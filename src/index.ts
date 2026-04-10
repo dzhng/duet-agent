@@ -46,6 +46,21 @@ export type {
 
 export { createSessionId, createAgentId, createTaskId, createMemoryId } from "./core/ids.js";
 
+// Layer boundaries
+export type {
+  StateSnapshot,
+  TaskSummary,
+  CommToOrchestrator,
+  OrchestratorToComm,
+  TaskContext,
+  DependencyResult,
+  TaskReport,
+  CheckpointAction,
+} from "./core/layers.js";
+
+// Layer bridges
+export { CommOrchestratorBridge, buildTaskContext } from "./core/bridges.js";
+
 // Memory
 export { FileMemoryStore } from "./memory/index.js";
 export { setEmbeddingModel } from "./memory/embeddings.js";

@@ -9,6 +9,8 @@ import type {
   TaskId,
 } from "../core/types.js";
 import type { Skill } from "../skills/types.js";
+import type { OrchestratorToComm, TaskReport } from "../core/layers.js";
+import { CommOrchestratorBridge, buildTaskContext } from "../core/bridges.js";
 import { createSessionId, createAgentId, createTaskId } from "../core/ids.js";
 import { InterruptController } from "../interrupt/controller.js";
 import { SubAgentRunner } from "./sub-agent.js";
@@ -26,8 +28,10 @@ import { discoverAll } from "../skills/loader.js";
  * 5. Auto-parallelizes pure tasks; runs effectful tasks sequentially
  * 6. Evaluates the final result
  *
- * Sub-agents are NOT tool calls the orchestrator executes. They're independent
- * actors that modify shared state. The orchestrator observes and adapts.
+ * Communication happens through layer bridges:
+ * - Orchestrator ↔ Comm: via CommOrchestratorBridge (pushes state, asks user)
+ * - Orchestrator ↔ Executor: via TaskContext/TaskReport (sealed contexts)
+ * - Comm ↮ Executor: NO direct communication. Ever.
  */
 export class Orchestrator {
   private interrupts: InterruptController;
@@ -36,8 +40,16 @@ export class Orchestrator {
   private skills: Skill[] = [];
   private skillsLoaded = false;
 
+  /** The bridge to the comm layer. Orchestrator talks to comm ONLY through this. */
+  private commBridge: CommOrchestratorBridge;
+  private comm: OrchestratorToComm;
+
   constructor(private readonly config: DuetAgentConfig) {
     this.interrupts = new InterruptController();
+
+    // Set up the comm ↔ orchestrator bridge
+    this.commBridge = new CommOrchestratorBridge(config.comm, this.interrupts);
+    this.comm = this.commBridge.orchestratorSide;
 
     if (config.guardrails?.length) {
       this.guardrail = createFirewall(config.guardrails);
@@ -54,16 +66,6 @@ export class Orchestrator {
     if (config.onInterrupt) {
       this.interrupts.on(config.onInterrupt);
     }
-
-    // Wire up comm layer interrupts (user messages become interrupts)
-    config.comm.onMessage((msg) => {
-      if (msg.kind === "text") {
-        this.interrupts.emit({
-          source: { kind: "user", message: msg.content },
-          priority: "pause",
-        });
-      }
-    });
 
     // Seed with explicitly provided skills
     if (config.skills) {
@@ -106,24 +108,41 @@ export class Orchestrator {
       transitions: [],
     };
 
-    await this.config.comm.sendStatus({ kind: "thinking", description: "Planning..." });
+    // Push initial state to comm layer
+    await this.pushState(state, "Starting planning...");
+    await this.comm.sendStatus({ kind: "thinking", description: "Planning..." });
 
     // Phase 1: Plan — break goal into tasks with dynamic agent specs
     await this.plan(state);
 
     // Phase 2: Execute — pure tasks parallelized, effectful tasks sequential
     this.transition(state, "executing", "Planning complete, beginning execution");
-    await this.config.comm.sendStatus({ kind: "executing", taskId: state.tasks[0]?.id as TaskId, description: "Executing tasks..." });
+    await this.pushState(state, "Execution started");
+    await this.comm.sendStatus({
+      kind: "executing",
+      taskId: state.tasks[0]?.id as TaskId,
+      description: "Executing tasks...",
+    });
     await this.execute(state);
 
     // Phase 3: Evaluate — check results
     this.transition(state, "evaluating", "Execution complete, evaluating results");
+    await this.pushState(state, "Evaluating results...");
     await this.evaluate(state);
 
     // Consolidate session memories
     await this.config.memory.consolidate();
 
     return state;
+  }
+
+  /**
+   * Push a state snapshot to the comm layer via the bridge.
+   * This is the ONLY way the comm layer learns about state changes.
+   */
+  private async pushState(state: SessionState, description: string): Promise<void> {
+    const snapshot = CommOrchestratorBridge.buildSnapshot(state, description);
+    await this.comm.pushStateUpdate(snapshot);
   }
 
   /**
@@ -318,13 +337,6 @@ ${skillsContext}${memoryContext}`,
    *
    * Pure tasks: auto-parallelized up to maxConcurrency when deps are met.
    * Effectful tasks: run one at a time, strictly sequentially.
-   *
-   * The scheduling algorithm:
-   * 1. Find all runnable tasks (pending + deps satisfied)
-   * 2. Partition into pure and effectful
-   * 3. Run all pure tasks in parallel (up to maxConcurrency)
-   * 4. Run at most ONE effectful task at a time
-   * 5. Never run an effectful task in parallel with anything else
    */
   private async execute(state: SessionState): Promise<void> {
     const maxConcurrency = this.config.maxConcurrency ?? 3;
@@ -333,9 +345,11 @@ ${skillsContext}${memoryContext}`,
       // Check for interrupts
       if (this.interrupts.isPaused) {
         this.transition(state, "interrupted", "Paused by interrupt");
+        await this.pushState(state, "Paused — handling interrupt");
         await this.handleInterrupt(state);
         if (state.phase === "interrupted") {
           this.transition(state, "planning", "Re-planning after interrupt");
+          await this.pushState(state, "Re-planning...");
           await this.plan(state);
           this.transition(state, "executing", "Resuming execution");
         }
@@ -381,6 +395,7 @@ ${skillsContext}${memoryContext}`,
           "executing",
           `Running ${batch.length} pure task(s) in parallel`
         );
+        await this.pushState(state, `Running ${batch.length} pure task(s) in parallel`);
         await Promise.allSettled(batch.map((task) => this.runTask(task, state)));
       } else if (effectfulTasks.length > 0 && !effectfulInProgress) {
         // Run exactly ONE effectful task
@@ -390,12 +405,14 @@ ${skillsContext}${memoryContext}`,
           "executing",
           `Running effectful task: ${task.description} [${task.sideEffectDescription ?? "side effects"}]`
         );
+        await this.pushState(
+          state,
+          `Running effectful task: ${task.description}`
+        );
         await this.runTask(task, state);
       } else if (effectfulInProgress) {
-        // Wait for the effectful task to finish before scheduling anything
         await new Promise((r) => setTimeout(r, 100));
       } else {
-        // Nothing to run, wait
         await new Promise((r) => setTimeout(r, 100));
       }
     }
@@ -403,6 +420,10 @@ ${skillsContext}${memoryContext}`,
 
   /**
    * Run a single task via the sub-agent runner.
+   *
+   * Builds a sealed TaskContext — the executor CANNOT see the comm layer,
+   * the full session state, or other tasks' raw results. This is the
+   * orchestrator ↔ executor boundary.
    */
   private async runTask(task: Task, state: SessionState): Promise<void> {
     task.status = "in_progress";
@@ -414,22 +435,72 @@ ${skillsContext}${memoryContext}`,
       task.id
     );
 
-    await this.config.comm.sendStatus({
+    await this.comm.sendStatus({
       kind: "executing",
       taskId: task.id,
       description: `[${task.purity}] ${task.description}`,
     });
 
+    // Resolve skill instructions for this task
+    const skillInstructions: string[] = [];
+    // Skills are already embedded in agentSpec.instructions during planning
+
+    // Fetch relevant memories for this task
+    const relevantMemories: string[] = [];
+    if (task.agentSpec.memoryAccess !== "none") {
+      const memories = await this.config.memory.recall({
+        query: task.description,
+        scope: task.agentSpec.memoryAccess === "all" ? undefined : "session",
+        limit: 5,
+      });
+      for (const m of memories) {
+        relevantMemories.push(m.content);
+      }
+    }
+
+    // Build the sealed TaskContext — this is all the executor gets to see
+    const taskContext = buildTaskContext(
+      task,
+      state.goal,
+      state,
+      skillInstructions,
+      relevantMemories
+    );
+
     try {
-      const result = await this.runner.run(task.agentSpec, task, state);
-      task.status = "completed";
-      task.result = result;
+      const report: TaskReport = await this.runner.run(
+        task.agentSpec,
+        taskContext,
+        state
+      );
+
+      if (report.status === "completed") {
+        task.status = "completed";
+        task.result = report.rawResult;
+      } else if (report.status === "needs_review") {
+        // Checkpoint — executor yielded for orchestrator review
+        task.status = "blocked";
+        task.result = report.rawResult;
+        // TODO: implement checkpoint handling
+      } else {
+        task.status = "failed";
+        task.error = report.rawResult;
+      }
+
+      // Track memories created during execution
+      task.memoriesCreated.push(...(report.memoriesCreated as any[]));
+
       this.transition(
         state,
         "executing",
-        `Completed ${task.purity} task: ${task.description}`,
+        `${report.status === "completed" ? "Completed" : "Failed"} ${task.purity} task: ${task.description}`,
         task.agentSpec.id,
         task.id
+      );
+
+      await this.pushState(
+        state,
+        `Task ${report.status}: ${task.description}`
       );
     } catch (err: any) {
       task.status = "failed";
@@ -441,12 +512,16 @@ ${skillsContext}${memoryContext}`,
         task.agentSpec.id,
         task.id
       );
+      await this.pushState(state, `Task failed: ${task.description}`);
     }
   }
 
   /**
    * Phase 3: Evaluate the results. The orchestrator reviews all task outputs
    * and determines if the goal was achieved.
+   *
+   * Note: only the orchestrator sees raw task results. The comm layer gets
+   * a curated summary via pushStateUpdate.
    */
   private async evaluate(state: SessionState): Promise<void> {
     const completedTasks = state.tasks.filter((t) => t.status === "completed");
@@ -467,7 +542,7 @@ ${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\
       maxOutputTokens: 1000,
     });
 
-    // Store evaluation as a session memory
+    // Store evaluation as a persistent memory
     await this.config.memory.write({
       author: createAgentId(),
       createdAt: Date.now(),
@@ -477,8 +552,10 @@ ${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\
       scope: "persistent",
     });
 
-    await this.config.comm.send({ kind: "text", content: evaluation });
+    // Send the evaluation through the comm bridge — this is what the user sees
+    await this.comm.sendMessage({ kind: "text", content: evaluation });
     this.transition(state, "complete", "Evaluation complete");
+    await this.pushState(state, "Complete");
   }
 
   private async handleInterrupt(state: SessionState): Promise<void> {
@@ -486,7 +563,8 @@ ${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\
     const pauseSource = queued.find((i) => i.priority === "pause")?.source;
 
     if (pauseSource?.kind === "user") {
-      await this.config.comm.send({
+      // Communicate back through the bridge, not directly
+      await this.comm.sendMessage({
         kind: "text",
         content: `Received your input: "${pauseSource.message}". Adjusting plan...`,
       });
