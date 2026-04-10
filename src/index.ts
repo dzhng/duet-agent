@@ -30,6 +30,7 @@ export type {
   GuardrailContext,
   // Session state
   TaskStatus,
+  TaskPurity,
   Task,
   SessionState,
   StateTransition,
@@ -65,6 +66,17 @@ export { StdioComm } from "./comm/index.js";
 
 // Guardrails
 export { SemanticGuardrail, PatternGuardrail, createFirewall } from "./guardrails/index.js";
+
+// Skills
+export type {
+  Skill,
+  SkillFile,
+  SkillReference,
+  SkillRegistry,
+  SkillSource,
+  SkillDiscoveryOptions,
+} from "./skills/index.js";
+export { discoverLocal, loadRemote, loadRegistry, discoverAll } from "./skills/index.js";
 
 // Agent templates
 export { AGENT_TEMPLATES } from "./agents/index.js";

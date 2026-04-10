@@ -9,6 +9,7 @@
 
 import type { LanguageModel } from "ai";
 import type { z } from "zod";
+import type { Skill, SkillDiscoveryOptions } from "../skills/types.js";
 
 // ---------------------------------------------------------------------------
 // Identity
@@ -178,6 +179,17 @@ export interface GuardrailContext {
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "failed" | "blocked";
 
+/**
+ * Task purity classification. The orchestrator determines this during planning.
+ *
+ * - "pure": no side effects — reads files, analyzes code, generates plans.
+ *   Pure tasks with satisfied dependencies are auto-parallelized.
+ * - "effectful": has side effects — writes to external systems, sends emails,
+ *   updates CRM records, modifies infrastructure. Effectful tasks run
+ *   sequentially and may require user confirmation.
+ */
+export type TaskPurity = "pure" | "effectful";
+
 /** A task in the orchestrator's plan. Sub-agents execute tasks. */
 export interface Task {
   id: TaskId;
@@ -189,6 +201,13 @@ export interface Task {
   status: TaskStatus;
   /** IDs of tasks that must complete before this one starts. */
   dependencies: TaskId[];
+  /**
+   * Whether this task is pure (no side effects) or effectful.
+   * Pure tasks are auto-parallelized. Effectful tasks run sequentially.
+   */
+  purity: TaskPurity;
+  /** For effectful tasks: what external system is affected. */
+  sideEffectDescription?: string;
   /** Result produced by the sub-agent (if completed). */
   result?: string;
   /** Error message (if failed). */
@@ -302,10 +321,14 @@ export interface DuetAgentConfig {
   comm: CommLayer;
   /** Optional guardrails. */
   guardrails?: Guardrail[];
-  /** Max concurrent sub-agents. */
+  /** Max concurrent sub-agents (only applies to pure tasks). */
   maxConcurrency?: number;
   /** Global system instructions prepended to all agents. */
   systemInstructions?: string;
+  /** Skills available to all agents. Loaded at init time. */
+  skills?: Skill[];
+  /** Skill discovery options — auto-discover skills from local/remote sources. */
+  skillDiscovery?: SkillDiscoveryOptions;
   /** Called on every state transition (for logging, UI, etc). */
   onTransition?: (transition: StateTransition, state: SessionState) => void;
   /** Called when an interrupt is received. */
