@@ -1,0 +1,66 @@
+{
+  "name": "duet-agent",
+  "version": "0.1.0",
+  "description": "An opinionated full-stack agent harness with native memories, sandboxes, interrupts, and multi-agent orchestration",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "duet-agent": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./memory": {
+      "types": "./dist/memory/index.d.ts",
+      "import": "./dist/memory/index.js"
+    },
+    "./sandbox": {
+      "types": "./dist/sandbox/index.d.ts",
+      "import": "./dist/sandbox/index.js"
+    },
+    "./orchestrator": {
+      "types": "./dist/orchestrator/index.d.ts",
+      "import": "./dist/orchestrator/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "oxlint src/",
+    "example": "tsx examples/basic.ts"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "multi-agent",
+    "orchestrator",
+    "sandbox",
+    "memory"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/duetso/duet-agent"
+  },
+  "dependencies": {
+    "ai": "^6.0.154",
+    "@ai-sdk/anthropic": "^2.0.0",
+    "@ai-sdk/openai": "^2.0.0",
+    "zod": "^3.23.0",
+    "nanoid": "^5.0.0",
+    "eventemitter3": "^5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "tsx": "^4.19.0",
+    "@types/node": "^22.0.0",
+    "oxlint": "^0.16.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
