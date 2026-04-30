@@ -27,11 +27,42 @@ export const OBSERVATION_CONTEXT_INSTRUCTIONS = dedent`
 `;
 
 const OBSERVER_EXTRACTION_INSTRUCTIONS = dedent`
-  - User facts, preferences, goals, constraints, corrections, and explicit decisions
-  - Project details, file paths, commands, tool results, and unresolved tasks
-  - Dates, relative dates, and time-sensitive commitments
-  - Concrete completed work that should not be repeated unless new information appears
-  - The assistant's immediate next-step bias when continuity would otherwise be lost
+  CRITICAL: DISTINGUISH USER ASSERTIONS FROM QUESTIONS
+
+  When the user tells you something about themselves, their work, or their environment, treat it as an assertion:
+  - "I have two kids" -> "User stated they have two kids"
+  - "I work at Acme Corp" -> "User stated they work at Acme Corp"
+
+  When the user asks for help, preserve that as a question or request:
+  - "Can you help me with X?" -> "User asked for help with X"
+  - "What's the best way to do Y?" -> "User asked for the best way to do Y"
+
+  Distinguish questions from statements of intent:
+  - "Can you recommend..." -> question/request
+  - "I'm looking forward to..." -> statement of intent
+  - "I need to..." -> stated need or goal
+
+  STATE CHANGES AND UPDATES
+
+  When the user indicates a change, frame it as a current state that supersedes older information:
+  - "I'm switching from A to B" -> "User is switching from A to B"
+  - "I'm going to start doing X instead of Y" -> "User will start doing X (changing from Y)"
+  - If new information contradicts older observations, explicitly say it replaces the older state.
+
+  TEMPORAL ANCHORING
+
+  Every observation already has the message time at the beginning. Only add a date at the end when the content references a different concrete time:
+  - Add "(meaning DATE)" or "(estimated DATE)" for relative dates like "tomorrow", "last week", "this weekend", or "next month".
+  - Do not add end dates for vague references like "recently", "soon", "lately", or "a while ago".
+  - Split observations that contain multiple time-sensitive events so each event can carry its own date.
+
+  PRESERVE SPECIFICS
+
+  Capture user facts, preferences, goals, constraints, corrections, explicit decisions, project details, file paths, commands, tool results, unresolved tasks, and completed work.
+  Preserve unusual phrasing in quotes when the user's exact wording matters.
+  Preserve names, handles, identifiers, quantities, counts, measurements, statistics, roles, and distinguishing attributes.
+  For assistant-generated recommendations, summaries, code, or explanations that the user may ask about later, retain the details that make the output reconstructable.
+  Capture the assistant's immediate next-step bias when continuity would otherwise be lost.
 `;
 
 export const OBSERVER_GUIDELINES = dedent`
@@ -45,11 +76,14 @@ export const OBSERVER_GUIDELINES = dedent`
   - When observing files with line numbers, include the line number if useful
   - If the agent provides a detailed response, observe the contents so it could be repeated
   - Make sure each observation starts with a priority emoji (🔴, 🟡, 🟢) or a completion marker (✅)
-  - Capture the user's words closely. User confirmations or explicit resolved outcomes should be ✅ when they clearly signal something is done
+  - Capture short and medium user messages nearly verbatim; summarize long messages but keep key quotes that carry intent
+  - User confirmations or explicit resolved outcomes should be ✅ when they clearly signal something is done; unresolved or critical user facts remain 🔴
   - Treat ✅ as a memory signal that tells the assistant something is finished and should not be repeated unless new information changes it
   - Make completion observations answer "What exactly is now done?"
   - Prefer concrete resolved outcomes over meta-level workflow or bookkeeping updates
+  - When multiple concrete things were completed, capture them concretely rather than collapsing them into vague progress
   - Observe WHAT the agent did and WHAT it means
+  - If the user provides detailed messages, code snippets, or exact text they are iterating on, preserve all important details
 `;
 
 export function buildObserverOutputFormat(includeThreadTitle = false): string {
@@ -63,7 +97,7 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
 
   return dedent`
     Use priority levels:
-    - 🔴 High: explicit user facts, preferences, unresolved goals, critical context
+    - 🔴 High: explicit user assertions, facts, preferences, requests, unresolved goals, critical context
     - 🟡 Medium: project details, learned information, tool results
     - 🟢 Low: minor details, uncertain observations
     - ✅ Completed: concrete task finished, question answered, issue resolved, goal achieved, or subtask completed
@@ -83,11 +117,14 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
     </observations>
 
     <current-task>
-    State the current task(s) explicitly.
+    State the current task(s) explicitly:
+    - Primary: what the agent is currently working on
+    - Secondary: other pending tasks, marked "waiting for user" when appropriate
+    - If the agent started doing something without user approval, note that it is off-task
     </current-task>
 
     <suggested-response>
-    Hint for the agent's immediate next message.
+    Hint for the agent's immediate next message. If the assistant needs to respond to the user, say that it should pause for user reply before continuing other tasks.
     </suggested-response>
     ${threadTitleSection}
   `;

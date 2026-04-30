@@ -44,28 +44,47 @@ export {
 
 export const OBSERVATIONAL_MEMORY_DEFAULTS = {
   observation: {
+    // Start converting raw conversation history into observations once the raw
+    // message log reaches this approximate token count.
     messageTokens: 30_000,
+    // Limit each observer call to a bounded slice of raw history so observation
+    // generation stays predictable on very long sessions.
     maxTokensPerBatch: 10_000,
+    // Begin precomputing buffered observations before activation. A number is a
+    // fraction of messageTokens; false disables buffering.
     bufferTokens: 0.2 as number | false,
+    // Keep this fraction of the raw-history budget after observations activate,
+    // so the actor still sees the most recent unobserved conversation tail.
     bufferActivation: 0.8,
   },
   reflection: {
+    // Condense the observation log once it reaches this approximate size.
     observationTokens: 40_000,
+    // Keep this fraction of observationTokens after reflection, leaving room for
+    // future observations before another reflection pass is needed.
     bufferActivation: 0.5,
   },
 } as const;
 
 export interface ObserverResult {
+  /** New observation log text extracted from raw messages. */
   observations: string;
+  /** Current task state distilled for continuity and optional thread metadata. */
   currentTask?: string;
+  /** Hint for the actor's next response after context has been compressed. */
   suggestedContinuation?: string;
+  /** Optional short title when the observer is asked to name the session/thread. */
   threadTitle?: string;
+  /** True when model output looked repetitive or malformed enough to discard. */
   degenerate?: boolean;
 }
 
 export interface ReflectorResult {
+  /** Condensed observation log produced from existing observations. */
   observations: string;
+  /** Hint for the actor's next response after reflection rewrites memory. */
   suggestedContinuation?: string;
+  /** True when model output looked repetitive or malformed enough to discard. */
   degenerate?: boolean;
 }
 
