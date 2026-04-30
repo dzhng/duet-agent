@@ -1,4 +1,4 @@
-import { generateText, type LanguageModel } from "ai";
+import { completeSimple, type Model } from "@mariozechner/pi-ai";
 import type { Guardrail, GuardrailContext, GuardrailResult } from "../core/types.js";
 
 /**
@@ -10,7 +10,7 @@ export class SemanticGuardrail implements Guardrail {
   description = "LLM-evaluated action safety check";
 
   constructor(
-    private readonly model: LanguageModel,
+    private readonly model: Model<any>,
     private readonly policy: string
   ) {}
 
@@ -26,11 +26,13 @@ AGENT: ${context.agentId}
 
 Respond with JSON: { "allowed": boolean, "reason": string, "suggestion"?: string }`;
 
-    const { text } = await generateText({
-      model: this.model,
-      prompt,
-      maxOutputTokens: 200,
+    const response = await completeSimple(this.model, {
+      messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
     });
+    const text = response.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n");
 
     try {
       return JSON.parse(text);

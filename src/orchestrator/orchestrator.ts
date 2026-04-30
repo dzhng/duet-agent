@@ -1,10 +1,11 @@
-import { generateText, stepCountIs, tool } from "ai";
-import { z } from "zod";
+import { Agent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
+import { convertToLlm } from "@mariozechner/pi-coding-agent";
+import { completeSimple } from "@mariozechner/pi-ai";
+import { Type, type Static } from "typebox";
 import type {
   DuetAgentConfig,
   SessionState,
   Task,
-  TaskPurity,
   StateTransition,
   TaskId,
 } from "../core/types.js";
@@ -16,6 +17,16 @@ import { InterruptController } from "../interrupt/controller.js";
 import { SubAgentRunner } from "./sub-agent.js";
 import { createFirewall } from "../guardrails/firewall.js";
 import { discoverAll } from "../skills/loader.js";
+
+function assistantText(messages: AgentMessage[]): string {
+  return messages
+    .filter((message) => message.role === "assistant")
+    .flatMap((message) => message.content)
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+}
 
 /**
  * The Orchestrator is the brain of duet-agent.
@@ -188,33 +199,38 @@ export class Orchestrator {
    * Effectful tasks (CRM updates, deployments, emails) run sequentially.
    */
   private async plan(state: SessionState): Promise<void> {
-    const addTaskSchema = z.object({
-      description: z.string().describe("What this task accomplishes"),
-      purity: z.enum(["pure", "effectful"]).describe(
-        "pure = no side effects (reads, analysis, code gen). effectful = writes to external systems (CRM, email, deploy, API calls that modify state)"
-      ),
-      sideEffectDescription: z.string().optional().describe(
-        "For effectful tasks: describe what external system is affected and how (e.g., 'Updates CRM contact record', 'Sends email via SendGrid')"
-      ),
-      agentRole: z.string().describe("Role of the sub-agent (e.g., 'researcher', 'code-writer', 'reviewer')"),
-      agentInstructions: z.string().describe("Detailed instructions for the sub-agent. If using a skill, include the skill instructions."),
-      skillIds: z.array(z.string()).optional().describe("IDs of skills this agent should use"),
-      allowedActions: z.array(z.string()).describe("Tools this agent can use: bash, readFile, writeFile, glob, memoryWrite, memoryRecall, memoryForget, interrupt, or * for all"),
-      maxTurns: z.number().describe("Maximum turns for this agent"),
-      dependencies: z.array(z.string()).optional().describe("Task descriptions this depends on"),
-      memoryAccess: z.enum(["all", "session", "none"]).optional().describe("Memory access level"),
+    const addTaskSchema = Type.Object({
+      description: Type.String({ description: "What this task accomplishes" }),
+      purity: Type.Union([Type.Literal("pure"), Type.Literal("effectful")], {
+        description: "pure = no side effects (reads, analysis, code gen). effectful = writes to external systems (CRM, email, deploy, API calls that modify state)",
+      }),
+      sideEffectDescription: Type.Optional(Type.String({
+        description: "For effectful tasks: describe what external system is affected and how (e.g., 'Updates CRM contact record', 'Sends email via SendGrid')",
+      })),
+      agentRole: Type.String({ description: "Role of the sub-agent (e.g., 'researcher', 'code-writer', 'reviewer')" }),
+      agentInstructions: Type.String({ description: "Detailed instructions for the sub-agent. If using a skill, include the skill instructions." }),
+      skillIds: Type.Optional(Type.Array(Type.String(), { description: "IDs of skills this agent should use" })),
+      allowedActions: Type.Array(Type.String(), { description: "Tools this agent can use: read, bash, edit, write, or * for all" }),
+      maxTurns: Type.Number({ description: "Maximum turns for this agent" }),
+      dependencies: Type.Optional(Type.Array(Type.String(), { description: "Task descriptions this depends on" })),
+      memoryAccess: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("session"), Type.Literal("none")], {
+        description: "Memory access level",
+      })),
     });
 
-    const setContextSchema = z.object({
-      key: z.string(),
-      value: z.string(),
+    const setContextSchema = Type.Object({
+      key: Type.String(),
+      value: Type.String(),
     });
 
-    const planTools = {
-      addTask: tool({
+    const planTools: AgentTool[] = [
+      {
+        name: "addTask",
+        label: "Add Task",
         description: "Add a task to the execution plan. Define the sub-agent that will execute it. IMPORTANT: classify purity correctly — pure tasks get auto-parallelized, effectful tasks run one at a time.",
-        inputSchema: addTaskSchema,
-        execute: async (input: z.infer<typeof addTaskSchema>) => {
+        parameters: addTaskSchema,
+        execute: async (_toolCallId, params) => {
+          const input = params as Static<typeof addTaskSchema>;
           const taskId = createTaskId();
           const agentId = createAgentId();
 
@@ -258,19 +274,28 @@ export class Orchestrator {
           };
 
           state.tasks.push(task);
-          return { taskId, agentId, description: input.description, purity: input.purity };
+          return {
+            content: [{ type: "text", text: `Added ${input.purity} task: ${input.description}` }],
+            details: { taskId, agentId, description: input.description, purity: input.purity },
+          };
         },
-      }),
+      },
 
-      setContext: tool({
+      {
+        name: "setContext",
+        label: "Set Context",
         description: "Set a key-value pair in the session context, available to all sub-agents",
-        inputSchema: setContextSchema,
-        execute: async (input: z.infer<typeof setContextSchema>) => {
+        parameters: setContextSchema,
+        execute: async (_toolCallId, params) => {
+          const input = params as Static<typeof setContextSchema>;
           state.context[input.key] = input.value;
-          return { set: input.key };
+          return {
+            content: [{ type: "text", text: `Set context key: ${input.key}` }],
+            details: { set: input.key },
+          };
         },
-      }),
-    };
+      },
+    ];
 
     // Recall relevant persistent memories for planning context
     const memories = await this.config.memory.recall({
@@ -285,9 +310,11 @@ export class Orchestrator {
 
     const skillsContext = this.buildSkillsContext();
 
-    await generateText({
-      model: this.config.orchestratorModel,
-      system: `You are an orchestrator agent. Your job is to break down a user's goal into discrete tasks, and for each task, define a sub-agent with the right role, instructions, tools, and constraints.
+    const planner = new Agent({
+      initialState: {
+        model: this.config.orchestratorModel,
+        tools: planTools,
+        systemPrompt: `You are an orchestrator agent. Your job is to break down a user's goal into discrete tasks, and for each task, define a sub-agent with the right role, instructions, tools, and constraints.
 
 ${this.config.systemInstructions ?? ""}
 
@@ -319,17 +346,24 @@ When a task has BOTH pure and effectful components, split it into two tasks:
 
 Rules:
 - Each task should be independently executable by a sub-agent.
-- Sub-agents interact with the world through bash and files only. No APIs, no MCP.
+- Sub-agents interact with the world through pi coding tools only: read, bash, edit, and write. No APIs, no MCP.
 - Define agent instructions that are specific and actionable.
-- Set appropriate tool permissions — don't give every agent write access if they only need to read.
+- Set appropriate tool permissions — don't give every agent edit/write access if they only need read or bash.
 - Consider task dependencies — some tasks must complete before others can start.
 - Use memory access wisely: "all" for agents that need historical context, "session" for task-local work, "none" for stateless operations.
 - For effectful tasks, always set sideEffectDescription explaining what external system is affected.
 ${skillsContext}${memoryContext}`,
-      prompt: `Break down this goal into tasks:\n\n${state.goal}`,
-      tools: planTools,
-      stopWhen: stepCountIs(20),
+      },
+      convertToLlm,
+      toolExecution: "sequential",
     });
+    let turns = 0;
+    planner.subscribe((event) => {
+      if (event.type === "turn_end" && ++turns >= 20) {
+        planner.abort();
+      }
+    });
+    await planner.prompt(`Break down this goal into tasks:\n\n${state.goal}`);
   }
 
   /**
@@ -535,12 +569,11 @@ ${completedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.result?.slice
 ### Failed (${failedTasks.length})
 ${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\n")}`;
 
-    const { text: evaluation } = await generateText({
-      model: this.config.orchestratorModel,
-      system: `You are evaluating whether a set of completed tasks achieves the user's original goal. Be concise and direct.`,
-      prompt: `Goal: ${state.goal}\n\n${summary}\n\nDid the tasks achieve the goal? Summarize what was accomplished.`,
-      maxOutputTokens: 1000,
+    const evaluationMessage = await completeSimple(this.config.orchestratorModel, {
+      systemPrompt: "You are evaluating whether a set of completed tasks achieves the user's original goal. Be concise and direct.",
+      messages: [{ role: "user", content: `Goal: ${state.goal}\n\n${summary}\n\nDid the tasks achieve the goal? Summarize what was accomplished.`, timestamp: Date.now() }],
     });
+    const evaluation = assistantText([evaluationMessage]);
 
     // Store evaluation as a persistent memory
     await this.config.memory.write({

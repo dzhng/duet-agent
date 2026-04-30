@@ -10,7 +10,7 @@
  * - Even another AI as the "user"
  */
 
-import { anthropic } from "@ai-sdk/anthropic";
+import { getModel } from "@mariozechner/pi-ai";
 import EventEmitter from "eventemitter3";
 import {
   Orchestrator,
@@ -110,8 +110,8 @@ async function main() {
   const comm = new WebSocketComm();
 
   const config: DuetAgentConfig = {
-    orchestratorModel: anthropic("claude-opus-4-6"),
-    defaultSubAgentModel: anthropic("claude-sonnet-4-6"),
+    orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
+    defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
     memory: new FileMemoryStore("./.duet-agent/memory"),
     sandbox: new LocalSandbox(process.cwd()),
     comm, // ← The only thing that changes

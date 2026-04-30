@@ -4,7 +4,7 @@
  * This shows the core API — how all the pieces fit together.
  */
 
-import { anthropic } from "@ai-sdk/anthropic";
+import { getModel } from "@mariozechner/pi-ai";
 import {
   Orchestrator,
   FileMemoryStore,
@@ -17,10 +17,10 @@ import {
 async function main() {
   const config: DuetAgentConfig = {
     // Smartest model for the orchestrator — it's doing the hard thinking
-    orchestratorModel: anthropic("claude-opus-4-6"),
+    orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
 
     // Cheaper/faster model for sub-agents — they execute, not plan
-    defaultSubAgentModel: anthropic("claude-sonnet-4-6"),
+    defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
 
     // Memory persists to disk. No database required.
     memory: new FileMemoryStore("./.duet-agent/memory"),

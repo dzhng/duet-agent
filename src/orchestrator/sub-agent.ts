@@ -1,4 +1,5 @@
-import { generateText, stepCountIs } from "ai";
+import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
+import { convertToLlm } from "@mariozechner/pi-coding-agent";
 import type {
   SubAgentSpec,
   MemoryStore,
@@ -9,6 +10,16 @@ import type {
 } from "../core/types.js";
 import type { TaskContext, TaskReport } from "../core/layers.js";
 import { createTools } from "./tools.js";
+
+function extractText(messages: AgentMessage[]): string {
+  return messages
+    .filter((message) => message.role === "assistant")
+    .flatMap((message) => message.content)
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+}
 
 export interface SubAgentRunnerDeps {
   memory: MemoryStore;
@@ -39,9 +50,9 @@ export class SubAgentRunner {
   async run(
     spec: SubAgentSpec,
     taskContext: TaskContext,
-    sessionState: SessionState
+    _sessionState: SessionState
   ): Promise<TaskReport> {
-    const { memory, sandbox, interrupts, guardrail } = this.deps;
+    const { sandbox, interrupts } = this.deps;
 
     // Build context from TaskContext — NOT from raw session state
     const depContext = taskContext.dependencyResults.length > 0
@@ -70,37 +81,46 @@ ${taskContext.sessionGoal}
 ${depContext}${memoryContext}${skillContext}
 
 ## Rules
-- Use bash for everything. No MCP, no APIs — files and CLI only.
-- Write memories for anything worth remembering beyond this task.
-- If you're blocked or need clarification, use the interrupt tool.
+- Use pi coding tools only: read, bash, edit, and write. No MCP, no APIs.
+- Use read instead of cat/sed for inspecting files.
+- Use edit for precise changes and write only for new files or complete rewrites.
+- If you're blocked or need clarification, explain that in your final response.
 - Stay focused on your specific task. Don't exceed your scope.`;
 
     const tools = createTools({
-      agentId: spec.id,
-      memory,
       sandbox,
-      interrupts,
-      guardrail,
-      sessionState,
       allowedActions: spec.allowedActions,
     });
 
     try {
-      const { text } = await generateText({
-        model: spec.model,
-        system: systemPrompt,
-        prompt: `Execute the task: ${taskContext.task.description}`,
-        tools,
-        stopWhen: stepCountIs(spec.maxTurns),
-        onStepFinish: () => {
+      let turns = 0;
+      const agent = new Agent({
+        initialState: {
+          systemPrompt,
+          model: spec.model,
+          tools,
+        },
+        convertToLlm,
+        toolExecution: "sequential",
+      });
+
+      agent.subscribe((event) => {
+        if (event.type === "turn_end") {
+          turns++;
           if (interrupts instanceof Object && "isPaused" in interrupts) {
             const ctrl = interrupts as any;
             if (ctrl.isPaused) {
-              throw new Error("Agent paused by interrupt");
+              agent.abort();
             }
           }
-        },
+          if (turns >= spec.maxTurns) {
+            agent.abort();
+          }
+        }
       });
+
+      await agent.prompt(`Execute the task: ${taskContext.task.description}`);
+      const text = extractText(agent.state.messages);
 
       return {
         taskId: taskContext.task.id,

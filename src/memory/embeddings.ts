@@ -1,5 +1,6 @@
-import { embed } from "ai";
-import type { EmbeddingModel } from "ai";
+export interface EmbeddingModel {
+  embed(text: string): Promise<number[]>;
+}
 
 let _embeddingModel: EmbeddingModel | undefined;
 
@@ -17,8 +18,7 @@ export function getEmbeddingModel(): EmbeddingModel | undefined {
  */
 export async function embedText(text: string): Promise<number[]> {
   if (_embeddingModel) {
-    const { embedding } = await embed({ model: _embeddingModel, value: text });
-    return embedding;
+    return _embeddingModel.embed(text);
   }
   // Fallback: deterministic hash-based pseudo-embedding (64 dims).
   // Not great for real semantic search but works for exact/tag matching.

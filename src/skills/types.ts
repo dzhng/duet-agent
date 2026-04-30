@@ -10,9 +10,6 @@
  * reference documentation. No runtime code — the agent reads the skill
  * definition and uses it to inform its behavior.
  */
-
-import type { z } from "zod";
-
 /** A resolved skill ready for use by agents. */
 export interface Skill {
   /** Unique identifier (e.g., "github", "crm-update", "web-scraper"). */

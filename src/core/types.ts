@@ -7,8 +7,7 @@
  * can't be interrupted can't collaborate.
  */
 
-import type { LanguageModel } from "ai";
-import type { z } from "zod";
+import type { Model } from "@mariozechner/pi-ai";
 import type { Skill, SkillDiscoveryOptions } from "../skills/types.js";
 
 // ---------------------------------------------------------------------------
@@ -263,7 +262,7 @@ export interface SubAgentSpec {
   /** System prompt for this agent — written by the orchestrator. */
   instructions: string;
   /** Which model to use. */
-  model: LanguageModel;
+  model: Model<any>;
   /** Which tools this agent is allowed to use (subset of sandbox + memory). */
   allowedActions: string[];
   /** Max turns before the agent must yield. */
@@ -310,9 +309,9 @@ export type AgentStatus =
 
 export interface DuetAgentConfig {
   /** The orchestrator model (should be the smartest available). */
-  orchestratorModel: LanguageModel;
+  orchestratorModel: Model<any>;
   /** Default model for sub-agents. Orchestrator can override per-task. */
-  defaultSubAgentModel: LanguageModel;
+  defaultSubAgentModel: Model<any>;
   /** Memory store implementation. */
   memory: MemoryStore;
   /** Sandbox implementation. */

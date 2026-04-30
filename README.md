@@ -85,7 +85,7 @@ npx duet-agent -m claude-opus-4-6 --sub-model claude-sonnet-4-6 "refactor the au
 ### Programmatic
 
 ```typescript
-import { anthropic } from "@ai-sdk/anthropic";
+import { getModel } from "@mariozechner/pi-ai";
 import {
   Orchestrator,
   FileMemoryStore,
@@ -95,8 +95,8 @@ import {
 } from "duet-agent";
 
 const orchestrator = new Orchestrator({
-  orchestratorModel: anthropic("claude-opus-4-6"),
-  defaultSubAgentModel: anthropic("claude-sonnet-4-6"),
+  orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
+  defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
   memory: new FileMemoryStore("./.duet-agent/memory"),
   sandbox: new LocalSandbox(process.cwd()),
   comm: new StdioComm(),
@@ -137,7 +137,7 @@ const patterns = new PatternGuardrail();
 
 // Smart: LLM-evaluated safety
 const semantic = new SemanticGuardrail(
-  anthropic("claude-haiku-4-5"),
+  getModel("anthropic", "claude-haiku-4-5"),
   "Never delete production data. Never expose secrets in output."
 );
 

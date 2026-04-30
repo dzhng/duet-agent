@@ -9,8 +9,7 @@
  *   echo "fix the bug in server.ts" | duet-agent
  */
 
-import { anthropic } from "@ai-sdk/anthropic";
-import { openai } from "@ai-sdk/openai";
+import { getModel, type Model } from "@mariozechner/pi-ai";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
 import { FileMemoryStore } from "./memory/file-store.js";
 import { LocalSandbox } from "./sandbox/local.js";
@@ -106,17 +105,17 @@ async function main() {
   }
 }
 
-function resolveModel(name: string) {
+function resolveModel(name: string): Model<any> {
   // Anthropic models
   if (name.startsWith("claude-")) {
-    return anthropic(name);
+    return getModel("anthropic", name as any);
   }
   // OpenAI models
   if (name.startsWith("gpt-") || name.startsWith("o1") || name.startsWith("o3")) {
-    return openai(name);
+    return getModel("openai", name as any);
   }
   // Default: try anthropic
-  return anthropic(name);
+  return getModel("anthropic", name as any);
 }
 
 function printHelp() {
