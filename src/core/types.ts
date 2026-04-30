@@ -10,7 +10,7 @@
 import type { Model } from "@mariozechner/pi-ai";
 import type { Skill, loadSkills } from "@mariozechner/pi-coding-agent";
 
-export type SkillDiscoveryOptions = Parameters<typeof loadSkills>[0];
+export type SkillDiscoveryOptions = Partial<Parameters<typeof loadSkills>[0]>;
 
 // ---------------------------------------------------------------------------
 // Identity
@@ -328,7 +328,7 @@ export interface DuetAgentConfig {
   systemInstructions?: string;
   /** Skills available to all agents. Loaded at init time. */
   skills?: Skill[];
-  /** Skill discovery options — auto-discover skills from local/remote sources. */
+  /** Skill discovery options. Defaults to ~/.agents/skills and <cwd>/.agents/skills. */
   skillDiscovery?: SkillDiscoveryOptions;
   /** Called on every state transition (for logging, UI, etc). */
   onTransition?: (transition: StateTransition, state: SessionState) => void;

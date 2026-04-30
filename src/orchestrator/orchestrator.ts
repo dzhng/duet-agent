@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { Agent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
 import { convertToLlm } from "@mariozechner/pi-coding-agent";
 import { completeSimple } from "@mariozechner/pi-ai";
@@ -8,6 +10,7 @@ import type {
   Task,
   StateTransition,
   TaskId,
+  SkillDiscoveryOptions,
 } from "../core/types.js";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import type { OrchestratorToComm, TaskReport } from "../core/layers.js";
@@ -27,6 +30,24 @@ function assistantText(messages: AgentMessage[]): string {
     .map((block) => block.text)
     .join("\n")
     .trim();
+}
+
+function getSandboxCwd(sandbox: unknown): string {
+  return (sandbox as { rootDir?: string }).rootDir ?? process.cwd();
+}
+
+function buildSkillDiscoveryOptions(options: SkillDiscoveryOptions | undefined, cwd: string) {
+  const agentDir = options?.agentDir ?? join(homedir(), ".agents");
+  const includeDefaults = options?.includeDefaults ?? true;
+  return {
+    cwd: options?.cwd ?? cwd,
+    agentDir,
+    includeDefaults: false,
+    skillPaths: [
+      ...(includeDefaults ? [join(agentDir, "skills"), join(options?.cwd ?? cwd, ".agents", "skills")] : []),
+      ...(options?.skillPaths ?? []),
+    ],
+  };
 }
 
 /**
@@ -92,14 +113,14 @@ export class Orchestrator {
     if (this.skillsLoaded) return;
     this.skillsLoaded = true;
 
-    if (this.config.skillDiscovery) {
-      const { skills: discovered } = loadSkills(this.config.skillDiscovery);
-      // Merge: explicit skills take priority (by name)
-      const existingNames = new Set(this.skills.map((s) => s.name));
-      for (const s of discovered) {
-        if (!existingNames.has(s.name)) {
-          this.skills.push(s);
-        }
+    const { skills: discovered } = loadSkills(
+      buildSkillDiscoveryOptions(this.config.skillDiscovery, getSandboxCwd(this.config.sandbox))
+    );
+    // Merge: explicit skills take priority (by name)
+    const existingNames = new Set(this.skills.map((s) => s.name));
+    for (const s of discovered) {
+      if (!existingNames.has(s.name)) {
+        this.skills.push(s);
       }
     }
   }
@@ -146,6 +167,11 @@ export class Orchestrator {
     await this.config.memory.consolidate();
 
     return state;
+  }
+
+  async getSkills(): Promise<readonly Skill[]> {
+    await this.ensureSkillsLoaded();
+    return [...this.skills];
   }
 
   /**

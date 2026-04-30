@@ -73,6 +73,18 @@ Pattern-based (fast, regex) and semantic (LLM-evaluated) guardrails compose into
 npm install duet-agent
 ```
 
+## Development
+
+This repo uses Bun for package management and Docker for functional tests.
+
+```bash
+bun install
+bun run setup  # install/start Docker on macOS or Linux if needed
+bun run test   # runs the test suite inside Docker
+```
+
+Raw `bun test` skips Docker-only functional tests so they do not create files on the host machine.
+
 ## Quick Start
 
 ### CLI
