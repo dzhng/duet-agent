@@ -1,6 +1,8 @@
 import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { convertToLlm } from "@mariozechner/pi-coding-agent";
 import type {
+  MemoryStorage,
+  ObservationalMemorySettings,
   SubAgentSpec,
   Sandbox,
   InterruptBus,
@@ -10,6 +12,7 @@ import type {
 import type { TaskContext, TaskReport } from "../core/layers.js";
 import { createTools } from "./tools.js";
 import { createCompactionTransform } from "./compaction.js";
+import { createObservationalMemoryTransform } from "../memory/observational.js";
 
 function extractText(messages: AgentMessage[]): string {
   return messages
@@ -22,6 +25,8 @@ function extractText(messages: AgentMessage[]): string {
 }
 
 export interface SubAgentRunnerDeps {
+  memory: MemoryStorage;
+  observationalMemory?: boolean | Partial<ObservationalMemorySettings>;
   sandbox: Sandbox;
   interrupts: InterruptBus;
   guardrail?: Guardrail;
@@ -51,7 +56,7 @@ export class SubAgentRunner {
     taskContext: TaskContext,
     _sessionState: SessionState
   ): Promise<TaskReport> {
-    const { sandbox, interrupts } = this.deps;
+    const { memory, observationalMemory, sandbox, interrupts } = this.deps;
 
     // Build context from TaskContext — NOT from raw session state
     const depContext = taskContext.dependencyResults.length > 0
@@ -100,7 +105,19 @@ ${depContext}${memoryContext}${skillContext}
           tools,
         },
         convertToLlm,
-        transformContext: createCompactionTransform({ model: spec.model }),
+        transformContext: async (messages, signal) => {
+          if (spec.memoryAccess === "none") {
+            return createCompactionTransform({ model: spec.model })(messages, signal);
+          }
+          const observational = createObservationalMemoryTransform({
+            store: memory,
+            sessionId: _sessionState.sessionId,
+            actorModel: spec.model,
+            settings: observationalMemory,
+          });
+          const compaction = createCompactionTransform({ model: spec.model });
+          return compaction(await observational(messages, signal), signal);
+        },
         toolExecution: "sequential",
       });
 

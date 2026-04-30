@@ -6,6 +6,8 @@ import { completeSimple } from "@mariozechner/pi-ai";
 import { Type, type Static } from "typebox";
 import type {
   DuetAgentConfig,
+  MemoryStorage,
+  ObservationalMemorySettings,
   SessionState,
   Task,
   StateTransition,
@@ -21,6 +23,7 @@ import { SubAgentRunner } from "./sub-agent.js";
 import { createFirewall } from "../guardrails/firewall.js";
 import { formatSkillsForPrompt, loadSkills } from "@mariozechner/pi-coding-agent";
 import { createCompactionTransform } from "./compaction.js";
+import { createObservationalMemoryTransform } from "../memory/observational.js";
 
 function assistantText(messages: AgentMessage[]): string {
   return messages
@@ -48,6 +51,25 @@ function buildSkillDiscoveryOptions(options: SkillDiscoveryOptions | undefined, 
       ...(options?.skillPaths ?? []),
     ],
   };
+}
+
+type AgentContextTransform = (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+
+function createMemoryContextTransform(options: {
+  memory: MemoryStorage;
+  sessionId: SessionState["sessionId"];
+  actorModel: DuetAgentConfig["orchestratorModel"];
+  observationalMemory: boolean | Partial<ObservationalMemorySettings> | undefined;
+}): AgentContextTransform {
+  const observational = createObservationalMemoryTransform({
+    store: options.memory,
+    sessionId: options.sessionId,
+    actorModel: options.actorModel,
+    settings: options.observationalMemory,
+  });
+  const compaction = createCompactionTransform({ model: options.actorModel });
+
+  return async (messages, signal) => compaction(await observational(messages, signal), signal);
 }
 
 /**
@@ -89,6 +111,8 @@ export class Orchestrator {
     }
 
     this.runner = new SubAgentRunner({
+      memory: config.memory,
+      observationalMemory: config.observationalMemory,
       sandbox: config.sandbox,
       interrupts: this.interrupts,
       guardrail: this.guardrail,
@@ -360,7 +384,12 @@ Rules:
 ${skillsContext}${memoryContext}`,
       },
       convertToLlm,
-      transformContext: createCompactionTransform({ model: this.config.orchestratorModel }),
+      transformContext: createMemoryContextTransform({
+        memory: this.config.memory,
+        sessionId: state.sessionId,
+        actorModel: this.config.orchestratorModel,
+        observationalMemory: this.config.observationalMemory,
+      }),
       toolExecution: "sequential",
     });
     let turns = 0;

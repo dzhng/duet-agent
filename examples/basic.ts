@@ -7,7 +7,7 @@
 import { getModel } from "@mariozechner/pi-ai";
 import {
   Orchestrator,
-  FileMemoryStore,
+  MemoryStore,
   LocalSandbox,
   StdioComm,
   PatternGuardrail,
@@ -22,8 +22,8 @@ async function main() {
     // Cheaper/faster model for sub-agents — they execute, not plan
     defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
 
-    // Memory persists to disk. No database required.
-    memory: new FileMemoryStore("./.duet-agent/memory"),
+    // Memory is event-emitting and in-memory by default. Persistence can subscribe to events.
+    memory: new MemoryStore(),
 
     // Sandbox = bash. That's it. No MCP, no custom protocols.
     sandbox: new LocalSandbox(process.cwd()),

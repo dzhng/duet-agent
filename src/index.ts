@@ -19,12 +19,15 @@ export type {
   ObservationSource,
   Observation,
   RawMemoryMessage,
+  BufferedObservationChunk,
   ObservationBlock,
   RawMemoryBlock,
   ObservationalMemorySnapshot,
   ObservationalMemorySettings,
   ObservationQuery,
-  MemoryStore,
+  MemoryStoreEvent,
+  MemoryStoreEventHandler,
+  MemoryStorage,
   // Sandbox
   ExecResult,
   SandboxOptions,
@@ -71,7 +74,41 @@ export type {
 export { CommOrchestratorBridge, buildTaskContext } from "./core/bridges.js";
 
 // Memory
-export { FileMemoryStore } from "./memory/index.js";
+export {
+  MemoryStore,
+  OBSERVATIONAL_MEMORY_DEFAULTS,
+  OBSERVATION_CONTINUATION_HINT,
+  OBSERVATION_CONTEXT_PROMPT,
+  OBSERVATION_CONTEXT_INSTRUCTIONS,
+  OBSERVER_GUIDELINES,
+  ModelByInputTokens,
+  resolveObservationalMemorySettings,
+  validateObservationalMemorySettings,
+  createObservationalMemoryTransform,
+  buildObserverOutputFormat,
+  buildObserverSystemPrompt,
+  buildObserverPrompt,
+  formatMessagesForObserver,
+  parseObserverOutput,
+  optimizeObservationsForContext,
+  sanitizeObservationLines,
+  detectDegenerateRepetition,
+  generateAnchorId,
+  wrapInObservationGroup,
+  parseObservationGroups,
+  stripObservationGroups,
+  combineObservationGroupRanges,
+  renderObservationGroupsForReflection,
+  deriveObservationGroupProvenance,
+  reconcileObservationGroupsFromReflection,
+} from "./memory/index.js";
+export type {
+  ObserverResult,
+  ReflectorResult,
+  ModelByInputTokensConfig,
+  ObservationalMemoryTransformOptions,
+  ObservationGroup,
+} from "./memory/index.js";
 
 // Sandbox
 export { LocalSandbox } from "./sandbox/index.js";

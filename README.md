@@ -36,7 +36,7 @@ duet-agent takes the opposite approach: **memories, sandboxes, and interrupts ar
 │                    Shared Infrastructure                  │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
 │  │  Memory   │  │ Sandbox  │  │Interrupts│  │Guardrails│ │
-│  │(semantic) │  │ (bash)   │  │(user+env)│  │(optional)│ │
+│  │(observed)│  │ (bash)   │  │(user+env)│  │(optional)│ │
 │  └──────────┘  └──────────┘  └──────────┘  └─────────┘ │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -45,7 +45,9 @@ duet-agent takes the opposite approach: **memories, sandboxes, and interrupts ar
 
 ### Native Memory
 
-Memories are first-class citizens, not a bolted-on RAG pipeline. Every agent can read and write memories. Memories have semantic embeddings, importance scores, scoping (session vs persistent), and automatic consolidation. The orchestrator uses memories from past sessions to inform planning.
+Memory is first-class, but the harness itself has **zero persistence logic**. The default `MemoryStore` is in-memory and emits events for every raw-message, observation, and buffer update. Persistence is intentionally built outside the harness: subscribe to memory events and write them wherever you want, or hydrate a store with initial state before passing it to the orchestrator.
+
+The memory model follows observational memory: raw messages accumulate, an observer compresses them into text observations, and a reflector condenses observations when they grow too large. Observations are scoped as `session` or `resource`; both can be persisted by external modules.
 
 ### Native Sandboxes
 
@@ -106,7 +108,7 @@ npx duet-agent -m claude-opus-4-6 --sub-model claude-sonnet-4-6 "refactor the au
 import { getModel } from "@mariozechner/pi-ai";
 import {
   Orchestrator,
-  FileMemoryStore,
+  MemoryStore,
   LocalSandbox,
   StdioComm,
   PatternGuardrail,
@@ -115,7 +117,7 @@ import {
 const orchestrator = new Orchestrator({
   orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
   defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
-  memory: new FileMemoryStore("./.duet-agent/memory"),
+  memory: new MemoryStore(),
   sandbox: new LocalSandbox(process.cwd()),
   comm: new StdioComm(),
   guardrails: [new PatternGuardrail()],
@@ -124,6 +126,30 @@ const orchestrator = new Orchestrator({
 
 const state = await orchestrator.run("Build a todo app with React and TypeScript");
 ```
+
+## Memory And Persistence
+
+`MemoryStore` is the default event-emitting in-memory store. It is the runtime state container, not a database adapter.
+
+```typescript
+import { MemoryStore } from "duet-agent";
+
+const memory = new MemoryStore();
+
+memory.on((event) => {
+  // Persist externally: append to a log, write JSON, sync to Postgres, etc.
+  console.log(event.type, event);
+});
+```
+
+Persistence modules should be built on top of events or should construct/hydrate a store before handing it to the harness. The harness should not know whether state came from a file, database, cache, or test fixture.
+
+Observational memory is enabled by default with conservative long-context thresholds:
+
+- Raw messages are observed around `30_000` tokens.
+- Observation logs are reflected around `40_000` tokens.
+- Buffering uses `bufferTokens` / `bufferActivation` settings adapted to Pi’s `transformContext` lifecycle.
+- Observation context is injected as reminder messages, then normal Pi compaction still runs.
 
 ## Custom Communication Layer
 
@@ -167,10 +193,10 @@ const firewall = createFirewall([patterns, semantic]);
 ## Design Principles
 
 1. **Files and CLI over protocols.** No MCP, no custom APIs. If you can't do it with bash, you can't do it.
-2. **Native over modular.** Memory, sandboxes, and interrupts are part of every agent turn, not optional plugins.
+2. **Runtime state over persistence.** The harness owns in-memory state and emits events. Persistence lives in external modules or initial-state hydration.
 3. **Dynamic over static.** Sub-agents are defined at runtime by the orchestrator, not pre-built classes.
 4. **Decoupled over integrated.** Agent logic doesn't know how it talks to users. Swap the comm layer freely.
-5. **Simple over flexible.** One sandbox primitive (bash). One memory store. One interrupt bus. Constraints breed creativity.
+5. **Simple over flexible.** One sandbox primitive (bash). One default memory store. One interrupt bus. Constraints breed creativity.
 
 ## License
 

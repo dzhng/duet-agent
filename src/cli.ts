@@ -11,7 +11,7 @@
 
 import { getModel, type Model } from "@mariozechner/pi-ai";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
-import { FileMemoryStore } from "./memory/file-store.js";
+import { MemoryStore } from "./memory/store.js";
 import { LocalSandbox } from "./sandbox/local.js";
 import { StdioComm } from "./comm/stdio.js";
 import { PatternGuardrail } from "./guardrails/pattern.js";
@@ -24,7 +24,6 @@ async function main() {
   let orchestratorModelName = "claude-opus-4-6";
   let subAgentModelName = "claude-sonnet-4-6";
   let workDir = process.cwd();
-  let memoryDir = `${workDir}/.duet-agent/memory`;
   const goalParts: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -39,9 +38,6 @@ async function main() {
       case "--workdir":
       case "-w":
         workDir = args[++i];
-        break;
-      case "--memory-dir":
-        memoryDir = args[++i];
         break;
       case "--help":
       case "-h":
@@ -77,7 +73,7 @@ async function main() {
   const config: DuetAgentConfig = {
     orchestratorModel,
     defaultSubAgentModel: subAgentModel,
-    memory: new FileMemoryStore(memoryDir),
+    memory: new MemoryStore(),
     sandbox: new LocalSandbox(workDir),
     comm: new StdioComm(),
     guardrails: [new PatternGuardrail()],
@@ -130,7 +126,6 @@ OPTIONS
   -m, --model <name>       Orchestrator model (default: claude-opus-4-6)
   --sub-model <name>       Sub-agent model (default: claude-sonnet-4-6)
   -w, --workdir <path>     Working directory (default: cwd)
-  --memory-dir <path>      Memory storage directory (default: .duet-agent/memory)
   -h, --help               Show this help
 
 MODELS

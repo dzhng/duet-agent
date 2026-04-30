@@ -1,9 +1,10 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import { createMemoryId } from "../core/ids.js";
 import type {
+  BufferedObservationChunk,
   MemoryId,
-  MemoryStore,
+  MemoryStorage,
+  MemoryStoreEvent,
+  MemoryStoreEventHandler,
   Observation,
   ObservationPriority,
   ObservationQuery,
@@ -12,87 +13,46 @@ import type {
   SessionId,
 } from "../core/types.js";
 
-/**
- * File-backed observational memory store.
- * This persists the two blocks observational memory needs:
- * durable observations and uncompressed raw messages.
- */
-export class FileMemoryStore implements MemoryStore {
+export class MemoryStore implements MemoryStorage {
   private observations: Map<MemoryId, Observation> = new Map();
   private rawMessages: Map<MemoryId, RawMemoryMessage> = new Map();
-  private loaded = false;
+  private bufferedObservations: Map<MemoryId, BufferedObservationChunk> = new Map();
+  private handlers = new Set<MemoryStoreEventHandler>();
 
-  constructor(private readonly dir: string) {}
-
-  private get indexPath(): string {
-    return join(this.dir, "observational-memory.json");
-  }
-
-  private async ensureLoaded(): Promise<void> {
-    if (this.loaded) return;
-    await mkdir(this.dir, { recursive: true });
-    try {
-      const raw = await readFile(this.indexPath, "utf-8");
-      const entries = JSON.parse(raw) as {
-        observations?: Observation[];
-        rawMessages?: RawMemoryMessage[];
-      };
-      for (const observation of entries.observations ?? []) {
-        this.observations.set(observation.id, observation);
-      }
-      for (const message of entries.rawMessages ?? []) {
-        this.rawMessages.set(message.id, message);
-      }
-    } catch {
-      // Fresh store — no file yet.
-    }
-    this.loaded = true;
-  }
-
-  private async persist(): Promise<void> {
-    await writeFile(
-      this.indexPath,
-      JSON.stringify(
-        {
-          observations: Array.from(this.observations.values()),
-          rawMessages: Array.from(this.rawMessages.values()),
-        },
-        null,
-        2
-      )
-    );
+  on(handler: MemoryStoreEventHandler): () => void {
+    this.handlers.add(handler);
+    return () => {
+      this.handlers.delete(handler);
+    };
   }
 
   async appendRawMessage(
     input: Omit<RawMemoryMessage, "id" | "createdAt">
   ): Promise<RawMemoryMessage> {
-    await this.ensureLoaded();
     const message: RawMemoryMessage = {
       ...input,
       id: createMemoryId(),
       createdAt: Date.now(),
     };
     this.rawMessages.set(message.id, message);
-    await this.persist();
+    this.emit({ type: "raw_message_appended", message });
     return message;
   }
 
   async appendObservation(
     input: Omit<Observation, "id" | "createdAt">
   ): Promise<Observation> {
-    await this.ensureLoaded();
     const observation: Observation = {
       ...input,
       id: createMemoryId(),
       createdAt: Date.now(),
     };
     this.observations.set(observation.id, observation);
-    await this.persist();
+    this.emit({ type: "observation_appended", observation });
     return observation;
   }
 
   async recall(query: ObservationQuery): Promise<Observation[]> {
-    await this.ensureLoaded();
     let candidates = Array.from(this.observations.values());
 
     if (query.sessionId) {
@@ -121,15 +81,13 @@ export class FileMemoryStore implements MemoryStore {
       candidates = candidates.sort(
         (a, b) => textScore(b, terms) - textScore(a, terms)
       );
-    }
-    if (!query.query) {
+    } else {
       candidates.sort((a, b) => b.createdAt - a.createdAt);
     }
     return candidates.slice(0, query.limit ?? 10);
   }
 
   async getSnapshot(sessionId: SessionId): Promise<ObservationalMemorySnapshot> {
-    await this.ensureLoaded();
     const observations = Array.from(this.observations.values())
       .filter(
         (observation) =>
@@ -139,6 +97,9 @@ export class FileMemoryStore implements MemoryStore {
       .sort((a, b) => a.createdAt - b.createdAt);
     const messages = Array.from(this.rawMessages.values())
       .filter((message) => message.sessionId === sessionId)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    const buffered = Array.from(this.bufferedObservations.values())
+      .filter((chunk) => chunk.sessionId === sessionId)
       .sort((a, b) => a.createdAt - b.createdAt);
     const updatedAt = Date.now();
     return {
@@ -155,6 +116,7 @@ export class FileMemoryStore implements MemoryStore {
         updatedAt,
         estimatedTokens: estimateTokens(messages.map((item) => item.content).join("\n")),
       },
+      buffered,
     };
   }
 
@@ -162,7 +124,6 @@ export class FileMemoryStore implements MemoryStore {
     sessionId: SessionId,
     messages: RawMemoryMessage[]
   ): Promise<void> {
-    await this.ensureLoaded();
     for (const [id, message] of this.rawMessages) {
       if (message.sessionId === sessionId) {
         this.rawMessages.delete(id);
@@ -171,14 +132,13 @@ export class FileMemoryStore implements MemoryStore {
     for (const message of messages) {
       this.rawMessages.set(message.id, message);
     }
-    await this.persist();
+    this.emit({ type: "raw_messages_replaced", sessionId, messages });
   }
 
   async replaceObservations(
     sessionId: SessionId,
     observations: Observation[]
   ): Promise<void> {
-    await this.ensureLoaded();
     for (const [id, observation] of this.observations) {
       if (observation.sessionId === sessionId && observation.scope !== "resource") {
         this.observations.delete(id);
@@ -187,7 +147,35 @@ export class FileMemoryStore implements MemoryStore {
     for (const observation of observations) {
       this.observations.set(observation.id, observation);
     }
-    await this.persist();
+    this.emit({ type: "observations_replaced", sessionId, observations });
+  }
+
+  async appendBufferedObservation(
+    input: Omit<BufferedObservationChunk, "id" | "createdAt">
+  ): Promise<BufferedObservationChunk> {
+    const chunk: BufferedObservationChunk = {
+      ...input,
+      id: createMemoryId(),
+      createdAt: Date.now(),
+    };
+    this.bufferedObservations.set(chunk.id, chunk);
+    this.emit({ type: "buffered_observation_appended", chunk });
+    return chunk;
+  }
+
+  async replaceBufferedObservations(
+    sessionId: SessionId,
+    chunks: BufferedObservationChunk[]
+  ): Promise<void> {
+    for (const [id, chunk] of this.bufferedObservations) {
+      if (chunk.sessionId === sessionId) {
+        this.bufferedObservations.delete(id);
+      }
+    }
+    for (const chunk of chunks) {
+      this.bufferedObservations.set(chunk.id, chunk);
+    }
+    this.emit({ type: "buffered_observations_replaced", sessionId, chunks });
   }
 
   render(snapshot: ObservationalMemorySnapshot): string {
@@ -202,6 +190,12 @@ export class FileMemoryStore implements MemoryStore {
       "## Raw Messages",
       rawLines.length > 0 ? rawLines.join("\n") : "(none)",
     ].join("\n");
+  }
+
+  private emit(event: MemoryStoreEvent): void {
+    for (const handler of this.handlers) {
+      handler(event);
+    }
   }
 }
 

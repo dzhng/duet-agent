@@ -14,7 +14,7 @@ import { getModel } from "@mariozechner/pi-ai";
 import EventEmitter from "eventemitter3";
 import {
   Orchestrator,
-  FileMemoryStore,
+  MemoryStore,
   LocalSandbox,
   PatternGuardrail,
   type CommLayer,
@@ -112,7 +112,7 @@ async function main() {
   const config: DuetAgentConfig = {
     orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
     defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
-    memory: new FileMemoryStore("./.duet-agent/memory"),
+    memory: new MemoryStore(),
     sandbox: new LocalSandbox(process.cwd()),
     comm, // ← The only thing that changes
     guardrails: [new PatternGuardrail()],

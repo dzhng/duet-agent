@@ -62,6 +62,17 @@ export interface RawMemoryMessage {
   estimatedTokens?: number;
 }
 
+export interface BufferedObservationChunk {
+  id: MemoryId;
+  sessionId: SessionId;
+  createdAt: number;
+  observations: string;
+  messageTokenCount: number;
+  observationTokenCount: number;
+  messageIds: MemoryId[];
+  status: "pending" | "active" | "failed";
+}
+
 export interface ObservationBlock {
   sessionId: SessionId;
   observations: Observation[];
@@ -80,6 +91,7 @@ export interface ObservationalMemorySnapshot {
   sessionId: SessionId;
   observations: ObservationBlock;
   raw: RawMemoryBlock;
+  buffered: BufferedObservationChunk[];
 }
 
 export interface ObservationalMemorySettings {
@@ -120,13 +132,26 @@ export interface ObservationQuery {
   minPriority?: ObservationPriority;
 }
 
-export interface MemoryStore {
+export type MemoryStoreEvent =
+  | { type: "raw_message_appended"; message: RawMemoryMessage }
+  | { type: "observation_appended"; observation: Observation }
+  | { type: "raw_messages_replaced"; sessionId: SessionId; messages: RawMemoryMessage[] }
+  | { type: "observations_replaced"; sessionId: SessionId; observations: Observation[] }
+  | { type: "buffered_observation_appended"; chunk: BufferedObservationChunk }
+  | { type: "buffered_observations_replaced"; sessionId: SessionId; chunks: BufferedObservationChunk[] };
+
+export type MemoryStoreEventHandler = (event: MemoryStoreEvent) => void;
+
+export interface MemoryStorage {
+  on(handler: MemoryStoreEventHandler): () => void;
   appendRawMessage(message: Omit<RawMemoryMessage, "id" | "createdAt">): Promise<RawMemoryMessage>;
   appendObservation(observation: Omit<Observation, "id" | "createdAt">): Promise<Observation>;
   recall(query: ObservationQuery): Promise<Observation[]>;
   getSnapshot(sessionId: SessionId): Promise<ObservationalMemorySnapshot>;
   replaceRawMessages(sessionId: SessionId, messages: RawMemoryMessage[]): Promise<void>;
   replaceObservations(sessionId: SessionId, observations: Observation[]): Promise<void>;
+  appendBufferedObservation(chunk: Omit<BufferedObservationChunk, "id" | "createdAt">): Promise<BufferedObservationChunk>;
+  replaceBufferedObservations(sessionId: SessionId, chunks: BufferedObservationChunk[]): Promise<void>;
   render(snapshot: ObservationalMemorySnapshot): string;
 }
 
@@ -374,7 +399,9 @@ export interface DuetAgentConfig {
   /** Default model for sub-agents. Orchestrator can override per-task. */
   defaultSubAgentModel: Model<any>;
   /** Memory store implementation. */
-  memory: MemoryStore;
+  memory: MemoryStorage;
+  /** Observational memory options. Enabled by default with conservative long-context thresholds. */
+  observationalMemory?: boolean | Partial<ObservationalMemorySettings>;
   /** Sandbox implementation. */
   sandbox: Sandbox;
   /** Communication layer. */
