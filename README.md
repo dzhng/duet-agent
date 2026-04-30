@@ -149,7 +149,7 @@ Observational memory is enabled by default with conservative long-context thresh
 - Raw messages are observed around `30_000` tokens.
 - Observation logs are reflected around `40_000` tokens.
 - Buffering uses `bufferTokens` / `bufferActivation` settings adapted to Pi’s `transformContext` lifecycle.
-- Observation context is injected as reminder messages, then normal Pi compaction still runs.
+- Observation context is injected as reminder messages; replacing raw context with observations/reflections is the compaction path.
 
 ## Custom Communication Layer
 

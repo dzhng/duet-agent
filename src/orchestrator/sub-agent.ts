@@ -11,7 +11,6 @@ import type {
 } from "../core/types.js";
 import type { TaskContext, TaskReport } from "../core/layers.js";
 import { createTools } from "./tools.js";
-import { createCompactionTransform } from "./compaction.js";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
 
 function extractText(messages: AgentMessage[]): string {
@@ -107,16 +106,14 @@ ${depContext}${memoryContext}${skillContext}
         convertToLlm,
         transformContext: async (messages, signal) => {
           if (spec.memoryAccess === "none") {
-            return createCompactionTransform({ model: spec.model })(messages, signal);
+            return messages;
           }
-          const observational = createObservationalMemoryTransform({
+          return createObservationalMemoryTransform({
             store: memory,
             sessionId: _sessionState.sessionId,
             actorModel: spec.model,
             settings: observationalMemory,
-          });
-          const compaction = createCompactionTransform({ model: spec.model });
-          return compaction(await observational(messages, signal), signal);
+          })(messages, signal);
         },
         toolExecution: "sequential",
       });

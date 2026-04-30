@@ -42,9 +42,10 @@
     "@mariozechner/pi-agent-core": "^0.70.6",
     "@mariozechner/pi-ai": "^0.70.6",
     "@mariozechner/pi-coding-agent": "^0.70.6",
-    "typebox": "^1.1.24",
+    "dedent": "^1.7.2",
+    "eventemitter3": "^5.0.0",
     "nanoid": "^5.0.0",
-    "eventemitter3": "^5.0.0"
+    "typebox": "^1.1.24"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

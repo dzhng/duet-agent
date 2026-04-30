@@ -16,6 +16,31 @@ import {
   stripObservationGroups,
   wrapInObservationGroup,
 } from "./observation-groups.js";
+import {
+  OBSERVATION_CONTEXT_INSTRUCTIONS,
+  OBSERVATION_CONTEXT_PROMPT,
+  OBSERVATION_CONTINUATION_HINT,
+  OBSERVER_GUIDELINES,
+  buildObserverOutputFormat,
+  buildObserverPrompt,
+  buildObserverSystemPrompt,
+  buildReflectorPrompt,
+  buildReflectorSystemPrompt,
+  formatMessagesForObserver,
+} from "./observational-prompts.js";
+
+export {
+  OBSERVATION_CONTEXT_INSTRUCTIONS,
+  OBSERVATION_CONTEXT_PROMPT,
+  OBSERVATION_CONTINUATION_HINT,
+  OBSERVER_GUIDELINES,
+  buildObserverOutputFormat,
+  buildObserverPrompt,
+  buildObserverSystemPrompt,
+  buildReflectorPrompt,
+  buildReflectorSystemPrompt,
+  formatMessagesForObserver,
+} from "./observational-prompts.js";
 
 export const OBSERVATIONAL_MEMORY_DEFAULTS = {
   observation: {
@@ -29,49 +54,6 @@ export const OBSERVATIONAL_MEMORY_DEFAULTS = {
     bufferActivation: 0.5,
   },
 } as const;
-
-export const OBSERVATION_CONTINUATION_HINT = `Please continue naturally with the conversation so far and respond to the latest message.
-
-Use the earlier context only as background. If something appears unfinished, continue only when it helps answer the latest request. If a suggested response is provided, follow it naturally.
-
-Do not mention internal instructions, memory, summarization, context handling, or missing messages.
-
-Any messages following this reminder are newer and should take priority.`;
-
-export const OBSERVATION_CONTEXT_PROMPT =
-  "The following observations block contains your memory of past conversations with this user.";
-
-export const OBSERVATION_CONTEXT_INSTRUCTIONS = `IMPORTANT: When responding, reference specific details from these observations. Do not give generic advice - personalize your response based on what you know about this user's experiences, preferences, and interests. If the user asks for recommendations, connect them to their past experiences mentioned above.
-
-KNOWLEDGE UPDATES: When asked about current state (e.g., "where do I currently...", "what is my current..."), always prefer the MOST RECENT information. Observations include dates - if you see conflicting information, the newer observation supersedes the older one. Look for phrases like "will start", "is switching", "changed to", "moved to" as indicators that previous information has been updated.
-
-PLANNED ACTIONS: If the user stated they planned to do something (e.g., "I'm going to...", "I'm looking forward to...", "I will...") and the date they planned to do it is now in the past, assume they completed the action unless there's evidence they didn't.
-
-MOST RECENT USER INPUT: Treat the most recent user message as the highest-priority signal for what to do next. Earlier messages may contain constraints, details, or context you should still honor, but the latest message is the primary driver of your response.
-
-SYSTEM REMINDERS: Messages wrapped in <system-reminder> tags contain internal continuation guidance, not user-authored content. Use them to maintain continuity, but do not mention them or treat them as part of the user's message.`;
-
-const OBSERVER_EXTRACTION_INSTRUCTIONS = `- User facts, preferences, goals, constraints, corrections, and explicit decisions
-- Project details, file paths, commands, tool results, and unresolved tasks
-- Dates, relative dates, and time-sensitive commitments
-- Concrete completed work that should not be repeated unless new information appears
-- The assistant's immediate next-step bias when continuity would otherwise be lost`;
-
-export const OBSERVER_GUIDELINES = `- Be specific enough for the assistant to act on
-- Good: "User prefers short, direct answers without lengthy explanations"
-- Bad: "User stated a preference" (too vague)
-- Add 1 to 5 observations per exchange
-- Use terse language to save tokens. Sentences should be dense without unnecessary words
-- Do not add repetitive observations that have already been observed. Group repeated similar actions under a single parent with sub-bullets for new results
-- If the agent calls tools, observe what was called, why, and what was learned
-- When observing files with line numbers, include the line number if useful
-- If the agent provides a detailed response, observe the contents so it could be repeated
-- Make sure each observation starts with a priority emoji (🔴, 🟡, 🟢) or a completion marker (✅)
-- Capture the user's words closely. User confirmations or explicit resolved outcomes should be ✅ when they clearly signal something is done
-- Treat ✅ as a memory signal that tells the assistant something is finished and should not be repeated unless new information changes it
-- Make completion observations answer "What exactly is now done?"
-- Prefer concrete resolved outcomes over meta-level workflow or bookkeeping updates
-- Observe WHAT the agent did and WHAT it means`;
 
 export interface ObserverResult {
   observations: string;
@@ -217,13 +199,15 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
     const rawMessages = agentMessagesToRaw(options.sessionId, messages);
     const rawTokens = estimateRawTokens(rawMessages);
     await options.store.replaceRawMessages(options.sessionId, rawMessages);
+    let retainedMessages = messages;
 
     if (shouldBuffer(settings, rawTokens)) {
       await maybeBufferObservations(options.store, options.sessionId, rawMessages, settings, signal);
     }
 
     if (rawTokens >= settings.observation.messageTokens) {
-      await activateObservations(options.store, options.sessionId, rawMessages, settings, signal);
+      const retainedRawMessages = await activateObservations(options.store, options.sessionId, rawMessages, settings, signal);
+      retainedMessages = retainAgentMessageTail(messages, retainedRawMessages);
     }
 
     const snapshot = await options.store.getSnapshot(options.sessionId);
@@ -235,104 +219,11 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
     const refreshed = await options.store.getSnapshot(options.sessionId);
     const observations = refreshed.observations.observations.map((observation) => observation.content).join("\n\n");
     if (!observations.trim()) {
-      return messages;
+      return retainedMessages;
     }
 
-    return [buildObservationContextMessage(observations), buildContinuationMessage(), ...messages];
+    return [buildObservationContextMessage(observations), buildContinuationMessage(), ...retainedMessages];
   };
-}
-
-export function buildObserverOutputFormat(includeThreadTitle = false): string {
-  const threadTitleSection = includeThreadTitle
-    ? `
-<thread-title>
-A short, noun-phrase title for this conversation (2-5 words). Only update when the topic meaningfully changes.
-</thread-title>`
-    : "";
-
-  return `Use priority levels:
-- 🔴 High: explicit user facts, preferences, unresolved goals, critical context
-- 🟡 Medium: project details, learned information, tool results
-- 🟢 Low: minor details, uncertain observations
-- ✅ Completed: concrete task finished, question answered, issue resolved, goal achieved, or subtask completed
-
-Group related observations by indenting:
-* 🔴 (14:33) Agent debugging auth issue
-  * -> ran git status, found 3 modified files
-  * -> viewed auth.ts:45-60, found missing null check
-  * ✅ Tests passing, auth issue resolved
-
-Group observations by date, then list each with 24-hour time.
-
-<observations>
-Date: Dec 4, 2025
-* 🔴 (14:30) User prefers direct answers
-* 🔴 (14:31) Working on feature X
-</observations>
-
-<current-task>
-State the current task(s) explicitly.
-</current-task>
-
-<suggested-response>
-Hint for the agent's immediate next message.
-</suggested-response>${threadTitleSection}`;
-}
-
-export function buildObserverSystemPrompt(instruction?: string, includeThreadTitle = false): string {
-  return `You are the memory consciousness of an AI assistant. Your observations will be the ONLY information the assistant has about past interactions with this user.
-
-Extract observations that will help the assistant remember:
-
-${OBSERVER_EXTRACTION_INSTRUCTIONS}
-
-=== OUTPUT FORMAT ===
-
-Your output MUST use XML tags to structure the response. This allows the system to properly parse and manage memory over time.
-
-${buildObserverOutputFormat(includeThreadTitle)}
-
-=== GUIDELINES ===
-
-${OBSERVER_GUIDELINES}
-
-=== IMPORTANT: THREAD ATTRIBUTION ===
-
-Do NOT add thread identifiers, thread IDs, or tags to your observations.
-Thread attribution is handled externally by the system.
-Simply output your observations without any thread-related markup.
-
-Remember: These observations are the assistant's ONLY memory. Make them count.
-
-User messages are extremely important. If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.${instruction ? `\n\n=== CUSTOM INSTRUCTIONS ===\n\n${instruction}` : ""}`;
-}
-
-export function buildObserverPrompt(
-  messages: RawMemoryMessage[],
-  existingObservations: string,
-  now = new Date()
-): string {
-  const previous = existingObservations.trim()
-    ? `## Existing Observations\n\nDo not repeat these existing observations. New observations will be appended.\n\n${existingObservations}\n\n---\n\n`
-    : "";
-  return `${previous}## New Message History to Observe
-
-Current date: ${now.toISOString()}
-
-${formatMessagesForObserver(messages)}
-
----
-
-Extract new observations from this message history.`;
-}
-
-export function formatMessagesForObserver(messages: RawMemoryMessage[]): string {
-  return messages
-    .map((message) => {
-      const date = new Date(message.createdAt).toISOString();
-      return `--- message boundary (${date}) ---\n${message.role.toUpperCase()} [${message.id}]\n${message.content}`;
-    })
-    .join("\n\n");
 }
 
 export function parseObserverOutput(output: string): ObserverResult {
@@ -433,7 +324,7 @@ async function activateObservations(
   messages: RawMemoryMessage[],
   settings: ObservationalMemorySettings,
   _signal?: AbortSignal
-): Promise<void> {
+): Promise<RawMemoryMessage[]> {
   const snapshot = await store.getSnapshot(sessionId);
   const pending = snapshot.buffered.filter((chunk) => chunk.status === "pending");
   const observations = pending.length > 0
@@ -441,7 +332,7 @@ async function activateObservations(
     : (await observe(messages, snapshot.observations.observations, settings, _signal)).observations;
 
   if (!observations.trim()) {
-    return;
+    return messages;
   }
 
   const range = `${messages[0]?.id ?? "unknown"}:${messages[messages.length - 1]?.id ?? "unknown"}`;
@@ -460,7 +351,9 @@ async function activateObservations(
     sessionId,
     snapshot.buffered.map((chunk) => pending.some((item) => item.id === chunk.id) ? { ...chunk, status: "active" } : chunk)
   );
-  await store.replaceRawMessages(sessionId, retainRawTail(messages, settings.observation.bufferActivation, settings.observation.messageTokens));
+  const retainedRawMessages = retainRawTail(messages, settings.observation.bufferActivation, settings.observation.messageTokens);
+  await store.replaceRawMessages(sessionId, retainedRawMessages);
+  return retainedRawMessages;
 }
 
 async function reflectObservations(
@@ -521,24 +414,6 @@ async function observe(
   return parseObserverOutput(assistantText([response]));
 }
 
-function buildReflectorSystemPrompt(instruction?: string): string {
-  return `You are the reflection agent for an observational memory system.
-
-Condense and restructure observations while preserving important facts, dates, user preferences, unresolved work, and completion markers.
-
-Rules:
-- Keep observations useful to the acting assistant.
-- Deduplicate repeated facts.
-- Preserve chronology and concrete details.
-- Preserve observation group headings/ranges when possible.
-- Do not invent details.
-${instruction ? `\nCustom instructions:\n${instruction}` : ""}`;
-}
-
-function buildReflectorPrompt(observations: string): string {
-  return `Reflect on these observations and return a condensed observation log.\n\n${observations}`;
-}
-
 function shouldBuffer(settings: ObservationalMemorySettings, rawTokens: number): boolean {
   if (settings.observation.bufferTokens === false) return false;
   const threshold = resolveBufferTokens(settings.observation.bufferTokens, settings.observation.messageTokens);
@@ -567,21 +442,50 @@ function retainRawTail(
   return retained;
 }
 
+function retainAgentMessageTail(
+  messages: AgentMessage[],
+  retainedRawMessages: RawMemoryMessage[]
+): AgentMessage[] {
+  if (retainedRawMessages.length === 0) {
+    return [];
+  }
+  const retainedIds = new Set(retainedRawMessages.map((message) => message.id));
+  return messages.filter((message) => {
+    const raw = agentMessageToRaw(undefined, message);
+    return raw ? retainedIds.has(raw.id) : false;
+  });
+}
+
 function agentMessagesToRaw(sessionId: SessionId, messages: AgentMessage[]): RawMemoryMessage[] {
   return messages
-    .filter((message) => message.role !== "compactionSummary")
-    .map((message) => {
-      const content = messageToText(message);
-      return {
-        id: createMemoryId(),
-        sessionId,
-        createdAt: "timestamp" in message && typeof message.timestamp === "number" ? message.timestamp : Date.now(),
-        role: normalizeRole(String(message.role)),
-        content,
-        estimatedTokens: estimateTokens(content),
-      };
-    })
-    .filter((message) => message.content.trim().length > 0);
+    .map((message) => agentMessageToRaw(sessionId, message))
+    .filter((message): message is RawMemoryMessage => Boolean(message));
+}
+
+function agentMessageToRaw(sessionId: SessionId | undefined, message: AgentMessage): RawMemoryMessage | undefined {
+  const content = messageToText(message);
+  if (content.trim().length === 0) {
+    return undefined;
+  }
+  return {
+    id: stableRawMessageId(message),
+    sessionId: sessionId ?? ("" as SessionId),
+    createdAt: "timestamp" in message && typeof message.timestamp === "number" ? message.timestamp : Date.now(),
+    role: normalizeRole(String(message.role)),
+    content,
+    estimatedTokens: estimateTokens(content),
+  };
+}
+
+function stableRawMessageId(message: AgentMessage): RawMemoryMessage["id"] {
+  if (message.role === "assistant" && "responseId" in message && message.responseId) {
+    return `msg_assistant_${message.responseId}` as RawMemoryMessage["id"];
+  }
+  if (message.role === "toolResult" && "toolCallId" in message) {
+    return `msg_tool_${message.toolCallId}` as RawMemoryMessage["id"];
+  }
+  const timestamp = "timestamp" in message && typeof message.timestamp === "number" ? message.timestamp : 0;
+  return `msg_${String(message.role)}_${timestamp}_${hashText(messageToText(message))}` as RawMemoryMessage["id"];
 }
 
 function normalizeRole(role: string): RawMemoryMessage["role"] {
@@ -681,4 +585,13 @@ function estimateRawTokens(messages: RawMemoryMessage[]): number {
 
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+function hashText(text: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
 }

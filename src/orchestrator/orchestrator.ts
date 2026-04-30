@@ -22,7 +22,6 @@ import { InterruptController } from "../interrupt/controller.js";
 import { SubAgentRunner } from "./sub-agent.js";
 import { createFirewall } from "../guardrails/firewall.js";
 import { formatSkillsForPrompt, loadSkills } from "@mariozechner/pi-coding-agent";
-import { createCompactionTransform } from "./compaction.js";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
 
 function assistantText(messages: AgentMessage[]): string {
@@ -67,9 +66,8 @@ function createMemoryContextTransform(options: {
     actorModel: options.actorModel,
     settings: options.observationalMemory,
   });
-  const compaction = createCompactionTransform({ model: options.actorModel });
 
-  return async (messages, signal) => compaction(await observational(messages, signal), signal);
+  return observational;
 }
 
 /**
