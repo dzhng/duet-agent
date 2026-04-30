@@ -44,21 +44,27 @@ duet-agent takes the opposite approach: **memories, sandboxes, and interrupts ar
 ## Key Differentiators
 
 ### Native Memory
+
 Memories are first-class citizens, not a bolted-on RAG pipeline. Every agent can read and write memories. Memories have semantic embeddings, importance scores, scoping (session vs persistent), and automatic consolidation. The orchestrator uses memories from past sessions to inform planning.
 
 ### Native Sandboxes
+
 Every action goes through bash. No MCP, no custom protocols — just `exec("command")`, `readFile`, `writeFile`. The sandbox interface is simple enough to swap between local execution, Docker, Firecracker, or cloud sandboxes without changing agent code.
 
 ### Native Interrupts
+
 Both users AND the environment can interrupt agents. A log file watcher, a webhook, a test failure, or a user typing a message — anything can push an interrupt onto the bus. Interrupts have priority levels: **pause** (halt immediately), **queue** (process after current turn), or **info** (non-blocking awareness).
 
 ### Multi-Agent by Default
+
 The orchestrator doesn't execute tasks — it defines sub-agents dynamically and manages a session state machine. Sub-agents are not pre-built classes. The orchestrator creates them on-the-fly with custom roles, instructions, model selection, tool permissions, and memory access.
 
 ### Decoupled Communication
+
 Agent logic is completely separated from how you talk to the user. Swap the comm layer for voice (gpt-realtime), video stream analysis, Slack, WebSocket, or anything else. The orchestrator doesn't know or care.
 
 ### Optional Guardrails
+
 Pattern-based (fast, regex) and semantic (LLM-evaluated) guardrails compose into a firewall. Every bash command and file write can be checked before execution.
 
 ## Install
@@ -123,6 +129,7 @@ class SlackComm implements CommLayer {
 ```
 
 This enables architectures like:
+
 - **Voice agent**: gpt-realtime as comm layer → Opus as orchestrator → OSS models as sub-agents
 - **Screen agent**: video stream → vision model transcription → orchestrator
 - **Team agent**: Slack channel as comm layer → orchestrator manages work
@@ -143,37 +150,6 @@ const semantic = new SemanticGuardrail(
 
 // Compose into a firewall
 const firewall = createFirewall([patterns, semantic]);
-```
-
-## Project Structure
-
-```
-src/
-├── core/           # Types, interfaces, ID generation
-│   ├── types.ts    # All type definitions
-│   └── ids.ts      # Branded ID generators
-├── memory/         # Native memory system
-│   ├── file-store.ts   # File-based persistence
-│   └── embeddings.ts   # Embedding generation + similarity
-├── sandbox/        # Native sandbox system
-│   └── local.ts    # Local bash execution
-├── interrupt/      # Native interrupt system
-│   └── controller.ts   # Event bus with priority levels
-├── orchestrator/   # Multi-agent orchestration
-│   ├── orchestrator.ts # Session state machine
-│   ├── sub-agent.ts    # Dynamic sub-agent runner
-│   └── tools.ts        # Tool creation with guardrail integration
-├── comm/           # Communication layer
-│   ├── adapter.ts  # Interface documentation
-│   └── stdio.ts    # Terminal I/O
-├── guardrails/     # Optional safety system
-│   ├── pattern.ts  # Regex-based checks
-│   ├── semantic.ts # LLM-based checks
-│   └── firewall.ts # Guardrail composition
-├── agents/         # Agent templates (not instances)
-│   └── index.ts    # Reusable instruction sets
-├── index.ts        # Public API
-└── cli.ts          # CLI entry point
 ```
 
 ## Design Principles

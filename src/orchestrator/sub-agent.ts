@@ -10,6 +10,7 @@ import type {
 } from "../core/types.js";
 import type { TaskContext, TaskReport } from "../core/layers.js";
 import { createTools } from "./tools.js";
+import { createCompactionTransform } from "./compaction.js";
 
 function extractText(messages: AgentMessage[]): string {
   return messages
@@ -101,6 +102,7 @@ ${depContext}${memoryContext}${skillContext}
           tools,
         },
         convertToLlm,
+        transformContext: createCompactionTransform({ model: spec.model }),
         toolExecution: "sequential",
       });
 

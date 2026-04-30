@@ -8,7 +8,9 @@
  */
 
 import type { Model } from "@mariozechner/pi-ai";
-import type { Skill, SkillDiscoveryOptions } from "../skills/types.js";
+import type { Skill, loadSkills } from "@mariozechner/pi-coding-agent";
+
+export type SkillDiscoveryOptions = Parameters<typeof loadSkills>[0];
 
 // ---------------------------------------------------------------------------
 // Identity

@@ -9,14 +9,15 @@ import type {
   StateTransition,
   TaskId,
 } from "../core/types.js";
-import type { Skill } from "../skills/types.js";
+import type { Skill } from "@mariozechner/pi-coding-agent";
 import type { OrchestratorToComm, TaskReport } from "../core/layers.js";
 import { CommOrchestratorBridge, buildTaskContext } from "../core/bridges.js";
 import { createSessionId, createAgentId, createTaskId } from "../core/ids.js";
 import { InterruptController } from "../interrupt/controller.js";
 import { SubAgentRunner } from "./sub-agent.js";
 import { createFirewall } from "../guardrails/firewall.js";
-import { discoverAll } from "../skills/loader.js";
+import { formatSkillsForPrompt, loadSkills } from "@mariozechner/pi-coding-agent";
+import { createCompactionTransform } from "./compaction.js";
 
 function assistantText(messages: AgentMessage[]): string {
   return messages
@@ -92,11 +93,11 @@ export class Orchestrator {
     this.skillsLoaded = true;
 
     if (this.config.skillDiscovery) {
-      const discovered = await discoverAll(this.config.skillDiscovery);
-      // Merge: explicit skills take priority (by ID)
-      const existingIds = new Set(this.skills.map((s) => s.id));
+      const { skills: discovered } = loadSkills(this.config.skillDiscovery);
+      // Merge: explicit skills take priority (by name)
+      const existingNames = new Set(this.skills.map((s) => s.name));
       for (const s of discovered) {
-        if (!existingIds.has(s.id)) {
+        if (!existingNames.has(s.name)) {
           this.skills.push(s);
         }
       }
@@ -160,34 +161,16 @@ export class Orchestrator {
    * Build a skills context block for the orchestrator prompt.
    */
   private buildSkillsContext(): string {
-    if (this.skills.length === 0) return "";
-
-    const lines = this.skills.map((s) => {
-      const fx = s.hasSideEffects ? " [HAS SIDE EFFECTS]" : "";
-      const refs = s.references.length > 0
-        ? ` (${s.references.length} reference docs available)`
-        : "";
-      return `- **${s.name}** (${s.id}): ${s.description}${fx}${refs}\n  Tools: ${s.tools.join(", ") || "none"}\n  Tags: ${s.tags.join(", ") || "none"}`;
-    });
-
-    return `\n\n## Available Skills\nThese skills provide additional capabilities. Include their instructions in sub-agent prompts when relevant. Skills marked [HAS SIDE EFFECTS] must be classified as effectful tasks.\n\n${lines.join("\n\n")}`;
+    return formatSkillsForPrompt(this.skills);
   }
 
   /**
    * Get the full instructions for a skill, including reference doc content.
    */
   private getSkillInstructions(skillId: string): string {
-    const skill = this.skills.find((s) => s.id === skillId);
+    const skill = this.skills.find((s) => s.name === skillId);
     if (!skill) return "";
-
-    let text = skill.instructions;
-    if (skill.references.length > 0) {
-      text += "\n\n## Reference Documentation\n";
-      for (const ref of skill.references) {
-        text += `\n### ${ref.title}\n${ref.content}\n`;
-      }
-    }
-    return text;
+    return formatSkillsForPrompt([skill]);
   }
 
   /**
@@ -355,6 +338,7 @@ Rules:
 ${skillsContext}${memoryContext}`,
       },
       convertToLlm,
+      transformContext: createCompactionTransform({ model: this.config.orchestratorModel }),
       toolExecution: "sequential",
     });
     let turns = 0;

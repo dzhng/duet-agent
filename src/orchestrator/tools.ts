@@ -25,7 +25,7 @@ export function createTools(deps: ToolDeps): AgentTool[] {
   if (allowedActions.length > 0 && !allowedActions.includes("*")) {
     const filtered: AgentTool[] = [];
     for (const action of allowedActions) {
-      const tool = toolsByName[toCodingToolName(action)];
+      const tool = toolsByName[action];
       if (tool) {
         filtered.push(tool);
       }
@@ -34,15 +34,4 @@ export function createTools(deps: ToolDeps): AgentTool[] {
   }
 
   return allTools;
-}
-
-function toCodingToolName(action: string): string {
-  switch (action) {
-    case "readFile":
-      return "read";
-    case "writeFile":
-      return "write";
-    default:
-      return action;
-  }
 }
