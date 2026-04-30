@@ -13,8 +13,17 @@ export type {
   TaskId,
   MemoryId,
   // Memory
-  Memory,
-  MemoryQuery,
+  ObservationPriority,
+  ObservationScope,
+  ReflectionMode,
+  ObservationSource,
+  Observation,
+  RawMemoryMessage,
+  ObservationBlock,
+  RawMemoryBlock,
+  ObservationalMemorySnapshot,
+  ObservationalMemorySettings,
+  ObservationQuery,
   MemoryStore,
   // Sandbox
   ExecResult,
@@ -63,7 +72,6 @@ export { CommOrchestratorBridge, buildTaskContext } from "./core/bridges.js";
 
 // Memory
 export { FileMemoryStore } from "./memory/index.js";
-export { setEmbeddingModel } from "./memory/embeddings.js";
 
 // Sandbox
 export { LocalSandbox } from "./sandbox/index.js";

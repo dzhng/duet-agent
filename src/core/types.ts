@@ -26,49 +26,108 @@ export type MemoryId = string & { readonly __brand: "MemoryId" };
 // Memory (native — not a plugin)
 // ---------------------------------------------------------------------------
 
-/** A single memory entry. Memories are first-class, not bolted on. */
-export interface Memory {
+export type ObservationPriority = "high" | "medium" | "low";
+export type ObservationScope = "session" | "resource";
+export type ReflectionMode = "none" | "threshold" | "forced";
+
+export type ObservationSource =
+  | { kind: "user" }
+  | { kind: "agent"; agentId: AgentId }
+  | { kind: "system" }
+  | { kind: "tool"; toolName: string };
+
+/** A distilled fact from prior conversation, rendered as text for model context. */
+export interface Observation {
   id: MemoryId;
-  /** Who wrote this memory — agent id or "user". */
-  author: AgentId | "user";
-  /** When it was created (epoch ms). */
+  sessionId: SessionId;
   createdAt: number;
-  /** When it was last accessed (epoch ms). Enables decay/relevance. */
-  lastAccessedAt: number;
-  /** Semantic content. */
+  observedDate: string;
+  referencedDate?: string;
+  relativeDate?: string;
+  timeOfDay?: string;
+  priority: ObservationPriority;
+  scope: ObservationScope;
+  source: ObservationSource;
   content: string;
-  /** Structured tags for fast filtering. */
   tags: string[];
-  /** Embedding vector (populated by the memory store). */
-  embedding?: number[];
-  /** Importance score 0-1, set by the agent or heuristics. */
-  importance: number;
-  /** Scope: session-local or persistent across sessions. */
-  scope: "session" | "persistent";
 }
 
-export interface MemoryQuery {
-  /** Natural language query for semantic search. */
+/** Raw messages are retained until the observer compresses them into observations. */
+export interface RawMemoryMessage {
+  id: MemoryId;
+  sessionId: SessionId;
+  createdAt: number;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  estimatedTokens?: number;
+}
+
+export interface ObservationBlock {
+  sessionId: SessionId;
+  observations: Observation[];
+  updatedAt: number;
+  estimatedTokens?: number;
+}
+
+export interface RawMemoryBlock {
+  sessionId: SessionId;
+  messages: RawMemoryMessage[];
+  updatedAt: number;
+  estimatedTokens?: number;
+}
+
+export interface ObservationalMemorySnapshot {
+  sessionId: SessionId;
+  observations: ObservationBlock;
+  raw: RawMemoryBlock;
+}
+
+export interface ObservationalMemorySettings {
+  enabled: boolean;
+  scope: ObservationScope;
+  model?: Model<any>;
+  observation: {
+    model?: Model<any>;
+    messageTokens: number;
+    maxTokensPerBatch: number;
+    bufferTokens: number | false;
+    bufferActivation: number;
+    blockAfter?: number;
+    previousObserverTokens?: number | false;
+    instruction?: string;
+    threadTitle?: boolean;
+  };
+  reflection: {
+    model?: Model<any>;
+    observationTokens: number;
+    bufferActivation: number;
+    blockAfter?: number;
+    instruction?: string;
+  };
+  retrieval?: boolean | { vector?: boolean; scope?: ObservationScope };
+  shareTokenBudget: boolean;
+  temporalMarkers: boolean;
+  activateAfterIdle?: number;
+  activateOnProviderChange: boolean;
+}
+
+export interface ObservationQuery {
+  sessionId?: SessionId;
   query?: string;
-  /** Filter by tags. */
   tags?: string[];
-  /** Filter by scope. */
-  scope?: "session" | "persistent";
-  /** Max results. */
+  scope?: ObservationScope;
   limit?: number;
-  /** Min importance threshold. */
-  minImportance?: number;
+  minPriority?: ObservationPriority;
 }
 
 export interface MemoryStore {
-  /** Write a memory. The store handles embedding generation. */
-  write(memory: Omit<Memory, "id" | "embedding" | "lastAccessedAt">): Promise<Memory>;
-  /** Recall memories matching a query. Updates lastAccessedAt. */
-  recall(query: MemoryQuery): Promise<Memory[]>;
-  /** Forget a specific memory. */
-  forget(id: MemoryId): Promise<void>;
-  /** Consolidate: merge/prune/summarize old memories. Called periodically. */
-  consolidate(): Promise<void>;
+  appendRawMessage(message: Omit<RawMemoryMessage, "id" | "createdAt">): Promise<RawMemoryMessage>;
+  appendObservation(observation: Omit<Observation, "id" | "createdAt">): Promise<Observation>;
+  recall(query: ObservationQuery): Promise<Observation[]>;
+  getSnapshot(sessionId: SessionId): Promise<ObservationalMemorySnapshot>;
+  replaceRawMessages(sessionId: SessionId, messages: RawMemoryMessage[]): Promise<void>;
+  replaceObservations(sessionId: SessionId, observations: Observation[]): Promise<void>;
+  render(snapshot: ObservationalMemorySnapshot): string;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,8 +227,8 @@ export interface GuardrailContext {
   action: string;
   /** The full command or content being evaluated. */
   content: string;
-  /** Relevant memories for context. */
-  memories: Memory[];
+  /** Relevant observations for context. */
+  memories: Observation[];
   /** Current session state. */
   sessionState: SessionState;
 }

@@ -89,7 +89,6 @@ export class Orchestrator {
     }
 
     this.runner = new SubAgentRunner({
-      memory: config.memory,
       sandbox: config.sandbox,
       interrupts: this.interrupts,
       guardrail: this.guardrail,
@@ -162,9 +161,6 @@ export class Orchestrator {
     this.transition(state, "evaluating", "Execution complete, evaluating results");
     await this.pushState(state, "Evaluating results...");
     await this.evaluate(state);
-
-    // Consolidate session memories
-    await this.config.memory.consolidate();
 
     return state;
   }
@@ -306,15 +302,15 @@ export class Orchestrator {
       },
     ];
 
-    // Recall relevant persistent memories for planning context
+    // Recall relevant resource-scoped observations for planning context
     const memories = await this.config.memory.recall({
       query: state.goal,
-      scope: "persistent",
+      scope: "resource",
       limit: 10,
     });
 
     const memoryContext = memories.length > 0
-      ? "\n\n## Relevant Memories\n" + memories.map((m) => `- ${m.content}`).join("\n")
+      ? "\n\n## Relevant Observations\n" + memories.map((m) => `- ${m.content}`).join("\n")
       : "";
 
     const skillsContext = this.buildSkillsContext();
@@ -489,10 +485,11 @@ ${skillsContext}${memoryContext}`,
     const skillInstructions: string[] = [];
     // Skills are already embedded in agentSpec.instructions during planning
 
-    // Fetch relevant memories for this task
+    // Fetch relevant observations for this task
     const relevantMemories: string[] = [];
     if (task.agentSpec.memoryAccess !== "none") {
       const memories = await this.config.memory.recall({
+        sessionId: state.sessionId,
         query: task.description,
         scope: task.agentSpec.memoryAccess === "all" ? undefined : "session",
         limit: 5,
@@ -585,14 +582,16 @@ ${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\
     });
     const evaluation = assistantText([evaluationMessage]);
 
-    // Store evaluation as a persistent memory
-    await this.config.memory.write({
-      author: createAgentId(),
-      createdAt: Date.now(),
+    // Store evaluation as an observation for future sessions.
+    await this.config.memory.appendObservation({
+      sessionId: state.sessionId,
+      observedDate: new Date().toISOString().slice(0, 10),
+      timeOfDay: new Date().toISOString().slice(11, 16),
+      priority: "high",
+      scope: "resource",
+      source: { kind: "agent", agentId: createAgentId() },
       content: `Session ${state.sessionId} evaluation: ${evaluation}`,
       tags: ["evaluation", "session-result"],
-      importance: 0.8,
-      scope: "persistent",
     });
 
     // Send the evaluation through the comm bridge — this is what the user sees

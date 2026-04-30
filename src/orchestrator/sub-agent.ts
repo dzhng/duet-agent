@@ -2,7 +2,6 @@ import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { convertToLlm } from "@mariozechner/pi-coding-agent";
 import type {
   SubAgentSpec,
-  MemoryStore,
   Sandbox,
   InterruptBus,
   Guardrail,
@@ -23,7 +22,6 @@ function extractText(messages: AgentMessage[]): string {
 }
 
 export interface SubAgentRunnerDeps {
-  memory: MemoryStore;
   sandbox: Sandbox;
   interrupts: InterruptBus;
   guardrail?: Guardrail;
