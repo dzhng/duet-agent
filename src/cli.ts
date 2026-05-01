@@ -11,10 +11,8 @@
 
 import { getModel, type Model } from "@mariozechner/pi-ai";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
-import { MemoryStore } from "./memory/store.js";
 import { LocalSandbox } from "./sandbox/local.js";
 import { StdioComm } from "./comm/stdio.js";
-import { PatternGuardrail } from "./guardrails/pattern.js";
 import type { DuetAgentConfig } from "./core/types.js";
 
 async function main() {
@@ -73,10 +71,8 @@ async function main() {
   const config: DuetAgentConfig = {
     orchestratorModel,
     defaultSubAgentModel: subAgentModel,
-    memory: new MemoryStore(),
     sandbox: new LocalSandbox(workDir),
     comm: new StdioComm(),
-    guardrails: [new PatternGuardrail()],
     maxConcurrency: 3,
     onTransition: (t, state) => {
       process.stderr.write(

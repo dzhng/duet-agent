@@ -1,7 +1,6 @@
 import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { convertToLlm } from "@mariozechner/pi-coding-agent";
 import type {
-  MemoryStorage,
   ObservationalMemorySettings,
   SubAgentSpec,
   Sandbox,
@@ -12,6 +11,7 @@ import type {
 import type { TaskContext, TaskReport } from "../core/layers.js";
 import { createTools } from "./tools.js";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
+import type { MemoryStore } from "../memory/store.js";
 
 function extractText(messages: AgentMessage[]): string {
   return messages
@@ -24,8 +24,8 @@ function extractText(messages: AgentMessage[]): string {
 }
 
 export interface SubAgentRunnerDeps {
-  memory: MemoryStorage;
-  observationalMemory?: boolean | Partial<ObservationalMemorySettings>;
+  memory: MemoryStore;
+  memorySettings?: Partial<ObservationalMemorySettings>;
   sandbox: Sandbox;
   interrupts: InterruptBus;
   guardrail?: Guardrail;
@@ -55,7 +55,7 @@ export class SubAgentRunner {
     taskContext: TaskContext,
     _sessionState: SessionState,
   ): Promise<TaskReport> {
-    const { memory, observationalMemory, sandbox, interrupts } = this.deps;
+    const { memory, memorySettings, sandbox, interrupts } = this.deps;
 
     // Build context from TaskContext — NOT from raw session state
     const depContext =
@@ -115,7 +115,7 @@ ${depContext}${memoryContext}${skillContext}
             store: memory,
             sessionId: _sessionState.sessionId,
             actorModel: spec.model,
-            settings: observationalMemory,
+            settings: memorySettings,
           })(messages, signal);
         },
         toolExecution: "sequential",

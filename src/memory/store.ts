@@ -2,7 +2,6 @@ import { createMemoryId } from "../core/ids.js";
 import type {
   BufferedObservationChunk,
   MemoryId,
-  MemoryStorage,
   MemoryStoreEvent,
   MemoryStoreEventHandler,
   Observation,
@@ -13,7 +12,7 @@ import type {
   SessionId,
 } from "../core/types.js";
 
-export class MemoryStore implements MemoryStorage {
+export class MemoryStore {
   private observations: Map<MemoryId, Observation> = new Map();
   private rawMessages: Map<MemoryId, RawMemoryMessage> = new Map();
   private bufferedObservations: Map<MemoryId, BufferedObservationChunk> = new Map();

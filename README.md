@@ -106,15 +106,13 @@ npx duet-agent -m claude-opus-4-6 --sub-model claude-sonnet-4-6 "refactor the au
 
 ```typescript
 import { getModel } from "@mariozechner/pi-ai";
-import { Orchestrator, MemoryStore, LocalSandbox, StdioComm, PatternGuardrail } from "duet-agent";
+import { Orchestrator, LocalSandbox, StdioComm } from "duet-agent";
 
 const orchestrator = new Orchestrator({
   orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
   defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
-  memory: new MemoryStore(),
   sandbox: new LocalSandbox(process.cwd()),
   comm: new StdioComm(),
-  guardrails: [new PatternGuardrail()],
   maxConcurrency: 3,
 });
 
@@ -123,20 +121,25 @@ const state = await orchestrator.run("Build a todo app with React and TypeScript
 
 ## Memory And Persistence
 
-`MemoryStore` is the default event-emitting in-memory store. It is the runtime state container, not a database adapter.
+duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the runtime state container, not a database adapter.
 
 ```typescript
-import { MemoryStore } from "duet-agent";
+import type { MemoryPersistenceModule } from "duet-agent";
 
-const memory = new MemoryStore();
-
-memory.on((event) => {
-  // Persist externally: append to a log, write JSON, sync to Postgres, etc.
-  console.log(event.type, event);
-});
+const persistence: MemoryPersistenceModule = {
+  async load(store) {
+    // Hydrate the internal runtime store before the first run.
+  },
+  subscribe(store) {
+    return store.on((event) => {
+      // Persist externally: append to a log, write JSON, sync to Postgres, etc.
+      console.log(event.type, event);
+    });
+  },
+};
 ```
 
-Persistence modules should be built on top of events or should construct/hydrate a store before handing it to the harness. The harness should not know whether state came from a file, database, cache, or test fixture.
+Persistence modules hydrate the internal store before a run and subscribe to events for future writes. The harness should not know whether state came from a file, database, cache, or test fixture.
 
 Observational memory is enabled by default with conservative long-context thresholds:
 
@@ -176,21 +179,7 @@ This enables architectures like:
 
 ## Guardrails
 
-```typescript
-import { PatternGuardrail, SemanticGuardrail, createFirewall } from "duet-agent";
-
-// Fast: regex pattern matching
-const patterns = new PatternGuardrail();
-
-// Smart: LLM-evaluated safety
-const semantic = new SemanticGuardrail(
-  getModel("anthropic", "claude-haiku-4-5"),
-  "Never delete production data. Never expose secrets in output.",
-);
-
-// Compose into a firewall
-const firewall = createFirewall([patterns, semantic]);
-```
+The harness installs its default safety checks internally. The public config stays focused on models, sandbox, comms, memory tuning, and persistence.
 
 ## Design Principles
 

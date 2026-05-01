@@ -6,7 +6,6 @@ import { completeSimple } from "@mariozechner/pi-ai";
 import { Type, type Static } from "typebox";
 import type {
   DuetAgentConfig,
-  MemoryStorage,
   ObservationalMemorySettings,
   SessionState,
   Task,
@@ -21,9 +20,11 @@ import { createSessionId, createAgentId, createTaskId } from "../core/ids.js";
 import { InterruptController } from "../interrupt/controller.js";
 import { SubAgentRunner } from "./sub-agent.js";
 import { createFirewall } from "../guardrails/firewall.js";
+import { PatternGuardrail } from "../guardrails/pattern.js";
 import { formatSkillsForPrompt, loadSkills } from "@mariozechner/pi-coding-agent";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
 import { assistantText } from "../core/serializer.js";
+import { MemoryStore } from "../memory/store.js";
 
 function getSandboxCwd(sandbox: unknown): string {
   return (sandbox as { rootDir?: string }).rootDir ?? process.cwd();
@@ -51,16 +52,16 @@ type AgentContextTransform = (
 ) => Promise<AgentMessage[]>;
 
 function createMemoryContextTransform(options: {
-  memory: MemoryStorage;
+  memory: MemoryStore;
   sessionId: SessionState["sessionId"];
   actorModel: DuetAgentConfig["orchestratorModel"];
-  observationalMemory: boolean | Partial<ObservationalMemorySettings> | undefined;
+  memorySettings: Partial<ObservationalMemorySettings> | undefined;
 }): AgentContextTransform {
   const observational = createObservationalMemoryTransform({
     store: options.memory,
     sessionId: options.sessionId,
     actorModel: options.actorModel,
-    settings: options.observationalMemory,
+    settings: options.memorySettings,
   });
 
   return observational;
@@ -85,9 +86,12 @@ function createMemoryContextTransform(options: {
 export class Orchestrator {
   private interrupts: InterruptController;
   private runner: SubAgentRunner;
-  private guardrail?: ReturnType<typeof createFirewall>;
+  private guardrail: ReturnType<typeof createFirewall>;
+  private memory = new MemoryStore();
   private skills: Skill[] = [];
   private skillsLoaded = false;
+  private memoryPersistenceLoaded = false;
+  private memoryPersistenceDisposers: Array<() => void> = [];
 
   /** The bridge to the comm layer. Orchestrator talks to comm ONLY through this. */
   private commBridge: CommOrchestratorBridge;
@@ -100,13 +104,16 @@ export class Orchestrator {
     this.commBridge = new CommOrchestratorBridge(config.comm, this.interrupts);
     this.comm = this.commBridge.orchestratorSide;
 
-    if (config.guardrails?.length) {
-      this.guardrail = createFirewall(config.guardrails);
+    this.guardrail = createFirewall([new PatternGuardrail()]);
+
+    for (const module of config.memoryPersistence ?? []) {
+      const dispose = module.subscribe?.(this.memory);
+      if (dispose) this.memoryPersistenceDisposers.push(dispose);
     }
 
     this.runner = new SubAgentRunner({
-      memory: config.memory,
-      observationalMemory: config.observationalMemory,
+      memory: this.memory,
+      memorySettings: config.memory,
       sandbox: config.sandbox,
       interrupts: this.interrupts,
       guardrail: this.guardrail,
@@ -120,6 +127,21 @@ export class Orchestrator {
     // Seed with explicitly provided skills
     if (config.skills) {
       this.skills = [...config.skills];
+    }
+  }
+
+  dispose(): void {
+    for (const dispose of this.memoryPersistenceDisposers.splice(0)) {
+      dispose();
+    }
+  }
+
+  private async ensureMemoryPersistenceLoaded(): Promise<void> {
+    if (this.memoryPersistenceLoaded) return;
+    this.memoryPersistenceLoaded = true;
+
+    for (const module of this.config.memoryPersistence ?? []) {
+      await module.load?.(this.memory);
     }
   }
 
@@ -146,6 +168,7 @@ export class Orchestrator {
    * Run the full orchestration loop for a user goal.
    */
   async run(goal: string): Promise<SessionState> {
+    await this.ensureMemoryPersistenceLoaded();
     await this.ensureSkillsLoaded();
 
     const state: SessionState = {
@@ -339,7 +362,7 @@ export class Orchestrator {
     ];
 
     // Recall relevant resource-scoped observations for planning context
-    const memories = await this.config.memory.recall({
+    const memories = await this.memory.recall({
       query: state.goal,
       scope: "resource",
       limit: 10,
@@ -398,10 +421,10 @@ ${skillsContext}${memoryContext}`,
       },
       convertToLlm,
       transformContext: createMemoryContextTransform({
-        memory: this.config.memory,
+        memory: this.memory,
         sessionId: state.sessionId,
         actorModel: this.config.orchestratorModel,
-        observationalMemory: this.config.observationalMemory,
+        memorySettings: this.config.memory,
       }),
       toolExecution: "sequential",
     });
@@ -521,7 +544,7 @@ ${skillsContext}${memoryContext}`,
     // Fetch relevant observations for this task
     const relevantMemories: string[] = [];
     if (task.agentSpec.memoryAccess !== "none") {
-      const memories = await this.config.memory.recall({
+      const memories = await this.memory.recall({
         sessionId: state.sessionId,
         query: task.description,
         scope: task.agentSpec.memoryAccess === "all" ? undefined : "session",
@@ -616,7 +639,7 @@ ${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\
     const evaluation = assistantText([evaluationMessage]);
 
     // Store evaluation as an observation for future sessions.
-    await this.config.memory.appendObservation({
+    await this.memory.appendObservation({
       sessionId: state.sessionId,
       observedDate: new Date().toISOString().slice(0, 10),
       timeOfDay: new Date().toISOString().slice(11, 16),

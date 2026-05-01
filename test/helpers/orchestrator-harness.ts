@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Model } from "@mariozechner/pi-ai";
 import { Orchestrator } from "../../src/orchestrator/orchestrator.js";
-import { MemoryStore } from "../../src/memory/store.js";
 import { LocalSandbox } from "../../src/sandbox/local.js";
 import type { AgentStatus, CommLayer, CommMessage } from "../../src/core/types.js";
 
@@ -48,7 +47,6 @@ export function createTestOrchestrator(): TestOrchestratorApp {
   const orchestrator = new Orchestrator({
     orchestratorModel: unusedModel,
     defaultSubAgentModel: unusedModel,
-    memory: new MemoryStore(),
     sandbox: new LocalSandbox(root),
     comm: new NullComm(),
   });

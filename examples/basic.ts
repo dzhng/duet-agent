@@ -5,14 +5,7 @@
  */
 
 import { getModel } from "@mariozechner/pi-ai";
-import {
-  Orchestrator,
-  MemoryStore,
-  LocalSandbox,
-  StdioComm,
-  PatternGuardrail,
-  type DuetAgentConfig,
-} from "duet-agent";
+import { Orchestrator, LocalSandbox, StdioComm, type DuetAgentConfig } from "duet-agent";
 
 async function main() {
   const config: DuetAgentConfig = {
@@ -22,17 +15,11 @@ async function main() {
     // Cheaper/faster model for sub-agents — they execute, not plan
     defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
 
-    // Memory is event-emitting and in-memory by default. Persistence can subscribe to events.
-    memory: new MemoryStore(),
-
     // Sandbox = bash. That's it. No MCP, no custom protocols.
     sandbox: new LocalSandbox(process.cwd()),
 
     // Comm layer is decoupled — swap this for voice, video, Slack, etc.
     comm: new StdioComm(),
-
-    // Guardrails are optional but recommended
-    guardrails: [new PatternGuardrail()],
 
     // Run up to 3 sub-agents concurrently
     maxConcurrency: 3,

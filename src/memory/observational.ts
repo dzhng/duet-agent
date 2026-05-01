@@ -3,8 +3,8 @@ import { completeSimple } from "@mariozechner/pi-ai";
 import type { Model } from "@mariozechner/pi-ai";
 import { createMemoryId } from "../core/ids.js";
 import { assistantText } from "../core/serializer.js";
+import type { MemoryStore } from "./store.js";
 import type {
-  MemoryStorage,
   Observation,
   ObservationPriority,
   ObservationalMemorySettings,
@@ -132,7 +132,7 @@ export class ModelByInputTokens {
 }
 
 export interface ObservationalMemoryTransformOptions {
-  store: MemoryStorage;
+  store: MemoryStore;
   sessionId: SessionId;
   actorModel: Model<any>;
   settings?: boolean | Partial<ObservationalMemorySettings>;
@@ -345,7 +345,7 @@ function buildContinuationMessage(): AgentMessage {
 }
 
 async function maybeBufferObservations(
-  store: MemoryStorage,
+  store: MemoryStore,
   sessionId: SessionId,
   messages: RawMemoryMessage[],
   settings: ObservationalMemorySettings,
@@ -372,7 +372,7 @@ async function maybeBufferObservations(
 }
 
 async function activateObservations(
-  store: MemoryStorage,
+  store: MemoryStore,
   sessionId: SessionId,
   messages: RawMemoryMessage[],
   settings: ObservationalMemorySettings,
@@ -418,7 +418,7 @@ async function activateObservations(
 }
 
 async function reflectObservations(
-  store: MemoryStorage,
+  store: MemoryStore,
   sessionId: SessionId,
   settings: ObservationalMemorySettings,
   _signal?: AbortSignal,

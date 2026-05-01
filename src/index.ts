@@ -27,7 +27,7 @@ export type {
   ObservationQuery,
   MemoryStoreEvent,
   MemoryStoreEventHandler,
-  MemoryStorage,
+  MemoryPersistenceModule,
   // Sandbox
   ExecResult,
   SandboxOptions,
