@@ -72,6 +72,8 @@ export type {
 
 // Layer bridges
 export { CommOrchestratorBridge, buildTaskContext } from "./core/bridges.js";
+export { generateStructuredOutput } from "./core/structured-output.js";
+export type { StructuredOutputOptions } from "./core/structured-output.js";
 
 // Memory
 export {

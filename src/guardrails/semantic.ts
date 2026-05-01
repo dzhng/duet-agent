@@ -1,5 +1,23 @@
-import { completeSimple, type Model } from "@mariozechner/pi-ai";
+import type { Model, Tool } from "@mariozechner/pi-ai";
+import dedent from "dedent";
+import { Type } from "typebox";
+import { generateStructuredOutput } from "../core/structured-output.js";
 import type { Guardrail, GuardrailContext, GuardrailResult } from "../core/types.js";
+
+const semanticGuardrailResultSchema = Type.Object({
+  allowed: Type.Boolean({ description: "Whether the action is allowed under the policy" }),
+  reason: Type.String({ description: "Brief explanation for the decision" }),
+  suggestion: Type.Optional(
+    Type.String({ description: "Safer alternative when the action is blocked" }),
+  ),
+});
+
+const EVALUATE_GUARDRAIL_TOOL = "evaluateGuardrail";
+const semanticGuardrailTool: Tool<typeof semanticGuardrailResultSchema> = {
+  name: EVALUATE_GUARDRAIL_TOOL,
+  description: "Return the semantic guardrail decision",
+  parameters: semanticGuardrailResultSchema,
+};
 
 /**
  * Semantic guardrail: uses an LLM to evaluate whether an action
@@ -15,30 +33,23 @@ export class SemanticGuardrail implements Guardrail {
   ) {}
 
   async evaluate(context: GuardrailContext): Promise<GuardrailResult> {
-    const prompt = `You are a security guardrail. Evaluate whether this action should be allowed.
+    const prompt = dedent`
+      You are a security guardrail. Evaluate whether this action should be allowed.
 
-POLICY:
-${this.policy}
+      POLICY:
+      ${this.policy}
 
-ACTION: ${context.action}
-CONTENT: ${context.content}
-AGENT: ${context.agentId}
+      ACTION: ${context.action}
+      CONTENT: ${context.content}
+      AGENT: ${context.agentId}
 
-Respond with JSON: { "allowed": boolean, "reason": string, "suggestion"?: string }`;
+      Call the ${EVALUATE_GUARDRAIL_TOOL} tool with your decision.
+    `;
 
-    const response = await completeSimple(this.model, {
-      messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+    return generateStructuredOutput({
+      model: this.model,
+      tool: semanticGuardrailTool,
+      prompt,
     });
-    const text = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join("\n");
-
-    try {
-      return JSON.parse(text);
-    } catch {
-      // If parsing fails, be conservative
-      return { allowed: false, reason: "Failed to parse guardrail response" };
-    }
   }
 }

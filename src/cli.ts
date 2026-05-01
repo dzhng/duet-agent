@@ -96,6 +96,13 @@ async function main() {
 }
 
 function resolveModel(name: string): Model<any> {
+  const providerSeparator = name.indexOf(":");
+  if (providerSeparator > 0) {
+    const provider = name.slice(0, providerSeparator);
+    const modelId = name.slice(providerSeparator + 1);
+    return getModel(provider as any, modelId as any);
+  }
+
   // Anthropic models
   if (name.startsWith("claude-")) {
     return getModel("anthropic", name as any);
@@ -125,10 +132,12 @@ OPTIONS
 MODELS
   Anthropic: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5
   OpenAI: gpt-5.4, gpt-4o, o3-mini
+  Provider syntax: vercel-ai-gateway:anthropic/claude-opus-4.6
 
 EXAMPLES
   duet-agent "build a REST API with Express and TypeScript"
   duet-agent -m gpt-5.4 "analyze the performance of our test suite"
+  duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 --sub-model vercel-ai-gateway:anthropic/claude-sonnet-4.6 "refactor the auth module"
   duet-agent --workdir ./my-project "refactor the auth module"
 `);
 }

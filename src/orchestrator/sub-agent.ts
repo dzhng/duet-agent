@@ -1,5 +1,6 @@
 import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { convertToLlm } from "@mariozechner/pi-coding-agent";
+import dedent from "dedent";
 import type {
   ObservationalMemorySettings,
   SubAgentSpec,
@@ -77,21 +78,23 @@ export class SubAgentRunner {
         ? "\n\n## Skills\n" + taskContext.skillInstructions.join("\n\n---\n\n")
         : "";
 
-    const systemPrompt = `${spec.instructions}
+    const systemPrompt = dedent`
+      ${spec.instructions}
 
-## Your Task
-${taskContext.task.description}
+      ## Your Task
+      ${taskContext.task.description}
 
-## Session Goal
-${taskContext.sessionGoal}
-${depContext}${memoryContext}${skillContext}
+      ## Session Goal
+      ${taskContext.sessionGoal}
+      ${depContext}${memoryContext}${skillContext}
 
-## Rules
-- Use pi coding tools only: read, bash, edit, and write. No MCP, no APIs.
-- Use read instead of cat/sed for inspecting files.
-- Use edit for precise changes and write only for new files or complete rewrites.
-- If you're blocked or need clarification, explain that in your final response.
-- Stay focused on your specific task. Don't exceed your scope.`;
+      ## Rules
+      - Use pi coding tools only: read, bash, edit, and write. No MCP, no APIs.
+      - Use read instead of cat/sed for inspecting files.
+      - Use edit for precise changes and write only for new files or complete rewrites.
+      - If you're blocked or need clarification, explain that in your final response.
+      - Stay focused on your specific task. Don't exceed your scope.
+    `;
 
     const tools = createTools({
       sandbox,

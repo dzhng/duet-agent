@@ -33,6 +33,7 @@
     "setup": "bash scripts/setup-docker.sh",
     "build": "tsc",
     "dev": "tsc --watch",
+    "eval": "bun test ./evals/*.eval.ts",
     "format": "oxfmt --write --no-error-on-unmatched-pattern",
     "format:check": "oxfmt --check --no-error-on-unmatched-pattern",
     "lint": "oxlint src/",
@@ -49,6 +50,7 @@
     "typebox": "^1.1.24"
   },
   "devDependencies": {
+    "@types/bun": "^1.3.13",
     "@types/node": "^22.0.0",
     "oxfmt": "^0.47.0",
     "oxlint": "^0.16.0",

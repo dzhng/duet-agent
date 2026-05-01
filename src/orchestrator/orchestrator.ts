@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { Agent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
 import { convertToLlm } from "@mariozechner/pi-coding-agent";
 import { completeSimple } from "@mariozechner/pi-ai";
+import dedent from "dedent";
 import { Type, type Static } from "typebox";
 import type {
   DuetAgentConfig,
@@ -393,45 +394,47 @@ export class Orchestrator {
       initialState: {
         model: this.config.orchestratorModel,
         tools: planTools,
-        systemPrompt: `You are an orchestrator agent. Your job is to break down a user's goal into discrete tasks, and for each task, define a sub-agent with the right role, instructions, tools, and constraints.
+        systemPrompt: dedent`
+          You are an orchestrator agent. Your job is to break down a user's goal into discrete tasks, and for each task, define a sub-agent with the right role, instructions, tools, and constraints.
 
-${this.config.systemInstructions ?? ""}
+          ${this.config.systemInstructions ?? ""}
 
-## Task Purity Classification
+          ## Task Purity Classification
 
-Every task MUST be classified as either "pure" or "effectful":
+          Every task MUST be classified as either "pure" or "effectful":
 
-**pure** — No side effects. The task only reads data, analyzes information, generates code/text, or computes results. Examples:
-- Reading and analyzing source code
-- Generating a plan or design document
-- Searching for information
-- Writing code to local files in the sandbox
-- Running tests (read-only verification)
+          **pure** — No side effects. The task only reads data, analyzes information, generates code/text, or computes results. Examples:
+          - Reading and analyzing source code
+          - Generating a plan or design document
+          - Searching for information
+          - Writing code to local files in the sandbox
+          - Running tests (read-only verification)
 
-**effectful** — Has side effects on external systems. The task modifies state outside the sandbox. Examples:
-- Updating a CRM record
-- Sending an email
-- Deploying to production
-- Making API calls that modify external data
-- Publishing to a package registry
-- Committing and pushing to git
+          **effectful** — Has side effects on external systems. The task modifies state outside the sandbox. Examples:
+          - Updating a CRM record
+          - Sending an email
+          - Deploying to production
+          - Making API calls that modify external data
+          - Publishing to a package registry
+          - Committing and pushing to git
 
-Pure tasks with satisfied dependencies are automatically parallelized for maximum throughput.
-Effectful tasks run ONE AT A TIME, in dependency order, to prevent race conditions and ensure auditability.
+          Pure tasks with satisfied dependencies are automatically parallelized for maximum throughput.
+          Effectful tasks run ONE AT A TIME, in dependency order, to prevent race conditions and ensure auditability.
 
-When a task has BOTH pure and effectful components, split it into two tasks:
-1. A pure task that prepares the data/content
-2. An effectful task (depending on the pure task) that performs the side effect
+          When a task has BOTH pure and effectful components, split it into two tasks:
+          1. A pure task that prepares the data/content
+          2. An effectful task (depending on the pure task) that performs the side effect
 
-Rules:
-- Each task should be independently executable by a sub-agent.
-- Sub-agents interact with the world through pi coding tools only: read, bash, edit, and write. No APIs, no MCP.
-- Define agent instructions that are specific and actionable.
-- Set appropriate tool permissions — don't give every agent edit/write access if they only need read or bash.
-- Consider task dependencies — some tasks must complete before others can start.
-- Use memory access wisely: "all" for agents that need historical context, "session" for task-local work, "none" for stateless operations.
-- For effectful tasks, always set sideEffectDescription explaining what external system is affected.
-${skillsContext}${memoryContext}`,
+          Rules:
+          - Each task should be independently executable by a sub-agent.
+          - Sub-agents interact with the world through pi coding tools only: read, bash, edit, and write. No APIs, no MCP.
+          - Define agent instructions that are specific and actionable.
+          - Set appropriate tool permissions — don't give every agent edit/write access if they only need read or bash.
+          - Consider task dependencies — some tasks must complete before others can start.
+          - Use memory access wisely: "all" for agents that need historical context, "session" for task-local work, "none" for stateless operations.
+          - For effectful tasks, always set sideEffectDescription explaining what external system is affected.
+          ${skillsContext}${memoryContext}
+        `,
       },
       convertToLlm,
       transformContext: createMemoryContextTransform({
@@ -631,13 +634,15 @@ ${skillsContext}${memoryContext}`,
     const completedTasks = state.tasks.filter((t) => t.status === "completed");
     const failedTasks = state.tasks.filter((t) => t.status === "failed");
 
-    const summary = `## Task Results
+    const summary = dedent`
+      ## Task Results
 
-### Completed (${completedTasks.length})
-${completedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.result?.slice(0, 500) ?? "(no output)"}`).join("\n")}
+      ### Completed (${completedTasks.length})
+      ${completedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.result?.slice(0, 500) ?? "(no output)"}`).join("\n")}
 
-### Failed (${failedTasks.length})
-${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\n")}`;
+      ### Failed (${failedTasks.length})
+      ${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\n")}
+    `;
 
     const evaluationMessage = await completeSimple(this.config.orchestratorModel, {
       systemPrompt:
@@ -645,7 +650,13 @@ ${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\
       messages: [
         {
           role: "user",
-          content: `Goal: ${state.goal}\n\n${summary}\n\nDid the tasks achieve the goal? Summarize what was accomplished.`,
+          content: dedent`
+            Goal: ${state.goal}
+
+            ${summary}
+
+            Did the tasks achieve the goal? Summarize what was accomplished.
+          `,
           timestamp: Date.now(),
         },
       ],
