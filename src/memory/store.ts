@@ -1,6 +1,5 @@
 import { createMemoryId } from "../core/ids.js";
 import type {
-  BufferedObservationChunk,
   MemoryId,
   MemoryStoreEvent,
   MemoryStoreEventHandler,
@@ -15,7 +14,6 @@ import type {
 export class MemoryStore {
   private observations: Map<MemoryId, Observation> = new Map();
   private rawMessages: Map<MemoryId, RawMemoryMessage> = new Map();
-  private bufferedObservations: Map<MemoryId, BufferedObservationChunk> = new Map();
   private handlers = new Set<MemoryStoreEventHandler>();
 
   on(handler: MemoryStoreEventHandler): () => void {
@@ -90,25 +88,16 @@ export class MemoryStore {
     const messages = Array.from(this.rawMessages.values())
       .filter((message) => message.sessionId === sessionId)
       .sort((a, b) => a.createdAt - b.createdAt);
-    const buffered = Array.from(this.bufferedObservations.values())
-      .filter((chunk) => chunk.sessionId === sessionId)
-      .sort((a, b) => a.createdAt - b.createdAt);
     const updatedAt = Date.now();
     return {
       sessionId,
-      observations: {
-        sessionId,
-        observations,
-        updatedAt,
-        estimatedTokens: estimateTokens(observations.map((item) => item.content).join("\n")),
+      observations,
+      rawMessages: messages,
+      estimatedTokens: {
+        observations: estimateTokens(observations.map((item) => item.content).join("\n")),
+        rawMessages: estimateTokens(messages.map((item) => item.content).join("\n")),
       },
-      raw: {
-        sessionId,
-        messages,
-        updatedAt,
-        estimatedTokens: estimateTokens(messages.map((item) => item.content).join("\n")),
-      },
-      buffered,
+      updatedAt,
     };
   }
 
@@ -136,39 +125,9 @@ export class MemoryStore {
     this.emit({ type: "observations_replaced", sessionId, observations });
   }
 
-  async appendBufferedObservation(
-    input: Omit<BufferedObservationChunk, "id" | "createdAt">,
-  ): Promise<BufferedObservationChunk> {
-    const chunk: BufferedObservationChunk = {
-      ...input,
-      id: createMemoryId(),
-      createdAt: Date.now(),
-    };
-    this.bufferedObservations.set(chunk.id, chunk);
-    this.emit({ type: "buffered_observation_appended", chunk });
-    return chunk;
-  }
-
-  async replaceBufferedObservations(
-    sessionId: SessionId,
-    chunks: BufferedObservationChunk[],
-  ): Promise<void> {
-    for (const [id, chunk] of this.bufferedObservations) {
-      if (chunk.sessionId === sessionId) {
-        this.bufferedObservations.delete(id);
-      }
-    }
-    for (const chunk of chunks) {
-      this.bufferedObservations.set(chunk.id, chunk);
-    }
-    this.emit({ type: "buffered_observations_replaced", sessionId, chunks });
-  }
-
   render(snapshot: ObservationalMemorySnapshot): string {
-    const observationLines = snapshot.observations.observations.map(formatObservation);
-    const rawLines = snapshot.raw.messages.map(
-      (message) => `- ${message.role}: ${message.content}`,
-    );
+    const observationLines = snapshot.observations.map(formatObservation);
+    const rawLines = snapshot.rawMessages.map((message) => `- ${message.role}: ${message.content}`);
     return [
       "## Observations",
       observationLines.length > 0 ? observationLines.join("\n") : "(none)",

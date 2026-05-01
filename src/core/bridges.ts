@@ -14,9 +14,7 @@ import type {
   CommToOrchestrator,
   OrchestratorToComm,
   TaskContext,
-  TaskReport,
   DependencyResult,
-  CheckpointAction,
 } from "./layers.js";
 
 // ---------------------------------------------------------------------------

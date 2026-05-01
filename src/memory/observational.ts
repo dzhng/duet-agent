@@ -51,9 +51,6 @@ export const OBSERVATIONAL_MEMORY_DEFAULTS = {
     // Limit each observer call to a bounded slice of raw history so observation
     // generation stays predictable on very long sessions.
     maxTokensPerBatch: 10_000,
-    // Begin precomputing buffered observations before activation. A number is a
-    // fraction of messageTokens; false disables buffering.
-    bufferTokens: 0.2 as number | false,
     // Keep this fraction of the raw-history budget after observations activate,
     // so the actor still sees the most recent unobserved conversation tail.
     bufferActivation: 0.8,
@@ -158,8 +155,6 @@ export function resolveObservationalMemorySettings(
       maxTokensPerBatch:
         partial.observation?.maxTokensPerBatch ??
         OBSERVATIONAL_MEMORY_DEFAULTS.observation.maxTokensPerBatch,
-      bufferTokens:
-        partial.observation?.bufferTokens ?? OBSERVATIONAL_MEMORY_DEFAULTS.observation.bufferTokens,
       bufferActivation:
         partial.observation?.bufferActivation ??
         OBSERVATIONAL_MEMORY_DEFAULTS.observation.bufferActivation,
@@ -188,24 +183,6 @@ export function resolveObservationalMemorySettings(
 }
 
 export function validateObservationalMemorySettings(settings: ObservationalMemorySettings): void {
-  if (settings.shareTokenBudget && settings.observation.bufferTokens !== false) {
-    throw new Error(
-      "shareTokenBudget requires async buffering to be disabled. Set observation.bufferTokens to false.",
-    );
-  }
-
-  if (settings.observation.bufferTokens !== false) {
-    const bufferTokens = resolveBufferTokens(
-      settings.observation.bufferTokens,
-      settings.observation.messageTokens,
-    );
-    if (bufferTokens <= 0 || bufferTokens >= settings.observation.messageTokens) {
-      throw new Error(
-        `observation.bufferTokens (${bufferTokens}) must be greater than 0 and less than messageTokens (${settings.observation.messageTokens})`,
-      );
-    }
-  }
-
   if (
     settings.observation.bufferActivation <= 0 ||
     (settings.observation.bufferActivation > 1 && settings.observation.bufferActivation < 1000)
@@ -234,16 +211,6 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
     await options.store.replaceRawMessages(options.sessionId, rawMessages);
     let retainedMessages = messages;
 
-    if (shouldBuffer(settings, rawTokens)) {
-      await maybeBufferObservations(
-        options.store,
-        options.sessionId,
-        rawMessages,
-        settings,
-        signal,
-      );
-    }
-
     if (rawTokens >= settings.observation.messageTokens) {
       const retainedRawMessages = await activateObservations(
         options.store,
@@ -256,13 +223,13 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
     }
 
     const snapshot = await options.store.getSnapshot(options.sessionId);
-    const observationTokens = snapshot.observations.estimatedTokens ?? 0;
+    const observationTokens = snapshot.estimatedTokens.observations;
     if (observationTokens >= settings.reflection.observationTokens) {
       await reflectObservations(options.store, options.sessionId, settings, signal);
     }
 
     const refreshed = await options.store.getSnapshot(options.sessionId);
-    const observations = refreshed.observations.observations
+    const observations = refreshed.observations
       .map((observation) => observation.content)
       .join("\n\n");
     if (!observations.trim()) {
@@ -344,33 +311,6 @@ function buildContinuationMessage(): AgentMessage {
   };
 }
 
-async function maybeBufferObservations(
-  store: MemoryStore,
-  sessionId: SessionId,
-  messages: RawMemoryMessage[],
-  settings: ObservationalMemorySettings,
-  _signal?: AbortSignal,
-): Promise<void> {
-  const snapshot = await store.getSnapshot(sessionId);
-  if (snapshot.buffered.some((chunk) => chunk.status === "pending")) {
-    return;
-  }
-
-  const result = await observe(messages, snapshot.observations.observations, settings, _signal);
-  if (!result.observations.trim() || result.degenerate) {
-    return;
-  }
-
-  await store.appendBufferedObservation({
-    sessionId,
-    observations: result.observations,
-    messageTokenCount: estimateRawTokens(messages),
-    observationTokenCount: estimateTokens(result.observations),
-    messageIds: messages.map((message) => message.id),
-    status: "pending",
-  });
-}
-
 async function activateObservations(
   store: MemoryStore,
   sessionId: SessionId,
@@ -379,12 +319,8 @@ async function activateObservations(
   _signal?: AbortSignal,
 ): Promise<RawMemoryMessage[]> {
   const snapshot = await store.getSnapshot(sessionId);
-  const pending = snapshot.buffered.filter((chunk) => chunk.status === "pending");
-  const observations =
-    pending.length > 0
-      ? pending.map((chunk) => chunk.observations).join("\n\n")
-      : (await observe(messages, snapshot.observations.observations, settings, _signal))
-          .observations;
+  const observations = (await observe(messages, snapshot.observations, settings, _signal))
+    .observations;
 
   if (!observations.trim()) {
     return messages;
@@ -402,12 +338,6 @@ async function activateObservations(
     tags: ["observational-memory"],
   });
 
-  await store.replaceBufferedObservations(
-    sessionId,
-    snapshot.buffered.map((chunk) =>
-      pending.some((item) => item.id === chunk.id) ? { ...chunk, status: "active" } : chunk,
-    ),
-  );
   const retainedRawMessages = retainRawTail(
     messages,
     settings.observation.bufferActivation,
@@ -424,9 +354,7 @@ async function reflectObservations(
   _signal?: AbortSignal,
 ): Promise<void> {
   const snapshot = await store.getSnapshot(sessionId);
-  const source = snapshot.observations.observations
-    .map((observation) => observation.content)
-    .join("\n\n");
+  const source = snapshot.observations.map((observation) => observation.content).join("\n\n");
   const rendered = renderObservationGroupsForReflection(source) ?? source;
   const model = settings.reflection.model ?? settings.model;
   const response = await completeSimple(model!, {
@@ -478,20 +406,6 @@ async function observe(
     ],
   });
   return parseObserverOutput(assistantText([response]));
-}
-
-function shouldBuffer(settings: ObservationalMemorySettings, rawTokens: number): boolean {
-  if (settings.observation.bufferTokens === false) return false;
-  const threshold = resolveBufferTokens(
-    settings.observation.bufferTokens,
-    settings.observation.messageTokens,
-  );
-  return rawTokens >= threshold && rawTokens < settings.observation.messageTokens;
-}
-
-function resolveBufferTokens(value: number | false, messageTokens: number): number {
-  if (value === false) return Number.POSITIVE_INFINITY;
-  return value > 0 && value < 1 ? Math.floor(messageTokens * value) : value;
 }
 
 function retainRawTail(

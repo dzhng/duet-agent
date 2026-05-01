@@ -2,7 +2,6 @@ import { exec as execCb } from "node:child_process";
 import { readFile, writeFile, mkdir, access } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
-import { glob as globCb } from "node:fs";
 import type { ExecResult, Sandbox, SandboxOptions } from "../core/types.js";
 
 const execAsync = promisify(execCb);

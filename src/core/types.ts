@@ -78,45 +78,16 @@ export interface RawMemoryMessage {
   estimatedTokens?: number;
 }
 
-/**
- * Precomputed observation batch created before the raw context reaches the
- * activation threshold. Buffered chunks let activation swap in observations
- * without blocking on a large observer call at the moment the context is full.
- */
-export interface BufferedObservationChunk {
-  id: MemoryId;
-  sessionId: SessionId;
-  createdAt: number;
-  observations: string;
-  messageTokenCount: number;
-  observationTokenCount: number;
-  messageIds: MemoryId[];
-  /** Failed chunks stay visible for observability but are ignored by activation. */
-  status: "pending" | "active" | "failed";
-}
-
-/** Observation side of a MemoryStore snapshot; reflection rewrites this block. */
-export interface ObservationBlock {
-  sessionId: SessionId;
-  observations: Observation[];
-  updatedAt: number;
-  estimatedTokens?: number;
-}
-
-/** Raw-message side of a MemoryStore snapshot; activation trims this to the recent tail. */
-export interface RawMemoryBlock {
-  sessionId: SessionId;
-  messages: RawMemoryMessage[];
-  updatedAt: number;
-  estimatedTokens?: number;
-}
-
-/** Complete memory view used by observers, reflectors, renderers, and persistence subscribers. */
+/** Complete memory view callers can persist and pass back into Orchestrator.run for restore. */
 export interface ObservationalMemorySnapshot {
   sessionId: SessionId;
-  observations: ObservationBlock;
-  raw: RawMemoryBlock;
-  buffered: BufferedObservationChunk[];
+  observations: Observation[];
+  rawMessages: RawMemoryMessage[];
+  estimatedTokens: {
+    observations: number;
+    rawMessages: number;
+  };
+  updatedAt: number;
 }
 
 /** Runtime settings for observation, buffering, reflection, and actor-context injection. */
@@ -135,8 +106,6 @@ export interface ObservationalMemorySettings {
     messageTokens: number;
     /** Maximum raw-message tokens sent to a single observer call. */
     maxTokensPerBatch: number;
-    /** Starts background/precomputed observation buffering; number means fraction of messageTokens. */
-    bufferTokens: number | false;
     /** Fraction of messageTokens retained as raw tail after activation. */
     bufferActivation: number;
     /** Optional hard limit for blocking observation work after this many tokens. */
@@ -189,13 +158,7 @@ export type MemoryStoreEvent =
   | { type: "raw_message_appended"; message: RawMemoryMessage }
   | { type: "observation_appended"; observation: Observation }
   | { type: "raw_messages_replaced"; sessionId: SessionId; messages: RawMemoryMessage[] }
-  | { type: "observations_replaced"; sessionId: SessionId; observations: Observation[] }
-  | { type: "buffered_observation_appended"; chunk: BufferedObservationChunk }
-  | {
-      type: "buffered_observations_replaced";
-      sessionId: SessionId;
-      chunks: BufferedObservationChunk[];
-    };
+  | { type: "observations_replaced"; sessionId: SessionId; observations: Observation[] };
 
 export type MemoryStoreEventHandler = (event: MemoryStoreEvent) => void;
 
@@ -398,6 +361,22 @@ export interface StateTransition {
   trigger: string;
   agentId?: AgentId;
   taskId?: TaskId;
+}
+
+/**
+ * Runtime continuation input for resuming an orchestration state machine.
+ * This hydrates the opinionated in-memory runtime; persistence still lives in
+ * external modules via MemoryPersistenceModule.
+ */
+export interface OrchestratorRunOptions {
+  /** Existing session state to continue instead of creating a fresh session. */
+  state?: SessionState;
+  /** Existing observational memory snapshot to overlay onto the runtime store. */
+  memory?: Partial<ObservationalMemorySnapshot>;
+  /** Convenience input for callers that only have the current raw message list. */
+  messages?: RawMemoryMessage[];
+  /** Which phase to resume from. "auto" follows state.phase. */
+  resume?: "auto" | "plan" | "execute" | "evaluate";
 }
 
 // ---------------------------------------------------------------------------

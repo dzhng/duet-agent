@@ -8,6 +8,7 @@ import { Type, type Static } from "typebox";
 import type {
   DuetAgentConfig,
   GuardrailConfig,
+  OrchestratorRunOptions,
   ObservationalMemorySettings,
   SessionState,
   Task,
@@ -180,13 +181,60 @@ export class Orchestrator {
   }
 
   /**
-   * Run the full orchestration loop for a user goal.
+   * Run the orchestration loop for a goal, optionally resuming a saved session.
+   *
+   * Continuation resumes the orchestration state machine. It cannot continue an
+   * in-flight LLM/tool turn, so in-progress tasks are retried from pending.
    */
-  async run(goal: string): Promise<SessionState> {
+  async run(goal: string, options?: OrchestratorRunOptions): Promise<SessionState> {
     await this.ensureMemoryPersistenceLoaded();
+    const state = this.prepareSessionState(goal, options);
+    await this.hydrateMemory(state.sessionId, options);
     await this.ensureSkillsLoaded();
 
-    const state: SessionState = {
+    const resumePhase = this.resolveResumePhase(state, options);
+    if (resumePhase === "complete") {
+      await this.pushState(state, "Session already complete");
+      return state;
+    }
+
+    if (resumePhase === "planning") {
+      await this.pushState(state, "Starting planning...");
+      await this.comm.sendStatus({ kind: "thinking", description: "Planning..." });
+      await this.plan(state);
+      this.transition(state, "executing", "Planning complete, beginning execution");
+    } else if (resumePhase === "interrupted") {
+      this.transition(state, "planning", "Resuming interrupted session");
+      await this.pushState(state, "Re-planning...");
+      await this.comm.sendStatus({ kind: "thinking", description: "Planning..." });
+      await this.plan(state);
+      this.transition(state, "executing", "Resuming execution");
+    } else if (resumePhase === "executing") {
+      state.phase = "executing";
+    }
+
+    if (state.phase === "executing") {
+      await this.pushState(state, "Execution started");
+      await this.comm.sendStatus({
+        kind: "executing",
+        taskId: state.tasks[0]?.id as TaskId,
+        description: "Executing tasks...",
+      });
+      await this.execute(state);
+      this.transition(state, "evaluating", "Execution complete, evaluating results");
+    }
+
+    if (state.phase === "evaluating" || resumePhase === "evaluating") {
+      state.phase = "evaluating";
+      await this.pushState(state, "Evaluating results...");
+      await this.evaluate(state);
+    }
+
+    return state;
+  }
+
+  private createInitialSessionState(goal: string): SessionState {
+    return {
       sessionId: createSessionId(),
       goal,
       phase: "planning",
@@ -195,30 +243,57 @@ export class Orchestrator {
       sessionMemories: [],
       transitions: [],
     };
+  }
 
-    // Push initial state to comm layer
-    await this.pushState(state, "Starting planning...");
-    await this.comm.sendStatus({ kind: "thinking", description: "Planning..." });
+  private prepareSessionState(
+    goal: string,
+    options: OrchestratorRunOptions | undefined,
+  ): SessionState {
+    if (!options?.state) {
+      return this.createInitialSessionState(goal);
+    }
 
-    // Phase 1: Plan — break goal into tasks with dynamic agent specs
-    await this.plan(state);
+    return {
+      ...options.state,
+      goal: options.state.goal,
+      tasks: options.state.tasks.map((task) => ({
+        ...task,
+        status: task.status === "in_progress" ? "pending" : task.status,
+        agentSpec: { ...task.agentSpec },
+        dependencies: [...task.dependencies],
+        memoriesCreated: [...task.memoriesCreated],
+      })),
+      context: { ...options.state.context },
+      sessionMemories: [...options.state.sessionMemories],
+      transitions: [...options.state.transitions],
+    };
+  }
 
-    // Phase 2: Execute — pure tasks parallelized, effectful tasks sequential
-    this.transition(state, "executing", "Planning complete, beginning execution");
-    await this.pushState(state, "Execution started");
-    await this.comm.sendStatus({
-      kind: "executing",
-      taskId: state.tasks[0]?.id as TaskId,
-      description: "Executing tasks...",
-    });
-    await this.execute(state);
+  private async hydrateMemory(
+    sessionId: SessionState["sessionId"],
+    options: OrchestratorRunOptions | undefined,
+  ): Promise<void> {
+    if (!options) return;
 
-    // Phase 3: Evaluate — check results
-    this.transition(state, "evaluating", "Execution complete, evaluating results");
-    await this.pushState(state, "Evaluating results...");
-    await this.evaluate(state);
+    const rawMessages = options.messages ?? options.memory?.rawMessages;
+    if (rawMessages) {
+      await this.memory.replaceRawMessages(sessionId, rawMessages);
+    }
 
-    return state;
+    if (options.memory?.observations) {
+      await this.memory.replaceObservations(sessionId, options.memory.observations);
+    }
+  }
+
+  private resolveResumePhase(
+    state: SessionState,
+    options: OrchestratorRunOptions | undefined,
+  ): SessionState["phase"] {
+    const resume = options?.resume ?? "auto";
+    if (resume === "plan") return "planning";
+    if (resume === "execute") return "executing";
+    if (resume === "evaluate") return "evaluating";
+    return state.phase;
   }
 
   async getSkills(): Promise<readonly Skill[]> {

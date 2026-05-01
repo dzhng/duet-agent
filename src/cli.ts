@@ -74,7 +74,7 @@ async function main() {
     sandbox: new LocalSandbox(workDir),
     comm: new StdioComm(),
     maxConcurrency: 3,
-    onTransition: (t, state) => {
+    onTransition: (t) => {
       process.stderr.write(
         `[${new Date(t.timestamp).toISOString()}] ${t.fromPhase} → ${t.toPhase}: ${t.trigger}\n`,
       );
