@@ -6,6 +6,7 @@ import { completeSimple } from "@mariozechner/pi-ai";
 import { Type, type Static } from "typebox";
 import type {
   DuetAgentConfig,
+  GuardrailConfig,
   ObservationalMemorySettings,
   SessionState,
   Task,
@@ -21,6 +22,7 @@ import { InterruptController } from "../interrupt/controller.js";
 import { SubAgentRunner } from "./sub-agent.js";
 import { createFirewall } from "../guardrails/firewall.js";
 import { PatternGuardrail } from "../guardrails/pattern.js";
+import { SemanticGuardrail } from "../guardrails/semantic.js";
 import { formatSkillsForPrompt, loadSkills } from "@mariozechner/pi-coding-agent";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
 import { assistantText } from "../core/serializer.js";
@@ -67,6 +69,18 @@ function createMemoryContextTransform(options: {
   return observational;
 }
 
+function createGuardrails(configs: GuardrailConfig[] | undefined) {
+  return [
+    new PatternGuardrail(),
+    ...(configs ?? []).map((config) => {
+      if (config.kind === "pattern") {
+        return new PatternGuardrail(config.rules);
+      }
+      return new SemanticGuardrail(config.model, config.policy);
+    }),
+  ];
+}
+
 /**
  * The Orchestrator is the brain of duet-agent.
  *
@@ -104,7 +118,7 @@ export class Orchestrator {
     this.commBridge = new CommOrchestratorBridge(config.comm, this.interrupts);
     this.comm = this.commBridge.orchestratorSide;
 
-    this.guardrail = createFirewall([new PatternGuardrail()]);
+    this.guardrail = createFirewall(createGuardrails(config.guardrails));
 
     for (const module of config.memoryPersistence ?? []) {
       const dispose = module.subscribe?.(this.memory);

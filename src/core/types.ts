@@ -299,6 +299,21 @@ export interface Guardrail {
   evaluate(context: GuardrailContext): Promise<GuardrailResult>;
 }
 
+export interface PatternGuardrailRuleConfig {
+  pattern: RegExp;
+  action: "block" | "warn";
+  reason: string;
+}
+
+/**
+ * Config objects for extending the internal guardrail firewall. The harness
+ * owns guardrail construction; callers describe extra policies instead of
+ * passing instantiated guardrail classes.
+ */
+export type GuardrailConfig =
+  | { kind: "pattern"; rules: PatternGuardrailRuleConfig[] }
+  | { kind: "semantic"; model: Model<any>; policy: string };
+
 export interface GuardrailContext {
   /** The agent attempting the action. */
   agentId: AgentId;
@@ -460,6 +475,8 @@ export interface DuetAgentConfig {
   sandbox: Sandbox;
   /** Communication layer. */
   comm: CommLayer;
+  /** Additional guardrail policies layered on top of the harness defaults. */
+  guardrails?: GuardrailConfig[];
   /** Max concurrent sub-agents (only applies to pure tasks). */
   maxConcurrency?: number;
   /** Global system instructions prepended to all agents. */

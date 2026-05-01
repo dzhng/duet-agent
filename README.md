@@ -179,7 +179,26 @@ This enables architectures like:
 
 ## Guardrails
 
-The harness installs its default safety checks internally. The public config stays focused on models, sandbox, comms, memory tuning, and persistence.
+The harness installs its default safety checks internally. Add extra guardrail config objects when a deployment needs stricter local policy.
+
+```typescript
+const orchestrator = new Orchestrator({
+  // ...
+  guardrails: [
+    {
+      kind: "pattern",
+      rules: [
+        { pattern: /production-db/i, action: "warn", reason: "Production database mentioned" },
+      ],
+    },
+    {
+      kind: "semantic",
+      model: getModel("anthropic", "claude-haiku-4-5"),
+      policy: "Never delete production data. Never expose secrets in output.",
+    },
+  ],
+});
+```
 
 ## Design Principles
 

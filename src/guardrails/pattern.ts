@@ -1,13 +1,9 @@
-import type { Guardrail, GuardrailContext, GuardrailResult } from "../core/types.js";
-
-interface PatternRule {
-  /** Regex pattern to match against the action content. */
-  pattern: RegExp;
-  /** What happens when matched. */
-  action: "block" | "warn";
-  /** Explanation. */
-  reason: string;
-}
+import type {
+  Guardrail,
+  GuardrailContext,
+  GuardrailResult,
+  PatternGuardrailRuleConfig,
+} from "../core/types.js";
 
 /**
  * Pattern-based guardrail: fast, deterministic checks using regex.
@@ -17,7 +13,7 @@ export class PatternGuardrail implements Guardrail {
   name = "pattern";
   description = "Regex-based action pattern matching";
 
-  constructor(private readonly rules: PatternRule[] = DEFAULT_RULES) {}
+  constructor(private readonly rules: PatternGuardrailRuleConfig[] = DEFAULT_RULES) {}
 
   async evaluate(context: GuardrailContext): Promise<GuardrailResult> {
     for (const rule of this.rules) {
@@ -36,7 +32,7 @@ export class PatternGuardrail implements Guardrail {
   }
 }
 
-const DEFAULT_RULES: PatternRule[] = [
+const DEFAULT_RULES: PatternGuardrailRuleConfig[] = [
   {
     pattern: /rm\s+(-rf?|--recursive)\s+\/(?!\w)/,
     action: "block",
