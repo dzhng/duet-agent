@@ -4,7 +4,6 @@ import type { FauxProviderRegistration, Model } from "@mariozechner/pi-ai";
 import { Orchestrator } from "../src/orchestrator/orchestrator.js";
 import { createAgentId, createMemoryId, createSessionId, createTaskId } from "../src/core/ids.js";
 import type { AgentStatus, CommLayer, CommMessage, SessionState, Task } from "../src/core/types.js";
-import { LocalSandbox } from "../src/sandbox/local.js";
 
 class TestComm implements CommLayer {
   sent: CommMessage[] = [];
@@ -133,7 +132,7 @@ function createOrchestrator(model: Model<any>): Orchestrator {
   return new Orchestrator({
     orchestratorModel: model,
     defaultSubAgentModel: model,
-    sandbox: new LocalSandbox(process.cwd()),
+    cwd: process.cwd(),
     comm: new TestComm(),
     skillDiscovery: { includeDefaults: false },
     memory: { enabled: false },

@@ -1,16 +1,14 @@
 import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
-import { convertToLlm } from "@mariozechner/pi-coding-agent";
+import { convertToLlm, createCodingTools } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
 import type {
   ObservationalMemorySettings,
   SubAgentSpec,
-  Sandbox,
   InterruptBus,
   Guardrail,
   SessionState,
 } from "../core/types.js";
 import type { TaskContext, TaskReport } from "../core/layers.js";
-import { createTools } from "./tools.js";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
 import type { MemoryStore } from "../memory/store.js";
 
@@ -27,7 +25,7 @@ function extractText(messages: AgentMessage[]): string {
 export interface SubAgentRunnerDeps {
   memory: MemoryStore;
   memorySettings?: Partial<ObservationalMemorySettings>;
-  sandbox: Sandbox;
+  cwd: string;
   interrupts: InterruptBus;
   guardrail?: Guardrail;
 }
@@ -56,7 +54,7 @@ export class SubAgentRunner {
     taskContext: TaskContext,
     _sessionState: SessionState,
   ): Promise<TaskReport> {
-    const { memory, memorySettings, sandbox, interrupts } = this.deps;
+    const { memory, memorySettings, cwd, interrupts } = this.deps;
 
     // Build context from TaskContext — NOT from raw session state
     const depContext =
@@ -96,10 +94,11 @@ export class SubAgentRunner {
       - Stay focused on your specific task. Don't exceed your scope.
     `;
 
-    const tools = createTools({
-      sandbox,
-      allowedActions: spec.allowedActions,
-    });
+    const allTools = createCodingTools(cwd);
+    const tools =
+      spec.allowedActions.length > 0 && !spec.allowedActions.includes("*")
+        ? allTools.filter((tool) => spec.allowedActions.includes(tool.name))
+        : allTools;
 
     try {
       let turns = 0;

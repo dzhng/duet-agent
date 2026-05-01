@@ -1,7 +1,7 @@
 /**
  * duet-agent — An opinionated full-stack agent harness.
  *
- * Native memories. Native sandboxes. Native interrupts. Multi-agent by default.
+ * Native memories. Native interrupts. Multi-agent by default.
  * No MCP — everything is files and CLI.
  */
 
@@ -11,10 +11,15 @@ export * from "./core/layers.js";
 export * from "./core/bridges.js";
 export * from "./core/structured-output.js";
 
-export * from "./memory/index.js";
-export * from "./sandbox/index.js";
-export * from "./interrupt/index.js";
-export * from "./orchestrator/index.js";
-export * from "./comm/index.js";
-export * from "./guardrails/index.js";
+export * from "./memory/store.js";
+export * from "./memory/observational.js";
+export * from "./memory/observation-groups.js";
+export * from "./interrupt/controller.js";
+export * from "./orchestrator/orchestrator.js";
+export * from "./orchestrator/sub-agent.js";
+export * from "./comm/stdio.js";
+export type * from "./comm/adapter.js";
+export * from "./guardrails/semantic.js";
+export * from "./guardrails/pattern.js";
+export * from "./guardrails/firewall.js";
 export * from "./agents/index.js";

@@ -30,10 +30,6 @@ import { createObservationalMemoryTransform } from "../memory/observational.js";
 import { assistantText } from "../core/serializer.js";
 import { MemoryStore } from "../memory/store.js";
 
-function getSandboxCwd(sandbox: unknown): string {
-  return (sandbox as { rootDir?: string }).rootDir ?? process.cwd();
-}
-
 function buildSkillDiscoveryOptions(options: SkillDiscoveryOptions | undefined, cwd: string) {
   const agentDir = options?.agentDir ?? join(homedir(), ".agents");
   const includeDefaults = options?.includeDefaults ?? true;
@@ -130,7 +126,7 @@ export class Orchestrator {
     this.runner = new SubAgentRunner({
       memory: this.memory,
       memorySettings: config.memory,
-      sandbox: config.sandbox,
+      cwd: config.cwd ?? process.cwd(),
       interrupts: this.interrupts,
       guardrail: this.guardrail,
     });
@@ -169,7 +165,7 @@ export class Orchestrator {
     this.skillsLoaded = true;
 
     const { skills: discovered } = loadSkills(
-      buildSkillDiscoveryOptions(this.config.skillDiscovery, getSandboxCwd(this.config.sandbox)),
+      buildSkillDiscoveryOptions(this.config.skillDiscovery, this.config.cwd ?? process.cwd()),
     );
     // Merge: explicit skills take priority (by name)
     const existingNames = new Set(this.skills.map((s) => s.name));
@@ -482,10 +478,10 @@ export class Orchestrator {
           - Reading and analyzing source code
           - Generating a plan or design document
           - Searching for information
-          - Writing code to local files in the sandbox
+          - Writing code to local files in the working directory
           - Running tests (read-only verification)
 
-          **effectful** — Has side effects on external systems. The task modifies state outside the sandbox. Examples:
+          **effectful** — Has side effects on external systems. The task modifies state outside the working directory. Examples:
           - Updating a CRM record
           - Sending an email
           - Deploying to production

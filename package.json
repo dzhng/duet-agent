@@ -1,15 +1,14 @@
 {
   "name": "duet-agent",
   "version": "0.1.0",
-  "description": "An opinionated full-stack agent harness with native memories, sandboxes, interrupts, and multi-agent orchestration",
+  "description": "An opinionated full-stack agent harness with native memories, interrupts, and multi-agent orchestration",
   "keywords": [
     "agent",
     "ai",
     "llm",
     "memory",
     "multi-agent",
-    "orchestrator",
-    "sandbox"
+    "orchestrator"
   ],
   "license": "Apache-2.0",
   "repository": {

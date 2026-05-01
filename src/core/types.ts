@@ -1,10 +1,9 @@
 /**
  * Core types for duet-agent.
  *
- * The key architectural insight: memories, sandboxes, and interrupts are not
- * optional modules — they're woven into every agent turn. An agent without
- * memory is stateless. An agent without a sandbox can't act. An agent that
- * can't be interrupted can't collaborate.
+ * The key architectural insight: memories and interrupts are not optional
+ * modules — they're woven into every agent turn. An agent without memory is
+ * stateless. An agent that can't be interrupted can't collaborate.
  */
 
 import type { Model } from "@mariozechner/pi-ai";
@@ -170,47 +169,6 @@ export type MemoryStoreEventHandler = (event: MemoryStoreEvent) => void;
 export interface MemoryPersistenceModule {
   load?(store: MemoryStore): void | Promise<void>;
   subscribe?(store: MemoryStore): void | (() => void);
-}
-
-// ---------------------------------------------------------------------------
-// Sandbox (native — not a plugin)
-// ---------------------------------------------------------------------------
-
-/** Result of a sandbox command execution. */
-export interface ExecResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-  /** Wall-clock duration in ms. */
-  durationMs: number;
-  /** Whether the command was killed (timeout or interrupt). */
-  killed: boolean;
-}
-
-export interface SandboxOptions {
-  /** Working directory inside the sandbox. */
-  cwd?: string;
-  /** Environment variables. */
-  env?: Record<string, string>;
-  /** Timeout in ms. 0 = no timeout. */
-  timeoutMs?: number;
-  /** If true, stream stdout/stderr to the interrupt bus as they arrive. */
-  stream?: boolean;
-}
-
-export interface Sandbox {
-  /** Execute a bash command. This is the only execution primitive. */
-  exec(command: string, options?: SandboxOptions): Promise<ExecResult>;
-  /** Read a file from the sandbox filesystem. */
-  readFile(path: string): Promise<string>;
-  /** Write a file to the sandbox filesystem. */
-  writeFile(path: string, content: string): Promise<void>;
-  /** List files matching a glob. */
-  glob(pattern: string, cwd?: string): Promise<string[]>;
-  /** Check if a path exists. */
-  exists(path: string): Promise<boolean>;
-  /** Tear down the sandbox. */
-  destroy(): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +355,7 @@ export interface SubAgentSpec {
   instructions: string;
   /** Which model to use. */
   model: Model<any>;
-  /** Which tools this agent is allowed to use (subset of sandbox + memory). */
+  /** Which pi coding tools this agent is allowed to use. */
   allowedActions: string[];
   /** Max turns before the agent must yield. */
   maxTurns: number;
@@ -450,8 +408,8 @@ export interface DuetAgentConfig {
   memory?: Partial<ObservationalMemorySettings>;
   /** Optional persistence/sync modules that subscribe to MemoryStore events. */
   memoryPersistence?: MemoryPersistenceModule[];
-  /** Sandbox implementation. */
-  sandbox: Sandbox;
+  /** Working directory for pi coding tools and project skill discovery. */
+  cwd?: string;
   /** Communication layer. */
   comm: CommLayer;
   /** Additional guardrail policies layered on top of the harness defaults. */

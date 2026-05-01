@@ -14,7 +14,6 @@ import { getModel } from "@mariozechner/pi-ai";
 import EventEmitter from "eventemitter3";
 import {
   Orchestrator,
-  LocalSandbox,
   type CommLayer,
   type CommMessage,
   type AgentStatus,
@@ -110,7 +109,7 @@ async function main() {
   const config: DuetAgentConfig = {
     orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
     defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
-    sandbox: new LocalSandbox(process.cwd()),
+    cwd: process.cwd(),
     comm, // ← The only thing that changes
   };
 

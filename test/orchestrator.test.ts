@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe("Orchestrator skills", () => {
-  testIfDocker("discovers project skills from the sandbox cwd", async () => {
+  testIfDocker("discovers project skills from the configured cwd", async () => {
     app = createTestOrchestrator();
     const skillPath = await app.addProjectSkill({
       name: "code-review",
@@ -32,7 +32,7 @@ describe("Orchestrator skills", () => {
     });
   });
 
-  testIfDocker("discovers global skills from the sandboxed home directory", async () => {
+  testIfDocker("discovers global skills from the home directory", async () => {
     app = createTestOrchestrator();
     const skillPath = await app.addGlobalSkill({
       name: "release-notes",
@@ -46,5 +46,20 @@ describe("Orchestrator skills", () => {
       description: "Draft concise release notes from completed work.",
       filePath: skillPath,
     });
+  });
+
+  testIfDocker("parses block scalar skill descriptions", async () => {
+    app = createTestOrchestrator();
+    await app.addProjectSkill({
+      name: "browser-qa",
+      description: "|\n  Fast headless browser for QA testing.\n  Use when checking UI flows.",
+      body: "# Browser QA\n\nRun quick browser checks.",
+    });
+
+    const skills = await app.orchestrator.getSkills();
+
+    expect(skills.map((skill) => skill.description)).toEqual([
+      "Fast headless browser for QA testing.\nUse when checking UI flows.\n",
+    ]);
   });
 });

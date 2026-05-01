@@ -9,9 +9,8 @@
  *   echo "fix the bug in server.ts" | duet-agent
  */
 
-import { getModel, type Model } from "@mariozechner/pi-ai";
+import { getModel } from "@mariozechner/pi-ai";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
-import { LocalSandbox } from "./sandbox/local.js";
 import { StdioComm } from "./comm/stdio.js";
 import type { DuetAgentConfig } from "./core/types.js";
 
@@ -19,8 +18,8 @@ async function main() {
   const args = process.argv.slice(2);
 
   // Parse flags
-  let orchestratorModelName = "claude-opus-4-6";
-  let subAgentModelName = "claude-sonnet-4-6";
+  let orchestratorModelName = "anthropic:claude-opus-4-6";
+  let subAgentModelName = "anthropic:claude-sonnet-4-6";
   let workDir = process.cwd();
   const goalParts: string[] = [];
 
@@ -63,15 +62,26 @@ async function main() {
     process.exit(1);
   }
 
-  // Resolve models
-  const orchestratorModel = resolveModel(orchestratorModelName);
-  const subAgentModel = resolveModel(subAgentModelName);
+  const orchestratorProviderSeparator = orchestratorModelName.indexOf(":");
+  const subAgentProviderSeparator = subAgentModelName.indexOf(":");
+  if (orchestratorProviderSeparator <= 0 || subAgentProviderSeparator <= 0) {
+    throw new Error("Models must use provider:modelId syntax");
+  }
+
+  const orchestratorModel = getModel(
+    orchestratorModelName.slice(0, orchestratorProviderSeparator) as any,
+    orchestratorModelName.slice(orchestratorProviderSeparator + 1) as any,
+  );
+  const subAgentModel = getModel(
+    subAgentModelName.slice(0, subAgentProviderSeparator) as any,
+    subAgentModelName.slice(subAgentProviderSeparator + 1) as any,
+  );
 
   // Build config
   const config: DuetAgentConfig = {
     orchestratorModel,
     defaultSubAgentModel: subAgentModel,
-    sandbox: new LocalSandbox(workDir),
+    cwd: workDir,
     comm: new StdioComm(),
     maxConcurrency: 3,
     onTransition: (t) => {
@@ -95,26 +105,6 @@ async function main() {
   }
 }
 
-function resolveModel(name: string): Model<any> {
-  const providerSeparator = name.indexOf(":");
-  if (providerSeparator > 0) {
-    const provider = name.slice(0, providerSeparator);
-    const modelId = name.slice(providerSeparator + 1);
-    return getModel(provider as any, modelId as any);
-  }
-
-  // Anthropic models
-  if (name.startsWith("claude-")) {
-    return getModel("anthropic", name as any);
-  }
-  // OpenAI models
-  if (name.startsWith("gpt-") || name.startsWith("o1") || name.startsWith("o3")) {
-    return getModel("openai", name as any);
-  }
-  // Default: try anthropic
-  return getModel("anthropic", name as any);
-}
-
 function printHelp() {
   console.log(`
 duet-agent — An opinionated full-stack agent harness
@@ -124,19 +114,17 @@ USAGE
   echo "goal" | duet-agent
 
 OPTIONS
-  -m, --model <name>       Orchestrator model (default: claude-opus-4-6)
-  --sub-model <name>       Sub-agent model (default: claude-sonnet-4-6)
+  -m, --model <name>       Orchestrator model (default: anthropic:claude-opus-4-6)
+  --sub-model <name>       Sub-agent model (default: anthropic:claude-sonnet-4-6)
   -w, --workdir <path>     Working directory (default: cwd)
   -h, --help               Show this help
 
 MODELS
-  Anthropic: claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5
-  OpenAI: gpt-5.4, gpt-4o, o3-mini
-  Provider syntax: vercel-ai-gateway:anthropic/claude-opus-4.6
+  Use provider:modelId syntax, e.g. anthropic:claude-opus-4-6
 
 EXAMPLES
   duet-agent "build a REST API with Express and TypeScript"
-  duet-agent -m gpt-5.4 "analyze the performance of our test suite"
+  duet-agent -m openai:gpt-5.4 "analyze the performance of our test suite"
   duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 --sub-model vercel-ai-gateway:anthropic/claude-sonnet-4.6 "refactor the auth module"
   duet-agent --workdir ./my-project "refactor the auth module"
 `);

@@ -5,7 +5,7 @@
  */
 
 import { getModel } from "@mariozechner/pi-ai";
-import { Orchestrator, LocalSandbox, StdioComm, type DuetAgentConfig } from "duet-agent";
+import { Orchestrator, StdioComm, type DuetAgentConfig } from "duet-agent";
 
 async function main() {
   const config: DuetAgentConfig = {
@@ -15,8 +15,8 @@ async function main() {
     // Cheaper/faster model for sub-agents — they execute, not plan
     defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
 
-    // Sandbox = bash. That's it. No MCP, no custom protocols.
-    sandbox: new LocalSandbox(process.cwd()),
+    // Pi coding tools run from this working directory.
+    cwd: process.cwd(),
 
     // Comm layer is decoupled — swap this for voice, video, Slack, etc.
     comm: new StdioComm(),
@@ -25,7 +25,7 @@ async function main() {
     maxConcurrency: 3,
 
     // Get notified on state transitions
-    onTransition: (transition, state) => {
+    onTransition: (transition) => {
       console.error(`[${transition.fromPhase} → ${transition.toPhase}] ${transition.trigger}`);
     },
 

@@ -1,14 +1,14 @@
 # duet-agent
 
-An opinionated, full-stack agent harness. Native memories. Native sandboxes. Native interrupts. Multi-agent by default.
+An opinionated, full-stack agent harness. Native memories. Native interrupts. Multi-agent by default.
 
 **No MCP. Everything is files and CLI.**
 
 ## Why another agent framework?
 
-Existing agent harnesses treat tools, memories, and sandboxes as pluggable modules. This makes them flexible but fundamentally disconnected — memory is an afterthought, sandboxes are optional, and interrupts are hacked in.
+Existing agent harnesses treat tools and memories as pluggable modules. This makes them flexible but fundamentally disconnected — memory is an afterthought and interrupts are hacked in.
 
-duet-agent takes the opposite approach: **memories, sandboxes, and interrupts are woven into the core architecture.** An agent without memory is stateless. An agent without a sandbox can't act. An agent that can't be interrupted can't collaborate.
+duet-agent takes the opposite approach: **memories and interrupts are woven into the core architecture.** An agent without memory is stateless. An agent that can't be interrupted can't collaborate.
 
 ## Architecture
 
@@ -34,10 +34,8 @@ duet-agent takes the opposite approach: **memories, sandboxes, and interrupts ar
      │          │          │          │
 ┌────▼──────────▼──────────▼──────────▼───────────────────┐
 │                    Shared Infrastructure                  │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
-│  │  Memory   │  │ Sandbox  │  │Interrupts│  │Guardrails│ │
-│  │(observed)│  │ (bash)   │  │(user+env)│  │(optional)│ │
-│  └──────────┘  └──────────┘  └──────────┘  └─────────┘ │
+│        Memory (observed) │ Interrupts │ Guardrails       │
+│        pi coding tools run in the configured cwd          │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -45,13 +43,13 @@ duet-agent takes the opposite approach: **memories, sandboxes, and interrupts ar
 
 ### Native Memory
 
-Memory is first-class, but the harness itself has **zero persistence logic**. The default `MemoryStore` is in-memory and emits events for every raw-message, observation, and buffer update. Persistence is intentionally built outside the harness: subscribe to memory events and write them wherever you want, or hydrate a store with initial state before passing it to the orchestrator.
+Memory is first-class, but the harness itself has **zero persistence logic**. The default `MemoryStore` is in-memory and emits events for raw-message and observation changes. Persistence is intentionally built outside the harness: subscribe to memory events and write them wherever you want, or pass saved state back to `Orchestrator.run()`.
 
 The memory model follows observational memory: raw messages accumulate, an observer compresses them into text observations, and a reflector condenses observations when they grow too large. Observations are scoped as `session` or `resource`; both can be persisted by external modules.
 
-### Native Sandboxes
+### Pi Coding Tools
 
-Every action goes through bash. No MCP, no custom protocols — just `exec("command")`, `readFile`, `writeFile`. The sandbox interface is simple enough to swap between local execution, Docker, Firecracker, or cloud sandboxes without changing agent code.
+Sub-agents use the default tools from `@mariozechner/pi-coding-agent`: read, bash, edit, and write. The harness supplies a working directory and filters the allowed tool names; it does not wrap those tools in a second sandbox abstraction.
 
 ### Native Interrupts
 
@@ -77,15 +75,20 @@ npm install duet-agent
 
 ## Development
 
-This repo uses Bun for package management and Docker for functional tests.
+This repo uses Bun for package management, Husky for pre-commit checks, and Docker for functional tests.
 
 ```bash
 bun install
 bun run setup  # install/start Docker on macOS or Linux if needed
+bun run check-types
+bun run lint
+bun run eval   # runs live evals in evals/*.eval.ts
 bun run test   # runs the test suite inside Docker
 ```
 
 Raw `bun test` skips Docker-only functional tests so they do not create files on the host machine.
+
+The pre-commit hook runs `format`, `check-types`, and `lint`.
 
 ## Quick Start
 
@@ -99,19 +102,23 @@ export ANTHROPIC_API_KEY=sk-...
 npx duet-agent "build a REST API with Express"
 
 # With options
-npx duet-agent -m claude-opus-4-6 --sub-model claude-sonnet-4-6 "refactor the auth module"
+npx duet-agent -m anthropic:claude-opus-4-6 --sub-model anthropic:claude-sonnet-4-6 "refactor the auth module"
+
+# Through Vercel AI Gateway
+export AI_GATEWAY_API_KEY=...
+npx duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 "review this repo"
 ```
 
 ### Programmatic
 
 ```typescript
 import { getModel } from "@mariozechner/pi-ai";
-import { Orchestrator, LocalSandbox, StdioComm } from "duet-agent";
+import { Orchestrator, StdioComm } from "duet-agent";
 
 const orchestrator = new Orchestrator({
   orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
   defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
-  sandbox: new LocalSandbox(process.cwd()),
+  cwd: process.cwd(),
   comm: new StdioComm(),
   maxConcurrency: 3,
 });
@@ -141,12 +148,28 @@ const persistence: MemoryPersistenceModule = {
 
 Persistence modules hydrate the internal store before a run and subscribe to events for future writes. The harness should not know whether state came from a file, database, cache, or test fixture.
 
+You can also resume directly from saved state:
+
+```typescript
+const state = await orchestrator.run("Continue the previous goal", {
+  state: savedSessionState,
+  memory: savedMemorySnapshot,
+  resume: "auto",
+});
+```
+
+Resume continues the orchestration state machine, not an in-flight model/tool call. Any `in_progress` task is retried from `pending`.
+
 Observational memory is enabled by default with conservative long-context thresholds:
 
 - Raw messages are observed around `30_000` tokens.
 - Observation logs are reflected around `40_000` tokens.
 - Raw-tail retention uses `bufferActivation` to keep recent unobserved messages after observation activation.
 - Observation context is injected as reminder messages; replacing raw context with observations/reflections is the compaction path.
+
+## Skills
+
+Skills are loaded from `<cwd>/.agents/skills` and `~/.agents/skills` by default, using `@mariozechner/pi-coding-agent`'s skill loader. `getSkills()` returns the discovered skills, including YAML frontmatter descriptions such as block scalars.
 
 ## Custom Communication Layer
 
@@ -206,7 +229,7 @@ const orchestrator = new Orchestrator({
 2. **Runtime state over persistence.** The harness owns in-memory state and emits events. Persistence lives in external modules or initial-state hydration.
 3. **Dynamic over static.** Sub-agents are defined at runtime by the orchestrator, not pre-built classes.
 4. **Decoupled over integrated.** Agent logic doesn't know how it talks to users. Swap the comm layer freely.
-5. **Simple over flexible.** One sandbox primitive (bash). One default memory store. One interrupt bus. Constraints breed creativity.
+5. **Simple over flexible.** Default pi coding tools. One default memory store. One interrupt bus. Constraints breed creativity.
 
 ## License
 
