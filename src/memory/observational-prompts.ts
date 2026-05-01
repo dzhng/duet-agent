@@ -130,7 +130,10 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
   `;
 }
 
-export function buildObserverSystemPrompt(instruction?: string, includeThreadTitle = false): string {
+export function buildObserverSystemPrompt(
+  instruction?: string,
+  includeThreadTitle = false,
+): string {
   return dedent`
     You are the memory consciousness of an AI assistant. Your observations will be the ONLY information the assistant has about past interactions with this user.
 
@@ -164,7 +167,7 @@ export function buildObserverSystemPrompt(instruction?: string, includeThreadTit
 export function buildObserverPrompt(
   messages: RawMemoryMessage[],
   existingObservations: string,
-  now = new Date()
+  now = new Date(),
 ): string {
   const previous = existingObservations.trim()
     ? dedent`

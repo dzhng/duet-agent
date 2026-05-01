@@ -58,14 +58,19 @@ export function createTestOrchestrator(): TestOrchestratorApp {
   return {
     orchestrator,
     addProjectSkill: (input) => writeSkill(join(root, ".agents", "skills"), input, createdPaths),
-    addGlobalSkill: (input) => writeSkill(join(homedir(), ".agents", "skills"), input, createdPaths),
+    addGlobalSkill: (input) =>
+      writeSkill(join(homedir(), ".agents", "skills"), input, createdPaths),
     cleanup: async () => {
       await Promise.all(createdPaths.map((path) => rm(path, { recursive: true, force: true })));
     },
   };
 }
 
-async function writeSkill(root: string, input: TestSkillInput, createdPaths: string[]): Promise<string> {
+async function writeSkill(
+  root: string,
+  input: TestSkillInput,
+  createdPaths: string[],
+): Promise<string> {
   const skillDir = join(root, input.name);
   createdPaths.push(skillDir);
   await mkdir(skillDir, { recursive: true });
@@ -78,7 +83,7 @@ description: ${input.description}
 ---
 
 ${input.body ?? `# ${input.name}`}
-`
+`,
   );
   return skillPath;
 }

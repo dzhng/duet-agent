@@ -53,26 +53,29 @@ export class SubAgentRunner {
   async run(
     spec: SubAgentSpec,
     taskContext: TaskContext,
-    _sessionState: SessionState
+    _sessionState: SessionState,
   ): Promise<TaskReport> {
     const { memory, observationalMemory, sandbox, interrupts } = this.deps;
 
     // Build context from TaskContext — NOT from raw session state
-    const depContext = taskContext.dependencyResults.length > 0
-      ? "\n\n## Results from Prerequisite Tasks\n" +
-        taskContext.dependencyResults
-          .map((d) => `### ${d.taskDescription}\n${d.summary}`)
-          .join("\n\n")
-      : "";
+    const depContext =
+      taskContext.dependencyResults.length > 0
+        ? "\n\n## Results from Prerequisite Tasks\n" +
+          taskContext.dependencyResults
+            .map((d) => `### ${d.taskDescription}\n${d.summary}`)
+            .join("\n\n")
+        : "";
 
-    const memoryContext = taskContext.relevantMemories.length > 0
-      ? "\n\n## Relevant Memories\n" +
-        taskContext.relevantMemories.map((m) => `- ${m}`).join("\n")
-      : "";
+    const memoryContext =
+      taskContext.relevantMemories.length > 0
+        ? "\n\n## Relevant Memories\n" +
+          taskContext.relevantMemories.map((m) => `- ${m}`).join("\n")
+        : "";
 
-    const skillContext = taskContext.skillInstructions.length > 0
-      ? "\n\n## Skills\n" + taskContext.skillInstructions.join("\n\n---\n\n")
-      : "";
+    const skillContext =
+      taskContext.skillInstructions.length > 0
+        ? "\n\n## Skills\n" + taskContext.skillInstructions.join("\n\n---\n\n")
+        : "";
 
     const systemPrompt = `${spec.instructions}
 

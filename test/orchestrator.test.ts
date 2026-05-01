@@ -1,6 +1,9 @@
 import { afterEach, describe, expect } from "bun:test";
 import { testIfDocker } from "./helpers/docker-only.js";
-import { createTestOrchestrator, type TestOrchestratorApp } from "./helpers/orchestrator-harness.js";
+import {
+  createTestOrchestrator,
+  type TestOrchestratorApp,
+} from "./helpers/orchestrator-harness.js";
 
 let app: TestOrchestratorApp | undefined;
 

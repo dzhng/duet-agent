@@ -23,16 +23,7 @@ import { SubAgentRunner } from "./sub-agent.js";
 import { createFirewall } from "../guardrails/firewall.js";
 import { formatSkillsForPrompt, loadSkills } from "@mariozechner/pi-coding-agent";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
-
-function assistantText(messages: AgentMessage[]): string {
-  return messages
-    .filter((message) => message.role === "assistant")
-    .flatMap((message) => message.content)
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
-}
+import { assistantText } from "../core/serializer.js";
 
 function getSandboxCwd(sandbox: unknown): string {
   return (sandbox as { rootDir?: string }).rootDir ?? process.cwd();
@@ -46,13 +37,18 @@ function buildSkillDiscoveryOptions(options: SkillDiscoveryOptions | undefined, 
     agentDir,
     includeDefaults: false,
     skillPaths: [
-      ...(includeDefaults ? [join(agentDir, "skills"), join(options?.cwd ?? cwd, ".agents", "skills")] : []),
+      ...(includeDefaults
+        ? [join(agentDir, "skills"), join(options?.cwd ?? cwd, ".agents", "skills")]
+        : []),
       ...(options?.skillPaths ?? []),
     ],
   };
 }
 
-type AgentContextTransform = (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+type AgentContextTransform = (
+  messages: AgentMessage[],
+  signal?: AbortSignal,
+) => Promise<AgentMessage[]>;
 
 function createMemoryContextTransform(options: {
   memory: MemoryStorage;
@@ -135,7 +131,7 @@ export class Orchestrator {
     this.skillsLoaded = true;
 
     const { skills: discovered } = loadSkills(
-      buildSkillDiscoveryOptions(this.config.skillDiscovery, getSandboxCwd(this.config.sandbox))
+      buildSkillDiscoveryOptions(this.config.skillDiscovery, getSandboxCwd(this.config.sandbox)),
     );
     // Merge: explicit skills take priority (by name)
     const existingNames = new Set(this.skills.map((s) => s.name));
@@ -229,20 +225,37 @@ export class Orchestrator {
     const addTaskSchema = Type.Object({
       description: Type.String({ description: "What this task accomplishes" }),
       purity: Type.Union([Type.Literal("pure"), Type.Literal("effectful")], {
-        description: "pure = no side effects (reads, analysis, code gen). effectful = writes to external systems (CRM, email, deploy, API calls that modify state)",
+        description:
+          "pure = no side effects (reads, analysis, code gen). effectful = writes to external systems (CRM, email, deploy, API calls that modify state)",
       }),
-      sideEffectDescription: Type.Optional(Type.String({
-        description: "For effectful tasks: describe what external system is affected and how (e.g., 'Updates CRM contact record', 'Sends email via SendGrid')",
-      })),
-      agentRole: Type.String({ description: "Role of the sub-agent (e.g., 'researcher', 'code-writer', 'reviewer')" }),
-      agentInstructions: Type.String({ description: "Detailed instructions for the sub-agent. If using a skill, include the skill instructions." }),
-      skillIds: Type.Optional(Type.Array(Type.String(), { description: "IDs of skills this agent should use" })),
-      allowedActions: Type.Array(Type.String(), { description: "Tools this agent can use: read, bash, edit, write, or * for all" }),
+      sideEffectDescription: Type.Optional(
+        Type.String({
+          description:
+            "For effectful tasks: describe what external system is affected and how (e.g., 'Updates CRM contact record', 'Sends email via SendGrid')",
+        }),
+      ),
+      agentRole: Type.String({
+        description: "Role of the sub-agent (e.g., 'researcher', 'code-writer', 'reviewer')",
+      }),
+      agentInstructions: Type.String({
+        description:
+          "Detailed instructions for the sub-agent. If using a skill, include the skill instructions.",
+      }),
+      skillIds: Type.Optional(
+        Type.Array(Type.String(), { description: "IDs of skills this agent should use" }),
+      ),
+      allowedActions: Type.Array(Type.String(), {
+        description: "Tools this agent can use: read, bash, edit, write, or * for all",
+      }),
       maxTurns: Type.Number({ description: "Maximum turns for this agent" }),
-      dependencies: Type.Optional(Type.Array(Type.String(), { description: "Task descriptions this depends on" })),
-      memoryAccess: Type.Optional(Type.Union([Type.Literal("all"), Type.Literal("session"), Type.Literal("none")], {
-        description: "Memory access level",
-      })),
+      dependencies: Type.Optional(
+        Type.Array(Type.String(), { description: "Task descriptions this depends on" }),
+      ),
+      memoryAccess: Type.Optional(
+        Type.Union([Type.Literal("all"), Type.Literal("session"), Type.Literal("none")], {
+          description: "Memory access level",
+        }),
+      ),
     });
 
     const setContextSchema = Type.Object({
@@ -254,7 +267,8 @@ export class Orchestrator {
       {
         name: "addTask",
         label: "Add Task",
-        description: "Add a task to the execution plan. Define the sub-agent that will execute it. IMPORTANT: classify purity correctly — pure tasks get auto-parallelized, effectful tasks run one at a time.",
+        description:
+          "Add a task to the execution plan. Define the sub-agent that will execute it. IMPORTANT: classify purity correctly — pure tasks get auto-parallelized, effectful tasks run one at a time.",
         parameters: addTaskSchema,
         execute: async (_toolCallId, params) => {
           const input = params as Static<typeof addTaskSchema>;
@@ -331,9 +345,10 @@ export class Orchestrator {
       limit: 10,
     });
 
-    const memoryContext = memories.length > 0
-      ? "\n\n## Relevant Observations\n" + memories.map((m) => `- ${m.content}`).join("\n")
-      : "";
+    const memoryContext =
+      memories.length > 0
+        ? "\n\n## Relevant Observations\n" + memories.map((m) => `- ${m.content}`).join("\n")
+        : "";
 
     const skillsContext = this.buildSkillsContext();
 
@@ -429,13 +444,11 @@ ${skillsContext}${memoryContext}`,
           t.dependencies.every((depId) => {
             const dep = state.tasks.find((d) => d.id === depId);
             return dep?.status === "completed";
-          })
+          }),
       );
 
       if (runnable.length === 0) {
-        const allDone = state.tasks.every(
-          (t) => t.status === "completed" || t.status === "failed"
-        );
+        const allDone = state.tasks.every((t) => t.status === "completed" || t.status === "failed");
         if (allDone) break;
 
         const hasInProgress = state.tasks.some((t) => t.status === "in_progress");
@@ -451,17 +464,13 @@ ${skillsContext}${memoryContext}`,
 
       // Check if any effectful task is currently in progress
       const effectfulInProgress = state.tasks.some(
-        (t) => t.purity === "effectful" && t.status === "in_progress"
+        (t) => t.purity === "effectful" && t.status === "in_progress",
       );
 
       if (pureTasks.length > 0 && !effectfulInProgress) {
         // Run pure tasks in parallel
         const batch = pureTasks.slice(0, maxConcurrency);
-        this.transition(
-          state,
-          "executing",
-          `Running ${batch.length} pure task(s) in parallel`
-        );
+        this.transition(state, "executing", `Running ${batch.length} pure task(s) in parallel`);
         await this.pushState(state, `Running ${batch.length} pure task(s) in parallel`);
         await Promise.allSettled(batch.map((task) => this.runTask(task, state)));
       } else if (effectfulTasks.length > 0 && !effectfulInProgress) {
@@ -470,12 +479,9 @@ ${skillsContext}${memoryContext}`,
         this.transition(
           state,
           "executing",
-          `Running effectful task: ${task.description} [${task.sideEffectDescription ?? "side effects"}]`
+          `Running effectful task: ${task.description} [${task.sideEffectDescription ?? "side effects"}]`,
         );
-        await this.pushState(
-          state,
-          `Running effectful task: ${task.description}`
-        );
+        await this.pushState(state, `Running effectful task: ${task.description}`);
         await this.runTask(task, state);
       } else if (effectfulInProgress) {
         await new Promise((r) => setTimeout(r, 100));
@@ -499,7 +505,7 @@ ${skillsContext}${memoryContext}`,
       "executing",
       `Starting ${task.purity} task: ${task.description}`,
       undefined,
-      task.id
+      task.id,
     );
 
     await this.comm.sendStatus({
@@ -532,15 +538,11 @@ ${skillsContext}${memoryContext}`,
       state.goal,
       state,
       skillInstructions,
-      relevantMemories
+      relevantMemories,
     );
 
     try {
-      const report: TaskReport = await this.runner.run(
-        task.agentSpec,
-        taskContext,
-        state
-      );
+      const report: TaskReport = await this.runner.run(task.agentSpec, taskContext, state);
 
       if (report.status === "completed") {
         task.status = "completed";
@@ -563,13 +565,10 @@ ${skillsContext}${memoryContext}`,
         "executing",
         `${report.status === "completed" ? "Completed" : "Failed"} ${task.purity} task: ${task.description}`,
         task.agentSpec.id,
-        task.id
+        task.id,
       );
 
-      await this.pushState(
-        state,
-        `Task ${report.status}: ${task.description}`
-      );
+      await this.pushState(state, `Task ${report.status}: ${task.description}`);
     } catch (err: any) {
       task.status = "failed";
       task.error = err.message;
@@ -578,7 +577,7 @@ ${skillsContext}${memoryContext}`,
         "executing",
         `Failed ${task.purity} task: ${task.description} — ${err.message}`,
         task.agentSpec.id,
-        task.id
+        task.id,
       );
       await this.pushState(state, `Task failed: ${task.description}`);
     }
@@ -604,8 +603,15 @@ ${completedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.result?.slice
 ${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\n")}`;
 
     const evaluationMessage = await completeSimple(this.config.orchestratorModel, {
-      systemPrompt: "You are evaluating whether a set of completed tasks achieves the user's original goal. Be concise and direct.",
-      messages: [{ role: "user", content: `Goal: ${state.goal}\n\n${summary}\n\nDid the tasks achieve the goal? Summarize what was accomplished.`, timestamp: Date.now() }],
+      systemPrompt:
+        "You are evaluating whether a set of completed tasks achieves the user's original goal. Be concise and direct.",
+      messages: [
+        {
+          role: "user",
+          content: `Goal: ${state.goal}\n\n${summary}\n\nDid the tasks achieve the goal? Summarize what was accomplished.`,
+          timestamp: Date.now(),
+        },
+      ],
     });
     const evaluation = assistantText([evaluationMessage]);
 
@@ -648,7 +654,7 @@ ${failedTasks.map((t) => `- [${t.purity}] ${t.description}: ${t.error}`).join("\
     toPhase: SessionState["phase"],
     trigger: string,
     agentId?: string,
-    taskId?: string
+    taskId?: string,
   ): void {
     const t: StateTransition = {
       timestamp: Date.now(),

@@ -11,7 +11,7 @@ export class SemanticGuardrail implements Guardrail {
 
   constructor(
     private readonly model: Model<any>,
-    private readonly policy: string
+    private readonly policy: string,
   ) {}
 
   async evaluate(context: GuardrailContext): Promise<GuardrailResult> {

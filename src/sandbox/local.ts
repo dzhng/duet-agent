@@ -18,7 +18,7 @@ const execAsync = promisify(execCb);
 export class LocalSandbox implements Sandbox {
   constructor(
     private readonly rootDir: string,
-    private readonly defaultEnv: Record<string, string> = {}
+    private readonly defaultEnv: Record<string, string> = {},
   ) {}
 
   async exec(command: string, options?: SandboxOptions): Promise<ExecResult> {
@@ -68,7 +68,7 @@ export class LocalSandbox implements Sandbox {
   async glob(pattern: string, cwd?: string): Promise<string[]> {
     const dir = cwd ?? this.rootDir;
     const { stdout } = await this.exec(
-      `find ${dir} -path '${pattern}' -type f 2>/dev/null | head -100`
+      `find ${dir} -path '${pattern}' -type f 2>/dev/null | head -100`,
     );
     return stdout.trim().split("\n").filter(Boolean);
   }

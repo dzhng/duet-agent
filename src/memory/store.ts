@@ -27,7 +27,7 @@ export class MemoryStore implements MemoryStorage {
   }
 
   async appendRawMessage(
-    input: Omit<RawMemoryMessage, "id" | "createdAt">
+    input: Omit<RawMemoryMessage, "id" | "createdAt">,
   ): Promise<RawMemoryMessage> {
     const message: RawMemoryMessage = {
       ...input,
@@ -39,9 +39,7 @@ export class MemoryStore implements MemoryStorage {
     return message;
   }
 
-  async appendObservation(
-    input: Omit<Observation, "id" | "createdAt">
-  ): Promise<Observation> {
+  async appendObservation(input: Omit<Observation, "id" | "createdAt">): Promise<Observation> {
     const observation: Observation = {
       ...input,
       id: createMemoryId(),
@@ -58,8 +56,7 @@ export class MemoryStore implements MemoryStorage {
     if (query.sessionId) {
       candidates = candidates.filter(
         (observation) =>
-          observation.sessionId === query.sessionId ||
-          observation.scope === "resource"
+          observation.sessionId === query.sessionId || observation.scope === "resource",
       );
     }
     if (query.scope) {
@@ -67,20 +64,18 @@ export class MemoryStore implements MemoryStorage {
     }
     if (query.tags?.length) {
       candidates = candidates.filter((observation) =>
-        query.tags!.some((tag) => observation.tags.includes(tag))
+        query.tags!.some((tag) => observation.tags.includes(tag)),
       );
     }
     if (query.minPriority) {
       const minRank = priorityRank(query.minPriority);
       candidates = candidates.filter(
-        (observation) => priorityRank(observation.priority) >= minRank
+        (observation) => priorityRank(observation.priority) >= minRank,
       );
     }
     if (query.query) {
       const terms = tokenize(query.query);
-      candidates = candidates.sort(
-        (a, b) => textScore(b, terms) - textScore(a, terms)
-      );
+      candidates = candidates.sort((a, b) => textScore(b, terms) - textScore(a, terms));
     } else {
       candidates.sort((a, b) => b.createdAt - a.createdAt);
     }
@@ -90,9 +85,7 @@ export class MemoryStore implements MemoryStorage {
   async getSnapshot(sessionId: SessionId): Promise<ObservationalMemorySnapshot> {
     const observations = Array.from(this.observations.values())
       .filter(
-        (observation) =>
-          observation.sessionId === sessionId ||
-          observation.scope === "resource"
+        (observation) => observation.sessionId === sessionId || observation.scope === "resource",
       )
       .sort((a, b) => a.createdAt - b.createdAt);
     const messages = Array.from(this.rawMessages.values())
@@ -120,10 +113,7 @@ export class MemoryStore implements MemoryStorage {
     };
   }
 
-  async replaceRawMessages(
-    sessionId: SessionId,
-    messages: RawMemoryMessage[]
-  ): Promise<void> {
+  async replaceRawMessages(sessionId: SessionId, messages: RawMemoryMessage[]): Promise<void> {
     for (const [id, message] of this.rawMessages) {
       if (message.sessionId === sessionId) {
         this.rawMessages.delete(id);
@@ -135,10 +125,7 @@ export class MemoryStore implements MemoryStorage {
     this.emit({ type: "raw_messages_replaced", sessionId, messages });
   }
 
-  async replaceObservations(
-    sessionId: SessionId,
-    observations: Observation[]
-  ): Promise<void> {
+  async replaceObservations(sessionId: SessionId, observations: Observation[]): Promise<void> {
     for (const [id, observation] of this.observations) {
       if (observation.sessionId === sessionId && observation.scope !== "resource") {
         this.observations.delete(id);
@@ -151,7 +138,7 @@ export class MemoryStore implements MemoryStorage {
   }
 
   async appendBufferedObservation(
-    input: Omit<BufferedObservationChunk, "id" | "createdAt">
+    input: Omit<BufferedObservationChunk, "id" | "createdAt">,
   ): Promise<BufferedObservationChunk> {
     const chunk: BufferedObservationChunk = {
       ...input,
@@ -165,7 +152,7 @@ export class MemoryStore implements MemoryStorage {
 
   async replaceBufferedObservations(
     sessionId: SessionId,
-    chunks: BufferedObservationChunk[]
+    chunks: BufferedObservationChunk[],
   ): Promise<void> {
     for (const [id, chunk] of this.bufferedObservations) {
       if (chunk.sessionId === sessionId) {
@@ -181,7 +168,7 @@ export class MemoryStore implements MemoryStorage {
   render(snapshot: ObservationalMemorySnapshot): string {
     const observationLines = snapshot.observations.observations.map(formatObservation);
     const rawLines = snapshot.raw.messages.map(
-      (message) => `- ${message.role}: ${message.content}`
+      (message) => `- ${message.role}: ${message.content}`,
     );
     return [
       "## Observations",
@@ -209,14 +196,17 @@ function priorityMarker(priority: ObservationPriority): string {
 
 function formatObservation(observation: Observation): string {
   const time = observation.timeOfDay ? ` ${observation.timeOfDay}` : "";
-  const referenced = observation.referencedDate
-    ? ` [ref: ${observation.referencedDate}]`
-    : "";
+  const referenced = observation.referencedDate ? ` [ref: ${observation.referencedDate}]` : "";
   return `- ${priorityMarker(observation.priority)} ${observation.observedDate}${time}${referenced} ${observation.content}`;
 }
 
 function tokenize(text: string): Set<string> {
-  return new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean),
+  );
 }
 
 function textScore(observation: Observation, terms: Set<string>): number {

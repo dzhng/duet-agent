@@ -29,7 +29,9 @@ function parseObservationGroupAttributes(attributeString: string): Record<string
   return attributes;
 }
 
-function parseReflectionObservationGroupSections(content: string): ReflectionObservationGroupSection[] {
+function parseReflectionObservationGroupSections(
+  content: string,
+): ReflectionObservationGroupSection[] {
   const normalizedContent = content.trim();
   if (!normalizedContent || !REFLECTION_GROUP_SPLIT_PATTERN.test(normalizedContent)) {
     return [];
@@ -64,7 +66,7 @@ export function wrapInObservationGroup(
   range: string,
   id = generateAnchorId(),
   _sourceGroupIds?: string[],
-  kind?: string
+  kind?: string,
 ): string {
   const content = observations.trim();
   const kindAttr = kind ? ` kind="${kind}"` : "";
@@ -142,11 +144,14 @@ export function renderObservationGroupsForReflection(observations: string): stri
   }
 
   const groupsByContent = new Map(groups.map((group) => [group.content.trim(), group]));
-  const result = observations.replace(OBSERVATION_GROUP_PATTERN, (_match, _attrs: string, content: string) => {
-    const group = groupsByContent.get(content.trim());
-    if (!group) return content.trim();
-    return `## Group \`${group.id}\`\n_range: \`${group.range}\`_\n\n${group.content}`;
-  });
+  const result = observations.replace(
+    OBSERVATION_GROUP_PATTERN,
+    (_match, _attrs: string, content: string) => {
+      const group = groupsByContent.get(content.trim());
+      if (!group) return content.trim();
+      return `## Group \`${group.id}\`\n_range: \`${group.range}\`_\n\n${group.content}`;
+    },
+  );
 
   return result.replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -156,7 +161,10 @@ function getCanonicalGroupId(sectionHeading: string, fallbackIndex: number): str
   return match?.[1]?.trim() || `derived-group-${fallbackIndex + 1}`;
 }
 
-export function deriveObservationGroupProvenance(content: string, groups: ObservationGroup[]): ObservationGroup[] {
+export function deriveObservationGroupProvenance(
+  content: string,
+  groups: ObservationGroup[],
+): ObservationGroup[] {
   const sections = parseReflectionObservationGroupSections(content);
   if (sections.length === 0 || groups.length === 0) {
     return [];
@@ -167,7 +175,7 @@ export function deriveObservationGroupProvenance(content: string, groups: Observ
       section.body
         .split("\n")
         .map((line) => line.trim())
-        .filter(Boolean)
+        .filter(Boolean),
     );
 
     const matchingGroups = groups.filter((group) => {
@@ -179,7 +187,8 @@ export function deriveObservationGroupProvenance(content: string, groups: Observ
     });
 
     const fallbackGroup = groups[Math.min(index, groups.length - 1)];
-    const resolvedGroups = matchingGroups.length > 0 ? matchingGroups : fallbackGroup ? [fallbackGroup] : [];
+    const resolvedGroups =
+      matchingGroups.length > 0 ? matchingGroups : fallbackGroup ? [fallbackGroup] : [];
     const canonicalGroupId = getCanonicalGroupId(section.heading, index);
 
     return {
@@ -191,7 +200,10 @@ export function deriveObservationGroupProvenance(content: string, groups: Observ
   });
 }
 
-export function reconcileObservationGroupsFromReflection(content: string, sourceObservations: string): string | null {
+export function reconcileObservationGroupsFromReflection(
+  content: string,
+  sourceObservations: string,
+): string | null {
   const sourceGroups = parseObservationGroups(sourceObservations);
   if (sourceGroups.length === 0) {
     return null;
@@ -205,7 +217,9 @@ export function reconcileObservationGroupsFromReflection(content: string, source
   const derivedGroups = deriveObservationGroupProvenance(normalizedContent, sourceGroups);
   if (derivedGroups.length > 0) {
     return derivedGroups
-      .map((group) => wrapInObservationGroup(group.content, group.range, group.id, undefined, group.kind))
+      .map((group) =>
+        wrapInObservationGroup(group.content, group.range, group.id, undefined, group.kind),
+      )
       .join("\n\n");
   }
 
@@ -214,6 +228,6 @@ export function reconcileObservationGroupsFromReflection(content: string, source
     combineObservationGroupRanges(sourceGroups),
     generateAnchorId(),
     undefined,
-    "reflection"
+    "reflection",
   );
 }

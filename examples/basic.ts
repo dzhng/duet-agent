@@ -49,7 +49,9 @@ async function main() {
   };
 
   const orchestrator = new Orchestrator(config);
-  const state = await orchestrator.run("Create a simple HTTP server in Node.js that serves a JSON API with a /health endpoint");
+  const state = await orchestrator.run(
+    "Create a simple HTTP server in Node.js that serves a JSON API with a /health endpoint",
+  );
 
   console.log("\n--- Session Summary ---");
   console.log(`Goal: ${state.goal}`);

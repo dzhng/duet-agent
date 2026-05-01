@@ -106,13 +106,7 @@ npx duet-agent -m claude-opus-4-6 --sub-model claude-sonnet-4-6 "refactor the au
 
 ```typescript
 import { getModel } from "@mariozechner/pi-ai";
-import {
-  Orchestrator,
-  MemoryStore,
-  LocalSandbox,
-  StdioComm,
-  PatternGuardrail,
-} from "duet-agent";
+import { Orchestrator, MemoryStore, LocalSandbox, StdioComm, PatternGuardrail } from "duet-agent";
 
 const orchestrator = new Orchestrator({
   orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
@@ -159,10 +153,18 @@ The comm layer is an interface. Implement it to plug in any I/O surface:
 import type { CommLayer, CommMessage, AgentStatus } from "duet-agent";
 
 class SlackComm implements CommLayer {
-  async send(message: CommMessage) { /* post to Slack */ }
-  async receive() { /* wait for Slack message */ }
-  onMessage(handler) { /* subscribe to Slack events */ }
-  async sendStatus(status: AgentStatus) { /* update Slack presence */ }
+  async send(message: CommMessage) {
+    /* post to Slack */
+  }
+  async receive() {
+    /* wait for Slack message */
+  }
+  onMessage(handler) {
+    /* subscribe to Slack events */
+  }
+  async sendStatus(status: AgentStatus) {
+    /* update Slack presence */
+  }
 }
 ```
 
@@ -183,7 +185,7 @@ const patterns = new PatternGuardrail();
 // Smart: LLM-evaluated safety
 const semantic = new SemanticGuardrail(
   getModel("anthropic", "claude-haiku-4-5"),
-  "Never delete production data. Never expose secrets in output."
+  "Never delete production data. Never expose secrets in output.",
 );
 
 // Compose into a firewall

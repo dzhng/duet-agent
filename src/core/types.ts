@@ -138,7 +138,11 @@ export type MemoryStoreEvent =
   | { type: "raw_messages_replaced"; sessionId: SessionId; messages: RawMemoryMessage[] }
   | { type: "observations_replaced"; sessionId: SessionId; observations: Observation[] }
   | { type: "buffered_observation_appended"; chunk: BufferedObservationChunk }
-  | { type: "buffered_observations_replaced"; sessionId: SessionId; chunks: BufferedObservationChunk[] };
+  | {
+      type: "buffered_observations_replaced";
+      sessionId: SessionId;
+      chunks: BufferedObservationChunk[];
+    };
 
 export type MemoryStoreEventHandler = (event: MemoryStoreEvent) => void;
 
@@ -150,8 +154,13 @@ export interface MemoryStorage {
   getSnapshot(sessionId: SessionId): Promise<ObservationalMemorySnapshot>;
   replaceRawMessages(sessionId: SessionId, messages: RawMemoryMessage[]): Promise<void>;
   replaceObservations(sessionId: SessionId, observations: Observation[]): Promise<void>;
-  appendBufferedObservation(chunk: Omit<BufferedObservationChunk, "id" | "createdAt">): Promise<BufferedObservationChunk>;
-  replaceBufferedObservations(sessionId: SessionId, chunks: BufferedObservationChunk[]): Promise<void>;
+  appendBufferedObservation(
+    chunk: Omit<BufferedObservationChunk, "id" | "createdAt">,
+  ): Promise<BufferedObservationChunk>;
+  replaceBufferedObservations(
+    sessionId: SessionId,
+    chunks: BufferedObservationChunk[],
+  ): Promise<void>;
   render(snapshot: ObservationalMemorySnapshot): string;
 }
 

@@ -80,7 +80,7 @@ async function main() {
     maxConcurrency: 3,
     onTransition: (t, state) => {
       process.stderr.write(
-        `[${new Date(t.timestamp).toISOString()}] ${t.fromPhase} → ${t.toPhase}: ${t.trigger}\n`
+        `[${new Date(t.timestamp).toISOString()}] ${t.fromPhase} → ${t.toPhase}: ${t.trigger}\n`,
       );
     },
   };
@@ -91,9 +91,7 @@ async function main() {
     const state = await orchestrator.run(goal);
     const completed = state.tasks.filter((t) => t.status === "completed").length;
     const failed = state.tasks.filter((t) => t.status === "failed").length;
-    process.stderr.write(
-      `\nDone. ${completed} tasks completed, ${failed} failed.\n`
-    );
+    process.stderr.write(`\nDone. ${completed} tasks completed, ${failed} failed.\n`);
     process.exit(failed > 0 ? 1 : 0);
   } catch (err: any) {
     console.error(`Fatal: ${err.message}`);

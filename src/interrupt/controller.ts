@@ -41,10 +41,7 @@ export class InterruptController implements InterruptBus {
     return () => this.emitter.off("interrupt", handler);
   }
 
-  waitFor(
-    predicate: (interrupt: Interrupt) => boolean,
-    timeoutMs = 60_000
-  ): Promise<Interrupt> {
+  waitFor(predicate: (interrupt: Interrupt) => boolean, timeoutMs = 60_000): Promise<Interrupt> {
     return new Promise<Interrupt>((resolve, reject) => {
       const timer = setTimeout(() => {
         cleanup();

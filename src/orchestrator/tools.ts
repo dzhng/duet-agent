@@ -1,8 +1,6 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
-import type {
-  Sandbox,
-} from "../core/types.js";
+import type { Sandbox } from "../core/types.js";
 
 interface ToolDeps {
   sandbox: Sandbox;

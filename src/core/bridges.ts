@@ -35,7 +35,7 @@ export class CommOrchestratorBridge {
 
   constructor(
     private readonly comm: CommLayer,
-    private readonly interrupts: InterruptBus
+    private readonly interrupts: InterruptBus,
   ) {
     this.currentSnapshot = {
       sessionId: "",
@@ -112,20 +112,22 @@ export class CommOrchestratorBridge {
   static buildSnapshot(
     state: SessionState,
     progressDescription: string,
-    taskSummaries?: Map<string, string>
+    taskSummaries?: Map<string, string>,
   ): StateSnapshot {
     return {
       sessionId: state.sessionId,
       goal: state.goal,
       phase: state.phase,
-      tasks: state.tasks.map((t): TaskSummary => ({
-        id: t.id,
-        description: t.description,
-        status: t.status,
-        purity: t.purity,
-        resultSummary: taskSummaries?.get(t.id) ?? undefined,
-        error: t.error,
-      })),
+      tasks: state.tasks.map(
+        (t): TaskSummary => ({
+          id: t.id,
+          description: t.description,
+          status: t.status,
+          purity: t.purity,
+          resultSummary: taskSummaries?.get(t.id) ?? undefined,
+          error: t.error,
+        }),
+      ),
       progressDescription,
       timestamp: Date.now(),
     };
@@ -146,7 +148,7 @@ export function buildTaskContext(
   sessionGoal: string,
   state: SessionState,
   skillInstructions: string[],
-  relevantMemories: string[]
+  relevantMemories: string[],
 ): TaskContext {
   // Curate dependency results — only include summaries, not raw output
   const dependencyResults: DependencyResult[] = task.dependencies
