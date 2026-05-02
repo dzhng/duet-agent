@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Model } from "@mariozechner/pi-ai";
 import { Orchestrator } from "../../src/orchestrator/orchestrator.js";
-import type { AgentStatus, CommLayer, CommMessage } from "../../src/core/types.js";
+import type { AgentStatus, CommLayer, CommMessage } from "../../src/types/comm.js";
 
 export class NullComm implements CommLayer {
   sent: CommMessage[] = [];

@@ -6,8 +6,9 @@
  * never talks to comm.
  */
 
-import type { CommLayer, SessionState, Task, CommMessage, AgentStatus } from "./types.js";
-import type { InterruptBus } from "./types.js";
+import type { CommLayer, CommMessage, AgentStatus } from "../types/comm.js";
+import type { InterruptBus } from "../types/interrupts.js";
+import type { SessionState, Task } from "../types/session.js";
 import type {
   StateSnapshot,
   TaskSummary,

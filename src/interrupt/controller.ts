@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { EventEmitter } from "eventemitter3";
-import type { Interrupt, InterruptBus } from "../core/types.js";
+import type { Interrupt, InterruptBus } from "../types/interrupts.js";
 
 /**
  * The interrupt controller is the nervous system of the agent harness.

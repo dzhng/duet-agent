@@ -12,7 +12,7 @@
 import { getModel } from "@mariozechner/pi-ai";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
 import { StdioComm } from "./comm/stdio.js";
-import type { DuetAgentConfig } from "./core/types.js";
+import type { DuetAgentConfig } from "./types/config.js";
 
 async function main() {
   const args = process.argv.slice(2);

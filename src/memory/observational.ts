@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { completeSimple } from "@mariozechner/pi-ai";
 import type { Model } from "@mariozechner/pi-ai";
-import { createMemoryId } from "../core/ids.js";
+import { createMemoryId } from "../types/identity.js";
 import { assistantText } from "../core/serializer.js";
 import type { MemoryStore } from "./store.js";
 import type {
@@ -9,8 +9,8 @@ import type {
   ObservationPriority,
   ObservationalMemorySettings,
   RawMemoryMessage,
-  SessionId,
-} from "../core/types.js";
+} from "../types/memory.js";
+import type { SessionId } from "../types/identity.js";
 import {
   reconcileObservationGroupsFromReflection,
   renderObservationGroupsForReflection,

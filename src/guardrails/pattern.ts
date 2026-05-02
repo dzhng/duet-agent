@@ -3,7 +3,7 @@ import type {
   GuardrailContext,
   GuardrailResult,
   PatternGuardrailRuleConfig,
-} from "../core/types.js";
+} from "../types/guardrails.js";
 
 /**
  * Pattern-based guardrail: fast, deterministic checks using regex.

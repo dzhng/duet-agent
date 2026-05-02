@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline";
 import { EventEmitter } from "eventemitter3";
-import type { AgentStatus, CommLayer, CommMessage } from "../core/types.js";
+import type { AgentStatus, CommLayer, CommMessage } from "../types/comm.js";
 
 /**
  * Terminal-based communication layer. The simplest possible comm adapter.

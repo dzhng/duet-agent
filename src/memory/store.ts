@@ -1,6 +1,5 @@
-import { createMemoryId } from "../core/ids.js";
+import { createMemoryId, type MemoryId, type SessionId } from "../types/identity.js";
 import type {
-  MemoryId,
   MemoryStoreEvent,
   MemoryStoreEventHandler,
   Observation,
@@ -8,8 +7,7 @@ import type {
   ObservationQuery,
   ObservationalMemorySnapshot,
   RawMemoryMessage,
-  SessionId,
-} from "../core/types.js";
+} from "../types/memory.js";
 
 export class MemoryStore {
   private observations: Map<MemoryId, Observation> = new Map();

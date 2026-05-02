@@ -28,7 +28,9 @@
  *   - If an executor result needs to reach the user, orchestrator summarizes it.
  */
 
-import type { SessionState, Task, TaskId, AgentId, CommMessage, AgentStatus } from "./types.js";
+import type { CommMessage, AgentStatus } from "../types/comm.js";
+import type { AgentId, TaskId } from "../types/identity.js";
+import type { SessionState, Task } from "../types/session.js";
 
 // ---------------------------------------------------------------------------
 // State Snapshot (what comm sees — orchestrator controls what's exposed)

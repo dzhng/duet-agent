@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import { loadSkills } from "@mariozechner/pi-coding-agent";
-import type { SkillDiscoveryOptions } from "../core/types.js";
+import type { SkillDiscoveryOptions } from "../types/config.js";
 
 const SKILL_SHELL_EXPANSION_PATTERN = /!`([^`\r\n]+)`/g;
 

@@ -1,13 +1,10 @@
 import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { convertToLlm, createCodingTools } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
-import type {
-  ObservationalMemorySettings,
-  SubAgentSpec,
-  InterruptBus,
-  Guardrail,
-  SessionState,
-} from "../core/types.js";
+import type { Guardrail } from "../types/guardrails.js";
+import type { InterruptBus } from "../types/interrupts.js";
+import type { ObservationalMemorySettings } from "../types/memory.js";
+import type { SessionState, SubAgentSpec } from "../types/session.js";
 import type { TaskContext, TaskReport } from "../core/layers.js";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
 import type { MemoryStore } from "../memory/store.js";

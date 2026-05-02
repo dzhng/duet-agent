@@ -5,8 +5,14 @@
  * No MCP — everything is files and CLI.
  */
 
-export * from "./core/types.js";
-export * from "./core/ids.js";
+export * from "./types/identity.js";
+export * from "./types/memory.js";
+export * from "./types/interrupts.js";
+export * from "./types/guardrails.js";
+export * from "./types/session.js";
+export * from "./types/comm.js";
+export * from "./types/config.js";
+export * from "./types/workflow.js";
 export * from "./core/layers.js";
 export * from "./core/bridges.js";
 export * from "./core/structured-output.js";
@@ -18,7 +24,6 @@ export * from "./interrupt/controller.js";
 export * from "./orchestrator/orchestrator.js";
 export * from "./orchestrator/sub-agent.js";
 export * from "./comm/stdio.js";
-export type * from "./comm/adapter.js";
 export * from "./guardrails/semantic.js";
 export * from "./guardrails/pattern.js";
 export * from "./guardrails/firewall.js";

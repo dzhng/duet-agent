@@ -1,4 +1,4 @@
-import type { Guardrail, GuardrailContext, GuardrailResult } from "../core/types.js";
+import type { Guardrail, GuardrailContext, GuardrailResult } from "../types/guardrails.js";
 
 /**
  * Create a guardrail firewall: run multiple guardrails and fail on first block.

@@ -3,20 +3,15 @@ import { convertToLlm, formatSkillsForPrompt } from "@mariozechner/pi-coding-age
 import { completeSimple } from "@mariozechner/pi-ai";
 import dedent from "dedent";
 import { Type, type Static } from "typebox";
-import type {
-  DuetAgentConfig,
-  GuardrailConfig,
-  OrchestratorRunOptions,
-  ObservationalMemorySettings,
-  SessionState,
-  Task,
-  StateTransition,
-  TaskId,
-} from "../core/types.js";
+import type { DuetAgentConfig, OrchestratorRunOptions } from "../types/config.js";
+import type { GuardrailConfig } from "../types/guardrails.js";
+import type { ObservationalMemorySettings } from "../types/memory.js";
+import type { SessionState, Task, StateTransition } from "../types/session.js";
+import type { TaskId } from "../types/identity.js";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import type { OrchestratorToComm, TaskReport } from "../core/layers.js";
 import { CommOrchestratorBridge, buildTaskContext } from "../core/bridges.js";
-import { createSessionId, createAgentId, createTaskId } from "../core/ids.js";
+import { createAgentId, createSessionId, createTaskId } from "../types/identity.js";
 import { InterruptController } from "../interrupt/controller.js";
 import { SubAgentRunner } from "./sub-agent.js";
 import { createFirewall } from "../guardrails/firewall.js";

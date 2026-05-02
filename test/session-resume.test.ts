@@ -2,8 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { fauxAssistantMessage, registerFauxProvider } from "@mariozechner/pi-ai";
 import type { FauxProviderRegistration, Model } from "@mariozechner/pi-ai";
 import { Orchestrator } from "../src/orchestrator/orchestrator.js";
-import { createAgentId, createMemoryId, createSessionId, createTaskId } from "../src/core/ids.js";
-import type { AgentStatus, CommLayer, CommMessage, SessionState, Task } from "../src/core/types.js";
+import type { AgentStatus, CommLayer, CommMessage } from "../src/types/comm.js";
+import {
+  createAgentId,
+  createMemoryId,
+  createSessionId,
+  createTaskId,
+} from "../src/types/identity.js";
+import type { SessionState, Task } from "../src/types/session.js";
 
 class TestComm implements CommLayer {
   sent: CommMessage[] = [];

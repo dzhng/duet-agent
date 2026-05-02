@@ -1,5 +1,5 @@
 import dedent from "dedent";
-import type { RawMemoryMessage } from "../core/types.js";
+import type { RawMemoryMessage } from "../types/memory.js";
 
 export const OBSERVATION_CONTINUATION_HINT = dedent`
   Please continue naturally with the conversation so far and respond to the latest message.

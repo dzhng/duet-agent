@@ -2,7 +2,7 @@ import type { Model, Tool } from "@mariozechner/pi-ai";
 import dedent from "dedent";
 import { Type } from "typebox";
 import { generateStructuredOutput } from "../core/structured-output.js";
-import type { Guardrail, GuardrailContext, GuardrailResult } from "../core/types.js";
+import type { Guardrail, GuardrailContext, GuardrailResult } from "../types/guardrails.js";
 
 const semanticGuardrailResultSchema = Type.Object({
   allowed: Type.Boolean({ description: "Whether the action is allowed under the policy" }),
