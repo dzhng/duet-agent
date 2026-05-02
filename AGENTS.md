@@ -44,6 +44,11 @@
 - Tests for normalization, deduplication, or idempotency should assert stored values, not only collection sizes.
 - A length assertion can hide the wrong value being stored or the right value being dropped.
 
+## Keep Prompt Literals Aligned
+
+- Use `dedent` for multi-line prompts, markdown fixtures, and tool instruction strings in code.
+- Keep indentation in source readable without letting template indentation leak into the prompt or fixture content.
+
 ## Review Before Finishing
 
 - Check for stale names, stale comments, intermediary artifacts, unnecessary wrappers, and redundant guards.

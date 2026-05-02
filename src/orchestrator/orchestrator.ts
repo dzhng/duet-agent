@@ -1,7 +1,5 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { Agent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
-import { convertToLlm } from "@mariozechner/pi-coding-agent";
+import { convertToLlm, formatSkillsForPrompt } from "@mariozechner/pi-coding-agent";
 import { completeSimple } from "@mariozechner/pi-ai";
 import dedent from "dedent";
 import { Type, type Static } from "typebox";
@@ -14,7 +12,6 @@ import type {
   Task,
   StateTransition,
   TaskId,
-  SkillDiscoveryOptions,
 } from "../core/types.js";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import type { OrchestratorToComm, TaskReport } from "../core/layers.js";
@@ -25,26 +22,15 @@ import { SubAgentRunner } from "./sub-agent.js";
 import { createFirewall } from "../guardrails/firewall.js";
 import { PatternGuardrail } from "../guardrails/pattern.js";
 import { SemanticGuardrail } from "../guardrails/semantic.js";
-import { formatSkillsForPrompt, loadSkills } from "@mariozechner/pi-coding-agent";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
 import { assistantText } from "../core/serializer.js";
 import { MemoryStore } from "../memory/store.js";
-
-function buildSkillDiscoveryOptions(options: SkillDiscoveryOptions | undefined, cwd: string) {
-  const agentDir = options?.agentDir ?? join(homedir(), ".agents");
-  const includeDefaults = options?.includeDefaults ?? true;
-  return {
-    cwd: options?.cwd ?? cwd,
-    agentDir,
-    includeDefaults: false,
-    skillPaths: [
-      ...(includeDefaults
-        ? [join(agentDir, "skills"), join(options?.cwd ?? cwd, ".agents", "skills")]
-        : []),
-      ...(options?.skillPaths ?? []),
-    ],
-  };
-}
+import {
+  loadDiscoveredSkills,
+  mergeSkillsByName,
+  prepareExplicitSkills,
+  readSkillInstructions,
+} from "./skills.js";
 
 type AgentContextTransform = (
   messages: AgentMessage[],
@@ -138,7 +124,7 @@ export class Orchestrator {
 
     // Seed with explicitly provided skills
     if (config.skills) {
-      this.skills = [...config.skills];
+      this.skills = prepareExplicitSkills(config.skills);
     }
   }
 
@@ -164,16 +150,11 @@ export class Orchestrator {
     if (this.skillsLoaded) return;
     this.skillsLoaded = true;
 
-    const { skills: discovered } = loadSkills(
-      buildSkillDiscoveryOptions(this.config.skillDiscovery, this.config.cwd ?? process.cwd()),
+    const discovered = loadDiscoveredSkills(
+      this.config.skillDiscovery,
+      this.config.cwd ?? process.cwd(),
     );
-    // Merge: explicit skills take priority (by name)
-    const existingNames = new Set(this.skills.map((s) => s.name));
-    for (const s of discovered) {
-      if (!existingNames.has(s.name)) {
-        this.skills.push(s);
-      }
-    }
+    this.skills = mergeSkillsByName(this.skills, discovered);
   }
 
   /**
@@ -319,7 +300,7 @@ export class Orchestrator {
   private getSkillInstructions(skillId: string): string {
     const skill = this.skills.find((s) => s.name === skillId);
     if (!skill) return "";
-    return formatSkillsForPrompt([skill]);
+    return readSkillInstructions(skill);
   }
 
   /**

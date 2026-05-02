@@ -5,7 +5,7 @@ import type { Model } from "@mariozechner/pi-ai";
 import { Orchestrator } from "../../src/orchestrator/orchestrator.js";
 import type { AgentStatus, CommLayer, CommMessage } from "../../src/core/types.js";
 
-class NullComm implements CommLayer {
+export class NullComm implements CommLayer {
   sent: CommMessage[] = [];
   statuses: AgentStatus[] = [];
 
