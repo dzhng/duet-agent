@@ -37,6 +37,8 @@ export function createStateMachineRun(currentState: string): HarnessRun {
 export function createOutreachStateMachine(): StateMachineDefinition {
   return {
     name: "conference_outreach",
+    instructions:
+      "Use for prospecting or outreach tasks where the goal is to contact someone and wait for a reply or meeting.",
     states: [
       {
         kind: "agent",

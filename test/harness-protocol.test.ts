@@ -4,6 +4,7 @@ import {
   createOutreachStateMachine,
   createStateMachineRun,
 } from "./helpers/harness-protocol.js";
+import { judge } from "./helpers/judge.js";
 
 describe("Harness protocol scenarios", () => {
   test("runs a simple auto-classified prompt in agent mode", async () => {
@@ -15,7 +16,8 @@ describe("Harness protocol scenarios", () => {
       mode: "auto",
     });
 
-    expect(events[0]).toMatchObject({
+    expect(events[0]).toMatchObject({ type: "ready" });
+    expect(events[1]).toMatchObject({
       type: "run_started",
       run: { agent: { status: "running" } },
     });
@@ -28,30 +30,39 @@ describe("Harness protocol scenarios", () => {
     expect(terminal.run.stateMachine).toBeUndefined();
   });
 
-  test("auto-selects a state machine for a long-running lifecycle and streams UI state", async () => {
+  test("auto-selects a valid state machine for a long-running lifecycle and streams UI state", async () => {
     const { harness, events } = createHarness();
+    const prompt = "Prospect Ada until she books a meeting.";
 
     const terminal = await harness.turn({
       type: "start",
-      prompt: "Prospect Ada until she books a meeting.",
+      prompt,
       mode: "auto",
     });
 
-    expect(events[0]).toMatchObject({
+    expect(events[0]).toMatchObject({ type: "ready" });
+    expect(events[1]).toMatchObject({
       type: "run_started",
       run: {
         agent: { status: "running" },
-        stateMachine: { status: "running", currentState: "research_prospect" },
+        stateMachine: { status: "running" },
       },
     });
-    expect(events).toContainEqual({
-      type: "state_machine",
-      status: "running",
-      currentState: "research_prospect",
-    });
+    const stateMachineEvent = events.find((event) => event.type === "state_machine");
+    expect(stateMachineEvent).toMatchObject({ type: "state_machine", status: "running" });
+    expect(
+      stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
+    ).not.toBe("");
     expect(events.some((event) => event.type === "step")).toBe(true);
     expect(events.some((event) => event.type === "todos")).toBe(true);
     expect(terminal.run.stateMachine).toBeDefined();
+
+    const judgment = await judge({
+      prompt:
+        "The input should show a coherent state-machine run for the user's long-running outreach task. Do not require exact state names.",
+      value: { prompt, run: terminal.run, events },
+    });
+    expect(judgment.valid).toBe(true);
   });
 
   test("uses a steering prompt to update and continue an active state-machine run", async () => {
@@ -65,15 +76,15 @@ describe("Harness protocol scenarios", () => {
       behavior: "steer",
     });
 
-    expect(events).toContainEqual({
-      type: "state_machine",
-      status: "running",
-      currentState: "classify_reply",
-    });
+    const stateMachineEvent = events.find((event) => event.type === "state_machine");
+    expect(stateMachineEvent).toMatchObject({ type: "state_machine", status: "running" });
+    expect(
+      stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
+    ).not.toBe("");
     expect(terminal.run.agent.messages.at(-1)).toMatchObject({
       role: "user",
     });
-    expect(terminal.run.stateMachine?.currentState).toBe("classify_reply");
+    expect(terminal.run.stateMachine?.currentState).not.toBe("waiting_for_reply");
   });
 
   test("sleeps between poll attempts while waiting for an external email response", async () => {
@@ -122,21 +133,36 @@ describe("Harness protocol scenarios", () => {
   test("runs an explicit state machine when the prompt matches the definition", async () => {
     const { harness, events } = createHarness();
     const definition = createOutreachStateMachine();
+    const prompt = "Prospect Ada until she books a meeting.";
 
     const terminal = await harness.turn({
       type: "start",
-      prompt: "Prospect Ada until she books a meeting.",
+      prompt,
       mode: definition,
     });
 
-    expect(events[0]).toMatchObject({
+    expect(events[0]).toMatchObject({ type: "ready" });
+    expect(events[1]).toMatchObject({
       type: "run_started",
       run: {
         agent: { status: "running" },
-        stateMachine: { status: "running", currentState: "research_prospect" },
+        stateMachine: { status: "running" },
       },
     });
     expect(terminal.run.stateMachine).toBeDefined();
+
+    const stateMachineEvent = events.find((event) => event.type === "state_machine");
+    expect(stateMachineEvent).toMatchObject({ type: "state_machine", status: "running" });
+    expect(
+      stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
+    ).not.toBe("");
+
+    const judgment = await judge({
+      prompt:
+        "The input should show that the explicit state-machine definition was a good fit for the user's outreach task and produced a coherent state-machine run. Do not require exact state names.",
+      value: { prompt, run: terminal.run, events, definition },
+    });
+    expect(judgment.valid).toBe(true);
   });
 
   test("answers normally when an explicit state machine does not fit the prompt", async () => {
@@ -149,7 +175,8 @@ describe("Harness protocol scenarios", () => {
       mode: definition,
     });
 
-    expect(events[0]).toMatchObject({
+    expect(events[0]).toMatchObject({ type: "ready" });
+    expect(events[1]).toMatchObject({
       type: "run_started",
       run: { agent: { status: "running" } },
     });

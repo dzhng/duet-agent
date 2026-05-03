@@ -162,6 +162,13 @@ export type StateMachineRunnerDecision =
 export interface StateMachineDefinition {
   /** Human-readable label for selection in CLIs/UIs. */
   name: string;
+  /**
+   * Routing guidance for the harness agent. This explains when this definition's
+   * set of states applies to a user prompt; if the prompt does not match these
+   * instructions, the selected state can be undefined and the harness can answer
+   * normally in agent mode.
+   */
+  instructions: string;
   /** Available states the runner agent can choose from, including terminal states. */
   states: StateMachineState[];
 }

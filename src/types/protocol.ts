@@ -27,7 +27,9 @@ import type {
  * - `prompt`: send a follow-up prompt while a run exists
  * - `answer`: answer questions from the previous terminal `ask` event
  *
- * The harness emits any number of during-turn events (`step`, `todos`,
+ * The harness must emit `ready` before any other event. A harness that is not
+ * ready should not emit run, progress, or terminal events. After `ready`, the
+ * harness emits any number of during-turn events (`step`, `todos`,
  * `state_machine`, `log`). The turn ends with exactly one terminal event:
  * `complete`, `ask`, `interrupted`, or `sleep`.
  * Terminal events carry the harness-owned state needed to continue a later
@@ -40,9 +42,10 @@ import type {
  * bug." The start command omits `mode` or sets `mode: "auto"`. The harness
  * classifies the prompt as agent mode and emits:
  *
- * 1. `run_started` with `run.agent` populated
- * 2. zero or more `step`, `todos`, or `log` events
- * 3. `complete` with the final answer and updated `run.agent`
+ * 1. `ready`
+ * 2. `run_started` with `run.agent` populated
+ * 3. zero or more `step`, `todos`, or `log` events
+ * 4. `complete` with the final answer and updated `run.agent`
  *
  * This behaves like a normal agent harness. There is no state-machine UI because
  * the run is not a long-running business process.
@@ -97,14 +100,16 @@ import type {
  *
  * ## Scenario 3: Explicit State Machine Definition
  *
- * A caller can pass a full `StateMachineDefinition` as `mode`.
+ * A caller can pass a full `StateMachineDefinition` as `mode`. The definition
+ * is a set of possible states the harness may use, not a command to force every
+ * prompt into that state machine.
  *
  * If the user's prompt matches the definition, the harness runs that state
  * machine directly and emits the same state-machine events as Scenario 2.
  *
  * If the user's prompt does not fit the provided definition, the harness should
- * answer normally in agent mode. Passing a state-machine definition is a strong
- * hint, not a reason to force an unrelated prompt through the wrong process.
+ * answer normally in agent mode. Conceptually, the selected state can be
+ * `undefined`: none of the possible states fit the user's request.
  */
 
 /**
@@ -112,7 +117,7 @@ import type {
  *
  * - "agent": handle the prompt as a normal one-shot/current-run agent run.
  * - "auto": let the harness classify which mode the prompt needs.
- * - StateMachineDefinition: run this explicit state machine.
+ * - StateMachineDefinition: use this explicit set of possible states when it fits.
  */
 export type HarnessMode = "agent" | "auto" | StateMachineDefinition;
 
