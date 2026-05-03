@@ -59,6 +59,27 @@ Both users AND the environment can interrupt agents. A log file watcher, a webho
 
 The orchestrator doesn't execute tasks — it defines sub-agents dynamically and manages a session state machine. Sub-agents are not pre-built classes. The orchestrator creates them on-the-fly with custom roles, instructions, model selection, tool permissions, and memory access.
 
+### Agent-Routed State Machines
+
+duet-agent is exploring long-running agent-routed state machines for business processes like outbound sales, conference outreach, and development loops. The design goal is **not** to become a workflow engine like Temporal, Airflow, or GitHub Actions.
+
+Instead, state machines are agent-routed. A state-machine definition describes the available business states: agent states, shell-script states, wait states, and terminal states. A state-machine runner agent sees the original prompt, current state, state history, and available state definitions, then decides what should happen next.
+
+The state machine is higher level than task execution. It tracks one current business state at a time. If a state needs fan-out, parallelism, or a task-level workflow, that belongs inside an agent or script state. The agent can execute a complex workflow internally; the state machine only records the business transition before and after that state.
+
+This keeps state machines flexible enough to start in the middle. For example, a user can say: "prospect person X, I've already sent email, just wait for response." The same outreach state machine can skip research and email sending, then choose the wait-for-response state because the runner agent understands the existing context.
+
+External integrations stay simple: anything with an API or CLI is a script state or polling wait. Email, GitHub, Calendly, CRM systems, and webhooks do not need first-class engine concepts. If the state machine can tolerate a few minutes of polling delay, a bash script is enough.
+
+What this is not:
+
+- Not a deterministic DAG scheduler.
+- Not a low-level durable execution runtime.
+- Not a workflow service with queues, workers, locks, and retries as the main abstraction.
+- Not a replacement for infrastructure workflow engines when exact-once execution or strict SLAs matter.
+
+The harness should provide enough structure for an agent to make good process decisions, while leaving hard operational guarantees to external systems.
+
 ### Decoupled Communication
 
 Agent logic is completely separated from how you talk to the user. Swap the comm layer for voice (gpt-realtime), video stream analysis, Slack, WebSocket, or anything else. The orchestrator doesn't know or care.
@@ -227,9 +248,10 @@ const orchestrator = new Orchestrator({
 
 1. **Files and CLI over protocols.** No MCP, no custom APIs. If you can't do it with bash, you can't do it.
 2. **Runtime state over persistence.** The harness owns in-memory state and emits events. Persistence lives in external modules or initial-state hydration.
-3. **Dynamic over static.** Sub-agents are defined at runtime by the orchestrator, not pre-built classes.
-4. **Decoupled over integrated.** Agent logic doesn't know how it talks to users. Swap the comm layer freely.
-5. **Simple over flexible.** Default pi coding tools. One default memory store. One interrupt bus. Constraints breed creativity.
+3. **Agent-routed state machines over workflow engines.** Long-running state machines describe available business states; a runner agent decides what to do next from prompt, state, and history. Task-level workflows belong inside agent or script states.
+4. **Dynamic over static.** Sub-agents are defined at runtime by the orchestrator, not pre-built classes.
+5. **Decoupled over integrated.** Agent logic doesn't know how it talks to users. Swap the comm layer freely.
+6. **Simple over flexible.** Default pi coding tools. One default memory store. One interrupt bus. Constraints breed creativity.
 
 ## License
 

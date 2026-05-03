@@ -12,7 +12,7 @@ export * from "./types/guardrails.js";
 export * from "./types/session.js";
 export * from "./types/comm.js";
 export * from "./types/config.js";
-export * from "./types/workflow.js";
+export * from "./types/state-machine.js";
 export * from "./core/layers.js";
 export * from "./core/bridges.js";
 export * from "./core/structured-output.js";
