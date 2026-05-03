@@ -96,17 +96,25 @@ import type { HarnessTurnOptions } from "./protocol.js";
  * - cleanup/finalizer states that run after terminal external outcomes
  * - terminal states such as merged, closed, failed_review, or cancelled
  *
- * In both cases, the harness is responsible for asking the state-machine runner
- * agent what to do next, entering the selected state, recording the result, and
- * asking again. This lets the same state machine start in the middle when the user's
- * prompt says prior work already happened, such as "I've already sent email,
- * just wait for response." The harness injects the original prompt and
- * relevant history automatically when constructing agent prompts; state
- * definitions only describe their own behavior. Human input is not a separate
- * state-machine state: if the current state is an agent state and the harness
- * run is waiting_for_human, the state machine is waiting for that agent's user
- * input. Polling remains explicit because the harness owns one poll attempt and
- * emits sleep until the next attempt.
+ * In state-machine mode, the parent harness is still a normal pi agent with its
+ * normal tools. The difference is prompting and routing: it should do as much
+ * durable business-process work through the state machine as possible, while
+ * still answering simple unrelated requests directly when that is the right
+ * behavior. The parent harness dispatches the current state, records the
+ * selected state's result, asks the runner agent what state should come next,
+ * updates history, and emits protocol events.
+ *
+ * Agent states execute by running the harness in normal agent mode. The parent
+ * harness is not a separate worker pool; the selected state owns execution, and
+ * an agent state delegates that execution back to a harness agent-mode turn.
+ * This lets the same state machine start in the middle when the user's prompt
+ * says prior work already happened, such as "I've already sent email, just wait
+ * for response." The harness injects the original prompt and relevant history
+ * automatically when constructing agent prompts; state definitions only describe
+ * their own behavior. Human input is not a separate state-machine state: if the
+ * current state is an agent state and the harness run is waiting_for_human, the
+ * state machine is waiting for that agent's user input. Polling remains explicit
+ * because the harness owns one poll attempt and emits sleep until the next attempt.
  *
  * Example of templated script commands:
  *
@@ -141,14 +149,6 @@ import type { HarnessTurnOptions } from "./protocol.js";
 
 export type StateMachineAgentContextScope = "state" | "dependencies" | "state_machine";
 
-export type StateMachineRunnerDecision =
-  /** Enter one of the available state machine states. */
-  | { kind: "run_state"; state: string; reason?: string }
-  /** Execute/finalize with a terminal state. */
-  | { kind: "terminal"; state: string; reason?: string }
-  /** Stop the run because no available state can make progress. */
-  | { kind: "fail"; reason: string };
-
 /** User-authored state machine template. Runtime progress lives in StateMachineRun. */
 export interface StateMachineDefinition {
   /** Human-readable label for selection in CLIs/UIs. */
@@ -168,6 +168,8 @@ export interface StateMachineDefinition {
  * continue from this run without redoing completed work.
  */
 export interface StateMachineRun {
+  /** Current active definition. Required for resuming and dispatching currentState. */
+  definition: StateMachineDefinition;
   /** Original user request that started the state machine. */
   prompt: string;
   /** Current business state, selected by the runner agent. */
@@ -294,9 +296,9 @@ export interface StateMachineTerminalResult {
 
 export type StateMachineRunEvent =
   | { type: "run_started"; timestamp: number }
-  | { type: "runner_decided"; timestamp: number; decision: StateMachineRunnerDecision }
-  | { type: "state_started"; timestamp: number; state: string }
-  | { type: "state_completed"; timestamp: number; state: string }
+  | { type: "runner_decided"; timestamp: number; decision: unknown }
+  | { type: "state_started"; timestamp: number; state: string; effectiveState?: StateMachineState }
+  | { type: "state_completed"; timestamp: number; state: string; output?: unknown }
   | { type: "state_failed"; timestamp: number; state: string; error: string }
   | { type: "run_resumed"; timestamp: number; state: string; input?: unknown }
   | { type: "run_completed"; timestamp: number; terminal: StateMachineTerminalResult };

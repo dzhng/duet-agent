@@ -1,12 +1,67 @@
 import type { Model } from "@mariozechner/pi-ai";
-import { Harness } from "../../src/harness/harness.js";
+import {
+  Harness,
+  type AgentWorkerInput,
+  type AgentWorkerResult,
+} from "../../src/harness/harness.js";
+import type { HarnessControlResult } from "../../src/harness/tools.js";
 import type { HarnessEvent, HarnessRun } from "../../src/types/protocol.js";
 import type { StateMachineDefinition } from "../../src/types/state-machine.js";
 
 const model = {} as Model<any>;
 
-export function createHarness(): { harness: Harness; events: HarnessEvent[] } {
-  const harness = new Harness({
+export class TestHarness extends Harness {
+  readonly workerInputs: AgentWorkerInput[] = [];
+  controlResults: HarnessControlResult[] = [];
+  worker?: (
+    input: AgentWorkerInput,
+    next: () => Promise<AgentWorkerResult>,
+  ) => Promise<AgentWorkerResult>;
+
+  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    if (this.worker) {
+      return this.worker(input, () => this.runDefaultWorker(input));
+    }
+
+    return this.runDefaultWorker(input);
+  }
+
+  private async runDefaultWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    this.workerInputs.push(input);
+    const control = this.controlResults.shift() ?? { type: "none" };
+    const resultText = input.prompt.includes("capital of France")
+      ? "Paris"
+      : `Completed: ${input.prompt}`;
+    const run = {
+      ...input.run,
+      status: "completed" as const,
+      agent: {
+        status: "completed" as const,
+        messages: [
+          ...input.run.agent.messages,
+          {
+            role: "assistant" as const,
+            content: [{ type: "text" as const, text: resultText }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
+    };
+
+    return {
+      control,
+      terminal: {
+        type: "complete",
+        status: "completed",
+        result: resultText,
+        run,
+      },
+    };
+  }
+}
+
+export function createHarness(): { harness: TestHarness; events: HarnessEvent[] } {
+  const harness = new TestHarness({
     harnessModel: model,
     skillDiscovery: { includeDefaults: false },
   });
@@ -16,13 +71,16 @@ export function createHarness(): { harness: Harness; events: HarnessEvent[] } {
 }
 
 export function createStateMachineRun(currentState: string): HarnessRun {
+  const definition = createOutreachStateMachine();
   return {
     status: "running",
+    mode: "auto",
     agent: {
       status: "running",
       messages: [],
     },
     stateMachine: {
+      definition,
       prompt: "Prospect Ada until she books a meeting.",
       currentState,
       state: {},
@@ -62,6 +120,11 @@ export function createOutreachStateMachine(): StateMachineDefinition {
         kind: "agent",
         name: "classify_reply",
         prompt: "Classify the email reply and update state.",
+      },
+      {
+        kind: "agent",
+        name: "waiting_for_reply",
+        prompt: "Wait for or incorporate the prospect reply.",
       },
       {
         kind: "terminal",

@@ -45,6 +45,7 @@ export class Orchestrator {
 
     return {
       status: "completed",
+      mode: _options?.mode ?? this.config.mode ?? "auto",
       agent: {
         status: "completed",
         messages: [

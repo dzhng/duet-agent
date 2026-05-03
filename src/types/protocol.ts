@@ -112,8 +112,12 @@ import type { StateMachineDefinition, StateMachineRun } from "./state-machine.js
  * Top-level execution mode for a prompt.
  *
  * - "agent": handle the prompt as a normal one-shot/current-run agent run.
- * - "auto": let the harness classify which mode the prompt needs.
+ * - "auto": let the harness classify which mode the prompt needs. Auto runs
+ *   may create new state-machine definitions over time, even after a previous
+ *   state machine reached a terminal state.
  * - StateMachineDefinition: use this explicit set of possible states when it fits.
+ *   Explicit-definition runs are constrained to this definition; if none of its
+ *   states fit, the selected state can be undefined and the harness can answer normally.
  */
 export type HarnessMode = "agent" | "auto" | StateMachineDefinition;
 
@@ -132,6 +136,12 @@ export type HarnessRunStatus =
 export interface HarnessRun {
   /** Lifecycle of the whole harness run, regardless of agent or state-machine mode. */
   status: HarnessRunStatus;
+  /**
+   * The mode originally used to start the run. This is required on resume so
+   * "auto" runs can keep creating definitions while explicit-definition runs
+   * stay constrained to their provided state set.
+   */
+  mode: HarnessMode;
   /** The agent conversation is always present, including state-machine runs. */
   agent: AgentRun;
   /** Present when this run is executing in state-machine mode. */
