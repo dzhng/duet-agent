@@ -9,6 +9,129 @@ import type {
   StateMachineState,
 } from "../types/state-machine.js";
 
+const harnessTurnOptionsSchema = Type.Object({
+  model: Type.Optional(Type.String()),
+  thinkingLevel: Type.Optional(
+    Type.Union([
+      Type.Literal("none"),
+      Type.Literal("auto"),
+      Type.Literal("low"),
+      Type.Literal("medium"),
+      Type.Literal("high"),
+      Type.Literal("xhigh"),
+    ]),
+  ),
+});
+
+const agentOverrideSchema = Type.Partial(
+  Type.Object({
+    prompt: Type.String(),
+    contextScope: Type.Union([
+      Type.Literal("state"),
+      Type.Literal("dependencies"),
+      Type.Literal("state_machine"),
+    ]),
+    allowedSkills: Type.Array(Type.String()),
+    options: harnessTurnOptionsSchema,
+    maxTurns: Type.Number(),
+    outputSchema: Type.Record(Type.String(), Type.Any()),
+  }),
+);
+
+const scriptOverrideSchema = Type.Partial(
+  Type.Object({
+    command: Type.String(),
+    cwd: Type.String(),
+    timeoutMs: Type.Number(),
+    successCodes: Type.Array(Type.Number()),
+  }),
+);
+
+const pollAttemptSchema = Type.Union([
+  Type.Object({
+    kind: Type.Literal("script"),
+    command: Type.String(),
+    cwd: Type.Optional(Type.String()),
+    successCodes: Type.Optional(Type.Array(Type.Number())),
+  }),
+  Type.Object({
+    kind: Type.Literal("prompt"),
+    prompt: Type.String(),
+    outputSchema: Type.Optional(Type.Record(Type.String(), Type.Any())),
+  }),
+]);
+
+const pollOverrideSchema = Type.Partial(
+  Type.Object({
+    intervalMs: Type.Number(),
+    timeoutMs: Type.Number(),
+    poll: pollAttemptSchema,
+  }),
+);
+
+const stateOverrideSchema = Type.Union([
+  Type.Object({ kind: Type.Literal("agent"), state: agentOverrideSchema }),
+  Type.Object({ kind: Type.Literal("script"), state: scriptOverrideSchema }),
+  Type.Object({ kind: Type.Literal("poll"), state: pollOverrideSchema }),
+]);
+
+const baseStateSchema = {
+  name: Type.String(),
+  when: Type.Optional(Type.String()),
+};
+
+const agentStateSchema = Type.Object({
+  ...baseStateSchema,
+  kind: Type.Literal("agent"),
+  prompt: Type.String(),
+  contextScope: Type.Optional(
+    Type.Union([
+      Type.Literal("state"),
+      Type.Literal("dependencies"),
+      Type.Literal("state_machine"),
+    ]),
+  ),
+  allowedSkills: Type.Optional(Type.Array(Type.String())),
+  options: Type.Optional(harnessTurnOptionsSchema),
+  maxTurns: Type.Optional(Type.Number()),
+  outputSchema: Type.Optional(Type.Record(Type.String(), Type.Any())),
+});
+
+const scriptStateSchema = Type.Object({
+  ...baseStateSchema,
+  kind: Type.Literal("script"),
+  command: Type.String(),
+  cwd: Type.Optional(Type.String()),
+  timeoutMs: Type.Optional(Type.Number()),
+  successCodes: Type.Optional(Type.Array(Type.Number())),
+});
+
+const pollStateSchema = Type.Object({
+  ...baseStateSchema,
+  kind: Type.Literal("poll"),
+  intervalMs: Type.Number(),
+  timeoutMs: Type.Optional(Type.Number()),
+  poll: pollAttemptSchema,
+});
+
+const terminalStateSchema = Type.Object({
+  ...baseStateSchema,
+  kind: Type.Literal("terminal"),
+  status: Type.Union([
+    Type.Literal("completed"),
+    Type.Literal("failed"),
+    Type.Literal("cancelled"),
+  ]),
+  reason: Type.Optional(Type.String()),
+});
+
+const stateMachineStateSchema = Type.Union([
+  agentStateSchema,
+  scriptStateSchema,
+  pollStateSchema,
+  terminalStateSchema,
+]);
+
 export type StateMachineAgentStateOverride = Partial<
   Pick<
     StateMachineAgentState,
@@ -33,10 +156,15 @@ export interface HarnessToolsResultRef {
   current: HarnessControlResult;
 }
 
+export interface HarnessToolSet {
+  tools: AgentTool[];
+  result: HarnessToolsResultRef;
+}
+
 const stateMachineDefinitionSchema = Type.Object({
   name: Type.String(),
   prompt: Type.String(),
-  states: Type.Array(Type.Any()),
+  states: Type.Array(stateMachineStateSchema),
 });
 
 const createDefinitionSchema = Type.Object({
@@ -52,7 +180,7 @@ const selectStateSchema = Type.Object({
     kind: Type.Union([Type.Literal("run_state"), Type.Literal("terminal"), Type.Literal("fail")]),
     state: Type.Optional(Type.String()),
     reason: Type.Optional(Type.String()),
-    override: Type.Optional(Type.Any()),
+    override: Type.Optional(stateOverrideSchema),
   }),
 });
 
@@ -85,7 +213,7 @@ export function createHarnessTools(input: {
   mode: HarnessMode;
   result: HarnessToolsResultRef;
 }): AgentTool[] {
-  const tools = createDefaultHarnessTools(input.cwd);
+  const tools = [...createDefaultHarnessTools(input.cwd)];
   if (input.mode === "agent") {
     return tools;
   }
@@ -96,6 +224,14 @@ export function createHarnessTools(input: {
 
   tools.push(createSelectStateTool(input.result));
   return tools;
+}
+
+export function createHarnessToolSet(input: { cwd: string; mode: HarnessMode }): HarnessToolSet {
+  const result: HarnessToolsResultRef = { current: { type: "none" } };
+  return {
+    result,
+    tools: createHarnessTools({ ...input, result }),
+  };
 }
 
 export function applyStateOverride(

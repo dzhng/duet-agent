@@ -146,7 +146,7 @@ describe("Harness protocol scenarios", () => {
       run: {
         status: "failed",
         mode: "auto",
-        agent: { status: "failed" },
+        agent: { status: "completed" },
         stateMachine: { currentState: "send_email" },
       },
     });

@@ -1,5 +1,5 @@
 import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
-import { getEnvApiKey, getModel, streamSimple } from "@mariozechner/pi-ai";
+import { getEnvApiKey, getModel, streamSimple, type Model } from "@mariozechner/pi-ai";
 import { convertToLlm } from "@mariozechner/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -30,8 +30,10 @@ import type {
 } from "../types/state-machine.js";
 import {
   applyStateOverride,
-  createHarnessTools,
+  createDefaultHarnessTools,
+  createHarnessToolSet,
   type HarnessControlResult,
+  type HarnessToolsResultRef,
   type StateMachineRunnerDecision,
 } from "./tools.js";
 
@@ -45,6 +47,7 @@ export interface AgentWorkerInput {
   options?: HarnessTurnOptions;
   systemPrompt?: string;
   tools: AgentTool[];
+  control?: HarnessToolsResultRef;
 }
 
 export interface AgentWorkerResult {
@@ -55,6 +58,7 @@ export interface AgentWorkerResult {
 export class Harness {
   private readonly eventHandlers = new Set<HarnessEventHandler>();
   private activeAgent?: Agent;
+  private interruptedTerminal?: HarnessTerminalTurnEvent;
 
   constructor(readonly config: DuetAgentConfig) {}
 
@@ -78,16 +82,20 @@ export class Harness {
   }
 
   interrupt(command: HarnessInterruptCommand): void {
-    this.activeAgent?.abort();
-    this.activeAgent = undefined;
-    this.emit({
+    const terminal: HarnessTerminalTurnEvent = {
       type: "interrupted",
       run: {
         ...command.run,
         status: "interrupted",
         agent: { ...command.run.agent, status: "cancelled" },
       },
-    });
+    };
+    if (this.activeAgent) {
+      this.interruptedTerminal = terminal;
+    }
+    this.activeAgent?.abort();
+    this.activeAgent = undefined;
+    this.emit(terminal);
   }
 
   protected emit(event: HarnessEvent): void {
@@ -143,7 +151,7 @@ export class Harness {
       prompt: input.prompt,
       options: input.options,
       systemPrompt: this.createStateMachineSystemPrompt(input.mode),
-      tools: this.createTools(input.mode),
+      ...this.createTools(input.mode),
     });
 
     if (workerResult.control.type === "none") {
@@ -186,7 +194,7 @@ export class Harness {
       prompt,
       options,
       systemPrompt: this.createStateMachineSystemPrompt(run.mode),
-      tools: this.createTools(run.mode),
+      ...this.createTools(run.mode),
     });
 
     if (workerResult.control.type === "create_state_machine_definition") {
@@ -218,15 +226,17 @@ export class Harness {
     return workerResult.terminal;
   }
 
-  protected createTools(
-    mode: HarnessMode,
-    result?: { current: HarnessControlResult },
-  ): AgentTool[] {
-    return createHarnessTools({
-      cwd: this.config.cwd ?? process.cwd(),
-      mode,
-      result: result ?? { current: { type: "none" } },
-    });
+  protected createTools(mode: HarnessMode): {
+    tools: AgentTool[];
+    control?: HarnessToolsResultRef;
+  } {
+    const cwd = this.config.cwd ?? process.cwd();
+    if (mode === "agent") {
+      return { tools: createDefaultHarnessTools(cwd) };
+    }
+
+    const toolSet = createHarnessToolSet({ cwd, mode });
+    return { tools: toolSet.tools, control: toolSet.result };
   }
 
   protected async runAgentMode(
@@ -239,27 +249,20 @@ export class Harness {
         run,
         prompt,
         options,
-        tools: this.createTools("agent"),
+        ...this.createTools("agent"),
       })
     ).terminal;
   }
 
   protected async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
-    const controlRef = { current: { type: "none" } as HarnessControlResult };
-    const tools = input.tools.some(
-      (tool) =>
-        tool.name === "create_state_machine_definition" ||
-        tool.name === "select_state_machine_state",
-    )
-      ? this.createTools(input.run.mode, controlRef)
-      : input.tools;
+    const controlRef = input.control ?? { current: { type: "none" } as HarnessControlResult };
     const agent = new Agent({
       initialState: {
         model: this.resolveModel(input.options),
         thinkingLevel: this.resolveThinkingLevel(input.options),
         systemPrompt: input.systemPrompt ?? this.config.systemInstructions ?? "",
         messages: input.run.agent.messages,
-        tools,
+        tools: input.tools,
       },
       convertToLlm,
       streamFn: streamSimple,
@@ -270,11 +273,21 @@ export class Harness {
     const unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event));
     try {
       await agent.prompt(input.prompt);
+    } catch (error) {
+      if (!this.interruptedTerminal) {
+        throw error;
+      }
     } finally {
       unsubscribe();
       if (this.activeAgent === agent) {
         this.activeAgent = undefined;
       }
+    }
+
+    if (this.interruptedTerminal) {
+      const terminal = this.interruptedTerminal;
+      this.interruptedTerminal = undefined;
+      return { control: controlRef.current, terminal };
     }
 
     const messages = agent.state.messages;
@@ -344,9 +357,17 @@ export class Harness {
     run: HarnessRun,
     state: StateMachineAgentState,
   ): Promise<HarnessTerminalTurnEvent> {
-    const childRun = this.createInitialRun(state.prompt, "agent");
-    const childResult = await this.runAgentMode(childRun, state.prompt, state.options);
-    const updatedRun = this.recordStateCompleted(run, state.name, {
+    const childPrompt = this.createStateAgentPrompt(run, state);
+    const childRun: HarnessRun = {
+      ...run,
+      mode: "agent",
+      status: "running",
+      stateMachine: undefined,
+      agent: { ...run.agent, status: "running" },
+    };
+    const childResult = await this.runAgentMode(childRun, childPrompt, state.options);
+    const parentRun = { ...run, agent: childResult.run.agent };
+    const updatedRun = this.recordStateCompleted(parentRun, state.name, {
       result: childResult.type === "complete" ? childResult.result : undefined,
       childStatus: childResult.run.status,
     });
@@ -402,12 +423,13 @@ export class Harness {
         this.createInitialRun(state.poll.prompt, "agent"),
         state.poll.prompt,
       );
-      const output = result.type === "complete" ? { result: result.result } : {};
+      const output =
+        result.type === "complete" && result.result ? this.parseJsonObject(result.result) : {};
       if (Object.keys(output).length > 0) {
         return this.complete(
           this.recordStateCompleted(run, state.name, output),
           "completed",
-          result.type,
+          result.type === "complete" ? result.result : undefined,
         );
       }
     } else {
@@ -416,7 +438,7 @@ export class Harness {
           cwd: state.poll.cwd ?? this.config.cwd ?? process.cwd(),
           timeout: state.timeoutMs,
         });
-        const output = this.parseStructuredOutput(stdout);
+        const output = this.parseJsonObject(stdout);
         if (Object.keys(output).length > 0) {
           return this.complete(
             this.recordStateCompleted(run, state.name, output),
@@ -505,7 +527,31 @@ export class Harness {
       .join("\n\n");
   }
 
-  private resolveModel(options?: HarnessTurnOptions): HarnessRun extends never ? never : any {
+  private createStateAgentPrompt(run: HarnessRun, state: StateMachineAgentState): string {
+    const stateMachine = run.stateMachine;
+    if (!stateMachine) return state.prompt;
+
+    const context =
+      state.contextScope === "state_machine"
+        ? {
+            originalPrompt: stateMachine.prompt,
+            state: stateMachine.state,
+            history: stateMachine.history,
+            definition: stateMachine.definition,
+          }
+        : {
+            originalPrompt: stateMachine.prompt,
+            state: stateMachine.state,
+          };
+
+    return [
+      state.prompt,
+      "Use this state-machine context as the source of truth for this state:",
+      JSON.stringify(context, null, 2),
+    ].join("\n\n");
+  }
+
+  private resolveModel(options?: HarnessTurnOptions): Model<any> {
     if (!options?.model) {
       return this.config.harnessModel;
     }
@@ -513,10 +559,9 @@ export class Harness {
     if (separator === -1) {
       return this.config.harnessModel;
     }
-    return getModel(
-      options.model.slice(0, separator) as any,
-      options.model.slice(separator + 1) as any,
-    );
+    const provider = options.model.slice(0, separator) as Parameters<typeof getModel>[0];
+    const model = options.model.slice(separator + 1) as Parameters<typeof getModel>[1];
+    return getModel(provider, model);
   }
 
   private resolveThinkingLevel(options?: HarnessTurnOptions) {
@@ -596,7 +641,6 @@ export class Harness {
       run: {
         ...run,
         status,
-        agent: { ...run.agent, status },
       },
     };
   }
@@ -669,6 +713,19 @@ export class Harness {
         : { result: parsed };
     } catch {
       return { result: trimmed };
+    }
+  }
+
+  private parseJsonObject(text: string): Record<string, unknown> {
+    const trimmed = text.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed);
+      return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
     }
   }
 }
