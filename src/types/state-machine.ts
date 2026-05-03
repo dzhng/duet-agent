@@ -1,4 +1,4 @@
-import type { HarnessQuestion } from "./protocol.js";
+import type { HarnessTurnOptions } from "./protocol.js";
 
 /**
  * Durable state-machine definitions and runtime state.
@@ -102,8 +102,11 @@ import type { HarnessQuestion } from "./protocol.js";
  * prompt says prior work already happened, such as "I've already sent email,
  * just wait for response." The harness injects the original prompt and
  * relevant history automatically when constructing agent prompts; state
- * definitions only describe their own behavior. Waiting is either human input
- * or a poll state that performs one check and sleeps until the next attempt.
+ * definitions only describe their own behavior. Human input is not a separate
+ * state-machine state: if the current state is an agent state and the harness
+ * run is waiting_for_human, the state machine is waiting for that agent's user
+ * input. Polling remains explicit because the harness owns one poll attempt and
+ * emits sleep until the next attempt.
  *
  * Example of templated script commands:
  *
@@ -136,23 +139,11 @@ import type { HarnessQuestion } from "./protocol.js";
  *   }
  */
 
-export type StateMachineRunStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
-
-export type StateMachineStateStatus =
-  | "pending"
-  | "running"
-  | "waiting"
-  | "completed"
-  | "failed"
-  | "skipped";
-
 export type StateMachineAgentContextScope = "state" | "dependencies" | "state_machine";
 
 export type StateMachineRunnerDecision =
   /** Enter one of the available state machine states. */
   | { kind: "run_state"; state: string; reason?: string }
-  /** Suspend on a human input state until the user answers. */
-  | { kind: "human_input"; state: string; reason?: string }
   /** Execute/finalize with a terminal state. */
   | { kind: "terminal"; state: string; reason?: string }
   /** Stop the run because no available state can make progress. */
@@ -164,11 +155,10 @@ export interface StateMachineDefinition {
   name: string;
   /**
    * Routing guidance for the harness agent. This explains when this definition's
-   * set of states applies to a user prompt; if the prompt does not match these
-   * instructions, the selected state can be undefined and the harness can answer
-   * normally in agent mode.
+   * set of states applies; if the user's request does not match this prompt, the
+   * selected state can be undefined and the harness can answer normally in agent mode.
    */
-  instructions: string;
+  prompt: string;
   /** Available states the runner agent can choose from, including terminal states. */
   states: StateMachineState[];
 }
@@ -178,20 +168,14 @@ export interface StateMachineDefinition {
  * continue from this run without redoing completed work.
  */
 export interface StateMachineRun {
-  /** High-level lifecycle used by schedulers to find active or waiting runs. */
-  status: StateMachineRunStatus;
   /** Original user request that started the state machine. */
   prompt: string;
   /** Current business state, selected by the runner agent. */
   currentState?: string;
   /** Mutable state machine memory shared across runner decisions and state templates. */
   state: Record<string, unknown>;
-  /** Latest execution record per state; detailed attempts stay in history. */
-  states: Record<string, StateMachineStateExecution>;
   /** Append-only audit log used for debugging, replay, and persistence. */
   history: StateMachineRunEvent[];
-  /** Present only when status is waiting for human input. */
-  humanInput?: StateMachineHumanInputRequest;
   /** Present only after a run reaches a named terminal state. */
   terminal?: StateMachineTerminalResult;
   createdAt: number;
@@ -202,7 +186,6 @@ export type StateMachineState =
   | StateMachineAgentState
   | StateMachineScriptState
   | StateMachinePollState
-  | StateMachineHumanInputState
   | StateMachineTerminalState;
 
 export interface StateMachineBaseState {
@@ -216,22 +199,24 @@ export interface StateMachineBaseState {
 export interface StateMachineAgentState extends StateMachineBaseState {
   kind: "agent";
   /**
-   * Prompt/instructions for the agent. The harness renders this as a
-   * template before execution using run.state only. The original prompt and
+   * Prompt for the agent. The harness renders this as a template before
+   * execution using run.state only. The original user prompt and
    * broader history are added separately when the final agent prompt is
    * constructed.
    */
-  instructions: string;
+  prompt: string;
   /**
    * Controls how much state machine context the agent receives.
    *
-   * - "state": rendered instructions and current state.
+   * - "state": rendered prompt and current state.
    * - "dependencies": state context plus runner-selected prerequisite history.
    * - "state_machine": state context plus full state-machine definition and full state history.
    */
   contextScope?: StateMachineAgentContextScope;
   /** Optional skill allowlist injected into this agent state. Omitted means use state machine/harness defaults. */
   allowedSkills?: string[];
+  /** Per-state model/thinking overrides for this agent turn. */
+  options?: HarnessTurnOptions;
   /** Upper bound before the agent must yield control back to the harness. */
   maxTurns?: number;
   /** Optional JSON Schema used to request and validate structured output before merging it into state. */
@@ -289,13 +274,6 @@ export type StateMachinePoll =
       outputSchema?: Record<string, unknown>;
     };
 
-/** Suspends the run until a human answers the prompt. */
-export interface StateMachineHumanInputState extends StateMachineBaseState {
-  kind: "human_input";
-  /** Passed directly through the protocol as an ask event. */
-  questions: HarnessQuestion[];
-}
-
 /** Finalizes the run when reached. Terminal outcomes are just state machine states. */
 export interface StateMachineTerminalState extends StateMachineBaseState {
   kind: "terminal";
@@ -314,35 +292,11 @@ export interface StateMachineTerminalResult {
   reason?: string;
 }
 
-export interface StateMachineStateExecution {
-  state: string;
-  /** Latest status for this state. */
-  status: StateMachineStateStatus;
-  /** Number of times the harness attempted this state. */
-  attempts: number;
-  startedAt?: number;
-  completedAt?: number;
-  /** Latest failure message for observability and retry decisions. */
-  error?: string;
-}
-
-export interface StateMachineHumanInputRequest {
-  state: string;
-  /** Passed directly through the protocol as an ask event. */
-  questions: HarnessQuestion[];
-  startedAt: number;
-}
-
 export type StateMachineRunEvent =
   | { type: "run_started"; timestamp: number }
   | { type: "runner_decided"; timestamp: number; decision: StateMachineRunnerDecision }
   | { type: "state_started"; timestamp: number; state: string }
   | { type: "state_completed"; timestamp: number; state: string }
   | { type: "state_failed"; timestamp: number; state: string; error: string }
-  | {
-      type: "human_input_requested";
-      timestamp: number;
-      request: StateMachineHumanInputRequest;
-    }
   | { type: "run_resumed"; timestamp: number; state: string; input?: unknown }
   | { type: "run_completed"; timestamp: number; terminal: StateMachineTerminalResult };

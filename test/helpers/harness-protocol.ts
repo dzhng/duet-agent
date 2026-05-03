@@ -17,16 +17,15 @@ export function createHarness(): { harness: Harness; events: HarnessEvent[] } {
 
 export function createStateMachineRun(currentState: string): HarnessRun {
   return {
+    status: "running",
     agent: {
       status: "running",
       messages: [],
     },
     stateMachine: {
-      status: "running",
       prompt: "Prospect Ada until she books a meeting.",
       currentState,
       state: {},
-      states: {},
       history: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -37,13 +36,13 @@ export function createStateMachineRun(currentState: string): HarnessRun {
 export function createOutreachStateMachine(): StateMachineDefinition {
   return {
     name: "conference_outreach",
-    instructions:
+    prompt:
       "Use for prospecting or outreach tasks where the goal is to contact someone and wait for a reply or meeting.",
     states: [
       {
         kind: "agent",
         name: "research_prospect",
-        instructions: "Research the prospect and company.",
+        prompt: "Research the prospect and company.",
       },
       {
         kind: "script",
@@ -62,7 +61,7 @@ export function createOutreachStateMachine(): StateMachineDefinition {
       {
         kind: "agent",
         name: "classify_reply",
-        instructions: "Classify the email reply and update state.",
+        prompt: "Classify the email reply and update state.",
       },
       {
         kind: "terminal",

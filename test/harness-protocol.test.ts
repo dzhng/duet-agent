@@ -19,13 +19,13 @@ describe("Harness protocol scenarios", () => {
     expect(events[0]).toMatchObject({ type: "ready" });
     expect(events[1]).toMatchObject({
       type: "run_started",
-      run: { agent: { status: "running" } },
+      run: { status: "running", agent: { status: "running" } },
     });
     expect(events.some((event) => event.type === "state_machine")).toBe(false);
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
-      run: { agent: { status: "completed" } },
+      run: { status: "completed", agent: { status: "completed" } },
     });
     expect(terminal.run.stateMachine).toBeUndefined();
   });
@@ -44,12 +44,13 @@ describe("Harness protocol scenarios", () => {
     expect(events[1]).toMatchObject({
       type: "run_started",
       run: {
+        status: "running",
         agent: { status: "running" },
-        stateMachine: { status: "running" },
+        stateMachine: {},
       },
     });
     const stateMachineEvent = events.find((event) => event.type === "state_machine");
-    expect(stateMachineEvent).toMatchObject({ type: "state_machine", status: "running" });
+    expect(stateMachineEvent).toMatchObject({ type: "state_machine" });
     expect(
       stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
     ).not.toBe("");
@@ -77,7 +78,7 @@ describe("Harness protocol scenarios", () => {
     });
 
     const stateMachineEvent = events.find((event) => event.type === "state_machine");
-    expect(stateMachineEvent).toMatchObject({ type: "state_machine", status: "running" });
+    expect(stateMachineEvent).toMatchObject({ type: "state_machine" });
     expect(
       stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
     ).not.toBe("");
@@ -101,8 +102,9 @@ describe("Harness protocol scenarios", () => {
     expect(terminal).toMatchObject({
       type: "sleep",
       run: {
+        status: "sleeping",
         agent: { status: "waiting" },
-        stateMachine: { status: "waiting", currentState: "poll_email_reply" },
+        stateMachine: { currentState: "poll_email_reply" },
       },
     });
     expect(terminal.type === "sleep" ? terminal.wakeAt : 0).toBeGreaterThan(Date.now());
@@ -124,8 +126,9 @@ describe("Harness protocol scenarios", () => {
     expect(terminal).toMatchObject({
       type: "interrupted",
       run: {
+        status: "interrupted",
         agent: { status: "cancelled" },
-        stateMachine: { status: "cancelled", currentState: "send_email" },
+        stateMachine: { currentState: "send_email" },
       },
     });
   });
@@ -145,14 +148,15 @@ describe("Harness protocol scenarios", () => {
     expect(events[1]).toMatchObject({
       type: "run_started",
       run: {
+        status: "running",
         agent: { status: "running" },
-        stateMachine: { status: "running" },
+        stateMachine: {},
       },
     });
     expect(terminal.run.stateMachine).toBeDefined();
 
     const stateMachineEvent = events.find((event) => event.type === "state_machine");
-    expect(stateMachineEvent).toMatchObject({ type: "state_machine", status: "running" });
+    expect(stateMachineEvent).toMatchObject({ type: "state_machine" });
     expect(
       stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
     ).not.toBe("");
@@ -178,7 +182,7 @@ describe("Harness protocol scenarios", () => {
     expect(events[0]).toMatchObject({ type: "ready" });
     expect(events[1]).toMatchObject({
       type: "run_started",
-      run: { agent: { status: "running" } },
+      run: { status: "running", agent: { status: "running" } },
     });
     expect(terminal).toMatchObject({
       type: "complete",

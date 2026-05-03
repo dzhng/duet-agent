@@ -44,6 +44,7 @@ export class Orchestrator {
     await this.ensureSkillsLoaded();
 
     return {
+      status: "completed",
       agent: {
         status: "completed",
         messages: [

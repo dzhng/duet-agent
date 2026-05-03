@@ -1,9 +1,5 @@
 import type { AgentRun } from "./agent.js";
-import type {
-  StateMachineDefinition,
-  StateMachineRun,
-  StateMachineRunStatus,
-} from "./state-machine.js";
+import type { StateMachineDefinition, StateMachineRun } from "./state-machine.js";
 
 /**
  * Harness Protocol
@@ -60,7 +56,7 @@ import type {
  *
  * During the turn, the harness emits events that the UI can render directly:
  *
- * - `state_machine` shows the state-machine status and current state name
+ * - `state_machine` shows the current state name
  * - `step` shows textual progress, reasoning, tool calls, or system messages
  * - `todos` shows current task progress
  * - `log` shows diagnostic messages
@@ -123,8 +119,19 @@ export type HarnessMode = "agent" | "auto" | StateMachineDefinition;
 
 export type ThinkingLevel = "none" | "auto" | "low" | "medium" | "high" | "xhigh";
 
+export type HarnessTerminalStatus = "completed" | "failed" | "cancelled";
+
+export type HarnessRunStatus =
+  | "running"
+  | "waiting_for_human"
+  | "sleeping"
+  | "interrupted"
+  | HarnessTerminalStatus;
+
 /** Harness-owned state needed to continue a later turn. */
 export interface HarnessRun {
+  /** Lifecycle of the whole harness run, regardless of agent or state-machine mode. */
+  status: HarnessRunStatus;
   /** The agent conversation is always present, including state-machine runs. */
   agent: AgentRun;
   /** Present when this run is executing in state-machine mode. */
@@ -138,8 +145,6 @@ export interface HarnessRun {
  * - "follow_up": queue until the active pi agent finishes its current turn.
  */
 export type HarnessPromptBehavior = "steer" | "follow_up";
-
-export type HarnessTerminalStatus = "completed" | "failed" | "cancelled";
 
 export interface HarnessTurnOptions {
   /** Model override in provider:modelId format. */
@@ -265,7 +270,6 @@ export interface HarnessTodosEvent {
 
 export interface HarnessStateMachineEvent {
   type: "state_machine";
-  status: StateMachineRunStatus;
   /** Display name/title of the current state. */
   currentState: string;
 }
