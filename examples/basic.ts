@@ -5,34 +5,12 @@
  */
 
 import { getModel } from "@mariozechner/pi-ai";
-import { Orchestrator, StdioComm, type DuetAgentConfig } from "duet-agent";
+import { Orchestrator, type DuetAgentConfig } from "duet-agent";
 
 async function main() {
   const config: DuetAgentConfig = {
-    // Smartest model for the orchestrator — it's doing the hard thinking
     orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
-
-    // Cheaper/faster model for sub-agents — they execute, not plan
-    defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
-
-    // Pi coding tools run from this working directory.
     cwd: process.cwd(),
-
-    // Comm layer is decoupled — swap this for voice, video, Slack, etc.
-    comm: new StdioComm(),
-
-    // Run up to 3 sub-agents concurrently
-    maxConcurrency: 3,
-
-    // Get notified on state transitions
-    onTransition: (transition) => {
-      console.error(`[${transition.fromPhase} → ${transition.toPhase}] ${transition.trigger}`);
-    },
-
-    // Get notified on interrupts
-    onInterrupt: (interrupt) => {
-      console.error(`[interrupt] ${interrupt.source.kind}: ${JSON.stringify(interrupt.source)}`);
-    },
   };
 
   const orchestrator = new Orchestrator(config);
@@ -40,12 +18,12 @@ async function main() {
     "Create a simple HTTP server in Node.js that serves a JSON API with a /health endpoint",
   );
 
-  console.log("\n--- Session Summary ---");
+  console.log("\n--- Run Summary ---");
   console.log(`Goal: ${state.goal}`);
-  console.log(`Phase: ${state.phase}`);
-  console.log(`Tasks: ${state.tasks.length}`);
-  for (const task of state.tasks) {
-    console.log(`  [${task.status}] ${task.description}`);
+  console.log(`Status: ${state.status}`);
+  console.log(`Todos: ${state.todos.length}`);
+  for (const todo of state.todos) {
+    console.log(`  [${todo.status}] ${todo.content}`);
   }
 }
 

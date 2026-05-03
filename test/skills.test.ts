@@ -9,7 +9,6 @@ import { Orchestrator } from "../src/orchestrator/orchestrator.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 import {
   createTestOrchestrator,
-  NullComm,
   type TestOrchestratorApp,
 } from "./helpers/orchestrator-harness.js";
 
@@ -44,9 +43,7 @@ describe("Orchestrator skills", () => {
     );
     const orchestrator = new Orchestrator({
       orchestratorModel: {} as Model<any>,
-      defaultSubAgentModel: {} as Model<any>,
       cwd: process.cwd(),
-      comm: new NullComm(),
       skillDiscovery: { includeDefaults: false },
       skills: [
         {
@@ -84,9 +81,7 @@ describe("Orchestrator skills", () => {
     );
     const orchestrator = new Orchestrator({
       orchestratorModel: {} as Model<any>,
-      defaultSubAgentModel: {} as Model<any>,
       cwd: process.cwd(),
-      comm: new NullComm(),
       skillDiscovery: { includeDefaults: false },
       skills: [
         {

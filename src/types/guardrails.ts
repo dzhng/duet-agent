@@ -1,7 +1,7 @@
 import type { Model } from "@mariozechner/pi-ai";
 import type { AgentId } from "./identity.js";
 import type { Observation } from "./memory.js";
-import type { SessionState } from "./session.js";
+import type { OrchestratorRun } from "./protocol.js";
 
 export interface GuardrailResult {
   allowed: boolean;
@@ -31,5 +31,5 @@ export interface GuardrailContext {
   action: string;
   content: string;
   memories: Observation[];
-  sessionState: SessionState;
+  run: OrchestratorRun;
 }

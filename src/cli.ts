@@ -11,7 +11,6 @@
 
 import { getModel } from "@mariozechner/pi-ai";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
-import { StdioComm } from "./comm/stdio.js";
 import type { DuetAgentConfig } from "./types/config.js";
 
 async function main() {
@@ -19,7 +18,6 @@ async function main() {
 
   // Parse flags
   let orchestratorModelName = "anthropic:claude-opus-4-6";
-  let subAgentModelName = "anthropic:claude-sonnet-4-6";
   let workDir = process.cwd();
   const goalParts: string[] = [];
 
@@ -28,9 +26,6 @@ async function main() {
       case "--model":
       case "-m":
         orchestratorModelName = args[++i];
-        break;
-      case "--sub-model":
-        subAgentModelName = args[++i];
         break;
       case "--workdir":
       case "-w":
@@ -63,8 +58,7 @@ async function main() {
   }
 
   const orchestratorProviderSeparator = orchestratorModelName.indexOf(":");
-  const subAgentProviderSeparator = subAgentModelName.indexOf(":");
-  if (orchestratorProviderSeparator <= 0 || subAgentProviderSeparator <= 0) {
+  if (orchestratorProviderSeparator <= 0) {
     throw new Error("Models must use provider:modelId syntax");
   }
 
@@ -72,32 +66,20 @@ async function main() {
     orchestratorModelName.slice(0, orchestratorProviderSeparator) as any,
     orchestratorModelName.slice(orchestratorProviderSeparator + 1) as any,
   );
-  const subAgentModel = getModel(
-    subAgentModelName.slice(0, subAgentProviderSeparator) as any,
-    subAgentModelName.slice(subAgentProviderSeparator + 1) as any,
-  );
 
   // Build config
   const config: DuetAgentConfig = {
     orchestratorModel,
-    defaultSubAgentModel: subAgentModel,
     cwd: workDir,
-    comm: new StdioComm(),
-    maxConcurrency: 3,
-    onTransition: (t) => {
-      process.stderr.write(
-        `[${new Date(t.timestamp).toISOString()}] ${t.fromPhase} → ${t.toPhase}: ${t.trigger}\n`,
-      );
-    },
   };
 
   const orchestrator = new Orchestrator(config);
 
   try {
     const state = await orchestrator.run(goal);
-    const completed = state.tasks.filter((t) => t.status === "completed").length;
-    const failed = state.tasks.filter((t) => t.status === "failed").length;
-    process.stderr.write(`\nDone. ${completed} tasks completed, ${failed} failed.\n`);
+    const completed = state.todos.filter((t) => t.status === "completed").length;
+    const failed = state.todos.filter((t) => t.status === "failed").length;
+    process.stderr.write(`\nDone. ${completed} todos completed, ${failed} failed.\n`);
     process.exit(failed > 0 ? 1 : 0);
   } catch (err: any) {
     console.error(`Fatal: ${err.message}`);
@@ -115,7 +97,6 @@ USAGE
 
 OPTIONS
   -m, --model <name>       Orchestrator model (default: anthropic:claude-opus-4-6)
-  --sub-model <name>       Sub-agent model (default: anthropic:claude-sonnet-4-6)
   -w, --workdir <path>     Working directory (default: cwd)
   -h, --help               Show this help
 
@@ -125,7 +106,7 @@ MODELS
 EXAMPLES
   duet-agent "build a REST API with Express and TypeScript"
   duet-agent -m openai:gpt-5.4 "analyze the performance of our test suite"
-  duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 --sub-model vercel-ai-gateway:anthropic/claude-sonnet-4.6 "refactor the auth module"
+  duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 "refactor the auth module"
   duet-agent --workdir ./my-project "refactor the auth module"
 `);
 }

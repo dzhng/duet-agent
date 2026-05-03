@@ -3,28 +3,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Model } from "@mariozechner/pi-ai";
 import { Orchestrator } from "../../src/orchestrator/orchestrator.js";
-import type { AgentStatus, CommLayer, CommMessage } from "../../src/types/comm.js";
-
-export class NullComm implements CommLayer {
-  sent: CommMessage[] = [];
-  statuses: AgentStatus[] = [];
-
-  async send(message: CommMessage): Promise<void> {
-    this.sent.push(message);
-  }
-
-  async receive(): Promise<CommMessage> {
-    throw new Error("NullComm does not receive messages");
-  }
-
-  onMessage(): () => void {
-    return () => {};
-  }
-
-  async sendStatus(status: AgentStatus): Promise<void> {
-    this.statuses.push(status);
-  }
-}
 
 const unusedModel = {} as Model<any>;
 
@@ -45,9 +23,7 @@ export function createTestOrchestrator(): TestOrchestratorApp {
   const root = process.cwd();
   const orchestrator = new Orchestrator({
     orchestratorModel: unusedModel,
-    defaultSubAgentModel: unusedModel,
     cwd: root,
-    comm: new NullComm(),
   });
 
   const createdPaths: string[] = [];

@@ -1,3 +1,5 @@
+import type { OrchestratorQuestion } from "./protocol.js";
+
 /**
  * Durable state-machine definitions and runtime state.
  *
@@ -18,9 +20,8 @@
  * Case 1: conference outreach state machine
  *
  * User provides an email address. Agent/script states can enrich the prospect,
- * research the company, draft/send outreach, then the state machine can suspend
- * while a polling script checks whether the prospect has replied or whether the
- * next follow-up date has arrived.
+ * research the company, draft/send outreach, then a poll state can check whether
+ * the prospect has replied or whether the next follow-up date has arrived.
  *
  * The orchestrator should:
  *
@@ -29,14 +30,16 @@
  * 2. Enter an agent state for enrichment/research and record the output in the
  *    run history so the state machine can resume without repeating research.
  * 3. Enter a send-email script state and record the sent message details.
- * 4. The runner can choose a waiting state backed by a user-provided script. That script can
- *    call any email/calendar/CRM API or CLI and should return structured data
- *    only when there is something for the state machine to do next, such as:
+ * 4. The runner can choose a poll state. The harness runs one poll attempt,
+ *    emits a sleep event if nothing changed, and relies on the outer layer to
+ *    wake it later. A poll attempt can run a script or prompt an agent, and
+ *    should return structured data only when there is something for the state
+ *    machine to do next, such as:
  *    - prospect replied
  *    - follow-up due
  *    - meeting scheduled
  *    - outreach window expired
- * 5. When the polling script returns a reply payload, resume the run and ask an
+ * 5. When polling returns a reply payload, resume the run and ask an
  *    agent to classify it: interested, negative, ad hoc question, neutral, or
  *    unclear.
  * 6. The runner chooses the appropriate next state based on that classification:
@@ -44,7 +47,7 @@
  *    - ad hoc question -> answer question, then return to waiting
  *    - negative -> terminal state: prospect_not_interested
  *    - unclear -> ask a follow-up or wait for more context
- * 7. When the polling script returns follow-up_due, send a follow-up if the run
+ * 7. When polling returns follow-up_due, send a follow-up if the run
  *    has not exceeded the cadence limit. For example: every 4 days for one
  *    month.
  * 8. End in one of the named terminal states:
@@ -57,7 +60,7 @@
  *
  * - durable domain state
  * - agent/tool/script states whose outputs are available through state-machine history
- * - waits backed by repeatable scripts, plus explicit waits for human input
+ * - poll states, plus explicit waits for human input
  * - runner-agent decisions driven by full prompt, state, and history
  * - named terminal states richer than generic "completed" or "failed"
  *
@@ -79,8 +82,8 @@
  * 5. If fixes are requested, choose the dev-agent state again with the review
  *    feedback as input. The run history should preserve both attempts.
  * 6. When approved, execute a PR creation state and record PR number/URL.
- * 7. Enter a waiting state backed by a script. That script can use gh, git, or
- *    any other CLI/API wrapper to inspect the PR state and return:
+ * 7. Enter a poll state. Each poll attempt can use gh, git, or any other
+ *    CLI/API wrapper to inspect the PR state and return:
  *    - merged -> continue to cleanup and terminal state: merged
  *    - closed -> continue to cleanup and terminal state: closed
  * 8. Execute cleanup using the recorded worktree path.
@@ -89,7 +92,7 @@
  *
  * - a catalog of available business states
  * - retry/review loops without losing prior state history
- * - waits backed by regular polling scripts
+ * - poll states that use sleep between attempts
  * - cleanup/finalizer states that run after terminal external outcomes
  * - terminal states such as merged, closed, failed_review, or cancelled
  *
@@ -99,10 +102,8 @@
  * prompt says prior work already happened, such as "I've already sent email,
  * just wait for response." The orchestrator injects the original prompt and
  * relevant history automatically when constructing agent prompts; state
- * definitions only describe their own behavior. Waiting is intentionally simple:
- * either the user supplies input, or the orchestrator periodically runs a
- * configured script until it exits successfully / returns true / emits a
- * structured payload that satisfies the wait condition.
+ * definitions only describe their own behavior. Waiting is either human input
+ * or a poll state that performs one check and sleeps until the next attempt.
  *
  * Example of templated script commands:
  *
@@ -122,22 +123,18 @@
  *     command: "rm -rf '{{ state.worktreePath }}'"
  *   }
  *
- * A PR wait state can poll through any CLI/API wrapper without the state machine
- * engine knowing about GitHub:
+ * A PR poll state can check through any CLI/API wrapper without the state
+ * machine engine knowing about GitHub:
  *
  *   {
- *     kind: "wait",
- *     wait: {
- *       kind: "poll_script",
- *       command: "scripts/check-pr-finished.sh '{{ state.prUrl }}'",
- *       intervalMs: 300000
- *     }
+ *     kind: "poll",
+ *     poll: {
+ *       kind: "script",
+ *       command: "scripts/check-pr-finished.sh '{{ state.prUrl }}'"
+ *     },
+ *     intervalMs: 300000
  *   }
  */
-
-export type StateMachineId = string & { readonly __brand: "StateMachineId" };
-export type StateMachineRunId = string & { readonly __brand: "StateMachineRunId" };
-export type StateMachineStateId = string & { readonly __brand: "StateMachineStateId" };
 
 export type StateMachineRunStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 
@@ -153,17 +150,16 @@ export type StateMachineAgentContextScope = "state" | "dependencies" | "state_ma
 
 export type StateMachineRunnerDecision =
   /** Enter one of the available state machine states. */
-  | { kind: "run_state"; stateId: StateMachineStateId; reason?: string }
-  /** Suspend on a wait state until human input or a polling script resumes it. */
-  | { kind: "wait"; stateId: StateMachineStateId; reason?: string }
+  | { kind: "run_state"; state: string; reason?: string }
+  /** Suspend on a human input state until the user answers. */
+  | { kind: "human_input"; state: string; reason?: string }
   /** Execute/finalize with a terminal state. */
-  | { kind: "terminal"; stateId: StateMachineStateId; reason?: string }
+  | { kind: "terminal"; state: string; reason?: string }
   /** Stop the run because no available state can make progress. */
   | { kind: "fail"; reason: string };
 
 /** User-authored state machine template. Runtime progress lives in StateMachineRun. */
 export interface StateMachineDefinition {
-  id: StateMachineId;
   /** Human-readable label for selection in CLIs/UIs. */
   name: string;
   /** Explains what business/process outcome this state machine owns. */
@@ -182,22 +178,20 @@ export interface StateMachineDefinition {
  * continue from this run without redoing completed work.
  */
 export interface StateMachineRun {
-  id: StateMachineRunId;
-  stateMachineId: StateMachineId;
   /** High-level lifecycle used by schedulers to find active or waiting runs. */
   status: StateMachineRunStatus;
   /** Original user request that started the state machine. */
   prompt: string;
   /** Current business state, selected by the runner agent. */
-  currentStateId?: StateMachineStateId;
+  currentState?: string;
   /** Mutable state machine memory shared across runner decisions and state templates. */
   state: Record<string, unknown>;
   /** Latest execution record per state; detailed attempts stay in history. */
   states: Record<string, StateMachineStateExecution>;
   /** Append-only audit log used for debugging, replay, and persistence. */
   history: StateMachineRunEvent[];
-  /** Present only when status is waiting; the runner resumes after this wait completes. */
-  waiting?: StateMachineWaitState;
+  /** Present only when status is waiting for human input. */
+  humanInput?: StateMachineHumanInputRequest;
   /** Present only after a run reaches a named terminal state. */
   terminal?: StateMachineTerminalResult;
   createdAt: number;
@@ -207,13 +201,13 @@ export interface StateMachineRun {
 export type StateMachineState =
   | StateMachineAgentState
   | StateMachineScriptState
-  | StateMachineWaitStateDefinition
+  | StateMachinePollState
+  | StateMachineHumanInputState
   | StateMachineTerminalState;
 
 export interface StateMachineBaseState {
-  id: StateMachineStateId;
-  /** Short label for status output. */
-  title?: string;
+  /** Name shown in status output and used by the runner when choosing a state. */
+  name: string;
   /** Helps the runner agent understand when this state is appropriate. */
   when?: string;
 }
@@ -262,11 +256,44 @@ export interface StateMachineScriptState extends StateMachineBaseState {
   successCodes?: number[];
 }
 
-/** Suspends the run until human input arrives or a polling script succeeds. */
-export interface StateMachineWaitStateDefinition extends StateMachineBaseState {
-  kind: "wait";
-  /** Describes how the run suspends and what input wakes it. */
-  wait: StateMachineWait;
+/** Performs one external check, then either records data or sleeps until the next attempt. */
+export interface StateMachinePollState extends StateMachineBaseState {
+  kind: "poll";
+  /** How often the protocol layer should wake the harness for another attempt. */
+  intervalMs: number;
+  /** Maximum time the state machine can remain in this poll state before failing the run. */
+  timeoutMs?: number;
+  /** One polling attempt. The harness owns the polling loop and emits sleep between attempts. */
+  poll: StateMachinePoll;
+}
+
+export type StateMachinePoll =
+  | {
+      kind: "script";
+      /**
+       * Runs once per poll attempt. The command should return structured output
+       * only when something changed; otherwise the harness sleeps and tries again.
+       */
+      command: string;
+      cwd?: string;
+      /** Exit codes that mean this poll found a result. Defaults to [0]. */
+      successCodes?: number[];
+    }
+  | {
+      kind: "prompt";
+      /**
+       * Prompt used once per poll attempt when the check needs an agent to inspect
+       * an external source through available tools.
+       */
+      prompt: string;
+      outputSchema?: Record<string, unknown>;
+    };
+
+/** Suspends the run until a human answers the prompt. */
+export interface StateMachineHumanInputState extends StateMachineBaseState {
+  kind: "human_input";
+  /** Passed directly through the protocol as an ask event. */
+  questions: OrchestratorQuestion[];
 }
 
 /** Finalizes the run when reached. Terminal outcomes are just state machine states. */
@@ -278,35 +305,9 @@ export interface StateMachineTerminalState extends StateMachineBaseState {
   reason?: string;
 }
 
-export type StateMachineWait =
-  | {
-      kind: "human_input";
-      /** Message shown to the human while the run is suspended. */
-      prompt: string;
-      /** Structured human input is recorded in history and merged into state. */
-    }
-  | {
-      kind: "poll_script";
-      /**
-       * Command rerun by the scheduler until it succeeds or times out. Like
-       * script-state commands, this is rendered as a template from run.state only
-       * before each poll attempt.
-       */
-      command: string;
-      /** Minimum delay between poll attempts. */
-      intervalMs: number;
-      /** Working directory for the poll command. */
-      cwd?: string;
-      /** Maximum time the state machine can remain in this wait before failing the run. */
-      timeoutMs?: number;
-      /** Exit codes that mean the wait condition is satisfied. Defaults to [0]. */
-      successCodes?: number[];
-      /** Successful structured poll output is recorded in history and merged into state. */
-    };
-
 export interface StateMachineTerminalResult {
-  /** References the terminal state that finalized the run. */
-  stateId: StateMachineStateId;
+  /** Names the terminal state that finalized the run. */
+  state: string;
   /** Copied from the terminal state for easy querying. */
   status: StateMachineTerminalState["status"];
   /** Optional final explanation, often generated by the orchestrator. */
@@ -314,7 +315,7 @@ export interface StateMachineTerminalResult {
 }
 
 export interface StateMachineStateExecution {
-  stateId: StateMachineStateId;
+  state: string;
   /** Latest status for this state. */
   status: StateMachineStateStatus;
   /** Number of times the orchestrator attempted this state. */
@@ -325,27 +326,23 @@ export interface StateMachineStateExecution {
   error?: string;
 }
 
-export interface StateMachineWaitState {
-  stateId: StateMachineStateId;
-  /** Copy of the wait config so schedulers can wake the run without reloading the definition. */
-  wait: StateMachineWait;
+export interface StateMachineHumanInputRequest {
+  state: string;
+  /** Passed directly through the protocol as an ask event. */
+  questions: OrchestratorQuestion[];
   startedAt: number;
-  /** Scheduler hint for when the next poll attempt is allowed. */
-  nextPollAt?: number;
-  /** Last time the poll command actually ran. */
-  lastPollAt?: number;
-  /** Poll or resume attempts made while waiting. */
-  attempts: number;
-  /** Last polling error, useful for status displays and retry logic. */
-  lastError?: string;
 }
 
 export type StateMachineRunEvent =
   | { type: "run_started"; timestamp: number }
   | { type: "runner_decided"; timestamp: number; decision: StateMachineRunnerDecision }
-  | { type: "state_started"; timestamp: number; stateId: StateMachineStateId }
-  | { type: "state_completed"; timestamp: number; stateId: StateMachineStateId }
-  | { type: "state_failed"; timestamp: number; stateId: StateMachineStateId; error: string }
-  | { type: "run_waiting"; timestamp: number; stateId: StateMachineStateId; wait: StateMachineWait }
-  | { type: "run_resumed"; timestamp: number; stateId: StateMachineStateId; input?: unknown }
+  | { type: "state_started"; timestamp: number; state: string }
+  | { type: "state_completed"; timestamp: number; state: string }
+  | { type: "state_failed"; timestamp: number; state: string; error: string }
+  | {
+      type: "human_input_requested";
+      timestamp: number;
+      request: StateMachineHumanInputRequest;
+    }
+  | { type: "run_resumed"; timestamp: number; state: string; input?: unknown }
   | { type: "run_completed"; timestamp: number; terminal: StateMachineTerminalResult };

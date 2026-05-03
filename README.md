@@ -6,23 +6,19 @@ An opinionated, full-stack agent harness. Native memories. Native interrupts. Mu
 
 ## Why another agent framework?
 
-Existing agent harnesses treat tools and memories as pluggable modules. This makes them flexible but fundamentally disconnected — memory is an afterthought and interrupts are hacked in.
+Existing agent harnesses treat tools and memories as pluggable modules. This makes them flexible but fundamentally disconnected — memory is an afterthought.
 
-duet-agent takes the opposite approach: **memories and interrupts are woven into the core architecture.** An agent without memory is stateless. An agent that can't be interrupted can't collaborate.
+duet-agent takes the opposite approach: **memory is woven into the core architecture.** An agent without memory is stateless. Interrupts are handled by the underlying pi agent runtime, so the harness does not need its own interrupt bus.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Communication Layer                    │
-│           (stdio / voice / video / websocket)            │
-└──────────────────────────┬──────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────┐
 │                      Orchestrator                        │
-│  • Takes user goal                                       │
+│  • Takes prompt + options                               │
 │  • Breaks into tasks                                     │
 │  • Dynamically defines sub-agents                        │
+│  • Chooses agent / state_machine / auto mode             │
 │  • Manages session state machine                         │
 │  • Evaluates results                                     │
 └────┬───────────┬───────────┬───────────┬────────────────┘
@@ -34,7 +30,7 @@ duet-agent takes the opposite approach: **memories and interrupts are woven into
      │          │          │          │
 ┌────▼──────────▼──────────▼──────────▼───────────────────┐
 │                    Shared Infrastructure                  │
-│        Memory (observed) │ Interrupts │ Guardrails       │
+│        Memory (observed) │ Pi │ Guardrails                │
 │        pi coding tools run in the configured cwd          │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -53,11 +49,21 @@ Sub-agents use the default tools from `@mariozechner/pi-coding-agent`: read, bas
 
 ### Native Interrupts
 
-Both users AND the environment can interrupt agents. A log file watcher, a webhook, a test failure, or a user typing a message — anything can push an interrupt onto the bus. Interrupts have priority levels: **pause** (halt immediately), **queue** (process after current turn), or **info** (non-blocking awareness).
+Interrupt behavior comes from the underlying pi agent runtime. A user can send a message while a pi session is running, and the runtime can handle it as an interruption or as a follow-up. duet-agent does not add a second interrupt bus on top.
 
 ### Multi-Agent by Default
 
 The orchestrator doesn't execute tasks — it defines sub-agents dynamically and manages a session state machine. Sub-agents are not pre-built classes. The orchestrator creates them on-the-fly with custom roles, instructions, model selection, tool permissions, and memory access.
+
+### Three Execution Modes
+
+The orchestrator has three top-level modes:
+
+- `agent`: handle the prompt as a normal agent run. This is for one-off tasks, coding requests, reviews, research, and anything that can complete in the current session.
+- `state_machine`: route the prompt into an agent-routed state machine. This is for long-running business processes with durable state, waits, and terminal business outcomes.
+- `auto`: let the orchestrator classify the prompt and choose either `agent` or `state_machine`.
+
+The current code is still scaffolding, but this is the intended boundary: normal agent mode handles immediate work, while state-machine mode handles business processes that may pause, resume, wait on external systems, or start in the middle based on the user's prompt.
 
 ### Agent-Routed State Machines
 
@@ -79,10 +85,6 @@ What this is not:
 - Not a replacement for infrastructure workflow engines when exact-once execution or strict SLAs matter.
 
 The harness should provide enough structure for an agent to make good process decisions, while leaving hard operational guarantees to external systems.
-
-### Decoupled Communication
-
-Agent logic is completely separated from how you talk to the user. Swap the comm layer for voice (gpt-realtime), video stream analysis, Slack, WebSocket, or anything else. The orchestrator doesn't know or care.
 
 ### Optional Guardrails
 
@@ -134,13 +136,13 @@ npx duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 "review this repo"
 
 ```typescript
 import { getModel } from "@mariozechner/pi-ai";
-import { Orchestrator, StdioComm } from "duet-agent";
+import { Orchestrator } from "duet-agent";
 
 const orchestrator = new Orchestrator({
   orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
   defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
   cwd: process.cwd(),
-  comm: new StdioComm(),
+  mode: "auto",
   maxConcurrency: 3,
 });
 
@@ -173,13 +175,13 @@ You can also resume directly from saved state:
 
 ```typescript
 const state = await orchestrator.run("Continue the previous goal", {
-  state: savedSessionState,
+  runState: savedRunState,
   memory: savedMemorySnapshot,
   resume: "auto",
 });
 ```
 
-Resume continues the orchestration state machine, not an in-flight model/tool call. Any `in_progress` task is retried from `pending`.
+Resume continues the orchestration run state, not an in-flight model/tool call. Any `in_progress` todo is retried from `pending`.
 
 Observational memory is enabled by default with conservative long-context thresholds:
 
@@ -191,35 +193,6 @@ Observational memory is enabled by default with conservative long-context thresh
 ## Skills
 
 Skills are loaded from `<cwd>/.agents/skills` and `~/.agents/skills` by default, using `@mariozechner/pi-coding-agent`'s skill loader. `getSkills()` returns the discovered skills, including YAML frontmatter descriptions such as block scalars.
-
-## Custom Communication Layer
-
-The comm layer is an interface. Implement it to plug in any I/O surface:
-
-```typescript
-import type { CommLayer, CommMessage, AgentStatus } from "duet-agent";
-
-class SlackComm implements CommLayer {
-  async send(message: CommMessage) {
-    /* post to Slack */
-  }
-  async receive() {
-    /* wait for Slack message */
-  }
-  onMessage(handler) {
-    /* subscribe to Slack events */
-  }
-  async sendStatus(status: AgentStatus) {
-    /* update Slack presence */
-  }
-}
-```
-
-This enables architectures like:
-
-- **Voice agent**: gpt-realtime as comm layer → Opus as orchestrator → OSS models as sub-agents
-- **Screen agent**: video stream → vision model transcription → orchestrator
-- **Team agent**: Slack channel as comm layer → orchestrator manages work
 
 ## Guardrails
 
@@ -250,8 +223,7 @@ const orchestrator = new Orchestrator({
 2. **Runtime state over persistence.** The harness owns in-memory state and emits events. Persistence lives in external modules or initial-state hydration.
 3. **Agent-routed state machines over workflow engines.** Long-running state machines describe available business states; a runner agent decides what to do next from prompt, state, and history. Task-level workflows belong inside agent or script states.
 4. **Dynamic over static.** Sub-agents are defined at runtime by the orchestrator, not pre-built classes.
-5. **Decoupled over integrated.** Agent logic doesn't know how it talks to users. Swap the comm layer freely.
-6. **Simple over flexible.** Default pi coding tools. One default memory store. One interrupt bus. Constraints breed creativity.
+5. **Simple over flexible.** Default pi coding tools. One default memory store. Constraints breed creativity.
 
 ## License
 
