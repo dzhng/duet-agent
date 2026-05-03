@@ -1,11 +1,11 @@
 import type { DuetAgentConfig } from "../types/config.js";
 import type {
   HarnessAnswerCommand,
-  HarnessCommand,
   HarnessEvent,
   HarnessInterruptCommand,
   HarnessPromptCommand,
   HarnessStartCommand,
+  HarnessTurnCommand,
   HarnessTerminalTurnEvent,
 } from "../types/protocol.js";
 
@@ -36,7 +36,7 @@ export class Harness {
    * The eventual implementation should emit during-turn events through
    * `emit(...)` and resolve with the terminal event that ends the turn.
    */
-  async turn(command: HarnessCommand): Promise<HarnessTerminalTurnEvent> {
+  async turn(command: HarnessTurnCommand): Promise<HarnessTerminalTurnEvent> {
     switch (command.type) {
       case "start":
         return this.start(command);
@@ -44,9 +44,17 @@ export class Harness {
         return this.prompt(command);
       case "answer":
         return this.answer(command);
-      case "interrupt":
-        return this.interrupt(command);
     }
+  }
+
+  /**
+   * Interrupt the active turn.
+   *
+   * This is not a turn command. It controls the currently running turn and the
+   * active turn should resolve with an `interrupted` terminal event.
+   */
+  interrupt(_command: HarnessInterruptCommand): void {
+    throw new Error("Harness.interrupt is not implemented yet");
   }
 
   protected emit(event: HarnessEvent): void {
@@ -65,9 +73,5 @@ export class Harness {
 
   protected async answer(_command: HarnessAnswerCommand): Promise<HarnessTerminalTurnEvent> {
     throw new Error("Harness.answer is not implemented yet");
-  }
-
-  protected async interrupt(_command: HarnessInterruptCommand): Promise<HarnessTerminalTurnEvent> {
-    throw new Error("Harness.interrupt is not implemented yet");
   }
 }

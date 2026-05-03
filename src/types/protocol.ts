@@ -222,21 +222,21 @@ export interface HarnessAnswerCommand {
   run: HarnessRun;
   questions: HarnessQuestion[];
   answers: Record<string, string>;
+  /** Pi handles the underlying interruption/follow-up behavior. */
+  behavior: HarnessPromptBehavior;
   options?: HarnessTurnOptions;
 }
 
-/** Ask the active pi agent/runtime to interrupt the current operation. */
+export type HarnessTurnCommand = HarnessStartCommand | HarnessPromptCommand | HarnessAnswerCommand;
+
+/** Out-of-band control message that interrupts the currently running turn. */
 export interface HarnessInterruptCommand {
   type: "interrupt";
-  /** Existing run to interrupt. */
+  /** Current run state known by the caller at the time of interruption. */
   run: HarnessRun;
 }
 
-export type HarnessCommand =
-  | HarnessStartCommand
-  | HarnessPromptCommand
-  | HarnessAnswerCommand
-  | HarnessInterruptCommand;
+export type HarnessCommand = HarnessTurnCommand | HarnessInterruptCommand;
 
 export interface HarnessReadyEvent {
   type: "ready";
