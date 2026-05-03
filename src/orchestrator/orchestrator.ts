@@ -1,6 +1,6 @@
 import type { Skill } from "@mariozechner/pi-coding-agent";
-import type { DuetAgentConfig, OrchestratorRunOptions } from "../types/config.js";
-import type { OrchestratorRun } from "../types/protocol.js";
+import type { DuetAgentConfig, HarnessRunOptions } from "../types/config.js";
+import type { HarnessRun } from "../types/protocol.js";
 import { createSessionId } from "../types/identity.js";
 import { MemoryStore } from "../memory/store.js";
 import {
@@ -40,7 +40,7 @@ export class Orchestrator {
     }
   }
 
-  async run(goal: string, _options?: OrchestratorRunOptions): Promise<OrchestratorRun> {
+  async run(goal: string, _options?: HarnessRunOptions): Promise<HarnessRun> {
     await this.ensureMemoryPersistenceLoaded();
     await this.ensureSkillsLoaded();
 

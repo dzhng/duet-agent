@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 
-/** Typed IDs used across orchestrator state, memory, and todos. */
+/** Typed IDs used across harness state, memory, and todos. */
 export type SessionId = string & { readonly __brand: "SessionId" };
 export type AgentId = string & { readonly __brand: "AgentId" };
 export type TodoId = string & { readonly __brand: "TodoId" };

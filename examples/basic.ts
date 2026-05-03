@@ -9,7 +9,7 @@ import { Orchestrator, type DuetAgentConfig } from "duet-agent";
 
 async function main() {
   const config: DuetAgentConfig = {
-    orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
+    harnessModel: getModel("anthropic", "claude-opus-4-6"),
     cwd: process.cwd(),
   };
 

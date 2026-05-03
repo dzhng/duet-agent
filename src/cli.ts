@@ -17,7 +17,7 @@ async function main() {
   const args = process.argv.slice(2);
 
   // Parse flags
-  let orchestratorModelName = "anthropic:claude-opus-4-6";
+  let harnessModelName = "anthropic:claude-opus-4-6";
   let workDir = process.cwd();
   const goalParts: string[] = [];
 
@@ -25,7 +25,7 @@ async function main() {
     switch (args[i]) {
       case "--model":
       case "-m":
-        orchestratorModelName = args[++i];
+        harnessModelName = args[++i];
         break;
       case "--workdir":
       case "-w":
@@ -57,19 +57,19 @@ async function main() {
     process.exit(1);
   }
 
-  const orchestratorProviderSeparator = orchestratorModelName.indexOf(":");
-  if (orchestratorProviderSeparator <= 0) {
+  const harnessProviderSeparator = harnessModelName.indexOf(":");
+  if (harnessProviderSeparator <= 0) {
     throw new Error("Models must use provider:modelId syntax");
   }
 
-  const orchestratorModel = getModel(
-    orchestratorModelName.slice(0, orchestratorProviderSeparator) as any,
-    orchestratorModelName.slice(orchestratorProviderSeparator + 1) as any,
+  const harnessModel = getModel(
+    harnessModelName.slice(0, harnessProviderSeparator) as any,
+    harnessModelName.slice(harnessProviderSeparator + 1) as any,
   );
 
   // Build config
   const config: DuetAgentConfig = {
-    orchestratorModel,
+    harnessModel,
     cwd: workDir,
   };
 
@@ -96,7 +96,7 @@ USAGE
   echo "goal" | duet-agent
 
 OPTIONS
-  -m, --model <name>       Orchestrator model (default: anthropic:claude-opus-4-6)
+  -m, --model <name>       Harness model (default: anthropic:claude-opus-4-6)
   -w, --workdir <path>     Working directory (default: cwd)
   -h, --help               Show this help
 

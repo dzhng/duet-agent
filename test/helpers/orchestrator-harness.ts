@@ -22,7 +22,7 @@ export interface TestOrchestratorApp {
 export function createTestOrchestrator(): TestOrchestratorApp {
   const root = process.cwd();
   const orchestrator = new Orchestrator({
-    orchestratorModel: unusedModel,
+    harnessModel: unusedModel,
     cwd: root,
   });
 

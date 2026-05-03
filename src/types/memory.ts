@@ -38,7 +38,7 @@ export interface RawMemoryMessage {
   estimatedTokens?: number;
 }
 
-/** Complete memory view callers can persist and pass back into Orchestrator.run for restore. */
+/** Complete memory view callers can persist and pass back into Harness.run for restore. */
 export interface ObservationalMemorySnapshot {
   sessionId: SessionId;
   observations: Observation[];

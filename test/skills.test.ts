@@ -42,7 +42,7 @@ describe("Orchestrator skills", () => {
       `,
     );
     const orchestrator = new Orchestrator({
-      orchestratorModel: {} as Model<any>,
+      harnessModel: {} as Model<any>,
       cwd: process.cwd(),
       skillDiscovery: { includeDefaults: false },
       skills: [
@@ -80,7 +80,7 @@ describe("Orchestrator skills", () => {
       `,
     );
     const orchestrator = new Orchestrator({
-      orchestratorModel: {} as Model<any>,
+      harnessModel: {} as Model<any>,
       cwd: process.cwd(),
       skillDiscovery: { includeDefaults: false },
       skills: [

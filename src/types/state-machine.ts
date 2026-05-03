@@ -1,4 +1,4 @@
-import type { OrchestratorQuestion } from "./protocol.js";
+import type { HarnessQuestion } from "./protocol.js";
 
 /**
  * Durable state-machine definitions and runtime state.
@@ -23,7 +23,7 @@ import type { OrchestratorQuestion } from "./protocol.js";
  * research the company, draft/send outreach, then a poll state can check whether
  * the prospect has replied or whether the next follow-up date has arrived.
  *
- * The orchestrator should:
+ * The harness should:
  *
  * 1. Start a StateMachineRun from a StateMachineDefinition and initialize durable domain
  *    state.
@@ -70,7 +70,7 @@ import type { OrchestratorQuestion } from "./protocol.js";
  * run a dev agent, run a review agent, create a PR, poll until the PR is merged
  * or closed, then clean up the worktree.
  *
- * The orchestrator should:
+ * The harness should:
  *
  * 1. Start a StateMachineRun from the user's prompt.
  * 2. Execute a script/tool state that creates a worktree and records its path in
@@ -96,11 +96,11 @@ import type { OrchestratorQuestion } from "./protocol.js";
  * - cleanup/finalizer states that run after terminal external outcomes
  * - terminal states such as merged, closed, failed_review, or cancelled
  *
- * In both cases, the orchestrator is responsible for asking the state-machine runner
+ * In both cases, the harness is responsible for asking the state-machine runner
  * agent what to do next, entering the selected state, recording the result, and
  * asking again. This lets the same state machine start in the middle when the user's
  * prompt says prior work already happened, such as "I've already sent email,
- * just wait for response." The orchestrator injects the original prompt and
+ * just wait for response." The harness injects the original prompt and
  * relevant history automatically when constructing agent prompts; state
  * definitions only describe their own behavior. Waiting is either human input
  * or a poll state that performs one check and sleeps until the next attempt.
@@ -108,7 +108,7 @@ import type { OrchestratorQuestion } from "./protocol.js";
  * Example of templated script commands:
  *
  * A setup state can emit structured output such as { "worktreePath": "..." }.
- * The orchestrator records that output in history and merges the structured
+ * The harness records that output in history and merges the structured
  * fields into state:
  *
  *   {
@@ -174,7 +174,7 @@ export interface StateMachineDefinition {
 }
 
 /**
- * Persisted execution state. The orchestrator can stop after any state and later
+ * Persisted execution state. The harness can stop after any state and later
  * continue from this run without redoing completed work.
  */
 export interface StateMachineRun {
@@ -212,11 +212,11 @@ export interface StateMachineBaseState {
   when?: string;
 }
 
-/** Runs an agent. The orchestrator injects original prompt/history outside this state config. */
+/** Runs an agent. The harness injects original prompt/history outside this state config. */
 export interface StateMachineAgentState extends StateMachineBaseState {
   kind: "agent";
   /**
-   * Prompt/instructions for the agent. The orchestrator renders this as a
+   * Prompt/instructions for the agent. The harness renders this as a
    * template before execution using run.state only. The original prompt and
    * broader history are added separately when the final agent prompt is
    * constructed.
@@ -230,9 +230,9 @@ export interface StateMachineAgentState extends StateMachineBaseState {
    * - "state_machine": state context plus full state-machine definition and full state history.
    */
   contextScope?: StateMachineAgentContextScope;
-  /** Optional skill allowlist injected into this agent state. Omitted means use state machine/orchestrator defaults. */
+  /** Optional skill allowlist injected into this agent state. Omitted means use state machine/harness defaults. */
   allowedSkills?: string[];
-  /** Upper bound before the agent must yield control back to the orchestrator. */
+  /** Upper bound before the agent must yield control back to the harness. */
   maxTurns?: number;
   /** Optional JSON Schema used to request and validate structured output before merging it into state. */
   outputSchema?: Record<string, unknown>;
@@ -243,7 +243,7 @@ export interface StateMachineScriptState extends StateMachineBaseState {
   kind: "script";
   /**
    * Shell command used for integrations, setup, cleanup, and deterministic
-   * checks. The orchestrator renders this as a template before execution using
+   * checks. The harness renders this as a template before execution using
    * run.state only; keep state-machine definitions serializable instead of storing
    * executable functions here.
    */
@@ -293,7 +293,7 @@ export type StateMachinePoll =
 export interface StateMachineHumanInputState extends StateMachineBaseState {
   kind: "human_input";
   /** Passed directly through the protocol as an ask event. */
-  questions: OrchestratorQuestion[];
+  questions: HarnessQuestion[];
 }
 
 /** Finalizes the run when reached. Terminal outcomes are just state machine states. */
@@ -310,7 +310,7 @@ export interface StateMachineTerminalResult {
   state: string;
   /** Copied from the terminal state for easy querying. */
   status: StateMachineTerminalState["status"];
-  /** Optional final explanation, often generated by the orchestrator. */
+  /** Optional final explanation, often generated by the harness. */
   reason?: string;
 }
 
@@ -318,7 +318,7 @@ export interface StateMachineStateExecution {
   state: string;
   /** Latest status for this state. */
   status: StateMachineStateStatus;
-  /** Number of times the orchestrator attempted this state. */
+  /** Number of times the harness attempted this state. */
   attempts: number;
   startedAt?: number;
   completedAt?: number;
@@ -329,7 +329,7 @@ export interface StateMachineStateExecution {
 export interface StateMachineHumanInputRequest {
   state: string;
   /** Passed directly through the protocol as an ask event. */
-  questions: OrchestratorQuestion[];
+  questions: HarnessQuestion[];
   startedAt: number;
 }
 
