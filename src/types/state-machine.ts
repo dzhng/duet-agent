@@ -162,13 +162,6 @@ export type StateMachineRunnerDecision =
 export interface StateMachineDefinition {
   /** Human-readable label for selection in CLIs/UIs. */
   name: string;
-  /** Explains what business/process outcome this state machine owns. */
-  description?: string;
-  /**
-   * Instructions for the state-machine runner agent that chooses what state to execute
-   * next from the prompt, state, history, and available state definitions.
-   */
-  runnerInstructions: string;
   /** Available states the runner agent can choose from, including terminal states. */
   states: StateMachineState[];
 }
