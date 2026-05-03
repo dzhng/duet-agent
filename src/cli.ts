@@ -76,11 +76,9 @@ async function main() {
   const orchestrator = new Orchestrator(config);
 
   try {
-    const state = await orchestrator.run(goal);
-    const completed = state.todos.filter((t) => t.status === "completed").length;
-    const failed = state.todos.filter((t) => t.status === "failed").length;
-    process.stderr.write(`\nDone. ${completed} todos completed, ${failed} failed.\n`);
-    process.exit(failed > 0 ? 1 : 0);
+    await orchestrator.run(goal);
+    process.stderr.write("\nDone.\n");
+    process.exit(0);
   } catch (err: any) {
     console.error(`Fatal: ${err.message}`);
     process.exit(1);

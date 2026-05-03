@@ -1,7 +1,6 @@
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import type { DuetAgentConfig, HarnessRunOptions } from "../types/config.js";
 import type { HarnessRun } from "../types/protocol.js";
-import { createSessionId } from "../types/identity.js";
 import { MemoryStore } from "../memory/store.js";
 import {
   loadDiscoveredSkills,
@@ -45,12 +44,16 @@ export class Orchestrator {
     await this.ensureSkillsLoaded();
 
     return {
-      sessionId: createSessionId(),
-      goal,
-      mode: "agent",
-      status: "completed",
-      todos: [],
-      context: {},
+      agent: {
+        status: "completed",
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: goal }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
     };
   }
 

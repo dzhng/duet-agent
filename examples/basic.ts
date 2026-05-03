@@ -19,12 +19,7 @@ async function main() {
   );
 
   console.log("\n--- Run Summary ---");
-  console.log(`Goal: ${state.goal}`);
-  console.log(`Status: ${state.status}`);
-  console.log(`Todos: ${state.todos.length}`);
-  for (const todo of state.todos) {
-    console.log(`  [${todo.status}] ${todo.content}`);
-  }
+  console.log(state.stateMachine ? "State machine run" : "Agent run");
 }
 
 main().catch(console.error);

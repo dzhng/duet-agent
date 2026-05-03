@@ -9,6 +9,7 @@ export * from "./types/identity.js";
 export * from "./types/memory.js";
 export * from "./types/guardrails.js";
 export * from "./types/config.js";
+export * from "./types/agent.js";
 export * from "./types/state-machine.js";
 export * from "./types/protocol.js";
 export * from "./core/structured-output.js";
