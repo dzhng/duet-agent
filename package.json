@@ -43,6 +43,7 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.4.5",
     "@mariozechner/pi-agent-core": "^0.70.6",
     "@mariozechner/pi-ai": "^0.70.6",
     "@mariozechner/pi-coding-agent": "^0.70.6",

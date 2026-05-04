@@ -6,6 +6,9 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assistantText } from "../core/serializer.js";
 import { toXML } from "../lib/xml.js";
+import { loadDiscoveredMemory } from "../memory/discovery.js";
+import { createObservationalMemoryTransform } from "../memory/observational.js";
+import { MemoryStore } from "../memory/store.js";
 import type { HarnessConfig } from "../types/config.js";
 import type {
   HarnessAnswerCommand,
@@ -69,15 +72,23 @@ export interface AgentWorkerResult {
 
 export class Harness {
   private readonly eventHandlers = new Set<HarnessEventHandler>();
+  protected readonly memory = new MemoryStore();
+  private memoryDiscoveryDispose?: () => void;
   private activeAgent?: Agent;
   private interruptedTerminal?: HarnessTerminalTurnEvent;
   private skills: Skill[] = [];
   private skillsLoaded = false;
+  private memoryLoaded = false;
 
   constructor(readonly config: HarnessConfig) {
     if (config.skills) {
       this.skills = prepareExplicitSkills(config.skills);
     }
+  }
+
+  dispose(): void {
+    this.memoryDiscoveryDispose?.();
+    this.memoryDiscoveryDispose = undefined;
   }
 
   subscribe(handler: HarnessEventHandler): () => void {
@@ -88,6 +99,7 @@ export class Harness {
   }
 
   async turn(command: HarnessTurnCommand): Promise<HarnessTerminalTurnEvent> {
+    await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
     this.emit({ type: "ready" });
     let terminal: HarnessTerminalTurnEvent;
@@ -348,14 +360,16 @@ export class Harness {
     input: AgentWorkerInput,
     onControlResult?: (result: HarnessControlResult) => void,
   ): Agent {
+    const model = this.resolveModel(input.options);
     return new Agent({
       initialState: {
-        model: this.resolveModel(input.options),
+        model,
         thinkingLevel: input.options?.thinkingLevel ?? "medium",
         systemPrompt: this.createBaseSystemPromptWithAppendedLayers(input.appendSystemPrompt),
         messages: input.run.agent.messages,
         tools: input.tools,
       },
+      transformContext: this.createMemoryTransform(model),
       afterToolCall: async (context) => {
         if (this.isHarnessControlResult(context.result.details)) {
           onControlResult?.(context.result.details);
@@ -363,6 +377,14 @@ export class Harness {
         return undefined;
       },
       getApiKey: getEnvApiKey,
+    });
+  }
+
+  protected createMemoryTransform(model: Model<any>) {
+    return createObservationalMemoryTransform({
+      memory: this.memory,
+      actorModel: model,
+      settings: this.config.memory,
     });
   }
 
@@ -385,6 +407,17 @@ export class Harness {
       this.config.cwd ?? process.cwd(),
     );
     this.skills = mergeSkillsByName(this.skills, discovered);
+  }
+
+  private async ensureMemoryLoaded(): Promise<void> {
+    if (this.memoryLoaded) return;
+    this.memoryLoaded = true;
+
+    this.memoryDiscoveryDispose = await loadDiscoveredMemory(
+      this.config.memoryDiscovery,
+      this.config.cwd ?? process.cwd(),
+      this.memory,
+    );
   }
 
   protected createBaseSystemPromptWithAppendedLayers(...append: Array<string | undefined>): string {

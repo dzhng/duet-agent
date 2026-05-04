@@ -1,5 +1,13 @@
 import dedent from "dedent";
-import type { RawMemoryMessage } from "../types/memory.js";
+
+/** Temporary text serialization of AgentMessage used only while observing context. */
+export interface RawMemoryMessage {
+  id: string;
+  createdAt: number;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  estimatedTokens?: number;
+}
 
 export const OBSERVATION_CONTINUATION_HINT = dedent`
   Please continue naturally with the conversation so far and respond to the latest message.
@@ -89,9 +97,7 @@ export const OBSERVER_GUIDELINES = dedent`
 export function buildObserverOutputFormat(includeThreadTitle = false): string {
   const threadTitleSection = includeThreadTitle
     ? dedent`
-        <thread-title>
-        A short, noun-phrase title for this conversation (2-5 words). Only update when the topic meaningfully changes.
-        </thread-title>
+        - threadTitle: A short, noun-phrase title for this conversation (2-5 words). Only update when the topic meaningfully changes.
       `
     : "";
 
@@ -110,22 +116,19 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
 
     Group observations by date, then list each with 24-hour time.
 
-    <observations>
+    observations:
     Date: Dec 4, 2025
     * 🔴 (14:30) User prefers direct answers
     * 🔴 (14:31) Working on feature X
-    </observations>
 
-    <current-task>
+    currentTask:
     State the current task(s) explicitly:
     - Primary: what the agent is currently working on
     - Secondary: other pending tasks, marked "waiting for user" when appropriate
     - If the agent started doing something without user approval, note that it is off-task
-    </current-task>
 
-    <suggested-response>
+    suggestedContinuation:
     Hint for the agent's immediate next message. If the assistant needs to respond to the user, say that it should pause for user reply before continuing other tasks.
-    </suggested-response>
     ${threadTitleSection}
   `;
 }
@@ -141,9 +144,9 @@ export function buildObserverSystemPrompt(
 
     ${OBSERVER_EXTRACTION_INSTRUCTIONS}
 
-    === OUTPUT FORMAT ===
+    === STRUCTURED OUTPUT FIELDS ===
 
-    Your output MUST use XML tags to structure the response. This allows the system to properly parse and manage memory over time.
+    Call the structured output tool with these fields. Do not write free-form text outside the tool call.
 
     ${buildObserverOutputFormat(includeThreadTitle)}
 

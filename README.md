@@ -152,22 +152,15 @@ const terminal = await harness.turn({
 duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the runtime state container, not a database adapter.
 
 ```typescript
-import type { MemoryPersistenceModule } from "duet-agent";
-
-const persistence: MemoryPersistenceModule = {
-  async load(store) {
-    // Hydrate the internal runtime store before the first run.
+const harness = new Harness({
+  harnessModel: "anthropic:claude-opus-4-6",
+  memoryDiscovery: {
+    path: ".agents/memory-pglite",
   },
-  subscribe(store) {
-    return store.on((event) => {
-      // Persist externally: append to a log, write JSON, sync to Postgres, etc.
-      console.log(event.type, event);
-    });
-  },
-};
+});
 ```
 
-Persistence modules hydrate the internal store before a run and subscribe to events for future writes. The harness should not know whether state came from a file, database, cache, or test fixture.
+The memory module hydrates durable observations from an embedded Postgres database powered by PGlite before the first turn and writes observation updates back as memory changes. Raw conversation messages stay in `HarnessRun.agent.messages`; memory persistence stores only derived observations/reflections.
 
 You can also resume directly from saved state:
 

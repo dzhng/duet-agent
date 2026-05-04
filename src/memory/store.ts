@@ -1,4 +1,4 @@
-import { createMemoryId, type MemoryId, type SessionId } from "../types/identity.js";
+import { nanoid } from "nanoid";
 import type {
   MemoryStoreEvent,
   MemoryStoreEventHandler,
@@ -6,12 +6,10 @@ import type {
   ObservationPriority,
   ObservationQuery,
   ObservationalMemorySnapshot,
-  RawMemoryMessage,
 } from "../types/memory.js";
 
 export class MemoryStore {
-  private observations: Map<MemoryId, Observation> = new Map();
-  private rawMessages: Map<MemoryId, RawMemoryMessage> = new Map();
+  private observations: Map<string, Observation> = new Map();
   private handlers = new Set<MemoryStoreEventHandler>();
 
   on(handler: MemoryStoreEventHandler): () => void {
@@ -19,19 +17,6 @@ export class MemoryStore {
     return () => {
       this.handlers.delete(handler);
     };
-  }
-
-  async appendRawMessage(
-    input: Omit<RawMemoryMessage, "id" | "createdAt">,
-  ): Promise<RawMemoryMessage> {
-    const message: RawMemoryMessage = {
-      ...input,
-      id: createMemoryId(),
-      createdAt: Date.now(),
-    };
-    this.rawMessages.set(message.id, message);
-    this.emit({ type: "raw_message_appended", message });
-    return message;
   }
 
   async appendObservation(input: Omit<Observation, "id" | "createdAt">): Promise<Observation> {
@@ -48,12 +33,6 @@ export class MemoryStore {
   async recall(query: ObservationQuery): Promise<Observation[]> {
     let candidates = Array.from(this.observations.values());
 
-    if (query.sessionId) {
-      candidates = candidates.filter(
-        (observation) =>
-          observation.sessionId === query.sessionId || observation.scope === "resource",
-      );
-    }
     if (query.scope) {
       candidates = candidates.filter((observation) => observation.scope === query.scope);
     }
@@ -77,61 +56,33 @@ export class MemoryStore {
     return candidates.slice(0, query.limit ?? 10);
   }
 
-  async getSnapshot(sessionId: SessionId): Promise<ObservationalMemorySnapshot> {
-    const observations = Array.from(this.observations.values())
-      .filter(
-        (observation) => observation.sessionId === sessionId || observation.scope === "resource",
-      )
-      .sort((a, b) => a.createdAt - b.createdAt);
-    const messages = Array.from(this.rawMessages.values())
-      .filter((message) => message.sessionId === sessionId)
-      .sort((a, b) => a.createdAt - b.createdAt);
+  async getSnapshot(): Promise<ObservationalMemorySnapshot> {
+    const observations = Array.from(this.observations.values()).sort(
+      (a, b) => a.createdAt - b.createdAt,
+    );
     const updatedAt = Date.now();
     return {
-      sessionId,
       observations,
-      rawMessages: messages,
       estimatedTokens: {
         observations: estimateTokens(observations.map((item) => item.content).join("\n")),
-        rawMessages: estimateTokens(messages.map((item) => item.content).join("\n")),
       },
       updatedAt,
     };
   }
 
-  async replaceRawMessages(sessionId: SessionId, messages: RawMemoryMessage[]): Promise<void> {
-    for (const [id, message] of this.rawMessages) {
-      if (message.sessionId === sessionId) {
-        this.rawMessages.delete(id);
-      }
-    }
-    for (const message of messages) {
-      this.rawMessages.set(message.id, message);
-    }
-    this.emit({ type: "raw_messages_replaced", sessionId, messages });
-  }
-
-  async replaceObservations(sessionId: SessionId, observations: Observation[]): Promise<void> {
-    for (const [id, observation] of this.observations) {
-      if (observation.sessionId === sessionId && observation.scope !== "resource") {
-        this.observations.delete(id);
-      }
-    }
+  async replaceObservations(observations: Observation[]): Promise<void> {
+    this.observations.clear();
     for (const observation of observations) {
       this.observations.set(observation.id, observation);
     }
-    this.emit({ type: "observations_replaced", sessionId, observations });
+    this.emit({ type: "observations_replaced", observations });
   }
 
   render(snapshot: ObservationalMemorySnapshot): string {
     const observationLines = snapshot.observations.map(formatObservation);
-    const rawLines = snapshot.rawMessages.map((message) => `- ${message.role}: ${message.content}`);
     return [
       "## Observations",
       observationLines.length > 0 ? observationLines.join("\n") : "(none)",
-      "",
-      "## Raw Messages",
-      rawLines.length > 0 ? rawLines.join("\n") : "(none)",
     ].join("\n");
   }
 
@@ -140,6 +91,10 @@ export class MemoryStore {
       handler(event);
     }
   }
+}
+
+function createMemoryId(): string {
+  return `mem_${nanoid(12)}`;
 }
 
 function priorityRank(priority: ObservationPriority): number {

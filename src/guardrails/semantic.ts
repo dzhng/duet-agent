@@ -41,7 +41,6 @@ export class SemanticGuardrail implements Guardrail {
 
       ACTION: ${context.action}
       CONTENT: ${context.content}
-      AGENT: ${context.agentId}
 
       Call the ${EVALUATE_GUARDRAIL_TOOL} tool with your decision.
     `;

@@ -1,5 +1,4 @@
 import type { Model } from "@mariozechner/pi-ai";
-import type { AgentId } from "./identity.js";
 import type { Observation } from "./memory.js";
 import type { HarnessRun } from "./protocol.js";
 
@@ -27,7 +26,6 @@ export type GuardrailConfig =
   | { kind: "semantic"; model: Model<any>; policy: string };
 
 export interface GuardrailContext {
-  agentId: AgentId;
   action: string;
   content: string;
   memories: Observation[];

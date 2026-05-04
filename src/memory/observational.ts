@@ -1,16 +1,14 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { completeSimple } from "@mariozechner/pi-ai";
 import type { Model } from "@mariozechner/pi-ai";
-import { createMemoryId } from "../types/identity.js";
-import { assistantText } from "../core/serializer.js";
+import { nanoid } from "nanoid";
+import { Type } from "typebox";
+import { generateStructuredOutput } from "../core/structured-output.js";
 import type { MemoryStore } from "./store.js";
 import type {
   Observation,
   ObservationPriority,
   ObservationalMemorySettings,
-  RawMemoryMessage,
 } from "../types/memory.js";
-import type { SessionId } from "../types/identity.js";
 import {
   reconcileObservationGroupsFromReflection,
   renderObservationGroupsForReflection,
@@ -28,6 +26,7 @@ import {
   buildReflectorPrompt,
   buildReflectorSystemPrompt,
   formatMessagesForObserver,
+  type RawMemoryMessage,
 } from "./observational-prompts.js";
 
 export {
@@ -73,8 +72,10 @@ export interface ObserverResult {
   suggestedContinuation?: string;
   /** Optional short title when the observer is asked to name the session/thread. */
   threadTitle?: string;
-  /** True when model output looked repetitive or malformed enough to discard. */
-  degenerate?: boolean;
+}
+
+function createMemoryId(): string {
+  return `mem_${nanoid(12)}`;
 }
 
 export interface ReflectorResult {
@@ -82,9 +83,47 @@ export interface ReflectorResult {
   observations: string;
   /** Hint for the actor's next response after reflection rewrites memory. */
   suggestedContinuation?: string;
-  /** True when model output looked repetitive or malformed enough to discard. */
-  degenerate?: boolean;
 }
+
+const observerResultSchema = Type.Object({
+  observations: Type.String({
+    description:
+      "New observation log text extracted from the raw message history. Return an empty string if there are no useful new observations.",
+  }),
+  currentTask: Type.Optional(
+    Type.String({ description: "Current task state distilled for continuity." }),
+  ),
+  suggestedContinuation: Type.Optional(
+    Type.String({ description: "Hint for the actor's next response after context compression." }),
+  ),
+  threadTitle: Type.Optional(
+    Type.String({ description: "Short 2-5 word title when thread title generation is requested." }),
+  ),
+});
+
+const observerResultTool = {
+  name: "recordObservations",
+  description: "Return extracted observational memory fields.",
+  parameters: observerResultSchema,
+};
+
+const reflectorResultSchema = Type.Object({
+  observations: Type.String({
+    description:
+      "Condensed observation log preserving important facts, dates, preferences, unresolved work, and completion markers.",
+  }),
+  suggestedContinuation: Type.Optional(
+    Type.String({
+      description: "Hint for the actor's next response after reflection rewrites memory.",
+    }),
+  ),
+});
+
+const reflectorResultTool = {
+  name: "reflectObservations",
+  description: "Return condensed observational memory fields.",
+  parameters: reflectorResultSchema,
+};
 
 export interface ModelByInputTokensConfig {
   upTo: Record<number, Model<any>>;
@@ -129,8 +168,7 @@ export class ModelByInputTokens {
 }
 
 export interface ObservationalMemoryTransformOptions {
-  store: MemoryStore;
-  sessionId: SessionId;
+  memory: MemoryStore;
   actorModel: Model<any>;
   settings?: boolean | Partial<ObservationalMemorySettings>;
 }
@@ -206,15 +244,13 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
   return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
     if (!settings.enabled) return messages;
 
-    const rawMessages = agentMessagesToRaw(options.sessionId, messages);
+    const rawMessages = agentMessagesToRaw(messages);
     const rawTokens = estimateRawTokens(rawMessages);
-    await options.store.replaceRawMessages(options.sessionId, rawMessages);
     let retainedMessages = messages;
 
     if (rawTokens >= settings.observation.messageTokens) {
       const retainedRawMessages = await activateObservations(
-        options.store,
-        options.sessionId,
+        options.memory,
         rawMessages,
         settings,
         signal,
@@ -222,13 +258,13 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
       retainedMessages = retainAgentMessageTail(messages, retainedRawMessages);
     }
 
-    const snapshot = await options.store.getSnapshot(options.sessionId);
+    const snapshot = await options.memory.getSnapshot();
     const observationTokens = snapshot.estimatedTokens.observations;
     if (observationTokens >= settings.reflection.observationTokens) {
-      await reflectObservations(options.store, options.sessionId, settings, signal);
+      await reflectObservations(options.memory, settings, signal);
     }
 
-    const refreshed = await options.store.getSnapshot(options.sessionId);
+    const refreshed = await options.memory.getSnapshot();
     const observations = refreshed.observations
       .map((observation) => observation.content)
       .join("\n\n");
@@ -242,45 +278,6 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
       ...retainedMessages,
     ];
   };
-}
-
-export function parseObserverOutput(output: string): ObserverResult {
-  if (detectDegenerateRepetition(output)) {
-    return { observations: "", degenerate: true };
-  }
-
-  const result: ObserverResult = { observations: "" };
-  const observationsMatches = [
-    ...output.matchAll(/^[ \t]*<observations>([\s\S]*?)^[ \t]*<\/observations>/gim),
-  ];
-  if (observationsMatches.length > 0) {
-    result.observations = observationsMatches
-      .map((match) => match[1]?.trim() ?? "")
-      .filter(Boolean)
-      .join("\n");
-  } else {
-    result.observations = extractListItemsOnly(output);
-  }
-
-  const currentTaskMatch = output.match(/^[ \t]*<current-task>([\s\S]*?)^[ \t]*<\/current-task>/im);
-  if (currentTaskMatch?.[1]) {
-    result.currentTask = currentTaskMatch[1].trim();
-  }
-
-  const suggestedResponseMatch = output.match(
-    /^[ \t]*<suggested-response>([\s\S]*?)^[ \t]*<\/suggested-response>/im,
-  );
-  if (suggestedResponseMatch?.[1]) {
-    result.suggestedContinuation = suggestedResponseMatch[1].trim();
-  }
-
-  const threadTitleMatch = output.match(/^[ \t]*<thread-title>([\s\S]*?)<\/thread-title>/im);
-  if (threadTitleMatch?.[1]) {
-    result.threadTitle = threadTitleMatch[1].trim();
-  }
-
-  result.observations = sanitizeObservationLines(result.observations);
-  return result;
 }
 
 export function optimizeObservationsForContext(observations: string): string {
@@ -313,12 +310,11 @@ function buildContinuationMessage(): AgentMessage {
 
 async function activateObservations(
   store: MemoryStore,
-  sessionId: SessionId,
   messages: RawMemoryMessage[],
   settings: ObservationalMemorySettings,
   _signal?: AbortSignal,
 ): Promise<RawMemoryMessage[]> {
-  const snapshot = await store.getSnapshot(sessionId);
+  const snapshot = await store.getSnapshot();
   const observations = (await observe(messages, snapshot.observations, settings, _signal))
     .observations;
 
@@ -328,7 +324,6 @@ async function activateObservations(
 
   const range = `${messages[0]?.id ?? "unknown"}:${messages[messages.length - 1]?.id ?? "unknown"}`;
   await store.appendObservation({
-    sessionId,
     observedDate: new Date().toISOString().slice(0, 10),
     timeOfDay: new Date().toISOString().slice(11, 16),
     priority: inferPriority(observations),
@@ -343,33 +338,32 @@ async function activateObservations(
     settings.observation.bufferActivation,
     settings.observation.messageTokens,
   );
-  await store.replaceRawMessages(sessionId, retainedRawMessages);
   return retainedRawMessages;
 }
 
 async function reflectObservations(
   store: MemoryStore,
-  sessionId: SessionId,
   settings: ObservationalMemorySettings,
   _signal?: AbortSignal,
 ): Promise<void> {
-  const snapshot = await store.getSnapshot(sessionId);
+  const snapshot = await store.getSnapshot();
   const source = snapshot.observations.map((observation) => observation.content).join("\n\n");
   const rendered = renderObservationGroupsForReflection(source) ?? source;
   const model = settings.reflection.model ?? settings.model;
-  const response = await completeSimple(model!, {
+  const result = await generateStructuredOutput({
+    model: model!,
+    tool: reflectorResultTool,
     systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
-    messages: [{ role: "user", content: buildReflectorPrompt(rendered), timestamp: Date.now() }],
+    prompt: buildReflectorPrompt(rendered),
   });
-  const text = assistantText([response]).trim();
-  if (!text || detectDegenerateRepetition(text)) {
+  const text = sanitizeObservationLines(result.observations.trim());
+  if (!text) {
     return;
   }
 
   const reconciled = reconcileObservationGroupsFromReflection(text, source) ?? text;
   const reflected: Observation = {
     id: createMemoryId(),
-    sessionId,
     createdAt: Date.now(),
     observedDate: new Date().toISOString().slice(0, 10),
     timeOfDay: new Date().toISOString().slice(11, 16),
@@ -379,7 +373,7 @@ async function reflectObservations(
     content: reconciled,
     tags: ["observational-memory", "reflection"],
   };
-  await store.replaceObservations(sessionId, [reflected]);
+  await store.replaceObservations([reflected]);
 }
 
 async function observe(
@@ -389,23 +383,22 @@ async function observe(
   _signal?: AbortSignal,
 ): Promise<ObserverResult> {
   const model = settings.observation.model ?? settings.model;
-  const response = await completeSimple(model!, {
+  const result = await generateStructuredOutput({
+    model: model!,
+    tool: observerResultTool,
     systemPrompt: buildObserverSystemPrompt(
       settings.observation.instruction,
       settings.observation.threadTitle,
     ),
-    messages: [
-      {
-        role: "user",
-        content: buildObserverPrompt(
-          messages,
-          previousObservations.map((observation) => observation.content).join("\n\n"),
-        ),
-        timestamp: Date.now(),
-      },
-    ],
+    prompt: buildObserverPrompt(
+      messages,
+      previousObservations.map((observation) => observation.content).join("\n\n"),
+    ),
   });
-  return parseObserverOutput(assistantText([response]));
+  return {
+    ...result,
+    observations: sanitizeObservationLines(result.observations),
+  };
 }
 
 function retainRawTail(
@@ -434,28 +427,24 @@ function retainAgentMessageTail(
   }
   const retainedIds = new Set(retainedRawMessages.map((message) => message.id));
   return messages.filter((message) => {
-    const raw = agentMessageToRaw(undefined, message);
+    const raw = agentMessageToRaw(message);
     return raw ? retainedIds.has(raw.id) : false;
   });
 }
 
-function agentMessagesToRaw(sessionId: SessionId, messages: AgentMessage[]): RawMemoryMessage[] {
+function agentMessagesToRaw(messages: AgentMessage[]): RawMemoryMessage[] {
   return messages
-    .map((message) => agentMessageToRaw(sessionId, message))
+    .map((message) => agentMessageToRaw(message))
     .filter((message): message is RawMemoryMessage => Boolean(message));
 }
 
-function agentMessageToRaw(
-  sessionId: SessionId | undefined,
-  message: AgentMessage,
-): RawMemoryMessage | undefined {
+function agentMessageToRaw(message: AgentMessage): RawMemoryMessage | undefined {
   const content = messageToText(message);
   if (content.trim().length === 0) {
     return undefined;
   }
   return {
     id: stableRawMessageId(message),
-    sessionId: sessionId ?? ("" as SessionId),
     createdAt:
       "timestamp" in message && typeof message.timestamp === "number"
         ? message.timestamp
@@ -468,14 +457,14 @@ function agentMessageToRaw(
 
 function stableRawMessageId(message: AgentMessage): RawMemoryMessage["id"] {
   if (message.role === "assistant" && "responseId" in message && message.responseId) {
-    return `msg_assistant_${message.responseId}` as RawMemoryMessage["id"];
+    return `msg_assistant_${message.responseId}`;
   }
   if (message.role === "toolResult" && "toolCallId" in message) {
-    return `msg_tool_${message.toolCallId}` as RawMemoryMessage["id"];
+    return `msg_tool_${message.toolCallId}`;
   }
   const timestamp =
     "timestamp" in message && typeof message.timestamp === "number" ? message.timestamp : 0;
-  return `msg_${String(message.role)}_${timestamp}_${hashText(messageToText(message))}` as RawMemoryMessage["id"];
+  return `msg_${String(message.role)}_${timestamp}_${hashText(messageToText(message))}`;
 }
 
 function normalizeRole(role: string): RawMemoryMessage["role"] {
@@ -507,14 +496,6 @@ function messageToText(message: AgentMessage): string {
   return "";
 }
 
-function extractListItemsOnly(content: string): string {
-  return content
-    .split("\n")
-    .filter((line) => /^\s*[-*]\s/.test(line) || /^\s*\d+\.\s/.test(line))
-    .join("\n")
-    .trim();
-}
-
 const MAX_OBSERVATION_LINE_CHARS = 10_000;
 
 export function sanitizeObservationLines(observations: string): string {
@@ -528,30 +509,6 @@ export function sanitizeObservationLines(observations: string): string {
     }
   }
   return changed ? lines.join("\n") : observations;
-}
-
-export function detectDegenerateRepetition(text: string): boolean {
-  if (!text || text.length < 2000) return false;
-
-  const windowSize = 200;
-  const step = Math.max(1, Math.floor(text.length / 50));
-  const seen = new Map<string, number>();
-  let duplicateWindows = 0;
-  let totalWindows = 0;
-
-  for (let i = 0; i + windowSize <= text.length; i += step) {
-    const window = text.slice(i, i + windowSize);
-    totalWindows++;
-    const count = (seen.get(window) ?? 0) + 1;
-    seen.set(window, count);
-    if (count > 1) duplicateWindows++;
-  }
-
-  if (totalWindows > 5 && duplicateWindows / totalWindows > 0.4) {
-    return true;
-  }
-
-  return text.split("\n").some((line) => line.length > 50_000);
 }
 
 function inferPriority(observations: string): ObservationPriority {

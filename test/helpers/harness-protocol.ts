@@ -5,6 +5,7 @@ import {
 } from "../../src/harness/harness.js";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { HarnessControlResult } from "../../src/harness/tools.js";
+import type { HarnessConfig } from "../../src/types/config.js";
 import type { HarnessEvent, HarnessRun } from "../../src/types/protocol.js";
 import type { StateMachineDefinition } from "../../src/types/state-machine.js";
 
@@ -68,10 +69,14 @@ export class TestHarness extends Harness {
   }
 }
 
-export function createHarness(): { harness: TestHarness; events: HarnessEvent[] } {
+export function createHarness(config?: Partial<HarnessConfig>): {
+  harness: TestHarness;
+  events: HarnessEvent[];
+} {
   const harness = new TestHarness({
     harnessModel: "anthropic:claude-opus-4-6",
     skillDiscovery: { includeDefaults: false },
+    ...config,
   });
   const events: HarnessEvent[] = [];
   harness.subscribe((event) => events.push(event));
