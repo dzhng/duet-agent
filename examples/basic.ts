@@ -8,7 +8,7 @@ import { Harness, type HarnessConfig } from "../src/index.js";
 
 async function main() {
   const config: HarnessConfig = {
-    harnessModel: "anthropic:claude-opus-4-6",
+    harnessModel: "vercel-ai-gateway:anthropic/claude-opus-4.6",
     cwd: process.cwd(),
   };
 

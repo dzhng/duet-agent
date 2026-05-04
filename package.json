@@ -38,7 +38,7 @@
     "format:check": "oxfmt --check --no-error-on-unmatched-pattern",
     "lint": "oxlint src/",
     "test": "docker run --rm -v \"$PWD:/src:ro\" -w /work -e HOME=/tmp/home -e DUET_TEST_IN_DOCKER=1 oven/bun:1.3.11 sh -lc 'cp -R /src/. /work && bun install --frozen-lockfile && bun test'",
-    "example": "tsx examples/basic.ts",
+    "example": "bun examples/basic.ts",
     "prepare": "husky"
   },
   "dependencies": {
