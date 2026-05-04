@@ -248,6 +248,9 @@ describe("Harness protocol scenarios", () => {
     expect(harness.workerInputs[0]?.tools.map((tool) => tool.name)).not.toContain(
       "create_state_machine_definition",
     );
+    expect(harness.workerInputs[0]?.systemPrompt).toContain("Explicit state-machine definition");
+    expect(harness.workerInputs[0]?.systemPrompt).toContain('"name": "conference_outreach"');
+    expect(harness.workerInputs[0]?.systemPrompt).toContain('"name": "research_prospect"');
   });
 
   test("answers normally when an explicit state machine does not fit the prompt", async () => {
@@ -271,6 +274,31 @@ describe("Harness protocol scenarios", () => {
       result: expect.stringContaining("Paris"),
     });
     expect(terminal.run.stateMachine).toBeUndefined();
+  });
+
+  test("reports valid states when the runner selects an invalid state", async () => {
+    const { harness } = createHarness();
+    const definition = createOutreachStateMachine();
+    harness.controlResults.push({
+      type: "select_state_machine_state",
+      decision: { kind: "run_state", state: "invented_state" },
+    });
+
+    const terminal = await harness.turn({
+      type: "start",
+      prompt: "Prospect Ada until she books a meeting.",
+      mode: definition,
+    });
+
+    if (terminal.type !== "complete") {
+      throw new Error("Expected complete event");
+    }
+    expect(terminal.status).toBe("failed");
+    const error = terminal.error ?? "";
+    expect(error.includes("Unknown state: invented_state")).toBe(true);
+    expect(error.includes("research_prospect")).toBe(true);
+    expect(error.includes("send_email")).toBe(true);
+    expect(error.includes("meeting_scheduled")).toBe(true);
   });
 
   test("uses transition overrides for one state attempt without mutating the definition", async () => {

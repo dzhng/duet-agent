@@ -61,6 +61,59 @@ describe("Harness tools", () => {
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
   });
 
+  test("rejects selected states outside the active definition", async () => {
+    const tools = createHarnessTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          { kind: "agent", name: "research", prompt: "Research the prospect." },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = selectStateTool.execute("tool-1", {
+      decision: { kind: "run_state", state: "invented_state" },
+    });
+
+    await expect(result).rejects.toThrow(
+      "Unknown state: invented_state. Valid states: research, done",
+    );
+  });
+
+  test("rejects invalid states from dynamically created auto-mode definitions", async () => {
+    const tools = createHarnessTools({
+      cwd: process.cwd(),
+      mode: "auto",
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          { kind: "agent", name: "research", prompt: "Research the prospect." },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = selectStateTool.execute("tool-1", {
+      decision: { kind: "terminal", state: "invented_state" },
+    });
+
+    await expect(result).rejects.toThrow(
+      "Unknown state: invented_state. Valid states: research, done",
+    );
+  });
+
   test("does not expose state-machine definition creation outside auto mode", () => {
     const agentTools = createHarnessTools({ cwd: process.cwd(), mode: "agent" });
     const stateMachineTools = createHarnessTools({

@@ -199,8 +199,8 @@ export class Harness {
       run: input.run,
       prompt: input.prompt,
       options: input.options,
-      systemPrompt: this.createStateMachineSystemPrompt(input.mode),
-      ...this.createTools(input.mode),
+      systemPrompt: this.createStateMachineSystemPrompt(input.mode, input.run),
+      ...this.createTools(input.mode, input.run),
     });
 
     if (workerResult.control.type === "none") {
@@ -245,7 +245,10 @@ export class Harness {
     return this.runStateMachine(selectedRun, workerResult.control.decision);
   }
 
-  protected createTools(mode: HarnessMode): {
+  protected createTools(
+    mode: HarnessMode,
+    run?: HarnessRun,
+  ): {
     tools: AgentTool[];
   } {
     const cwd = this.config.cwd ?? process.cwd();
@@ -253,7 +256,7 @@ export class Harness {
       return { tools: createDefaultHarnessTools(cwd) };
     }
 
-    return { tools: createHarnessTools({ cwd, mode }) };
+    return { tools: createHarnessTools({ cwd, mode, definition: run?.stateMachine?.definition }) };
   }
 
   protected async runAgentMode(
@@ -370,7 +373,13 @@ export class Harness {
 
     const selectedState = this.findState(stateMachine, decision.state);
     if (!selectedState) {
-      return this.complete(run, "failed", undefined, `Unknown state: ${decision.state}`);
+      const validStates = stateMachine.definition.states.map((state) => state.name);
+      return this.complete(
+        run,
+        "failed",
+        undefined,
+        `Unknown state: ${decision.state}. Valid states: ${validStates.join(", ")}`,
+      );
     }
 
     const effectiveState =
@@ -543,8 +552,8 @@ export class Harness {
           You must call the select_state_machine_state tool to choose the next state, terminal state, or failure outcome.
           Do not answer normally. Do not return text instead of calling the tool.
         `,
-        systemPrompt: this.createStateMachineSystemPrompt(run.mode),
-        ...this.createTools(run.mode),
+        systemPrompt: this.createStateMachineSystemPrompt(run.mode, run),
+        ...this.createTools(run.mode, run),
       });
 
       nextRun = workerResult.terminal.run;
@@ -604,16 +613,27 @@ export class Harness {
     };
   }
 
-  private createStateMachineSystemPrompt(mode: HarnessMode): string {
+  private createStateMachineSystemPrompt(mode: HarnessMode, run?: HarnessRun): string {
     const constraint =
       mode === "auto"
         ? "You may create new state-machine definitions whenever durable lifecycle work appears."
         : "You must stay constrained to the explicit state-machine definition unless no state fits.";
+    const definition = typeof mode === "object" ? mode : run?.stateMachine?.definition;
+    const definitionPrompt = definition
+      ? dedent`
+          Explicit state-machine definition:
+
+          ${JSON.stringify(definition, null, 2)}
+
+          Only select states by name from this definition. Do not invent state names.
+        `
+      : undefined;
     return [
       this.config.systemInstructions,
       "Route durable business-process work through state-machine tools whenever possible.",
       "If the request is simple or unrelated, answer normally without calling a harness-control tool.",
       constraint,
+      definitionPrompt,
     ]
       .filter(Boolean)
       .join("\n\n");

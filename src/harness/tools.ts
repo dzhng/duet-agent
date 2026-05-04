@@ -4,6 +4,7 @@ import { Type, type Static } from "typebox";
 import type { HarnessMode } from "../types/protocol.js";
 import type {
   StateMachineAgentState,
+  StateMachineDefinition,
   StateMachinePollState,
   StateMachineScriptState,
   StateMachineState,
@@ -194,11 +195,17 @@ export type HarnessControlResult =
     } & Pick<CreateDefinitionParams, "firstState">)
   | { type: "select_state_machine_state"; decision: StateMachineRunnerDecision };
 
+interface HarnessToolsInput {
+  cwd: string;
+  mode: HarnessMode;
+  definition?: StateMachineDefinition;
+}
+
 export function createDefaultHarnessTools(cwd: string): AgentTool[] {
   return createCodingTools(cwd);
 }
 
-export function createHarnessTools(input: { cwd: string; mode: HarnessMode }): AgentTool[] {
+export function createHarnessTools(input: HarnessToolsInput): AgentTool[] {
   const tools = [...createDefaultHarnessTools(input.cwd)];
   if (input.mode === "agent") {
     return tools;
@@ -208,7 +215,8 @@ export function createHarnessTools(input: { cwd: string; mode: HarnessMode }): A
     tools.push(createStateMachineDefinitionTool());
   }
 
-  tools.push(createSelectStateTool());
+  const definition = typeof input.mode === "object" ? input.mode : input.definition;
+  tools.push(createSelectStateTool(definition));
   return tools;
 }
 
@@ -245,7 +253,9 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
   };
 }
 
-function createSelectStateTool(): AgentTool<typeof selectStateSchema> {
+function createSelectStateTool(
+  definition: StateMachineDefinition | undefined,
+): AgentTool<typeof selectStateSchema> {
   return {
     name: "select_state_machine_state",
     label: "Select state machine state",
@@ -253,6 +263,7 @@ function createSelectStateTool(): AgentTool<typeof selectStateSchema> {
     parameters: selectStateSchema,
     async execute(_toolCallId, params) {
       const decision = normalizeRunnerDecision(params.decision);
+      assertValidSelectedState(decision, definition);
 
       const result: HarnessControlResult = { type: "select_state_machine_state", decision };
       return {
@@ -262,6 +273,20 @@ function createSelectStateTool(): AgentTool<typeof selectStateSchema> {
       };
     },
   };
+}
+
+function assertValidSelectedState(
+  decision: StateMachineRunnerDecision,
+  definition: StateMachineDefinition | undefined,
+): void {
+  if (decision.kind === "fail" || !definition) {
+    return;
+  }
+
+  const validStates = definition.states.map((state) => state.name);
+  if (!validStates.includes(decision.state)) {
+    throw new Error(`Unknown state: ${decision.state}. Valid states: ${validStates.join(", ")}`);
+  }
 }
 
 function normalizeRunnerDecision(decision: ToolRunnerDecision): StateMachineRunnerDecision {
