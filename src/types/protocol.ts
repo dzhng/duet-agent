@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@mariozechner/pi-ai";
 import type { AgentRun } from "./agent.js";
 import type { StateMachineDefinition, StateMachineRun } from "./state-machine.js";
 
@@ -120,8 +121,6 @@ import type { StateMachineDefinition, StateMachineRun } from "./state-machine.js
  *   states fit, the selected state can be undefined and the harness can answer normally.
  */
 export type HarnessMode = "agent" | "auto" | StateMachineDefinition;
-
-export type ThinkingLevel = "none" | "auto" | "low" | "medium" | "high" | "xhigh";
 
 export type HarnessTerminalStatus = "completed" | "failed" | "cancelled";
 

@@ -13,8 +13,7 @@ const harnessTurnOptionsSchema = Type.Object({
   model: Type.Optional(Type.String()),
   thinkingLevel: Type.Optional(
     Type.Union([
-      Type.Literal("none"),
-      Type.Literal("auto"),
+      Type.Literal("minimal"),
       Type.Literal("low"),
       Type.Literal("medium"),
       Type.Literal("high"),

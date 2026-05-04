@@ -1,5 +1,5 @@
 import type { Skill } from "@mariozechner/pi-coding-agent";
-import type { DuetAgentConfig, HarnessRunOptions } from "../types/config.js";
+import type { HarnessConfig, HarnessRunOptions } from "../types/config.js";
 import type { HarnessRun } from "../types/protocol.js";
 import { MemoryStore } from "../memory/store.js";
 import {
@@ -22,7 +22,7 @@ export class Orchestrator {
   private memoryPersistenceLoaded = false;
   private memoryPersistenceDisposers: Array<() => void> = [];
 
-  constructor(private readonly config: DuetAgentConfig) {
+  constructor(private readonly config: HarnessConfig) {
     for (const module of config.memoryPersistence ?? []) {
       const dispose = module.subscribe?.(this.memory);
       if (dispose) this.memoryPersistenceDisposers.push(dispose);

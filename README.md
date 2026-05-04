@@ -135,15 +135,12 @@ npx duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 "review this repo"
 ### Programmatic
 
 ```typescript
-import { getModel } from "@mariozechner/pi-ai";
 import { Orchestrator } from "duet-agent";
 
 const orchestrator = new Orchestrator({
-  orchestratorModel: getModel("anthropic", "claude-opus-4-6"),
-  defaultSubAgentModel: getModel("anthropic", "claude-sonnet-4-6"),
+  harnessModel: "anthropic:claude-opus-4-6",
   cwd: process.cwd(),
   mode: "auto",
-  maxConcurrency: 3,
 });
 
 const state = await orchestrator.run("Build a todo app with React and TypeScript");

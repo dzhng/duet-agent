@@ -1,4 +1,3 @@
-import type { Model } from "@mariozechner/pi-ai";
 import type { Skill, loadSkills } from "@mariozechner/pi-coding-agent";
 import type { GuardrailConfig } from "./guardrails.js";
 import type {
@@ -21,15 +20,15 @@ export interface HarnessRunOptions {
   messages?: RawMemoryMessage[];
 }
 
-export interface DuetAgentConfig {
-  harnessModel: Model<any>;
+export interface HarnessConfig {
+  /** Default model in provider:modelId format, passed through pi-ai's model registry. */
+  harnessModel: string;
   memory?: Partial<ObservationalMemorySettings>;
   memoryPersistence?: MemoryPersistenceModule[];
   cwd?: string;
   /** Default mode for Harness.run. "auto" lets the harness classify each prompt. */
   mode?: HarnessMode;
   guardrails?: GuardrailConfig[];
-  maxConcurrency?: number;
   systemInstructions?: string;
   skills?: Skill[];
   skillDiscovery?: SkillDiscoveryOptions;

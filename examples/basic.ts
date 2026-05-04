@@ -4,12 +4,11 @@
  * This shows the core API — how all the pieces fit together.
  */
 
-import { getModel } from "@mariozechner/pi-ai";
-import { Orchestrator, type DuetAgentConfig } from "duet-agent";
+import { Orchestrator, type HarnessConfig } from "../src/index.js";
 
 async function main() {
-  const config: DuetAgentConfig = {
-    harnessModel: getModel("anthropic", "claude-opus-4-6"),
+  const config: HarnessConfig = {
+    harnessModel: "anthropic:claude-opus-4-6",
     cwd: process.cwd(),
   };
 

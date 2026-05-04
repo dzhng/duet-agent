@@ -1,4 +1,3 @@
-import type { Model } from "@mariozechner/pi-ai";
 import {
   Harness,
   type AgentWorkerInput,
@@ -7,8 +6,6 @@ import {
 import type { HarnessControlResult } from "../../src/harness/tools.js";
 import type { HarnessEvent, HarnessRun } from "../../src/types/protocol.js";
 import type { StateMachineDefinition } from "../../src/types/state-machine.js";
-
-const model = {} as Model<any>;
 
 export class TestHarness extends Harness {
   readonly workerInputs: AgentWorkerInput[] = [];
@@ -62,7 +59,7 @@ export class TestHarness extends Harness {
 
 export function createHarness(): { harness: TestHarness; events: HarnessEvent[] } {
   const harness = new TestHarness({
-    harnessModel: model,
+    harnessModel: "anthropic:claude-opus-4-6",
     skillDiscovery: { includeDefaults: false },
   });
   const events: HarnessEvent[] = [];

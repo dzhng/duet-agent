@@ -1,10 +1,10 @@
 import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
-import { getEnvApiKey, getModel, streamSimple, type Model } from "@mariozechner/pi-ai";
+import { getEnvApiKey, getModel, type Model } from "@mariozechner/pi-ai";
 import { convertToLlm } from "@mariozechner/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assistantText } from "../core/serializer.js";
-import type { DuetAgentConfig } from "../types/config.js";
+import type { HarnessConfig } from "../types/config.js";
 import type {
   HarnessAnswerCommand,
   HarnessEvent,
@@ -60,7 +60,7 @@ export class Harness {
   private activeAgent?: Agent;
   private interruptedTerminal?: HarnessTerminalTurnEvent;
 
-  constructor(readonly config: DuetAgentConfig) {}
+  constructor(readonly config: HarnessConfig) {}
 
   subscribe(handler: HarnessEventHandler): () => void {
     this.eventHandlers.add(handler);
@@ -256,18 +256,7 @@ export class Harness {
 
   protected async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     const controlRef = input.control ?? { current: { type: "none" } as HarnessControlResult };
-    const agent = new Agent({
-      initialState: {
-        model: this.resolveModel(input.options),
-        thinkingLevel: this.resolveThinkingLevel(input.options),
-        systemPrompt: input.systemPrompt ?? this.config.systemInstructions ?? "",
-        messages: input.run.agent.messages,
-        tools: input.tools,
-      },
-      convertToLlm,
-      streamFn: streamSimple,
-      getApiKey: getEnvApiKey,
-    });
+    const agent = this.createAgent(input);
     this.activeAgent = agent;
 
     const unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event));
@@ -311,6 +300,20 @@ export class Harness {
         error: agent.state.errorMessage,
       },
     };
+  }
+
+  protected createAgent(input: AgentWorkerInput): Agent {
+    return new Agent({
+      initialState: {
+        model: this.resolveModel(input.options),
+        thinkingLevel: input.options?.thinkingLevel ?? "medium",
+        systemPrompt: input.systemPrompt ?? this.config.systemInstructions ?? "",
+        messages: input.run.agent.messages,
+        tools: input.tools,
+      },
+      convertToLlm,
+      getApiKey: getEnvApiKey,
+    });
   }
 
   protected async runStateMachine(
@@ -552,26 +555,14 @@ export class Harness {
   }
 
   private resolveModel(options?: HarnessTurnOptions): Model<any> {
-    if (!options?.model) {
-      return this.config.harnessModel;
-    }
-    const separator = options.model.indexOf(":");
+    const modelName = options?.model ?? this.config.harnessModel;
+    const separator = modelName.indexOf(":");
     if (separator === -1) {
-      return this.config.harnessModel;
+      throw new Error("Models must use provider:modelId syntax");
     }
-    const provider = options.model.slice(0, separator) as Parameters<typeof getModel>[0];
-    const model = options.model.slice(separator + 1) as Parameters<typeof getModel>[1];
+    const provider = modelName.slice(0, separator) as Parameters<typeof getModel>[0];
+    const model = modelName.slice(separator + 1) as Parameters<typeof getModel>[1];
     return getModel(provider, model);
-  }
-
-  private resolveThinkingLevel(options?: HarnessTurnOptions) {
-    if (!options?.thinkingLevel || options.thinkingLevel === "auto") {
-      return "medium";
-    }
-    if (options.thinkingLevel === "none") {
-      return "off";
-    }
-    return options.thinkingLevel === "low" ? "minimal" : options.thinkingLevel;
   }
 
   private emitAgentEvent(event: AgentEvent): void {

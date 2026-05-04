@@ -1,10 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Model } from "@mariozechner/pi-ai";
 import { Orchestrator } from "../../src/orchestrator/orchestrator.js";
-
-const unusedModel = {} as Model<any>;
 
 export interface TestSkillInput {
   name: string;
@@ -22,7 +19,7 @@ export interface TestOrchestratorApp {
 export function createTestOrchestrator(): TestOrchestratorApp {
   const root = process.cwd();
   const orchestrator = new Orchestrator({
-    harnessModel: unusedModel,
+    harnessModel: "anthropic:claude-opus-4-6",
     cwd: root,
   });
 

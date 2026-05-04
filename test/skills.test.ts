@@ -2,7 +2,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
-import type { Model } from "@mariozechner/pi-ai";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
 import { Orchestrator } from "../src/orchestrator/orchestrator.js";
@@ -42,7 +41,7 @@ describe("Orchestrator skills", () => {
       `,
     );
     const orchestrator = new Orchestrator({
-      harnessModel: {} as Model<any>,
+      harnessModel: "anthropic:claude-opus-4-6",
       cwd: process.cwd(),
       skillDiscovery: { includeDefaults: false },
       skills: [
@@ -80,7 +79,7 @@ describe("Orchestrator skills", () => {
       `,
     );
     const orchestrator = new Orchestrator({
-      harnessModel: {} as Model<any>,
+      harnessModel: "anthropic:claude-opus-4-6",
       cwd: process.cwd(),
       skillDiscovery: { includeDefaults: false },
       skills: [

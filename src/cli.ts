@@ -9,9 +9,8 @@
  *   echo "fix the bug in server.ts" | duet-agent
  */
 
-import { getModel } from "@mariozechner/pi-ai";
 import { Orchestrator } from "./orchestrator/orchestrator.js";
-import type { DuetAgentConfig } from "./types/config.js";
+import type { HarnessConfig } from "./types/config.js";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -57,19 +56,13 @@ async function main() {
     process.exit(1);
   }
 
-  const harnessProviderSeparator = harnessModelName.indexOf(":");
-  if (harnessProviderSeparator <= 0) {
+  if (harnessModelName.indexOf(":") <= 0) {
     throw new Error("Models must use provider:modelId syntax");
   }
 
-  const harnessModel = getModel(
-    harnessModelName.slice(0, harnessProviderSeparator) as any,
-    harnessModelName.slice(harnessProviderSeparator + 1) as any,
-  );
-
   // Build config
-  const config: DuetAgentConfig = {
-    harnessModel,
+  const config: HarnessConfig = {
+    harnessModel: harnessModelName,
     cwd: workDir,
   };
 
