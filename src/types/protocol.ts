@@ -23,6 +23,7 @@ import type { StateMachineDefinition, StateMachineRun } from "./state-machine.js
  * - `start`: begin a new harness run from a prompt
  * - `prompt`: send a follow-up prompt while a run exists
  * - `answer`: answer questions from the previous terminal `ask` event
+ * - `wake`: resume a sleeping run for one scheduled polling attempt
  *
  * The harness must emit `ready` before any other event. A harness that is not
  * ready should not emit run, progress, or terminal events. After `ready`, the
@@ -246,7 +247,19 @@ export interface HarnessAnswerCommand {
   options?: HarnessTurnOptions;
 }
 
-export type HarnessTurnCommand = HarnessStartCommand | HarnessPromptCommand | HarnessAnswerCommand;
+/** Wake a sleeping run. If the run is not sleeping on a poll state, this is a no-op. */
+export interface HarnessWakeCommand {
+  type: "wake";
+  /** Existing run to wake. */
+  run: HarnessRun;
+  options?: HarnessTurnOptions;
+}
+
+export type HarnessTurnCommand =
+  | HarnessStartCommand
+  | HarnessPromptCommand
+  | HarnessAnswerCommand
+  | HarnessWakeCommand;
 
 /** Out-of-band control message that interrupts the currently running turn. */
 export interface HarnessInterruptCommand {

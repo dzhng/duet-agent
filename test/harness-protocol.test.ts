@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import assert from "node:assert";
 import {
   createHarness,
   createOutreachStateMachine,
@@ -97,6 +98,29 @@ describe("Harness protocol scenarios", () => {
     expect(terminal.run.stateMachine?.currentState).not.toBe("waiting_for_reply");
   });
 
+  test("answers unrelated prompts during an active state-machine run without changing state", async () => {
+    const { harness, events } = createHarness();
+    const run = createStateMachineRun("waiting_for_reply");
+
+    const terminal = await harness.turn({
+      type: "prompt",
+      run,
+      message: "What is the capital of France?",
+      behavior: "follow_up",
+    });
+
+    expect(events.some((event) => event.type === "state_machine")).toBe(false);
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      result: expect.stringContaining("Paris"),
+      run: {
+        status: "completed",
+        stateMachine: { currentState: "waiting_for_reply" },
+      },
+    });
+  });
+
   test("sleeps between poll attempts while waiting for an external email response", async () => {
     const { harness } = createHarness();
     const run = createStateMachineRun("poll_email_reply");
@@ -122,6 +146,41 @@ describe("Harness protocol scenarios", () => {
       },
     });
     expect(terminal.type === "sleep" ? terminal.wakeAt : 0).toBeGreaterThan(Date.now());
+  });
+
+  test("wakes a sleeping poll run for one polling attempt", async () => {
+    const { harness } = createHarness();
+    const run = { ...createStateMachineRun("poll_email_reply"), status: "sleeping" as const };
+
+    const terminal = await harness.turn({
+      type: "wake",
+      run,
+    });
+
+    expect(terminal).toMatchObject({
+      type: "sleep",
+      run: {
+        status: "sleeping",
+        stateMachine: { currentState: "poll_email_reply" },
+      },
+    });
+  });
+
+  test("wake is a no-op when the run is not sleeping on a poll", async () => {
+    const { harness } = createHarness();
+    const run = createStateMachineRun("waiting_for_reply");
+
+    const terminal = await harness.turn({
+      type: "wake",
+      run,
+    });
+
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      result: "Nothing to wake.",
+      run,
+    });
   });
 
   test("interrupts a running turn and resolves it with the current run", async () => {
@@ -244,6 +303,160 @@ describe("Harness protocol scenarios", () => {
     });
   });
 
+  test("asks the parent runner for the next state immediately after a state completes", async () => {
+    const { harness, events } = createHarness();
+    const run = createStateMachineRun("waiting_for_reply");
+    harness.controlResults.push(
+      {
+        type: "select_state_machine_state",
+        decision: { kind: "run_state", state: "research_prospect" },
+      },
+      { type: "none" },
+      {
+        type: "select_state_machine_state",
+        decision: { kind: "terminal", state: "meeting_scheduled" },
+      },
+    );
+
+    const terminal = await harness.turn({
+      type: "prompt",
+      run,
+      message: "Continue.",
+      behavior: "follow_up",
+    });
+
+    expect(harness.workerInputs).toHaveLength(3);
+    expect(harness.workerInputs[2]?.prompt).toContain('The state "research_prospect" finished.');
+    expect(events.filter((event) => event.type === "state_machine")).toHaveLength(2);
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      run: {
+        status: "completed",
+        stateMachine: {
+          currentState: "meeting_scheduled",
+          terminal: { state: "meeting_scheduled", status: "completed" },
+        },
+      },
+    });
+  });
+
+  test("retries when the parent runner does not choose the next state after completion", async () => {
+    const { harness } = createHarness();
+    const run = createStateMachineRun("waiting_for_reply");
+    harness.controlResults.push({
+      type: "select_state_machine_state",
+      decision: { kind: "run_state", state: "research_prospect" },
+    });
+
+    const terminal = await harness.turn({
+      type: "prompt",
+      run,
+      message: "Continue.",
+      behavior: "follow_up",
+    });
+
+    expect(harness.workerInputs).toHaveLength(5);
+    expect(harness.workerInputs[2]?.prompt).toContain("select_state_machine_state");
+    expect(harness.workerInputs[3]?.prompt).toContain("retry 2 of 3");
+    expect(harness.workerInputs[4]?.prompt).toContain("retry 3 of 3");
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "failed",
+      error: "State completed, but the runner did not call select_state_machine_state.",
+    });
+  });
+
+  test("cannot create a new state-machine definition while one is active", async () => {
+    const { harness } = createHarness();
+    const run = createStateMachineRun("waiting_for_reply");
+    const definition = {
+      name: "follow_up_flow",
+      prompt: "Use after outreach needs a new follow-up process.",
+      states: [
+        {
+          kind: "terminal" as const,
+          name: "done",
+          status: "completed" as const,
+        },
+      ],
+    };
+    harness.controlResults.push(
+      {
+        type: "select_state_machine_state",
+        decision: { kind: "run_state", state: "research_prospect" },
+      },
+      { type: "none" },
+      {
+        type: "create_state_machine_definition",
+        definition,
+        firstState: "done",
+      },
+    );
+
+    const terminal = await harness.turn({
+      type: "prompt",
+      run,
+      message: "Continue.",
+      behavior: "follow_up",
+    });
+
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "failed",
+      error:
+        "Cannot create a new state-machine definition while the current state machine is still active.",
+    });
+  });
+
+  test("can create a new state-machine definition after the previous one is terminal", async () => {
+    const { harness } = createHarness();
+    const run = createStateMachineRun("meeting_scheduled");
+    assert(run.stateMachine);
+    const terminalRun = {
+      ...run,
+      stateMachine: {
+        ...run.stateMachine,
+        terminal: { state: "meeting_scheduled", status: "completed" as const },
+      },
+    };
+    const definition = {
+      name: "follow_up_flow",
+      prompt: "Use after a completed outreach process needs follow-up.",
+      states: [
+        {
+          kind: "terminal" as const,
+          name: "done",
+          status: "completed" as const,
+        },
+      ],
+    };
+    harness.controlResults.push({
+      type: "create_state_machine_definition",
+      definition,
+      firstState: "done",
+    });
+
+    const terminal = await harness.turn({
+      type: "prompt",
+      run: terminalRun,
+      message: "Start a follow-up process.",
+      behavior: "follow_up",
+    });
+
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      run: {
+        stateMachine: {
+          definition,
+          currentState: "done",
+          terminal: { state: "done", status: "completed" },
+        },
+      },
+    });
+  });
+
   test("bubbles an agent state's ask terminal status to the parent harness", async () => {
     const { harness } = createHarness();
     const run = createStateMachineRun("research_prospect");
@@ -275,5 +488,59 @@ describe("Harness protocol scenarios", () => {
     });
 
     expect(terminal).toMatchObject({ type: "ask", run: { status: "waiting_for_human" } });
+  });
+
+  test("routes answers back to the current agent state when it is waiting for human input", async () => {
+    const { harness } = createHarness();
+    const run = {
+      ...createStateMachineRun("research_prospect"),
+      status: "waiting_for_human" as const,
+    };
+    harness.controlResults.push(
+      { type: "none" },
+      {
+        type: "select_state_machine_state",
+        decision: { kind: "terminal", state: "meeting_scheduled" },
+      },
+    );
+
+    const terminal = await harness.turn({
+      type: "answer",
+      run,
+      questions: [{ question: "Which prospect?", options: [{ label: "Ada" }] }],
+      answers: { prospect: "Ada Lovelace" },
+      behavior: "follow_up",
+    });
+
+    expect(harness.workerInputs).toHaveLength(2);
+    const answerMessage = harness.workerInputs[0]?.run.agent.messages.at(-1);
+    expect(answerMessage).toMatchObject({
+      role: "user",
+      content: [
+        {
+          type: "text",
+        },
+      ],
+    });
+    const answerContent = answerMessage?.role === "user" ? answerMessage.content : undefined;
+    const answerText =
+      typeof answerContent === "string"
+        ? answerContent
+        : Array.isArray(answerContent) && answerContent[0]?.type === "text"
+          ? answerContent[0].text
+          : "";
+    expect(answerText).toContain("Here are my answers to your questions.");
+    expect(answerText).toContain("Ada Lovelace");
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      run: {
+        status: "completed",
+        stateMachine: {
+          currentState: "meeting_scheduled",
+          terminal: { state: "meeting_scheduled", status: "completed" },
+        },
+      },
+    });
   });
 });

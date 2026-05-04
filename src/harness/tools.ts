@@ -250,7 +250,8 @@ function createStateMachineDefinitionTool(
   return {
     name: "create_state_machine_definition",
     label: "Create state machine definition",
-    description: "Create a state-machine definition for durable business-process work.",
+    description:
+      "Create a state-machine definition for durable business-process work. Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.",
     parameters: createDefinitionSchema,
     async execute(_toolCallId, params) {
       result.current = {

@@ -3,6 +3,7 @@ import {
   type AgentWorkerInput,
   type AgentWorkerResult,
 } from "../../src/harness/harness.js";
+import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { HarnessControlResult } from "../../src/harness/tools.js";
 import type { HarnessEvent, HarnessRun } from "../../src/types/protocol.js";
 import type { StateMachineDefinition } from "../../src/types/state-machine.js";
@@ -29,19 +30,29 @@ export class TestHarness extends Harness {
     const resultText = input.prompt.includes("capital of France")
       ? "Paris"
       : `Completed: ${input.prompt}`;
+    const assistantMessage: AssistantMessage = {
+      role: "assistant",
+      content: [{ type: "text", text: resultText }],
+      api: "unknown",
+      provider: "unknown",
+      model: "test",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    };
     const run = {
       ...input.run,
       status: "completed" as const,
       agent: {
         status: "completed" as const,
-        messages: [
-          ...input.run.agent.messages,
-          {
-            role: "assistant" as const,
-            content: [{ type: "text" as const, text: resultText }],
-            timestamp: Date.now(),
-          },
-        ],
+        messages: [...input.run.agent.messages, assistantMessage],
       },
     };
 

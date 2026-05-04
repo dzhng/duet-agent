@@ -13,12 +13,12 @@ import type {
   HarnessMode,
   HarnessPromptCommand,
   HarnessRun,
-  HarnessRunStatus,
   HarnessStartCommand,
   HarnessTerminalStatus,
   HarnessTerminalTurnEvent,
   HarnessTurnCommand,
   HarnessTurnOptions,
+  HarnessWakeCommand,
 } from "../types/protocol.js";
 import type {
   StateMachineAgentState,
@@ -83,6 +83,9 @@ export class Harness {
       case "answer":
         terminal = await this.answer(command);
         break;
+      case "wake":
+        terminal = await this.wake(command);
+        break;
     }
     this.emit(terminal);
     return terminal;
@@ -130,12 +133,17 @@ export class Harness {
   }
 
   protected async prompt(command: HarnessPromptCommand): Promise<HarnessTerminalTurnEvent> {
-    const run = this.appendUserMessage(this.withRunStatus(command.run, "running"), command.message);
-    if (run.stateMachine) {
-      return this.askRunnerForNextState(run, command.message, command.options);
+    const run = this.appendUserMessage({ ...command.run, status: "running" }, command.message);
+    if (run.mode === "agent") {
+      return this.runAgentMode(run, command.message, command.options);
     }
 
-    return this.runAgentMode(run, command.message, command.options);
+    return this.runHarnessAgentWithStateMachineTools({
+      run,
+      prompt: command.message,
+      mode: run.mode,
+      options: command.options,
+    });
   }
 
   protected async answer(command: HarnessAnswerCommand): Promise<HarnessTerminalTurnEvent> {
@@ -145,6 +153,16 @@ export class Harness {
       ${toXML([{ questions: command.questions }, { answers: command.answers }])}
     `;
 
+    const stateMachine = command.run.stateMachine;
+    const currentState = stateMachine?.currentState
+      ? this.findState(stateMachine, stateMachine.currentState)
+      : undefined;
+
+    if (command.run.status === "waiting_for_human" && currentState?.kind === "agent") {
+      const run = this.appendUserMessage({ ...command.run, status: "running" }, message);
+      return this.runStateMachineAgentState(run, currentState);
+    }
+
     return this.prompt({
       type: "prompt",
       run: command.run,
@@ -152,6 +170,25 @@ export class Harness {
       behavior: command.behavior,
       options: command.options,
     });
+  }
+
+  protected async wake(command: HarnessWakeCommand): Promise<HarnessTerminalTurnEvent> {
+    const run: HarnessRun = { ...command.run, status: "running" };
+    const stateMachine = run.stateMachine;
+    const currentState = stateMachine?.currentState
+      ? this.findState(stateMachine, stateMachine.currentState)
+      : undefined;
+
+    if (command.run.status === "sleeping" && currentState?.kind === "poll") {
+      return this.runStateMachinePollState(run, currentState);
+    }
+
+    return {
+      type: "complete",
+      status: "completed",
+      run: command.run,
+      result: "Nothing to wake.",
+    };
   }
 
   protected async runHarnessAgentWithStateMachineTools(input: {
@@ -173,6 +210,18 @@ export class Harness {
     }
 
     if (workerResult.control.type === "create_state_machine_definition") {
+      if (
+        workerResult.terminal.run.stateMachine &&
+        !workerResult.terminal.run.stateMachine.terminal
+      ) {
+        return this.complete(
+          workerResult.terminal.run,
+          "failed",
+          undefined,
+          "Cannot create a new state-machine definition while the current state machine is still active.",
+        );
+      }
+
       const firstState =
         workerResult.control.firstState ?? workerResult.control.definition.states[0]?.name ?? "";
       const run = this.initializeStateMachineRun(
@@ -196,48 +245,6 @@ export class Harness {
           )
         : workerResult.terminal.run;
     return this.runStateMachine(selectedRun, workerResult.control.decision);
-  }
-
-  protected async askRunnerForNextState(
-    run: HarnessRun,
-    prompt: string,
-    options?: HarnessTurnOptions,
-  ): Promise<HarnessTerminalTurnEvent> {
-    const workerResult = await this.runAgentWorker({
-      run,
-      prompt,
-      options,
-      systemPrompt: this.createStateMachineSystemPrompt(run.mode),
-      ...this.createTools(run.mode),
-    });
-
-    if (workerResult.control.type === "create_state_machine_definition") {
-      if (run.mode !== "auto") {
-        return this.complete(
-          run,
-          "failed",
-          undefined,
-          "Explicit state-machine mode cannot create a new definition.",
-        );
-      }
-      const firstState =
-        workerResult.control.firstState ?? workerResult.control.definition.states[0]?.name ?? "";
-      return this.runStateMachine(
-        this.initializeStateMachineRun(
-          workerResult.terminal.run,
-          prompt,
-          workerResult.control.definition,
-          firstState,
-        ),
-        { kind: "run_state", state: firstState },
-      );
-    }
-
-    if (workerResult.control.type === "select_state_machine_state") {
-      return this.runStateMachine(workerResult.terminal.run, workerResult.control.decision);
-    }
-
-    return workerResult.terminal;
   }
 
   protected createTools(mode: HarnessMode): {
@@ -389,19 +396,20 @@ export class Harness {
     });
 
     if (childResult.type === "ask") {
-      return { ...childResult, run: this.withRunStatus(updatedRun, "waiting_for_human") };
+      return { ...childResult, run: { ...updatedRun, status: "waiting_for_human" } };
     }
     if (childResult.type === "sleep") {
-      return { ...childResult, run: this.withRunStatus(updatedRun, "sleeping") };
+      return { ...childResult, run: { ...updatedRun, status: "sleeping" } };
     }
     if (childResult.type === "interrupted") {
-      return { ...childResult, run: this.withRunStatus(updatedRun, "interrupted") };
+      return { ...childResult, run: { ...updatedRun, status: "interrupted" } };
     }
 
-    return {
-      ...childResult,
-      run: this.withRunStatus(updatedRun, childResult.status),
-    };
+    return this.continueStateMachineAfterStateCompleted(
+      { ...updatedRun, status: "running" },
+      state.name,
+      childResult.result,
+    );
   }
 
   protected async runStateMachineScriptState(
@@ -414,9 +422,9 @@ export class Harness {
         timeout: state.timeoutMs,
       });
       const output = this.parseStructuredOutput(stdout);
-      return this.complete(
+      return this.continueStateMachineAfterStateCompleted(
         this.recordStateCompleted(run, state.name, output),
-        "completed",
+        state.name,
         stdout.trim(),
       );
     } catch (error) {
@@ -442,9 +450,9 @@ export class Harness {
       const output =
         result.type === "complete" && result.result ? this.parseJsonObject(result.result) : {};
       if (Object.keys(output).length > 0) {
-        return this.complete(
+        return this.continueStateMachineAfterStateCompleted(
           this.recordStateCompleted(run, state.name, output),
-          "completed",
+          state.name,
           result.type === "complete" ? result.result : undefined,
         );
       }
@@ -456,9 +464,9 @@ export class Harness {
         });
         const output = this.parseJsonObject(stdout);
         if (Object.keys(output).length > 0) {
-          return this.complete(
+          return this.continueStateMachineAfterStateCompleted(
             this.recordStateCompleted(run, state.name, output),
-            "completed",
+            state.name,
             stdout.trim(),
           );
         }
@@ -470,7 +478,7 @@ export class Harness {
     return {
       type: "sleep",
       wakeAt: Date.now() + state.intervalMs,
-      run: this.withRunStatus(run, "sleeping"),
+      run: { ...run, status: "sleeping" },
     };
   }
 
@@ -491,6 +499,62 @@ export class Harness {
       : undefined;
 
     return this.complete({ ...run, stateMachine }, state.status, state.reason);
+  }
+
+  protected async continueStateMachineAfterStateCompleted(
+    run: HarnessRun,
+    state: string,
+    result?: string,
+  ): Promise<HarnessTerminalTurnEvent> {
+    if (run.mode === "agent") {
+      return this.complete(run, "completed", result);
+    }
+
+    let nextRun = run;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const retryInstruction =
+        attempt === 1
+          ? ""
+          : `This is retry ${attempt} of 3. You did not call select_state_machine_state last time. You must call select_state_machine_state now.`;
+
+      const workerResult = await this.runAgentWorker({
+        run: nextRun,
+        prompt: dedent`
+          The state "${state}" finished.
+
+          ${toXML({ result: result ?? "" })}
+
+          ${retryInstruction}
+
+          You must call the select_state_machine_state tool to choose the next state, terminal state, or failure outcome.
+          Do not answer normally. Do not return text instead of calling the tool.
+        `,
+        systemPrompt: this.createStateMachineSystemPrompt(run.mode),
+        ...this.createTools(run.mode),
+      });
+
+      nextRun = workerResult.terminal.run;
+
+      if (workerResult.control.type === "select_state_machine_state") {
+        return this.runStateMachine(nextRun, workerResult.control.decision);
+      }
+
+      if (workerResult.control.type === "create_state_machine_definition") {
+        return this.complete(
+          nextRun,
+          "failed",
+          undefined,
+          "Cannot create a new state-machine definition while the current state machine is still active.",
+        );
+      }
+    }
+
+    return this.complete(
+      nextRun,
+      "failed",
+      undefined,
+      "State completed, but the runner did not call select_state_machine_state.",
+    );
   }
 
   private createInitialRun(prompt: string, mode: HarnessMode): HarnessRun {
@@ -628,10 +692,6 @@ export class Harness {
         ],
       },
     };
-  }
-
-  private withRunStatus(run: HarnessRun, status: HarnessRunStatus): HarnessRun {
-    return { ...run, status };
   }
 
   private complete(
