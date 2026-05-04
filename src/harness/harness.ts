@@ -1,8 +1,10 @@
 import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { getEnvApiKey, getModel, type Model } from "@mariozechner/pi-ai";
+import dedent from "dedent";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assistantText } from "../core/serializer.js";
+import { toXML } from "../lib/xml.js";
 import type { HarnessConfig } from "../types/config.js";
 import type {
   HarnessAnswerCommand,
@@ -96,6 +98,8 @@ export class Harness {
       },
     };
     if (this.activeAgent) {
+      // The active turn emits this terminal event after agent.prompt() unwinds.
+      // interrupt() only aborts out-of-band; it does not own turn completion.
       this.interruptedTerminal = terminal;
     }
     this.activeAgent?.abort();
@@ -135,10 +139,16 @@ export class Harness {
   }
 
   protected async answer(command: HarnessAnswerCommand): Promise<HarnessTerminalTurnEvent> {
+    const message = dedent`
+      Here are my answers to your questions.
+
+      ${toXML([{ questions: command.questions }, { answers: command.answers }])}
+    `;
+
     return this.prompt({
       type: "prompt",
       run: command.run,
-      message: JSON.stringify({ questions: command.questions, answers: command.answers }),
+      message,
       behavior: command.behavior,
       options: command.options,
     });

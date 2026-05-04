@@ -47,6 +47,7 @@
     "@mariozechner/pi-coding-agent": "^0.70.6",
     "dedent": "^1.7.2",
     "eventemitter3": "^5.0.0",
+    "jstoxml": "^7.1.0",
     "nanoid": "^5.0.0",
     "typebox": "^1.1.24"
   },

@@ -10,6 +10,7 @@
         "@mariozechner/pi-coding-agent": "^0.70.6",
         "dedent": "^1.7.2",
         "eventemitter3": "^5.0.0",
+        "jstoxml": "^7.1.0",
         "nanoid": "^5.0.0",
         "typebox": "^1.1.24",
       },
@@ -504,6 +505,8 @@
     "json-bigint": ["json-bigint@1.0.0", "", { "dependencies": { "bignumber.js": "^9.0.0" } }, "sha512-SiPv/8VpZuWbvLSMtTDU8hEfrZWg/mH/nV/b4o0CYbSxu1UIQPLdwKOCIyLQX+VIPO5vrLX3i8qtqFyhdPSUSQ=="],
 
     "json-schema-to-ts": ["json-schema-to-ts@3.1.1", "", { "dependencies": { "@babel/runtime": "^7.18.3", "ts-algebra": "^2.0.0" } }, "sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g=="],
+
+    "jstoxml": ["jstoxml@7.1.0", "", {}, "sha512-IUETuZk3Gza+5xcG85DA00UuBXjpvyDsHXuSgj/wk6WtLSRDBSYNFNG/bGvUR8jzC0cyk2Xe9uL6qi4tTAOaGg=="],
 
     "jwa": ["jwa@2.0.1", "", { "dependencies": { "buffer-equal-constant-time": "^1.0.1", "ecdsa-sig-formatter": "1.0.11", "safe-buffer": "^5.0.1" } }, "sha512-hRF04fqJIP8Abbkq5NKGN0Bbr3JxlQ+qhZufXVr0DvujKy93ZCbXZMHDL4EOtodSbCWxOqR8MS1tXA5hwqCXDg=="],
 
