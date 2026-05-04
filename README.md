@@ -154,7 +154,7 @@ duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the ru
 ```typescript
 const harness = new Harness({
   harnessModel: "anthropic:claude-opus-4-6",
-  memoryDiscovery: {
+  memoryStorage: {
     path: ".agents/memory-pglite",
   },
 });

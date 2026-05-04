@@ -14,7 +14,7 @@ class MemoryTransformHarness extends Harness {
 }
 
 describe("Harness memory", () => {
-  test("observational transform mutates direct harness memory data", async () => {
+  test("observational transform does not persist raw messages below observation threshold", async () => {
     const harness = new MemoryTransformHarness({
       harnessModel: "anthropic:claude-opus-4-6",
       skillDiscovery: { includeDefaults: false },
@@ -35,6 +35,9 @@ describe("Harness memory", () => {
     await transform(messages);
 
     const snapshot = await harness.getMemorySnapshotForTest();
-    expect(snapshot.observations).toHaveLength(0);
+    expect(snapshot).toMatchObject({
+      observations: [],
+      estimatedTokens: { observations: 0 },
+    });
   });
 });

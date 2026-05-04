@@ -3,17 +3,17 @@ import { PGlite } from "@electric-sql/pglite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadDiscoveredMemory } from "../src/memory/discovery.js";
+import { loadStoredMemory } from "../src/memory/storage.js";
 import { MemoryStore } from "../src/memory/store.js";
 import type { Observation } from "../src/types/memory.js";
 
-describe("Memory discovery", () => {
+describe("Memory storage", () => {
   test("is a no-op without a configured path", async () => {
     const store = new MemoryStore();
-    const dispose = await loadDiscoveredMemory(undefined, process.cwd(), store);
+    const dispose = await loadStoredMemory(undefined, process.cwd(), store);
 
     await store.appendObservation(createObservation("Not persisted."));
-    dispose();
+    await dispose();
 
     const snapshot = await store.getSnapshot();
     expect(snapshot.observations).toHaveLength(1);
@@ -25,10 +25,9 @@ describe("Memory discovery", () => {
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadDiscoveredMemory({ path: memoryPath }, tempDir, store);
+      const dispose = await loadStoredMemory({ path: memoryPath }, tempDir, store);
       await store.appendObservation(createObservation("Created database."));
-      await waitForObservationContents(memoryPath, ["Created database."]);
-      dispose();
+      await dispose();
 
       const observations = await readObservationContents(memoryPath);
       expect(observations).toEqual(["Created database."]);
@@ -45,9 +44,9 @@ describe("Memory discovery", () => {
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadDiscoveredMemory({ path: memoryPath }, tempDir, store);
+      const dispose = await loadStoredMemory({ path: memoryPath }, tempDir, store);
       const snapshot = await store.getSnapshot();
-      dispose();
+      await dispose();
 
       expect(snapshot.observations).toEqual([
         {
@@ -69,7 +68,7 @@ describe("Memory discovery", () => {
     }
   });
 
-  test("replaceObservations persists deletions", async () => {
+  test("replaceObservations deletes only removed observations", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
     const memoryPath = join(tempDir, "memory-pglite");
     const seeded = await openSeededDatabase(memoryPath);
@@ -77,14 +76,19 @@ describe("Memory discovery", () => {
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadDiscoveredMemory({ path: memoryPath }, tempDir, store);
+      const dispose = await loadStoredMemory({ path: memoryPath }, tempDir, store);
+      await store.appendObservation(createObservation("Kept memory."));
+
       await store.replaceObservations([
+        createPersistedObservation("mem_kept", "Kept memory.", 3),
         createPersistedObservation("replacement", "Replacement memory."),
       ]);
-      await waitForObservationContents(memoryPath, ["Replacement memory."]);
-      dispose();
+      await dispose();
 
-      expect(await readObservationContents(memoryPath)).toEqual(["Replacement memory."]);
+      expect(await readObservationContents(memoryPath)).toEqual([
+        "Kept memory.",
+        "Replacement memory.",
+      ]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -96,13 +100,38 @@ describe("Memory discovery", () => {
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadDiscoveredMemory({ path: memoryPath }, tempDir, store);
+      const dispose = await loadStoredMemory({ path: memoryPath }, tempDir, store);
       await store.appendObservation(createObservation("Before dispose."));
-      await waitForObservationContents(memoryPath, ["Before dispose."]);
-      dispose();
+      await dispose();
 
       await store.appendObservation(createObservation("After dispose."));
       expect(await readObservationContents(memoryPath)).toEqual(["Before dispose."]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("serializes rapid writes before dispose completes", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
+    const memoryPath = join(tempDir, "memory-pglite");
+    const store = new MemoryStore();
+
+    try {
+      const dispose = await loadStoredMemory({ path: memoryPath }, tempDir, store);
+      await Promise.all(
+        Array.from({ length: 5 }, (_, index) =>
+          store.appendObservation(createObservation(`Queued memory ${index}.`)),
+        ),
+      );
+      await dispose();
+
+      expect(await readObservationContents(memoryPath)).toEqual([
+        "Queued memory 0.",
+        "Queued memory 1.",
+        "Queued memory 2.",
+        "Queued memory 3.",
+        "Queued memory 4.",
+      ]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -156,10 +185,10 @@ function createObservation(content: string): Omit<Observation, "id" | "createdAt
   };
 }
 
-function createPersistedObservation(id: string, content: string): Observation {
+function createPersistedObservation(id: string, content: string, createdAt = 2): Observation {
   return {
     id,
-    createdAt: 2,
+    createdAt,
     ...createObservation(content),
   };
 }
@@ -167,18 +196,8 @@ function createPersistedObservation(id: string, content: string): Observation {
 async function readObservationContents(path: string): Promise<string[]> {
   const database = new PGlite(path);
   const result = await database.query<{ content: string }>(
-    "SELECT content FROM observations ORDER BY id",
+    "SELECT content FROM observations ORDER BY content",
   );
   await database.close();
   return result.rows.map((row) => row.content);
-}
-
-async function waitForObservationContents(path: string, expected: string[]): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt++) {
-    if (JSON.stringify(await readObservationContents(path)) === JSON.stringify(expected)) {
-      return;
-    }
-    await Bun.sleep(10);
-  }
-  expect(await readObservationContents(path)).toEqual(expected);
 }

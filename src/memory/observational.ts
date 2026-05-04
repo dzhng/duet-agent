@@ -26,19 +26,6 @@ import {
   type RawMemoryMessage,
 } from "./observational-prompts.js";
 
-export {
-  OBSERVATION_CONTEXT_INSTRUCTIONS,
-  OBSERVATION_CONTEXT_PROMPT,
-  OBSERVATION_CONTINUATION_HINT,
-  OBSERVER_GUIDELINES,
-  buildObserverOutputFormat,
-  buildObserverPrompt,
-  buildObserverSystemPrompt,
-  buildReflectorPrompt,
-  buildReflectorSystemPrompt,
-  formatMessagesForObserver,
-} from "./observational-prompts.js";
-
 export const OBSERVATIONAL_MEMORY_DEFAULTS = {
   observation: {
     // Start converting raw conversation history into observations once the raw

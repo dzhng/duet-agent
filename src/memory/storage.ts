@@ -1,42 +1,40 @@
 import { PGlite } from "@electric-sql/pglite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { MemoryDiscoveryOptions } from "../types/config.js";
-import type { Observation, ObservationalMemorySnapshot } from "../types/memory.js";
+import type { MemoryStorageOptions } from "../types/config.js";
+import type {
+  MemoryStoreEvent,
+  Observation,
+  ObservationalMemorySnapshot,
+} from "../types/memory.js";
 import type { MemoryStore } from "./store.js";
 
 type MemoryDatabase = PGlite;
 
-function buildMemoryDiscoveryOptions(options: MemoryDiscoveryOptions | undefined, cwd: string) {
-  return {
-    path: options?.path ? resolveMemoryPath(options.path, cwd) : undefined,
-  };
-}
-
-export async function loadDiscoveredMemory(
-  discoveryOptions: MemoryDiscoveryOptions | undefined,
+export async function loadStoredMemory(
+  storageOptions: MemoryStorageOptions | undefined,
   cwd: string,
   store: MemoryStore,
-): Promise<() => void> {
-  const options = buildMemoryDiscoveryOptions(discoveryOptions, cwd);
-  if (!options.path) {
-    return () => {};
+): Promise<() => Promise<void>> {
+  if (!storageOptions?.path) {
+    return async () => {};
   }
 
-  const database = await openMemoryDatabase(options.path);
+  const database = await openMemoryDatabase(resolveMemoryPath(storageOptions.path, cwd));
   const snapshot = await readMemorySnapshot(database);
   await store.replaceObservations(snapshot.observations);
 
-  const persist = async () => {
-    await writeMemorySnapshot(database, await store.getSnapshot());
+  let writeQueue = Promise.resolve();
+  const enqueueWrite = (event: MemoryStoreEvent) => {
+    writeQueue = writeQueue.then(() => persistMemoryEvent(database, event));
+    void writeQueue;
   };
-  await persist();
-  const unsubscribe = store.on(() => {
-    void persist();
-  });
-  return () => {
+  const unsubscribe = store.on(enqueueWrite);
+
+  return async () => {
     unsubscribe();
-    void database.close();
+    await writeQueue;
+    await database.close();
   };
 }
 
@@ -77,45 +75,70 @@ async function readMemorySnapshot(database: MemoryDatabase): Promise<Observation
   };
 }
 
-async function writeMemorySnapshot(
+async function persistMemoryEvent(
   database: MemoryDatabase,
-  snapshot: ObservationalMemorySnapshot,
+  event: MemoryStoreEvent,
 ): Promise<void> {
+  if (event.type === "observation_appended") {
+    await upsertObservation(database, event.observation);
+    return;
+  }
+
+  await syncObservations(database, event.observations);
+}
+
+async function syncObservations(
+  database: MemoryDatabase,
+  observations: readonly Observation[],
+): Promise<void> {
+  const ids = observations.map((observation) => observation.id);
   await database.transaction(async (tx) => {
-    await tx.exec("DELETE FROM observations");
-    for (const observation of snapshot.observations) {
-      await tx.query(
-        `INSERT INTO observations (
-          id, created_at, observed_date, referenced_date, relative_date, time_of_day,
-          priority, scope, source_json, content, tags_json
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        ON CONFLICT (id) DO UPDATE SET
-          created_at = EXCLUDED.created_at,
-          observed_date = EXCLUDED.observed_date,
-          referenced_date = EXCLUDED.referenced_date,
-          relative_date = EXCLUDED.relative_date,
-          time_of_day = EXCLUDED.time_of_day,
-          priority = EXCLUDED.priority,
-          scope = EXCLUDED.scope,
-          source_json = EXCLUDED.source_json,
-          content = EXCLUDED.content,
-          tags_json = EXCLUDED.tags_json`,
-        [
-          observation.id,
-          observation.createdAt,
-          observation.observedDate,
-          observation.referencedDate ?? null,
-          observation.relativeDate ?? null,
-          observation.timeOfDay ?? null,
-          observation.priority,
-          observation.scope,
-          JSON.stringify(observation.source),
-          observation.content,
-          JSON.stringify(observation.tags),
-        ],
-      );
+    if (ids.length === 0) {
+      await tx.exec("DELETE FROM observations");
+    } else {
+      await tx.query("DELETE FROM observations WHERE NOT (id = ANY($1::text[]))", [ids]);
+    }
+
+    for (const observation of observations) {
+      await upsertObservation(tx, observation);
     }
   });
+}
+
+async function upsertObservation(
+  database: Pick<MemoryDatabase, "query">,
+  observation: Observation,
+): Promise<void> {
+  await database.query(
+    `INSERT INTO observations (
+      id, created_at, observed_date, referenced_date, relative_date, time_of_day,
+      priority, scope, source_json, content, tags_json
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    ON CONFLICT (id) DO UPDATE SET
+      created_at = EXCLUDED.created_at,
+      observed_date = EXCLUDED.observed_date,
+      referenced_date = EXCLUDED.referenced_date,
+      relative_date = EXCLUDED.relative_date,
+      time_of_day = EXCLUDED.time_of_day,
+      priority = EXCLUDED.priority,
+      scope = EXCLUDED.scope,
+      source_json = EXCLUDED.source_json,
+      content = EXCLUDED.content,
+      tags_json = EXCLUDED.tags_json`,
+    [
+      observation.id,
+      observation.createdAt,
+      observation.observedDate,
+      observation.referencedDate ?? null,
+      observation.relativeDate ?? null,
+      observation.timeOfDay ?? null,
+      observation.priority,
+      observation.scope,
+      JSON.stringify(observation.source),
+      observation.content,
+      JSON.stringify(observation.tags),
+    ],
+  );
 }
 
 function resolveMemoryPath(path: string, cwd: string): string {

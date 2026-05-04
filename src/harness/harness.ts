@@ -6,8 +6,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assistantText } from "../core/serializer.js";
 import { toXML } from "../lib/xml.js";
-import { loadDiscoveredMemory } from "../memory/discovery.js";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
+import { loadStoredMemory } from "../memory/storage.js";
 import { MemoryStore } from "../memory/store.js";
 import type { HarnessConfig } from "../types/config.js";
 import type {
@@ -73,7 +73,7 @@ export interface AgentWorkerResult {
 export class Harness {
   private readonly eventHandlers = new Set<HarnessEventHandler>();
   protected readonly memory = new MemoryStore();
-  private memoryDiscoveryDispose?: () => void;
+  private memoryStorageDispose?: () => Promise<void>;
   private activeAgent?: Agent;
   private interruptedTerminal?: HarnessTerminalTurnEvent;
   private skills: Skill[] = [];
@@ -86,9 +86,9 @@ export class Harness {
     }
   }
 
-  dispose(): void {
-    this.memoryDiscoveryDispose?.();
-    this.memoryDiscoveryDispose = undefined;
+  async dispose(): Promise<void> {
+    await this.memoryStorageDispose?.();
+    this.memoryStorageDispose = undefined;
   }
 
   subscribe(handler: HarnessEventHandler): () => void {
@@ -413,8 +413,8 @@ export class Harness {
     if (this.memoryLoaded) return;
     this.memoryLoaded = true;
 
-    this.memoryDiscoveryDispose = await loadDiscoveredMemory(
-      this.config.memoryDiscovery,
+    this.memoryStorageDispose = await loadStoredMemory(
+      this.config.memoryStorage,
       this.config.cwd ?? process.cwd(),
       this.memory,
     );

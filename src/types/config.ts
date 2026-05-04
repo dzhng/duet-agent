@@ -6,7 +6,7 @@ import type { HarnessMode } from "./protocol.js";
 /** Directly mirrors pi-coding-agent's loadSkills options. */
 export type SkillDiscoveryOptions = Partial<Parameters<typeof loadSkills>[0]>;
 
-export interface MemoryDiscoveryOptions {
+export interface MemoryStorageOptions {
   path: string;
 }
 
@@ -14,7 +14,7 @@ export interface HarnessConfig {
   /** Default model in provider:modelId format, passed through pi-ai's model registry. */
   harnessModel: string;
   memory?: Partial<ObservationalMemorySettings>;
-  memoryDiscovery?: MemoryDiscoveryOptions;
+  memoryStorage?: MemoryStorageOptions;
   cwd?: string;
   /** Default mode for Harness.turn. "auto" lets the harness classify each prompt. */
   mode?: HarnessMode;
