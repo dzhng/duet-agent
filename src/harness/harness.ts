@@ -32,9 +32,8 @@ import type {
 import {
   applyStateOverride,
   createDefaultHarnessTools,
-  createHarnessToolSet,
+  createHarnessTools,
   type HarnessControlResult,
-  type HarnessToolsResultRef,
   type StateMachineRunnerDecision,
 } from "./tools.js";
 
@@ -48,7 +47,6 @@ export interface AgentWorkerInput {
   options?: HarnessTurnOptions;
   systemPrompt?: string;
   tools: AgentTool[];
-  control?: HarnessToolsResultRef;
 }
 
 export interface AgentWorkerResult {
@@ -249,15 +247,13 @@ export class Harness {
 
   protected createTools(mode: HarnessMode): {
     tools: AgentTool[];
-    control?: HarnessToolsResultRef;
   } {
     const cwd = this.config.cwd ?? process.cwd();
     if (mode === "agent") {
       return { tools: createDefaultHarnessTools(cwd) };
     }
 
-    const toolSet = createHarnessToolSet({ cwd, mode });
-    return { tools: toolSet.tools, control: toolSet.result };
+    return { tools: createHarnessTools({ cwd, mode }) };
   }
 
   protected async runAgentMode(
@@ -276,8 +272,10 @@ export class Harness {
   }
 
   protected async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
-    const controlRef = input.control ?? { current: { type: "none" } as HarnessControlResult };
-    const agent = this.createAgent(input);
+    let control: HarnessControlResult = { type: "none" };
+    const agent = this.createAgent(input, (result) => {
+      control = result;
+    });
     this.activeAgent = agent;
 
     const unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event));
@@ -297,7 +295,7 @@ export class Harness {
     if (this.interruptedTerminal) {
       const terminal = this.interruptedTerminal;
       this.interruptedTerminal = undefined;
-      return { control: controlRef.current, terminal };
+      return { control, terminal };
     }
 
     const messages = agent.state.messages;
@@ -312,7 +310,7 @@ export class Harness {
     } satisfies HarnessRun;
 
     return {
-      control: controlRef.current,
+      control,
       terminal: {
         type: "complete",
         status,
@@ -323,7 +321,10 @@ export class Harness {
     };
   }
 
-  protected createAgent(input: AgentWorkerInput): Agent {
+  protected createAgent(
+    input: AgentWorkerInput,
+    onControlResult?: (result: HarnessControlResult) => void,
+  ): Agent {
     return new Agent({
       initialState: {
         model: this.resolveModel(input.options),
@@ -332,8 +333,24 @@ export class Harness {
         messages: input.run.agent.messages,
         tools: input.tools,
       },
+      afterToolCall: async (context) => {
+        if (this.isHarnessControlResult(context.result.details)) {
+          onControlResult?.(context.result.details);
+        }
+        return undefined;
+      },
       getApiKey: getEnvApiKey,
     });
+  }
+
+  private isHarnessControlResult(value: unknown): value is HarnessControlResult {
+    if (!value || typeof value !== "object" || !("type" in value)) return false;
+    const type = value.type;
+    return (
+      type === "none" ||
+      type === "create_state_machine_definition" ||
+      type === "select_state_machine_state"
+    );
   }
 
   protected async runStateMachine(

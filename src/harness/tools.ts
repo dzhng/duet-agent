@@ -151,15 +151,6 @@ export type StateMachineStateOverride =
   | { kind: "script"; state: StateMachineScriptStateOverride }
   | { kind: "poll"; state: StateMachinePollStateOverride };
 
-export interface HarnessToolsResultRef {
-  current: HarnessControlResult;
-}
-
-export interface HarnessToolSet {
-  tools: AgentTool[];
-  result: HarnessToolsResultRef;
-}
-
 const stateMachineDefinitionSchema = Type.Object({
   name: Type.String(),
   prompt: Type.String(),
@@ -207,30 +198,18 @@ export function createDefaultHarnessTools(cwd: string): AgentTool[] {
   return createCodingTools(cwd);
 }
 
-export function createHarnessTools(input: {
-  cwd: string;
-  mode: HarnessMode;
-  result: HarnessToolsResultRef;
-}): AgentTool[] {
+export function createHarnessTools(input: { cwd: string; mode: HarnessMode }): AgentTool[] {
   const tools = [...createDefaultHarnessTools(input.cwd)];
   if (input.mode === "agent") {
     return tools;
   }
 
   if (input.mode === "auto") {
-    tools.push(createStateMachineDefinitionTool(input.result));
+    tools.push(createStateMachineDefinitionTool());
   }
 
-  tools.push(createSelectStateTool(input.result));
+  tools.push(createSelectStateTool());
   return tools;
-}
-
-export function createHarnessToolSet(input: { cwd: string; mode: HarnessMode }): HarnessToolSet {
-  const result: HarnessToolsResultRef = { current: { type: "none" } };
-  return {
-    result,
-    tools: createHarnessTools({ ...input, result }),
-  };
 }
 
 export function applyStateOverride(
@@ -244,9 +223,7 @@ export function applyStateOverride(
   return { ...state, ...override.state } as StateMachineState;
 }
 
-function createStateMachineDefinitionTool(
-  result: HarnessToolsResultRef,
-): AgentTool<typeof createDefinitionSchema> {
+function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSchema> {
   return {
     name: "create_state_machine_definition",
     label: "Create state machine definition",
@@ -254,21 +231,21 @@ function createStateMachineDefinitionTool(
       "Create a state-machine definition for durable business-process work. Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.",
     parameters: createDefinitionSchema,
     async execute(_toolCallId, params) {
-      result.current = {
+      const result: HarnessControlResult = {
         type: "create_state_machine_definition",
         definition: params.definition,
         firstState: params.firstState,
       };
       return {
-        content: [{ type: "text", text: JSON.stringify(result.current, null, 2) }],
-        details: result.current,
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        details: result,
         terminate: true,
       };
     },
   };
 }
 
-function createSelectStateTool(result: HarnessToolsResultRef): AgentTool<typeof selectStateSchema> {
+function createSelectStateTool(): AgentTool<typeof selectStateSchema> {
   return {
     name: "select_state_machine_state",
     label: "Select state machine state",
@@ -277,10 +254,10 @@ function createSelectStateTool(result: HarnessToolsResultRef): AgentTool<typeof 
     async execute(_toolCallId, params) {
       const decision = normalizeRunnerDecision(params.decision);
 
-      result.current = { type: "select_state_machine_state", decision };
+      const result: HarnessControlResult = { type: "select_state_machine_state", decision };
       return {
-        content: [{ type: "text", text: JSON.stringify(result.current, null, 2) }],
-        details: result.current,
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        details: result,
         terminate: true,
       };
     },
