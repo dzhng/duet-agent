@@ -19,13 +19,10 @@ import {
   OBSERVATION_CONTEXT_INSTRUCTIONS,
   OBSERVATION_CONTEXT_PROMPT,
   OBSERVATION_CONTINUATION_HINT,
-  OBSERVER_GUIDELINES,
-  buildObserverOutputFormat,
   buildObserverPrompt,
   buildObserverSystemPrompt,
   buildReflectorPrompt,
   buildReflectorSystemPrompt,
-  formatMessagesForObserver,
   type RawMemoryMessage,
 } from "./observational-prompts.js";
 
