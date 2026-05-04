@@ -3,7 +3,7 @@ import assert from "node:assert";
 import { Agent, type StreamFn } from "@mariozechner/pi-agent-core";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@mariozechner/pi-ai";
 import { Harness, type AgentWorkerInput } from "../src/harness/harness.js";
-import type { HarnessEvent, HarnessRun } from "../src/types/protocol.js";
+import type { HarnessEvent, HarnessSession } from "../src/types/protocol.js";
 
 function createAbortedMessage(): AssistantMessage {
   return {
@@ -46,7 +46,7 @@ class InterruptHarness extends Harness {
         model: { provider: "unknown", id: "test" } as never,
         thinkingLevel: input.options?.thinkingLevel ?? "medium",
         systemPrompt: input.appendSystemPrompt ?? "",
-        messages: input.run.agent.messages,
+        messages: input.session.agent.messages,
         tools: input.tools,
       },
       streamFn: this.createInterruptibleStream(),
@@ -84,11 +84,13 @@ describe("Harness interrupts", () => {
     });
     await harness.streamStarted;
 
-    const run = events.find((event) => event.type === "run_started")?.run as HarnessRun | undefined;
-    expect(run).toBeDefined();
-    assert(run);
+    const session = events.find((event) => event.type === "session_started")?.session as
+      | HarnessSession
+      | undefined;
+    expect(session).toBeDefined();
+    assert(session);
 
-    harness.interrupt({ type: "interrupt", run });
+    harness.interrupt({ type: "interrupt", session });
 
     const terminal = await turn;
     const interruptedEvent = events.find((event) => event.type === "interrupted");
@@ -98,7 +100,7 @@ describe("Harness interrupts", () => {
     expect(terminal).toBe(interruptedEvent);
     expect(terminal).toMatchObject({
       type: "interrupted",
-      run: {
+      session: {
         status: "interrupted",
         agent: { status: "cancelled" },
       },

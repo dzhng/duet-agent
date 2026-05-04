@@ -52,8 +52,8 @@ async function main() {
   });
 
   console.log("\n--- State Machine Summary ---");
-  console.log(`Status: ${terminal.run.status}`);
-  console.log(`Current state: ${terminal.run.stateMachine?.currentState ?? "none"}`);
+  console.log(`Status: ${terminal.session.status}`);
+  console.log(`Current state: ${terminal.session.stateMachine?.currentState ?? "none"}`);
   if (terminal.type === "complete" && terminal.error) {
     console.error(`Error: ${terminal.error}`);
   }

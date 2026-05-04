@@ -2,8 +2,8 @@ import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
 import { toXML } from "../lib/xml.js";
 import type { HarnessConfig } from "../types/config.js";
-import type { HarnessMode, HarnessRun } from "../types/protocol.js";
-import type { StateMachineAgentState, StateMachineRun } from "../types/state-machine.js";
+import type { HarnessMode, HarnessSession } from "../types/protocol.js";
+import type { StateMachineAgentState, StateMachineSession } from "../types/state-machine.js";
 import { readSkillInstructions } from "./skills.js";
 
 const STATE_AGENT_HISTORY_CHAR_LIMIT = 12_000;
@@ -20,14 +20,14 @@ export function createSystemPromptWithAppendedLayers(input: {
 
 export function createStateMachineSystemPromptLayer(input: {
   mode: HarnessMode;
-  run?: HarnessRun;
+  session?: HarnessSession;
 }): string {
   const constraint =
     input.mode === "auto"
       ? "You may create new state-machine definitions whenever durable lifecycle work appears."
       : "You must stay constrained to the explicit state-machine definition unless no state fits.";
   const definition =
-    typeof input.mode === "object" ? input.mode : input.run?.stateMachine?.definition;
+    typeof input.mode === "object" ? input.mode : input.session?.stateMachine?.definition;
   const definitionPrompt = definition
     ? dedent`
         Explicit state-machine definition:
@@ -49,10 +49,10 @@ export function createStateMachineSystemPromptLayer(input: {
 }
 
 export function createStateAgentSystemPromptLayer(input: {
-  run: HarnessRun;
+  session: HarnessSession;
   state: StateMachineAgentState;
 }): string | undefined {
-  const stateMachine = input.run.stateMachine;
+  const stateMachine = input.session.stateMachine;
   if (!stateMachine) return undefined;
 
   return dedent`
@@ -76,10 +76,10 @@ export function createStateAgentSystemPromptLayer(input: {
 }
 
 export function createStateAgentPrompt(input: {
-  run: HarnessRun;
+  session: HarnessSession;
   state: StateMachineAgentState;
 }): string {
-  const stateMachine = input.run.stateMachine;
+  const stateMachine = input.session.stateMachine;
   if (!stateMachine) return input.state.prompt;
 
   const history = createBoundedStateMachineHistory(stateMachine.history);
@@ -113,11 +113,11 @@ function createSkillsSystemPrompt(skills: readonly Skill[]): string | undefined 
   `;
 }
 
-function createBoundedStateMachineHistory(history: StateMachineRun["history"]): {
+function createBoundedStateMachineHistory(history: StateMachineSession["history"]): {
   omitted: number;
-  events: StateMachineRun["history"];
+  events: StateMachineSession["history"];
 } {
-  const events: StateMachineRun["history"] = [];
+  const events: StateMachineSession["history"] = [];
   let size = 0;
 
   for (let index = history.length - 1; index >= 0; index--) {

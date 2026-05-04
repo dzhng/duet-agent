@@ -1,7 +1,7 @@
 import type { Guardrail, GuardrailContext, GuardrailResult } from "../types/guardrails.js";
 
 /**
- * Create a guardrail firewall: run multiple guardrails and fail on first block.
+ * Create a guardrail firewall: session multiple guardrails and fail on first block.
  * This composes pattern + semantic + custom guardrails into a single check.
  */
 export function createFirewall(guardrails: Guardrail[]): Guardrail {

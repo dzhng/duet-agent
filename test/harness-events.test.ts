@@ -21,7 +21,7 @@ function createEventHarness(): { harness: EventHarness; events: HarnessEvent[] }
 }
 
 describe("Harness event emission", () => {
-  test("emits ready, run_started, and the terminal event for a turn", async () => {
+  test("emits ready, session_started, and the terminal event for a turn", async () => {
     const { harness, events } = createHarness();
 
     const terminal = await harness.turn({
@@ -30,7 +30,7 @@ describe("Harness event emission", () => {
       prompt: "Summarize this file.",
     });
 
-    expect(events.map((event) => event.type)).toEqual(["ready", "run_started", "complete"]);
+    expect(events.map((event) => event.type)).toEqual(["ready", "session_started", "complete"]);
     expect(events.at(-1)).toBe(terminal);
   });
 

@@ -6,7 +6,7 @@ import type { HarnessTurnOptions } from "./protocol.js";
  * A state machine models the high-level business process, not task execution.
  * There is one current business state at a time. The state-machine runner agent
  * sees the original prompt, state-machine state, state history, and state
- * definitions, then decides which state should run next, whether the run should
+ * definitions, then decides which state should run next, whether the session should
  * wait, or whether a terminal state should finalize the state machine.
  *
  * If a state needs fan-out, parallelism, or task-level workflow execution, that
@@ -25,10 +25,10 @@ import type { HarnessTurnOptions } from "./protocol.js";
  *
  * The harness should:
  *
- * 1. Start a StateMachineRun from a StateMachineDefinition and initialize durable domain
+ * 1. Start a StateMachineSession from a StateMachineDefinition and initialize durable domain
  *    state.
  * 2. Enter an agent state for enrichment/research and record the output in the
- *    run history so the state machine can resume without repeating research.
+ *    session history so the state machine can resume without repeating research.
  * 3. Enter a send-email script state and record the sent message details.
  * 4. The runner can choose a poll state. The harness runs one poll attempt,
  *    emits a sleep event if nothing changed, and relies on the outer layer to
@@ -39,7 +39,7 @@ import type { HarnessTurnOptions } from "./protocol.js";
  *    - follow-up due
  *    - meeting scheduled
  *    - outreach window expired
- * 5. When polling returns a reply payload, resume the run and ask an
+ * 5. When polling returns a reply payload, resume the session and ask an
  *    agent to classify it: interested, negative, ad hoc question, neutral, or
  *    unclear.
  * 6. The runner chooses the appropriate next state based on that classification:
@@ -47,7 +47,7 @@ import type { HarnessTurnOptions } from "./protocol.js";
  *    - ad hoc question -> answer question, then return to waiting
  *    - negative -> terminal state: prospect_not_interested
  *    - unclear -> ask a follow-up or wait for more context
- * 7. When polling returns follow-up_due, send a follow-up if the run
+ * 7. When polling returns follow-up_due, send a follow-up if the session
  *    has not exceeded the cadence limit. For example: every 4 days for one
  *    month.
  * 8. End in one of the named terminal states:
@@ -72,7 +72,7 @@ import type { HarnessTurnOptions } from "./protocol.js";
  *
  * The harness should:
  *
- * 1. Start a StateMachineRun from the user's prompt.
+ * 1. Start a StateMachineSession from the user's prompt.
  * 2. Execute a script/tool state that creates a worktree and records its path in
  *    state-machine state/history.
  * 3. Execute an agent state that implements the requested code change inside the
@@ -80,7 +80,7 @@ import type { HarnessTurnOptions } from "./protocol.js";
  * 4. Execute a review agent state. The review can either approve, request fixes,
  *    or block the state machine.
  * 5. If fixes are requested, choose the dev-agent state again with the review
- *    feedback as input. The run history should preserve both attempts.
+ *    feedback as input. The session history should preserve both attempts.
  * 6. When approved, execute a PR creation state and record PR number/URL.
  * 7. Enter a poll state. Each poll attempt can use gh, git, or any other
  *    CLI/API wrapper to inspect the PR state and return:
@@ -112,7 +112,7 @@ import type { HarnessTurnOptions } from "./protocol.js";
  * for response." The harness injects the original prompt and relevant history
  * automatically when constructing agent prompts; state definitions only describe
  * their own behavior. Human input is not a separate state-machine state: if the
- * current state is an agent state and the harness run is waiting_for_human, the
+ * current state is an agent state and the harness session is waiting_for_human, the
  * state machine is waiting for that agent's user input. Polling remains explicit
  * because the harness owns one poll attempt and emits sleep until the next attempt.
  *
@@ -149,7 +149,7 @@ import type { HarnessTurnOptions } from "./protocol.js";
 
 export type StateMachineAgentContextScope = "state" | "dependencies" | "state_machine";
 
-/** User-authored state machine template. Runtime progress lives in StateMachineRun. */
+/** User-authored state machine template. Runtime progress lives in StateMachineSession. */
 export interface StateMachineDefinition {
   /** Human-readable label for selection in CLIs/UIs. */
   name: string;
@@ -165,9 +165,9 @@ export interface StateMachineDefinition {
 
 /**
  * Persisted execution state. The harness can stop after any state and later
- * continue from this run without redoing completed work.
+ * continue from this session without redoing completed work.
  */
-export interface StateMachineRun {
+export interface StateMachineSession {
   /** Current active definition. Required for resuming and dispatching currentState. */
   definition: StateMachineDefinition;
   /** Original user request that started the state machine. */
@@ -177,8 +177,8 @@ export interface StateMachineRun {
   /** Mutable state machine memory shared across runner decisions and state templates. */
   state: Record<string, unknown>;
   /** Append-only audit log used for debugging, replay, and persistence. */
-  history: StateMachineRunEvent[];
-  /** Present only after a run reaches a named terminal state. */
+  history: StateMachineSessionEvent[];
+  /** Present only after a session reaches a named terminal state. */
   terminal?: StateMachineTerminalResult;
   createdAt: number;
   updatedAt: number;
@@ -202,7 +202,7 @@ export interface StateMachineAgentState extends StateMachineBaseState {
   kind: "agent";
   /**
    * Prompt for the agent. The harness renders this as a template before
-   * execution using run.state only. The original user prompt and
+   * execution using session.state only. The original user prompt and
    * broader history are added separately when the final agent prompt is
    * constructed.
    */
@@ -231,11 +231,11 @@ export interface StateMachineScriptState extends StateMachineBaseState {
   /**
    * Shell command used for integrations, setup, cleanup, and deterministic
    * checks. The harness renders this as a template before execution using
-   * run.state only; keep state-machine definitions serializable instead of storing
+   * session.state only; keep state-machine definitions serializable instead of storing
    * executable functions here.
    */
   command: string;
-  /** Working directory for the command. Defaults to the state-machine runner cwd. */
+  /** Working directory for the command. Defaults to the state-machine session cwd. */
   cwd?: string;
   /** Kills the command if it exceeds this runtime. */
   timeoutMs?: number;
@@ -248,7 +248,7 @@ export interface StateMachinePollState extends StateMachineBaseState {
   kind: "poll";
   /** How often the protocol layer should wake the harness for another attempt. */
   intervalMs: number;
-  /** Maximum time the state machine can remain in this poll state before failing the run. */
+  /** Maximum time the state machine can remain in this poll state before failing the session. */
   timeoutMs?: number;
   /** One polling attempt. The harness owns the polling loop and emits sleep between attempts. */
   poll: StateMachinePoll;
@@ -276,17 +276,17 @@ export type StateMachinePoll =
       outputSchema?: Record<string, unknown>;
     };
 
-/** Finalizes the run when reached. Terminal outcomes are just state machine states. */
+/** Finalizes the session when reached. Terminal outcomes are just state machine states. */
 export interface StateMachineTerminalState extends StateMachineBaseState {
   kind: "terminal";
-  /** Maps this named outcome to the run's lifecycle status. */
+  /** Maps this named outcome to the session's lifecycle status. */
   status: "completed" | "failed" | "cancelled";
   /** Optional final explanation shown to users and recorded in history. */
   reason?: string;
 }
 
 export interface StateMachineTerminalResult {
-  /** Names the terminal state that finalized the run. */
+  /** Names the terminal state that finalized the session. */
   state: string;
   /** Copied from the terminal state for easy querying. */
   status: StateMachineTerminalState["status"];
@@ -294,11 +294,11 @@ export interface StateMachineTerminalResult {
   reason?: string;
 }
 
-export type StateMachineRunEvent =
-  | { type: "run_started"; timestamp: number }
+export type StateMachineSessionEvent =
+  | { type: "session_started"; timestamp: number }
   | { type: "runner_decided"; timestamp: number; decision: unknown }
   | { type: "state_started"; timestamp: number; state: string; effectiveState?: StateMachineState }
   | { type: "state_completed"; timestamp: number; state: string; output?: unknown }
   | { type: "state_failed"; timestamp: number; state: string; error: string }
-  | { type: "run_resumed"; timestamp: number; state: string; input?: unknown }
-  | { type: "run_completed"; timestamp: number; terminal: StateMachineTerminalResult };
+  | { type: "session_resumed"; timestamp: number; state: string; input?: unknown }
+  | { type: "session_completed"; timestamp: number; terminal: StateMachineTerminalResult };

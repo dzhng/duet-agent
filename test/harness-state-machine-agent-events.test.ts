@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
 import { Harness, type AgentWorkerInput, type AgentWorkerResult } from "../src/harness/harness.js";
 import type { HarnessEvent } from "../src/types/protocol.js";
-import { createStateMachineRun } from "./helpers/harness-protocol.js";
+import { createStateMachineSession } from "./helpers/harness-protocol.js";
 
 class StateMachineAgentEventHarness extends Harness {
   private workerCalls = 0;
@@ -27,7 +27,7 @@ class StateMachineAgentEventHarness extends Harness {
           type: "complete",
           status: "completed",
           result: "Selected research state.",
-          run: { ...input.run, status: "completed" },
+          session: { ...input.session, status: "completed" },
         },
       };
     }
@@ -55,11 +55,11 @@ class StateMachineAgentEventHarness extends Harness {
         type: "complete",
         status: "completed",
         result: "Child state complete.",
-        run: {
-          ...input.run,
+        session: {
+          ...input.session,
           status: "completed",
           agent: {
-            ...input.run.agent,
+            ...input.session.agent,
             status: "completed",
           },
         },
@@ -76,7 +76,7 @@ describe("State-machine agent state events", () => {
 
     await harness.turn({
       type: "prompt",
-      run: createStateMachineRun("waiting_for_reply"),
+      session: createStateMachineSession("waiting_for_reply"),
       message: "Continue.",
       behavior: "follow_up",
     });

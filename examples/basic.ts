@@ -25,12 +25,12 @@ async function main() {
     prompt: "Create a simple HTTP server in Node.js that serves a JSON API with a /health endpoint",
   });
 
-  console.log("\n--- Run Summary ---");
-  console.log(`Status: ${terminal.run.status}`);
+  console.log("\n--- Session Summary ---");
+  console.log(`Status: ${terminal.session.status}`);
   if (terminal.type === "complete" && terminal.error) {
     console.error(`Error: ${terminal.error}`);
   }
-  console.log(terminal.run.stateMachine ? "State machine run" : "Agent run");
+  console.log(terminal.session.stateMachine ? "State machine session" : "Agent session");
 }
 
 main().catch(console.error);

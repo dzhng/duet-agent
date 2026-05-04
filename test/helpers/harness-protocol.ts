@@ -6,7 +6,7 @@ import {
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { HarnessControlResult } from "../../src/harness/tools.js";
 import type { HarnessConfig } from "../../src/types/config.js";
-import type { HarnessEvent, HarnessRun } from "../../src/types/protocol.js";
+import type { HarnessEvent, HarnessSession } from "../../src/types/protocol.js";
 import type { StateMachineDefinition } from "../../src/types/state-machine.js";
 
 export class TestHarness extends Harness {
@@ -48,12 +48,12 @@ export class TestHarness extends Harness {
       stopReason: "stop",
       timestamp: Date.now(),
     };
-    const run = {
-      ...input.run,
+    const session = {
+      ...input.session,
       status: "completed" as const,
       agent: {
         status: "completed" as const,
-        messages: [...input.run.agent.messages, assistantMessage],
+        messages: [...input.session.agent.messages, assistantMessage],
       },
     };
 
@@ -63,7 +63,7 @@ export class TestHarness extends Harness {
         type: "complete",
         status: "completed",
         result: resultText,
-        run,
+        session,
       },
     };
   }
@@ -83,7 +83,7 @@ export function createHarness(config?: Partial<HarnessConfig>): {
   return { harness, events };
 }
 
-export function createStateMachineRun(currentState: string): HarnessRun {
+export function createStateMachineSession(currentState: string): HarnessSession {
   const definition = createOutreachStateMachine();
   return {
     status: "running",

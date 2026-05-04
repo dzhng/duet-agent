@@ -206,7 +206,7 @@ describe("Harness skills", () => {
     await app.addProjectSkill({
       name: "browser-qa",
       description: "|\n  Fast headless browser for QA testing.\n  Use when checking UI flows.",
-      body: "# Browser QA\n\nRun quick browser checks.",
+      body: "# Browser QA\n\nSession quick browser checks.",
     });
 
     const skills = await app.harness.getSkills();

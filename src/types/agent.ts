@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
-export type AgentRunStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
+export type AgentSessionStatus = "running" | "waiting" | "completed" | "failed" | "cancelled";
 
 /**
  * Serializable state for agent mode.
@@ -10,7 +10,7 @@ export type AgentRunStatus = "running" | "waiting" | "completed" | "failed" | "c
  * return so the layer above the harness can persist enough state to continue a
  * later turn.
  */
-export interface AgentRun {
-  status: AgentRunStatus;
+export interface AgentSession {
+  status: AgentSessionStatus;
   messages: AgentMessage[];
 }

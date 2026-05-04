@@ -1,6 +1,6 @@
 import type { Model } from "@mariozechner/pi-ai";
 import type { Observation } from "./memory.js";
-import type { HarnessRun } from "./protocol.js";
+import type { HarnessSession } from "./protocol.js";
 
 export interface GuardrailResult {
   allowed: boolean;
@@ -29,5 +29,5 @@ export interface GuardrailContext {
   action: string;
   content: string;
   memories: Observation[];
-  run: HarnessRun;
+  session: HarnessSession;
 }

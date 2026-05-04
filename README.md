@@ -29,7 +29,7 @@ duet-agent takes the opposite approach: **memory is woven into the core architec
 ┌────▼──────────▼──────────▼──────────▼───────────────────┐
 │                    Shared Infrastructure                  │
 │        Memory (observed) │ Pi │ Guardrails                │
-│        pi coding tools run in the configured cwd          │
+│        pi coding tools run in the configured cwd              │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -37,9 +37,9 @@ duet-agent takes the opposite approach: **memory is woven into the core architec
 
 ### Native Memory
 
-Memory is first-class, but the harness itself has **zero persistence logic**. The default `MemoryStore` is in-memory and emits events for raw-message and observation changes. Persistence is intentionally built outside the harness: subscribe to memory events and write them wherever you want, or pass saved state back to the harness as run state.
+Memory is first-class. The default `MemoryStore` is in-memory and emits observation events; optional PGlite storage hydrates and persists durable observations outside the harness session.
 
-The memory model follows observational memory: raw messages accumulate, an observer compresses them into text observations, and a reflector condenses observations when they grow too large. Observations are scoped as `session` or `resource`; both can be persisted by external modules.
+The memory model follows observational memory: harness session messages are observed into durable text observations, and a reflector condenses observations when they grow too large. Observations are scoped as `session` or `resource`.
 
 ### Pi Coding Tools
 
@@ -57,7 +57,7 @@ The harness can delegate durable process steps into agent states. Agent states a
 
 The harness has three top-level modes:
 
-- `agent`: handle the prompt as a normal agent run. This is for one-off tasks, coding requests, reviews, research, and anything that can complete in the current session.
+- `agent`: handle the prompt as a normal agent session. This is for one-off tasks, coding requests, reviews, research, and anything that can complete in the current session.
 - `state_machine`: route the prompt into an agent-routed state machine. This is for long-running business processes with durable state, waits, and terminal business outcomes.
 - `auto`: let the harness classify the prompt and choose either `agent` or `state_machine`.
 
@@ -119,7 +119,7 @@ The pre-commit hook runs `format`, `check-types`, and `lint`.
 # Set your API key
 export ANTHROPIC_API_KEY=sk-...
 
-# Run
+# Session
 npx duet-agent "build a REST API with Express"
 
 # With options
@@ -160,20 +160,20 @@ const harness = new Harness({
 });
 ```
 
-The memory module hydrates durable observations from an embedded Postgres database powered by PGlite before the first turn and writes observation updates back as memory changes. Raw conversation messages stay in `HarnessRun.agent.messages`; memory persistence stores only derived observations/reflections.
+The memory module hydrates durable observations from an embedded Postgres database powered by PGlite before the first turn and writes observation updates back as memory changes. Raw conversation messages stay in `HarnessSession.agent.messages`; memory persistence stores only derived observations/reflections.
 
 You can also resume directly from saved state:
 
 ```typescript
 const terminal = await harness.turn({
   type: "prompt",
-  run: savedRun,
+  session: savedSession,
   message: "Continue the previous goal",
   behavior: "follow_up",
 });
 ```
 
-Resume continues harness run state, not an in-flight model/tool call. Any `in_progress` todo is retried from `pending`.
+Resume continues harness session state, not an in-flight model/tool call. Any `in_progress` todo is retried from `pending`.
 
 Observational memory is enabled by default with conservative long-context thresholds:
 
