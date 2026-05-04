@@ -115,7 +115,7 @@ export class Harness {
 
   protected async start(command: HarnessStartCommand): Promise<HarnessTerminalTurnEvent> {
     const mode = command.mode ?? this.config.mode ?? "auto";
-    const run = this.createInitialRun(command.prompt, mode);
+    const run = this.createInitialRun(mode);
     this.emit({ type: "run_started", run });
 
     if (mode === "agent") {
@@ -131,7 +131,7 @@ export class Harness {
   }
 
   protected async prompt(command: HarnessPromptCommand): Promise<HarnessTerminalTurnEvent> {
-    const run = this.appendUserMessage({ ...command.run, status: "running" }, command.message);
+    const run: HarnessRun = { ...command.run, status: "running" };
     if (run.mode === "agent") {
       return this.runAgentMode(run, command.message, command.options);
     }
@@ -460,10 +460,7 @@ export class Harness {
     state: StateMachinePollState,
   ): Promise<HarnessTerminalTurnEvent> {
     if (state.poll.kind === "prompt") {
-      const result = await this.runAgentMode(
-        this.createInitialRun(state.poll.prompt, "agent"),
-        state.poll.prompt,
-      );
+      const result = await this.runAgentMode(this.createInitialRun("agent"), state.poll.prompt);
       const output =
         result.type === "complete" && result.result ? this.parseJsonObject(result.result) : {};
       if (Object.keys(output).length > 0) {
@@ -574,15 +571,13 @@ export class Harness {
     );
   }
 
-  private createInitialRun(prompt: string, mode: HarnessMode): HarnessRun {
+  private createInitialRun(mode: HarnessMode): HarnessRun {
     return {
       status: "running",
       mode,
       agent: {
         status: "running",
-        messages: [
-          { role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() },
-        ],
+        messages: [],
       },
     };
   }
