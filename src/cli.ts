@@ -9,7 +9,7 @@
  *   echo "fix the bug in server.ts" | duet-agent
  */
 
-import { Orchestrator } from "./orchestrator/orchestrator.js";
+import { Harness } from "./harness/harness.js";
 import type { HarnessConfig } from "./types/config.js";
 
 async function main() {
@@ -66,10 +66,18 @@ async function main() {
     cwd: workDir,
   };
 
-  const orchestrator = new Orchestrator(config);
+  const harness = new Harness(config);
+  harness.subscribe((event) => {
+    if (event.type === "step") {
+      process.stderr.write(`${JSON.stringify(event.step)}\n`);
+    }
+  });
 
   try {
-    await orchestrator.run(goal);
+    const terminal = await harness.turn({ type: "start", mode: config.mode, prompt: goal });
+    if (terminal.type === "complete" && terminal.error) {
+      throw new Error(terminal.error);
+    }
     process.stderr.write("\nDone.\n");
     process.exit(0);
   } catch (err: any) {

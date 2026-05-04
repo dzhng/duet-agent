@@ -1,5 +1,6 @@
 import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { getEnvApiKey, getModel, type Model } from "@mariozechner/pi-ai";
+import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -30,6 +31,18 @@ import type {
   StateMachineTerminalState,
 } from "../types/state-machine.js";
 import {
+  createSystemPromptWithAppendedLayers,
+  createStateAgentPrompt,
+  createStateAgentSystemPromptLayer,
+  createStateMachineSystemPromptLayer,
+} from "./prompts.js";
+import {
+  loadDiscoveredSkills,
+  mergeSkillsByName,
+  prepareExplicitSkills,
+  readSkillInstructions,
+} from "./skills.js";
+import {
   applyStateOverride,
   createDefaultHarnessTools,
   createHarnessTools,
@@ -45,7 +58,7 @@ export interface AgentWorkerInput {
   run: HarnessRun;
   prompt: string;
   options?: HarnessTurnOptions;
-  systemPrompt?: string;
+  appendSystemPrompt?: string;
   tools: AgentTool[];
 }
 
@@ -58,8 +71,14 @@ export class Harness {
   private readonly eventHandlers = new Set<HarnessEventHandler>();
   private activeAgent?: Agent;
   private interruptedTerminal?: HarnessTerminalTurnEvent;
+  private skills: Skill[] = [];
+  private skillsLoaded = false;
 
-  constructor(readonly config: HarnessConfig) {}
+  constructor(readonly config: HarnessConfig) {
+    if (config.skills) {
+      this.skills = prepareExplicitSkills(config.skills);
+    }
+  }
 
   subscribe(handler: HarnessEventHandler): () => void {
     this.eventHandlers.add(handler);
@@ -69,6 +88,7 @@ export class Harness {
   }
 
   async turn(command: HarnessTurnCommand): Promise<HarnessTerminalTurnEvent> {
+    await this.ensureSkillsLoaded();
     this.emit({ type: "ready" });
     let terminal: HarnessTerminalTurnEvent;
     switch (command.type) {
@@ -199,7 +219,7 @@ export class Harness {
       run: input.run,
       prompt: input.prompt,
       options: input.options,
-      systemPrompt: this.createStateMachineSystemPrompt(input.mode, input.run),
+      appendSystemPrompt: createStateMachineSystemPromptLayer({ mode: input.mode, run: input.run }),
       ...this.createTools(input.mode, input.run),
     });
 
@@ -332,7 +352,7 @@ export class Harness {
       initialState: {
         model: this.resolveModel(input.options),
         thinkingLevel: input.options?.thinkingLevel ?? "medium",
-        systemPrompt: input.systemPrompt ?? this.config.systemInstructions ?? "",
+        systemPrompt: this.createBaseSystemPromptWithAppendedLayers(input.appendSystemPrompt),
         messages: input.run.agent.messages,
         tools: input.tools,
       },
@@ -343,6 +363,35 @@ export class Harness {
         return undefined;
       },
       getApiKey: getEnvApiKey,
+    });
+  }
+
+  async getSkills(): Promise<readonly Skill[]> {
+    await this.ensureSkillsLoaded();
+    return [...this.skills];
+  }
+
+  getSkillInstructions(skillId: string): string {
+    const skill = this.skills.find((s) => s.name === skillId);
+    return skill ? readSkillInstructions(skill) : "";
+  }
+
+  private async ensureSkillsLoaded(): Promise<void> {
+    if (this.skillsLoaded) return;
+    this.skillsLoaded = true;
+
+    const discovered = loadDiscoveredSkills(
+      this.config.skillDiscovery,
+      this.config.cwd ?? process.cwd(),
+    );
+    this.skills = mergeSkillsByName(this.skills, discovered);
+  }
+
+  protected createBaseSystemPromptWithAppendedLayers(...append: Array<string | undefined>): string {
+    return createSystemPromptWithAppendedLayers({
+      config: this.config,
+      skills: this.skills,
+      append,
     });
   }
 
@@ -406,7 +455,7 @@ export class Harness {
     run: HarnessRun,
     state: StateMachineAgentState,
   ): Promise<HarnessTerminalTurnEvent> {
-    const childPrompt = this.createStateAgentPrompt(run, state);
+    const childPrompt = createStateAgentPrompt({ run, state });
     const childRun: HarnessRun = {
       ...run,
       mode: "agent",
@@ -414,7 +463,15 @@ export class Harness {
       stateMachine: undefined,
       agent: { ...run.agent, status: "running" },
     };
-    const childResult = await this.runAgentMode(childRun, childPrompt, state.options);
+    const childResult = (
+      await this.runAgentWorker({
+        run: childRun,
+        prompt: childPrompt,
+        options: state.options,
+        appendSystemPrompt: createStateAgentSystemPromptLayer({ run, state }),
+        ...this.createTools("agent"),
+      })
+    ).terminal;
     const parentRun = { ...run, agent: childResult.run.agent };
     const updatedRun = this.recordStateCompleted(parentRun, state.name, {
       result: childResult.type === "complete" ? childResult.result : undefined,
@@ -552,7 +609,7 @@ export class Harness {
           You must call the select_state_machine_state tool to choose the next state, terminal state, or failure outcome.
           Do not answer normally. Do not return text instead of calling the tool.
         `,
-        systemPrompt: this.createStateMachineSystemPrompt(run.mode, run),
+        appendSystemPrompt: createStateMachineSystemPromptLayer({ mode: run.mode, run }),
         ...this.createTools(run.mode, run),
       });
 
@@ -611,56 +668,6 @@ export class Harness {
         updatedAt: now,
       },
     };
-  }
-
-  private createStateMachineSystemPrompt(mode: HarnessMode, run?: HarnessRun): string {
-    const constraint =
-      mode === "auto"
-        ? "You may create new state-machine definitions whenever durable lifecycle work appears."
-        : "You must stay constrained to the explicit state-machine definition unless no state fits.";
-    const definition = typeof mode === "object" ? mode : run?.stateMachine?.definition;
-    const definitionPrompt = definition
-      ? dedent`
-          Explicit state-machine definition:
-
-          ${JSON.stringify(definition, null, 2)}
-
-          Only select states by name from this definition. Do not invent state names.
-        `
-      : undefined;
-    return [
-      this.config.systemInstructions,
-      "Route durable business-process work through state-machine tools whenever possible.",
-      "If the request is simple or unrelated, answer normally without calling a harness-control tool.",
-      constraint,
-      definitionPrompt,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-  }
-
-  private createStateAgentPrompt(run: HarnessRun, state: StateMachineAgentState): string {
-    const stateMachine = run.stateMachine;
-    if (!stateMachine) return state.prompt;
-
-    const context =
-      state.contextScope === "state_machine"
-        ? {
-            originalPrompt: stateMachine.prompt,
-            state: stateMachine.state,
-            history: stateMachine.history,
-            definition: stateMachine.definition,
-          }
-        : {
-            originalPrompt: stateMachine.prompt,
-            state: stateMachine.state,
-          };
-
-    return [
-      state.prompt,
-      "Use this state-machine context as the source of truth for this state:",
-      JSON.stringify(context, null, 2),
-    ].join("\n\n");
   }
 
   private resolveModel(options?: HarnessTurnOptions): Model<any> {

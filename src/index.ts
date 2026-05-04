@@ -18,7 +18,6 @@ export * from "./memory/store.js";
 export * from "./memory/observational.js";
 export * from "./memory/observation-groups.js";
 export * from "./harness/harness.js";
-export * from "./orchestrator/orchestrator.js";
 export * from "./guardrails/semantic.js";
 export * from "./guardrails/pattern.js";
 export * from "./guardrails/firewall.js";

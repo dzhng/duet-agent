@@ -45,7 +45,7 @@ class InterruptHarness extends Harness {
       initialState: {
         model: { provider: "unknown", id: "test" } as never,
         thinkingLevel: input.options?.thinkingLevel ?? "medium",
-        systemPrompt: input.systemPrompt ?? "",
+        systemPrompt: input.appendSystemPrompt ?? "",
         messages: input.run.agent.messages,
         tools: input.tools,
       },

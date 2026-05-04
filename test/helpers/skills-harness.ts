@@ -1,7 +1,8 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { Orchestrator } from "../../src/orchestrator/orchestrator.js";
+import dedent from "dedent";
+import { Harness } from "../../src/harness/harness.js";
 
 export interface TestSkillInput {
   name: string;
@@ -9,16 +10,16 @@ export interface TestSkillInput {
   body?: string;
 }
 
-export interface TestOrchestratorApp {
-  orchestrator: Orchestrator;
+export interface TestHarnessApp {
+  harness: Harness;
   addProjectSkill(input: TestSkillInput): Promise<string>;
   addGlobalSkill(input: TestSkillInput): Promise<string>;
   cleanup(): Promise<void>;
 }
 
-export function createTestOrchestrator(): TestOrchestratorApp {
+export function createTestHarness(): TestHarnessApp {
   const root = process.cwd();
-  const orchestrator = new Orchestrator({
+  const harness = new Harness({
     harnessModel: "anthropic:claude-opus-4-6",
     cwd: root,
   });
@@ -26,7 +27,7 @@ export function createTestOrchestrator(): TestOrchestratorApp {
   const createdPaths: string[] = [];
 
   return {
-    orchestrator,
+    harness,
     addProjectSkill: (input) => writeSkill(join(root, ".agents", "skills"), input, createdPaths),
     addGlobalSkill: (input) =>
       writeSkill(join(homedir(), ".agents", "skills"), input, createdPaths),
@@ -47,13 +48,14 @@ async function writeSkill(
   const skillPath = join(skillDir, "SKILL.md");
   await writeFile(
     skillPath,
-    `---
-name: ${input.name}
-description: ${input.description}
----
+    dedent`
+      ---
+      name: ${input.name}
+      description: ${input.description}
+      ---
 
-${input.body ?? `# ${input.name}`}
-`,
+      ${input.body ?? `# ${input.name}`}
+    `,
   );
   return skillPath;
 }

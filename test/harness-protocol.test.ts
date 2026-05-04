@@ -248,9 +248,11 @@ describe("Harness protocol scenarios", () => {
     expect(harness.workerInputs[0]?.tools.map((tool) => tool.name)).not.toContain(
       "create_state_machine_definition",
     );
-    expect(harness.workerInputs[0]?.systemPrompt).toContain("Explicit state-machine definition");
-    expect(harness.workerInputs[0]?.systemPrompt).toContain('"name": "conference_outreach"');
-    expect(harness.workerInputs[0]?.systemPrompt).toContain('"name": "research_prospect"');
+    expect(harness.workerInputs[0]?.appendSystemPrompt).toContain(
+      "Explicit state-machine definition",
+    );
+    expect(harness.workerInputs[0]?.appendSystemPrompt).toContain('"name": "conference_outreach"');
+    expect(harness.workerInputs[0]?.appendSystemPrompt).toContain('"name": "research_prospect"');
   });
 
   test("answers normally when an explicit state machine does not fit the prompt", async () => {
@@ -329,6 +331,54 @@ describe("Harness protocol scenarios", () => {
     expect(terminal.run.stateMachine?.definition.states[0]).toMatchObject({
       prompt: "Research the prospect and company.",
     });
+  });
+
+  test("bounds state-machine history injected into agent state prompts", async () => {
+    const { harness } = createHarness();
+    const run = createStateMachineRun("research_prospect");
+    if (!run.stateMachine) throw new Error("Expected state machine run");
+    run.stateMachine.definition = {
+      ...run.stateMachine.definition,
+      states: run.stateMachine.definition.states.map((state) =>
+        state.name === "waiting_for_reply" && state.kind === "agent"
+          ? { ...state, contextScope: "state_machine" }
+          : state,
+      ),
+    };
+    run.stateMachine.history = [
+      {
+        type: "state_completed",
+        timestamp: 1,
+        state: "research_prospect",
+        output: { marker: "old-history", data: "x".repeat(20_000) },
+      },
+      {
+        type: "state_completed",
+        timestamp: 2,
+        state: "send_email",
+        output: { marker: "recent-history" },
+      },
+    ];
+    harness.controlResults.push({
+      type: "select_state_machine_state",
+      decision: { kind: "run_state", state: "waiting_for_reply" },
+    });
+
+    await harness.turn({
+      type: "prompt",
+      run,
+      message: "Continue outreach.",
+      behavior: "follow_up",
+    });
+
+    const agentStatePrompt = harness.workerInputs[1]?.prompt ?? "";
+    const agentStateSystemPrompt = harness.workerInputs[1]?.appendSystemPrompt ?? "";
+    expect(agentStatePrompt.includes("recent-history")).toBe(true);
+    expect(agentStatePrompt.includes("old-history")).toBe(false);
+    expect(agentStatePrompt.includes('"omitted": 1')).toBe(true);
+    expect(agentStateSystemPrompt.includes("recent-history")).toBe(false);
+    expect(agentStateSystemPrompt.includes("old-history")).toBe(false);
+    expect(agentStateSystemPrompt.includes("State-machine context:")).toBe(true);
   });
 
   test("asks the parent runner for the next state immediately after a state completes", async () => {
