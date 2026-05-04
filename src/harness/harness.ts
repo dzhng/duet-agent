@@ -1,6 +1,5 @@
 import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { getEnvApiKey, getModel, type Model } from "@mariozechner/pi-ai";
-import { convertToLlm } from "@mariozechner/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { assistantText } from "../core/serializer.js";
@@ -71,14 +70,20 @@ export class Harness {
 
   async turn(command: HarnessTurnCommand): Promise<HarnessTerminalTurnEvent> {
     this.emit({ type: "ready" });
+    let terminal: HarnessTerminalTurnEvent;
     switch (command.type) {
       case "start":
-        return this.start(command);
+        terminal = await this.start(command);
+        break;
       case "prompt":
-        return this.prompt(command);
+        terminal = await this.prompt(command);
+        break;
       case "answer":
-        return this.answer(command);
+        terminal = await this.answer(command);
+        break;
     }
+    this.emit(terminal);
+    return terminal;
   }
 
   interrupt(command: HarnessInterruptCommand): void {
@@ -95,7 +100,6 @@ export class Harness {
     }
     this.activeAgent?.abort();
     this.activeAgent = undefined;
-    this.emit(terminal);
   }
 
   protected emit(event: HarnessEvent): void {
@@ -311,7 +315,6 @@ export class Harness {
         messages: input.run.agent.messages,
         tools: input.tools,
       },
-      convertToLlm,
       getApiKey: getEnvApiKey,
     });
   }
@@ -565,11 +568,14 @@ export class Harness {
     return getModel(provider, model);
   }
 
-  private emitAgentEvent(event: AgentEvent): void {
-    if (event.type === "message_update" && "assistantMessageEvent" in event) {
+  protected emitAgentEvent(event: AgentEvent): void {
+    if (event.type === "message_update") {
       const update = event.assistantMessageEvent;
-      if (update.type === "text_delta") {
-        this.emit({ type: "step", step: { type: "text", text: update.delta } });
+      if (update.type === "text_end") {
+        this.emit({ type: "step", step: { type: "text", text: update.content } });
+      }
+      if (update.type === "thinking_end") {
+        this.emit({ type: "step", step: { type: "reasoning", text: update.content } });
       }
     }
     if (event.type === "tool_execution_start") {
