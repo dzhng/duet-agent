@@ -14,30 +14,28 @@ duet-agent takes the opposite approach: **memory is woven into the core architec
 
 ```mermaid
 flowchart TD
-  TurnRunner["TurnRunner<br/>Takes prompt + options<br/>Chooses agent / state_machine / auto mode<br/>Routes state-machine transitions through an agent<br/>Runs agent, script, poll, and terminal states"]
+  Runner["TurnRunner"]
+  Input["Prompt + options"]
+  Mode["Mode selection<br/>agent | state_machine | auto"]
+  States["State execution<br/>agent | script | poll | terminal"]
 
-  Coder["Sub-Agent<br/>(coder)"]
-  Research["Sub-Agent<br/>(research)"]
-  Review["Sub-Agent<br/>(review)"]
-  Sysadm["Sub-Agent<br/>(sysadm)"]
+  subgraph Agents["Dynamically defined sub-agents"]
+    direction LR
+    Coder["coder"]
+    Research["research"]
+    Review["review"]
+    Sysadm["sysadm"]
+  end
 
-  Shared["Shared Infrastructure<br/>Memory (observed) | Pi | Guardrails<br/>pi coding tools run in the configured cwd"]
+  subgraph Infrastructure["Shared infrastructure"]
+    direction LR
+    Memory["Observed memory"]
+    Pi["Pi coding tools<br/>in configured cwd"]
+    Guardrails["Guardrails"]
+  end
 
-  TurnRunner --> Coder
-  TurnRunner --> Research
-  TurnRunner --> Review
-  TurnRunner --> Sysadm
-
-  Coder --> Shared
-  Research --> Shared
-  Review --> Shared
-  Sysadm --> Shared
-
-  Dynamic["dynamically defined"]
-  Dynamic -.-> Coder
-  Dynamic -.-> Research
-  Dynamic -.-> Review
-  Dynamic -.-> Sysadm
+  Input --> Runner --> Mode --> States --> Agents
+  Agents --> Infrastructure
 ```
 
 ## Key Differentiators
