@@ -12,7 +12,7 @@ class EventTurnRunner extends TurnRunner {
 
 function createEventTurnRunner(): { runner: EventTurnRunner; events: TurnEvent[] } {
   const runner = new EventTurnRunner({
-    model: "anthropic:claude-opus-4-6",
+    model: "anthropic:claude-opus-4-7",
     skillDiscovery: { includeDefaults: false },
   });
   const events: TurnEvent[] = [];

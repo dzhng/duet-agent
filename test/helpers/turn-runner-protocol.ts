@@ -74,7 +74,7 @@ export function createTurnRunner(config?: Partial<TurnRunnerConfig>): {
   events: TurnEvent[];
 } {
   const runner = new TestTurnRunner({
-    model: "anthropic:claude-opus-4-6",
+    model: "anthropic:claude-opus-4-7",
     skillDiscovery: { includeDefaults: false },
     ...config,
   });

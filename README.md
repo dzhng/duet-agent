@@ -126,14 +126,14 @@ npx duet-agent "build a REST API with Express"
 bun run cli -- "build a REST API with Express"
 
 # With options
-bun run cli -- -m anthropic:claude-opus-4-6 --workdir ./my-project "refactor the auth module"
+bun run cli -- -m anthropic:claude-opus-4-7 --workdir ./my-project "refactor the auth module"
 
 # Resume a saved session
 bun run cli -- --resume session_abc123 --workdir ./my-project
 
 # Through Vercel AI Gateway
 export AI_GATEWAY_API_KEY=...
-npx duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 "review this repo"
+npx duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.7 "review this repo"
 ```
 
 ### Programmatic
@@ -142,7 +142,7 @@ npx duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 "review this repo"
 import { TurnRunner } from "duet-agent";
 
 const turnRunner = new TurnRunner({
-  model: "anthropic:claude-opus-4-6",
+  model: "anthropic:claude-opus-4-7",
   cwd: process.cwd(),
   mode: "auto",
 });
@@ -159,7 +159,7 @@ duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the ru
 
 ```typescript
 const turnRunner = new TurnRunner({
-  model: "anthropic:claude-opus-4-6",
+  model: "anthropic:claude-opus-4-7",
   memoryStorage: {
     path: ".agents/memory-pglite",
   },

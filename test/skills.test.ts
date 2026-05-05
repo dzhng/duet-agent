@@ -45,7 +45,7 @@ describe("TurnRunner skills", () => {
       `,
     );
     const runner = new TurnRunner({
-      model: "anthropic:claude-opus-4-6",
+      model: "anthropic:claude-opus-4-7",
       cwd: process.cwd(),
       skillDiscovery: { includeDefaults: false },
       skills: [
@@ -81,7 +81,7 @@ describe("TurnRunner skills", () => {
       `,
     );
     const runner = new TurnRunner({
-      model: "anthropic:claude-opus-4-6",
+      model: "anthropic:claude-opus-4-7",
       cwd: process.cwd(),
       skillDiscovery: { includeDefaults: false },
       skills: [
@@ -132,7 +132,7 @@ describe("TurnRunner skills", () => {
       `,
     );
     const runner = new SkillPromptTurnRunner({
-      model: "anthropic:claude-opus-4-6",
+      model: "anthropic:claude-opus-4-7",
       cwd: process.cwd(),
       skillDiscovery: { includeDefaults: false },
       skills: [

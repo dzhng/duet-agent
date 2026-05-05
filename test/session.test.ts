@@ -122,7 +122,7 @@ async function createSession(runner: FakeTurnRunner): Promise<Session> {
   const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
   tempDirs.push(tempDir);
   return new Session(
-    { model: "anthropic:claude-opus-4-6" },
+    { model: "anthropic:claude-opus-4-7" },
     { id: "session_test", runner: runner, sessionPath: tempDir },
   );
 }
@@ -195,7 +195,7 @@ describe("Session", () => {
     const runner = new FakeTurnRunner([complete("stored")]);
     await mkdir(join(tempDir, "existing-session"), { recursive: true });
     const session = new Session(
-      { model: "anthropic:claude-opus-4-6" },
+      { model: "anthropic:claude-opus-4-7" },
       { id: "existing-session", runner: runner, sessionPath: join(tempDir, "existing-session") },
     );
 
@@ -223,7 +223,7 @@ describe("Session", () => {
     const firstTurnRunner = new FakeTurnRunner([complete("first")]);
     await mkdir(join(tempDir, "continuable"), { recursive: true });
     const first = new Session(
-      { model: "anthropic:claude-opus-4-6" },
+      { model: "anthropic:claude-opus-4-7" },
       { id: "continuable", runner: firstTurnRunner, sessionPath: join(tempDir, "continuable") },
     );
     await first.start({ prompt: "start" });
@@ -231,7 +231,7 @@ describe("Session", () => {
     const secondTurnRunner = new FakeTurnRunner([complete("second")]);
 
     const second = new Session(
-      { model: "anthropic:claude-opus-4-6" },
+      { model: "anthropic:claude-opus-4-7" },
       { id: "continuable", runner: secondTurnRunner, sessionPath: join(tempDir, "continuable") },
     );
     await second.start({ prompt: "continue" });
@@ -383,7 +383,7 @@ describe("SessionManager", () => {
   testIfDocker("creates and stores multiple sessions with manager-wrapped events", async () => {
     const runners = new Map<string, FakeTurnRunner>();
     const manager = new SessionManager(
-      { model: "anthropic:claude-opus-4-6" },
+      { model: "anthropic:claude-opus-4-7" },
       {
         createRunner: (sessionId) => {
           const runner = new FakeTurnRunner([complete(sessionId)]);
@@ -421,7 +421,7 @@ describe("SessionManager", () => {
   testIfDocker("resumes one session without relying on turn state object identity", async () => {
     const runner = new FakeTurnRunner([complete("resumed")]);
     const manager = new SessionManager(
-      { model: "anthropic:claude-opus-4-6" },
+      { model: "anthropic:claude-opus-4-7" },
       { createRunner: () => runner },
     );
     const events: Array<{ sessionId: string; event: TurnEvent }> = [];

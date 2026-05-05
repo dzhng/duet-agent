@@ -21,7 +21,7 @@ const evalTool: Tool<typeof evalSchema> = {
 describe("structured output", () => {
   test("returns validated tool arguments through Vercel AI Gateway", async () => {
     const model = resolveGatewayModel(
-      process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-sonnet-4.6",
+      process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-opus-4.7",
     );
 
     const result = await generateStructuredOutput({

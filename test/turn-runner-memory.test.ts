@@ -16,7 +16,7 @@ class MemoryTransformTurnRunner extends TurnRunner {
 describe("TurnRunner memory", () => {
   test("observational transform does not persist raw messages below observation threshold", async () => {
     const runner = new MemoryTransformTurnRunner({
-      model: "anthropic:claude-opus-4-6",
+      model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
       memory: { enabled: true },
     });

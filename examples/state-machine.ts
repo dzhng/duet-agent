@@ -31,7 +31,7 @@ const definition: StateMachineDefinition = {
 
 async function main() {
   const config: TurnRunnerConfig = {
-    model: "vercel-ai-gateway:anthropic/claude-opus-4.6",
+    model: "vercel-ai-gateway:anthropic/claude-opus-4.7",
     cwd: process.cwd(),
   };
 

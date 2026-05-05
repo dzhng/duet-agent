@@ -19,7 +19,7 @@ export interface TestTurnRunnerApp {
 export function createTestTurnRunner(): TestTurnRunnerApp {
   const root = process.cwd();
   const runner = new TurnRunner({
-    model: "anthropic:claude-opus-4-6",
+    model: "anthropic:claude-opus-4-7",
     cwd: root,
   });
 

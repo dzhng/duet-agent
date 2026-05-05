@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnState } from "../src/types/protocol.js";
 
-const model = process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-opus-4.7";
 
 describe("prompt cache resume", () => {
   test("reuses cached tokens after resuming from serialized TurnState", async () => {

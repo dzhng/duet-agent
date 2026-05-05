@@ -11,7 +11,7 @@ import type { TurnState } from "../src/types/protocol.js";
 class CapturingTurnRunner extends TurnRunner {
   constructor(config?: Partial<TurnRunnerConfig>) {
     super({
-      model: "anthropic:claude-opus-4-6",
+      model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
       ...config,
     });

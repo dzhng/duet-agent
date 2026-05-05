@@ -13,7 +13,7 @@ class StateMachineAgentEventTurnRunner extends TurnRunner {
 
   constructor() {
     super({
-      model: "anthropic:claude-opus-4-6",
+      model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
     });
   }

@@ -5,7 +5,7 @@
  *
  * Usage:
  *   duet-agent "build a todo app in React"
- *   duet-agent --model claude-opus-4-6 "refactor auth system"
+ *   duet-agent --model claude-opus-4-7 "refactor auth system"
  *   echo "fix the bug in server.ts" | duet-agent
  */
 
@@ -20,7 +20,7 @@ async function main() {
   const args = process.argv.slice(2);
 
   // Parse flags
-  let modelName = "anthropic:claude-opus-4-6";
+  let modelName = "anthropic:claude-opus-4-7";
   let workDir = process.cwd();
   let resumeSessionId: string | undefined;
   const promptParts: string[] = [];
@@ -180,7 +180,7 @@ USAGE
   echo "prompt" | duet-agent
 
 OPTIONS
-  -m, --model <name>       TurnRunner model (default: anthropic:claude-opus-4-6)
+  -m, --model <name>       TurnRunner model (default: anthropic:claude-opus-4-7)
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
   -h, --help               Show this help
@@ -190,12 +190,12 @@ INTERACTIVE
   Type /exit or /quit to end the conversation.
 
 MODELS
-  Use provider:modelId syntax, e.g. anthropic:claude-opus-4-6
+  Use provider:modelId syntax, e.g. anthropic:claude-opus-4-7
 
 EXAMPLES
   duet-agent "build a REST API with Express and TypeScript"
-  duet-agent -m openai:gpt-5.4 "analyze the performance of our test suite"
-  duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 "refactor the auth module"
+  duet-agent -m openai:gpt-5.5 "analyze the performance of our test suite"
+  duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.7 "refactor the auth module"
   duet-agent --workdir ./my-project "refactor the auth module"
   duet-agent --resume session_abc123 --workdir ./my-project
 `);

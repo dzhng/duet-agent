@@ -16,7 +16,7 @@ const judgeTool: Tool<typeof judgeSchema> = {
   parameters: judgeSchema,
 };
 
-const judgeModel = getModel("anthropic", "claude-sonnet-4-6");
+const judgeModel = getModel("anthropic", "claude-opus-4-7");
 
 export async function judge(input: {
   prompt: string;
