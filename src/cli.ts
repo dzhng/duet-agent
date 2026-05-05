@@ -104,10 +104,14 @@ async function main() {
   };
 
   const manager = new SessionManager(config);
+  let streamedTextThisTurn = false;
   manager.subscribe(({ event }) => {
     if (jsonOutput) {
       process.stdout.write(`${JSON.stringify(event)}\n`);
     } else if (event.type === "step") {
+      if (event.step.type === "text") {
+        streamedTextThisTurn = true;
+      }
       handleStep(event.step);
     }
   });
@@ -119,12 +123,19 @@ async function main() {
     let terminal: TurnTerminalEvent | undefined;
     let started = Boolean(prompt || resumeSessionId);
     if (prompt && resumeSessionId) {
+      streamedTextThisTurn = false;
       await session.prompt({ message: prompt });
       terminal = await session.waitForTerminal();
-      handleTerminal(terminal);
+      handleTerminal(terminal, {
+        suppressHumanOutput: jsonOutput,
+        suppressResult: streamedTextThisTurn,
+      });
     } else if (prompt && !resumeSessionId) {
       terminal = await session.waitForTerminal();
-      handleTerminal(terminal);
+      handleTerminal(terminal, {
+        suppressHumanOutput: jsonOutput,
+        suppressResult: streamedTextThisTurn,
+      });
     }
 
     if (interactive) {
@@ -134,6 +145,7 @@ async function main() {
         while (true) {
           const prompt = (await readline.question("> ")).trim();
           if (!prompt || prompt === "/exit" || prompt === "/quit") break;
+          streamedTextThisTurn = false;
           if (started) {
             await session.prompt({ message: prompt });
           } else {
@@ -141,7 +153,10 @@ async function main() {
             started = true;
           }
           terminal = await session.waitForTerminal();
-          handleTerminal(terminal);
+          handleTerminal(terminal, {
+            suppressHumanOutput: jsonOutput,
+            suppressResult: streamedTextThisTurn,
+          });
         }
       } finally {
         readline.close();
@@ -164,11 +179,15 @@ async function main() {
   }
 }
 
-function handleTerminal(terminal: TurnTerminalEvent): void {
+function handleTerminal(
+  terminal: TurnTerminalEvent,
+  options: { suppressHumanOutput?: boolean; suppressResult?: boolean } = {},
+): void {
+  if (options.suppressHumanOutput) return;
   if (terminal.type === "complete" && terminal.error) {
     throw new Error(terminal.error);
   }
-  if (terminal.type === "complete" && terminal.result) {
+  if (terminal.type === "complete" && terminal.result && !options.suppressResult) {
     process.stdout.write(`${terminal.result}\n`);
   }
   if (terminal.type === "ask") {
