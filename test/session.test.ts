@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
-import { Session, SessionManager, type SessionTurnRunner } from "../src/session/session.js";
+import { Session, type SessionTurnRunner } from "../src/session/session.js";
+import { SessionManager } from "../src/session/session-manager.js";
 import type {
   TurnEvent,
   TurnInterruptCommand,
@@ -121,7 +122,7 @@ async function createSession(runner: FakeTurnRunner): Promise<Session> {
   tempDirs.push(tempDir);
   return new Session(
     { model: "anthropic:claude-opus-4-6" },
-    { runner: runner, sessionStoragePath: tempDir },
+    { id: "session_test", runner: runner, sessionPath: tempDir },
   );
 }
 
@@ -191,14 +192,15 @@ describe("Session", () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
     tempDirs.push(tempDir);
     const runner = new FakeTurnRunner([complete("stored")]);
+    await mkdir(join(tempDir, "existing-session"), { recursive: true });
     const session = new Session(
       { model: "anthropic:claude-opus-4-6" },
-      { id: "existing-session", runner: runner, sessionStoragePath: tempDir },
+      { id: "existing-session", runner: runner, sessionPath: join(tempDir, "existing-session") },
     );
 
     await session.start({ prompt: "remember me" });
     await session.waitForTerminal();
-    const content = await readFile(join(tempDir, "existing-session.json"), "utf-8");
+    const content = await readFile(join(tempDir, "existing-session", "state.json"), "utf-8");
     const stored = JSON.parse(content);
 
     expect(stored.sessionId).toBe("existing-session");
@@ -218,9 +220,10 @@ describe("Session", () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
     tempDirs.push(tempDir);
     const firstTurnRunner = new FakeTurnRunner([complete("first")]);
+    await mkdir(join(tempDir, "continuable"), { recursive: true });
     const first = new Session(
       { model: "anthropic:claude-opus-4-6" },
-      { id: "continuable", runner: firstTurnRunner, sessionStoragePath: tempDir },
+      { id: "continuable", runner: firstTurnRunner, sessionPath: join(tempDir, "continuable") },
     );
     await first.start({ prompt: "start" });
     await first.waitForTerminal();
@@ -228,7 +231,7 @@ describe("Session", () => {
 
     const second = new Session(
       { model: "anthropic:claude-opus-4-6" },
-      { id: "continuable", runner: secondTurnRunner, sessionStoragePath: tempDir },
+      { id: "continuable", runner: secondTurnRunner, sessionPath: join(tempDir, "continuable") },
     );
     await second.start({ prompt: "continue" });
     await second.waitForTerminal();

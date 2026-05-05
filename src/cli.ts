@@ -10,7 +10,7 @@
  */
 
 import { createInterface } from "node:readline/promises";
-import { SessionManager } from "./session/session.js";
+import { SessionManager } from "./session/session-manager.js";
 import type { TurnRunnerConfig } from "./types/config.js";
 import type { TurnTerminalEvent } from "./types/protocol.js";
 

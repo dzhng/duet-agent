@@ -1,6 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { nanoid } from "nanoid";
 import { TurnRunner, type TurnEventHandler } from "../turn-runner/turn-runner.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type {
@@ -46,17 +45,18 @@ export interface SessionTurnRunner {
 }
 
 export interface SessionOptions {
-  id?: string;
+  id: string;
+  /** Concrete directory owned by this session. The manager creates it before construction. */
+  sessionPath: string;
   runner?: SessionTurnRunner;
   initialState?: TurnState;
   resumeFromStorage?: boolean;
-  sessionStoragePath?: string;
 }
 
 export class Session {
   readonly id: string;
   private readonly runner: SessionTurnRunner;
-  private readonly sessionStoragePath: string;
+  private readonly sessionPath: string;
   private readonly eventHandlers = new Set<SessionEventHandler>();
   private readonly unsubscribeRunner: () => void;
   private state?: TurnState;
@@ -69,14 +69,13 @@ export class Session {
 
   constructor(
     readonly config: TurnRunnerConfig,
-    options: SessionOptions = {},
+    options: SessionOptions,
   ) {
-    this.id = options.id ?? createSessionId();
+    this.id = options.id;
     this.state = options.initialState;
     this.resumeFromStorage = options.resumeFromStorage ?? Boolean(options.id);
     this.runner = options.runner ?? new TurnRunner(config);
-    this.sessionStoragePath =
-      options.sessionStoragePath ?? join(config.cwd ?? process.cwd(), ".agents", "sessions");
+    this.sessionPath = options.sessionPath;
     this.unsubscribeRunner = this.runner.subscribe((event) => void this.handleTurnEvent(event));
   }
 
@@ -279,112 +278,16 @@ export class Session {
   }
 
   private async writeStoredState(state: TurnState): Promise<void> {
-    try {
-      await mkdir(this.sessionStoragePath, { recursive: true });
-      await writeFile(
-        this.sessionFilePath(),
-        `${JSON.stringify({ sessionId: this.id, updatedAt: Date.now(), state }, null, 2)}\n`,
-        "utf-8",
-      );
-    } catch (error) {
-      if (!isEnoent(error)) throw error;
-    }
+    await writeFile(
+      this.sessionFilePath(),
+      `${JSON.stringify({ sessionId: this.id, updatedAt: Date.now(), state }, null, 2)}\n`,
+      "utf-8",
+    );
   }
 
   private sessionFilePath(): string {
-    return join(this.sessionStoragePath, `${sanitizeSessionId(this.id)}.json`);
+    return join(this.sessionPath, "state.json");
   }
-}
-
-export interface SessionManagerCreateInput extends SessionStartInput {
-  sessionId?: string;
-}
-
-export interface SessionManagerOptions {
-  sessionStoragePath?: string;
-  createRunner?: (sessionId: string) => SessionTurnRunner;
-}
-
-export type SessionManagerEvent = {
-  sessionId: string;
-  event: TurnEvent;
-};
-
-export type SessionManagerEventHandler = (event: SessionManagerEvent) => void;
-
-export class SessionManager {
-  private readonly sessions = new Map<string, Session>();
-  private readonly eventHandlers = new Set<SessionManagerEventHandler>();
-  private readonly sessionStoragePath: string;
-
-  constructor(
-    readonly config: TurnRunnerConfig,
-    private readonly options: SessionManagerOptions = {},
-  ) {
-    this.sessionStoragePath =
-      options.sessionStoragePath ?? join(config.cwd ?? process.cwd(), ".agents", "sessions");
-  }
-
-  subscribe(handler: SessionManagerEventHandler): () => void {
-    this.eventHandlers.add(handler);
-    return () => {
-      this.eventHandlers.delete(handler);
-    };
-  }
-
-  create(input: SessionManagerCreateInput): Session {
-    const session = this.createSession(input.sessionId, false);
-    this.sessions.set(session.id, session);
-    void session.start(input);
-    return session;
-  }
-
-  get(sessionId: string): Session | undefined {
-    return this.sessions.get(sessionId);
-  }
-
-  resume(sessionId: string): Session {
-    const existing = this.sessions.get(sessionId);
-    if (existing) return existing;
-    const session = this.createSession(sessionId, true);
-    this.sessions.set(sessionId, session);
-    return session;
-  }
-
-  async dispose(): Promise<void> {
-    for (const session of this.sessions.values()) {
-      await session.dispose();
-    }
-    this.sessions.clear();
-  }
-
-  private createSession(sessionId: string | undefined, resumeFromStorage: boolean): Session {
-    const id = sessionId ?? createSessionId();
-    const session = new Session(this.config, {
-      id,
-      runner: this.options.createRunner?.(id),
-      resumeFromStorage,
-      sessionStoragePath: this.sessionStoragePath,
-    });
-    session.subscribe((event) => {
-      this.emit({ sessionId: session.id, event });
-    });
-    return session;
-  }
-
-  private emit(event: SessionManagerEvent): void {
-    for (const handler of this.eventHandlers) {
-      handler(event);
-    }
-  }
-}
-
-function createSessionId(): string {
-  return `session_${nanoid(12)}`;
-}
-
-function sanitizeSessionId(sessionId: string): string {
-  return sessionId.replace(/[^A-Za-z0-9_.-]/g, "_");
 }
 
 function isTerminalEvent(event: TurnEvent): event is TurnTerminalEvent {
