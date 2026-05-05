@@ -53,7 +53,8 @@ const agentOverrideSchema = Type.Partial(
         "Skill names to inject into this sub-agent. Omit to inject all available skills.",
     }),
     inputSchema: Type.Record(Type.String(), Type.Any(), {
-      description: "Replacement JSON Schema for transition input accepted by this state.",
+      description:
+        'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "email": { "type": "string" }, "followUpCount": { "type": "integer" } }, "required": ["email"] }. Fields omitted from required are optional.',
     }),
   }),
 );
@@ -67,7 +68,8 @@ const scriptOverrideSchema = Type.Partial(
       description: "Replacement exit codes treated as successful completion.",
     }),
     inputSchema: Type.Record(Type.String(), Type.Any(), {
-      description: "Replacement JSON Schema for transition input accepted by this state.",
+      description:
+        'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "email": { "type": "string" }, "followUpCount": { "type": "integer" } }, "required": ["email"] }. Fields omitted from required are optional.',
     }),
   }),
 );
@@ -99,7 +101,8 @@ const pollOverrideSchema = Type.Partial(
     timeoutMs: Type.Number({ description: "Replacement maximum poll-state runtime." }),
     poll: pollAttemptSchema,
     inputSchema: Type.Record(Type.String(), Type.Any(), {
-      description: "Replacement JSON Schema for transition input accepted by this state.",
+      description:
+        'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "messageId": { "type": "string" } }, "required": ["messageId"] }. Fields omitted from required are optional.',
     }),
   }),
 );
@@ -118,7 +121,7 @@ const baseStateSchema = {
   inputSchema: Type.Optional(
     Type.Record(Type.String(), Type.Any(), {
       description:
-        "JSON Schema for the input object the parent must pass when selecting this state. Template strings read values from this object.",
+        'Valid JSON Schema object for the input the parent must pass when selecting this state, such as { "type": "object", "properties": { "email": { "type": "string" }, "followUpCount": { "type": "integer" } }, "required": ["email"] }. Fields omitted from required are optional. Template strings read values from this object.',
     }),
   ),
 };
