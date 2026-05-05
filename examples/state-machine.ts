@@ -18,7 +18,6 @@ const definition: StateMachineDefinition = {
       when: "The user needs the brief written.",
       prompt:
         "Write a concise brief for the user's request. Keep it under 120 words and do not edit files.",
-      contextScope: "state_machine",
     },
     {
       kind: "terminal",
@@ -52,8 +51,8 @@ async function main() {
   });
 
   console.log("\n--- State Machine Summary ---");
-  console.log(`Status: ${terminal.session.status}`);
-  console.log(`Current state: ${terminal.session.stateMachine?.currentState ?? "none"}`);
+  console.log(`Status: ${terminal.state.status}`);
+  console.log(`Current state: ${terminal.state.stateMachine?.currentState ?? "none"}`);
   if (terminal.type === "complete" && terminal.error) {
     console.error(`Error: ${terminal.error}`);
   }

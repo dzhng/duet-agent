@@ -26,11 +26,11 @@ async function main() {
   });
 
   console.log("\n--- Session Summary ---");
-  console.log(`Status: ${terminal.session.status}`);
+  console.log(`Status: ${terminal.state.status}`);
   if (terminal.type === "complete" && terminal.error) {
     console.error(`Error: ${terminal.error}`);
   }
-  console.log(terminal.session.stateMachine ? "State machine session" : "Agent session");
+  console.log(terminal.state.stateMachine ? "State machine session" : "Agent session");
 }
 
 main().catch(console.error);

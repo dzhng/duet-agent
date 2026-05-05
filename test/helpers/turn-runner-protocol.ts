@@ -96,7 +96,6 @@ export function createStateMachineState(currentState: string): TurnState {
       definition,
       prompt: "Prospect Ada until she books a meeting.",
       currentState,
-      state: {},
       history: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -118,7 +117,12 @@ export function createOutreachStateMachine(): StateMachineDefinition {
       {
         kind: "script",
         name: "send_email",
-        command: "scripts/send-email.sh '{{ state.email }}'",
+        inputSchema: {
+          type: "object",
+          properties: { email: { type: "string" } },
+          required: ["email"],
+        },
+        command: "scripts/send-email.sh '{{ input.email }}'",
       },
       {
         kind: "poll",
@@ -126,7 +130,15 @@ export function createOutreachStateMachine(): StateMachineDefinition {
         intervalMs: 300_000,
         poll: {
           kind: "script",
-          command: "scripts/check-email-reply.sh '{{ state.email }}'",
+          command: "scripts/check-email-reply.sh '{{ input.email }}'",
+        },
+      },
+      {
+        kind: "poll",
+        name: "wait_before_retry",
+        intervalMs: 300_000,
+        poll: {
+          kind: "timer",
         },
       },
       {

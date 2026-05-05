@@ -1,11 +1,9 @@
-import type { TurnOptions } from "./protocol.js";
-
 /**
  * Durable state-machine definitions and runtime state.
  *
  * A state machine models the high-level business process, not task execution.
  * There is one current business state at a time. The state-machine runner agent
- * sees the original prompt, state-machine state, state history, and state
+ * sees the original prompt, current transition input, state history, and state
  * definitions, then decides which state should run next, whether the session should
  * wait, or whether a terminal state should finalize the state machine.
  *
@@ -25,8 +23,7 @@ import type { TurnOptions } from "./protocol.js";
  *
  * The runner should:
  *
- * 1. Start a StateMachineSession from a StateMachineDefinition and initialize durable domain
- *    state.
+ * 1. Start a StateMachineSession from a StateMachineDefinition.
  * 2. Enter an agent state for enrichment/research and record the output in the
  *    session history so the state machine can resume without repeating research.
  * 3. Enter a send-email script state and record the sent message details.
@@ -58,10 +55,10 @@ import type { TurnOptions } from "./protocol.js";
  *
  * The state-machine types should support this by representing:
  *
- * - durable domain state
+ * - durable session history
  * - agent/tool/script states whose outputs are available through state-machine history
  * - poll states, plus explicit waits for human input
- * - runner-agent decisions driven by full prompt, state, and history
+ * - runner-agent decisions driven by full prompt, transition input, and history
  * - named terminal states richer than generic "completed" or "failed"
  *
  * Case 2: development state machine
@@ -74,7 +71,7 @@ import type { TurnOptions } from "./protocol.js";
  *
  * 1. Start a StateMachineSession from the user's prompt.
  * 2. Execute a script/tool state that creates a worktree and records its path in
- *    state-machine state/history.
+ *    state-machine history.
  * 3. Execute an agent state that implements the requested code change inside the
  *    worktree.
  * 4. Execute a review agent state. The review can either approve, request fixes,
@@ -118,20 +115,24 @@ import type { TurnOptions } from "./protocol.js";
  *
  * Example of templated script commands:
  *
- * A setup state can emit structured output such as { "worktreePath": "..." }.
- * The runner records that output in history and merges the structured
- * fields into state:
+ * The parent runner can pass transition input when selecting a state:
  *
  *   {
  *     kind: "script",
- *     command: "scripts/create-worktree.sh '{{ state.branchName }}'"
+ *     inputSchema: {
+ *       type: "object",
+ *       properties: { branchName: { type: "string" } },
+ *       required: ["branchName"]
+ *     },
+ *     command: "scripts/create-worktree.sh '{{ input.branchName }}'"
  *   }
  *
- * A later dev state or cleanup state can reference that state:
+ * A later dev state or cleanup state can receive fresh input selected from
+ * prior completion output:
  *
  *   {
  *     kind: "script",
- *     command: "rm -rf '{{ state.worktreePath }}'"
+ *     command: "rm -rf '{{ input.worktreePath }}'"
  *   }
  *
  * A PR poll state can check through any CLI/API wrapper without the state
@@ -141,13 +142,11 @@ import type { TurnOptions } from "./protocol.js";
  *     kind: "poll",
  *     poll: {
  *       kind: "script",
- *       command: "scripts/check-pr-finished.sh '{{ state.prUrl }}'"
+ *       command: "scripts/check-pr-finished.sh '{{ input.prUrl }}'"
  *     },
  *     intervalMs: 300000
  *   }
  */
-
-export type StateMachineAgentContextScope = "state" | "dependencies" | "state_machine";
 
 /** User-authored state machine template. Runtime progress lives in StateMachineSession. */
 export interface StateMachineDefinition {
@@ -174,8 +173,11 @@ export interface StateMachineSession {
   prompt: string;
   /** Current business state, selected by the runner agent. */
   currentState?: string;
-  /** Mutable state machine memory shared across runner decisions and state templates. */
-  state: Record<string, unknown>;
+  /**
+   * Input supplied by the parent runner when it selected the current state.
+   * Persisted so sleeping poll states can resume with the same template values.
+   */
+  currentInput?: Record<string, unknown>;
   /** Append-only audit log used for debugging, replay, and persistence. */
   history: StateMachineSessionEvent[];
   /** Present only after a session reaches a named terminal state. */
@@ -195,34 +197,35 @@ export interface StateMachineBaseState {
   name: string;
   /** Helps the runner agent understand when this state is appropriate. */
   when?: string;
+  /**
+   * Optional JSON Schema for the input the parent runner must provide when
+   * selecting this state. The runner validates transition input before executing
+   * the state and exposes it to prompt/script templates as `input`.
+   */
+  inputSchema?: Record<string, unknown>;
 }
 
 /** Runs an agent. The runner injects original prompt/history outside this state config. */
 export interface StateMachineAgentState extends StateMachineBaseState {
   kind: "agent";
   /**
-   * Prompt for the agent. The runner renders this as a template before
-   * execution using session.state only. The original user prompt and
-   * broader history are added separately when the final agent prompt is
-   * constructed.
+   * User prompt sent to the sub-agent. The runner renders this as a template
+   * using the transition input provided when the parent runner selected this
+   * state.
    */
   prompt: string;
   /**
-   * Controls how much state machine context the agent receives.
-   *
-   * - "state": rendered prompt and current state.
-   * - "dependencies": state context plus runner-selected prerequisite history.
-   * - "state_machine": state context plus full state-machine definition and full state history.
+   * Optional system prompt appended to the runner's base system prompt for this
+   * sub-agent only. Use this for durable role or behavior instructions; dynamic
+   * state input belongs in `prompt`.
    */
-  contextScope?: StateMachineAgentContextScope;
-  /** Optional skill allowlist injected into this agent state. Omitted means use state machine/turn-runner defaults. */
+  systemPrompt?: string;
+  /**
+   * Optional skill allowlist for this sub-agent. When set, only these discovered
+   * or explicitly configured skills are injected into the sub-agent system
+   * prompt.
+   */
   allowedSkills?: string[];
-  /** Per-state model/thinking overrides for this agent turn. */
-  options?: TurnOptions;
-  /** Upper bound before the agent must yield control back to the runner. */
-  maxTurns?: number;
-  /** Optional JSON Schema used to request and validate structured output before merging it into state. */
-  outputSchema?: Record<string, unknown>;
 }
 
 /** Runs a shell command. This is the generic integration primitive. */
@@ -230,9 +233,9 @@ export interface StateMachineScriptState extends StateMachineBaseState {
   kind: "script";
   /**
    * Shell command used for integrations, setup, cleanup, and deterministic
-   * checks. The runner renders this as a template before execution using
-   * session.state only; keep state-machine definitions serializable instead of storing
-   * executable functions here.
+   * checks. The runner renders this as a template using transition input; keep
+   * state-machine definitions serializable instead of storing executable
+   * functions here.
    */
   command: string;
   /** Working directory for the command. Defaults to the state-machine session cwd. */
@@ -267,13 +270,11 @@ export type StateMachinePoll =
       successCodes?: number[];
     }
   | {
-      kind: "prompt";
+      kind: "timer";
       /**
-       * Prompt used once per poll attempt when the check needs an agent to inspect
-       * an external source through available tools.
+       * Pure delay poll. The first visit sleeps; the scheduled wake lets the
+       * parent runner choose the next state without invoking a script or agent.
        */
-      prompt: string;
-      outputSchema?: Record<string, unknown>;
     };
 
 /** Finalizes the session when reached. Terminal outcomes are just state machine states. */
@@ -297,7 +298,12 @@ export interface StateMachineTerminalResult {
 export type StateMachineSessionEvent =
   | { type: "session_started"; timestamp: number }
   | { type: "runner_decided"; timestamp: number; decision: unknown }
-  | { type: "state_started"; timestamp: number; state: string; effectiveState?: StateMachineState }
+  | {
+      type: "state_started";
+      timestamp: number;
+      state: string;
+      input?: Record<string, unknown>;
+    }
   | { type: "state_completed"; timestamp: number; state: string; output?: unknown }
   | { type: "state_failed"; timestamp: number; state: string; error: string }
   | { type: "session_completed"; timestamp: number; terminal: StateMachineTerminalResult };

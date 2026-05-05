@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
 import type { TurnMode, TurnQuestion } from "../types/protocol.js";
 import type {
   StateMachineAgentState,
@@ -11,65 +12,92 @@ import type {
 } from "../types/state-machine.js";
 
 const questionOptionSchema = Type.Object({
-  label: Type.String(),
-  description: Type.Optional(Type.String()),
+  label: Type.String({ description: "Answer text shown to the user." }),
+  description: Type.Optional(
+    Type.String({ description: "Optional context explaining this choice." }),
+  ),
 });
 
 const questionSchema = Type.Object({
-  question: Type.String(),
-  header: Type.Optional(Type.String()),
-  options: Type.Array(questionOptionSchema),
-  multiSelect: Type.Optional(Type.Boolean()),
+  question: Type.String({ description: "Question to ask the user." }),
+  header: Type.Optional(
+    Type.String({ description: "Optional section heading for this question." }),
+  ),
+  options: Type.Array(questionOptionSchema, {
+    description: "Answer options the user can choose from.",
+  }),
+  multiSelect: Type.Optional(
+    Type.Boolean({ description: "Whether the user may select more than one option." }),
+  ),
 });
 
 const askUserQuestionSchema = Type.Object({
-  questions: Type.Array(questionSchema),
+  questions: Type.Array(questionSchema, {
+    description: "Structured multiple-choice questions that must be answered before continuing.",
+  }),
 });
 
 type AskUserQuestionParams = Static<typeof askUserQuestionSchema>;
 
 const agentOverrideSchema = Type.Partial(
   Type.Object({
-    prompt: Type.String(),
-    contextScope: Type.Union([
-      Type.Literal("state"),
-      Type.Literal("dependencies"),
-      Type.Literal("state_machine"),
-    ]),
-    allowedSkills: Type.Array(Type.String()),
-    maxTurns: Type.Number(),
-    outputSchema: Type.Record(Type.String(), Type.Any()),
+    prompt: Type.String({ description: "Replacement user prompt for this agent state." }),
+    systemPrompt: Type.String({
+      description: "Replacement system prompt appended for this sub-agent only.",
+    }),
+    allowedSkills: Type.Array(Type.String(), {
+      description:
+        "Skill names to inject into this sub-agent. Omit to inject all available skills.",
+    }),
+    inputSchema: Type.Record(Type.String(), Type.Any(), {
+      description: "Replacement JSON Schema for transition input accepted by this state.",
+    }),
   }),
 );
 
 const scriptOverrideSchema = Type.Partial(
   Type.Object({
-    command: Type.String(),
-    cwd: Type.String(),
-    timeoutMs: Type.Number(),
-    successCodes: Type.Array(Type.Number()),
+    command: Type.String({ description: "Replacement shell command for this script state." }),
+    cwd: Type.String({ description: "Replacement working directory for the command." }),
+    timeoutMs: Type.Number({ description: "Replacement command timeout in milliseconds." }),
+    successCodes: Type.Array(Type.Number(), {
+      description: "Replacement exit codes treated as successful completion.",
+    }),
+    inputSchema: Type.Record(Type.String(), Type.Any(), {
+      description: "Replacement JSON Schema for transition input accepted by this state.",
+    }),
   }),
 );
 
 const pollAttemptSchema = Type.Union([
   Type.Object({
-    kind: Type.Literal("script"),
-    command: Type.String(),
-    cwd: Type.Optional(Type.String()),
-    successCodes: Type.Optional(Type.Array(Type.Number())),
+    kind: Type.Literal("script", { description: "Run one shell command per poll attempt." }),
+    command: Type.String({
+      description:
+        "Shell command for one poll attempt. Return non-empty JSON only when polling found a result.",
+    }),
+    cwd: Type.Optional(Type.String({ description: "Working directory for the poll command." })),
+    successCodes: Type.Optional(
+      Type.Array(Type.Number(), {
+        description: "Exit codes that mean this poll attempt found a result.",
+      }),
+    ),
   }),
   Type.Object({
-    kind: Type.Literal("prompt"),
-    prompt: Type.String(),
-    outputSchema: Type.Optional(Type.Record(Type.String(), Type.Any())),
+    kind: Type.Literal("timer", {
+      description: "Sleep once for intervalMs, then resume with elapsedMs output.",
+    }),
   }),
 ]);
 
 const pollOverrideSchema = Type.Partial(
   Type.Object({
-    intervalMs: Type.Number(),
-    timeoutMs: Type.Number(),
+    intervalMs: Type.Number({ description: "Replacement delay between poll wake attempts." }),
+    timeoutMs: Type.Number({ description: "Replacement maximum poll-state runtime." }),
     poll: pollAttemptSchema,
+    inputSchema: Type.Record(Type.String(), Type.Any(), {
+      description: "Replacement JSON Schema for transition input accepted by this state.",
+    }),
   }),
 );
 
@@ -80,52 +108,69 @@ const stateOverrideSchema = Type.Union([
 ]);
 
 const baseStateSchema = {
-  name: Type.String(),
-  when: Type.Optional(Type.String()),
+  name: Type.String({ description: "State name used by select_state_machine_state." }),
+  when: Type.Optional(
+    Type.String({ description: "Guidance for when the parent runner should select this state." }),
+  ),
+  inputSchema: Type.Optional(
+    Type.Record(Type.String(), Type.Any(), {
+      description:
+        "JSON Schema for the input object the parent must pass when selecting this state. Template strings read values from this object.",
+    }),
+  ),
 };
 
 const agentStateSchema = Type.Object({
   ...baseStateSchema,
-  kind: Type.Literal("agent"),
-  prompt: Type.String(),
-  contextScope: Type.Optional(
-    Type.Union([
-      Type.Literal("state"),
-      Type.Literal("dependencies"),
-      Type.Literal("state_machine"),
-    ]),
+  kind: Type.Literal("agent", { description: "Run a sub-agent for this state." }),
+  prompt: Type.String({
+    description: "User prompt sent to the sub-agent. May use templates like {{ input.email }}.",
+  }),
+  systemPrompt: Type.Optional(
+    Type.String({ description: "Optional system prompt appended for this sub-agent only." }),
   ),
-  allowedSkills: Type.Optional(Type.Array(Type.String())),
-  maxTurns: Type.Optional(Type.Number()),
-  outputSchema: Type.Optional(Type.Record(Type.String(), Type.Any())),
+  allowedSkills: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Skill names to inject into this sub-agent. Omit to inject all available skills.",
+    }),
+  ),
 });
 
 const scriptStateSchema = Type.Object({
   ...baseStateSchema,
-  kind: Type.Literal("script"),
-  command: Type.String(),
-  cwd: Type.Optional(Type.String()),
-  timeoutMs: Type.Optional(Type.Number()),
-  successCodes: Type.Optional(Type.Array(Type.Number())),
+  kind: Type.Literal("script", { description: "Run a shell command for this state." }),
+  command: Type.String({
+    description: "Shell command to execute. May use templates like {{ input.email }}.",
+  }),
+  cwd: Type.Optional(Type.String({ description: "Working directory for the command." })),
+  timeoutMs: Type.Optional(Type.Number({ description: "Command timeout in milliseconds." })),
+  successCodes: Type.Optional(
+    Type.Array(Type.Number(), {
+      description: "Exit codes treated as successful completion. Defaults to [0].",
+    }),
+  ),
 });
 
 const pollStateSchema = Type.Object({
   ...baseStateSchema,
-  kind: Type.Literal("poll"),
-  intervalMs: Type.Number(),
-  timeoutMs: Type.Optional(Type.Number()),
+  kind: Type.Literal("poll", { description: "Perform one external wait/check attempt." }),
+  intervalMs: Type.Number({ description: "Delay before the next scheduled wake attempt." }),
+  timeoutMs: Type.Optional(
+    Type.Number({ description: "Maximum time this state may remain polling." }),
+  ),
   poll: pollAttemptSchema,
 });
 
 const terminalStateSchema = Type.Object({
   ...baseStateSchema,
-  kind: Type.Literal("terminal"),
+  kind: Type.Literal("terminal", { description: "Finalize the state-machine session." }),
   status: Type.Union([
-    Type.Literal("completed"),
-    Type.Literal("failed"),
-    Type.Literal("cancelled"),
+    Type.Literal("completed", { description: "The state machine completed successfully." }),
+    Type.Literal("failed", { description: "The state machine failed." }),
+    Type.Literal("cancelled", { description: "The state machine was cancelled." }),
   ]),
-  reason: Type.Optional(Type.String()),
+  reason: Type.Optional(Type.String({ description: "Optional final explanation for the user." })),
 });
 
 const stateMachineStateSchema = Type.Union([
@@ -136,18 +181,15 @@ const stateMachineStateSchema = Type.Union([
 ]);
 
 export type StateMachineAgentStateOverride = Partial<
-  Pick<
-    StateMachineAgentState,
-    "prompt" | "contextScope" | "allowedSkills" | "options" | "maxTurns" | "outputSchema"
-  >
+  Pick<StateMachineAgentState, "prompt" | "systemPrompt" | "allowedSkills" | "inputSchema">
 >;
 
 export type StateMachineScriptStateOverride = Partial<
-  Pick<StateMachineScriptState, "command" | "cwd" | "timeoutMs" | "successCodes">
+  Pick<StateMachineScriptState, "command" | "cwd" | "timeoutMs" | "successCodes" | "inputSchema">
 >;
 
 export type StateMachinePollStateOverride = Partial<
-  Pick<StateMachinePollState, "intervalMs" | "timeoutMs" | "poll">
+  Pick<StateMachinePollState, "intervalMs" | "timeoutMs" | "poll" | "inputSchema">
 >;
 
 export type StateMachineStateOverride =
@@ -155,34 +197,62 @@ export type StateMachineStateOverride =
   | { kind: "script"; state: StateMachineScriptStateOverride }
   | { kind: "poll"; state: StateMachinePollStateOverride };
 
-const stateMachineDefinitionSchema = Type.Object({
-  name: Type.String(),
-  prompt: Type.String(),
-  states: Type.Array(stateMachineStateSchema),
-});
+const stateMachineDefinitionSchema = Type.Object(
+  {
+    name: Type.String({ description: "Human-readable state-machine name." }),
+    prompt: Type.String({
+      description: "Routing guidance explaining when this state-machine definition applies.",
+    }),
+    states: Type.Array(stateMachineStateSchema, {
+      description: "Available states the parent runner may select.",
+    }),
+  },
+  {
+    description:
+      "State-machine definition. Use inputSchema plus {{ input.foo }} templates for state prompts and commands that need transition input.",
+  },
+);
 
 const createDefinitionSchema = Type.Object({
   definition: stateMachineDefinitionSchema,
-  firstState: Type.Optional(Type.String()),
+  firstState: Type.Optional(
+    Type.String({ description: "Optional state name to run first after creating the definition." }),
+  ),
 });
 
 type CreateDefinitionParams = Static<typeof createDefinitionSchema>;
 type ToolStateMachineDefinition = CreateDefinitionParams["definition"];
 
 const selectStateSchema = Type.Object({
-  decision: Type.Object({
-    kind: Type.Union([Type.Literal("run_state"), Type.Literal("terminal"), Type.Literal("fail")]),
-    state: Type.Optional(Type.String()),
-    reason: Type.Optional(Type.String()),
-    override: Type.Optional(stateOverrideSchema),
-  }),
+  decision: Type.Object(
+    {
+      kind: Type.Union([Type.Literal("run_state"), Type.Literal("terminal"), Type.Literal("fail")]),
+      state: Type.Optional(Type.String({ description: "State name to run or finalize." })),
+      reason: Type.Optional(
+        Type.String({ description: "Reason for a terminal or failure decision." }),
+      ),
+      override: Type.Optional(stateOverrideSchema),
+      input: Type.Optional(
+        Type.Record(Type.String(), Type.Any(), {
+          description:
+            "Input object for the selected state. Required when the state inputSchema requires fields; templates read values as {{ input.field }}.",
+        }),
+      ),
+    },
+    {
+      description:
+        "State transition decision. Use input when selecting states with inputSchema or {{ input.foo }} templates.",
+    },
+  ),
 });
 
 type SelectStateParams = Static<typeof selectStateSchema>;
 type ToolRunnerDecision = SelectStateParams["decision"];
 
 const promptStateMachineAgentSchema = Type.Object({
-  prompt: Type.String(),
+  prompt: Type.String({
+    description: "Follow-up user prompt to send to the current state-machine agent state.",
+  }),
 });
 
 type PromptStateMachineAgentParams = Static<typeof promptStateMachineAgentSchema>;
@@ -192,6 +262,7 @@ export type StateMachineRunnerDecision =
       kind: "run_state";
       state: string;
       override?: StateMachineStateOverride;
+      input?: Record<string, unknown>;
     })
   | (ToolRunnerDecision & { kind: "terminal"; state: string })
   | (ToolRunnerDecision & { kind: "fail"; reason: string });
@@ -274,7 +345,7 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
     name: "create_state_machine_definition",
     label: "Create state machine definition",
     description:
-      "Create a state-machine definition for durable business-process work. Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.",
+      "Create a state-machine definition for durable business-process work. State prompts and script commands may use template strings such as {{ input.email }}; define inputSchema on those states and pass matching input when selecting them. Agent states may set allowedSkills to restrict which skills are injected into that sub-agent. Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.",
     parameters: createDefinitionSchema,
     async execute(_toolCallId, params) {
       const result: TurnRunnerControlResult = {
@@ -297,7 +368,8 @@ function createSelectStateTool(
   return {
     name: "select_state_machine_state",
     label: "Select state machine state",
-    description: "Select the next state-machine state, terminal state, or failure outcome.",
+    description:
+      "Select the next state-machine state, terminal state, or failure outcome. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here.",
     parameters: selectStateSchema,
     async execute(_toolCallId, params) {
       const decision = normalizeRunnerDecision(params.decision);
@@ -343,9 +415,15 @@ function assertValidSelectedState(
   }
 
   const validStates = definition.states.map((state) => state.name);
-  if (!validStates.includes(decision.state)) {
+  const selectedState = definition.states.find((state) => state.name === decision.state);
+  if (!selectedState) {
     throw new Error(`Unknown state: ${decision.state}. Valid states: ${validStates.join(", ")}`);
   }
+
+  if (decision.kind !== "run_state") return;
+
+  const effectiveState = applyStateOverride(selectedState, decision.override);
+  assertValidStateInput(effectiveState, decision.input);
 }
 
 function normalizeRunnerDecision(decision: ToolRunnerDecision): StateMachineRunnerDecision {
@@ -369,5 +447,19 @@ function normalizeRunnerDecision(decision: ToolRunnerDecision): StateMachineRunn
     state: decision.state ?? "",
     reason: decision.reason,
     override: decision.override as StateMachineStateOverride | undefined,
+    input: decision.input,
   };
+}
+
+function assertValidStateInput(state: StateMachineState, input: unknown): void {
+  if (!state.inputSchema) return;
+
+  const candidate = input ?? {};
+  if (Value.Check(state.inputSchema as never, candidate)) return;
+
+  const errors = [...Value.Errors(state.inputSchema as never, candidate)];
+  const first = errors[0] as { path?: string; message?: string } | undefined;
+  const path = first?.path ?? "/";
+  const message = first?.message ?? "does not match schema";
+  throw new Error(`Invalid input for state "${state.name}" at ${path}: ${message}`);
 }
