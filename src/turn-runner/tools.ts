@@ -1,5 +1,6 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
+import { Ajv } from "ajv";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import type { TurnMode, TurnQuestion } from "../types/protocol.js";
@@ -10,6 +11,8 @@ import type {
   StateMachineScriptState,
   StateMachineState,
 } from "../types/state-machine.js";
+
+const jsonSchemaValidator = new Ajv({ strictSchema: false });
 
 const questionOptionSchema = Type.Object({
   label: Type.String({ description: "Answer text shown to the user." }),
@@ -348,6 +351,7 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
       "Create a state-machine definition for durable business-process work. State prompts and script commands may use template strings such as {{ input.email }}; define inputSchema on those states and pass matching input when selecting them. Agent states may set allowedSkills to restrict which skills are injected into that sub-agent. Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.",
     parameters: createDefinitionSchema,
     async execute(_toolCallId, params) {
+      assertValidDefinitionInputSchemas(params.definition);
       const result: TurnRunnerControlResult = {
         type: "create_state_machine_definition",
         definition: params.definition,
@@ -423,6 +427,7 @@ function assertValidSelectedState(
   if (decision.kind !== "run_state") return;
 
   const effectiveState = applyStateOverride(selectedState, decision.override);
+  assertValidStateInputSchema(effectiveState);
   assertValidStateInput(effectiveState, decision.input);
 }
 
@@ -462,4 +467,21 @@ function assertValidStateInput(state: StateMachineState, input: unknown): void {
   const path = first?.path ?? "/";
   const message = first?.message ?? "does not match schema";
   throw new Error(`Invalid input for state "${state.name}" at ${path}: ${message}`);
+}
+
+function assertValidDefinitionInputSchemas(definition: StateMachineDefinition): void {
+  for (const state of definition.states) {
+    assertValidStateInputSchema(state);
+  }
+}
+
+function assertValidStateInputSchema(state: StateMachineState): void {
+  if (!state.inputSchema) return;
+
+  if (jsonSchemaValidator.validateSchema(state.inputSchema)) return;
+
+  const message = jsonSchemaValidator.errorsText(jsonSchemaValidator.errors, {
+    dataVar: `inputSchema for state "${state.name}"`,
+  });
+  throw new Error(`Invalid inputSchema for state "${state.name}": ${message}`);
 }
