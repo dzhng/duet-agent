@@ -56,15 +56,25 @@ export interface SessionOptions {
 export class Session {
   readonly id: string;
   private readonly runner: SessionTurnRunner;
+  /** Directory owned by this session. State persistence writes `state.json` inside it. */
   private readonly sessionPath: string;
+  /** Subscribers interested in this single session's raw turn-runner events. */
   private readonly eventHandlers = new Set<SessionEventHandler>();
+  /** Removes the session's subscription to its owned runner during disposal. */
   private readonly unsubscribeRunner: () => void;
+  /** Latest turn state snapshot used to continue prompts, answers, wakes, and interrupts. */
   private state?: TurnState;
+  /** In-flight runner turn, used to distinguish active work from a reusable terminal result. */
   private activeTurn?: Promise<void>;
+  /** Most recent terminal event, returned immediately when callers wait after a turn has settled. */
   private lastTerminal?: TurnTerminalEvent;
+  /** Scheduled wake for sleeping poll states; cancelled when user input or interrupt arrives. */
   private wakeTimer?: ReturnType<typeof setTimeout>;
+  /** Restores a prompt/answer turn back to sleep when the underlying state machine is still polling. */
   private restoreSleepAfterTurn?: boolean;
+  /** Whether this session should hydrate `state.json` on first use. New sessions start empty. */
   private readonly resumeFromStorage: boolean;
+  /** Pending callers of `waitForTerminal`, resolved together when the next terminal event arrives. */
   private readonly terminalWaiters: Array<(terminal: TurnTerminalEvent) => void> = [];
 
   constructor(

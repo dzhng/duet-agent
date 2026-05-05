@@ -30,6 +30,36 @@ describe("TurnRunner protocol scenarios", () => {
     expect(terminal.state.stateMachine).toBeUndefined();
   });
 
+  test("asks the user structured questions from agent mode", async () => {
+    const { runner } = createTurnRunner();
+    runner.controlResults.push({
+      type: "ask_user_question",
+      questions: [
+        {
+          question: "Which branch should I deploy?",
+          options: [{ label: "main" }, { label: "release" }],
+        },
+      ],
+    });
+
+    const terminal = await runner.turn({
+      type: "start",
+      prompt: "Deploy the app.",
+      mode: "agent",
+    });
+
+    expect(terminal).toMatchObject({
+      type: "ask",
+      questions: [
+        {
+          question: "Which branch should I deploy?",
+          options: [{ label: "main" }, { label: "release" }],
+        },
+      ],
+      state: { status: "waiting_for_human" },
+    });
+  });
+
   test("auto-selects a valid state machine for a long-running lifecycle and streams UI state", async () => {
     const { runner, events } = createTurnRunner();
     const prompt = "Prospect Ada until she books a meeting.";
@@ -619,6 +649,44 @@ describe("TurnRunner protocol scenarios", () => {
         status: "completed",
         stateMachine: {
           currentState: "meeting_scheduled",
+          terminal: { state: "meeting_scheduled", status: "completed" },
+        },
+      },
+    });
+  });
+
+  test("lets the parent runner prompt the current state-machine agent", async () => {
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("waiting_for_reply");
+    runner.controlResults.push(
+      {
+        type: "prompt_state_machine_agent",
+        prompt: "Use the user's answer to continue the waiting state.",
+      },
+      { type: "none" },
+      {
+        type: "select_state_machine_state",
+        decision: { kind: "terminal", state: "meeting_scheduled" },
+      },
+    );
+
+    const terminal = await runner.turn({
+      type: "prompt",
+      state: turnState,
+      message: "Ada replied yes.",
+      behavior: "follow_up",
+    });
+
+    expect(runner.workerInputs).toHaveLength(3);
+    expect(runner.workerInputs[1]?.prompt).toBe(
+      "Use the user's answer to continue the waiting state.",
+    );
+    expect(runner.workerInputs[1]?.appendSystemPrompt).toContain("waiting_for_reply");
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      state: {
+        stateMachine: {
           terminal: { state: "meeting_scheduled", status: "completed" },
         },
       },

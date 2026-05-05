@@ -88,13 +88,21 @@ function parseSlashCommands(prompt: string): {
 
 export class TurnRunner {
   private readonly eventHandlers = new Set<TurnEventHandler>();
+  /** In-memory observation store used by context transforms during agent turns. */
   protected readonly memory = new MemoryStore();
+  /** Stops memory persistence subscriptions/databases when the runner is disposed. */
   private memoryStorageDispose?: () => Promise<void>;
+  /** Current pi agent, if a model turn is active; used for out-of-band interruption. */
   private activeAgent?: Agent;
+  /** Current script or poll abort controller, used to interrupt non-agent state work. */
   private activeAbortController?: AbortController;
+  /** Terminal event prepared by `interrupt()` and returned when active work unwinds. */
   private interruptedTerminal?: TurnTerminalEvent;
+  /** Explicit and discovered skills available for prompt injection and slash commands. */
   private skills: Skill[] = [];
+  /** Ensures skill discovery runs once even when multiple turns share this runner. */
   private skillsLoaded = false;
+  /** Ensures persisted memory hydrates once before the first turn that needs it. */
   private memoryLoaded = false;
 
   constructor(readonly config: TurnRunnerConfig) {
@@ -260,8 +268,10 @@ export class TurnRunner {
       ...this.createTools(input.mode, input.state),
     });
 
-    if (workerResult.control.type === "none") {
-      return workerResult.terminal;
+    if (workerResult.control.type === "none") return workerResult.terminal;
+
+    if (workerResult.control.type === "ask_user_question") {
+      return this.askUserQuestion(workerResult.terminal, workerResult.control);
     }
 
     if (workerResult.control.type === "create_state_machine_definition") {
@@ -286,6 +296,19 @@ export class TurnRunner {
         firstState,
       );
       return this.runStateMachine(state, { kind: "run_state", state: firstState });
+    }
+
+    if (workerResult.control.type === "prompt_state_machine_agent") {
+      return this.promptStateMachineAgent(workerResult.terminal.state, workerResult.control.prompt);
+    }
+
+    if (workerResult.control.type !== "select_state_machine_state") {
+      return this.complete(
+        workerResult.terminal.state,
+        "failed",
+        undefined,
+        "Unsupported state-machine control result.",
+      );
     }
 
     const selectedState =
@@ -323,14 +346,16 @@ export class TurnRunner {
     prompt: string,
     options?: TurnOptions,
   ): Promise<TurnTerminalEvent> {
-    return (
-      await this.runAgentWorker({
-        state,
-        prompt,
-        options,
-        ...this.createTools("agent"),
-      })
-    ).terminal;
+    const workerResult = await this.runAgentWorker({
+      state,
+      prompt,
+      options,
+      ...this.createTools("agent"),
+    });
+    if (workerResult.control.type === "ask_user_question") {
+      return this.askUserQuestion(workerResult.terminal, workerResult.control);
+    }
+    return workerResult.terminal;
   }
 
   protected async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
@@ -487,9 +512,22 @@ export class TurnRunner {
     const type = value.type;
     return (
       type === "none" ||
+      type === "ask_user_question" ||
       type === "create_state_machine_definition" ||
-      type === "select_state_machine_state"
+      type === "select_state_machine_state" ||
+      type === "prompt_state_machine_agent"
     );
+  }
+
+  private askUserQuestion(
+    terminal: TurnTerminalEvent,
+    control: Extract<TurnRunnerControlResult, { type: "ask_user_question" }>,
+  ): TurnTerminalEvent {
+    return {
+      type: "ask",
+      questions: control.questions,
+      state: { ...terminal.state, status: "waiting_for_human" },
+    };
   }
 
   protected async runStateMachine(
@@ -543,6 +581,34 @@ export class TurnRunner {
     state: StateMachineAgentState,
   ): Promise<TurnTerminalEvent> {
     const childPrompt = createStateAgentPrompt({ session, state });
+    return this.runStateMachineAgentStatePrompt(session, state, childPrompt, state.options);
+  }
+
+  protected async promptStateMachineAgent(
+    session: TurnState,
+    prompt: string,
+  ): Promise<TurnTerminalEvent> {
+    const stateMachine = session.stateMachine;
+    const currentState = stateMachine?.currentState
+      ? this.findState(stateMachine, stateMachine.currentState)
+      : undefined;
+    if (!stateMachine || currentState?.kind !== "agent") {
+      return this.complete(
+        session,
+        "failed",
+        undefined,
+        "Cannot prompt state-machine agent because the current state is not an agent state.",
+      );
+    }
+    return this.runStateMachineAgentStatePrompt(session, currentState, prompt);
+  }
+
+  protected async runStateMachineAgentStatePrompt(
+    session: TurnState,
+    state: StateMachineAgentState,
+    prompt: string,
+    options?: TurnOptions,
+  ): Promise<TurnTerminalEvent> {
     const childState: TurnState = {
       ...session,
       mode: "agent",
@@ -553,8 +619,8 @@ export class TurnRunner {
     const childResult = (
       await this.runAgentWorker({
         state: childState,
-        prompt: childPrompt,
-        options: state.options,
+        prompt,
+        options: options ?? state.options,
         appendSystemPrompt: createStateAgentSystemPromptLayer({ session, state }),
         ...this.createTools("agent"),
       })
@@ -725,6 +791,9 @@ export class TurnRunner {
       });
 
       nextSession = workerResult.terminal.state;
+      if (workerResult.control.type === "ask_user_question") {
+        return this.askUserQuestion(workerResult.terminal, workerResult.control);
+      }
 
       if (workerResult.control.type === "select_state_machine_state") {
         return this.runStateMachine(nextSession, workerResult.control.decision);

@@ -1,7 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import type { TurnMode } from "../types/protocol.js";
+import type { TurnMode, TurnQuestion } from "../types/protocol.js";
 import type {
   StateMachineAgentState,
   StateMachineDefinition,
@@ -10,18 +10,23 @@ import type {
   StateMachineState,
 } from "../types/state-machine.js";
 
-const turnOptionsSchema = Type.Object({
-  model: Type.Optional(Type.String()),
-  thinkingLevel: Type.Optional(
-    Type.Union([
-      Type.Literal("minimal"),
-      Type.Literal("low"),
-      Type.Literal("medium"),
-      Type.Literal("high"),
-      Type.Literal("xhigh"),
-    ]),
-  ),
+const questionOptionSchema = Type.Object({
+  label: Type.String(),
+  description: Type.Optional(Type.String()),
 });
+
+const questionSchema = Type.Object({
+  question: Type.String(),
+  header: Type.Optional(Type.String()),
+  options: Type.Array(questionOptionSchema),
+  multiSelect: Type.Optional(Type.Boolean()),
+});
+
+const askUserQuestionSchema = Type.Object({
+  questions: Type.Array(questionSchema),
+});
+
+type AskUserQuestionParams = Static<typeof askUserQuestionSchema>;
 
 const agentOverrideSchema = Type.Partial(
   Type.Object({
@@ -32,7 +37,6 @@ const agentOverrideSchema = Type.Partial(
       Type.Literal("state_machine"),
     ]),
     allowedSkills: Type.Array(Type.String()),
-    options: turnOptionsSchema,
     maxTurns: Type.Number(),
     outputSchema: Type.Record(Type.String(), Type.Any()),
   }),
@@ -92,7 +96,6 @@ const agentStateSchema = Type.Object({
     ]),
   ),
   allowedSkills: Type.Optional(Type.Array(Type.String())),
-  options: Type.Optional(turnOptionsSchema),
   maxTurns: Type.Optional(Type.Number()),
   outputSchema: Type.Optional(Type.Record(Type.String(), Type.Any())),
 });
@@ -178,6 +181,12 @@ const selectStateSchema = Type.Object({
 type SelectStateParams = Static<typeof selectStateSchema>;
 type ToolRunnerDecision = SelectStateParams["decision"];
 
+const promptStateMachineAgentSchema = Type.Object({
+  prompt: Type.String(),
+});
+
+type PromptStateMachineAgentParams = Static<typeof promptStateMachineAgentSchema>;
+
 export type StateMachineRunnerDecision =
   | (ToolRunnerDecision & {
       kind: "run_state";
@@ -190,10 +199,17 @@ export type StateMachineRunnerDecision =
 export type TurnRunnerControlResult =
   | { type: "none" }
   | ({
+      type: "ask_user_question";
+      questions: TurnQuestion[];
+    } & AskUserQuestionParams)
+  | ({
       type: "create_state_machine_definition";
       definition: ToolStateMachineDefinition;
     } & Pick<CreateDefinitionParams, "firstState">)
-  | { type: "select_state_machine_state"; decision: StateMachineRunnerDecision };
+  | { type: "select_state_machine_state"; decision: StateMachineRunnerDecision }
+  | ({
+      type: "prompt_state_machine_agent";
+    } & PromptStateMachineAgentParams);
 
 interface TurnRunnerToolsInput {
   cwd: string;
@@ -202,7 +218,7 @@ interface TurnRunnerToolsInput {
 }
 
 export function createDefaultTurnRunnerTools(cwd: string): AgentTool[] {
-  return createCodingTools(cwd);
+  return [...createCodingTools(cwd), createAskUserQuestionTool()];
 }
 
 export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] {
@@ -217,6 +233,7 @@ export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] 
 
   const definition = typeof input.mode === "object" ? input.mode : input.definition;
   tools.push(createSelectStateTool(definition));
+  tools.push(createPromptStateMachineAgentTool());
   return tools;
 }
 
@@ -229,6 +246,27 @@ export function applyStateOverride(
   }
 
   return { ...state, ...override.state } as StateMachineState;
+}
+
+function createAskUserQuestionTool(): AgentTool<typeof askUserQuestionSchema> {
+  return {
+    name: "ask_user_question",
+    label: "Ask user question",
+    description:
+      "Ask the user one or more structured multiple-choice questions. Use this when progress requires user input before continuing.",
+    parameters: askUserQuestionSchema,
+    async execute(_toolCallId, params) {
+      const result: TurnRunnerControlResult = {
+        type: "ask_user_question",
+        questions: params.questions,
+      };
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        details: result,
+        terminate: true,
+      };
+    },
+  };
 }
 
 function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSchema> {
@@ -266,6 +304,27 @@ function createSelectStateTool(
       assertValidSelectedState(decision, definition);
 
       const result: TurnRunnerControlResult = { type: "select_state_machine_state", decision };
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        details: result,
+        terminate: true,
+      };
+    },
+  };
+}
+
+function createPromptStateMachineAgentTool(): AgentTool<typeof promptStateMachineAgentSchema> {
+  return {
+    name: "prompt_state_machine_agent",
+    label: "Prompt state-machine agent",
+    description:
+      "Send a prompt to the current state-machine agent state instead of selecting a new state. Use this when the current state is an agent state that needs user context or a direct answer before the state machine can continue.",
+    parameters: promptStateMachineAgentSchema,
+    async execute(_toolCallId, params) {
+      const result: TurnRunnerControlResult = {
+        type: "prompt_state_machine_agent",
+        prompt: params.prompt,
+      };
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         details: result,

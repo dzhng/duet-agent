@@ -2,6 +2,44 @@ import { describe, expect, test } from "bun:test";
 import { createTurnRunnerTools, type TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 
 describe("TurnRunner tools", () => {
+  test("returns user questions in tool details and model-visible content", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "agent" });
+    const askUserQuestionTool = tools.find((tool) => tool.name === "ask_user_question");
+
+    expect(askUserQuestionTool).toBeDefined();
+    if (!askUserQuestionTool) throw new Error("ask_user_question tool missing");
+
+    const result = await askUserQuestionTool.execute("tool-1", {
+      questions: [
+        {
+          header: "Deployment",
+          question: "Which environment should I deploy to?",
+          options: [
+            { label: "staging", description: "Internal validation" },
+            { label: "production" },
+          ],
+        },
+      ],
+    });
+
+    const details: TurnRunnerControlResult = result.details;
+    expect(details).toEqual({
+      type: "ask_user_question",
+      questions: [
+        {
+          header: "Deployment",
+          question: "Which environment should I deploy to?",
+          options: [
+            { label: "staging", description: "Internal validation" },
+            { label: "production" },
+          ],
+        },
+      ],
+    });
+    expect(result.terminate).toBe(true);
+    expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
+  });
+
   test("returns control decisions in tool details and model-visible content", async () => {
     const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
     const createDefinitionTool = tools.find(
@@ -56,6 +94,33 @@ describe("TurnRunner tools", () => {
     expect(details).toEqual({
       type: "select_state_machine_state",
       decision: { kind: "terminal", state: "done" },
+    });
+    expect(result.terminate).toBe(true);
+    expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
+  });
+
+  test("returns state-machine agent prompts in tool details and model-visible content", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [{ kind: "agent", name: "waiting", prompt: "Wait for a reply." }],
+      },
+    });
+    const promptAgentTool = tools.find((tool) => tool.name === "prompt_state_machine_agent");
+
+    expect(promptAgentTool).toBeDefined();
+    if (!promptAgentTool) throw new Error("prompt_state_machine_agent tool missing");
+
+    const result = await promptAgentTool.execute("tool-1", {
+      prompt: "Use the user's reply to continue.",
+    });
+
+    const details: TurnRunnerControlResult = result.details;
+    expect(details).toEqual({
+      type: "prompt_state_machine_agent",
+      prompt: "Use the user's reply to continue.",
     });
     expect(result.terminate).toBe(true);
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
@@ -126,10 +191,12 @@ describe("TurnRunner tools", () => {
     });
 
     expect(agentTools.some((tool) => tool.name === "create_state_machine_definition")).toBe(false);
+    expect(agentTools.some((tool) => tool.name === "ask_user_question")).toBe(true);
     expect(agentTools.some((tool) => tool.name === "select_state_machine_state")).toBe(false);
     expect(stateMachineTools.some((tool) => tool.name === "create_state_machine_definition")).toBe(
       false,
     );
     expect(stateMachineTools.some((tool) => tool.name === "select_state_machine_state")).toBe(true);
+    expect(stateMachineTools.some((tool) => tool.name === "prompt_state_machine_agent")).toBe(true);
   });
 });

@@ -241,8 +241,6 @@ export interface TurnStartCommand {
   type: "start";
   /** User prompt to route through the runner. */
   prompt: string;
-  /** Working directory for pi coding tools and script states. */
-  cwd?: string;
   /** Routing mode. Omit to use the turn runner's configured default. */
   mode?: TurnMode;
   options?: TurnOptions;
