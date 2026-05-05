@@ -28,7 +28,7 @@ afterEach(async () => {
 });
 
 describe("TurnRunner skills", () => {
-  test("expands bash commands for explicitly provided skills", async () => {
+  testIfDocker("expands bash commands for explicitly provided skills", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
     const skillPath = join(tempDir, "SKILL.md");
     await writeFile(
@@ -66,7 +66,7 @@ describe("TurnRunner skills", () => {
     expect(instructions).not.toContain("!`printf");
   });
 
-  test("expands bash commands in skill descriptions", async () => {
+  testIfDocker("expands bash commands in skill descriptions", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
     const skillPath = join(tempDir, "SKILL.md");
     await writeFile(
@@ -101,7 +101,7 @@ describe("TurnRunner skills", () => {
     expect(skill?.description).toBe("Use when description expansion.");
   });
 
-  test("injects all loaded skill instructions into the system prompt", async () => {
+  testIfDocker("injects all loaded skill instructions into the system prompt", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
     const firstSkillPath = join(tempDir, "first.md");
     const secondSkillPath = join(tempDir, "second.md");
@@ -167,12 +167,14 @@ describe("TurnRunner skills", () => {
     expect(systemPrompt).toContain("Base instructions.");
   });
 
-  test("injects full skill instructions for slash command prompts at runner level", async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
-    const skillPath = join(tempDir, "SKILL.md");
-    await writeFile(
-      skillPath,
-      dedent`
+  testIfDocker(
+    "injects full skill instructions for slash command prompts at runner level",
+    async () => {
+      tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
+      const skillPath = join(tempDir, "SKILL.md");
+      await writeFile(
+        skillPath,
+        dedent`
         ---
         name: review
         description: Review changed code.
@@ -182,24 +184,24 @@ describe("TurnRunner skills", () => {
 
         Use the full review checklist.
       `,
-    );
-    const { runner } = createTurnRunner({
-      mode: "agent",
-      skills: [
-        {
-          name: "review",
-          description: "Review changed code.",
-          filePath: skillPath,
-          baseDir: tempDir,
-          sourceInfo: {} as Skill["sourceInfo"],
-          disableModelInvocation: false,
-        },
-      ],
-    });
+      );
+      const { runner } = createTurnRunner({
+        mode: "agent",
+        skills: [
+          {
+            name: "review",
+            description: "Review changed code.",
+            filePath: skillPath,
+            baseDir: tempDir,
+            sourceInfo: {} as Skill["sourceInfo"],
+            disableModelInvocation: false,
+          },
+        ],
+      });
 
-    await runner.turn({ type: "start", prompt: "/review audit this diff" });
+      await runner.turn({ type: "start", prompt: "/review audit this diff" });
 
-    expect(runner.workerInputs[0]?.prompt).toBe(dedent`
+      expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       /review audit this diff
 
       <skill name="review">
@@ -216,9 +218,10 @@ describe("TurnRunner skills", () => {
       </instructions>
       </skill>
     `);
-  });
+    },
+  );
 
-  test("injects multiple slash command skills at runner level", async () => {
+  testIfDocker("injects multiple slash command skills at runner level", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
     const reviewPath = join(tempDir, "review.md");
     const repoMapPath = join(tempDir, "repo-map.md");
@@ -305,7 +308,7 @@ describe("TurnRunner skills", () => {
     `);
   });
 
-  test("injects slash command skills from anywhere in the prompt", async () => {
+  testIfDocker("injects slash command skills from anywhere in the prompt", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
     const skillPath = join(tempDir, "SKILL.md");
     await writeFile(
@@ -352,7 +355,7 @@ describe("TurnRunner skills", () => {
     `);
   });
 
-  test("preserves unknown slash commands while injecting known slash skills", async () => {
+  testIfDocker("preserves unknown slash commands while injecting known slash skills", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
     const skillPath = join(tempDir, "SKILL.md");
     await writeFile(

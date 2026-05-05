@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { loadStoredMemory } from "../src/memory/storage.js";
 import { MemoryStore } from "../src/memory/store.js";
 import type { Observation } from "../src/types/memory.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 
 describe("Memory storage", () => {
   test("is a no-op without a configured path", async () => {
@@ -19,7 +20,7 @@ describe("Memory storage", () => {
     expect(snapshot.observations).toHaveLength(1);
   });
 
-  test("creates a PGlite memory database and persists observations", async () => {
+  testIfDocker("creates a PGlite memory database and persists observations", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
     const memoryPath = join(tempDir, "memory-pglite");
     const store = new MemoryStore();
@@ -36,7 +37,7 @@ describe("Memory storage", () => {
     }
   });
 
-  test("loads existing observations with optional fields intact", async () => {
+  testIfDocker("loads existing observations with optional fields intact", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
     const memoryPath = join(tempDir, "memory-pglite");
     const seeded = await openSeededDatabase(memoryPath);
@@ -68,7 +69,7 @@ describe("Memory storage", () => {
     }
   });
 
-  test("replaceObservations deletes only removed observations", async () => {
+  testIfDocker("replaceObservations deletes only removed observations", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
     const memoryPath = join(tempDir, "memory-pglite");
     const seeded = await openSeededDatabase(memoryPath);
@@ -94,7 +95,7 @@ describe("Memory storage", () => {
     }
   });
 
-  test("dispose stops future persistence writes", async () => {
+  testIfDocker("dispose stops future persistence writes", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
     const memoryPath = join(tempDir, "memory-pglite");
     const store = new MemoryStore();
@@ -111,7 +112,7 @@ describe("Memory storage", () => {
     }
   });
 
-  test("serializes rapid writes before dispose completes", async () => {
+  testIfDocker("serializes rapid writes before dispose completes", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
     const memoryPath = join(tempDir, "memory-pglite");
     const store = new MemoryStore();

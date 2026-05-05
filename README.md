@@ -107,7 +107,7 @@ bun run eval   # runs live evals in evals/*.eval.ts
 bun run test   # runs the test suite inside Docker
 ```
 
-Raw `bun test` skips Docker-only functional tests so they do not create files on the host machine.
+Use `bun run test`, not raw `bun test`, as the source of truth. File-writing tests are Docker-only so focused host runs cannot create `.agents`, PGlite databases, or home-directory skill fixtures in the checkout.
 
 The pre-commit hook runs `format`, `check-types`, and `lint`.
 
@@ -135,13 +135,13 @@ npx duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 "review this repo"
 ```typescript
 import { TurnRunner } from "duet-agent";
 
-const turn runner = new TurnRunner({
+const turnRunner = new TurnRunner({
   model: "anthropic:claude-opus-4-6",
   cwd: process.cwd(),
   mode: "auto",
 });
 
-const terminal = await turn runner.turn({
+const terminal = await turnRunner.turn({
   type: "start",
   prompt: "Build a todo app with React and TypeScript",
 });
@@ -152,7 +152,7 @@ const terminal = await turn runner.turn({
 duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the runtime state container, not a database adapter.
 
 ```typescript
-const turn runner = new TurnRunner({
+const turnRunner = new TurnRunner({
   model: "anthropic:claude-opus-4-6",
   memoryStorage: {
     path: ".agents/memory-pglite",
@@ -160,14 +160,14 @@ const turn runner = new TurnRunner({
 });
 ```
 
-The memory module hydrates durable observations from an embedded Postgres database powered by PGlite before the first turn and writes observation updates back as memory changes. Raw conversation messages stay in `HarnessSession.agent.messages`; memory persistence stores only derived observations/reflections.
+The memory module hydrates durable observations from an embedded Postgres database powered by PGlite before the first turn and writes observation updates back as memory changes. Raw conversation messages stay in `TurnState.agent.messages`; memory persistence stores only derived observations/reflections.
 
 You can also resume directly from saved state:
 
 ```typescript
-const terminal = await turn runner.turn({
+const terminal = await turnRunner.turn({
   type: "prompt",
-  session: savedSession,
+  state: savedState,
   message: "Continue the previous goal",
   behavior: "follow_up",
 });
@@ -191,7 +191,7 @@ Skills are loaded from `<cwd>/.agents/skills` and `~/.agents/skills` by default,
 The turn runner installs its default safety checks internally. Add extra guardrail config objects when a deployment needs stricter local policy.
 
 ```typescript
-const turn runner = new TurnRunner({
+const turnRunner = new TurnRunner({
   // ...
   guardrails: [
     {

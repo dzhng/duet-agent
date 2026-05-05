@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect } from "bun:test";
 import { Session, type SessionTurnRunner } from "../src/session/session.js";
 import { SessionManager } from "../src/session/session-manager.js";
 import type {
@@ -11,6 +11,7 @@ import type {
   TurnTerminalEvent,
   TurnCommand,
 } from "../src/types/protocol.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 import { createStateMachineState } from "./helpers/turn-runner-protocol.js";
 
 class FakeTurnRunner implements SessionTurnRunner {
@@ -143,7 +144,7 @@ function complete(result = "done"): TurnTerminalEvent {
 }
 
 describe("Session", () => {
-  test("starts a session without waiting for the runner terminal event", async () => {
+  testIfDocker("starts a session without waiting for the runner terminal event", async () => {
     const runner = new FakeTurnRunner([complete()]);
     const session = await createSession(runner);
 
@@ -154,7 +155,7 @@ describe("Session", () => {
     expect(runner.commands).toEqual([{ type: "start", mode: undefined, prompt: "hello" }]);
   });
 
-  test("wraps runner events with the session id", async () => {
+  testIfDocker("wraps runner events with the session id", async () => {
     const runner = new FakeTurnRunner([complete()]);
     const session = await createSession(runner);
     const events: TurnEvent[] = [];
@@ -168,7 +169,7 @@ describe("Session", () => {
     expect(events[0]).toEqual({ type: "ready" });
   });
 
-  test("schedules wake after sleep without blocking command submission", async () => {
+  testIfDocker("schedules wake after sleep without blocking command submission", async () => {
     const sleeping = {
       ...createStateMachineState("poll_email_reply"),
       status: "sleeping" as const,
@@ -188,7 +189,7 @@ describe("Session", () => {
     ]);
   });
 
-  test("persists terminal state snapshots by session id", async () => {
+  testIfDocker("persists terminal state snapshots by session id", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
     tempDirs.push(tempDir);
     const runner = new FakeTurnRunner([complete("stored")]);
@@ -207,7 +208,7 @@ describe("Session", () => {
     expect(stored.state.agent.messages).toEqual(turnState.agent.messages);
   });
 
-  test("disposes runner resources", async () => {
+  testIfDocker("disposes runner resources", async () => {
     const runner = new FakeTurnRunner([complete()]);
     const session = await createSession(runner);
 
@@ -216,7 +217,7 @@ describe("Session", () => {
     expect(runner.disposed).toBe(true);
   });
 
-  test("continues stored sessions with prompt commands", async () => {
+  testIfDocker("continues stored sessions with prompt commands", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
     tempDirs.push(tempDir);
     const firstTurnRunner = new FakeTurnRunner([complete("first")]);
@@ -241,7 +242,7 @@ describe("Session", () => {
     ]);
   });
 
-  test("forwards steer and follow-up prompts while a turn is active", async () => {
+  testIfDocker("forwards steer and follow-up prompts while a turn is active", async () => {
     const runner = new FakeTurnRunner([]);
     const session = await createSession(runner);
 
@@ -257,7 +258,7 @@ describe("Session", () => {
     ]);
   });
 
-  test("routes answers with the latest live state", async () => {
+  testIfDocker("routes answers with the latest live state", async () => {
     const waiting = { ...turnState, status: "waiting_for_human" as const };
     const runner = new FakeTurnRunner([{ type: "ask", questions: [], state: waiting }]);
     const session = await createSession(runner);
@@ -276,23 +277,26 @@ describe("Session", () => {
     });
   });
 
-  test("interrupts active state-machine work and persists the interrupted marker", async () => {
-    const runner = new FakeTurnRunner([]);
-    const session = await createSession(runner);
+  testIfDocker(
+    "interrupts active state-machine work and persists the interrupted marker",
+    async () => {
+      const runner = new FakeTurnRunner([]);
+      const session = await createSession(runner);
 
-    await session.start({ prompt: "start" });
-    await waitFor(() => runner.commands.length === 1);
-    await session.interrupt();
-    const terminal = await session.waitForTerminal();
+      await session.start({ prompt: "start" });
+      await waitFor(() => runner.commands.length === 1);
+      await session.interrupt();
+      const terminal = await session.waitForTerminal();
 
-    expect(runner.interrupts).toHaveLength(1);
-    expect(terminal.state.stateMachine?.terminal).toMatchObject({
-      state: "interrupted",
-      status: "cancelled",
-    });
-  });
+      expect(runner.interrupts).toHaveLength(1);
+      expect(terminal.state.stateMachine?.terminal).toMatchObject({
+        state: "interrupted",
+        status: "cancelled",
+      });
+    },
+  );
 
-  test("stale wake after interrupting sleeping state is a no-op", async () => {
+  testIfDocker("stale wake after interrupting sleeping state is a no-op", async () => {
     const sleeping = {
       ...createStateMachineState("poll_email_reply"),
       status: "sleeping" as const,
@@ -322,55 +326,61 @@ describe("Session", () => {
     });
   });
 
-  test("returns sleeping sessions to sleep after user prompts while still waiting", async () => {
-    const sleeping = {
-      ...createStateMachineState("poll_email_reply"),
-      status: "sleeping" as const,
-    };
-    const completedStillWaiting: TurnState = {
-      ...sleeping,
-      status: "completed",
-      agent: { ...sleeping.agent, status: "completed" },
-    };
-    const runner = new FakeTurnRunner([
-      { type: "sleep", wakeAt: Date.now() + 60_000, state: sleeping },
-    ]);
-    const session = await createSession(runner);
+  testIfDocker(
+    "returns sleeping sessions to sleep after user prompts while still waiting",
+    async () => {
+      const sleeping = {
+        ...createStateMachineState("poll_email_reply"),
+        status: "sleeping" as const,
+      };
+      const completedStillWaiting: TurnState = {
+        ...sleeping,
+        status: "completed",
+        agent: { ...sleeping.agent, status: "completed" },
+      };
+      const runner = new FakeTurnRunner([
+        { type: "sleep", wakeAt: Date.now() + 60_000, state: sleeping },
+      ]);
+      const session = await createSession(runner);
 
-    await session.start({ prompt: "poll" });
-    await session.waitForTerminal();
-    await session.prompt({ message: "anything new?" });
-    runner.terminals.push({
-      type: "complete",
-      status: "completed",
-      state: completedStillWaiting,
-    });
-    runner.resolveNext();
-    const terminal = await session.waitForTerminal();
+      await session.start({ prompt: "poll" });
+      await session.waitForTerminal();
+      await session.prompt({ message: "anything new?" });
+      runner.terminals.push({
+        type: "complete",
+        status: "completed",
+        state: completedStillWaiting,
+      });
+      runner.resolveNext();
+      const terminal = await session.waitForTerminal();
 
-    expect(terminal).toMatchObject({
-      type: "sleep",
-      state: { status: "sleeping", stateMachine: { currentState: "poll_email_reply" } },
-    });
-  });
+      expect(terminal).toMatchObject({
+        type: "sleep",
+        state: { status: "sleeping", stateMachine: { currentState: "poll_email_reply" } },
+      });
+    },
+  );
 
-  test("allows a complete turn to be followed by another prompt on the same session", async () => {
-    const runner = new FakeTurnRunner([complete("first"), complete("second")]);
-    const session = await createSession(runner);
+  testIfDocker(
+    "allows a complete turn to be followed by another prompt on the same session",
+    async () => {
+      const runner = new FakeTurnRunner([complete("first"), complete("second")]);
+      const session = await createSession(runner);
 
-    await session.start({ prompt: "start" });
-    await session.waitForTerminal();
-    await session.prompt({ message: "next" });
+      await session.start({ prompt: "start" });
+      await session.waitForTerminal();
+      await session.prompt({ message: "next" });
 
-    expect(runner.commands).toEqual([
-      { type: "start", mode: undefined, prompt: "start" },
-      { type: "prompt", state: turnState, message: "next", behavior: "steer" },
-    ]);
-  });
+      expect(runner.commands).toEqual([
+        { type: "start", mode: undefined, prompt: "start" },
+        { type: "prompt", state: turnState, message: "next", behavior: "steer" },
+      ]);
+    },
+  );
 });
 
 describe("SessionManager", () => {
-  test("creates and stores multiple sessions with manager-wrapped events", async () => {
+  testIfDocker("creates and stores multiple sessions with manager-wrapped events", async () => {
     const runners = new Map<string, FakeTurnRunner>();
     const manager = new SessionManager(
       { model: "anthropic:claude-opus-4-6" },
@@ -408,7 +418,7 @@ describe("SessionManager", () => {
     await manager.dispose();
   });
 
-  test("resumes one session without relying on turn state object identity", async () => {
+  testIfDocker("resumes one session without relying on turn state object identity", async () => {
     const runner = new FakeTurnRunner([complete("resumed")]);
     const manager = new SessionManager(
       { model: "anthropic:claude-opus-4-6" },

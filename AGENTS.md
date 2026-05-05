@@ -44,6 +44,12 @@
 - Tests for normalization, deduplication, or idempotency should assert stored values, not only collection sizes.
 - A length assertion can hide the wrong value being stored or the right value being dropped.
 
+## Run File-Writing Tests In Docker
+
+- Use `bun run test` for the test suite. Do not use raw `bun test` as the source of truth.
+- Tests that write files, create databases, touch `.agents`, or depend on the home directory must use `testIfDocker` so host-only focused runs skip them.
+- If a focused host run creates runtime artifacts, fix the test boundary instead of committing or relying on cleanup.
+
 ## Keep Prompt Literals Aligned
 
 - Use `dedent` for multi-line prompts, markdown fixtures, and tool instruction strings in code.
