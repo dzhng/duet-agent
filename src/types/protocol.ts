@@ -246,7 +246,13 @@ export interface TurnStartCommand {
   options?: TurnOptions;
 }
 
-/** Send a new user prompt while turn state exists. */
+/**
+ * Send a new user prompt while turn state exists.
+ *
+ * Callers may send prompt commands even while a previous `turn()` call is
+ * active. The turn runner maps `behavior` onto the active pi agent when it can
+ * and otherwise queues the command behind active non-agent work.
+ */
 export interface TurnPromptCommand {
   type: "prompt";
   /** Existing turn state to continue. */
@@ -257,7 +263,13 @@ export interface TurnPromptCommand {
   options?: TurnOptions;
 }
 
-/** Provide answers to a structured question emitted by the runner. */
+/**
+ * Provide answers to a structured question emitted by the runner.
+ *
+ * Answers serialize into parent-agent prompt text and follow the same active
+ * turn behavior as prompts, except answers to current child-agent questions may
+ * be routed directly to that child agent.
+ */
 export interface TurnAnswerCommand {
   type: "answer";
   /** Existing turn state to continue. */
@@ -345,14 +357,18 @@ export interface TurnSleepEvent extends TurnTerminalBaseEvent {
   wakeAt: number;
 }
 
-export interface TurnLogEvent {
-  type: "log";
+export interface TurnSystemEvent {
+  type: "system";
   level: "debug" | "info" | "warn" | "error";
   message: string;
 }
 
 /** Events emitted while the runner is still working on the current turn. */
-export type TurnDuringEvent = TurnStepEvent | TurnTodosEvent | TurnStateMachineEvent | TurnLogEvent;
+export type TurnDuringEvent =
+  | TurnStepEvent
+  | TurnTodosEvent
+  | TurnStateMachineEvent
+  | TurnSystemEvent;
 
 /** Events that end the current turn. */
 export type TurnTerminalEvent =

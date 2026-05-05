@@ -196,6 +196,14 @@ const terminal = await turnRunner.turn({
 });
 ```
 
+`TurnRunner.turn()` is the concurrency boundary. Callers may call it repeatedly
+while work is active; the runner folds active `prompt` and `answer` commands
+back into the active pi agent as `steer` or `follow_up`, queues wakes and other
+work it cannot absorb immediately, and emits one terminal event when the whole
+active work chain is done. The parent runner transcript stays linear: state
+machine continuations, script results, poll results, and user follow-ups rejoin
+the parent agent rather than creating separate conversation branches.
+
 ## Memory And Persistence
 
 duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the runtime state container, not a database adapter.
