@@ -1,30 +1,30 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
-import { Harness } from "../src/harness/harness.js";
-import type { HarnessEvent } from "../src/types/protocol.js";
-import { createHarness } from "./helpers/harness-protocol.js";
+import { TurnRunner } from "../src/turn-runner/turn-runner.js";
+import type { TurnEvent } from "../src/types/protocol.js";
+import { createTurnRunner } from "./helpers/turn-runner-protocol.js";
 
-class EventHarness extends Harness {
+class EventTurnRunner extends TurnRunner {
   emitAgentEventForTest(event: AgentEvent): void {
     this.emitAgentEvent(event);
   }
 }
 
-function createEventHarness(): { harness: EventHarness; events: HarnessEvent[] } {
-  const harness = new EventHarness({
-    harnessModel: "anthropic:claude-opus-4-6",
+function createEventTurnRunner(): { runner: EventTurnRunner; events: TurnEvent[] } {
+  const runner = new EventTurnRunner({
+    model: "anthropic:claude-opus-4-6",
     skillDiscovery: { includeDefaults: false },
   });
-  const events: HarnessEvent[] = [];
-  harness.subscribe((event) => events.push(event));
-  return { harness, events };
+  const events: TurnEvent[] = [];
+  runner.subscribe((event) => events.push(event));
+  return { runner, events };
 }
 
-describe("Harness event emission", () => {
+describe("TurnRunner event emission", () => {
   test("emits ready, session_started, and the terminal event for a turn", async () => {
-    const { harness, events } = createHarness();
+    const { runner, events } = createTurnRunner();
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "start",
       mode: "agent",
       prompt: "Summarize this file.",
@@ -35,9 +35,9 @@ describe("Harness event emission", () => {
   });
 
   test("translates complete assistant text and reasoning blocks into step events", () => {
-    const { harness, events } = createEventHarness();
+    const { runner, events } = createEventTurnRunner();
 
-    harness.emitAgentEventForTest({
+    runner.emitAgentEventForTest({
       type: "message_update",
       message: { role: "assistant" } as never,
       assistantMessageEvent: {
@@ -47,7 +47,7 @@ describe("Harness event emission", () => {
         partial: { role: "assistant" } as never,
       },
     });
-    harness.emitAgentEventForTest({
+    runner.emitAgentEventForTest({
       type: "message_update",
       message: { role: "assistant" } as never,
       assistantMessageEvent: {
@@ -65,15 +65,15 @@ describe("Harness event emission", () => {
   });
 
   test("translates tool execution lifecycle into tool_call step events", () => {
-    const { harness, events } = createEventHarness();
+    const { runner, events } = createEventTurnRunner();
 
-    harness.emitAgentEventForTest({
+    runner.emitAgentEventForTest({
       type: "tool_execution_start",
       toolCallId: "tool-1",
       toolName: "read",
       args: { path: "README.md" },
     });
-    harness.emitAgentEventForTest({
+    runner.emitAgentEventForTest({
       type: "tool_execution_end",
       toolCallId: "tool-1",
       toolName: "read",

@@ -1,15 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
-import { Harness, type AgentWorkerInput, type AgentWorkerResult } from "../src/harness/harness.js";
-import type { HarnessEvent } from "../src/types/protocol.js";
-import { createStateMachineSession } from "./helpers/harness-protocol.js";
+import {
+  TurnRunner,
+  type AgentWorkerInput,
+  type AgentWorkerResult,
+} from "../src/turn-runner/turn-runner.js";
+import type { TurnEvent } from "../src/types/protocol.js";
+import { createStateMachineState } from "./helpers/turn-runner-protocol.js";
 
-class StateMachineAgentEventHarness extends Harness {
+class StateMachineAgentEventTurnRunner extends TurnRunner {
   private workerCalls = 0;
 
   constructor() {
     super({
-      harnessModel: "anthropic:claude-opus-4-6",
+      model: "anthropic:claude-opus-4-6",
       skillDiscovery: { includeDefaults: false },
     });
   }
@@ -27,7 +31,7 @@ class StateMachineAgentEventHarness extends Harness {
           type: "complete",
           status: "completed",
           result: "Selected research state.",
-          session: { ...input.session, status: "completed" },
+          state: { ...input.state, status: "completed" },
         },
       };
     }
@@ -55,11 +59,11 @@ class StateMachineAgentEventHarness extends Harness {
         type: "complete",
         status: "completed",
         result: "Child state complete.",
-        session: {
-          ...input.session,
+        state: {
+          ...input.state,
           status: "completed",
           agent: {
-            ...input.session.agent,
+            ...input.state.agent,
             status: "completed",
           },
         },
@@ -69,14 +73,14 @@ class StateMachineAgentEventHarness extends Harness {
 }
 
 describe("State-machine agent state events", () => {
-  test("emits child agent step events through the parent harness subscription", async () => {
-    const harness = new StateMachineAgentEventHarness();
-    const events: HarnessEvent[] = [];
-    harness.subscribe((event) => events.push(event));
+  test("emits child agent step events through the parent runner subscription", async () => {
+    const runner = new StateMachineAgentEventTurnRunner();
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
 
-    await harness.turn({
+    await runner.turn({
       type: "prompt",
-      session: createStateMachineSession("waiting_for_reply"),
+      state: createStateMachineState("waiting_for_reply"),
       message: "Continue.",
       behavior: "follow_up",
     });

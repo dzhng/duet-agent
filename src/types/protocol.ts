@@ -3,78 +3,87 @@ import type { AgentSession } from "./agent.js";
 import type { StateMachineDefinition, StateMachineSession } from "./state-machine.js";
 
 /**
- * Harness Protocol
+ * TurnRunner Protocol
  *
- * A JSON-friendly command/event protocol for operating duet-agent harnesses.
+ * A JSON-friendly command/event protocol for operating duet-agent turn runners.
  * The transport is intentionally unspecified. A CLI, daemon, HTTP server, or
  * parent process can all speak this protocol as long as they can send commands
  * and consume streamed events.
  *
  * The protocol is not a comm layer. It is the control surface for the
- * harness itself:
+ * runner itself:
  *
- * - commands tell the harness what to do
+ * - commands tell the runner what to do
  * - turn events report work during the turn and end each turn
  *
  * ## Turn Model
  *
- * A user starts a turn by sending one of:
+ * The runner is a stateless turn executor: every command carries the full
+ * `TurnState` snapshot needed to resume work, and every terminal event returns
+ * the next snapshot. The session is the long-lived session owner. It assigns
+ * session ids, persists snapshots, schedules wakeups, and can run an unbounded
+ * number of turn-runner turns for the same user session.
  *
- * - `start`: begin a new harness session from a prompt
- * - `prompt`: send a follow-up prompt while a session exists
+ * A caller starts a turn-runner turn by sending one of:
+ *
+ * - `start`: begin a new turn state from a prompt
+ * - `prompt`: send a follow-up prompt while state exists
  * - `answer`: answer questions from the previous terminal `ask` event
  * - `wake`: resume a sleeping session for one scheduled polling attempt
  *
- * The harness must emit `ready` before any other event. A harness that is not
+ * The turn runner must emit `ready` before any other event. A turn runner that is not
  * ready should not emit session, progress, or terminal events. After `ready`, the
- * harness emits any number of during-turn events (`step`, `todos`,
+ * runner emits any number of during-turn events (`step`, `todos`,
  * `state_machine`, `log`). The turn ends with exactly one terminal event:
  * `complete`, `ask`, `interrupted`, or `sleep`.
- * Terminal events carry the harness-owned state needed to continue a later
- * turn. The agent session is always present because the agent owns the conversation
+ * Terminal events carry the turn runner-owned state needed to continue a later turn.
+ * `complete` means this turn-runner turn ended; it does not mean the session
+ * session is finished. A user can follow up with another prompt for the same
+ * session, and the session will pass the latest `TurnState`
+ * back into the runner. The agent session is always present because the agent owns the conversation
  * history and, for state-machine mode, drives state transitions.
  *
  * ## Scenario 1: One-Shot Agent Task
  *
  * The user asks for a normal task, such as "summarize this file" or "fix this
- * bug." The start command omits `mode` or sets `mode: "auto"`. The harness
+ * bug." The start command omits `mode` or sets `mode: "auto"`. The turn runner
  * classifies the prompt as agent mode and emits:
  *
  * 1. `ready`
- * 2. `session_started` with `session.agent` populated
+ * 2. `session_started` with `state.agent` populated
  * 3. zero or more `step`, `todos`, or `log` events
- * 4. `complete` with the final answer and updated `session.agent`
+ * 4. `complete` with the final answer and updated `state.agent`
  *
- * This behaves like a normal agent harness. There is no state-machine UI because
+ * This behaves like a normal agent runner. There is no state-machine UI because
  * the session is not a long-running business process.
  *
  * ## Scenario 2: Auto-Selected State Machine
  *
  * The user asks for a task with a complex lifecycle, such as "prospect this
  * customer until they book a meeting" or "implement this change, open a PR, and
- * watch it until merge." With `mode: "auto"`, the harness chooses a state
- * machine and emits `session_started` with `session.agent` and `session.stateMachine`
+ * watch it until merge." With `mode: "auto"`, the runner chooses a state
+ * machine and emits `session_started` with `state.agent` and `state.stateMachine`
  * populated.
  *
- * During the turn, the harness emits events that the UI can render directly:
+ * During the turn, the runner emits events that the UI can render directly:
  *
  * - `state_machine` shows the current state name
  * - `step` shows textual progress, reasoning, tool calls, or system messages
  * - `todos` shows current task progress
  * - `log` shows diagnostic messages
  *
- * The UI can always render `session.agent` as the conversation transcript. When it
- * also sees `session.stateMachine`, it can render a Kanban board for the state
+ * The UI can always render `state.agent` as the conversation transcript. When it
+ * also sees `state.stateMachine`, it can render a Kanban board for the state
  * machine. Each `state_machine` event moves the visible session card to the
  * current state column and updates the lifecycle status.
  *
  * ### Scenario 2a: User Follow-Up Interrupts The Turn
  *
  * While the state machine is running, the user can send a `prompt` command with
- * `behavior: "steer"`. The harness should treat this as additional user
+ * `behavior: "steer"`. The runner should treat this as additional user
  * context for the active pi session. For example, the user might say "I've
  * already received this email" while the state machine is waiting for a reply.
- * The harness agent can incorporate that message, update the state-machine
+ * The runner agent can incorporate that message, update the state-machine
  * state, and then continue the same state-machine session instead of abandoning it.
  *
  * A typical stream is:
@@ -82,30 +91,45 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  * 1. `step` events while the agent incorporates the user's update
  * 2. more `state_machine` events as the updated state machine continues
  * 3. a terminal event (`complete`, `ask`, `sleep`, or `interrupted`) carrying
- *    the updated `session`
+ *    the updated `state`
  *
  * ### Scenario 2b: Polling Uses Sleep
  *
  * A state machine might send an email and then wait for a reply. This should be
  * modeled as a poll state, not as a user-owned infinite polling script. The
- * harness performs one poll attempt. If no reply exists yet, it emits a terminal
+ * runner performs one poll attempt. If no reply exists yet, it emits a terminal
  * `sleep` event with `wakeAt`.
  *
- * The layer above the harness persists `session`, schedules a wakeup for `wakeAt`,
- * and starts the harness again at that time. On each wake, the harness performs
- * one more poll attempt. Once a reply is found, the harness records it in the
+ * The layer above the runner persists the state, schedules a wakeup for `wakeAt`,
+ * and starts the runner again at that time. On each wake, the runner performs
+ * one more poll attempt. Once a reply is found, the runner records it in the
  * state-machine session and continues to the next state.
+ *
+ * If the user sends a prompt while the session is sleeping on a
+ * poll/external wait, the session cancels the pending wake, runs that prompt
+ * as a normal turn-runner turn, and returns the session to `sleep` if the state
+ * machine is still waiting. The user should not see a stable `complete` state
+ * while the business process is actually waiting on something external.
+ *
+ * ### Scenario 2c: Interrupting State-Machine Work
+ *
+ * An interrupt stops active turn-runner work for the current turn. If a state-machine
+ * session is active, interruption also records an interrupted state-machine
+ * terminal marker. Scheduled poll wakeups are owned by the session and are
+ * cancelled there. A later user prompt starts a new turn from the interrupted
+ * state; the parent agent can choose the right continuation, including resuming
+ * polling.
  *
  * ## Scenario 3: Explicit State Machine Definition
  *
  * A caller can pass a full `StateMachineDefinition` as `mode`. The definition
- * is a set of possible states the harness may use, not a command to force every
+ * is a set of possible states the runner may use, not a command to force every
  * prompt into that state machine.
  *
- * If the user's prompt matches the definition, the harness runs that state
+ * If the user's prompt matches the definition, the runner runs that state
  * machine directly and emits the same state-machine events as Scenario 2.
  *
- * If the user's prompt does not fit the provided definition, the harness should
+ * If the user's prompt does not fit the provided definition, the runner should
  * answer normally in agent mode. Conceptually, the selected state can be
  * `undefined`: none of the possible states fit the user's request.
  */
@@ -114,34 +138,34 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  * Top-level execution mode for a prompt.
  *
  * - "agent": handle the prompt as a normal one-shot/current-session agent session.
- * - "auto": let the harness classify which mode the prompt needs. Auto sessions
+ * - "auto": let the runner classify which mode the prompt needs. Auto sessions
  *   may create new state-machine definitions over time, even after a previous
  *   state machine reached a terminal state.
  * - StateMachineDefinition: use this explicit set of possible states when it fits.
  *   Explicit-definition sessions are constrained to this definition; if none of its
- *   states fit, the selected state can be undefined and the harness can answer normally.
+ *   states fit, the selected state can be undefined and the runner can answer normally.
  */
-export type HarnessMode = "agent" | "auto" | StateMachineDefinition;
+export type TurnMode = "agent" | "auto" | StateMachineDefinition;
 
-export type HarnessTerminalStatus = "completed" | "failed" | "cancelled";
+export type TurnRunnerTerminalStatus = "completed" | "failed" | "cancelled";
 
-export type HarnessSessionStatus =
+export type TurnStateStatus =
   | "running"
   | "waiting_for_human"
   | "sleeping"
   | "interrupted"
-  | HarnessTerminalStatus;
+  | TurnRunnerTerminalStatus;
 
-/** Harness-owned state needed to continue a later turn. */
-export interface HarnessSession {
-  /** Lifecycle of the whole harness session, regardless of agent or state-machine mode. */
-  status: HarnessSessionStatus;
+/** TurnRunner-owned state snapshot needed to continue a later turn. */
+export interface TurnState {
+  /** Lifecycle of the current turn state, regardless of agent or state-machine mode. */
+  status: TurnStateStatus;
   /**
    * The mode originally used to start the session. This is required on resume so
    * "auto" sessions can keep creating definitions while explicit-definition sessions
    * stay constrained to their provided state set.
    */
-  mode: HarnessMode;
+  mode: TurnMode;
   /** The agent conversation is always present, including state-machine sessions. */
   agent: AgentSession;
   /** Present when this session is executing in state-machine mode. */
@@ -154,49 +178,49 @@ export interface HarnessSession {
  * - "steer": deliver as an interruption/steering message to the active pi agent.
  * - "follow_up": queue until the active pi agent finishes its current turn.
  */
-export type HarnessPromptBehavior = "steer" | "follow_up";
+export type TurnPromptBehavior = "steer" | "follow_up";
 
-export interface HarnessTurnOptions {
+export interface TurnOptions {
   /** Model override in provider:modelId format. */
   model?: string;
   thinkingLevel?: ThinkingLevel;
 }
 
-export interface HarnessQuestionOption {
+export interface TurnQuestionOption {
   /** Display label shown to the user. */
   label: string;
   /** Optional extra context for the option. */
   description?: string;
 }
 
-export interface HarnessQuestion {
+export interface TurnQuestion {
   /** Question text shown to the user. */
   question: string;
   /** Optional section heading for grouped questions. */
   header?: string;
   /** Available answers. */
-  options: HarnessQuestionOption[];
+  options: TurnQuestionOption[];
   /** Whether multiple options can be selected. */
   multiSelect?: boolean;
 }
 
-export type HarnessTodoStatus = "pending" | "in_progress" | "completed" | "failed";
+export type TurnTodoStatus = "pending" | "in_progress" | "completed" | "failed";
 
-export interface HarnessTodo {
+export interface TurnTodo {
   /** Stable UI-facing label for the work item. */
   content: string;
   /** Current progress state for the work item. */
-  status: HarnessTodoStatus;
+  status: TurnTodoStatus;
 }
 
-export interface HarnessTokenUsage {
+export interface TurnTokenUsage {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens?: number;
   costUsd?: number;
 }
 
-export type HarnessStep =
+export type TurnStep =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
   | {
@@ -209,142 +233,138 @@ export type HarnessStep =
   | { type: "system"; message: string };
 
 /**
- * Start a new orchestration session.
+ * Start a new turn state.
  *
- * The mode decides routing. Omit it to use the harness's configured default.
+ * The mode decides routing. Omit it to use the turn runner's configured default.
  */
-export interface HarnessStartCommand {
+export interface TurnStartCommand {
   type: "start";
-  /** User prompt to route through the harness. */
+  /** User prompt to route through the runner. */
   prompt: string;
   /** Working directory for pi coding tools and script states. */
   cwd?: string;
-  /** Routing mode. Omit to use the harness's configured default. */
-  mode?: HarnessMode;
-  options?: HarnessTurnOptions;
+  /** Routing mode. Omit to use the turn runner's configured default. */
+  mode?: TurnMode;
+  options?: TurnOptions;
 }
 
-/** Send a new user prompt while a session is active. */
-export interface HarnessPromptCommand {
+/** Send a new user prompt while turn state exists. */
+export interface TurnPromptCommand {
   type: "prompt";
-  /** Existing session to continue. */
-  session: HarnessSession;
+  /** Existing turn state to continue. */
+  state: TurnState;
   message: string;
   /** Pi handles the underlying interruption/follow-up behavior. */
-  behavior: HarnessPromptBehavior;
-  options?: HarnessTurnOptions;
+  behavior: TurnPromptBehavior;
+  options?: TurnOptions;
 }
 
-/** Provide answers to a structured question emitted by the harness. */
-export interface HarnessAnswerCommand {
+/** Provide answers to a structured question emitted by the runner. */
+export interface TurnAnswerCommand {
   type: "answer";
-  /** Existing session to continue. */
-  session: HarnessSession;
-  questions: HarnessQuestion[];
+  /** Existing turn state to continue. */
+  state: TurnState;
+  questions: TurnQuestion[];
   answers: Record<string, string>;
   /** Pi handles the underlying interruption/follow-up behavior. */
-  behavior: HarnessPromptBehavior;
-  options?: HarnessTurnOptions;
+  behavior: TurnPromptBehavior;
+  options?: TurnOptions;
 }
 
-/** Wake a sleeping session. If the session is not sleeping on a poll state, this is a no-op. */
-export interface HarnessWakeCommand {
+/** Wake sleeping turn state. If the state is not sleeping on a poll state, this is a no-op. */
+export interface TurnWakeCommand {
   type: "wake";
-  /** Existing session to wake. */
-  session: HarnessSession;
-  options?: HarnessTurnOptions;
+  /** Existing turn state to wake. */
+  state: TurnState;
+  options?: TurnOptions;
 }
 
-export type HarnessTurnCommand =
-  | HarnessStartCommand
-  | HarnessPromptCommand
-  | HarnessAnswerCommand
-  | HarnessWakeCommand;
+export type TurnCommand =
+  | TurnStartCommand
+  | TurnPromptCommand
+  | TurnAnswerCommand
+  | TurnWakeCommand;
 
 /** Out-of-band control message that interrupts the currently running turn. */
-export interface HarnessInterruptCommand {
+export interface TurnInterruptCommand {
   type: "interrupt";
-  /** Current session state known by the caller at the time of interruption. */
-  session: HarnessSession;
+  /** Current turn state known by the caller at the time of interruption. */
+  state: TurnState;
 }
 
-export type HarnessCommand = HarnessTurnCommand | HarnessInterruptCommand;
+export type TurnRunnerCommand = TurnCommand | TurnInterruptCommand;
 
-export interface HarnessReadyEvent {
+export interface TurnReadyEvent {
   type: "ready";
 }
 
-export interface HarnessSessionStartedEvent {
+export interface TurnStateStartedEvent {
   type: "session_started";
-  /** Full session object after applying config/options/auto routing. */
-  session: HarnessSession;
+  /** Full turn state after applying config/options/auto routing. */
+  state: TurnState;
 }
 
-export interface HarnessStepEvent {
+export interface TurnStepEvent {
   type: "step";
-  step: HarnessStep;
+  step: TurnStep;
 }
 
-export interface HarnessTodosEvent {
+export interface TurnTodosEvent {
   type: "todos";
-  todos: HarnessTodo[];
+  todos: TurnTodo[];
 }
 
-export interface HarnessStateMachineEvent {
+export interface TurnStateMachineEvent {
   type: "state_machine";
   /** Display name/title of the current state. */
   currentState: string;
 }
 
-export interface HarnessTerminalEvent {
-  session: HarnessSession;
-  usage?: HarnessTokenUsage;
+export interface TurnTerminalBaseEvent {
+  state: TurnState;
+  usage?: TurnTokenUsage;
 }
 
-export interface HarnessAskEvent extends HarnessTerminalEvent {
+export interface TurnAskEvent extends TurnTerminalBaseEvent {
   type: "ask";
-  questions: HarnessQuestion[];
+  questions: TurnQuestion[];
 }
 
-export interface HarnessSessionCompletedEvent extends HarnessTerminalEvent {
+export interface TurnCompletedEvent extends TurnTerminalBaseEvent {
   type: "complete";
-  status: HarnessTerminalStatus;
+  status: TurnRunnerTerminalStatus;
   result?: string;
   error?: string;
 }
 
-export interface HarnessInterruptedEvent extends HarnessTerminalEvent {
+export interface TurnInterruptedEvent extends TurnTerminalBaseEvent {
   type: "interrupted";
 }
 
-export interface HarnessSleepEvent extends HarnessTerminalEvent {
+export interface TurnSleepEvent extends TurnTerminalBaseEvent {
   type: "sleep";
-  /** Unix timestamp in milliseconds when the outer layer should wake the harness. */
+  /** Unix timestamp in milliseconds when the outer layer should wake the runner. */
   wakeAt: number;
 }
 
-export interface HarnessLogEvent {
+export interface TurnLogEvent {
   type: "log";
   level: "debug" | "info" | "warn" | "error";
   message: string;
 }
 
-/** Events emitted while the harness is still working on the current turn. */
-export type HarnessDuringTurnEvent =
-  | HarnessStepEvent
-  | HarnessTodosEvent
-  | HarnessStateMachineEvent
-  | HarnessLogEvent;
+/** Events emitted while the runner is still working on the current turn. */
+export type TurnDuringEvent = TurnStepEvent | TurnTodosEvent | TurnStateMachineEvent | TurnLogEvent;
 
 /** Events that end the current turn. */
-export type HarnessTerminalTurnEvent =
-  | HarnessAskEvent
-  | HarnessSessionCompletedEvent
-  | HarnessInterruptedEvent
-  | HarnessSleepEvent;
+export type TurnTerminalEvent =
+  | TurnAskEvent
+  | TurnCompletedEvent
+  | TurnInterruptedEvent
+  | TurnSleepEvent;
 
-export type HarnessEvent =
-  | HarnessReadyEvent
-  | HarnessSessionStartedEvent
-  | HarnessDuringTurnEvent
-  | HarnessTerminalTurnEvent;
+export type TurnEvent =
+  | TurnReadyEvent
+  | TurnStateStartedEvent
+  | TurnDuringEvent
+  | TurnTerminalEvent;

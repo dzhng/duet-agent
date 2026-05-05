@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createHarnessTools, type HarnessControlResult } from "../src/harness/tools.js";
+import { createTurnRunnerTools, type TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 
-describe("Harness tools", () => {
+describe("TurnRunner tools", () => {
   test("returns control decisions in tool details and model-visible content", async () => {
-    const tools = createHarnessTools({ cwd: process.cwd(), mode: "auto" });
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
     const createDefinitionTool = tools.find(
       (tool) => tool.name === "create_state_machine_definition",
     );
@@ -20,7 +20,7 @@ describe("Harness tools", () => {
       firstState: "done",
     });
 
-    const details: HarnessControlResult = result.details;
+    const details: TurnRunnerControlResult = result.details;
     expect(details).toEqual({
       type: "create_state_machine_definition",
       definition: {
@@ -35,7 +35,7 @@ describe("Harness tools", () => {
   });
 
   test("returns selected state decisions in tool details and model-visible content", async () => {
-    const tools = createHarnessTools({
+    const tools = createTurnRunnerTools({
       cwd: process.cwd(),
       mode: {
         name: "outreach",
@@ -52,7 +52,7 @@ describe("Harness tools", () => {
       decision: { kind: "terminal", state: "done" },
     });
 
-    const details: HarnessControlResult = result.details;
+    const details: TurnRunnerControlResult = result.details;
     expect(details).toEqual({
       type: "select_state_machine_state",
       decision: { kind: "terminal", state: "done" },
@@ -62,7 +62,7 @@ describe("Harness tools", () => {
   });
 
   test("rejects selected states outside the active definition", async () => {
-    const tools = createHarnessTools({
+    const tools = createTurnRunnerTools({
       cwd: process.cwd(),
       mode: {
         name: "outreach",
@@ -88,7 +88,7 @@ describe("Harness tools", () => {
   });
 
   test("rejects invalid states from dynamically created auto-mode definitions", async () => {
-    const tools = createHarnessTools({
+    const tools = createTurnRunnerTools({
       cwd: process.cwd(),
       mode: "auto",
       definition: {
@@ -115,8 +115,8 @@ describe("Harness tools", () => {
   });
 
   test("does not expose state-machine definition creation outside auto mode", () => {
-    const agentTools = createHarnessTools({ cwd: process.cwd(), mode: "agent" });
-    const stateMachineTools = createHarnessTools({
+    const agentTools = createTurnRunnerTools({ cwd: process.cwd(), mode: "agent" });
+    const stateMachineTools = createTurnRunnerTools({
       cwd: process.cwd(),
       mode: {
         name: "outreach",

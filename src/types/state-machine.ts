@@ -1,4 +1,4 @@
-import type { HarnessTurnOptions } from "./protocol.js";
+import type { TurnOptions } from "./protocol.js";
 
 /**
  * Durable state-machine definitions and runtime state.
@@ -23,14 +23,14 @@ import type { HarnessTurnOptions } from "./protocol.js";
  * research the company, draft/send outreach, then a poll state can check whether
  * the prospect has replied or whether the next follow-up date has arrived.
  *
- * The harness should:
+ * The runner should:
  *
  * 1. Start a StateMachineSession from a StateMachineDefinition and initialize durable domain
  *    state.
  * 2. Enter an agent state for enrichment/research and record the output in the
  *    session history so the state machine can resume without repeating research.
  * 3. Enter a send-email script state and record the sent message details.
- * 4. The runner can choose a poll state. The harness runs one poll attempt,
+ * 4. The runner can choose a poll state. The runner runs one poll attempt,
  *    emits a sleep event if nothing changed, and relies on the outer layer to
  *    wake it later. A poll attempt can run a script or prompt an agent, and
  *    should return structured data only when there is something for the state
@@ -70,7 +70,7 @@ import type { HarnessTurnOptions } from "./protocol.js";
  * run a dev agent, run a review agent, create a PR, poll until the PR is merged
  * or closed, then clean up the worktree.
  *
- * The harness should:
+ * The runner should:
  *
  * 1. Start a StateMachineSession from the user's prompt.
  * 2. Execute a script/tool state that creates a worktree and records its path in
@@ -96,30 +96,30 @@ import type { HarnessTurnOptions } from "./protocol.js";
  * - cleanup/finalizer states that run after terminal external outcomes
  * - terminal states such as merged, closed, failed_review, or cancelled
  *
- * In state-machine mode, the parent harness is still a normal pi agent with its
+ * In state-machine mode, the parent runner is still a normal pi agent with its
  * normal tools. The difference is prompting and routing: it should do as much
  * durable business-process work through the state machine as possible, while
  * still answering simple unrelated requests directly when that is the right
- * behavior. The parent harness dispatches the current state, records the
+ * behavior. The parent runner dispatches the current state, records the
  * selected state's result, asks the runner agent what state should come next,
  * updates history, and emits protocol events.
  *
- * Agent states execute by running the harness in normal agent mode. The parent
- * harness is not a separate worker pool; the selected state owns execution, and
- * an agent state delegates that execution back to a harness agent-mode turn.
+ * Agent states execute by running the runner in normal agent mode. The parent
+ * runner is not a separate worker pool; the selected state owns execution, and
+ * an agent state delegates that execution back to a turn-runner agent-mode turn.
  * This lets the same state machine start in the middle when the user's prompt
  * says prior work already happened, such as "I've already sent email, just wait
- * for response." The harness injects the original prompt and relevant history
+ * for response." The runner injects the original prompt and relevant history
  * automatically when constructing agent prompts; state definitions only describe
  * their own behavior. Human input is not a separate state-machine state: if the
- * current state is an agent state and the harness session is waiting_for_human, the
+ * current state is an agent state and the runner state is waiting_for_human, the
  * state machine is waiting for that agent's user input. Polling remains explicit
- * because the harness owns one poll attempt and emits sleep until the next attempt.
+ * because the runner owns one poll attempt and emits sleep until the next attempt.
  *
  * Example of templated script commands:
  *
  * A setup state can emit structured output such as { "worktreePath": "..." }.
- * The harness records that output in history and merges the structured
+ * The runner records that output in history and merges the structured
  * fields into state:
  *
  *   {
@@ -154,9 +154,9 @@ export interface StateMachineDefinition {
   /** Human-readable label for selection in CLIs/UIs. */
   name: string;
   /**
-   * Routing guidance for the harness agent. This explains when this definition's
+   * Routing guidance for the runner agent. This explains when this definition's
    * set of states applies; if the user's request does not match this prompt, the
-   * selected state can be undefined and the harness can answer normally in agent mode.
+   * selected state can be undefined and the runner can answer normally in agent mode.
    */
   prompt: string;
   /** Available states the runner agent can choose from, including terminal states. */
@@ -164,7 +164,7 @@ export interface StateMachineDefinition {
 }
 
 /**
- * Persisted execution state. The harness can stop after any state and later
+ * Persisted execution state. The runner can stop after any state and later
  * continue from this session without redoing completed work.
  */
 export interface StateMachineSession {
@@ -197,11 +197,11 @@ export interface StateMachineBaseState {
   when?: string;
 }
 
-/** Runs an agent. The harness injects original prompt/history outside this state config. */
+/** Runs an agent. The runner injects original prompt/history outside this state config. */
 export interface StateMachineAgentState extends StateMachineBaseState {
   kind: "agent";
   /**
-   * Prompt for the agent. The harness renders this as a template before
+   * Prompt for the agent. The runner renders this as a template before
    * execution using session.state only. The original user prompt and
    * broader history are added separately when the final agent prompt is
    * constructed.
@@ -215,11 +215,11 @@ export interface StateMachineAgentState extends StateMachineBaseState {
    * - "state_machine": state context plus full state-machine definition and full state history.
    */
   contextScope?: StateMachineAgentContextScope;
-  /** Optional skill allowlist injected into this agent state. Omitted means use state machine/harness defaults. */
+  /** Optional skill allowlist injected into this agent state. Omitted means use state machine/turn-runner defaults. */
   allowedSkills?: string[];
   /** Per-state model/thinking overrides for this agent turn. */
-  options?: HarnessTurnOptions;
-  /** Upper bound before the agent must yield control back to the harness. */
+  options?: TurnOptions;
+  /** Upper bound before the agent must yield control back to the runner. */
   maxTurns?: number;
   /** Optional JSON Schema used to request and validate structured output before merging it into state. */
   outputSchema?: Record<string, unknown>;
@@ -230,7 +230,7 @@ export interface StateMachineScriptState extends StateMachineBaseState {
   kind: "script";
   /**
    * Shell command used for integrations, setup, cleanup, and deterministic
-   * checks. The harness renders this as a template before execution using
+   * checks. The runner renders this as a template before execution using
    * session.state only; keep state-machine definitions serializable instead of storing
    * executable functions here.
    */
@@ -246,11 +246,11 @@ export interface StateMachineScriptState extends StateMachineBaseState {
 /** Performs one external check, then either records data or sleeps until the next attempt. */
 export interface StateMachinePollState extends StateMachineBaseState {
   kind: "poll";
-  /** How often the protocol layer should wake the harness for another attempt. */
+  /** How often the protocol layer should wake the runner for another attempt. */
   intervalMs: number;
   /** Maximum time the state machine can remain in this poll state before failing the session. */
   timeoutMs?: number;
-  /** One polling attempt. The harness owns the polling loop and emits sleep between attempts. */
+  /** One polling attempt. The runner owns the polling loop and emits sleep between attempts. */
   poll: StateMachinePoll;
 }
 
@@ -259,7 +259,7 @@ export type StateMachinePoll =
       kind: "script";
       /**
        * Runs once per poll attempt. The command should return structured output
-       * only when something changed; otherwise the harness sleeps and tries again.
+       * only when something changed; otherwise the runner sleeps and tries again.
        */
       command: string;
       cwd?: string;
@@ -290,7 +290,7 @@ export interface StateMachineTerminalResult {
   state: string;
   /** Copied from the terminal state for easy querying. */
   status: StateMachineTerminalState["status"];
-  /** Optional final explanation, often generated by the harness. */
+  /** Optional final explanation, often generated by the runner. */
   reason?: string;
 }
 
@@ -300,5 +300,4 @@ export type StateMachineSessionEvent =
   | { type: "state_started"; timestamp: number; state: string; effectiveState?: StateMachineState }
   | { type: "state_completed"; timestamp: number; state: string; output?: unknown }
   | { type: "state_failed"; timestamp: number; state: string; error: string }
-  | { type: "session_resumed"; timestamp: number; state: string; input?: unknown }
   | { type: "session_completed"; timestamp: number; terminal: StateMachineTerminalResult };

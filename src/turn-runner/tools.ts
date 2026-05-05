@@ -1,7 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import type { HarnessMode } from "../types/protocol.js";
+import type { TurnMode } from "../types/protocol.js";
 import type {
   StateMachineAgentState,
   StateMachineDefinition,
@@ -10,7 +10,7 @@ import type {
   StateMachineState,
 } from "../types/state-machine.js";
 
-const harnessTurnOptionsSchema = Type.Object({
+const turnOptionsSchema = Type.Object({
   model: Type.Optional(Type.String()),
   thinkingLevel: Type.Optional(
     Type.Union([
@@ -32,7 +32,7 @@ const agentOverrideSchema = Type.Partial(
       Type.Literal("state_machine"),
     ]),
     allowedSkills: Type.Array(Type.String()),
-    options: harnessTurnOptionsSchema,
+    options: turnOptionsSchema,
     maxTurns: Type.Number(),
     outputSchema: Type.Record(Type.String(), Type.Any()),
   }),
@@ -92,7 +92,7 @@ const agentStateSchema = Type.Object({
     ]),
   ),
   allowedSkills: Type.Optional(Type.Array(Type.String())),
-  options: Type.Optional(harnessTurnOptionsSchema),
+  options: Type.Optional(turnOptionsSchema),
   maxTurns: Type.Optional(Type.Number()),
   outputSchema: Type.Optional(Type.Record(Type.String(), Type.Any())),
 });
@@ -187,7 +187,7 @@ export type StateMachineRunnerDecision =
   | (ToolRunnerDecision & { kind: "terminal"; state: string })
   | (ToolRunnerDecision & { kind: "fail"; reason: string });
 
-export type HarnessControlResult =
+export type TurnRunnerControlResult =
   | { type: "none" }
   | ({
       type: "create_state_machine_definition";
@@ -195,18 +195,18 @@ export type HarnessControlResult =
     } & Pick<CreateDefinitionParams, "firstState">)
   | { type: "select_state_machine_state"; decision: StateMachineRunnerDecision };
 
-interface HarnessToolsInput {
+interface TurnRunnerToolsInput {
   cwd: string;
-  mode: HarnessMode;
+  mode: TurnMode;
   definition?: StateMachineDefinition;
 }
 
-export function createDefaultHarnessTools(cwd: string): AgentTool[] {
+export function createDefaultTurnRunnerTools(cwd: string): AgentTool[] {
   return createCodingTools(cwd);
 }
 
-export function createHarnessTools(input: HarnessToolsInput): AgentTool[] {
-  const tools = [...createDefaultHarnessTools(input.cwd)];
+export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] {
+  const tools = [...createDefaultTurnRunnerTools(input.cwd)];
   if (input.mode === "agent") {
     return tools;
   }
@@ -239,7 +239,7 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
       "Create a state-machine definition for durable business-process work. Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.",
     parameters: createDefinitionSchema,
     async execute(_toolCallId, params) {
-      const result: HarnessControlResult = {
+      const result: TurnRunnerControlResult = {
         type: "create_state_machine_definition",
         definition: params.definition,
         firstState: params.firstState,
@@ -265,7 +265,7 @@ function createSelectStateTool(
       const decision = normalizeRunnerDecision(params.decision);
       assertValidSelectedState(decision, definition);
 
-      const result: HarnessControlResult = { type: "select_state_machine_state", decision };
+      const result: TurnRunnerControlResult = { type: "select_state_machine_state", decision };
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         details: result,

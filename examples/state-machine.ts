@@ -1,11 +1,11 @@
 /**
  * Explicit state-machine example.
  *
- * This gives the harness a concrete state-machine definition with one agent
- * state and one terminal state, then asks the harness to run that process.
+ * This gives the runner a concrete state-machine definition with one agent
+ * state and one terminal state, then asks the runner to run that process.
  */
 
-import { Harness, type HarnessConfig, type StateMachineDefinition } from "../src/index.js";
+import { TurnRunner, type TurnRunnerConfig, type StateMachineDefinition } from "../src/index.js";
 
 const definition: StateMachineDefinition = {
   name: "brief_writer",
@@ -30,13 +30,13 @@ const definition: StateMachineDefinition = {
 };
 
 async function main() {
-  const config: HarnessConfig = {
-    harnessModel: "vercel-ai-gateway:anthropic/claude-opus-4.6",
+  const config: TurnRunnerConfig = {
+    model: "vercel-ai-gateway:anthropic/claude-opus-4.6",
     cwd: process.cwd(),
   };
 
-  const harness = new Harness(config);
-  harness.subscribe((event) => {
+  const runner = new TurnRunner(config);
+  runner.subscribe((event) => {
     if (event.type === "state_machine") {
       console.log(`State: ${event.currentState}`);
     }
@@ -45,7 +45,7 @@ async function main() {
     }
   });
 
-  const terminal = await harness.turn({
+  const terminal = await runner.turn({
     type: "start",
     mode: definition,
     prompt: "Write a brief recommendation for using feature flags during risky launches.",

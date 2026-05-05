@@ -1,5 +1,5 @@
 /**
- * duet-agent — An opinionated full-stack agent harness.
+ * duet-agent — An opinionated full-stack agent runner.
  *
  * Native memories. Native interrupts. Multi-agent by default.
  * No MCP — everything is files and CLI.
@@ -13,8 +13,8 @@ export * from "./types/state-machine.js";
 export * from "./types/protocol.js";
 export * from "./core/structured-output.js";
 
-export * from "./harness/harness.js";
-export * from "./orchestrator/orchestrator.js";
+export * from "./turn-runner/turn-runner.js";
+export * from "./session/session.js";
 export * from "./guardrails/semantic.js";
 export * from "./guardrails/pattern.js";
 export * from "./guardrails/firewall.js";

@@ -1,15 +1,15 @@
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
 import { toXML } from "../lib/xml.js";
-import type { HarnessConfig } from "../types/config.js";
-import type { HarnessMode, HarnessSession } from "../types/protocol.js";
+import type { TurnRunnerConfig } from "../types/config.js";
+import type { TurnMode, TurnState } from "../types/protocol.js";
 import type { StateMachineAgentState, StateMachineSession } from "../types/state-machine.js";
 import { readSkillInstructions } from "./skills.js";
 
 const STATE_AGENT_HISTORY_CHAR_LIMIT = 12_000;
 
 export function createSystemPromptWithAppendedLayers(input: {
-  config: HarnessConfig;
+  config: TurnRunnerConfig;
   skills: readonly Skill[];
   append: Array<string | undefined>;
 }): string {
@@ -19,8 +19,8 @@ export function createSystemPromptWithAppendedLayers(input: {
 }
 
 export function createStateMachineSystemPromptLayer(input: {
-  mode: HarnessMode;
-  session?: HarnessSession;
+  mode: TurnMode;
+  session?: TurnState;
 }): string {
   const constraint =
     input.mode === "auto"
@@ -40,7 +40,7 @@ export function createStateMachineSystemPromptLayer(input: {
 
   return [
     "Route durable business-process work through state-machine tools whenever possible.",
-    "If the request is simple or unrelated, answer normally without calling a harness-control tool.",
+    "If the request is simple or unrelated, answer normally without calling a turn-runner control tool.",
     constraint,
     definitionPrompt,
   ]
@@ -49,7 +49,7 @@ export function createStateMachineSystemPromptLayer(input: {
 }
 
 export function createStateAgentSystemPromptLayer(input: {
-  session: HarnessSession;
+  session: TurnState;
   state: StateMachineAgentState;
 }): string | undefined {
   const stateMachine = input.session.stateMachine;
@@ -76,7 +76,7 @@ export function createStateAgentSystemPromptLayer(input: {
 }
 
 export function createStateAgentPrompt(input: {
-  session: HarnessSession;
+  session: TurnState;
   state: StateMachineAgentState;
 }): string {
   const stateMachine = input.session.stateMachine;
@@ -90,7 +90,7 @@ export function createStateAgentPrompt(input: {
   ].join("\n\n");
 }
 
-function createBaseSystemPrompt(config: HarnessConfig, skills: readonly Skill[]): string {
+function createBaseSystemPrompt(config: TurnRunnerConfig, skills: readonly Skill[]): string {
   return [config.systemInstructions, createSkillsSystemPrompt(skills)].filter(Boolean).join("\n\n");
 }
 

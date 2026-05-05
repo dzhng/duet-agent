@@ -4,15 +4,15 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
-import { Harness } from "../src/harness/harness.js";
+import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import { testIfDocker } from "./helpers/docker-only.js";
-import { createHarness } from "./helpers/harness-protocol.js";
-import { createTestHarness, type TestHarnessApp } from "./helpers/skills-harness.js";
+import { createTurnRunner } from "./helpers/turn-runner-protocol.js";
+import { createTestTurnRunner, type TestTurnRunnerApp } from "./helpers/skills-turn-runner.js";
 
-let app: TestHarnessApp | undefined;
+let app: TestTurnRunnerApp | undefined;
 let tempDir: string | undefined;
 
-class SkillPromptHarness extends Harness {
+class SkillPromptTurnRunner extends TurnRunner {
   systemPromptForTest(systemPrompt?: string): string {
     return this.createBaseSystemPromptWithAppendedLayers(systemPrompt);
   }
@@ -27,7 +27,7 @@ afterEach(async () => {
   tempDir = undefined;
 });
 
-describe("Harness skills", () => {
+describe("TurnRunner skills", () => {
   test("expands bash commands for explicitly provided skills", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
     const skillPath = join(tempDir, "SKILL.md");
@@ -44,8 +44,8 @@ describe("Harness skills", () => {
         !\`printf 'expanded value'\`
       `,
     );
-    const harness = new Harness({
-      harnessModel: "anthropic:claude-opus-4-6",
+    const runner = new TurnRunner({
+      model: "anthropic:claude-opus-4-6",
       cwd: process.cwd(),
       skillDiscovery: { includeDefaults: false },
       skills: [
@@ -60,7 +60,7 @@ describe("Harness skills", () => {
       ],
     });
 
-    const instructions = harness.getSkillInstructions("explicit-skill");
+    const instructions = runner.getSkillInstructions("explicit-skill");
 
     expect(instructions).toContain("expanded value");
     expect(instructions).not.toContain("!`printf");
@@ -80,8 +80,8 @@ describe("Harness skills", () => {
         # Description Skill
       `,
     );
-    const harness = new Harness({
-      harnessModel: "anthropic:claude-opus-4-6",
+    const runner = new TurnRunner({
+      model: "anthropic:claude-opus-4-6",
       cwd: process.cwd(),
       skillDiscovery: { includeDefaults: false },
       skills: [
@@ -96,7 +96,7 @@ describe("Harness skills", () => {
       ],
     });
 
-    const [skill] = await harness.getSkills();
+    const [skill] = await runner.getSkills();
 
     expect(skill?.description).toBe("Use when description expansion.");
   });
@@ -131,8 +131,8 @@ describe("Harness skills", () => {
         Second skill instructions.
       `,
     );
-    const harness = new SkillPromptHarness({
-      harnessModel: "anthropic:claude-opus-4-6",
+    const runner = new SkillPromptTurnRunner({
+      model: "anthropic:claude-opus-4-6",
       cwd: process.cwd(),
       skillDiscovery: { includeDefaults: false },
       skills: [
@@ -155,8 +155,8 @@ describe("Harness skills", () => {
       ],
     });
 
-    await harness.getSkills();
-    const systemPrompt = harness.systemPromptForTest("Base instructions.");
+    await runner.getSkills();
+    const systemPrompt = runner.systemPromptForTest("Base instructions.");
 
     expect(systemPrompt).toContain("Available skills:");
     expect(systemPrompt).toContain("<skills>");
@@ -167,7 +167,7 @@ describe("Harness skills", () => {
     expect(systemPrompt).toContain("Base instructions.");
   });
 
-  test("injects full skill instructions for slash command prompts at harness level", async () => {
+  test("injects full skill instructions for slash command prompts at runner level", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
     const skillPath = join(tempDir, "SKILL.md");
     await writeFile(
@@ -183,7 +183,7 @@ describe("Harness skills", () => {
         Use the full review checklist.
       `,
     );
-    const { harness } = createHarness({
+    const { runner } = createTurnRunner({
       mode: "agent",
       skills: [
         {
@@ -197,9 +197,9 @@ describe("Harness skills", () => {
       ],
     });
 
-    await harness.turn({ type: "start", prompt: "/review audit this diff" });
+    await runner.turn({ type: "start", prompt: "/review audit this diff" });
 
-    expect(harness.workerInputs[0]?.prompt).toBe(dedent`
+    expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       /review audit this diff
 
       <skill name="review">
@@ -218,7 +218,7 @@ describe("Harness skills", () => {
     `);
   });
 
-  test("injects multiple slash command skills at harness level", async () => {
+  test("injects multiple slash command skills at runner level", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
     const reviewPath = join(tempDir, "review.md");
     const repoMapPath = join(tempDir, "repo-map.md");
@@ -248,7 +248,7 @@ describe("Harness skills", () => {
         Build a concise repository map.
       `,
     );
-    const { harness } = createHarness({
+    const { runner } = createTurnRunner({
       mode: "agent",
       skills: [
         {
@@ -270,9 +270,9 @@ describe("Harness skills", () => {
       ],
     });
 
-    await harness.turn({ type: "start", prompt: "/review /repo-map audit this diff" });
+    await runner.turn({ type: "start", prompt: "/review /repo-map audit this diff" });
 
-    expect(harness.workerInputs[0]?.prompt).toBe(dedent`
+    expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       /review /repo-map audit this diff
 
       <skill name="review">
@@ -319,7 +319,7 @@ describe("Harness skills", () => {
         # Review Skill
       `,
     );
-    const { harness } = createHarness({
+    const { runner } = createTurnRunner({
       mode: "agent",
       skills: [
         {
@@ -333,9 +333,9 @@ describe("Harness skills", () => {
       ],
     });
 
-    await harness.turn({ type: "start", prompt: "audit this diff /review carefully" });
+    await runner.turn({ type: "start", prompt: "audit this diff /review carefully" });
 
-    expect(harness.workerInputs[0]?.prompt).toBe(dedent`
+    expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       audit this diff /review carefully
 
       <skill name="review">
@@ -366,7 +366,7 @@ describe("Harness skills", () => {
         # Review Skill
       `,
     );
-    const { harness } = createHarness({
+    const { runner } = createTurnRunner({
       mode: "agent",
       skills: [
         {
@@ -380,9 +380,9 @@ describe("Harness skills", () => {
       ],
     });
 
-    await harness.turn({ type: "start", prompt: "/missing /review audit this diff" });
+    await runner.turn({ type: "start", prompt: "/missing /review audit this diff" });
 
-    expect(harness.workerInputs[0]?.prompt).toBe(dedent`
+    expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       /missing /review audit this diff
 
       <skill name="review">
@@ -399,23 +399,23 @@ describe("Harness skills", () => {
     `);
   });
 
-  test("leaves unknown slash command prompts unchanged at harness level", async () => {
-    const { harness } = createHarness({ mode: "agent" });
+  test("leaves unknown slash command prompts unchanged at runner level", async () => {
+    const { runner } = createTurnRunner({ mode: "agent" });
 
-    await harness.turn({ type: "start", prompt: "/missing do work" });
+    await runner.turn({ type: "start", prompt: "/missing do work" });
 
-    expect(harness.workerInputs[0]?.prompt).toBe("/missing do work");
+    expect(runner.workerInputs[0]?.prompt).toBe("/missing do work");
   });
 
   testIfDocker("discovers project skills from the configured cwd", async () => {
-    app = createTestHarness();
+    app = createTestTurnRunner();
     const skillPath = await app.addProjectSkill({
       name: "code-review",
       description: "Review changed code for correctness and simplicity.",
       body: "# Code Review\n\nPrefer direct imports and avoid thin wrappers.",
     });
 
-    const skills = await app.harness.getSkills();
+    const skills = await app.runner.getSkills();
 
     expect(skills).toHaveLength(1);
     expect(skills[0]).toMatchObject({
@@ -427,14 +427,14 @@ describe("Harness skills", () => {
   });
 
   testIfDocker("discovers global skills from the home directory", async () => {
-    app = createTestHarness();
+    app = createTestTurnRunner();
     const skillPath = await app.addGlobalSkill({
       name: "release-notes",
       description: "Draft concise release notes from completed work.",
       body: "# Release Notes\n\nSummarize user-visible changes.",
     });
 
-    const skills = await app.harness.getSkills();
+    const skills = await app.runner.getSkills();
     expect(skills.map((skill) => skill.name)).toEqual(["release-notes"]);
     expect(skills[0]).toMatchObject({
       description: "Draft concise release notes from completed work.",
@@ -443,14 +443,14 @@ describe("Harness skills", () => {
   });
 
   testIfDocker("parses block scalar skill descriptions", async () => {
-    app = createTestHarness();
+    app = createTestTurnRunner();
     await app.addProjectSkill({
       name: "browser-qa",
       description: "|\n  Fast headless browser for QA testing.\n  Use when checking UI flows.",
       body: "# Browser QA\n\nSession quick browser checks.",
     });
 
-    const skills = await app.harness.getSkills();
+    const skills = await app.runner.getSkills();
 
     expect(skills.map((skill) => skill.description)).toEqual([
       "Fast headless browser for QA testing.\nUse when checking UI flows.\n",
@@ -458,15 +458,15 @@ describe("Harness skills", () => {
   });
 
   testIfDocker("expands bash commands when injecting selected skill instructions", async () => {
-    app = createTestHarness();
+    app = createTestTurnRunner();
     await app.addProjectSkill({
       name: "repo-map",
       description: "Summarize the files in the current repository.",
       body: "# Repo Map\n\nFiles:\n!`printf 'src\\ntest\\n'`",
     });
 
-    await app.harness.getSkills();
-    const instructions = app.harness.getSkillInstructions("repo-map");
+    await app.runner.getSkills();
+    const instructions = app.runner.getSkillInstructions("repo-map");
 
     expect(instructions).toContain("Files:\nsrc\ntest");
     expect(instructions).not.toContain("!`printf");

@@ -35,7 +35,7 @@
 
 ## Keep Runtime And Persistence Separate
 
-- The harness runtime should not own persistence policy.
+- The turn runner runtime should not own persistence policy.
 - Persistence should hydrate the concrete runtime store before use, then subscribe to store events for future writes.
 - Install scripts set up prerequisites; runtime commands handle runtime work.
 

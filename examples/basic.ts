@@ -1,25 +1,25 @@
 /**
- * Basic example: using the harness programmatically.
+ * Basic example: using the runner programmatically.
  *
- * This runs a single agent turn and logs streamed harness events.
+ * This runs a single agent turn and logs streamed runner events.
  */
 
-import { Harness, type HarnessConfig } from "../src/index.js";
+import { TurnRunner, type TurnRunnerConfig } from "../src/index.js";
 
 async function main() {
-  const config: HarnessConfig = {
-    harnessModel: "vercel-ai-gateway:anthropic/claude-opus-4.6",
+  const config: TurnRunnerConfig = {
+    model: "vercel-ai-gateway:anthropic/claude-opus-4.6",
     cwd: process.cwd(),
   };
 
-  const harness = new Harness(config);
-  harness.subscribe((event) => {
+  const runner = new TurnRunner(config);
+  runner.subscribe((event) => {
     if (event.type === "step") {
       console.log(event.step);
     }
   });
 
-  const terminal = await harness.turn({
+  const terminal = await runner.turn({
     type: "start",
     mode: "agent",
     prompt: "Create a simple HTTP server in Node.js that serves a JSON API with a /health endpoint",

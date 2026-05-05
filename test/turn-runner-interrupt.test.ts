@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import assert from "node:assert";
 import { Agent, type StreamFn } from "@mariozechner/pi-agent-core";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@mariozechner/pi-ai";
-import { Harness, type AgentWorkerInput } from "../src/harness/harness.js";
-import type { HarnessEvent, HarnessSession } from "../src/types/protocol.js";
+import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
+import type { TurnEvent, TurnState } from "../src/types/protocol.js";
 
 function createAbortedMessage(): AssistantMessage {
   return {
@@ -26,13 +26,13 @@ function createAbortedMessage(): AssistantMessage {
   };
 }
 
-class InterruptHarness extends Harness {
+class InterruptTurnRunner extends TurnRunner {
   streamStarted: Promise<void>;
   private resolveStreamStarted!: () => void;
 
   constructor() {
     super({
-      harnessModel: "anthropic:claude-opus-4-6",
+      model: "anthropic:claude-opus-4-6",
       skillDiscovery: { includeDefaults: false },
     });
     this.streamStarted = new Promise((resolve) => {
@@ -46,7 +46,7 @@ class InterruptHarness extends Harness {
         model: { provider: "unknown", id: "test" } as never,
         thinkingLevel: input.options?.thinkingLevel ?? "medium",
         systemPrompt: input.appendSystemPrompt ?? "",
-        messages: input.session.agent.messages,
+        messages: input.state.agent.messages,
         tools: input.tools,
       },
       streamFn: this.createInterruptibleStream(),
@@ -71,26 +71,26 @@ class InterruptHarness extends Harness {
   }
 }
 
-describe("Harness interrupts", () => {
+describe("TurnRunner interrupts", () => {
   test("resolves the active turn with the same interrupted terminal event subscribers receive", async () => {
-    const harness = new InterruptHarness();
-    const events: HarnessEvent[] = [];
-    harness.subscribe((event) => events.push(event));
+    const runner = new InterruptTurnRunner();
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
 
-    const turn = harness.turn({
+    const turn = runner.turn({
       type: "start",
       mode: "agent",
       prompt: "Keep working until interrupted.",
     });
-    await harness.streamStarted;
+    await runner.streamStarted;
 
-    const session = events.find((event) => event.type === "session_started")?.session as
-      | HarnessSession
+    const turnState = events.find((event) => event.type === "session_started")?.state as
+      | TurnState
       | undefined;
-    expect(session).toBeDefined();
-    assert(session);
+    expect(turnState).toBeDefined();
+    assert(turnState);
 
-    harness.interrupt({ type: "interrupt", session });
+    runner.interrupt({ type: "interrupt", state: turnState });
 
     const terminal = await turn;
     const interruptedEvent = events.find((event) => event.type === "interrupted");
@@ -100,7 +100,7 @@ describe("Harness interrupts", () => {
     expect(terminal).toBe(interruptedEvent);
     expect(terminal).toMatchObject({
       type: "interrupted",
-      session: {
+      state: {
         status: "interrupted",
         agent: { status: "cancelled" },
       },

@@ -10,15 +10,15 @@
  */
 
 import { createInterface } from "node:readline/promises";
-import { Orchestrator } from "./orchestrator/orchestrator.js";
-import type { HarnessConfig } from "./types/config.js";
-import type { HarnessTerminalTurnEvent } from "./types/protocol.js";
+import { SessionManager } from "./session/session.js";
+import type { TurnRunnerConfig } from "./types/config.js";
+import type { TurnTerminalEvent } from "./types/protocol.js";
 
 async function main() {
   const args = process.argv.slice(2);
 
   // Parse flags
-  let harnessModelName = "anthropic:claude-opus-4-6";
+  let modelName = "anthropic:claude-opus-4-6";
   let workDir = process.cwd();
   const goalParts: string[] = [];
 
@@ -26,7 +26,7 @@ async function main() {
     switch (args[i]) {
       case "--model":
       case "-m":
-        harnessModelName = args[++i];
+        modelName = args[++i];
         break;
       case "--workdir":
       case "-w":
@@ -58,35 +58,37 @@ async function main() {
     process.exit(1);
   }
 
-  if (harnessModelName.indexOf(":") <= 0) {
+  if (modelName.indexOf(":") <= 0) {
     throw new Error("Models must use provider:modelId syntax");
   }
 
   // Build config
-  const config: HarnessConfig = {
-    harnessModel: harnessModelName,
+  const config: TurnRunnerConfig = {
+    model: modelName,
     cwd: workDir,
   };
 
-  const orchestrator = new Orchestrator(config);
-  orchestrator.subscribe((event) => {
+  const manager = new SessionManager(config);
+  manager.subscribe(({ event }) => {
     if (event.type === "step") {
       process.stderr.write(`${JSON.stringify(event.step)}\n`);
     }
   });
 
   try {
-    let { sessionId, terminal } = await orchestrator.run({ mode: config.mode, prompt: goal });
+    const session = manager.create({ mode: config.mode, prompt: goal });
+    let terminal = await session.waitForTerminal();
     handleTerminal(terminal);
 
     if (process.stdin.isTTY) {
-      process.stderr.write(`\nSession: ${sessionId}\n`);
+      process.stderr.write(`\nSession: ${session.id}\n`);
       const readline = createInterface({ input: process.stdin, output: process.stdout });
       try {
         while (true) {
           const prompt = (await readline.question("> ")).trim();
           if (!prompt || prompt === "/exit" || prompt === "/quit") break;
-          ({ sessionId, terminal } = await orchestrator.run({ sessionId, prompt }));
+          await session.prompt({ message: prompt });
+          terminal = await session.waitForTerminal();
           handleTerminal(terminal);
         }
       } finally {
@@ -99,11 +101,11 @@ async function main() {
     console.error(`Fatal: ${err.message}`);
     process.exit(1);
   } finally {
-    await orchestrator.dispose();
+    await manager.dispose();
   }
 }
 
-function handleTerminal(terminal: HarnessTerminalTurnEvent): void {
+function handleTerminal(terminal: TurnTerminalEvent): void {
   if (terminal.type === "complete" && terminal.error) {
     throw new Error(terminal.error);
   }
@@ -122,14 +124,14 @@ function handleTerminal(terminal: HarnessTerminalTurnEvent): void {
 
 function printHelp() {
   console.log(`
-duet-agent — An opinionated full-stack agent harness
+duet-agent — An opinionated full-stack agent runner
 
 USAGE
   duet-agent [options] <goal>
   echo "goal" | duet-agent
 
 OPTIONS
-  -m, --model <name>       Harness model (default: anthropic:claude-opus-4-6)
+  -m, --model <name>       TurnRunner model (default: anthropic:claude-opus-4-6)
   -w, --workdir <path>     Working directory (default: cwd)
   -h, --help               Show this help
 

@@ -1,8 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import dedent from "dedent";
-import { Harness } from "../../src/harness/harness.js";
+import { TurnRunner } from "../../src/turn-runner/turn-runner.js";
 
 export interface TestSkillInput {
   name: string;
@@ -10,24 +9,24 @@ export interface TestSkillInput {
   body?: string;
 }
 
-export interface TestHarnessApp {
-  harness: Harness;
+export interface TestTurnRunnerApp {
+  runner: TurnRunner;
   addProjectSkill(input: TestSkillInput): Promise<string>;
   addGlobalSkill(input: TestSkillInput): Promise<string>;
   cleanup(): Promise<void>;
 }
 
-export function createTestHarness(): TestHarnessApp {
+export function createTestTurnRunner(): TestTurnRunnerApp {
   const root = process.cwd();
-  const harness = new Harness({
-    harnessModel: "anthropic:claude-opus-4-6",
+  const runner = new TurnRunner({
+    model: "anthropic:claude-opus-4-6",
     cwd: root,
   });
 
   const createdPaths: string[] = [];
 
   return {
-    harness,
+    runner,
     addProjectSkill: (input) => writeSkill(join(root, ".agents", "skills"), input, createdPaths),
     addGlobalSkill: (input) =>
       writeSkill(join(homedir(), ".agents", "skills"), input, createdPaths),
@@ -48,14 +47,18 @@ async function writeSkill(
   const skillPath = join(skillDir, "SKILL.md");
   await writeFile(
     skillPath,
-    dedent`
-      ---
-      name: ${input.name}
-      description: ${input.description}
-      ---
-
-      ${input.body ?? `# ${input.name}`}
-    `,
+    [
+      "---",
+      `name: ${input.name}`,
+      `description: ${formatFrontmatterValue(input.description)}`,
+      "---",
+      "",
+      input.body ?? `# ${input.name}`,
+    ].join("\n"),
   );
   return skillPath;
+}
+
+function formatFrontmatterValue(value: string): string {
+  return value.replace(/\n/g, "\n  ");
 }

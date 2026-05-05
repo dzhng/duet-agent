@@ -1,17 +1,17 @@
 import {
-  Harness,
+  TurnRunner,
   type AgentWorkerInput,
   type AgentWorkerResult,
-} from "../../src/harness/harness.js";
+} from "../../src/turn-runner/turn-runner.js";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import type { HarnessControlResult } from "../../src/harness/tools.js";
-import type { HarnessConfig } from "../../src/types/config.js";
-import type { HarnessEvent, HarnessSession } from "../../src/types/protocol.js";
+import type { TurnRunnerControlResult } from "../../src/turn-runner/tools.js";
+import type { TurnRunnerConfig } from "../../src/types/config.js";
+import type { TurnEvent, TurnState } from "../../src/types/protocol.js";
 import type { StateMachineDefinition } from "../../src/types/state-machine.js";
 
-export class TestHarness extends Harness {
+export class TestTurnRunner extends TurnRunner {
   readonly workerInputs: AgentWorkerInput[] = [];
-  controlResults: HarnessControlResult[] = [];
+  controlResults: TurnRunnerControlResult[] = [];
   worker?: (
     input: AgentWorkerInput,
     next: () => Promise<AgentWorkerResult>,
@@ -48,12 +48,12 @@ export class TestHarness extends Harness {
       stopReason: "stop",
       timestamp: Date.now(),
     };
-    const session = {
-      ...input.session,
+    const state = {
+      ...input.state,
       status: "completed" as const,
       agent: {
         status: "completed" as const,
-        messages: [...input.session.agent.messages, assistantMessage],
+        messages: [...input.state.agent.messages, assistantMessage],
       },
     };
 
@@ -63,27 +63,27 @@ export class TestHarness extends Harness {
         type: "complete",
         status: "completed",
         result: resultText,
-        session,
+        state,
       },
     };
   }
 }
 
-export function createHarness(config?: Partial<HarnessConfig>): {
-  harness: TestHarness;
-  events: HarnessEvent[];
+export function createTurnRunner(config?: Partial<TurnRunnerConfig>): {
+  runner: TestTurnRunner;
+  events: TurnEvent[];
 } {
-  const harness = new TestHarness({
-    harnessModel: "anthropic:claude-opus-4-6",
+  const runner = new TestTurnRunner({
+    model: "anthropic:claude-opus-4-6",
     skillDiscovery: { includeDefaults: false },
     ...config,
   });
-  const events: HarnessEvent[] = [];
-  harness.subscribe((event) => events.push(event));
-  return { harness, events };
+  const events: TurnEvent[] = [];
+  runner.subscribe((event) => events.push(event));
+  return { runner, events };
 }
 
-export function createStateMachineSession(currentState: string): HarnessSession {
+export function createStateMachineState(currentState: string): TurnState {
   const definition = createOutreachStateMachine();
   return {
     status: "running",

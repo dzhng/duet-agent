@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Model } from "@mariozechner/pi-ai";
-import { Harness } from "../src/harness/harness.js";
+import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 
-class MemoryTransformHarness extends Harness {
+class MemoryTransformTurnRunner extends TurnRunner {
   createMemoryTransformForTest(model: Model<any>) {
     return this.createMemoryTransform(model);
   }
@@ -13,14 +13,14 @@ class MemoryTransformHarness extends Harness {
   }
 }
 
-describe("Harness memory", () => {
+describe("TurnRunner memory", () => {
   test("observational transform does not persist raw messages below observation threshold", async () => {
-    const harness = new MemoryTransformHarness({
-      harnessModel: "anthropic:claude-opus-4-6",
+    const runner = new MemoryTransformTurnRunner({
+      model: "anthropic:claude-opus-4-6",
       skillDiscovery: { includeDefaults: false },
       memory: { enabled: true },
     });
-    const transform = harness.createMemoryTransformForTest({
+    const transform = runner.createMemoryTransformForTest({
       provider: "unknown",
       id: "test",
     } as Model<any>);
@@ -34,7 +34,7 @@ describe("Harness memory", () => {
 
     await transform(messages);
 
-    const snapshot = await harness.getMemorySnapshotForTest();
+    const snapshot = await runner.getMemorySnapshotForTest();
     expect(snapshot).toMatchObject({
       observations: [],
       estimatedTokens: { observations: 0 },

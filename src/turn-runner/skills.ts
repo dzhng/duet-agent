@@ -6,7 +6,7 @@ import type { Skill } from "@mariozechner/pi-coding-agent";
 import { loadSkills } from "@mariozechner/pi-coding-agent";
 import type { SkillDiscoveryOptions } from "../types/config.js";
 
-const SKILL_SHELL_EXPANSION_PATTERN = /!`([^`\r\n]+)`/g;
+const SKILL_SHELL_EXPANSION_PATTERN = /!`([\s\S]*?)`/g;
 
 function buildSkillDiscoveryOptions(options: SkillDiscoveryOptions | undefined, cwd: string) {
   const agentDir = options?.agentDir ?? join(homedir(), ".agents");

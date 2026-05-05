@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import assert from "node:assert";
 import {
-  createHarness,
+  createTurnRunner,
   createOutreachStateMachine,
-  createStateMachineSession,
-} from "./helpers/harness-protocol.js";
+  createStateMachineState,
+} from "./helpers/turn-runner-protocol.js";
 
-describe("Harness protocol scenarios", () => {
+describe("TurnRunner protocol scenarios", () => {
   test("runs a simple auto-classified prompt in agent mode", async () => {
-    const { harness, events } = createHarness();
+    const { runner, events } = createTurnRunner();
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "start",
       prompt: "Summarize this file.",
       mode: "auto",
@@ -19,28 +19,28 @@ describe("Harness protocol scenarios", () => {
     expect(events[0]).toMatchObject({ type: "ready" });
     expect(events[1]).toMatchObject({
       type: "session_started",
-      session: { status: "running", mode: "auto", agent: { status: "running" } },
+      state: { status: "running", mode: "auto", agent: { status: "running" } },
     });
     expect(events.some((event) => event.type === "state_machine")).toBe(false);
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
-      session: { status: "completed", agent: { status: "completed" } },
+      state: { status: "completed", agent: { status: "completed" } },
     });
-    expect(terminal.session.stateMachine).toBeUndefined();
+    expect(terminal.state.stateMachine).toBeUndefined();
   });
 
   test("auto-selects a valid state machine for a long-running lifecycle and streams UI state", async () => {
-    const { harness, events } = createHarness();
+    const { runner, events } = createTurnRunner();
     const prompt = "Prospect Ada until she books a meeting.";
     const definition = createOutreachStateMachine();
-    harness.controlResults.push({
+    runner.controlResults.push({
       type: "create_state_machine_definition",
       definition,
       firstState: "research_prospect",
     });
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "start",
       prompt,
       mode: "auto",
@@ -49,7 +49,7 @@ describe("Harness protocol scenarios", () => {
     expect(events[0]).toMatchObject({ type: "ready" });
     expect(events[1]).toMatchObject({
       type: "session_started",
-      session: {
+      state: {
         status: "running",
         mode: "auto",
         agent: { status: "running" },
@@ -60,29 +60,29 @@ describe("Harness protocol scenarios", () => {
     expect(
       stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
     ).not.toBe("");
-    expect(terminal.session.stateMachine).toBeDefined();
-    expect(terminal.session.mode).toBe("auto");
-    expect(terminal.session.stateMachine?.definition).toBeDefined();
+    expect(terminal.state.stateMachine).toBeDefined();
+    expect(terminal.state.mode).toBe("auto");
+    expect(terminal.state.stateMachine?.definition).toBeDefined();
     expect(
-      terminal.session.stateMachine?.history.some((event) => event.type === "state_completed"),
+      terminal.state.stateMachine?.history.some((event) => event.type === "state_completed"),
     ).toBe(true);
 
-    expect(harness.workerInputs[0]?.tools.map((tool) => tool.name)).toContain(
+    expect(runner.workerInputs[0]?.tools.map((tool) => tool.name)).toContain(
       "create_state_machine_definition",
     );
   });
 
   test("uses a steering prompt to update and continue an active state-machine session", async () => {
-    const { harness, events } = createHarness();
-    const session = createStateMachineSession("waiting_for_reply");
-    harness.controlResults.push({
+    const { runner, events } = createTurnRunner();
+    const turnState = createStateMachineState("waiting_for_reply");
+    runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "classify_reply" },
     });
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "prompt",
-      session,
+      state: turnState,
       message: "I've already received this email: yes, happy to meet next week.",
       behavior: "steer",
     });
@@ -92,19 +92,19 @@ describe("Harness protocol scenarios", () => {
     expect(
       stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
     ).not.toBe("");
-    expect(terminal.session.agent.messages.at(-1)).toMatchObject({
+    expect(terminal.state.agent.messages.at(-1)).toMatchObject({
       role: "assistant",
     });
-    expect(terminal.session.stateMachine?.currentState).not.toBe("waiting_for_reply");
+    expect(terminal.state.stateMachine?.currentState).not.toBe("waiting_for_reply");
   });
 
   test("answers unrelated prompts during an active state-machine session without changing state", async () => {
-    const { harness, events } = createHarness();
-    const session = createStateMachineSession("waiting_for_reply");
+    const { runner, events } = createTurnRunner();
+    const turnState = createStateMachineState("waiting_for_reply");
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "prompt",
-      session,
+      state: turnState,
       message: "What is the capital of France?",
       behavior: "follow_up",
     });
@@ -114,7 +114,7 @@ describe("Harness protocol scenarios", () => {
       type: "complete",
       status: "completed",
       result: expect.stringContaining("Paris"),
-      session: {
+      state: {
         status: "completed",
         stateMachine: { currentState: "waiting_for_reply" },
       },
@@ -122,23 +122,23 @@ describe("Harness protocol scenarios", () => {
   });
 
   test("sleeps between poll attempts while waiting for an external email response", async () => {
-    const { harness } = createHarness();
-    const session = createStateMachineSession("poll_email_reply");
-    harness.controlResults.push({
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("poll_email_reply");
+    runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "poll_email_reply" },
     });
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "prompt",
-      session,
+      state: turnState,
       message: "Continue polling.",
       behavior: "follow_up",
     });
 
     expect(terminal).toMatchObject({
       type: "sleep",
-      session: {
+      state: {
         status: "sleeping",
         mode: "auto",
         agent: { status: "completed" },
@@ -149,20 +149,20 @@ describe("Harness protocol scenarios", () => {
   });
 
   test("wakes a sleeping poll session for one polling attempt", async () => {
-    const { harness } = createHarness();
-    const session = {
-      ...createStateMachineSession("poll_email_reply"),
+    const { runner } = createTurnRunner();
+    const turnState = {
+      ...createStateMachineState("poll_email_reply"),
       status: "sleeping" as const,
     };
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "wake",
-      session,
+      state: turnState,
     });
 
     expect(terminal).toMatchObject({
       type: "sleep",
-      session: {
+      state: {
         status: "sleeping",
         stateMachine: { currentState: "poll_email_reply" },
       },
@@ -170,33 +170,33 @@ describe("Harness protocol scenarios", () => {
   });
 
   test("wake is a no-op when the session is not sleeping on a poll", async () => {
-    const { harness } = createHarness();
-    const session = createStateMachineSession("waiting_for_reply");
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("waiting_for_reply");
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "wake",
-      session,
+      state: turnState,
     });
 
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
       result: "Nothing to wake.",
-      session,
+      state: turnState,
     });
   });
 
   test("interrupts a running turn and resolves it with the current session", async () => {
-    const { harness } = createHarness();
-    const session = createStateMachineSession("send_email");
-    harness.controlResults.push({
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("send_email");
+    runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "fail", reason: "Interrupted" },
     });
 
-    const turn = harness.turn({
+    const turn = runner.turn({
       type: "prompt",
-      session,
+      state: turnState,
       message: "Send the email now.",
       behavior: "steer",
     });
@@ -205,7 +205,7 @@ describe("Harness protocol scenarios", () => {
     expect(terminal).toMatchObject({
       type: "complete",
       status: "failed",
-      session: {
+      state: {
         status: "failed",
         mode: "auto",
         agent: { status: "completed" },
@@ -215,15 +215,15 @@ describe("Harness protocol scenarios", () => {
   });
 
   test("runs an explicit state machine when the prompt matches the definition", async () => {
-    const { harness, events } = createHarness();
+    const { runner, events } = createTurnRunner();
     const definition = createOutreachStateMachine();
     const prompt = "Prospect Ada until she books a meeting.";
-    harness.controlResults.push({
+    runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "research_prospect" },
     });
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "start",
       prompt,
       mode: definition,
@@ -232,15 +232,15 @@ describe("Harness protocol scenarios", () => {
     expect(events[0]).toMatchObject({ type: "ready" });
     expect(events[1]).toMatchObject({
       type: "session_started",
-      session: {
+      state: {
         status: "running",
         mode: definition,
         agent: { status: "running" },
       },
     });
-    expect(terminal.session.stateMachine).toBeDefined();
-    expect(terminal.session.mode).toBe(definition);
-    expect(terminal.session.stateMachine?.definition).toBe(definition);
+    expect(terminal.state.stateMachine).toBeDefined();
+    expect(terminal.state.mode).toBe(definition);
+    expect(terminal.state.stateMachine?.definition).toBe(definition);
 
     const stateMachineEvent = events.find((event) => event.type === "state_machine");
     expect(stateMachineEvent).toMatchObject({ type: "state_machine" });
@@ -248,21 +248,21 @@ describe("Harness protocol scenarios", () => {
       stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
     ).not.toBe("");
 
-    expect(harness.workerInputs[0]?.tools.map((tool) => tool.name)).not.toContain(
+    expect(runner.workerInputs[0]?.tools.map((tool) => tool.name)).not.toContain(
       "create_state_machine_definition",
     );
-    expect(harness.workerInputs[0]?.appendSystemPrompt).toContain(
+    expect(runner.workerInputs[0]?.appendSystemPrompt).toContain(
       "Explicit state-machine definition",
     );
-    expect(harness.workerInputs[0]?.appendSystemPrompt).toContain('"name": "conference_outreach"');
-    expect(harness.workerInputs[0]?.appendSystemPrompt).toContain('"name": "research_prospect"');
+    expect(runner.workerInputs[0]?.appendSystemPrompt).toContain('"name": "conference_outreach"');
+    expect(runner.workerInputs[0]?.appendSystemPrompt).toContain('"name": "research_prospect"');
   });
 
   test("answers normally when an explicit state machine does not fit the prompt", async () => {
-    const { harness, events } = createHarness();
+    const { runner, events } = createTurnRunner();
     const definition = createOutreachStateMachine();
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "start",
       prompt: "What is the capital of France?",
       mode: definition,
@@ -271,25 +271,25 @@ describe("Harness protocol scenarios", () => {
     expect(events[0]).toMatchObject({ type: "ready" });
     expect(events[1]).toMatchObject({
       type: "session_started",
-      session: { status: "running", mode: definition, agent: { status: "running" } },
+      state: { status: "running", mode: definition, agent: { status: "running" } },
     });
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
       result: expect.stringContaining("Paris"),
     });
-    expect(terminal.session.stateMachine).toBeUndefined();
+    expect(terminal.state.stateMachine).toBeUndefined();
   });
 
   test("reports valid states when the runner selects an invalid state", async () => {
-    const { harness } = createHarness();
+    const { runner } = createTurnRunner();
     const definition = createOutreachStateMachine();
-    harness.controlResults.push({
+    runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "invented_state" },
     });
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "start",
       prompt: "Prospect Ada until she books a meeting.",
       mode: definition,
@@ -307,9 +307,9 @@ describe("Harness protocol scenarios", () => {
   });
 
   test("uses transition overrides for one state attempt without mutating the definition", async () => {
-    const { harness } = createHarness();
-    const session = createStateMachineSession("research_prospect");
-    harness.controlResults.push({
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("research_prospect");
+    runner.controlResults.push({
       type: "select_state_machine_state",
       decision: {
         kind: "run_state",
@@ -318,37 +318,37 @@ describe("Harness protocol scenarios", () => {
       },
     });
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "prompt",
-      session,
+      state: turnState,
       message: "Focus on Grace.",
       behavior: "steer",
     });
 
-    const started = terminal.session.stateMachine?.history.find(
+    const started = terminal.state.stateMachine?.history.find(
       (event) => event.type === "state_started",
     );
     expect(started?.type === "state_started" ? started.effectiveState : undefined).toMatchObject({
       prompt: "Research Grace Hopper.",
     });
-    expect(terminal.session.stateMachine?.definition.states[0]).toMatchObject({
+    expect(terminal.state.stateMachine?.definition.states[0]).toMatchObject({
       prompt: "Research the prospect and company.",
     });
   });
 
   test("bounds state-machine history injected into agent state prompts", async () => {
-    const { harness } = createHarness();
-    const session = createStateMachineSession("research_prospect");
-    if (!session.stateMachine) throw new Error("Expected state machine session");
-    session.stateMachine.definition = {
-      ...session.stateMachine.definition,
-      states: session.stateMachine.definition.states.map((state) =>
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("research_prospect");
+    if (!turnState.stateMachine) throw new Error("Expected state machine session");
+    turnState.stateMachine.definition = {
+      ...turnState.stateMachine.definition,
+      states: turnState.stateMachine.definition.states.map((state) =>
         state.name === "waiting_for_reply" && state.kind === "agent"
           ? { ...state, contextScope: "state_machine" }
           : state,
       ),
     };
-    session.stateMachine.history = [
+    turnState.stateMachine.history = [
       {
         type: "state_completed",
         timestamp: 1,
@@ -362,20 +362,20 @@ describe("Harness protocol scenarios", () => {
         output: { marker: "recent-history" },
       },
     ];
-    harness.controlResults.push({
+    runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "waiting_for_reply" },
     });
 
-    await harness.turn({
+    await runner.turn({
       type: "prompt",
-      session,
+      state: turnState,
       message: "Continue outreach.",
       behavior: "follow_up",
     });
 
-    const agentStatePrompt = harness.workerInputs[1]?.prompt ?? "";
-    const agentStateSystemPrompt = harness.workerInputs[1]?.appendSystemPrompt ?? "";
+    const agentStatePrompt = runner.workerInputs[1]?.prompt ?? "";
+    const agentStateSystemPrompt = runner.workerInputs[1]?.appendSystemPrompt ?? "";
     expect(agentStatePrompt.includes("recent-history")).toBe(true);
     expect(agentStatePrompt.includes("old-history")).toBe(false);
     expect(agentStatePrompt.includes('"omitted": 1')).toBe(true);
@@ -385,9 +385,9 @@ describe("Harness protocol scenarios", () => {
   });
 
   test("asks the parent runner for the next state immediately after a state completes", async () => {
-    const { harness, events } = createHarness();
-    const session = createStateMachineSession("waiting_for_reply");
-    harness.controlResults.push(
+    const { runner, events } = createTurnRunner();
+    const turnState = createStateMachineState("waiting_for_reply");
+    runner.controlResults.push(
       {
         type: "select_state_machine_state",
         decision: { kind: "run_state", state: "research_prospect" },
@@ -399,20 +399,20 @@ describe("Harness protocol scenarios", () => {
       },
     );
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "prompt",
-      session,
+      state: turnState,
       message: "Continue.",
       behavior: "follow_up",
     });
 
-    expect(harness.workerInputs).toHaveLength(3);
-    expect(harness.workerInputs[2]?.prompt).toContain('The state "research_prospect" finished.');
+    expect(runner.workerInputs).toHaveLength(3);
+    expect(runner.workerInputs[2]?.prompt).toContain('The state "research_prospect" finished.');
     expect(events.filter((event) => event.type === "state_machine")).toHaveLength(2);
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
-      session: {
+      state: {
         status: "completed",
         stateMachine: {
           currentState: "meeting_scheduled",
@@ -423,24 +423,24 @@ describe("Harness protocol scenarios", () => {
   });
 
   test("retries when the parent runner does not choose the next state after completion", async () => {
-    const { harness } = createHarness();
-    const session = createStateMachineSession("waiting_for_reply");
-    harness.controlResults.push({
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("waiting_for_reply");
+    runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "research_prospect" },
     });
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "prompt",
-      session,
+      state: turnState,
       message: "Continue.",
       behavior: "follow_up",
     });
 
-    expect(harness.workerInputs).toHaveLength(5);
-    expect(harness.workerInputs[2]?.prompt).toContain("select_state_machine_state");
-    expect(harness.workerInputs[3]?.prompt).toContain("retry 2 of 3");
-    expect(harness.workerInputs[4]?.prompt).toContain("retry 3 of 3");
+    expect(runner.workerInputs).toHaveLength(5);
+    expect(runner.workerInputs[2]?.prompt).toContain("select_state_machine_state");
+    expect(runner.workerInputs[3]?.prompt).toContain("retry 2 of 3");
+    expect(runner.workerInputs[4]?.prompt).toContain("retry 3 of 3");
     expect(terminal).toMatchObject({
       type: "complete",
       status: "failed",
@@ -449,8 +449,8 @@ describe("Harness protocol scenarios", () => {
   });
 
   test("cannot create a new state-machine definition while one is active", async () => {
-    const { harness } = createHarness();
-    const session = createStateMachineSession("waiting_for_reply");
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("waiting_for_reply");
     const definition = {
       name: "follow_up_flow",
       prompt: "Use after outreach needs a new follow-up process.",
@@ -462,7 +462,7 @@ describe("Harness protocol scenarios", () => {
         },
       ],
     };
-    harness.controlResults.push(
+    runner.controlResults.push(
       {
         type: "select_state_machine_state",
         decision: { kind: "run_state", state: "research_prospect" },
@@ -475,9 +475,9 @@ describe("Harness protocol scenarios", () => {
       },
     );
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "prompt",
-      session,
+      state: turnState,
       message: "Continue.",
       behavior: "follow_up",
     });
@@ -491,13 +491,13 @@ describe("Harness protocol scenarios", () => {
   });
 
   test("can create a new state-machine definition after the previous one is terminal", async () => {
-    const { harness } = createHarness();
-    const session = createStateMachineSession("meeting_scheduled");
-    assert(session.stateMachine);
-    const terminalSession = {
-      ...session,
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("meeting_scheduled");
+    assert(turnState.stateMachine);
+    const terminalState = {
+      ...turnState,
       stateMachine: {
-        ...session.stateMachine,
+        ...turnState.stateMachine,
         terminal: { state: "meeting_scheduled", status: "completed" as const },
       },
     };
@@ -512,15 +512,15 @@ describe("Harness protocol scenarios", () => {
         },
       ],
     };
-    harness.controlResults.push({
+    runner.controlResults.push({
       type: "create_state_machine_definition",
       definition,
       firstState: "done",
     });
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "prompt",
-      session: terminalSession,
+      state: terminalState,
       message: "Start a follow-up process.",
       behavior: "follow_up",
     });
@@ -528,7 +528,7 @@ describe("Harness protocol scenarios", () => {
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
-      session: {
+      state: {
         stateMachine: {
           definition,
           currentState: "done",
@@ -538,15 +538,15 @@ describe("Harness protocol scenarios", () => {
     });
   });
 
-  test("bubbles an agent state's ask terminal status to the parent harness", async () => {
-    const { harness } = createHarness();
-    const session = createStateMachineSession("research_prospect");
-    harness.controlResults.push({
+  test("bubbles an agent state's ask terminal status to the parent turn runner", async () => {
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("research_prospect");
+    runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "research_prospect" },
     });
     let calls = 0;
-    harness.worker = async (input, next) => {
+    runner.worker = async (input, next) => {
       calls += 1;
       if (calls === 2) {
         return {
@@ -554,30 +554,30 @@ describe("Harness protocol scenarios", () => {
           terminal: {
             type: "ask",
             questions: [{ question: "Need detail?", options: [{ label: "Yes" }] }],
-            session: { ...input.session, status: "waiting_for_human" },
+            state: { ...input.state, status: "waiting_for_human" },
           },
         };
       }
       return next();
     };
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "prompt",
-      session,
+      state: turnState,
       message: "Continue.",
       behavior: "steer",
     });
 
-    expect(terminal).toMatchObject({ type: "ask", session: { status: "waiting_for_human" } });
+    expect(terminal).toMatchObject({ type: "ask", state: { status: "waiting_for_human" } });
   });
 
   test("routes answers back to the current agent state when it is waiting for human input", async () => {
-    const { harness } = createHarness();
-    const session = {
-      ...createStateMachineSession("research_prospect"),
+    const { runner } = createTurnRunner();
+    const turnState = {
+      ...createStateMachineState("research_prospect"),
       status: "waiting_for_human" as const,
     };
-    harness.controlResults.push(
+    runner.controlResults.push(
       { type: "none" },
       {
         type: "select_state_machine_state",
@@ -585,16 +585,16 @@ describe("Harness protocol scenarios", () => {
       },
     );
 
-    const terminal = await harness.turn({
+    const terminal = await runner.turn({
       type: "answer",
-      session,
+      state: turnState,
       questions: [{ question: "Which prospect?", options: [{ label: "Ada" }] }],
       answers: { prospect: "Ada Lovelace" },
       behavior: "follow_up",
     });
 
-    expect(harness.workerInputs).toHaveLength(2);
-    const answerMessage = harness.workerInputs[0]?.session.agent.messages.at(-1);
+    expect(runner.workerInputs).toHaveLength(2);
+    const answerMessage = runner.workerInputs[0]?.state.agent.messages.at(-1);
     expect(answerMessage).toMatchObject({
       role: "user",
       content: [
@@ -615,7 +615,7 @@ describe("Harness protocol scenarios", () => {
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
-      session: {
+      state: {
         status: "completed",
         stateMachine: {
           currentState: "meeting_scheduled",

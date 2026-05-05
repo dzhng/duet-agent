@@ -3,7 +3,7 @@ import type { Model } from "@mariozechner/pi-ai";
 /** Relative importance used for recall ordering and prompt rendering. */
 export type ObservationPriority = "high" | "medium" | "low";
 
-/** Whether an observation belongs to the current harness memory or a reusable resource. */
+/** Whether an observation belongs to current turn-runner memory or a reusable resource. */
 export type ObservationScope = "session" | "resource";
 
 /** Reflection policy for condensing accumulated observations. */
@@ -12,7 +12,7 @@ export type ReflectionMode = "none" | "threshold" | "forced";
 /** Where an observation came from, used for auditability and future filtering. */
 export type ObservationSource =
   | { kind: "user" }
-  /** Produced by an agent; name is optional because the harness does not assign agent ids. */
+  /** Produced by an agent; name is optional because the runner does not assign agent ids. */
   | { kind: "agent"; name?: string }
   | { kind: "system" }
   /** Produced from a specific tool call or tool result. */
@@ -44,9 +44,9 @@ export interface Observation {
   tags: string[];
 }
 
-/** Complete durable memory view persisted outside the harness session. */
+/** Complete durable memory view persisted outside the runner state. */
 export interface ObservationalMemorySnapshot {
-  /** All durable observations currently owned by the harness memory store. */
+  /** All durable observations currently owned by the runner memory store. */
   observations: Observation[];
   /** Approximate token counts used to decide when observation/reflection should execute. */
   estimatedTokens: {
@@ -57,7 +57,7 @@ export interface ObservationalMemorySnapshot {
   updatedAt: number;
 }
 
-/** Runtime settings for converting harness conversation context into observations. */
+/** Runtime settings for converting turn-runner conversation context into observations. */
 export interface ObservationalMemorySettings {
   /** Master switch for memory transform behavior. */
   enabled: boolean;

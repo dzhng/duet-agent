@@ -9,20 +9,20 @@ import { toXML } from "../lib/xml.js";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
 import { loadStoredMemory } from "../memory/storage.js";
 import { MemoryStore } from "../memory/store.js";
-import type { HarnessConfig } from "../types/config.js";
+import type { TurnRunnerConfig } from "../types/config.js";
 import type {
-  HarnessAnswerCommand,
-  HarnessEvent,
-  HarnessInterruptCommand,
-  HarnessMode,
-  HarnessPromptCommand,
-  HarnessSession,
-  HarnessStartCommand,
-  HarnessTerminalStatus,
-  HarnessTerminalTurnEvent,
-  HarnessTurnCommand,
-  HarnessTurnOptions,
-  HarnessWakeCommand,
+  TurnAnswerCommand,
+  TurnEvent,
+  TurnInterruptCommand,
+  TurnMode,
+  TurnPromptCommand,
+  TurnState,
+  TurnStartCommand,
+  TurnRunnerTerminalStatus,
+  TurnTerminalEvent,
+  TurnCommand,
+  TurnOptions,
+  TurnWakeCommand,
 } from "../types/protocol.js";
 import type {
   StateMachineAgentState,
@@ -47,27 +47,27 @@ import {
 } from "./skills.js";
 import {
   applyStateOverride,
-  createDefaultHarnessTools,
-  createHarnessTools,
-  type HarnessControlResult,
+  createDefaultTurnRunnerTools,
+  createTurnRunnerTools,
+  type TurnRunnerControlResult,
   type StateMachineRunnerDecision,
 } from "./tools.js";
 
 const execFileAsync = promisify(execFile);
 
-export type HarnessEventHandler = (event: HarnessEvent) => void;
+export type TurnEventHandler = (event: TurnEvent) => void;
 
 export interface AgentWorkerInput {
-  session: HarnessSession;
+  state: TurnState;
   prompt: string;
-  options?: HarnessTurnOptions;
+  options?: TurnOptions;
   appendSystemPrompt?: string;
   tools: AgentTool[];
 }
 
 export interface AgentWorkerResult {
-  terminal: HarnessTerminalTurnEvent;
-  control: HarnessControlResult;
+  terminal: TurnTerminalEvent;
+  control: TurnRunnerControlResult;
 }
 
 function parseSlashCommands(prompt: string): {
@@ -86,17 +86,18 @@ function parseSlashCommands(prompt: string): {
   return { commands };
 }
 
-export class Harness {
-  private readonly eventHandlers = new Set<HarnessEventHandler>();
+export class TurnRunner {
+  private readonly eventHandlers = new Set<TurnEventHandler>();
   protected readonly memory = new MemoryStore();
   private memoryStorageDispose?: () => Promise<void>;
   private activeAgent?: Agent;
-  private interruptedTerminal?: HarnessTerminalTurnEvent;
+  private activeAbortController?: AbortController;
+  private interruptedTerminal?: TurnTerminalEvent;
   private skills: Skill[] = [];
   private skillsLoaded = false;
   private memoryLoaded = false;
 
-  constructor(readonly config: HarnessConfig) {
+  constructor(readonly config: TurnRunnerConfig) {
     if (config.skills) {
       this.skills = prepareExplicitSkills(config.skills);
     }
@@ -107,18 +108,18 @@ export class Harness {
     this.memoryStorageDispose = undefined;
   }
 
-  subscribe(handler: HarnessEventHandler): () => void {
+  subscribe(handler: TurnEventHandler): () => void {
     this.eventHandlers.add(handler);
     return () => {
       this.eventHandlers.delete(handler);
     };
   }
 
-  async turn(command: HarnessTurnCommand): Promise<HarnessTerminalTurnEvent> {
+  async turn(command: TurnCommand): Promise<TurnTerminalEvent> {
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
     this.emit({ type: "ready" });
-    let terminal: HarnessTerminalTurnEvent;
+    let terminal: TurnTerminalEvent;
     switch (command.type) {
       case "start":
         terminal = await this.start(command);
@@ -137,123 +138,126 @@ export class Harness {
     return terminal;
   }
 
-  interrupt(command: HarnessInterruptCommand): void {
-    const terminal: HarnessTerminalTurnEvent = {
+  interrupt(command: TurnInterruptCommand): void {
+    const interruptedState = this.recordStateInterrupted(command.state, "Interrupted");
+    const terminal: TurnTerminalEvent = {
       type: "interrupted",
-      session: {
-        ...command.session,
+      state: {
+        ...interruptedState,
         status: "interrupted",
-        agent: { ...command.session.agent, status: "cancelled" },
+        agent: { ...interruptedState.agent, status: "cancelled" },
       },
     };
-    if (this.activeAgent) {
+    if (this.activeAgent || this.activeAbortController) {
       // The active turn emits this terminal event after agent.prompt() unwinds.
       // interrupt() only aborts out-of-band; it does not own turn completion.
       this.interruptedTerminal = terminal;
     }
     this.activeAgent?.abort();
+    this.activeAbortController?.abort();
     this.activeAgent = undefined;
+    this.activeAbortController = undefined;
   }
 
-  protected emit(event: HarnessEvent): void {
+  protected emit(event: TurnEvent): void {
     for (const handler of this.eventHandlers) {
       handler(event);
     }
   }
 
-  protected async start(command: HarnessStartCommand): Promise<HarnessTerminalTurnEvent> {
+  protected async start(command: TurnStartCommand): Promise<TurnTerminalEvent> {
     const mode = command.mode ?? this.config.mode ?? "auto";
-    const session = this.createInitialSession(mode);
+    const state = this.createInitialState(mode);
     const prompt = this.resolveSlashSkillPrompt(command.prompt);
-    this.emit({ type: "session_started", session });
+    this.emit({ type: "session_started", state });
 
     if (mode === "agent") {
-      return this.runAgentMode(session, prompt, command.options);
+      return this.runAgentMode(state, prompt, command.options);
     }
 
-    return this.runHarnessAgentWithStateMachineTools({
-      session,
+    return this.runTurnRunnerAgentWithStateMachineTools({
+      state,
       prompt,
       mode,
       options: command.options,
     });
   }
 
-  protected async prompt(command: HarnessPromptCommand): Promise<HarnessTerminalTurnEvent> {
-    const session: HarnessSession = { ...command.session, status: "running" };
+  protected async prompt(command: TurnPromptCommand): Promise<TurnTerminalEvent> {
+    const state: TurnState = { ...command.state, status: "running" };
     const prompt = this.resolveSlashSkillPrompt(command.message);
-    if (session.mode === "agent") {
-      return this.runAgentMode(session, prompt, command.options);
+    if (state.mode === "agent") {
+      return this.runAgentMode(state, prompt, command.options);
     }
 
-    return this.runHarnessAgentWithStateMachineTools({
-      session,
+    return this.runTurnRunnerAgentWithStateMachineTools({
+      state,
       prompt,
-      mode: session.mode,
+      mode: state.mode,
       options: command.options,
     });
   }
 
-  protected async answer(command: HarnessAnswerCommand): Promise<HarnessTerminalTurnEvent> {
+  protected async answer(command: TurnAnswerCommand): Promise<TurnTerminalEvent> {
     const message = dedent`
       Here are my answers to your questions.
 
       ${toXML([{ questions: command.questions }, { answers: command.answers }])}
     `;
 
-    const stateMachine = command.session.stateMachine;
+    const stateMachine = command.state.stateMachine;
     const currentState = stateMachine?.currentState
       ? this.findState(stateMachine, stateMachine.currentState)
       : undefined;
 
-    if (command.session.status === "waiting_for_human" && currentState?.kind === "agent") {
-      const session = this.appendUserMessage({ ...command.session, status: "running" }, message);
+    if (command.state.status === "waiting_for_human" && currentState?.kind === "agent") {
+      const session = this.appendUserMessage({ ...command.state, status: "running" }, message);
       return this.runStateMachineAgentState(session, currentState);
     }
 
     return this.prompt({
       type: "prompt",
-      session: command.session,
+      state: command.state,
       message,
       behavior: command.behavior,
       options: command.options,
     });
   }
 
-  protected async wake(command: HarnessWakeCommand): Promise<HarnessTerminalTurnEvent> {
-    const session: HarnessSession = { ...command.session, status: "running" };
-    const stateMachine = session.stateMachine;
+  protected async wake(command: TurnWakeCommand): Promise<TurnTerminalEvent> {
+    const state: TurnState = { ...command.state, status: "running" };
+    const stateMachine = state.stateMachine;
     const currentState = stateMachine?.currentState
       ? this.findState(stateMachine, stateMachine.currentState)
       : undefined;
 
-    if (command.session.status === "sleeping" && currentState?.kind === "poll") {
-      return this.runStateMachinePollState(session, currentState);
+    if (command.state.status === "sleeping" && currentState?.kind === "poll") {
+      return this.runStateMachinePollState(state, currentState);
     }
 
     return {
       type: "complete",
       status: "completed",
-      session: command.session,
+      state: command.state,
       result: "Nothing to wake.",
     };
   }
 
-  protected async runHarnessAgentWithStateMachineTools(input: {
-    session: HarnessSession;
+  protected async runTurnRunnerAgentWithStateMachineTools(input: {
+    state: TurnState;
     prompt: string;
-    mode: Exclude<HarnessMode, "agent">;
-    options?: HarnessTurnOptions;
-  }): Promise<HarnessTerminalTurnEvent> {
+    mode: Exclude<TurnMode, "agent">;
+    options?: TurnOptions;
+  }): Promise<TurnTerminalEvent> {
     const workerResult = await this.runAgentWorker({
-      session: input.session,
+      state: input.state,
       prompt: input.prompt,
       options: input.options,
       appendSystemPrompt: createStateMachineSystemPromptLayer({
         mode: input.mode,
-        session: input.session,
+        session: input.state,
       }),
-      ...this.createTools(input.mode, input.session),
+      ...this.createTools(input.mode, input.state),
     });
 
     if (workerResult.control.type === "none") {
@@ -262,11 +266,11 @@ export class Harness {
 
     if (workerResult.control.type === "create_state_machine_definition") {
       if (
-        workerResult.terminal.session.stateMachine &&
-        !workerResult.terminal.session.stateMachine.terminal
+        workerResult.terminal.state.stateMachine &&
+        !workerResult.terminal.state.stateMachine.terminal
       ) {
         return this.complete(
-          workerResult.terminal.session,
+          workerResult.terminal.state,
           "failed",
           undefined,
           "Cannot create a new state-machine definition while the current state machine is still active.",
@@ -275,53 +279,53 @@ export class Harness {
 
       const firstState =
         workerResult.control.firstState ?? workerResult.control.definition.states[0]?.name ?? "";
-      const session = this.initializeStateMachineSession(
-        workerResult.terminal.session,
+      const state = this.initializeStateMachineState(
+        workerResult.terminal.state,
         input.prompt,
         workerResult.control.definition,
         firstState,
       );
-      return this.runStateMachine(session, { kind: "run_state", state: firstState });
+      return this.runStateMachine(state, { kind: "run_state", state: firstState });
     }
 
-    const selectedSession =
-      !workerResult.terminal.session.stateMachine &&
+    const selectedState =
+      !workerResult.terminal.state.stateMachine &&
       typeof input.mode === "object" &&
       workerResult.control.decision.kind !== "fail"
-        ? this.initializeStateMachineSession(
-            workerResult.terminal.session,
+        ? this.initializeStateMachineState(
+            workerResult.terminal.state,
             input.prompt,
             input.mode,
             workerResult.control.decision.state,
           )
-        : workerResult.terminal.session;
-    return this.runStateMachine(selectedSession, workerResult.control.decision);
+        : workerResult.terminal.state;
+    return this.runStateMachine(selectedState, workerResult.control.decision);
   }
 
   protected createTools(
-    mode: HarnessMode,
-    session?: HarnessSession,
+    mode: TurnMode,
+    session?: TurnState,
   ): {
     tools: AgentTool[];
   } {
     const cwd = this.config.cwd ?? process.cwd();
     if (mode === "agent") {
-      return { tools: createDefaultHarnessTools(cwd) };
+      return { tools: createDefaultTurnRunnerTools(cwd) };
     }
 
     return {
-      tools: createHarnessTools({ cwd, mode, definition: session?.stateMachine?.definition }),
+      tools: createTurnRunnerTools({ cwd, mode, definition: session?.stateMachine?.definition }),
     };
   }
 
   protected async runAgentMode(
-    session: HarnessSession,
+    state: TurnState,
     prompt: string,
-    options?: HarnessTurnOptions,
-  ): Promise<HarnessTerminalTurnEvent> {
+    options?: TurnOptions,
+  ): Promise<TurnTerminalEvent> {
     return (
       await this.runAgentWorker({
-        session,
+        state,
         prompt,
         options,
         ...this.createTools("agent"),
@@ -330,7 +334,7 @@ export class Harness {
   }
 
   protected async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
-    let control: HarnessControlResult = { type: "none" };
+    let control: TurnRunnerControlResult = { type: "none" };
     const agent = this.createAgent(input, (result) => {
       control = result;
     });
@@ -358,21 +362,21 @@ export class Harness {
 
     const messages = agent.state.messages;
     const status = agent.state.errorMessage ? "failed" : "completed";
-    const session = {
-      ...input.session,
+    const state = {
+      ...input.state,
       status,
       agent: {
         status,
         messages,
       },
-    } satisfies HarnessSession;
+    } satisfies TurnState;
 
     return {
       control,
       terminal: {
         type: "complete",
         status,
-        session,
+        state,
         result: assistantText(messages),
         error: agent.state.errorMessage,
       },
@@ -381,7 +385,7 @@ export class Harness {
 
   protected createAgent(
     input: AgentWorkerInput,
-    onControlResult?: (result: HarnessControlResult) => void,
+    onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
     const model = this.resolveModel(input.options);
     return new Agent({
@@ -389,12 +393,12 @@ export class Harness {
         model,
         thinkingLevel: input.options?.thinkingLevel ?? "medium",
         systemPrompt: this.createBaseSystemPromptWithAppendedLayers(input.appendSystemPrompt),
-        messages: input.session.agent.messages,
+        messages: input.state.agent.messages,
         tools: input.tools,
       },
       transformContext: this.createMemoryTransform(model),
       afterToolCall: async (context) => {
-        if (this.isHarnessControlResult(context.result.details)) {
+        if (this.isTurnRunnerControlResult(context.result.details)) {
           onControlResult?.(context.result.details);
         }
         return undefined;
@@ -478,7 +482,7 @@ export class Harness {
     });
   }
 
-  private isHarnessControlResult(value: unknown): value is HarnessControlResult {
+  private isTurnRunnerControlResult(value: unknown): value is TurnRunnerControlResult {
     if (!value || typeof value !== "object" || !("type" in value)) return false;
     const type = value.type;
     return (
@@ -489,9 +493,9 @@ export class Harness {
   }
 
   protected async runStateMachine(
-    session: HarnessSession,
+    session: TurnState,
     decision: StateMachineRunnerDecision,
-  ): Promise<HarnessTerminalTurnEvent> {
+  ): Promise<TurnTerminalEvent> {
     const stateMachine = session.stateMachine;
     if (!stateMachine) {
       return this.complete(session, "failed", undefined, "No state machine is active.");
@@ -535,11 +539,11 @@ export class Harness {
   }
 
   protected async runStateMachineAgentState(
-    session: HarnessSession,
+    session: TurnState,
     state: StateMachineAgentState,
-  ): Promise<HarnessTerminalTurnEvent> {
+  ): Promise<TurnTerminalEvent> {
     const childPrompt = createStateAgentPrompt({ session, state });
-    const childSession: HarnessSession = {
+    const childState: TurnState = {
       ...session,
       mode: "agent",
       status: "running",
@@ -548,27 +552,27 @@ export class Harness {
     };
     const childResult = (
       await this.runAgentWorker({
-        session: childSession,
+        state: childState,
         prompt: childPrompt,
         options: state.options,
         appendSystemPrompt: createStateAgentSystemPromptLayer({ session, state }),
         ...this.createTools("agent"),
       })
     ).terminal;
-    const parentSession = { ...session, agent: childResult.session.agent };
+    const parentSession = { ...session, agent: childResult.state.agent };
     const updatedSession = this.recordStateCompleted(parentSession, state.name, {
       result: childResult.type === "complete" ? childResult.result : undefined,
-      childStatus: childResult.session.status,
+      childStatus: childResult.state.status,
     });
 
     if (childResult.type === "ask") {
-      return { ...childResult, session: { ...updatedSession, status: "waiting_for_human" } };
+      return { ...childResult, state: { ...updatedSession, status: "waiting_for_human" } };
     }
     if (childResult.type === "sleep") {
-      return { ...childResult, session: { ...updatedSession, status: "sleeping" } };
+      return { ...childResult, state: { ...updatedSession, status: "sleeping" } };
     }
     if (childResult.type === "interrupted") {
-      return { ...childResult, session: { ...updatedSession, status: "interrupted" } };
+      return { ...childResult, state: { ...updatedSession, status: "interrupted" } };
     }
 
     return this.continueStateMachineAfterStateCompleted(
@@ -579,13 +583,16 @@ export class Harness {
   }
 
   protected async runStateMachineScriptState(
-    session: HarnessSession,
+    session: TurnState,
     state: StateMachineScriptState,
-  ): Promise<HarnessTerminalTurnEvent> {
+  ): Promise<TurnTerminalEvent> {
+    const abortController = new AbortController();
+    this.activeAbortController = abortController;
     try {
       const { stdout } = await execFileAsync("sh", ["-lc", state.command], {
         cwd: state.cwd ?? this.config.cwd ?? process.cwd(),
         timeout: state.timeoutMs,
+        signal: abortController.signal,
       });
       const output = this.parseStructuredOutput(stdout);
       return this.continueStateMachineAfterStateCompleted(
@@ -594,6 +601,11 @@ export class Harness {
         stdout.trim(),
       );
     } catch (error) {
+      if (this.interruptedTerminal) {
+        const terminal = this.interruptedTerminal;
+        this.interruptedTerminal = undefined;
+        return terminal;
+      }
       const message = error instanceof Error ? error.message : String(error);
       return this.complete(
         this.recordStateFailed(session, state.name, message),
@@ -601,15 +613,19 @@ export class Harness {
         undefined,
         message,
       );
+    } finally {
+      if (this.activeAbortController === abortController) {
+        this.activeAbortController = undefined;
+      }
     }
   }
 
   protected async runStateMachinePollState(
-    session: HarnessSession,
+    session: TurnState,
     state: StateMachinePollState,
-  ): Promise<HarnessTerminalTurnEvent> {
+  ): Promise<TurnTerminalEvent> {
     if (state.poll.kind === "prompt") {
-      const result = await this.runAgentMode(this.createInitialSession("agent"), state.poll.prompt);
+      const result = await this.runAgentMode(this.createInitialState("agent"), state.poll.prompt);
       const output =
         result.type === "complete" && result.result ? this.parseJsonObject(result.result) : {};
       if (Object.keys(output).length > 0) {
@@ -620,10 +636,13 @@ export class Harness {
         );
       }
     } else {
+      const abortController = new AbortController();
+      this.activeAbortController = abortController;
       try {
         const { stdout } = await execFileAsync("sh", ["-lc", state.poll.command], {
           cwd: state.poll.cwd ?? this.config.cwd ?? process.cwd(),
           timeout: state.timeoutMs,
+          signal: abortController.signal,
         });
         const output = this.parseJsonObject(stdout);
         if (Object.keys(output).length > 0) {
@@ -634,21 +653,30 @@ export class Harness {
           );
         }
       } catch {
+        if (this.interruptedTerminal) {
+          const terminal = this.interruptedTerminal;
+          this.interruptedTerminal = undefined;
+          return terminal;
+        }
         // A poll with no result sleeps; failures can be modeled by the script output.
+      } finally {
+        if (this.activeAbortController === abortController) {
+          this.activeAbortController = undefined;
+        }
       }
     }
 
     return {
       type: "sleep",
       wakeAt: Date.now() + state.intervalMs,
-      session: { ...session, status: "sleeping" },
+      state: { ...session, status: "sleeping" },
     };
   }
 
   protected async runStateMachineTerminalState(
-    session: HarnessSession,
+    session: TurnState,
     state: StateMachineTerminalState,
-  ): Promise<HarnessTerminalTurnEvent> {
+  ): Promise<TurnTerminalEvent> {
     const terminal = { state: state.name, status: state.status, reason: state.reason };
     const stateMachine = session.stateMachine
       ? {
@@ -665,10 +693,10 @@ export class Harness {
   }
 
   protected async continueStateMachineAfterStateCompleted(
-    session: HarnessSession,
+    session: TurnState,
     state: string,
     result?: string,
-  ): Promise<HarnessTerminalTurnEvent> {
+  ): Promise<TurnTerminalEvent> {
     if (session.mode === "agent") {
       return this.complete(session, "completed", result);
     }
@@ -681,7 +709,7 @@ export class Harness {
           : `This is retry ${attempt} of 3. You did not call select_state_machine_state last time. You must call select_state_machine_state now.`;
 
       const workerResult = await this.runAgentWorker({
-        session: nextSession,
+        state: nextSession,
         prompt: dedent`
           The state "${state}" finished.
 
@@ -696,7 +724,7 @@ export class Harness {
         ...this.createTools(session.mode, session),
       });
 
-      nextSession = workerResult.terminal.session;
+      nextSession = workerResult.terminal.state;
 
       if (workerResult.control.type === "select_state_machine_state") {
         return this.runStateMachine(nextSession, workerResult.control.decision);
@@ -720,7 +748,7 @@ export class Harness {
     );
   }
 
-  private createInitialSession(mode: HarnessMode): HarnessSession {
+  private createInitialState(mode: TurnMode): TurnState {
     return {
       status: "running",
       mode,
@@ -731,12 +759,12 @@ export class Harness {
     };
   }
 
-  private initializeStateMachineSession(
-    session: HarnessSession,
+  private initializeStateMachineState(
+    session: TurnState,
     prompt: string,
     definition: StateMachineDefinition,
     currentState: string,
-  ): HarnessSession {
+  ): TurnState {
     const now = Date.now();
     return {
       ...session,
@@ -753,8 +781,8 @@ export class Harness {
     };
   }
 
-  private resolveModel(options?: HarnessTurnOptions): Model<any> {
-    const modelName = options?.model ?? this.config.harnessModel;
+  private resolveModel(options?: TurnOptions): Model<any> {
+    const modelName = options?.model ?? this.config.model;
     const separator = modelName.indexOf(":");
     if (separator === -1) {
       throw new Error("Models must use provider:modelId syntax");
@@ -803,7 +831,7 @@ export class Harness {
     return session.definition.states.find((state) => state.name === name);
   }
 
-  private appendUserMessage(session: HarnessSession, text: string): HarnessSession {
+  private appendUserMessage(session: TurnState, text: string): TurnState {
     return {
       ...session,
       agent: {
@@ -817,24 +845,24 @@ export class Harness {
   }
 
   private complete(
-    session: HarnessSession,
-    status: HarnessTerminalStatus,
+    session: TurnState,
+    status: TurnRunnerTerminalStatus,
     result?: string,
     error?: string,
-  ): HarnessTerminalTurnEvent {
+  ): TurnTerminalEvent {
     return {
       type: "complete",
       status,
       result,
       error,
-      session: {
+      state: {
         ...session,
         status,
       },
     };
   }
 
-  private recordStateStarted(session: HarnessSession, state: StateMachineState): HarnessSession {
+  private recordStateStarted(session: TurnState, state: StateMachineState): TurnState {
     const stateMachine = session.stateMachine;
     if (!stateMachine) return session;
     return {
@@ -856,11 +884,7 @@ export class Harness {
     };
   }
 
-  private recordStateCompleted(
-    session: HarnessSession,
-    state: string,
-    output: unknown,
-  ): HarnessSession {
+  private recordStateCompleted(session: TurnState, state: string, output: unknown): TurnState {
     const stateMachine = session.stateMachine;
     if (!stateMachine) return session;
     return {
@@ -880,7 +904,7 @@ export class Harness {
     };
   }
 
-  private recordStateFailed(session: HarnessSession, state: string, error: string): HarnessSession {
+  private recordStateFailed(session: TurnState, state: string, error: string): TurnState {
     const stateMachine = session.stateMachine;
     if (!stateMachine) return session;
     return {
@@ -890,6 +914,24 @@ export class Harness {
         history: [
           ...stateMachine.history,
           { type: "state_failed", timestamp: Date.now(), state, error },
+        ],
+        updatedAt: Date.now(),
+      },
+    };
+  }
+
+  private recordStateInterrupted(session: TurnState, reason?: string): TurnState {
+    const stateMachine = session.stateMachine;
+    if (!stateMachine) return session;
+    const terminal = { state: "interrupted", status: "cancelled" as const, reason };
+    return {
+      ...session,
+      stateMachine: {
+        ...stateMachine,
+        terminal,
+        history: [
+          ...stateMachine.history,
+          { type: "session_completed" as const, timestamp: Date.now(), terminal },
         ],
         updatedAt: Date.now(),
       },

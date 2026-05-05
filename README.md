@@ -1,20 +1,20 @@
 # duet-agent
 
-An opinionated, full-stack agent harness. Native memories. Native interrupts. Multi-agent by default.
+An opinionated, full-stack agent turn runner. Native memories. Native interrupts. Multi-agent by default.
 
 **No MCP. Everything is files and CLI.**
 
 ## Why another agent framework?
 
-Existing agent harnesses treat tools and memories as pluggable modules. This makes them flexible but fundamentally disconnected — memory is an afterthought.
+Existing agent turn runners treat tools and memories as pluggable modules. This makes them flexible but fundamentally disconnected — memory is an afterthought.
 
-duet-agent takes the opposite approach: **memory is woven into the core architecture.** An agent without memory is stateless. Interrupts are handled by the underlying pi agent runtime, so the harness does not need its own interrupt bus.
+duet-agent takes the opposite approach: **memory is woven into the core architecture.** An agent without memory is stateless. Interrupts are handled by the underlying pi agent runtime, so the turn runner does not need its own interrupt bus.
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                        Harness                          │
+│                        TurnRunner                          │
 │  • Takes prompt + options                               │
 │  • Chooses agent / state_machine / auto mode             │
 │  • Routes state-machine transitions through an agent     │
@@ -37,13 +37,13 @@ duet-agent takes the opposite approach: **memory is woven into the core architec
 
 ### Native Memory
 
-Memory is first-class. The default `MemoryStore` is in-memory and emits observation events; optional PGlite storage hydrates and persists durable observations outside the harness session.
+Memory is first-class. The default `MemoryStore` is in-memory and emits observation events; optional PGlite storage hydrates and persists durable observations outside the turn runner session.
 
-The memory model follows observational memory: harness session messages are observed into durable text observations, and a reflector condenses observations when they grow too large. Observations are scoped as `session` or `resource`.
+The memory model follows observational memory: turn runner session messages are observed into durable text observations, and a reflector condenses observations when they grow too large. Observations are scoped as `session` or `resource`.
 
 ### Pi Coding Tools
 
-Sub-agents use the default tools from `@mariozechner/pi-coding-agent`: read, bash, edit, and write. The harness supplies a working directory and filters the allowed tool names; it does not wrap those tools in a second sandbox abstraction.
+Sub-agents use the default tools from `@mariozechner/pi-coding-agent`: read, bash, edit, and write. The turn runner supplies a working directory and filters the allowed tool names; it does not wrap those tools in a second sandbox abstraction.
 
 ### Native Interrupts
 
@@ -51,15 +51,15 @@ Interrupt behavior comes from the underlying pi agent runtime. A user can send a
 
 ### Multi-Agent by Default
 
-The harness can delegate durable process steps into agent states. Agent states are not pre-built classes; they are state-machine states with prompts, context scope, model options, and skill access.
+The turn runner can delegate durable process steps into agent states. Agent states are not pre-built classes; they are state-machine states with prompts, context scope, model options, and skill access.
 
 ### Three Execution Modes
 
-The harness has three top-level modes:
+The turn runner has three top-level modes:
 
 - `agent`: handle the prompt as a normal agent session. This is for one-off tasks, coding requests, reviews, research, and anything that can complete in the current session.
 - `state_machine`: route the prompt into an agent-routed state machine. This is for long-running business processes with durable state, waits, and terminal business outcomes.
-- `auto`: let the harness classify the prompt and choose either `agent` or `state_machine`.
+- `auto`: let the turn runner classify the prompt and choose either `agent` or `state_machine`.
 
 The current code is still scaffolding, but this is the intended boundary: normal agent mode handles immediate work, while state-machine mode handles business processes that may pause, resume, wait on external systems, or start in the middle based on the user's prompt.
 
@@ -82,7 +82,7 @@ What this is not:
 - Not a workflow service with queues, workers, locks, and retries as the main abstraction.
 - Not a replacement for infrastructure workflow engines when exact-once execution or strict SLAs matter.
 
-The harness should provide enough structure for an agent to make good process decisions, while leaving hard operational guarantees to external systems.
+The turn runner should provide enough structure for an agent to make good process decisions, while leaving hard operational guarantees to external systems.
 
 ### Optional Guardrails
 
@@ -133,15 +133,15 @@ npx duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.6 "review this repo"
 ### Programmatic
 
 ```typescript
-import { Harness } from "duet-agent";
+import { TurnRunner } from "duet-agent";
 
-const harness = new Harness({
-  harnessModel: "anthropic:claude-opus-4-6",
+const turn runner = new TurnRunner({
+  model: "anthropic:claude-opus-4-6",
   cwd: process.cwd(),
   mode: "auto",
 });
 
-const terminal = await harness.turn({
+const terminal = await turn runner.turn({
   type: "start",
   prompt: "Build a todo app with React and TypeScript",
 });
@@ -152,8 +152,8 @@ const terminal = await harness.turn({
 duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the runtime state container, not a database adapter.
 
 ```typescript
-const harness = new Harness({
-  harnessModel: "anthropic:claude-opus-4-6",
+const turn runner = new TurnRunner({
+  model: "anthropic:claude-opus-4-6",
   memoryStorage: {
     path: ".agents/memory-pglite",
   },
@@ -165,7 +165,7 @@ The memory module hydrates durable observations from an embedded Postgres databa
 You can also resume directly from saved state:
 
 ```typescript
-const terminal = await harness.turn({
+const terminal = await turn runner.turn({
   type: "prompt",
   session: savedSession,
   message: "Continue the previous goal",
@@ -173,7 +173,7 @@ const terminal = await harness.turn({
 });
 ```
 
-Resume continues harness session state, not an in-flight model/tool call. Any `in_progress` todo is retried from `pending`.
+Resume continues turn runner session state, not an in-flight model/tool call. Any `in_progress` todo is retried from `pending`.
 
 Observational memory is enabled by default with conservative long-context thresholds:
 
@@ -184,14 +184,14 @@ Observational memory is enabled by default with conservative long-context thresh
 
 ## Skills
 
-Skills are loaded from `<cwd>/.agents/skills` and `~/.agents/skills` by default, using `@mariozechner/pi-coding-agent`'s skill loader. The harness injects every loaded skill's description and instructions into the agent system prompt. `getSkills()` returns the discovered skills, including YAML frontmatter descriptions such as block scalars.
+Skills are loaded from `<cwd>/.agents/skills` and `~/.agents/skills` by default, using `@mariozechner/pi-coding-agent`'s skill loader. The turn runner injects every loaded skill's description and instructions into the agent system prompt. `getSkills()` returns the discovered skills, including YAML frontmatter descriptions such as block scalars.
 
 ## Guardrails
 
-The harness installs its default safety checks internally. Add extra guardrail config objects when a deployment needs stricter local policy.
+The turn runner installs its default safety checks internally. Add extra guardrail config objects when a deployment needs stricter local policy.
 
 ```typescript
-const harness = new Harness({
+const turn runner = new TurnRunner({
   // ...
   guardrails: [
     {
@@ -212,7 +212,7 @@ const harness = new Harness({
 ## Design Principles
 
 1. **Files and CLI over protocols.** No MCP, no custom APIs. If you can't do it with bash, you can't do it.
-2. **Runtime state over persistence.** The harness owns in-memory state and emits events. Persistence lives in external modules or initial-state hydration.
+2. **Runtime state over persistence.** The turn runner owns in-memory state and emits events. Persistence lives in external modules or initial-state hydration.
 3. **Agent-routed state machines over workflow engines.** Long-running state machines describe available business states; a runner agent decides what to do next from prompt, state, and history. Task-level workflows belong inside agent or script states.
 4. **Dynamic over static.** Agent states are defined by state machines at runtime, not pre-built classes.
 5. **Simple over flexible.** Default pi coding tools. One default memory store. Constraints breed creativity.
