@@ -76,7 +76,8 @@ describe("TurnState serialization", () => {
       }),
     ) as Context;
 
-    expect(context.systemPrompt).toContain("System prompt file: AGENTS.md");
+    expect(context.systemPrompt).toContain('<system_prompt_file path="AGENTS.md">');
+    expect(context.systemPrompt).toContain("<content>");
     expect(context.systemPrompt).toContain("Treat Types As Documentation");
   });
 
@@ -93,9 +94,9 @@ describe("TurnState serialization", () => {
       }),
     ) as Context;
 
-    expect(context.systemPrompt).toContain("System prompt file: README.md");
+    expect(context.systemPrompt).toContain('<system_prompt_file path="README.md">');
     expect(context.systemPrompt).toContain("# duet-agent");
-    expect(context.systemPrompt).not.toContain("System prompt file: AGENTS.md");
+    expect(context.systemPrompt).not.toContain('<system_prompt_file path="AGENTS.md">');
   });
 
   test("can disable system prompt file loading", async () => {
@@ -108,7 +109,7 @@ describe("TurnState serialization", () => {
       }),
     ) as Context;
 
-    expect(context.systemPrompt).not.toContain("System prompt file:");
+    expect(context.systemPrompt).not.toContain("<system_prompt_file");
     expect(context.systemPrompt).not.toContain("Treat Types As Documentation");
   });
 });

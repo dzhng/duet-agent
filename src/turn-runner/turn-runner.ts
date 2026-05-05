@@ -517,7 +517,12 @@ export class TurnRunner {
       const path = join(cwd, fileName);
       if (!existsSync(path)) continue;
       layers.push(
-        [`System prompt file: ${fileName}`, readFileSync(path, "utf-8").trim()].join("\n\n"),
+        toXML({
+          system_prompt_file: {
+            _attrs: { path: fileName },
+            content: readFileSync(path, "utf-8").trim(),
+          },
+        }),
       );
     }
     return layers;
