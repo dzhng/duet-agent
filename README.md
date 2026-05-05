@@ -103,11 +103,11 @@ bun install
 bun run setup  # install/start Docker on macOS or Linux if needed
 bun run check-types
 bun run lint
-bun run eval   # runs live evals in evals/*.eval.ts
+bun run eval   # runs live evals inside Docker
 bun run test   # runs the test suite inside Docker
 ```
 
-Use `bun run test`, not raw `bun test`, as the source of truth. File-writing tests are Docker-only so focused host runs cannot create `.agents`, PGlite databases, or home-directory skill fixtures in the checkout.
+Use `bun run test` and `bun run eval`, not raw `bun test`, as the source of truth. File-writing tests and evals run in Docker so focused host runs cannot create `.agents`, PGlite databases, or home-directory skill fixtures in the checkout.
 
 The pre-commit hook runs `format`, `check-types`, and `lint`.
 

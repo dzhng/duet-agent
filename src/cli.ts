@@ -9,7 +9,9 @@
  *   echo "fix the bug in server.ts" | duet-agent
  */
 
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import dotenv from "dotenv";
 import { SessionManager } from "./session/session-manager.js";
 import type { TurnRunnerConfig } from "./types/config.js";
 import type { TurnTerminalEvent } from "./types/protocol.js";
@@ -72,6 +74,8 @@ async function main() {
   if (modelName.indexOf(":") <= 0) {
     throw new Error("Models must use provider:modelId syntax");
   }
+
+  dotenv.config({ path: join(workDir, ".env"), quiet: true });
 
   // Build config
   const config: TurnRunnerConfig = {
