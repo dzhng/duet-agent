@@ -122,8 +122,14 @@ export ANTHROPIC_API_KEY=sk-...
 # Session
 npx duet-agent "build a REST API with Express"
 
+# Local checkout
+bun run cli -- "build a REST API with Express"
+
 # With options
-npx duet-agent -m anthropic:claude-opus-4-6 --sub-model anthropic:claude-sonnet-4-6 "refactor the auth module"
+bun run cli -- -m anthropic:claude-opus-4-6 --workdir ./my-project "refactor the auth module"
+
+# Resume a saved session
+bun run cli -- --resume session_abc123 --workdir ./my-project
 
 # Through Vercel AI Gateway
 export AI_GATEWAY_API_KEY=...

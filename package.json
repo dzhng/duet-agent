@@ -32,6 +32,7 @@
     "setup": "bash scripts/setup-docker.sh",
     "build": "tsc",
     "check-types": "tsc --noEmit",
+    "cli": "bun src/cli.ts",
     "dev": "tsc --watch",
     "eval": "bun test ./evals/*.eval.ts",
     "format": "oxfmt --write --no-error-on-unmatched-pattern",
