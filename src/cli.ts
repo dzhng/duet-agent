@@ -26,6 +26,7 @@ async function main() {
   let systemInstructions: string | undefined;
   let systemPromptFiles: string[] | undefined;
   const promptParts: string[] = [];
+  const interactive = Boolean(process.stdin.isTTY ?? process.stdout.isTTY);
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -70,7 +71,7 @@ async function main() {
   let prompt = promptParts.join(" ");
 
   // Read from stdin if no prompt is provided
-  if (!prompt && !process.stdin.isTTY) {
+  if (!prompt && !interactive) {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) {
       chunks.push(chunk as Buffer);
@@ -78,7 +79,7 @@ async function main() {
     prompt = Buffer.concat(chunks).toString("utf-8").trim();
   }
 
-  if (!prompt && !resumeSessionId && !process.stdin.isTTY) {
+  if (!prompt && !resumeSessionId && !interactive) {
     console.error("Usage: duet-agent <prompt>");
     console.error('  e.g., duet-agent "build a todo app"');
     process.exit(1);
@@ -115,12 +116,12 @@ async function main() {
       await session.prompt({ message: prompt });
       terminal = await session.waitForTerminal();
       handleTerminal(terminal);
-    } else if (!resumeSessionId) {
+    } else if (prompt && !resumeSessionId) {
       terminal = await session.waitForTerminal();
       handleTerminal(terminal);
     }
 
-    if (process.stdin.isTTY) {
+    if (interactive) {
       process.stderr.write(`\nSession: ${session.id}\n`);
       const readline = createInterface({ input: process.stdin, output: process.stdout });
       try {

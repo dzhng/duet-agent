@@ -81,6 +81,24 @@ describe("TurnState serialization", () => {
     expect(context.systemPrompt).toContain("Treat Types As Documentation");
   });
 
+  test("includes both configured base instructions and system prompt files", async () => {
+    const runner = new CapturingTurnRunner({
+      cwd: process.cwd(),
+      systemInstructions: "Base instruction marker: prefer precise answers.",
+    });
+
+    const context = JSON.parse(
+      await runner.captureLlmContext({
+        state: createSerializableTurnState(),
+        prompt: "Check combined system prompt layers.",
+      }),
+    ) as Context;
+
+    expect(context.systemPrompt).toContain("Base instruction marker: prefer precise answers.");
+    expect(context.systemPrompt).toContain('<system_prompt_file path="AGENTS.md">');
+    expect(context.systemPrompt).toContain("Treat Types As Documentation");
+  });
+
   test("overrides default system prompt files", async () => {
     const runner = new CapturingTurnRunner({
       cwd: process.cwd(),
