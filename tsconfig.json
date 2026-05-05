@@ -18,6 +18,6 @@
     "resolveJsonModule": true,
     "isolatedModules": true
   },
-  "include": ["src/**/*", "test/**/*", "evals/**/*"],
-  "exclude": ["node_modules", "dist", "examples"]
+  "include": ["src/**/*", "test/**/*", "evals/**/*", "examples/**/*"],
+  "exclude": ["node_modules", "dist"]
 }

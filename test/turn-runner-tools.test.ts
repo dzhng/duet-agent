@@ -72,6 +72,115 @@ describe("TurnRunner tools", () => {
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
   });
 
+  test("accepts dynamically created definitions with required and optional input fields", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = await createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "script",
+            name: "send_email",
+            inputSchema: {
+              type: "object",
+              properties: {
+                email: { type: "string" },
+                followUpCount: { type: "integer", minimum: 0 },
+              },
+              required: ["email"],
+              additionalProperties: false,
+            },
+            command: "send email",
+          },
+        ],
+      },
+    });
+
+    expect(result.details).toMatchObject({
+      type: "create_state_machine_definition",
+      definition: {
+        states: [
+          {
+            name: "send_email",
+            inputSchema: {
+              required: ["email"],
+              properties: {
+                email: { type: "string" },
+                followUpCount: { type: "integer", minimum: 0 },
+              },
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  test("rejects dynamically created definitions with invalid input schemas", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "script",
+            name: "send_email",
+            inputSchema: { type: "bogus" },
+            command: "send email",
+          },
+        ],
+      },
+    });
+
+    await expect(result).rejects.toThrow('Invalid inputSchema for state "send_email"');
+  });
+
+  test("rejects dynamically created definitions with invalid nested input schemas", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "script",
+            name: "send_email",
+            inputSchema: {
+              type: "object",
+              properties: { email: { type: "bogus" } },
+              required: ["email"],
+            },
+            command: "send email",
+          },
+        ],
+      },
+    });
+
+    await expect(result).rejects.toThrow('Invalid inputSchema for state "send_email"');
+  });
+
   test("returns selected state decisions in tool details and model-visible content", async () => {
     const tools = createTurnRunnerTools({
       cwd: process.cwd(),
@@ -97,6 +206,288 @@ describe("TurnRunner tools", () => {
     });
     expect(result.terminate).toBe(true);
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
+  });
+
+  test("accepts state transition input that matches the selected state's schema", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "script",
+            name: "send_email",
+            inputSchema: {
+              type: "object",
+              properties: {
+                email: { type: "string" },
+                followUpCount: { type: "integer", minimum: 0 },
+              },
+              required: ["email"],
+              additionalProperties: false,
+            },
+            command: "send '{{ input.email }}'",
+          },
+        ],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = await selectStateTool.execute("tool-1", {
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        input: { email: "ada@example.com" },
+      },
+    });
+
+    expect(result.details).toMatchObject({
+      type: "select_state_machine_state",
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        input: { email: "ada@example.com" },
+      },
+    });
+
+    const resultWithOptionalField = await selectStateTool.execute("tool-2", {
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        input: { email: "ada@example.com", followUpCount: 1 },
+      },
+    });
+
+    expect(resultWithOptionalField.details).toMatchObject({
+      type: "select_state_machine_state",
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        input: { email: "ada@example.com", followUpCount: 1 },
+      },
+    });
+  });
+
+  test("rejects state transition input that does not match the selected state's schema", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "script",
+            name: "send_email",
+            inputSchema: {
+              type: "object",
+              properties: { email: { type: "string" } },
+              required: ["email"],
+            },
+            command: "send '{{ input.email }}'",
+          },
+        ],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = selectStateTool.execute("tool-1", {
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        input: { email: 123 },
+      },
+    });
+
+    await expect(result).rejects.toThrow('Invalid input for state "send_email"');
+  });
+
+  test("rejects state transition input that omits required fields", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "script",
+            name: "send_email",
+            inputSchema: {
+              type: "object",
+              properties: {
+                email: { type: "string" },
+                followUpCount: { type: "integer" },
+              },
+              required: ["email"],
+            },
+            command: "send '{{ input.email }}'",
+          },
+        ],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = selectStateTool.execute("tool-1", {
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        input: { followUpCount: 1 },
+      },
+    });
+
+    await expect(result).rejects.toThrow('Invalid input for state "send_email"');
+  });
+
+  test("rejects state transition input with unexpected optional fields when disallowed", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "script",
+            name: "send_email",
+            inputSchema: {
+              type: "object",
+              properties: {
+                email: { type: "string" },
+                followUpCount: { type: "integer" },
+              },
+              required: ["email"],
+              additionalProperties: false,
+            },
+            command: "send '{{ input.email }}'",
+          },
+        ],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = selectStateTool.execute("tool-1", {
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        input: { email: "ada@example.com", extra: true },
+      },
+    });
+
+    await expect(result).rejects.toThrow('Invalid input for state "send_email"');
+  });
+
+  test("rejects state transition overrides with invalid input schemas", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [{ kind: "script", name: "send_email", command: "send email" }],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = selectStateTool.execute("tool-1", {
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        override: {
+          kind: "script",
+          state: { inputSchema: { type: "bogus" } },
+        },
+      },
+    });
+
+    await expect(result).rejects.toThrow('Invalid inputSchema for state "send_email"');
+  });
+
+  test("validates state transition input against override input schemas", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "script",
+            name: "send_email",
+            inputSchema: {
+              type: "object",
+              properties: { email: { type: "string" } },
+              required: ["email"],
+            },
+            command: "send '{{ input.email }}'",
+          },
+        ],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const accepted = await selectStateTool.execute("tool-1", {
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        override: {
+          kind: "script",
+          state: {
+            inputSchema: {
+              type: "object",
+              properties: { prospectId: { type: "string" } },
+              required: ["prospectId"],
+              additionalProperties: false,
+            },
+          },
+        },
+        input: { prospectId: "prospect-1" },
+      },
+    });
+
+    expect(accepted.details).toMatchObject({
+      type: "select_state_machine_state",
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        input: { prospectId: "prospect-1" },
+      },
+    });
+
+    const rejected = selectStateTool.execute("tool-2", {
+      decision: {
+        kind: "run_state",
+        state: "send_email",
+        override: {
+          kind: "script",
+          state: {
+            inputSchema: {
+              type: "object",
+              properties: { prospectId: { type: "string" } },
+              required: ["prospectId"],
+              additionalProperties: false,
+            },
+          },
+        },
+        input: { email: "ada@example.com" },
+      },
+    });
+
+    await expect(rejected).rejects.toThrow('Invalid input for state "send_email"');
   });
 
   test("returns state-machine agent prompts in tool details and model-visible content", async () => {
@@ -199,4 +590,30 @@ describe("TurnRunner tools", () => {
     expect(stateMachineTools.some((tool) => tool.name === "select_state_machine_state")).toBe(true);
     expect(stateMachineTools.some((tool) => tool.name === "prompt_state_machine_agent")).toBe(true);
   });
+
+  test("describes tool schema properties for provider tool prompts", () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(createDefinitionTool).toBeDefined();
+    expect(selectStateTool).toBeDefined();
+    if (!createDefinitionTool || !selectStateTool) throw new Error("Expected state-machine tools");
+
+    expect(createDefinitionTool.description).toContain("{{ input.email }}");
+    expect(selectStateTool.description).toContain("input object");
+    expect(propertyDescription(createDefinitionTool.parameters, "definition")).toContain(
+      "State-machine",
+    );
+    expect(propertyDescription(selectStateTool.parameters, "decision")).toContain(
+      "State transition",
+    );
+  });
 });
+
+function propertyDescription(schema: unknown, property: string): string {
+  const record = schema as { properties?: Record<string, { description?: string }> };
+  return record.properties?.[property]?.description ?? "";
+}

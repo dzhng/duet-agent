@@ -2,7 +2,7 @@ import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-c
 import { getEnvApiKey, getModel, type Model } from "@mariozechner/pi-ai";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
-import { execFile } from "node:child_process";
+import { execFile, type ExecException } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -37,8 +37,6 @@ import type {
 } from "../types/state-machine.js";
 import {
   createSystemPromptWithAppendedLayers,
-  createStateAgentPrompt,
-  createStateAgentSystemPromptLayer,
   createStateMachineSystemPromptLayer,
 } from "./prompts.js";
 import {
@@ -64,6 +62,7 @@ export interface AgentWorkerInput {
   prompt: string;
   options?: TurnOptions;
   appendSystemPrompt?: string;
+  skills?: Skill[];
   tools: AgentTool[];
 }
 
@@ -242,7 +241,7 @@ export class TurnRunner {
       : undefined;
 
     if (command.state.status === "sleeping" && currentState?.kind === "poll") {
-      return this.runStateMachinePollState(state, currentState);
+      return this.runStateMachinePollState(state, currentState, { woke: true });
     }
 
     return {
@@ -419,7 +418,10 @@ export class TurnRunner {
       initialState: {
         model,
         thinkingLevel: input.options?.thinkingLevel ?? "medium",
-        systemPrompt: this.createBaseSystemPromptWithAppendedLayers(input.appendSystemPrompt),
+        systemPrompt: this.createBaseSystemPromptWithAppendedLayers({
+          append: [input.appendSystemPrompt],
+          skills: input.skills,
+        }),
         messages: input.state.agent.messages,
         tools: input.tools,
       },
@@ -450,6 +452,18 @@ export class TurnRunner {
   getSkillInstructions(skillId: string): string {
     const skill = this.skills.find((s) => s.name === skillId);
     return skill ? readSkillInstructions(skill) : "";
+  }
+
+  private resolveStateAgentSkills(state: StateMachineAgentState): Skill[] | undefined {
+    if (!state.allowedSkills) return undefined;
+
+    const skillsByName = new Map(this.skills.map((skill) => [skill.name, skill]));
+    const missing = state.allowedSkills.filter((name) => !skillsByName.has(name));
+    if (missing.length > 0) {
+      throw new Error(`Unknown allowedSkills for state "${state.name}": ${missing.join(", ")}`);
+    }
+
+    return state.allowedSkills.map((name) => skillsByName.get(name)!);
   }
 
   private resolveSlashSkillPrompt(prompt: string): string {
@@ -501,11 +515,14 @@ export class TurnRunner {
     );
   }
 
-  protected createBaseSystemPromptWithAppendedLayers(...append: Array<string | undefined>): string {
+  protected createBaseSystemPromptWithAppendedLayers(input?: {
+    append?: Array<string | undefined>;
+    skills?: readonly Skill[];
+  }): string {
     return createSystemPromptWithAppendedLayers({
       config: this.config,
-      skills: this.skills,
-      append: [...this.readSystemPromptFileLayers(), ...append],
+      skills: input?.skills ?? this.skills,
+      append: [...this.readSystemPromptFileLayers(), ...(input?.append ?? [])],
     });
   }
 
@@ -581,7 +598,11 @@ export class TurnRunner {
       decision.kind === "run_state"
         ? applyStateOverride(selectedState, decision.override)
         : selectedState;
-    const nextSession = this.recordStateStarted(session, effectiveState);
+    const nextSession = this.recordStateStarted(
+      session,
+      effectiveState,
+      decision.kind === "run_state" ? decision.input : undefined,
+    );
 
     this.emit({ type: "state_machine", currentState: effectiveState.name });
 
@@ -601,8 +622,8 @@ export class TurnRunner {
     session: TurnState,
     state: StateMachineAgentState,
   ): Promise<TurnTerminalEvent> {
-    const childPrompt = createStateAgentPrompt({ session, state });
-    return this.runStateMachineAgentStatePrompt(session, state, childPrompt, state.options);
+    const childPrompt = this.renderTemplate(state.prompt, session.stateMachine?.currentInput ?? {});
+    return this.runStateMachineAgentStatePrompt(session, state, childPrompt);
   }
 
   protected async promptStateMachineAgent(
@@ -628,7 +649,6 @@ export class TurnRunner {
     session: TurnState,
     state: StateMachineAgentState,
     prompt: string,
-    options?: TurnOptions,
   ): Promise<TurnTerminalEvent> {
     const childState: TurnState = {
       ...session,
@@ -641,16 +661,18 @@ export class TurnRunner {
       await this.runAgentWorker({
         state: childState,
         prompt,
-        options: options ?? state.options,
-        appendSystemPrompt: createStateAgentSystemPromptLayer({ session, state }),
+        appendSystemPrompt: state.systemPrompt,
+        skills: this.resolveStateAgentSkills(state),
         ...this.createTools("agent"),
       })
     ).terminal;
     const parentSession = { ...session, agent: childResult.state.agent };
-    const updatedSession = this.recordStateCompleted(parentSession, state.name, {
+    const rawOutput = {
       result: childResult.type === "complete" ? childResult.result : undefined,
       childStatus: childResult.state.status,
-    });
+      terminal: childResult,
+    };
+    const updatedSession = this.recordStateCompleted(parentSession, state.name, rawOutput);
 
     if (childResult.type === "ask") {
       return { ...childResult, state: { ...updatedSession, status: "waiting_for_human" } };
@@ -665,7 +687,7 @@ export class TurnRunner {
     return this.continueStateMachineAfterStateCompleted(
       { ...updatedSession, status: "running" },
       state.name,
-      childResult.result,
+      rawOutput,
     );
   }
 
@@ -676,16 +698,25 @@ export class TurnRunner {
     const abortController = new AbortController();
     this.activeAbortController = abortController;
     try {
-      const { stdout } = await execFileAsync("sh", ["-lc", state.command], {
+      const command = this.renderTemplate(state.command, session.stateMachine?.currentInput ?? {});
+      const shellOutput = await this.runShellCommand(command, {
         cwd: state.cwd ?? this.config.cwd ?? process.cwd(),
-        timeout: state.timeoutMs,
+        timeoutMs: state.timeoutMs,
         signal: abortController.signal,
+        successCodes: state.successCodes,
       });
+      const { stdout } = shellOutput;
       const output = this.parseStructuredOutput(stdout);
+      const rawOutput = {
+        ...shellOutput,
+        stdout: stdout.trim(),
+        stderr: shellOutput.stderr.trim(),
+        parsed: output,
+      };
       return this.continueStateMachineAfterStateCompleted(
-        this.recordStateCompleted(session, state.name, output),
+        this.recordStateCompleted(session, state.name, rawOutput),
         state.name,
-        stdout.trim(),
+        rawOutput,
       );
     } catch (error) {
       if (this.interruptedTerminal) {
@@ -710,33 +741,55 @@ export class TurnRunner {
   protected async runStateMachinePollState(
     session: TurnState,
     state: StateMachinePollState,
+    options?: { woke?: boolean },
   ): Promise<TurnTerminalEvent> {
-    if (state.poll.kind === "prompt") {
-      const result = await this.runAgentMode(this.createInitialState("agent"), state.poll.prompt);
-      const output =
-        result.type === "complete" && result.result ? this.parseJsonObject(result.result) : {};
-      if (Object.keys(output).length > 0) {
-        return this.continueStateMachineAfterStateCompleted(
-          this.recordStateCompleted(session, state.name, output),
-          state.name,
-          result.type === "complete" ? result.result : undefined,
-        );
+    const elapsedMs = this.elapsedSinceStateStarted(session, state.name);
+    if (state.timeoutMs !== undefined && elapsedMs >= state.timeoutMs) {
+      const message = `Poll state "${state.name}" timed out after ${elapsedMs}ms.`;
+      return this.complete(
+        this.recordStateFailed(session, state.name, message),
+        "failed",
+        undefined,
+        message,
+      );
+    }
+
+    if (state.poll.kind === "timer") {
+      if (!options?.woke) {
+        return this.sleep(session, state);
       }
+      const output = { elapsedMs };
+      return this.continueStateMachineAfterStateCompleted(
+        this.recordStateCompleted(session, state.name, output),
+        state.name,
+        output,
+      );
     } else {
       const abortController = new AbortController();
       this.activeAbortController = abortController;
       try {
-        const { stdout } = await execFileAsync("sh", ["-lc", state.poll.command], {
+        const command = this.renderTemplate(
+          state.poll.command,
+          session.stateMachine?.currentInput ?? {},
+        );
+        const shellOutput = await this.runShellCommand(command, {
           cwd: state.poll.cwd ?? this.config.cwd ?? process.cwd(),
-          timeout: state.timeoutMs,
           signal: abortController.signal,
+          successCodes: state.poll.successCodes,
         });
+        const { stdout } = shellOutput;
         const output = this.parseJsonObject(stdout);
         if (Object.keys(output).length > 0) {
+          const rawOutput = {
+            ...shellOutput,
+            stdout: stdout.trim(),
+            stderr: shellOutput.stderr.trim(),
+            parsed: output,
+          };
           return this.continueStateMachineAfterStateCompleted(
-            this.recordStateCompleted(session, state.name, output),
+            this.recordStateCompleted(session, state.name, rawOutput),
             state.name,
-            stdout.trim(),
+            rawOutput,
           );
         }
       } catch {
@@ -753,6 +806,10 @@ export class TurnRunner {
       }
     }
 
+    return this.sleep(session, state);
+  }
+
+  private sleep(session: TurnState, state: StateMachinePollState): TurnTerminalEvent {
     return {
       type: "sleep",
       wakeAt: Date.now() + state.intervalMs,
@@ -782,10 +839,10 @@ export class TurnRunner {
   protected async continueStateMachineAfterStateCompleted(
     session: TurnState,
     state: string,
-    result?: string,
+    output?: unknown,
   ): Promise<TurnTerminalEvent> {
     if (session.mode === "agent") {
-      return this.complete(session, "completed", result);
+      return this.complete(session, "completed", typeof output === "string" ? output : undefined);
     }
 
     let nextSession = session;
@@ -800,7 +857,11 @@ export class TurnRunner {
         prompt: dedent`
           The state "${state}" finished.
 
-          ${toXML({ result: result ?? "" })}
+          ${toXML({
+            state_completed: {
+              output: output ?? null,
+            },
+          })}
 
           ${retryInstruction}
 
@@ -863,7 +924,6 @@ export class TurnRunner {
         definition,
         prompt,
         currentState,
-        state: {},
         history: [{ type: "session_started", timestamp: now }],
         createdAt: now,
         updatedAt: now,
@@ -952,7 +1012,11 @@ export class TurnRunner {
     };
   }
 
-  private recordStateStarted(session: TurnState, state: StateMachineState): TurnState {
+  private recordStateStarted(
+    session: TurnState,
+    state: StateMachineState,
+    input?: Record<string, unknown>,
+  ): TurnState {
     const stateMachine = session.stateMachine;
     if (!stateMachine) return session;
     return {
@@ -960,13 +1024,14 @@ export class TurnRunner {
       stateMachine: {
         ...stateMachine,
         currentState: state.name,
+        currentInput: input,
         history: [
           ...stateMachine.history,
           {
             type: "state_started",
             timestamp: Date.now(),
             state: state.name,
-            effectiveState: state,
+            input,
           },
         ],
         updatedAt: Date.now(),
@@ -981,10 +1046,6 @@ export class TurnRunner {
       ...session,
       stateMachine: {
         ...stateMachine,
-        state: {
-          ...stateMachine.state,
-          ...(typeof output === "object" && output !== null ? output : { result: output }),
-        },
         history: [
           ...stateMachine.history,
           { type: "state_completed", timestamp: Date.now(), state, output },
@@ -992,6 +1053,17 @@ export class TurnRunner {
         updatedAt: Date.now(),
       },
     };
+  }
+
+  private elapsedSinceStateStarted(session: TurnState, state: string): number {
+    const history = session.stateMachine?.history ?? [];
+    for (let index = history.length - 1; index >= 0; index--) {
+      const event = history[index];
+      if (event.type === "state_started" && event.state === state) {
+        return Math.max(0, Date.now() - event.timestamp);
+      }
+    }
+    return 0;
   }
 
   private recordStateFailed(session: TurnState, state: string, error: string): TurnState {
@@ -1028,6 +1100,45 @@ export class TurnRunner {
     };
   }
 
+  private async runShellCommand(
+    command: string,
+    options: {
+      cwd: string;
+      timeoutMs?: number;
+      signal: AbortSignal;
+      successCodes?: number[];
+    },
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    try {
+      const result = await execFileAsync("sh", ["-lc", command], {
+        cwd: options.cwd,
+        timeout: options.timeoutMs,
+        signal: options.signal,
+      });
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
+    } catch (error) {
+      const execError = error as ExecException & {
+        stdout?: string;
+        stderr?: string;
+        code?: number | string;
+      };
+      const code =
+        typeof execError.code === "number"
+          ? execError.code
+          : typeof execError.code === "string"
+            ? Number(execError.code)
+            : undefined;
+      if (code !== undefined && (options.successCodes ?? [0]).includes(code)) {
+        return {
+          stdout: execError.stdout ?? "",
+          stderr: execError.stderr ?? "",
+          exitCode: code,
+        };
+      }
+      throw error;
+    }
+  }
+
   private parseStructuredOutput(stdout: string): Record<string, unknown> {
     const trimmed = stdout.trim();
     if (!trimmed) return {};
@@ -1052,5 +1163,22 @@ export class TurnRunner {
     } catch {
       return {};
     }
+  }
+
+  private renderTemplate(template: string, input: Record<string, unknown>): string {
+    return template.replace(/\{\{\s*input\.([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, path: string) => {
+      const value = this.readPath(input, path);
+      if (value === undefined || value === null) return "";
+      return typeof value === "string" ? value : JSON.stringify(value);
+    });
+  }
+
+  private readPath(input: Record<string, unknown>, path: string): unknown {
+    let value: unknown = input;
+    for (const part of path.split(".")) {
+      if (!value || typeof value !== "object") return undefined;
+      value = (value as Record<string, unknown>)[part];
+    }
+    return value;
   }
 }

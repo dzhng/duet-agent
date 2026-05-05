@@ -14,7 +14,7 @@ let tempDir: string | undefined;
 
 class SkillPromptTurnRunner extends TurnRunner {
   systemPromptForTest(systemPrompt?: string): string {
-    return this.createBaseSystemPromptWithAppendedLayers(systemPrompt);
+    return this.createBaseSystemPromptWithAppendedLayers({ append: [systemPrompt] });
   }
 }
 

@@ -3,10 +3,7 @@ import dedent from "dedent";
 import { toXML } from "../lib/xml.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
-import type { StateMachineAgentState, StateMachineSession } from "../types/state-machine.js";
 import { readSkillInstructions } from "./skills.js";
-
-const STATE_AGENT_HISTORY_CHAR_LIMIT = 12_000;
 
 export function createSystemPromptWithAppendedLayers(input: {
   config: TurnRunnerConfig;
@@ -41,53 +38,13 @@ export function createStateMachineSystemPromptLayer(input: {
   return [
     "Route durable business-process work through state-machine tools whenever possible.",
     "If the request is simple or unrelated, answer normally without calling a turn-runner control tool.",
+    "State prompts and script commands may use template strings like {{ input.email }}. Add inputSchema to states that need template input, and pass matching input when selecting that state.",
+    "Use allowedSkills on agent states only when that sub-agent should receive a restricted skill set.",
     constraint,
     definitionPrompt,
   ]
     .filter(Boolean)
     .join("\n\n");
-}
-
-export function createStateAgentSystemPromptLayer(input: {
-  session: TurnState;
-  state: StateMachineAgentState;
-}): string | undefined {
-  const stateMachine = input.session.stateMachine;
-  if (!stateMachine) return undefined;
-
-  return dedent`
-    You are executing the "${input.state.name}" state in a state machine.
-
-    State prompt:
-    ${input.state.prompt}
-
-    State-machine context:
-    ${JSON.stringify(
-      {
-        originalPrompt: stateMachine.prompt,
-        state: stateMachine.state,
-        definition:
-          input.state.contextScope === "state_machine" ? stateMachine.definition : undefined,
-      },
-      null,
-      2,
-    )}
-  `;
-}
-
-export function createStateAgentPrompt(input: {
-  session: TurnState;
-  state: StateMachineAgentState;
-}): string {
-  const stateMachine = input.session.stateMachine;
-  if (!stateMachine) return input.state.prompt;
-
-  const history = createBoundedStateMachineHistory(stateMachine.history);
-  return [
-    input.state.prompt,
-    "Use this bounded state-machine history as recent context for this state:",
-    JSON.stringify(history, null, 2),
-  ].join("\n\n");
 }
 
 function createBaseSystemPrompt(config: TurnRunnerConfig, skills: readonly Skill[]): string {
@@ -111,24 +68,4 @@ function createSkillsSystemPrompt(skills: readonly Skill[]): string | undefined 
       })),
     })}
   `;
-}
-
-function createBoundedStateMachineHistory(history: StateMachineSession["history"]): {
-  omitted: number;
-  events: StateMachineSession["history"];
-} {
-  const events: StateMachineSession["history"] = [];
-  let size = 0;
-
-  for (let index = history.length - 1; index >= 0; index--) {
-    const event = history[index];
-    const eventSize = JSON.stringify(event).length;
-    if (events.length > 0 && size + eventSize > STATE_AGENT_HISTORY_CHAR_LIMIT) {
-      return { omitted: index + 1, events };
-    }
-    events.unshift(event);
-    size += eventSize;
-  }
-
-  return { omitted: 0, events };
 }
