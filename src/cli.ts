@@ -23,6 +23,7 @@ async function main() {
   let modelName = "anthropic:claude-opus-4-7";
   let workDir = process.cwd();
   let resumeSessionId: string | undefined;
+  let systemInstructions: string | undefined;
   const promptParts: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -41,6 +42,10 @@ async function main() {
       case "-r":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         resumeSessionId = args[++i];
+        break;
+      case "--system-prompt":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        systemInstructions = args[++i];
         break;
       case "--help":
       case "-h":
@@ -81,6 +86,7 @@ async function main() {
   const config: TurnRunnerConfig = {
     model: modelName,
     cwd: workDir,
+    ...(systemInstructions ? { systemInstructions } : {}),
   };
 
   const manager = new SessionManager(config);
@@ -126,7 +132,9 @@ async function main() {
       }
     }
 
-    process.stderr.write(`Resume: ${resumeCommand(session.id, modelName, workDir)}\n`);
+    process.stderr.write(
+      `Resume: ${resumeCommand(session.id, { modelName, workDir, systemInstructions })}\n`,
+    );
   } catch (err: any) {
     console.error(`Fatal: ${err.message}`);
     process.exitCode = 1;
@@ -160,16 +168,23 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-function resumeCommand(sessionId: string, modelName: string, workDir: string): string {
-  return [
+function resumeCommand(
+  sessionId: string,
+  input: { modelName: string; workDir: string; systemInstructions?: string },
+): string {
+  const command = [
     "duet-agent",
     "--resume",
     shellQuote(sessionId),
     "--model",
-    shellQuote(modelName),
+    shellQuote(input.modelName),
     "--workdir",
-    shellQuote(workDir),
-  ].join(" ");
+    shellQuote(input.workDir),
+  ];
+  if (input.systemInstructions) {
+    command.push("--system-prompt", shellQuote(input.systemInstructions));
+  }
+  return command.join(" ");
 }
 
 function shellQuote(value: string): string {
@@ -189,6 +204,7 @@ OPTIONS
   -m, --model <name>       TurnRunner model (default: anthropic:claude-opus-4-7)
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
+  --system-prompt <text>   Additional system instructions for the runner
   -h, --help               Show this help
 
 INTERACTIVE
@@ -202,6 +218,7 @@ EXAMPLES
   duet-agent "build a REST API with Express and TypeScript"
   duet-agent -m openai:gpt-5.5 "analyze the performance of our test suite"
   duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.7 "refactor the auth module"
+  duet-agent --system-prompt "Prefer concise answers." "review this repo"
   duet-agent --workdir ./my-project "refactor the auth module"
   duet-agent --resume session_abc123 --workdir ./my-project
 `);

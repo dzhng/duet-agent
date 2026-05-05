@@ -131,6 +131,9 @@ bun run cli
 # With options
 bun run cli -- -m anthropic:claude-opus-4-7 --workdir ./my-project "refactor the auth module"
 
+# With additional system instructions
+bun run cli -- --system-prompt "Prefer concise answers." "review this repo"
+
 # Resume a saved session
 bun run cli -- --resume session_abc123 --workdir ./my-project
 
