@@ -12,31 +12,57 @@ duet-agent takes the opposite approach: **memory is woven into the core architec
 
 ## Architecture
 
+The diagram below walks through a realistic agent-routed state machine: outbound conference
+outreach. The user prompt enters the `TurnRunner`, the runner agent picks the next state based on
+prompt, history, and available state definitions, and the state machine drives the business process
+until it hits a terminal state. The same definition can start in the middle — for example, the
+runner can skip straight to `wait_for_reply` if the user says “I already emailed them”.
+
 ```mermaid
-flowchart TD
-  Runner["TurnRunner"]
-  Input["Prompt + options"]
-  Mode["Mode selection<br/>agent | state_machine | auto"]
-  States["State execution<br/>agent | script | poll | terminal"]
+stateDiagram-v2
+  direction TB
 
-  subgraph Agents["Dynamically defined sub-agents"]
-    direction LR
-    Coder["coder"]
-    Research["research"]
-    Review["review"]
-    Sysadm["sysadm"]
-  end
+  [*] --> Classify : user prompt
+  Classify --> AgentMode : one-off task
+  Classify --> Outreach : matches a state machine
 
-  subgraph Infrastructure["Shared infrastructure"]
-    direction LR
-    Memory["Observed memory"]
-    Pi["Pi coding tools<br/>in configured cwd"]
-    Guardrails["Guardrails"]
-  end
+  AgentMode --> [*] : answer / edits
 
-  Input --> Runner --> Mode --> States --> Agents
-  Agents --> Infrastructure
+  state Outreach {
+    direction TB
+    [*] --> research_prospect
+
+    research_prospect : research_prospect (agent)\nweb + notes lookup
+    draft_email       : draft_email (agent)\nwrite first-touch email
+    send_email        : send_email (script)\nbash: gmail send
+    wait_for_reply    : wait_for_reply (poll)\nevery 6h: check inbox
+    schedule_meeting  : schedule_meeting (script)\nbash: calendly create
+    meeting_booked    : meeting_booked (terminal: completed)
+    not_interested    : not_interested (terminal: completed)
+    no_response       : no_response (terminal: cancelled)
+
+    research_prospect --> draft_email     : enough signal
+    research_prospect --> not_interested  : disqualified
+    draft_email       --> send_email
+    send_email        --> wait_for_reply
+    wait_for_reply    --> schedule_meeting : positive reply
+    wait_for_reply    --> not_interested   : declined
+    wait_for_reply    --> no_response      : 14d timeout
+    schedule_meeting  --> meeting_booked
+  }
+
+  Outreach --> [*]
 ```
+
+Each state is one of the four kinds the runner understands:
+
+- **agent** states run a sub-agent with a prompt, context scope, and skill access.
+- **script** states shell out (`bash`, `curl`, CLIs) for anything with an API.
+- **poll** states wait on an external signal by re-running a script or prompt on an interval.
+- **terminal** states record a business outcome (`completed`, `cancelled`, `failed`).
+
+Observational memory, pi coding tools, and guardrails sit underneath every state transition; they
+are not states themselves.
 
 ## Key Differentiators
 
