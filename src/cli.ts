@@ -65,7 +65,7 @@ async function main() {
     prompt = Buffer.concat(chunks).toString("utf-8").trim();
   }
 
-  if (!prompt && !resumeSessionId) {
+  if (!prompt && !resumeSessionId && !process.stdin.isTTY) {
     console.error("Usage: duet-agent <prompt>");
     console.error('  e.g., duet-agent "build a todo app"');
     process.exit(1);
@@ -95,6 +95,7 @@ async function main() {
       ? manager.resume(resumeSessionId)
       : manager.create({ mode: config.mode, prompt });
     let terminal: TurnTerminalEvent | undefined;
+    let started = Boolean(prompt || resumeSessionId);
     if (prompt && resumeSessionId) {
       await session.prompt({ message: prompt });
       terminal = await session.waitForTerminal();
@@ -111,7 +112,12 @@ async function main() {
         while (true) {
           const prompt = (await readline.question("> ")).trim();
           if (!prompt || prompt === "/exit" || prompt === "/quit") break;
-          await session.prompt({ message: prompt });
+          if (started) {
+            await session.prompt({ message: prompt });
+          } else {
+            await session.start({ prompt, mode: config.mode });
+            started = true;
+          }
           terminal = await session.waitForTerminal();
           handleTerminal(terminal);
         }
@@ -176,7 +182,7 @@ function printHelp() {
 duet-agent — An opinionated full-stack agent runner
 
 USAGE
-  duet-agent [options] <prompt>
+  duet-agent [options] [prompt]
   echo "prompt" | duet-agent
 
 OPTIONS

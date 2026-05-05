@@ -125,6 +125,9 @@ npx duet-agent "build a REST API with Express"
 # Local checkout
 bun run cli -- "build a REST API with Express"
 
+# Open an interactive session without an initial prompt
+bun run cli
+
 # With options
 bun run cli -- -m anthropic:claude-opus-4-7 --workdir ./my-project "refactor the auth module"
 

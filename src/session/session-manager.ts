@@ -5,7 +5,7 @@ import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnEvent } from "../types/protocol.js";
 import { Session, type SessionStartInput, type SessionTurnRunner } from "./session.js";
 
-export interface SessionManagerCreateInput extends SessionStartInput {
+export interface SessionManagerCreateInput extends Partial<SessionStartInput> {
   sessionId?: string;
 }
 
@@ -44,7 +44,9 @@ export class SessionManager {
   create(input: SessionManagerCreateInput): Session {
     const session = this.createSession(input.sessionId, false);
     this.sessions.set(session.id, session);
-    void session.start(input);
+    if (input.prompt) {
+      void session.start({ prompt: input.prompt, mode: input.mode, options: input.options });
+    }
     return session;
   }
 
