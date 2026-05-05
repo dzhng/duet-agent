@@ -14,7 +14,7 @@ import { createInterface } from "node:readline/promises";
 import dotenv from "dotenv";
 import { SessionManager } from "./session/session-manager.js";
 import type { TurnRunnerConfig } from "./types/config.js";
-import type { TurnTerminalEvent } from "./types/protocol.js";
+import type { TurnStep, TurnTerminalEvent } from "./types/protocol.js";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -25,6 +25,7 @@ async function main() {
   let resumeSessionId: string | undefined;
   let systemInstructions: string | undefined;
   let systemPromptFiles: string[] | undefined;
+  let jsonOutput = false;
   const promptParts: string[] = [];
   const interactive = Boolean(process.stdin.isTTY ?? process.stdout.isTTY);
 
@@ -55,6 +56,9 @@ async function main() {
         break;
       case "--no-system-prompt-files":
         systemPromptFiles = [];
+        break;
+      case "--json":
+        jsonOutput = true;
         break;
       case "--help":
       case "-h":
@@ -101,8 +105,10 @@ async function main() {
 
   const manager = new SessionManager(config);
   manager.subscribe(({ event }) => {
-    if (event.type === "step") {
-      process.stderr.write(`${JSON.stringify(event.step)}\n`);
+    if (jsonOutput) {
+      process.stdout.write(`${JSON.stringify(event)}\n`);
+    } else if (event.type === "step") {
+      handleStep(event.step);
     }
   });
 
@@ -178,6 +184,21 @@ function handleTerminal(terminal: TurnTerminalEvent): void {
   }
 }
 
+function handleStep(step: TurnStep): void {
+  if (step.type === "reasoning") {
+    process.stderr.write(formatReasoning(step.text));
+  }
+  if (step.type === "system") {
+    process.stderr.write(`${step.message}\n`);
+  }
+}
+
+function formatReasoning(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return `\n[reasoning]\n${trimmed}\n[/reasoning]\n`;
+}
+
 function fail(message: string): never {
   console.error(`Fatal: ${message}`);
   process.exit(1);
@@ -237,6 +258,7 @@ OPTIONS
   --system-prompt-file <path>
                             Load a file into the system prompt; repeatable
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
+  --json                    Print streamed events as JSON lines
   -h, --help               Show this help
 
 INTERACTIVE

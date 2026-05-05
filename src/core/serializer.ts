@@ -17,12 +17,11 @@ function isTextContentBlock(block: unknown): block is TextContentBlock {
 }
 
 export function assistantText(messages: AgentMessage[]): string {
-  return messages
-    .filter((message) => message.role === "assistant")
-    .flatMap((message) => {
-      const content = (message as { content?: unknown }).content;
-      return Array.isArray(content) ? content : [];
-    })
+  const assistant = [...messages].reverse().find((message) => message.role === "assistant");
+  if (!assistant) return "";
+  const content = (assistant as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "";
+  return content
     .filter(isTextContentBlock)
     .map((block) => block.text)
     .join("\n")
