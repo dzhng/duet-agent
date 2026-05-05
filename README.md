@@ -134,6 +134,12 @@ bun run cli -- -m anthropic:claude-opus-4-7 --workdir ./my-project "refactor the
 # With additional system instructions
 bun run cli -- --system-prompt "Prefer concise answers." "review this repo"
 
+# Override the default AGENTS.md system prompt file
+bun run cli -- --system-prompt-file TEAM.md "review this repo"
+
+# Disable system prompt file loading
+bun run cli -- --no-system-prompt-files "review this repo"
+
 # Resume a saved session
 bun run cli -- --resume session_abc123 --workdir ./my-project
 

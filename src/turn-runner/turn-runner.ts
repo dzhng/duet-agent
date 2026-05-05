@@ -3,6 +3,8 @@ import { getEnvApiKey, getModel, type Model } from "@mariozechner/pi-ai";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
 import { execFile } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { assistantText } from "../core/serializer.js";
 import { toXML } from "../lib/xml.js";
@@ -503,8 +505,22 @@ export class TurnRunner {
     return createSystemPromptWithAppendedLayers({
       config: this.config,
       skills: this.skills,
-      append,
+      append: [...this.readSystemPromptFileLayers(), ...append],
     });
+  }
+
+  private readSystemPromptFileLayers(): string[] {
+    const cwd = this.config.cwd ?? process.cwd();
+    const fileNames = this.config.systemPromptFiles ?? ["AGENTS.md"];
+    const layers: string[] = [];
+    for (const fileName of fileNames) {
+      const path = join(cwd, fileName);
+      if (!existsSync(path)) continue;
+      layers.push(
+        [`System prompt file: ${fileName}`, readFileSync(path, "utf-8").trim()].join("\n\n"),
+      );
+    }
+    return layers;
   }
 
   private isTurnRunnerControlResult(value: unknown): value is TurnRunnerControlResult {

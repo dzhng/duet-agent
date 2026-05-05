@@ -20,6 +20,14 @@ export interface TurnRunnerConfig {
   mode?: TurnMode;
   guardrails?: GuardrailConfig[];
   systemInstructions?: string;
+  /**
+   * Files loaded from `cwd` and appended to the base system prompt.
+   *
+   * Defaults to `["AGENTS.md"]` so repository-local agent guidance is included
+   * automatically. Set to `[]` to disable file loading, or provide an explicit
+   * ordered list to replace the default.
+   */
+  systemPromptFiles?: string[];
   skills?: Skill[];
   skillDiscovery?: SkillDiscoveryOptions;
 }

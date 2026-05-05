@@ -24,6 +24,7 @@ async function main() {
   let workDir = process.cwd();
   let resumeSessionId: string | undefined;
   let systemInstructions: string | undefined;
+  let systemPromptFiles: string[] | undefined;
   const promptParts: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -46,6 +47,13 @@ async function main() {
       case "--system-prompt":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         systemInstructions = args[++i];
+        break;
+      case "--system-prompt-file":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        systemPromptFiles = [...(systemPromptFiles ?? []), args[++i]];
+        break;
+      case "--no-system-prompt-files":
+        systemPromptFiles = [];
         break;
       case "--help":
       case "-h":
@@ -87,6 +95,7 @@ async function main() {
     model: modelName,
     cwd: workDir,
     ...(systemInstructions ? { systemInstructions } : {}),
+    ...(systemPromptFiles ? { systemPromptFiles } : {}),
   };
 
   const manager = new SessionManager(config);
@@ -133,7 +142,12 @@ async function main() {
     }
 
     process.stderr.write(
-      `Resume: ${resumeCommand(session.id, { modelName, workDir, systemInstructions })}\n`,
+      `Resume: ${resumeCommand(session.id, {
+        modelName,
+        workDir,
+        systemInstructions,
+        systemPromptFiles,
+      })}\n`,
     );
   } catch (err: any) {
     console.error(`Fatal: ${err.message}`);
@@ -170,7 +184,12 @@ function fail(message: string): never {
 
 function resumeCommand(
   sessionId: string,
-  input: { modelName: string; workDir: string; systemInstructions?: string },
+  input: {
+    modelName: string;
+    workDir: string;
+    systemInstructions?: string;
+    systemPromptFiles?: string[];
+  },
 ): string {
   const command = [
     "duet-agent",
@@ -183,6 +202,15 @@ function resumeCommand(
   ];
   if (input.systemInstructions) {
     command.push("--system-prompt", shellQuote(input.systemInstructions));
+  }
+  if (input.systemPromptFiles) {
+    if (input.systemPromptFiles.length === 0) {
+      command.push("--no-system-prompt-files");
+    } else {
+      for (const fileName of input.systemPromptFiles) {
+        command.push("--system-prompt-file", shellQuote(fileName));
+      }
+    }
   }
   return command.join(" ");
 }
@@ -205,6 +233,9 @@ OPTIONS
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
   --system-prompt <text>   Additional system instructions for the runner
+  --system-prompt-file <path>
+                            Load a file into the system prompt; repeatable
+  --no-system-prompt-files Disable default AGENTS.md system prompt loading
   -h, --help               Show this help
 
 INTERACTIVE
@@ -219,6 +250,7 @@ EXAMPLES
   duet-agent -m openai:gpt-5.5 "analyze the performance of our test suite"
   duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.7 "refactor the auth module"
   duet-agent --system-prompt "Prefer concise answers." "review this repo"
+  duet-agent --system-prompt-file TEAM.md "review this repo"
   duet-agent --workdir ./my-project "refactor the auth module"
   duet-agent --resume session_abc123 --workdir ./my-project
 `);

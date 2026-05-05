@@ -65,6 +65,52 @@ describe("TurnState serialization", () => {
       Date.now = originalNow;
     }
   });
+
+  test("loads AGENTS.md into the system prompt by default", async () => {
+    const runner = new CapturingTurnRunner({ cwd: process.cwd() });
+
+    const context = JSON.parse(
+      await runner.captureLlmContext({
+        state: createSerializableTurnState(),
+        prompt: "Check default system prompt files.",
+      }),
+    ) as Context;
+
+    expect(context.systemPrompt).toContain("System prompt file: AGENTS.md");
+    expect(context.systemPrompt).toContain("Treat Types As Documentation");
+  });
+
+  test("overrides default system prompt files", async () => {
+    const runner = new CapturingTurnRunner({
+      cwd: process.cwd(),
+      systemPromptFiles: ["README.md"],
+    });
+
+    const context = JSON.parse(
+      await runner.captureLlmContext({
+        state: createSerializableTurnState(),
+        prompt: "Check configured system prompt files.",
+      }),
+    ) as Context;
+
+    expect(context.systemPrompt).toContain("System prompt file: README.md");
+    expect(context.systemPrompt).toContain("# duet-agent");
+    expect(context.systemPrompt).not.toContain("System prompt file: AGENTS.md");
+  });
+
+  test("can disable system prompt file loading", async () => {
+    const runner = new CapturingTurnRunner({ cwd: process.cwd(), systemPromptFiles: [] });
+
+    const context = JSON.parse(
+      await runner.captureLlmContext({
+        state: createSerializableTurnState(),
+        prompt: "Check disabled system prompt files.",
+      }),
+    ) as Context;
+
+    expect(context.systemPrompt).not.toContain("System prompt file:");
+    expect(context.systemPrompt).not.toContain("Treat Types As Documentation");
+  });
 });
 
 function createSerializableTurnState(): TurnState {
