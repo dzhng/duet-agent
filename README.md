@@ -12,25 +12,32 @@ duet-agent takes the opposite approach: **memory is woven into the core architec
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                        TurnRunner                          │
-│  • Takes prompt + options                               │
-│  • Chooses agent / state_machine / auto mode             │
-│  • Routes state-machine transitions through an agent     │
-│  • Runs agent, script, poll, and terminal states          │
-└────┬───────────┬───────────┬───────────┬────────────────┘
-     │           │           │           │
-┌────▼────┐ ┌───▼────┐ ┌───▼────┐ ┌───▼────┐
-│Sub-Agent│ │Sub-Agent│ │Sub-Agent│ │Sub-Agent│  ← dynamically defined
-│(coder)  │ │(research)│ │(review) │ │(sysadm) │
-└────┬────┘ └───┬────┘ └───┬────┘ └───┬────┘
-     │          │          │          │
-┌────▼──────────▼──────────▼──────────▼───────────────────┐
-│                    Shared Infrastructure                  │
-│        Memory (observed) │ Pi │ Guardrails                │
-│        pi coding tools run in the configured cwd              │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+  TurnRunner["TurnRunner<br/>Takes prompt + options<br/>Chooses agent / state_machine / auto mode<br/>Routes state-machine transitions through an agent<br/>Runs agent, script, poll, and terminal states"]
+
+  Coder["Sub-Agent<br/>(coder)"]
+  Research["Sub-Agent<br/>(research)"]
+  Review["Sub-Agent<br/>(review)"]
+  Sysadm["Sub-Agent<br/>(sysadm)"]
+
+  Shared["Shared Infrastructure<br/>Memory (observed) | Pi | Guardrails<br/>pi coding tools run in the configured cwd"]
+
+  TurnRunner --> Coder
+  TurnRunner --> Research
+  TurnRunner --> Review
+  TurnRunner --> Sysadm
+
+  Coder --> Shared
+  Research --> Shared
+  Review --> Shared
+  Sysadm --> Shared
+
+  Dynamic["dynamically defined"]
+  Dynamic -.-> Coder
+  Dynamic -.-> Research
+  Dynamic -.-> Review
+  Dynamic -.-> Sysadm
 ```
 
 ## Key Differentiators
