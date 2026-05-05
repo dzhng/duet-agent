@@ -9,8 +9,10 @@
  *   echo "fix the bug in server.ts" | duet-agent
  */
 
-import { Harness } from "./harness/harness.js";
+import { createInterface } from "node:readline/promises";
+import { Orchestrator } from "./orchestrator/orchestrator.js";
 import type { HarnessConfig } from "./types/config.js";
+import type { HarnessTerminalTurnEvent } from "./types/protocol.js";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -66,23 +68,55 @@ async function main() {
     cwd: workDir,
   };
 
-  const harness = new Harness(config);
-  harness.subscribe((event) => {
+  const orchestrator = new Orchestrator(config);
+  orchestrator.subscribe((event) => {
     if (event.type === "step") {
       process.stderr.write(`${JSON.stringify(event.step)}\n`);
     }
   });
 
   try {
-    const terminal = await harness.turn({ type: "start", mode: config.mode, prompt: goal });
-    if (terminal.type === "complete" && terminal.error) {
-      throw new Error(terminal.error);
+    let { sessionId, terminal } = await orchestrator.run({ mode: config.mode, prompt: goal });
+    handleTerminal(terminal);
+
+    if (process.stdin.isTTY) {
+      process.stderr.write(`\nSession: ${sessionId}\n`);
+      const readline = createInterface({ input: process.stdin, output: process.stdout });
+      try {
+        while (true) {
+          const prompt = (await readline.question("> ")).trim();
+          if (!prompt || prompt === "/exit" || prompt === "/quit") break;
+          ({ sessionId, terminal } = await orchestrator.run({ sessionId, prompt }));
+          handleTerminal(terminal);
+        }
+      } finally {
+        readline.close();
+      }
     }
-    process.stderr.write("\nDone.\n");
+
     process.exit(0);
   } catch (err: any) {
     console.error(`Fatal: ${err.message}`);
     process.exit(1);
+  } finally {
+    await orchestrator.dispose();
+  }
+}
+
+function handleTerminal(terminal: HarnessTerminalTurnEvent): void {
+  if (terminal.type === "complete" && terminal.error) {
+    throw new Error(terminal.error);
+  }
+  if (terminal.type === "complete" && terminal.result) {
+    process.stdout.write(`${terminal.result}\n`);
+  }
+  if (terminal.type === "ask") {
+    for (const question of terminal.questions) {
+      process.stdout.write(`${question.question}\n`);
+    }
+  }
+  if (terminal.type === "interrupted") {
+    process.stderr.write("Interrupted.\n");
   }
 }
 
@@ -98,6 +132,10 @@ OPTIONS
   -m, --model <name>       Harness model (default: anthropic:claude-opus-4-6)
   -w, --workdir <path>     Working directory (default: cwd)
   -h, --help               Show this help
+
+INTERACTIVE
+  In a TTY, duet-agent keeps one local session open after terminal events.
+  Type /exit or /quit to end the conversation.
 
 MODELS
   Use provider:modelId syntax, e.g. anthropic:claude-opus-4-6

@@ -6,6 +6,7 @@ import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
 import { Harness } from "../src/harness/harness.js";
 import { testIfDocker } from "./helpers/docker-only.js";
+import { createHarness } from "./helpers/harness-protocol.js";
 import { createTestHarness, type TestHarnessApp } from "./helpers/skills-harness.js";
 
 let app: TestHarnessApp | undefined;
@@ -164,6 +165,246 @@ describe("Harness skills", () => {
     expect(systemPrompt).toContain("name: second-skill");
     expect(systemPrompt).toContain("Second skill instructions.");
     expect(systemPrompt).toContain("Base instructions.");
+  });
+
+  test("injects full skill instructions for slash command prompts at harness level", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
+    const skillPath = join(tempDir, "SKILL.md");
+    await writeFile(
+      skillPath,
+      dedent`
+        ---
+        name: review
+        description: Review changed code.
+        ---
+
+        # Review Skill
+
+        Use the full review checklist.
+      `,
+    );
+    const { harness } = createHarness({
+      mode: "agent",
+      skills: [
+        {
+          name: "review",
+          description: "Review changed code.",
+          filePath: skillPath,
+          baseDir: tempDir,
+          sourceInfo: {} as Skill["sourceInfo"],
+          disableModelInvocation: false,
+        },
+      ],
+    });
+
+    await harness.turn({ type: "start", prompt: "/review audit this diff" });
+
+    expect(harness.workerInputs[0]?.prompt).toBe(dedent`
+      /review audit this diff
+
+      <skill name="review">
+      Use the following skill instructions for this request.
+      <instructions>
+      ---
+      name: review
+      description: Review changed code.
+      ---
+
+      # Review Skill
+
+      Use the full review checklist.
+      </instructions>
+      </skill>
+    `);
+  });
+
+  test("injects multiple slash command skills at harness level", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
+    const reviewPath = join(tempDir, "review.md");
+    const repoMapPath = join(tempDir, "repo-map.md");
+    await writeFile(
+      reviewPath,
+      dedent`
+        ---
+        name: review
+        description: Review changed code.
+        ---
+
+        # Review Skill
+
+        Use the review checklist.
+      `,
+    );
+    await writeFile(
+      repoMapPath,
+      dedent`
+        ---
+        name: repo-map
+        description: Summarize the repository.
+        ---
+
+        # Repo Map Skill
+
+        Build a concise repository map.
+      `,
+    );
+    const { harness } = createHarness({
+      mode: "agent",
+      skills: [
+        {
+          name: "review",
+          description: "Review changed code.",
+          filePath: reviewPath,
+          baseDir: tempDir,
+          sourceInfo: {} as Skill["sourceInfo"],
+          disableModelInvocation: false,
+        },
+        {
+          name: "repo-map",
+          description: "Summarize the repository.",
+          filePath: repoMapPath,
+          baseDir: tempDir,
+          sourceInfo: {} as Skill["sourceInfo"],
+          disableModelInvocation: false,
+        },
+      ],
+    });
+
+    await harness.turn({ type: "start", prompt: "/review /repo-map audit this diff" });
+
+    expect(harness.workerInputs[0]?.prompt).toBe(dedent`
+      /review /repo-map audit this diff
+
+      <skill name="review">
+      Use the following skill instructions for this request.
+      <instructions>
+      ---
+      name: review
+      description: Review changed code.
+      ---
+
+      # Review Skill
+
+      Use the review checklist.
+      </instructions>
+      </skill>
+
+      <skill name="repo-map">
+      Use the following skill instructions for this request.
+      <instructions>
+      ---
+      name: repo-map
+      description: Summarize the repository.
+      ---
+
+      # Repo Map Skill
+
+      Build a concise repository map.
+      </instructions>
+      </skill>
+    `);
+  });
+
+  test("injects slash command skills from anywhere in the prompt", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
+    const skillPath = join(tempDir, "SKILL.md");
+    await writeFile(
+      skillPath,
+      dedent`
+        ---
+        name: review
+        description: Review changed code.
+        ---
+
+        # Review Skill
+      `,
+    );
+    const { harness } = createHarness({
+      mode: "agent",
+      skills: [
+        {
+          name: "review",
+          description: "Review changed code.",
+          filePath: skillPath,
+          baseDir: tempDir,
+          sourceInfo: {} as Skill["sourceInfo"],
+          disableModelInvocation: false,
+        },
+      ],
+    });
+
+    await harness.turn({ type: "start", prompt: "audit this diff /review carefully" });
+
+    expect(harness.workerInputs[0]?.prompt).toBe(dedent`
+      audit this diff /review carefully
+
+      <skill name="review">
+      Use the following skill instructions for this request.
+      <instructions>
+      ---
+      name: review
+      description: Review changed code.
+      ---
+
+      # Review Skill
+      </instructions>
+      </skill>
+    `);
+  });
+
+  test("preserves unknown slash commands while injecting known slash skills", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
+    const skillPath = join(tempDir, "SKILL.md");
+    await writeFile(
+      skillPath,
+      dedent`
+        ---
+        name: review
+        description: Review changed code.
+        ---
+
+        # Review Skill
+      `,
+    );
+    const { harness } = createHarness({
+      mode: "agent",
+      skills: [
+        {
+          name: "review",
+          description: "Review changed code.",
+          filePath: skillPath,
+          baseDir: tempDir,
+          sourceInfo: {} as Skill["sourceInfo"],
+          disableModelInvocation: false,
+        },
+      ],
+    });
+
+    await harness.turn({ type: "start", prompt: "/missing /review audit this diff" });
+
+    expect(harness.workerInputs[0]?.prompt).toBe(dedent`
+      /missing /review audit this diff
+
+      <skill name="review">
+      Use the following skill instructions for this request.
+      <instructions>
+      ---
+      name: review
+      description: Review changed code.
+      ---
+
+      # Review Skill
+      </instructions>
+      </skill>
+    `);
+  });
+
+  test("leaves unknown slash command prompts unchanged at harness level", async () => {
+    const { harness } = createHarness({ mode: "agent" });
+
+    await harness.turn({ type: "start", prompt: "/missing do work" });
+
+    expect(harness.workerInputs[0]?.prompt).toBe("/missing do work");
   });
 
   testIfDocker("discovers project skills from the configured cwd", async () => {

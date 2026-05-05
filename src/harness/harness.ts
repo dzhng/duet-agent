@@ -70,6 +70,22 @@ export interface AgentWorkerResult {
   control: HarnessControlResult;
 }
 
+function parseSlashCommands(prompt: string): {
+  commands: string[];
+} {
+  const tokens = prompt.trim().split(/\s+/);
+  const commands: string[] = [];
+
+  for (const token of tokens) {
+    const match = token.match(/^\/([A-Za-z0-9_.-]+)$/);
+    if (match) {
+      commands.push(match[1]!);
+    }
+  }
+
+  return { commands };
+}
+
 export class Harness {
   private readonly eventHandlers = new Set<HarnessEventHandler>();
   protected readonly memory = new MemoryStore();
@@ -148,15 +164,16 @@ export class Harness {
   protected async start(command: HarnessStartCommand): Promise<HarnessTerminalTurnEvent> {
     const mode = command.mode ?? this.config.mode ?? "auto";
     const session = this.createInitialSession(mode);
+    const prompt = this.resolveSlashSkillPrompt(command.prompt);
     this.emit({ type: "session_started", session });
 
     if (mode === "agent") {
-      return this.runAgentMode(session, command.prompt, command.options);
+      return this.runAgentMode(session, prompt, command.options);
     }
 
     return this.runHarnessAgentWithStateMachineTools({
       session,
-      prompt: command.prompt,
+      prompt,
       mode,
       options: command.options,
     });
@@ -164,13 +181,14 @@ export class Harness {
 
   protected async prompt(command: HarnessPromptCommand): Promise<HarnessTerminalTurnEvent> {
     const session: HarnessSession = { ...command.session, status: "running" };
+    const prompt = this.resolveSlashSkillPrompt(command.message);
     if (session.mode === "agent") {
-      return this.runAgentMode(session, command.message, command.options);
+      return this.runAgentMode(session, prompt, command.options);
     }
 
     return this.runHarnessAgentWithStateMachineTools({
       session,
-      prompt: command.message,
+      prompt,
       mode: session.mode,
       options: command.options,
     });
@@ -401,6 +419,33 @@ export class Harness {
   getSkillInstructions(skillId: string): string {
     const skill = this.skills.find((s) => s.name === skillId);
     return skill ? readSkillInstructions(skill) : "";
+  }
+
+  private resolveSlashSkillPrompt(prompt: string): string {
+    const slash = parseSlashCommands(prompt);
+    if (slash.commands.length === 0) return prompt;
+
+    const skillBlocks: string[] = [];
+    for (const command of slash.commands) {
+      const skill = this.skills.find((item) => item.name === command);
+      if (!skill) continue;
+
+      const instructions = readSkillInstructions(skill).trim();
+      skillBlocks.push(
+        [
+          `<skill name="${skill.name}">`,
+          "Use the following skill instructions for this request.",
+          "<instructions>",
+          instructions,
+          "</instructions>",
+          "</skill>",
+        ].join("\n"),
+      );
+    }
+
+    if (skillBlocks.length === 0) return prompt;
+
+    return [prompt, ...skillBlocks].join("\n\n");
   }
 
   private async ensureSkillsLoaded(): Promise<void> {
