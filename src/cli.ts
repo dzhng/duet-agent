@@ -185,8 +185,14 @@ function handleTerminal(terminal: TurnTerminalEvent): void {
 }
 
 function handleStep(step: TurnStep): void {
+  if (step.type === "text") {
+    process.stdout.write(`${step.text}\n`);
+  }
   if (step.type === "reasoning") {
     process.stderr.write(formatReasoning(step.text));
+  }
+  if (step.type === "tool_call") {
+    process.stderr.write(formatToolCall(step));
   }
   if (step.type === "system") {
     process.stderr.write(`${step.message}\n`);
@@ -197,6 +203,12 @@ function formatReasoning(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
   return `\n[reasoning]\n${trimmed}\n[/reasoning]\n`;
+}
+
+function formatToolCall(step: Extract<TurnStep, { type: "tool_call" }>): string {
+  const status = step.status ? ` ${step.status}` : "";
+  const input = step.input === undefined ? "" : `\n${JSON.stringify(step.input, null, 2)}`;
+  return `\n[tool ${step.toolName}${status}]${input}\n[/tool]\n`;
 }
 
 function fail(message: string): never {
