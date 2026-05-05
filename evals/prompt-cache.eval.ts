@@ -39,7 +39,9 @@ describe("prompt cache resume", () => {
 });
 
 function latestAssistantUsage(state: TurnState) {
-  const assistant = state.agent.messages.findLast((message) => message.role === "assistant");
+  const assistant = [...state.agent.messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
   if (!assistant || assistant.role !== "assistant") {
     throw new Error("Expected an assistant message with usage");
   }
