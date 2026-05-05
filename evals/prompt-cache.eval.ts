@@ -1,0 +1,61 @@
+import { describe, expect, test } from "bun:test";
+import { TurnRunner } from "../src/turn-runner/turn-runner.js";
+import type { TurnState } from "../src/types/protocol.js";
+
+const model = process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-sonnet-4.6";
+
+describe("prompt cache resume", () => {
+  test("reuses cached tokens after resuming from serialized TurnState", async () => {
+    const runner = new TurnRunner({
+      model,
+      mode: "agent",
+      skillDiscovery: { includeDefaults: false },
+      systemInstructions: createStableCachePrefix(),
+    });
+
+    const first = await runner.turn({
+      type: "start",
+      mode: "agent",
+      prompt:
+        "Do not call tools. Reply with exactly this sentence: first prompt cache turn complete.",
+    });
+    expect(first.type).toBe("complete");
+    const firstUsage = latestAssistantUsage(first.state);
+    expect(firstUsage.cacheWrite).toBeGreaterThan(0);
+
+    const resumedState = JSON.parse(JSON.stringify(first.state)) as TurnState;
+    const second = await runner.turn({
+      type: "prompt",
+      state: resumedState,
+      message:
+        "Do not call tools. Reply with exactly this sentence: second prompt cache turn complete.",
+      behavior: "follow_up",
+    });
+    expect(second.type).toBe("complete");
+    const secondUsage = latestAssistantUsage(second.state);
+
+    expect(secondUsage.cacheRead).toBeGreaterThan(0);
+  });
+});
+
+function latestAssistantUsage(state: TurnState) {
+  const assistant = state.agent.messages.findLast((message) => message.role === "assistant");
+  if (!assistant || assistant.role !== "assistant") {
+    throw new Error("Expected an assistant message with usage");
+  }
+  return assistant.usage;
+}
+
+function createStableCachePrefix(): string {
+  const paragraph = [
+    "This eval intentionally creates a long stable system prompt prefix so Anthropic prompt caching has enough repeated content to cache.",
+    "The model must answer the user's direct instruction without calling tools.",
+    "All text in this prefix should remain byte-for-byte stable across both turns.",
+    "Prompt caching is useful only when the serialized session reconstructs the exact same LLM prefix after resume.",
+  ].join(" ");
+
+  return Array.from(
+    { length: 80 },
+    (_, index) => `Stable cache paragraph ${index}: ${paragraph}`,
+  ).join("\n");
+}
