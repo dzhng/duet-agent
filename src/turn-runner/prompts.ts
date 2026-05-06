@@ -5,6 +5,11 @@ import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
 import { readSkillInstructions } from "./skills.js";
 
+const TOOL_EXECUTION_SYSTEM_PROMPT = dedent`
+  Tool execution:
+  Independent tool calls are executed in parallel. When multiple tool calls do not depend on each other's results, issue them together in the same assistant turn instead of waiting for one result before starting the next.
+`;
+
 export function createSystemPromptWithAppendedLayers(input: {
   config: TurnRunnerConfig;
   skills: readonly Skill[];
@@ -48,7 +53,9 @@ export function createStateMachineSystemPromptLayer(input: {
 }
 
 function createBaseSystemPrompt(config: TurnRunnerConfig, skills: readonly Skill[]): string {
-  return [config.systemInstructions, createSkillsSystemPrompt(skills)].filter(Boolean).join("\n\n");
+  return [config.systemInstructions, TOOL_EXECUTION_SYSTEM_PROMPT, createSkillsSystemPrompt(skills)]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function createSkillsSystemPrompt(skills: readonly Skill[]): string | undefined {

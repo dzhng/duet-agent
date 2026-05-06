@@ -631,6 +631,7 @@ export class TurnRunner {
         tools: input.tools,
       },
       transformContext: this.createMemoryTransform(model),
+      toolExecution: "parallel",
       afterToolCall: async (context) => {
         if (this.isTurnRunnerControlResult(context.result.details)) {
           onControlResult?.(context.result.details);

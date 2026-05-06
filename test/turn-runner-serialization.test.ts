@@ -39,6 +39,14 @@ class CapturingTurnRunner extends TurnRunner {
     if (!context) throw new Error("Expected stream function to receive LLM context");
     return JSON.stringify(context);
   }
+
+  captureToolExecution(input: Omit<AgentWorkerInput, "tools">): string {
+    const agent = this.createAgent({
+      ...input,
+      ...this.createTools(input.state.mode, input.state),
+    });
+    return agent.toolExecution;
+  }
 }
 
 describe("TurnState serialization", () => {
@@ -80,6 +88,31 @@ describe("TurnState serialization", () => {
     expect(context.systemPrompt).toContain('<system_prompt_file path="AGENTS.md">');
     expect(context.systemPrompt).toContain("<content>");
     expect(context.systemPrompt).toContain("Treat Types As Documentation");
+  });
+
+  test("includes tool parallelism guidance in the default system prompt", async () => {
+    const runner = new CapturingTurnRunner({ cwd: process.cwd(), systemPromptFiles: [] });
+
+    const context = JSON.parse(
+      await runner.captureLlmContext({
+        state: createSerializableTurnState(),
+        prompt: "Check default tool guidance.",
+      }),
+    ) as Context;
+
+    expect(context.systemPrompt).toContain("Tool execution:");
+    expect(context.systemPrompt).toContain("Independent tool calls are executed in parallel.");
+  });
+
+  test("configures pi-agent tool calls for parallel execution", () => {
+    const runner = new CapturingTurnRunner({ cwd: process.cwd(), systemPromptFiles: [] });
+
+    const toolExecution = runner.captureToolExecution({
+      state: createSerializableTurnState(),
+      prompt: "Check tool execution mode.",
+    });
+
+    expect(toolExecution).toBe("parallel");
   });
 
   test("includes both configured base instructions and system prompt files", async () => {
