@@ -1,6 +1,6 @@
 {
   "name": "@dzhng/duet-agent",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "An opinionated full-stack agent turn runner with native memories, interrupts, and multi-agent orchestration",
   "keywords": [
     "agent",
@@ -19,6 +19,7 @@
     "duet": "dist/src/cli.js"
   },
   "files": [
+    "dist/package.json",
     "dist/src",
     "LICENSE",
     "README.md"
