@@ -72,6 +72,19 @@ export interface AgentWorkerResult {
   control: TurnRunnerControlResult;
 }
 
+type ShellCommandOutput = { stdout: string; stderr: string; exitCode: number };
+
+type ActiveStateWork =
+  | { kind: "script" }
+  | {
+      kind: "poll";
+      session: TurnState;
+      state: StateMachinePollState;
+      promptStarted: Promise<void>;
+      resolvePromptStarted: () => void;
+      promptTerminal?: Promise<TurnTerminalEvent>;
+    };
+
 function parseSlashCommands(prompt: string): {
   commands: string[];
 } {
@@ -100,6 +113,8 @@ export class TurnRunner {
   private activeAgentScope?: "parent" | "child";
   /** Current script or poll abort controller, used to interrupt non-agent state work. */
   private activeAbortController?: AbortController;
+  /** Current non-agent state work, if a script or poll owns the active turn. */
+  private activeStateWork?: ActiveStateWork;
   /** Terminal event prepared by `interrupt()` and returned when active work unwinds. */
   private interruptedTerminal?: TurnTerminalEvent;
   /**
@@ -110,6 +125,8 @@ export class TurnRunner {
   private activeTurnPromise?: Promise<TurnTerminalEvent>;
   /** Commands that could not be absorbed into the active pi agent and must run later. */
   private readonly queuedTurnCommands: TurnCommand[] = [];
+  /** Prevents queued user prompts from recursively preempting continuation prompts. */
+  private drainingQueuedCommandsBeforeContinuation = false;
   /** Explicit and discovered skills available for prompt injection and slash commands. */
   private skills: Skill[] = [];
   /** Ensures skill discovery runs once even when multiple turns share this runner. */
@@ -196,6 +213,14 @@ export class TurnRunner {
       return;
     }
 
+    if (
+      (command.type === "prompt" || command.type === "answer") &&
+      this.activeStateWork?.kind === "poll"
+    ) {
+      this.runPromptDuringActivePoll(this.activeStateWork, command);
+      return;
+    }
+
     this.queuedTurnCommands.push(command);
   }
 
@@ -235,6 +260,42 @@ export class TurnRunner {
     }
   }
 
+  private runPromptDuringActivePoll(
+    work: Extract<ActiveStateWork, { kind: "poll" }>,
+    command: TurnPromptCommand | TurnAnswerCommand,
+  ): void {
+    if (work.promptTerminal) {
+      this.queuedTurnCommands.push(command);
+      return;
+    }
+
+    const prompt = this.commandToUserMessage(command);
+    work.promptTerminal = this.prompt({
+      type: "prompt",
+      state: { ...work.session, status: "running" },
+      message: prompt,
+      behavior: command.behavior,
+      options: command.options,
+    }).then((terminal) => this.restorePollSleepAfterMidPollPrompt(work, terminal));
+    work.resolvePromptStarted();
+  }
+
+  private restorePollSleepAfterMidPollPrompt(
+    work: Extract<ActiveStateWork, { kind: "poll" }>,
+    terminal: TurnTerminalEvent,
+  ): TurnTerminalEvent {
+    if (terminal.type !== "complete" || terminal.status !== "completed") {
+      return terminal;
+    }
+
+    const currentPoll = this.currentPollState(terminal.state);
+    if (!currentPoll || currentPoll.name !== work.state.name) {
+      return terminal;
+    }
+
+    return this.sleep(terminal.state, currentPoll);
+  }
+
   private commandToUserMessage(command: TurnPromptCommand | TurnAnswerCommand): string {
     if (command.type === "prompt") {
       return this.resolveSlashSkillPrompt(command.message);
@@ -269,6 +330,7 @@ export class TurnRunner {
     this.activeAgent = undefined;
     this.activeAgentScope = undefined;
     this.activeAbortController = undefined;
+    this.activeStateWork = undefined;
   }
 
   protected emit(event: TurnEvent): void {
@@ -806,6 +868,7 @@ export class TurnRunner {
   ): Promise<TurnTerminalEvent> {
     const abortController = new AbortController();
     this.activeAbortController = abortController;
+    this.activeStateWork = { kind: "script" };
     try {
       const command = this.renderTemplate(state.command, session.stateMachine?.currentInput ?? {});
       const shellOutput = await this.runShellCommand(command, {
@@ -844,6 +907,9 @@ export class TurnRunner {
       if (this.activeAbortController === abortController) {
         this.activeAbortController = undefined;
       }
+      if (this.activeStateWork?.kind === "script") {
+        this.activeStateWork = undefined;
+      }
     }
   }
 
@@ -875,31 +941,85 @@ export class TurnRunner {
       );
     } else {
       const abortController = new AbortController();
+      let resolvePromptStarted!: () => void;
+      const promptStarted = new Promise<void>((resolve) => {
+        resolvePromptStarted = resolve;
+      });
+      const work: Extract<ActiveStateWork, { kind: "poll" }> = {
+        kind: "poll",
+        session,
+        state,
+        promptStarted,
+        resolvePromptStarted,
+      };
       this.activeAbortController = abortController;
+      this.activeStateWork = work;
       try {
         const command = this.renderTemplate(
           state.poll.command,
           session.stateMachine?.currentInput ?? {},
         );
-        const shellOutput = await this.runShellCommand(command, {
+        let settledShell:
+          | { status: "fulfilled"; value: ShellCommandOutput }
+          | { status: "rejected"; reason: unknown }
+          | undefined;
+        const shellPromise = this.runShellCommand(command, {
           cwd: state.poll.cwd ?? this.config.cwd ?? process.cwd(),
           signal: abortController.signal,
           successCodes: state.poll.successCodes,
-        });
-        const { stdout } = shellOutput;
-        const output = this.parseJsonObject(stdout);
-        if (Object.keys(output).length > 0) {
-          const rawOutput = {
-            ...shellOutput,
-            stdout: stdout.trim(),
-            stderr: shellOutput.stderr.trim(),
-            parsed: output,
-          };
-          return this.continueStateMachineAfterStateCompleted(
-            this.recordStateCompleted(session, state.name, rawOutput),
-            state.name,
-            rawOutput,
+        }).then(
+          (value) => {
+            settledShell = { status: "fulfilled", value };
+            return value;
+          },
+          (reason) => {
+            settledShell = { status: "rejected", reason };
+            throw reason;
+          },
+        );
+        shellPromise.catch(() => undefined);
+
+        const first = await Promise.race([
+          shellPromise.then(
+            () => "shell" as const,
+            () => "shell" as const,
+          ),
+          work.promptStarted.then(() => "prompt" as const),
+        ]);
+
+        if (first === "prompt") {
+          const promptTerminal = await work.promptTerminal;
+          if (!promptTerminal) {
+            return this.sleep(session, state);
+          }
+          if (!settledShell) {
+            abortController.abort();
+            return promptTerminal;
+          }
+          if (settledShell.status === "rejected") {
+            return promptTerminal;
+          }
+          return this.completePollStateAfterShellResult(
+            { ...promptTerminal.state, status: "running" },
+            state,
+            settledShell.value,
           );
+        }
+
+        if (work.promptTerminal) {
+          const promptTerminal = await work.promptTerminal;
+          if (settledShell?.status === "fulfilled") {
+            return this.completePollStateAfterShellResult(
+              { ...promptTerminal.state, status: "running" },
+              state,
+              settledShell.value,
+            );
+          }
+          return promptTerminal;
+        }
+
+        if (settledShell?.status === "fulfilled") {
+          return this.completePollStateAfterShellResult(session, state, settledShell.value);
         }
       } catch {
         if (this.interruptedTerminal) {
@@ -912,10 +1032,37 @@ export class TurnRunner {
         if (this.activeAbortController === abortController) {
           this.activeAbortController = undefined;
         }
+        if (this.activeStateWork === work) {
+          this.activeStateWork = undefined;
+        }
       }
     }
 
     return this.sleep(session, state);
+  }
+
+  private completePollStateAfterShellResult(
+    session: TurnState,
+    state: StateMachinePollState,
+    shellOutput: ShellCommandOutput,
+  ): Promise<TurnTerminalEvent> | TurnTerminalEvent {
+    const { stdout } = shellOutput;
+    const output = this.parseJsonObject(stdout);
+    if (Object.keys(output).length === 0) {
+      return this.sleep(session, state);
+    }
+
+    const rawOutput = {
+      ...shellOutput,
+      stdout: stdout.trim(),
+      stderr: shellOutput.stderr.trim(),
+      parsed: output,
+    };
+    return this.continueStateMachineAfterStateCompleted(
+      this.recordStateCompleted(session, state.name, rawOutput),
+      state.name,
+      rawOutput,
+    );
   }
 
   private sleep(session: TurnState, state: StateMachinePollState): TurnTerminalEvent {
@@ -980,6 +1127,23 @@ export class TurnRunner {
   ): Promise<TurnTerminalEvent> {
     if (session.mode === "agent") {
       return this.complete(session, "completed", typeof output === "string" ? output : undefined);
+    }
+
+    if (!this.drainingQueuedCommandsBeforeContinuation && this.queuedTurnCommands.length > 0) {
+      this.drainingQueuedCommandsBeforeContinuation = true;
+      try {
+        const terminal = await this.drainQueuedTurnCommands({
+          type: "complete",
+          status: "completed",
+          state: session,
+        });
+        if (terminal.type !== "complete" || terminal.status !== "completed") {
+          return terminal;
+        }
+        session = terminal.state;
+      } finally {
+        this.drainingQueuedCommandsBeforeContinuation = false;
+      }
     }
 
     let nextSession = session;
@@ -1257,7 +1421,7 @@ export class TurnRunner {
       signal: AbortSignal;
       successCodes?: number[];
     },
-  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  ): Promise<ShellCommandOutput> {
     try {
       const result = await execFileAsync("sh", ["-lc", command], {
         cwd: options.cwd,
