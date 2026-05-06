@@ -26,7 +26,7 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  * unbounded number of turn-runner turns for the same user session.
  *
  * A caller initializes a session by sending `start`. This is a setup command,
- * not a turn: the runner loads memory and skills, emits `session_started`
+ * not a turn: the runner loads memory and skills, emits `turn_started`
  * with the initial empty `TurnState`, and returns. Skills, agent files, and
  * skill collisions are exposed through `getSkills()`, `getResolvedAgentFiles()`,
  * and `getSkillCollisions()` for callers (CLI/TUI) that want to render a
@@ -53,7 +53,7 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  *
  * The user asks for a normal task, such as "summarize this file" or "fix this
  * bug." The caller sends `start` (omitting `mode` or setting `mode: "auto"`)
- * to set the session up; the runner emits `session_started` with an empty
+ * to set the session up; the runner emits `turn_started` with an empty
  * `state.agent`. When the user types their first prompt, the caller sends a
  * `prompt` command and the runner classifies it as agent mode and emits:
  *
@@ -265,7 +265,7 @@ export type TurnStep =
  *
  * `start` is a setup command, not a turn. The runner loads memory and skills,
  * stores its initial `TurnState` (either fresh or the resumed one passed via
- * `state`), and emits `session_started`. No agent work runs. The caller sends
+ * `state`), and emits `turn_started`. No agent work runs. The caller sends
  * `prompt` afterwards to actually run a turn. Skills, agent files, and skill
  * collisions are exposed through dedicated runner methods so callers can
  * render the setup summary without subscribing to a dedicated event.
@@ -278,7 +278,7 @@ export interface TurnStartCommand {
   /** Routing mode for subsequent prompts. Omit to use the turn runner's configured default. */
   mode?: TurnMode;
   /**
-   * Existing state to resume. When provided, the runner emits `session_started`
+   * Existing state to resume. When provided, the runner emits `turn_started`
    * with this state instead of creating a fresh one. Resumed sessions keep
    * their persisted agent and state-machine history.
    */
@@ -363,8 +363,8 @@ export interface TurnAgentFile {
   path: string;
 }
 
-export interface TurnStateStartedEvent {
-  type: "session_started";
+export interface TurnStartedEvent {
+  type: "turn_started";
   /** Full turn state after applying config/options/auto routing. */
   state: TurnState;
 }
@@ -444,4 +444,4 @@ export type TurnTerminalEvent =
   | TurnInterruptedEvent
   | TurnSleepEvent;
 
-export type TurnEvent = TurnStateStartedEvent | TurnDuringEvent | TurnTerminalEvent;
+export type TurnEvent = TurnStartedEvent | TurnDuringEvent | TurnTerminalEvent;

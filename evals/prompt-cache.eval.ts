@@ -30,7 +30,16 @@ describe("prompt cache resume", () => {
       // the first turn reads from cache instead of reporting another cache write.
       expect(firstUsage.cacheRead + firstUsage.cacheWrite).toBeGreaterThan(0);
 
-      const second = await runner.turn({
+      const resumedState = JSON.parse(JSON.stringify(first.state)) as TurnState;
+      const resumedRunner = new TurnRunner({
+        model,
+        mode: "agent",
+        skillDiscovery: { includeDefaults: false },
+        systemInstructions: createStableCachePrefix(),
+      });
+      await resumedRunner.start({ type: "start", state: resumedState });
+
+      const second = await resumedRunner.turn({
         type: "prompt",
         message:
           "Do not call tools. Reply with exactly this sentence: second prompt cache turn complete.",

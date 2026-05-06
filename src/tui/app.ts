@@ -221,7 +221,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function markRunning(): void {
     running = true;
     setHint(true);
-    setStatus("● working… (Esc to interrupt)");
+    setStatus("● working… (Esc/Ctrl+C to interrupt)");
   }
 
   function markIdle(): void {
@@ -326,7 +326,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderFollowUpQueue(prompts: string[]): void {
     if (prompts.length === 0) {
-      setStatus(running ? "● working… (Esc to interrupt)" : "");
+      setStatus(running ? "● working… (Esc/Ctrl+C to interrupt)" : "");
       return;
     }
     setStatus(`queued follow-ups: ${prompts.length}`);
@@ -457,11 +457,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderMemoryStatus(event: Extract<TurnEvent, { type: "memory" }>): void {
     if (event.status === "running") {
-      setStatus(`● ${event.message} (Esc to interrupt)`);
+      setStatus(`● ${event.message} (Esc/Ctrl+C to interrupt)`);
       return;
     }
     if (running) {
-      setStatus("● working… (Esc to interrupt)");
+      setStatus("● working… (Esc/Ctrl+C to interrupt)");
     }
   }
 
@@ -583,8 +583,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   await new Promise<void>((resolve) => {
     const onDestroy = () => resolve();
     renderer.once("destroy", onDestroy);
-    // Fallback — if the renderer is stopped without emitting destroy, settle on
-    // process exit signals which createCliRenderer already wires up.
   });
 
   unsubscribe();

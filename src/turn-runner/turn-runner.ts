@@ -153,8 +153,7 @@ export class TurnRunner {
 
   /**
    * Set up a session before any turn runs. Loads memory and skills, emits
-   * `ready` with the resolved skill/agent-file context, and emits
-   * `session_started` with an initial empty `TurnState`. No agent work runs.
+   * `turn_started` with an initial empty `TurnState`. No agent work runs.
    *
    * Callers (CLI/TUI/session managers) call this once on launch so the user
    * sees available skills before typing the first prompt.
@@ -165,7 +164,7 @@ export class TurnRunner {
     const mode = command.mode ?? this.config.mode ?? "auto";
     const state = command.state ?? this.stateMachineRuntime.createInitialState(mode);
     this.state = state;
-    this.emit({ type: "session_started", state });
+    this.emit({ type: "turn_started", state });
     return state;
   }
 

@@ -67,7 +67,7 @@ describe("TurnRunner interrupts", () => {
     });
     await runner.streamStarted;
 
-    const turnState = events.find((event) => event.type === "session_started")?.state as
+    const turnState = events.find((event) => event.type === "turn_started")?.state as
       | TurnState
       | undefined;
     expect(turnState).toBeDefined();

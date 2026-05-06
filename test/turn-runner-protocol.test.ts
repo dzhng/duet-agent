@@ -18,7 +18,7 @@ describe("TurnRunner protocol scenarios", () => {
     ).turn;
 
     expect(events[0]).toMatchObject({
-      type: "session_started",
+      type: "turn_started",
       state: { status: "running", mode: "auto", agent: { status: "running" } },
     });
     expect(events.some((event) => event.type === "state_machine")).toBe(false);
@@ -71,7 +71,7 @@ describe("TurnRunner protocol scenarios", () => {
     const terminal = await (await startTurn(runner, { mode: "auto", prompt })).turn;
 
     expect(events[0]).toMatchObject({
-      type: "session_started",
+      type: "turn_started",
       state: {
         status: "running",
         mode: "auto",
@@ -296,7 +296,7 @@ describe("TurnRunner protocol scenarios", () => {
     const terminal = await (await startTurn(runner, { mode: definition, prompt })).turn;
 
     expect(events[0]).toMatchObject({
-      type: "session_started",
+      type: "turn_started",
       state: {
         status: "running",
         mode: definition,
@@ -332,7 +332,7 @@ describe("TurnRunner protocol scenarios", () => {
     ).turn;
 
     expect(events[0]).toMatchObject({
-      type: "session_started",
+      type: "turn_started",
       state: { status: "running", mode: definition, agent: { status: "running" } },
     });
     expect(terminal).toMatchObject({

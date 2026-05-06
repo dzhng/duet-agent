@@ -73,14 +73,14 @@ function createToolEventTurnRunner(): { runner: ToolEventTurnRunner; events: Tur
 }
 
 describe("TurnRunner event emission", () => {
-  test("emits session_started and the terminal event for a turn", async () => {
+  test("emits turn_started and the terminal event for a turn", async () => {
     const { runner, events } = createTurnRunner();
 
     const terminal = await (
       await startTurn(runner, { mode: "agent", prompt: "Summarize this file." })
     ).turn;
 
-    expect(events.map((event) => event.type)).toEqual(["session_started", "complete"]);
+    expect(events.map((event) => event.type)).toEqual(["turn_started", "complete"]);
     expect(events.at(-1)).toBe(terminal);
   });
 

@@ -80,7 +80,7 @@ export class Session {
   private state?: TurnState;
   /** In-flight runner turn, used to distinguish active work from a reusable terminal result. */
   private activeTurn?: Promise<void>;
-  /** In-flight runner setup, awaited before any turn dispatches so ready/session_started land first. */
+  /** In-flight runner setup, awaited before any turn dispatches so turn_started lands first. */
   private startPromise?: Promise<void>;
   /** Tracks whether `start()` has already issued setup so repeat calls stay idempotent. */
   private hasStarted = false;
@@ -116,8 +116,8 @@ export class Session {
 
   /**
    * Initialize the session before any turn runs. Calls the runner's setup
-   * step once so the caller (CLI/TUI) sees the `ready` event with skills and
-   * agent files immediately on launch, before the user types a prompt.
+   * step once so the caller can render skills and agent files immediately on
+   * launch, before the user types a prompt.
    *
    * Repeat calls are no-ops; resumed sessions reuse the persisted state.
    */
@@ -136,7 +136,7 @@ export class Session {
       ...(this.state ? { state: this.state } : {}),
       ...(input.options ? { options: input.options } : {}),
     };
-    // The runner emits `session_started` synchronously while `start` runs;
+    // The runner emits `turn_started` synchronously while `start` runs;
     // `handleTurnEvent` captures that state, so we only need to await setup.
     this.startPromise = this.runner.start(command).then(() => undefined);
     await this.startPromise;
@@ -276,7 +276,7 @@ export class Session {
       for (const resolve of this.terminalWaiters.splice(0)) {
         resolve(emitted);
       }
-    } else if (event.type === "session_started") {
+    } else if (event.type === "turn_started") {
       this.state = event.state;
     }
     this.emit(emitted);

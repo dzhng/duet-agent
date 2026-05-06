@@ -11,7 +11,7 @@ import { DUET_GATEWAY_API_KEY_ENV } from "../duet-gateway/index.js";
 
 export interface ModelResolution {
   modelName: string;
-  /** explicit: --model flag; inferred: provider env var present; default: built-in fallback. */
+  /** explicit: CLI flag; inferred: provider env var present; default: built-in fallback. */
   source: "explicit" | "inferred" | "default";
   /** Provider env var that triggered inference, e.g. "ANTHROPIC_API_KEY". */
   envVar?: string;
@@ -143,7 +143,7 @@ function findInferredProviderEntry(
 }
 
 export function describeModelResolution(resolution: ModelResolution): string {
-  if (resolution.source === "explicit") return "--model flag";
+  if (resolution.source === "explicit") return "explicit CLI flag";
   if (resolution.source === "inferred") {
     const where = resolution.fromDotenv ? "<workdir>/.env" : "shell environment";
     return `inferred from ${resolution.envVar} in ${where}`;

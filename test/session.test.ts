@@ -44,7 +44,7 @@ class FakeTurnRunner implements SessionTurnRunner {
   }
 
   async start(_command: TurnStartCommand): Promise<TurnState> {
-    this.emit({ type: "session_started", state: turnState });
+    this.emit({ type: "turn_started", state: turnState });
     return turnState;
   }
 
@@ -210,7 +210,7 @@ describe("Session", () => {
     unsubscribe();
     runner.emit({ type: "system", level: "info", message: "ignored" });
 
-    expect(events[0]).toMatchObject({ type: "session_started" });
+    expect(events[0]).toMatchObject({ type: "turn_started" });
     expect(events.at(-1)).toMatchObject({ type: "complete" });
   });
 
@@ -488,12 +488,10 @@ describe("SessionManager", () => {
       { type: "prompt", message: "two", behavior: "follow_up" },
     ]);
     expect(
-      events.some((event) => event.sessionId === "first" && event.event.type === "session_started"),
+      events.some((event) => event.sessionId === "first" && event.event.type === "turn_started"),
     ).toBe(true);
     expect(
-      events.some(
-        (event) => event.sessionId === "second" && event.event.type === "session_started",
-      ),
+      events.some((event) => event.sessionId === "second" && event.event.type === "turn_started"),
     ).toBe(true);
     expect(manager.config.memoryDbPath).toBe(join(homedir(), ".duet", "memory.db"));
 
