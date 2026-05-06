@@ -544,6 +544,13 @@ export class TurnRunner {
     input: AgentWorkerInput,
     activeSlot: "parent" | "child" = "parent",
   ): Promise<AgentWorkerResult> {
+    if (activeSlot === "parent" && this.activeAgent) {
+      throw new Error("Cannot start a parent agent while another parent agent is active.");
+    }
+    if (activeSlot === "child" && this.activeChildAgent) {
+      throw new Error("Cannot start a child agent while another child agent is active.");
+    }
+
     let control: TurnRunnerControlResult = { type: "none" };
     const agent = this.createAgent(input, (result) => {
       control = result;
