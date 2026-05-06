@@ -11,8 +11,10 @@ export interface TestSkillInput {
 
 export interface TestTurnRunnerApp {
   runner: TurnRunner;
-  addProjectSkill(input: TestSkillInput): Promise<string>;
-  addGlobalSkill(input: TestSkillInput): Promise<string>;
+  addProjectDuetSkill(input: TestSkillInput): Promise<string>;
+  addProjectAgentSkill(input: TestSkillInput): Promise<string>;
+  addGlobalDuetSkill(input: TestSkillInput): Promise<string>;
+  addGlobalAgentSkill(input: TestSkillInput): Promise<string>;
   cleanup(): Promise<void>;
 }
 
@@ -27,8 +29,12 @@ export function createTestTurnRunner(): TestTurnRunnerApp {
 
   return {
     runner,
-    addProjectSkill: (input) => writeSkill(join(root, ".agents", "skills"), input, createdPaths),
-    addGlobalSkill: (input) =>
+    addProjectDuetSkill: (input) => writeSkill(join(root, ".duet", "skills"), input, createdPaths),
+    addProjectAgentSkill: (input) =>
+      writeSkill(join(root, ".agents", "skills"), input, createdPaths),
+    addGlobalDuetSkill: (input) =>
+      writeSkill(join(homedir(), ".duet", "skills"), input, createdPaths),
+    addGlobalAgentSkill: (input) =>
       writeSkill(join(homedir(), ".agents", "skills"), input, createdPaths),
     cleanup: async () => {
       await Promise.all(createdPaths.map((path) => rm(path, { recursive: true, force: true })));

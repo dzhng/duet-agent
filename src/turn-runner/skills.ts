@@ -7,21 +7,34 @@ import { loadSkills } from "@mariozechner/pi-coding-agent";
 import type { SkillDiscoveryOptions } from "../types/config.js";
 
 const SKILL_SHELL_EXPANSION_PATTERN = /!`([\s\S]*?)`/g;
+const DEFAULT_SKILL_DIR_NAMES = [".duet", ".agents"] as const;
 
 function buildSkillDiscoveryOptions(options: SkillDiscoveryOptions | undefined, cwd: string) {
-  const agentDir = options?.agentDir ?? join(homedir(), ".agents");
+  const effectiveCwd = options?.cwd ?? cwd;
+  const globalSkillRoots = options?.agentDir
+    ? [options.agentDir]
+    : DEFAULT_SKILL_DIR_NAMES.map((dirName) => join(homedir(), dirName));
   const includeDefaults = options?.includeDefaults ?? true;
   return {
-    cwd: options?.cwd ?? cwd,
-    agentDir,
+    cwd: effectiveCwd,
+    agentDir: globalSkillRoots[0],
     includeDefaults: false,
-    skillPaths: [
-      ...(includeDefaults
-        ? [join(agentDir, "skills"), join(options?.cwd ?? cwd, ".agents", "skills")]
-        : []),
+    skillPaths: uniquePaths([
+      ...(includeDefaults ? defaultSkillPaths(globalSkillRoots, effectiveCwd) : []),
       ...(options?.skillPaths ?? []),
-    ],
+    ]),
   };
+}
+
+function defaultSkillPaths(globalSkillRoots: string[], cwd: string): string[] {
+  return [
+    ...globalSkillRoots.map((root) => join(root, "skills")),
+    ...DEFAULT_SKILL_DIR_NAMES.map((dirName) => join(cwd, dirName, "skills")),
+  ];
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return Array.from(new Set(paths));
 }
 
 function expandSkillShellCommands(content: string, cwd: string): string {

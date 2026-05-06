@@ -410,9 +410,9 @@ describe("TurnRunner skills", () => {
     expect(runner.workerInputs[0]?.prompt).toBe("/missing do work");
   });
 
-  testIfDocker("discovers project skills from the configured cwd", async () => {
+  testIfDocker("discovers project skills from .duet in the configured cwd", async () => {
     app = createTestTurnRunner();
-    const skillPath = await app.addProjectSkill({
+    const skillPath = await app.addProjectDuetSkill({
       name: "code-review",
       description: "Review changed code for correctness and simplicity.",
       body: "# Code Review\n\nPrefer direct imports and avoid thin wrappers.",
@@ -429,9 +429,58 @@ describe("TurnRunner skills", () => {
     });
   });
 
-  testIfDocker("discovers global skills from the home directory", async () => {
+  testIfDocker("discovers standard project skills from .agents in the configured cwd", async () => {
     app = createTestTurnRunner();
-    const skillPath = await app.addGlobalSkill({
+    const skillPath = await app.addProjectAgentSkill({
+      name: "standard-review",
+      description: "Review changed code from the standard skill directory.",
+      body: "# Standard Review\n\nUse the standard project skill.",
+    });
+
+    const skills = await app.runner.getSkills();
+
+    expect(skills.map((skill) => skill.name)).toEqual(["standard-review"]);
+    expect(skills[0]).toMatchObject({
+      description: "Review changed code from the standard skill directory.",
+      filePath: skillPath,
+    });
+  });
+
+  testIfDocker("discovers project skills from both .duet and .agents", async () => {
+    app = createTestTurnRunner();
+    const duetSkillPath = await app.addProjectDuetSkill({
+      name: "duet-docs",
+      description: "Document Duet-specific workflows.",
+      body: "# Duet Docs\n\nUse the Duet project skill.",
+    });
+    const agentSkillPath = await app.addProjectAgentSkill({
+      name: "agent-review",
+      description: "Review code using standard agent guidance.",
+      body: "# Agent Review\n\nUse the standard project skill.",
+    });
+
+    const skills = await app.runner.getSkills();
+
+    expect(skills.map((skill) => skill.name)).toEqual(["duet-docs", "agent-review"]);
+    expect(skills).toContainEqual(
+      expect.objectContaining({
+        name: "duet-docs",
+        description: "Document Duet-specific workflows.",
+        filePath: duetSkillPath,
+      }),
+    );
+    expect(skills).toContainEqual(
+      expect.objectContaining({
+        name: "agent-review",
+        description: "Review code using standard agent guidance.",
+        filePath: agentSkillPath,
+      }),
+    );
+  });
+
+  testIfDocker("discovers global skills from .duet in the home directory", async () => {
+    app = createTestTurnRunner();
+    const skillPath = await app.addGlobalDuetSkill({
       name: "release-notes",
       description: "Draft concise release notes from completed work.",
       body: "# Release Notes\n\nSummarize user-visible changes.",
@@ -445,9 +494,26 @@ describe("TurnRunner skills", () => {
     });
   });
 
+  testIfDocker("discovers standard global skills from .agents in the home directory", async () => {
+    app = createTestTurnRunner();
+    const skillPath = await app.addGlobalAgentSkill({
+      name: "standard-release-notes",
+      description: "Draft release notes from the standard skill directory.",
+      body: "# Standard Release Notes\n\nSummarize user-visible changes.",
+    });
+
+    const skills = await app.runner.getSkills();
+
+    expect(skills.map((skill) => skill.name)).toEqual(["standard-release-notes"]);
+    expect(skills[0]).toMatchObject({
+      description: "Draft release notes from the standard skill directory.",
+      filePath: skillPath,
+    });
+  });
+
   testIfDocker("parses block scalar skill descriptions", async () => {
     app = createTestTurnRunner();
-    await app.addProjectSkill({
+    await app.addProjectDuetSkill({
       name: "browser-qa",
       description: "|\n  Fast headless browser for QA testing.\n  Use when checking UI flows.",
       body: "# Browser QA\n\nSession quick browser checks.",
@@ -462,7 +528,7 @@ describe("TurnRunner skills", () => {
 
   testIfDocker("expands bash commands when injecting selected skill instructions", async () => {
     app = createTestTurnRunner();
-    await app.addProjectSkill({
+    await app.addProjectDuetSkill({
       name: "repo-map",
       description: "Summarize the files in the current repository.",
       body: "# Repo Map\n\nFiles:\n!`printf 'src\\ntest\\n'`",

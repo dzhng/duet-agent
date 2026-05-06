@@ -77,12 +77,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     content: "",
     fg: COLORS.status,
     height: 1,
+    flexShrink: 0,
   });
 
   const hint = new TextRenderable(renderer, {
     content: HINT_IDLE,
     fg: COLORS.hint,
     height: 1,
+    flexShrink: 0,
   });
 
   const inputBox = new BoxRenderable(renderer, {
@@ -91,6 +93,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     borderColor: COLORS.border,
     paddingLeft: 1,
     paddingRight: 1,
+    flexShrink: 0,
   });
 
   const prompt = new TextRenderable(renderer, {
@@ -104,7 +107,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   const inputField = new TextareaRenderable(renderer, {
     placeholder: "Type a message and press Enter…",
     flexGrow: 1,
-    minHeight: 3,
+    minHeight: 1,
     maxHeight: 10,
     wrapMode: "word",
   });
@@ -167,6 +170,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     running = false;
     setHint(false);
     setStatus("");
+  }
+
+  function reportError(error: unknown): void {
+    appendBlock("[error]", error instanceof Error ? error.message : String(error), COLORS.error);
+    markIdle();
   }
 
   // ---- session subscription --------------------------------------------------
@@ -337,7 +345,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const handleEsc = () => {
     if (running) {
-      void input.session.interrupt();
+      void input.session.interrupt().catch(reportError);
     } else {
       renderer.stop();
     }
@@ -370,17 +378,17 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (running) {
       // Mid-turn: Enter → steer, Shift+Enter → queued follow-up.
       const behavior = shiftEnter ? "follow_up" : "steer";
-      void input.session.prompt({ message, behavior });
+      void input.session.prompt({ message, behavior }).catch(reportError);
       // Keep status as "working"; the existing turn continues.
       return;
     }
 
     // Idle: just start (or follow up) a fresh turn.
     if (!started) {
-      void input.session.start({ prompt: message, mode: input.mode });
+      void input.session.start({ prompt: message, mode: input.mode }).catch(reportError);
       started = true;
     } else {
-      void input.session.prompt({ message, behavior: "follow_up" });
+      void input.session.prompt({ message, behavior: "follow_up" }).catch(reportError);
     }
     markRunning();
   }
@@ -403,8 +411,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   if (input.initialPrompt) {
     appendBlock("you:", input.initialPrompt, COLORS.user);
     if (!started) {
-      void input.session.start({ prompt: input.initialPrompt, mode: input.mode });
+      void input.session
+        .start({ prompt: input.initialPrompt, mode: input.mode })
+        .catch(reportError);
       started = true;
+    } else {
+      void input.session
+        .prompt({ message: input.initialPrompt, behavior: "follow_up" })
+        .catch(reportError);
     }
     markRunning();
   } else if (input.started) {

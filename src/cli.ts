@@ -187,6 +187,9 @@ async function main() {
       // Force-load the persisted state.json so the TUI can replay past
       // messages into its transcript before any new turn dispatches.
       await session.hydrate();
+      if (!session.getState()) {
+        throw new Error(`Unknown session: ${resumeSessionId}`);
+      }
       resumedHistory = session.getState()?.agent.messages;
     }
 
