@@ -13,6 +13,8 @@ import type { Session } from "../session/session.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type {
   TurnEvent,
+  TurnReadyAgentFile,
+  TurnReadySkillInfo,
   TurnStep,
   TurnTerminalEvent,
   TurnTodo,
@@ -236,8 +238,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- session subscription --------------------------------------------------
 
+  let renderedReadyIntro = false;
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
-    if (event.type === "step") {
+    if (event.type === "ready") {
+      if (!renderedReadyIntro) {
+        renderedReadyIntro = true;
+        renderReadyIntro(event.skills, event.agentFiles);
+      }
+    } else if (event.type === "step") {
       renderStep(event.step);
     } else if (event.type === "todos") {
       renderTodos(event.todos);
@@ -276,6 +284,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       markIdle();
     }
   });
+
+  function renderReadyIntro(skills: TurnReadySkillInfo[], agentFiles: TurnReadyAgentFile[]): void {
+    if (agentFiles.length === 0) {
+      appendLine("[agent file] none", COLORS.hint);
+    } else {
+      appendLine(`[agent file] ${agentFiles.map((file) => file.name).join(", ")}`, COLORS.hint);
+    }
+
+    if (skills.length === 0) {
+      appendLine("[skills] none", COLORS.hint);
+    } else {
+      const names = skills.map((skill) => skill.name).join(", ");
+      appendLine(`[skills] ${skills.length} loaded: ${names}`, COLORS.hint);
+    }
+  }
 
   function renderUsage(usage?: TurnTokenUsage): void {
     if (!usage) return;

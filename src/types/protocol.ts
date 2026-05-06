@@ -340,8 +340,30 @@ export interface TurnInterruptCommand {
 
 export type TurnRunnerCommand = TurnCommand | TurnInterruptCommand | TurnEditFollowUpQueueCommand;
 
+export interface TurnReadySkillInfo {
+  /** Skill name (from frontmatter or directory). */
+  name: string;
+  /** Skill description (from frontmatter, raw — no shell expansion). */
+  description: string;
+  /** Absolute path to the skill directory. */
+  path: string;
+  /** Where the skill was discovered. */
+  scope: "user" | "project" | "temporary";
+}
+
+export interface TurnReadyAgentFile {
+  /** Configured file name relative to the working directory, e.g. "AGENTS.md". */
+  name: string;
+  /** Absolute path on disk. */
+  path: string;
+}
+
 export interface TurnReadyEvent {
   type: "ready";
+  /** Skills discovered for this session. */
+  skills: TurnReadySkillInfo[];
+  /** System-prompt files that were resolved on disk for this session. */
+  agentFiles: TurnReadyAgentFile[];
 }
 
 export interface TurnStateStartedEvent {

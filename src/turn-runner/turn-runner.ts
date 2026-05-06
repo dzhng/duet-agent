@@ -170,7 +170,7 @@ export class TurnRunner {
   private async runTurnChain(command: TurnCommand): Promise<TurnTerminalEvent> {
     this.turnUsage = undefined;
     try {
-      this.emit({ type: "ready" });
+      this.emit(this.buildReadyEvent());
       let terminal: TurnTerminalEvent;
       terminal = await this.executeTurnCommand(command);
       terminal = await this.drainQueuedTurnCommands(terminal);
@@ -416,6 +416,19 @@ export class TurnRunner {
     for (const handler of this.eventHandlers) {
       handler(event);
     }
+  }
+
+  private buildReadyEvent(): TurnEvent {
+    return {
+      type: "ready",
+      skills: this.skillContext.getSkills().map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        path: skill.baseDir,
+        scope: skill.sourceInfo.scope,
+      })),
+      agentFiles: this.skillContext.getResolvedAgentFiles(),
+    };
   }
 
   private consumeInterruptedTerminal(): TurnTerminalEvent | undefined {

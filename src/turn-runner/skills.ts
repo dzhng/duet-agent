@@ -7,7 +7,7 @@ import { loadSkills } from "@mariozechner/pi-coding-agent";
 import type { SkillDiscoveryOptions } from "../types/config.js";
 
 const SKILL_SHELL_EXPANSION_PATTERN = /!`([\s\S]*?)`/g;
-const DEFAULT_SKILL_DIR_NAMES = [".duet", ".agents"] as const;
+const DEFAULT_SKILL_DIR_NAMES = [".duet", ".agents", ".claude"] as const;
 
 function buildSkillDiscoveryOptions(options: SkillDiscoveryOptions | undefined, cwd: string) {
   const effectiveCwd = options?.cwd ?? cwd;
