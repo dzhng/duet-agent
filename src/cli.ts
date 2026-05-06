@@ -424,18 +424,6 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-// Re-exported so tests and external callers keep their existing
-// `../src/cli.js` import paths after the model-resolution split.
-export {
-  describeModelResolution,
-  inferDefaultModelName,
-  type ModelResolution,
-  resolveCliMemoryModel,
-  resolveCliMemoryModelName,
-  resolveCliModel,
-  resolveCliModelName,
-} from "./model-resolution/index.js";
-
 async function getNewVersionNotice(): Promise<string | undefined> {
   try {
     const [currentVersion, latestVersion] = await Promise.all([
@@ -723,7 +711,7 @@ COMMANDS
 
 OPTIONS
   -m, --model <name>       TurnRunner model override
-  --memory-model <name>    Observational memory model (defaults to the turn model provider)
+  --memory-model <name>    Observational memory model (default inferred from provider env)
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
   --system-prompt <text>   Additional system instructions for the runner
