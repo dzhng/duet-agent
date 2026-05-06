@@ -10,7 +10,13 @@ import {
 } from "@opentui/core";
 import type { Session } from "../session/session.js";
 import type { TurnRunnerConfig } from "../types/config.js";
-import type { TurnEvent, TurnStep, TurnTerminalEvent } from "../types/protocol.js";
+import type {
+  TurnEvent,
+  TurnStep,
+  TurnTerminalEvent,
+  TurnTodo,
+  TurnTokenUsage,
+} from "../types/protocol.js";
 
 export interface RunTuiInput {
   session: Session;
@@ -160,10 +166,17 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
     if (event.type === "step") {
       renderStep(event.step);
+    } else if (event.type === "todos") {
+      renderTodos(event.todos);
+    } else if (event.type === "follow_up_queue") {
+      renderFollowUpQueue(event.prompts);
+    } else if (event.type === "memory") {
+      renderMemoryStatus(event);
     } else if (event.type === "system") {
       appendBlock("[system]", event.message, COLORS.system);
     } else if (event.type === "ask") {
       appendBlock("[question]", event.questions.map((q) => q.question).join("\n"), COLORS.system);
+      renderUsage(event.usage);
       lastTerminal = event;
       markIdle();
     } else if (event.type === "complete") {
@@ -174,18 +187,54 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         // for this turn (cheap heuristic: empty transcript-since-last-prompt).
         // Always-append is fine too — duplicate text is harmless and clearer for short turns.
       }
+      renderUsage(event.usage);
       lastTerminal = event;
       markIdle();
     } else if (event.type === "interrupted") {
       appendLine("[interrupted]", COLORS.system);
+      renderUsage(event.usage);
       lastTerminal = event;
       markIdle();
     } else if (event.type === "sleep") {
       appendLine(`[sleeping until ${new Date(event.wakeAt).toLocaleTimeString()}]`, COLORS.system);
+      renderUsage(event.usage);
       lastTerminal = event;
       markIdle();
     }
   });
+
+  function renderUsage(usage?: TurnTokenUsage): void {
+    if (!usage) return;
+    const parts = [`in=${usage.inputTokens}`, `out=${usage.outputTokens}`];
+    if (usage.cachedInputTokens !== undefined) parts.push(`cached=${usage.cachedInputTokens}`);
+    const cost = usage.costUsd === undefined ? "" : ` · Cost: $${usage.costUsd.toFixed(4)}`;
+    appendLine(`[usage] Tokens: ${parts.join(" ")}${cost}`, COLORS.hint);
+  }
+
+  function renderTodos(todos: TurnTodo[]): void {
+    if (todos.length === 0) {
+      appendBlock("[todos]", "No todos", COLORS.hint);
+      return;
+    }
+    appendBlock(
+      "[todos]",
+      todos.map((todo) => `${todo.status} ${todo.id}: ${todo.content}`).join("\n"),
+      COLORS.status,
+    );
+  }
+
+  function renderFollowUpQueue(prompts: string[]): void {
+    if (prompts.length === 0) {
+      setStatus(running ? "● working… (Esc to interrupt)" : "");
+      return;
+    }
+    setStatus(`queued follow-ups: ${prompts.length}`);
+    appendBlock(
+      "[follow-up queue]",
+      prompts.map((prompt, index) => `${index + 1}. ${prompt}`).join("\n"),
+      COLORS.hint,
+    );
+  }
 
   function renderStep(step: TurnStep): void {
     if (step.type === "text") {
@@ -210,6 +259,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       }
     } else if (step.type === "system") {
       appendBlock("[system]", step.message, COLORS.system);
+    }
+  }
+
+  function renderMemoryStatus(event: Extract<TurnEvent, { type: "memory" }>): void {
+    if (event.status === "running") {
+      setStatus(`● ${event.message} (Esc to interrupt)`);
+      return;
+    }
+    if (running) {
+      setStatus("● working… (Esc to interrupt)");
     }
   }
 

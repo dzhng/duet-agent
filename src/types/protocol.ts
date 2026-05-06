@@ -1,5 +1,6 @@
 import type { ImageContent, TextContent, ThinkingLevel } from "@mariozechner/pi-ai";
 import type { AgentSession } from "./agent.js";
+import type { ObservationalMemoryActivityEvent } from "./memory.js";
 import type { StateMachineDefinition, StateMachineSession } from "./state-machine.js";
 
 /**
@@ -33,7 +34,7 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  *
  * The turn runner must emit `ready` before any other event. A turn runner that is not
  * ready should not emit session, progress, or terminal events. After `ready`, the
- * runner emits any number of during-turn events (`step`, `todos`,
+ * runner emits any number of during-turn events (`step`, `todos`, `follow_up_queue`,
  * `state_machine`, `log`). The turn ends with exactly one terminal event:
  * `complete`, `ask`, `interrupted`, or `sleep`.
  * Terminal events carry the turn runner-owned state needed to continue a later turn.
@@ -51,7 +52,7 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  *
  * 1. `ready`
  * 2. `session_started` with `state.agent` populated
- * 3. zero or more `step`, `todos`, or `log` events
+ * 3. zero or more `step`, `todos`, `follow_up_queue`, or `log` events
  * 4. `complete` with the final answer and updated `state.agent`
  *
  * This behaves like a normal agent runner. There is no state-machine UI because
@@ -70,6 +71,7 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  * - `state_machine` shows the current state name
  * - `step` shows textual progress, reasoning, tool calls, or system messages
  * - `todos` shows current task progress
+ * - `follow_up_queue` shows prompts waiting for the current turn chain to finish
  * - `log` shows diagnostic messages
  *
  * The UI can always render `state.agent` as the conversation transcript. When it
@@ -213,6 +215,8 @@ export interface TurnQuestion {
 export type TurnTodoStatus = "pending" | "in_progress" | "completed" | "failed";
 
 export interface TurnTodo {
+  /** Stable identifier used by todo edits to replace an existing work item. */
+  id: string;
   /** Stable UI-facing label for the work item. */
   content: string;
   /** Current progress state for the work item. */
@@ -298,6 +302,19 @@ export interface TurnWakeCommand {
   options?: TurnOptions;
 }
 
+/**
+ * Replace the currently visible follow-up queue.
+ *
+ * This is an out-of-band edit command for UI clients. It mirrors the queue into
+ * the active pi agent when possible, but the protocol event is emitted from the
+ * runner-owned prompt list so clients can render and edit it directly.
+ */
+export interface TurnEditFollowUpQueueCommand {
+  type: "edit_follow_up_queue";
+  /** Full replacement queue, in the order prompts should be delivered. */
+  prompts: string[];
+}
+
 export type TurnCommand =
   | TurnStartCommand
   | TurnPromptCommand
@@ -311,7 +328,7 @@ export interface TurnInterruptCommand {
   state: TurnState;
 }
 
-export type TurnRunnerCommand = TurnCommand | TurnInterruptCommand;
+export type TurnRunnerCommand = TurnCommand | TurnInterruptCommand | TurnEditFollowUpQueueCommand;
 
 export interface TurnReadyEvent {
   type: "ready";
@@ -333,10 +350,20 @@ export interface TurnTodosEvent {
   todos: TurnTodo[];
 }
 
+export interface TurnFollowUpQueueEvent {
+  type: "follow_up_queue";
+  /** Prompts currently waiting to run as follow-ups after active work settles. */
+  prompts: string[];
+}
+
 export interface TurnStateMachineEvent {
   type: "state_machine";
   /** Display name/title of the current state. */
   currentState: string;
+}
+
+export interface TurnMemoryEvent extends ObservationalMemoryActivityEvent {
+  type: "memory";
 }
 
 export interface TurnTerminalBaseEvent {
@@ -376,7 +403,9 @@ export interface TurnSystemEvent {
 export type TurnDuringEvent =
   | TurnStepEvent
   | TurnTodosEvent
+  | TurnFollowUpQueueEvent
   | TurnStateMachineEvent
+  | TurnMemoryEvent
   | TurnSystemEvent;
 
 /** Events that end the current turn. */

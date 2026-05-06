@@ -6,6 +6,7 @@ import { Session, type SessionTurnRunner } from "../src/session/session.js";
 import { SessionManager } from "../src/session/session-manager.js";
 import type {
   TurnEvent,
+  TurnEditFollowUpQueueCommand,
   TurnInterruptCommand,
   TurnState,
   TurnTerminalEvent,
@@ -18,6 +19,7 @@ import { createStateMachineState } from "./helpers/turn-runner-protocol.js";
 class FakeTurnRunner implements SessionTurnRunner {
   readonly commands: TurnCommand[] = [];
   readonly interrupts: TurnInterruptCommand[] = [];
+  readonly followUpQueueEdits: TurnEditFollowUpQueueCommand[] = [];
   readonly handlers = new Set<(event: TurnEvent) => void>();
   skills: readonly { name: string }[] = [];
   skillInstructions = new Map<string, string>();
@@ -83,6 +85,11 @@ class FakeTurnRunner implements SessionTurnRunner {
     this.terminals.push(terminal);
     this.emit(terminal);
     this.resolveNext();
+  }
+
+  editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void {
+    this.followUpQueueEdits.push(command);
+    this.emit({ type: "follow_up_queue", prompts: command.prompts });
   }
 
   subscribe(handler: (event: TurnEvent) => void): () => void {
@@ -154,6 +161,20 @@ describe("Session", () => {
 
     expect(session.id).toStartWith("session_");
     expect(runner.commands).toEqual([{ type: "start", mode: undefined, prompt: "hello" }]);
+  });
+
+  testIfDocker("forwards follow-up queue edits to the runner", async () => {
+    const runner = new FakeTurnRunner([complete()]);
+    const session = await createSession(runner);
+    const events: TurnEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.editFollowUpQueue({ prompts: ["after this"] });
+
+    expect(runner.followUpQueueEdits).toEqual([
+      { type: "edit_follow_up_queue", prompts: ["after this"] },
+    ]);
+    expect(events).toContainEqual({ type: "follow_up_queue", prompts: ["after this"] });
   });
 
   testIfDocker("wraps runner events with the session id", async () => {

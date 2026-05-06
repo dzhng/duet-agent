@@ -2,6 +2,58 @@ import { describe, expect, test } from "bun:test";
 import { createTurnRunnerTools, type TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 
 describe("TurnRunner tools", () => {
+  test("todo_write replaces and merges todo lists", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "agent" });
+    const todoTool = tools.find((tool) => tool.name === "todo_write");
+
+    expect(todoTool).toBeDefined();
+    if (!todoTool) throw new Error("todo_write tool missing");
+
+    const initial = await todoTool.execute("tool-1", {
+      merge: false,
+      todos: [
+        { id: "plan", content: "Plan the work", status: "completed" },
+        { id: "test", content: "Run tests", status: "pending" },
+      ],
+    });
+
+    expect(initial.terminate).toBeUndefined();
+    expect(initial.details).toEqual({
+      type: "todo_write",
+      todos: [
+        { id: "plan", content: "Plan the work", status: "completed" },
+        { id: "test", content: "Run tests", status: "pending" },
+      ],
+    });
+    expect(initial.content).toEqual([
+      {
+        type: "text",
+        text: [
+          "Current task list:",
+          "- [completed] plan: Plan the work",
+          "- [pending] test: Run tests",
+        ].join("\n"),
+      },
+    ]);
+
+    const merged = await todoTool.execute("tool-2", {
+      merge: true,
+      todos: [
+        { id: "test", content: "Run tests", status: "in_progress" },
+        { id: "verify", content: "Verify behavior", status: "failed" },
+      ],
+    });
+
+    expect(merged.details).toEqual({
+      type: "todo_write",
+      todos: [
+        { id: "plan", content: "Plan the work", status: "completed" },
+        { id: "test", content: "Run tests", status: "in_progress" },
+        { id: "verify", content: "Verify behavior", status: "failed" },
+      ],
+    });
+  });
+
   test("returns user questions in tool details and model-visible content", async () => {
     const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "agent" });
     const askUserQuestionTool = tools.find((tool) => tool.name === "ask_user_question");

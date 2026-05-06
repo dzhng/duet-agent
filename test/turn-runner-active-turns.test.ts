@@ -72,9 +72,12 @@ describe("TurnRunner active turns", () => {
       message: "second",
       behavior: "follow_up",
     });
+    await waitFor(() => followUpQueueEvents(events).some((queue) => queue[0] === "second"));
+    expect(followUpQueueEvents(events)).toContainEqual(["second"]);
 
     runner.completeNext("first response");
     await waitFor(() => runner.pendingStreams.length === 1);
+    expect(followUpQueueEvents(events).at(-1)).toEqual([]);
     runner.completeNext("second response");
 
     const [firstTerminal, secondTerminal] = await Promise.all([first, second]);
@@ -87,6 +90,39 @@ describe("TurnRunner active turns", () => {
       "second",
       "second response",
     ]);
+  });
+
+  test("editing active follow-up queue replaces queued prompts", async () => {
+    const { runner, events } = createStreamingRunner();
+    const first = runner.turn({ type: "start", mode: "agent", prompt: "first" });
+    const state = await waitForStartedState(events);
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const queued = runner.turn({
+      type: "prompt",
+      state,
+      message: "queued before edit",
+      behavior: "follow_up",
+    });
+    await waitFor(() =>
+      followUpQueueEvents(events).some((queue) => queue[0] === "queued before edit"),
+    );
+    runner.editFollowUpQueue({
+      type: "edit_follow_up_queue",
+      prompts: ["replacement follow-up"],
+    });
+
+    expect(followUpQueueEvents(events)).toContainEqual(["queued before edit"]);
+    expect(followUpQueueEvents(events)).toContainEqual(["replacement follow-up"]);
+    runner.completeNext("first response");
+    await waitFor(() => runner.contexts.length >= 2);
+    expect(lastUserText(runner.contexts[1]!)).toContain("replacement follow-up");
+    expect(lastUserText(runner.contexts[1]!)).not.toContain("queued before edit");
+    runner.completeNext("replacement response");
+
+    const [firstTerminal, queuedTerminal] = await Promise.all([first, queued]);
+    expect(firstTerminal).toBe(queuedTerminal);
+    expect(followUpQueueEvents(events).at(-1)).toEqual([]);
   });
 
   test("steer is handled through turn and still shares the active terminal", async () => {
@@ -551,6 +587,8 @@ describe("TurnRunner active turns", () => {
       message: "queued",
       behavior: "follow_up",
     });
+    await waitFor(() => followUpQueueEvents(events).some((queue) => queue[0] === "queued"));
+    expect(followUpQueueEvents(events)).toContainEqual(["queued"]);
     runner.interrupt({ type: "interrupt", state });
     runner.completeNext("", { error: "aborted" });
 
@@ -559,6 +597,7 @@ describe("TurnRunner active turns", () => {
     expect(terminalEvents(events)).toHaveLength(1);
     expect(firstTerminal.type).toBe("interrupted");
     expect(messageTexts(firstTerminal.state)).not.toContain("queued");
+    expect(followUpQueueEvents(events).at(-1)).toEqual([]);
   });
 
   test("dispose drops queued work without starting another command", async () => {
@@ -571,6 +610,16 @@ describe("TurnRunner active turns", () => {
       type: "wake",
       state: { ...createStateMachineState("poll_email_reply"), status: "sleeping" },
     });
+    void runner.turn({
+      type: "prompt",
+      state: await waitForStartedState(events),
+      message: "queued before dispose",
+      behavior: "follow_up",
+    });
+    await waitFor(() =>
+      followUpQueueEvents(events).some((queue) => queue[0] === "queued before dispose"),
+    );
+    expect(followUpQueueEvents(events)).toContainEqual(["queued before dispose"]);
     await delay(0);
     await runner.dispose();
 
@@ -583,6 +632,7 @@ describe("TurnRunner active turns", () => {
       "Nothing to wake.",
     );
     expect(terminalEvents(events)).toHaveLength(1);
+    expect(followUpQueueEvents(events).at(-1)).toEqual([]);
   });
 
   test("answers can follow up the active child agent directly", async () => {
@@ -694,6 +744,15 @@ function terminalEvents(events: TurnEvent[]): TurnTerminalEvent[] {
       event.type === "interrupted" ||
       event.type === "sleep",
   );
+}
+
+function followUpQueueEvents(events: TurnEvent[]): string[][] {
+  return events
+    .filter(
+      (event): event is Extract<TurnEvent, { type: "follow_up_queue" }> =>
+        event.type === "follow_up_queue",
+    )
+    .map((event) => event.prompts);
 }
 
 function messageTexts(state: TurnState): string[] {

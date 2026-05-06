@@ -19,6 +19,7 @@ import { MemoryStore } from "../memory/store.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type {
   TurnAnswerCommand,
+  TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
   TurnMode,
@@ -30,6 +31,7 @@ import type {
   TurnTerminalEvent,
   TurnCommand,
   TurnOptions,
+  TurnTodo,
   TurnWakeCommand,
 } from "../types/protocol.js";
 import type {
@@ -55,6 +57,7 @@ import {
   applyStateOverride,
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
+  type TodoWriteToolDetails,
   type TurnRunnerControlResult,
   type StateMachineRunnerDecision,
 } from "./tools.js";
@@ -139,6 +142,10 @@ export class TurnRunner {
   private activeTurnPromise?: Promise<TurnTerminalEvent>;
   /** Commands that could not be absorbed into the active pi agent and must run later. */
   private readonly queuedTurnCommands: TurnCommand[] = [];
+  /** User-visible mirror of follow-up prompts accepted by this runner. */
+  private followUpQueuePrompts: string[] = [];
+  /** Current todo list emitted through todo protocol events. */
+  private todos: TurnTodo[] = [];
   /** Aggregates model usage across parent agents, child agents, and memory work for one turn chain. */
   private turnUsage?: TurnTokenUsage;
   /** Prevents queued user prompts from recursively preempting continuation prompts. */
@@ -160,6 +167,7 @@ export class TurnRunner {
     this.activeAgent?.clearAllQueues();
     this.activeChildAgent?.clearAllQueues();
     this.queuedTurnCommands.length = 0;
+    this.clearFollowUpQueue();
     await this.memoryDispose?.();
     this.memoryDispose = undefined;
   }
@@ -169,6 +177,10 @@ export class TurnRunner {
     return () => {
       this.eventHandlers.delete(handler);
     };
+  }
+
+  editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void {
+    this.replaceFollowUpQueue(command.prompts);
   }
 
   async turn(command: TurnCommand): Promise<TurnTerminalEvent> {
@@ -249,7 +261,7 @@ export class TurnRunner {
       return;
     }
 
-    this.queuedTurnCommands.push(command);
+    this.enqueueTurnCommand(command);
   }
 
   private sendCommandToAgent(agent: Agent, command: TurnPromptCommand | TurnAnswerCommand): void {
@@ -258,6 +270,7 @@ export class TurnRunner {
     if (command.behavior === "steer") {
       agent.steer(agentMessage);
     } else {
+      this.appendFollowUpPrompt(message);
       agent.followUp(agentMessage);
     }
   }
@@ -270,9 +283,11 @@ export class TurnRunner {
         (latest.type === "complete" && latest.status === "failed")
       ) {
         this.queuedTurnCommands.length = 0;
+        this.clearFollowUpQueue();
         return latest;
       }
       const queued = this.queuedTurnCommands.shift()!;
+      this.removeQueuedFollowUpPrompt(queued);
       const command = this.rebaseQueuedCommand(queued, latest.state);
       latest = await this.executeTurnCommand(command);
     }
@@ -303,7 +318,7 @@ export class TurnRunner {
     command: TurnPromptCommand | TurnAnswerCommand,
   ): void {
     if (work.promptTerminal) {
-      this.queuedTurnCommands.push(command);
+      this.enqueueTurnCommand(command);
       return;
     }
 
@@ -346,6 +361,89 @@ export class TurnRunner {
     `;
   }
 
+  private enqueueTurnCommand(command: TurnCommand): void {
+    if (
+      (command.type === "prompt" || command.type === "answer") &&
+      command.behavior === "follow_up"
+    ) {
+      this.appendFollowUpPrompt(this.commandToUserMessage(command));
+    }
+    this.queuedTurnCommands.push(command);
+  }
+
+  private replaceFollowUpQueue(prompts: string[]): void {
+    this.followUpQueuePrompts = [...prompts];
+    this.activeAgent?.clearFollowUpQueue();
+    for (const prompt of this.followUpQueuePrompts) {
+      this.activeAgent?.followUp({
+        role: "user",
+        content: prompt,
+        timestamp: Date.now(),
+      });
+    }
+    this.replaceQueuedFollowUpCommands(prompts);
+    this.emitFollowUpQueue();
+  }
+
+  private replaceQueuedFollowUpCommands(prompts: string[]): void {
+    const replacementState = this.removeQueuedFollowUpCommands();
+    if (!replacementState || this.activeAgent) return;
+    for (const prompt of prompts) {
+      this.queuedTurnCommands.push({
+        type: "prompt",
+        state: replacementState,
+        message: prompt,
+        behavior: "follow_up",
+      });
+    }
+  }
+
+  private removeQueuedFollowUpCommands(): TurnState | undefined {
+    let replacementState: TurnState | undefined;
+    for (let index = this.queuedTurnCommands.length - 1; index >= 0; index--) {
+      const command = this.queuedTurnCommands[index]!;
+      if (!this.isFollowUpQueueCommand(command)) continue;
+      replacementState = replacementState ?? command.state;
+      this.queuedTurnCommands.splice(index, 1);
+    }
+    return replacementState;
+  }
+
+  private isFollowUpQueueCommand(
+    command: TurnCommand,
+  ): command is TurnPromptCommand | TurnAnswerCommand {
+    return (
+      (command.type === "prompt" || command.type === "answer") && command.behavior === "follow_up"
+    );
+  }
+
+  private appendFollowUpPrompt(prompt: string): void {
+    this.followUpQueuePrompts.push(prompt);
+    this.emitFollowUpQueue();
+  }
+
+  private removeQueuedFollowUpPrompt(command: TurnCommand): void {
+    if (!this.isFollowUpQueueCommand(command)) return;
+    this.removeFollowUpPrompt(this.commandToUserMessage(command));
+  }
+
+  private removeFollowUpPrompt(prompt: string): void {
+    const index = this.followUpQueuePrompts.indexOf(prompt);
+    if (index === -1) return;
+    this.followUpQueuePrompts.splice(index, 1);
+    this.emitFollowUpQueue();
+  }
+
+  private clearFollowUpQueue(): void {
+    if (this.followUpQueuePrompts.length === 0) return;
+    this.followUpQueuePrompts = [];
+    this.emitFollowUpQueue();
+  }
+
+  private emitFollowUpQueue(): void {
+    this.emit({ type: "follow_up_queue", prompts: [...this.followUpQueuePrompts] });
+  }
+
   interrupt(command: TurnInterruptCommand): void {
     const interruptedState = this.recordStateInterrupted(command.state, "Interrupted");
     const terminal: TurnTerminalEvent = {
@@ -367,6 +465,7 @@ export class TurnRunner {
     this.activeAgent?.clearAllQueues();
     this.activeChildAgent?.clearAllQueues();
     this.queuedTurnCommands.length = 0;
+    this.clearFollowUpQueue();
     this.activeAgent = undefined;
     this.activeChildAgent = undefined;
     this.activeAbortController = undefined;
@@ -541,12 +640,23 @@ export class TurnRunner {
     tools: AgentTool[];
   } {
     const cwd = this.config.cwd ?? process.cwd();
+    const todoStorage = {
+      getTodos: () => this.todos,
+      setTodos: (todos: TurnTodo[]) => {
+        this.todos = todos;
+      },
+    };
     if (mode === "agent") {
-      return { tools: createDefaultTurnRunnerTools(cwd) };
+      return { tools: createDefaultTurnRunnerTools(cwd, todoStorage) };
     }
 
     return {
-      tools: createTurnRunnerTools({ cwd, mode, definition: session?.stateMachine?.definition }),
+      tools: createTurnRunnerTools({
+        cwd,
+        mode,
+        definition: session?.stateMachine?.definition,
+        todoStorage,
+      }),
     };
   }
 
@@ -669,6 +779,9 @@ export class TurnRunner {
         if (this.isTurnRunnerControlResult(context.result.details)) {
           onControlResult?.(context.result.details);
         }
+        if (this.isTodoWriteToolDetails(context.result.details)) {
+          this.emit({ type: "todos", todos: context.result.details.todos });
+        }
         return undefined;
       },
       getApiKey: getEnvApiKey,
@@ -681,6 +794,7 @@ export class TurnRunner {
       actorModel: model,
       settings: this.config.memory,
       onUsage: (usage) => this.recordUsage(usage),
+      onActivity: (event) => this.emit({ type: "memory", ...event }),
     });
   }
 
@@ -794,6 +908,12 @@ export class TurnRunner {
       type === "create_state_machine_definition" ||
       type === "select_state_machine_state" ||
       type === "prompt_state_machine_agent"
+    );
+  }
+
+  private isTodoWriteToolDetails(value: unknown): value is TodoWriteToolDetails {
+    return Boolean(
+      value && typeof value === "object" && "type" in value && value.type === "todo_write",
     );
   }
 
@@ -1379,6 +1499,9 @@ export class TurnRunner {
   }
 
   protected emitAgentEvent(event: AgentEvent): void {
+    if (event.type === "message_start" && event.message.role === "user") {
+      this.removeFollowUpPrompt(this.agentMessageText(event.message));
+    }
     if (event.type === "message_update") {
       const update = event.assistantMessageEvent;
       if (update.type === "text_end") {
@@ -1412,6 +1535,19 @@ export class TurnRunner {
         },
       });
     }
+  }
+
+  private agentMessageText(message: AgentMessage): string {
+    const content = "content" in message ? message.content : undefined;
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content
+      .flatMap((part) =>
+        part && typeof part === "object" && "text" in part && typeof part.text === "string"
+          ? [part.text]
+          : [],
+      )
+      .join("\n");
   }
 
   private findState(session: StateMachineSession, name: string): StateMachineState | undefined {

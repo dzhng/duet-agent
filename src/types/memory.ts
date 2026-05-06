@@ -55,6 +55,16 @@ export interface ObservationalMemorySnapshot {
   updatedAt: number;
 }
 
+/** Progress update emitted while observational memory is compacting context. */
+export interface ObservationalMemoryActivityEvent {
+  /** Memory operation currently affecting the model context. */
+  phase: "observation" | "reflection";
+  /** Whether the operation is still running or has finished. */
+  status: "running" | "completed";
+  /** Human-readable status suitable for CLI/TUI surfaces. */
+  message: string;
+}
+
 /** Runtime settings for converting turn-runner conversation context into observations. */
 export interface ObservationalMemorySettings {
   /** Scope assigned to newly generated observations. */

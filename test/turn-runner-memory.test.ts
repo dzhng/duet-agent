@@ -18,6 +18,17 @@ class MemoryTransformTurnRunner extends TurnRunner {
   getMemorySnapshotForTest() {
     return this.memory.getSnapshot();
   }
+
+  appendObservationForTest(content: string) {
+    return this.memory.appendObservation({
+      observedDate: "2026-05-06",
+      priority: "high",
+      scope: "session",
+      source: { kind: "system" },
+      content,
+      tags: ["test"],
+    });
+  }
 }
 
 class ModelRoutingTurnRunner extends TurnRunner {
@@ -98,6 +109,100 @@ describe("TurnRunner memory", () => {
       observations: [],
       estimatedTokens: { observations: 0 },
     });
+  });
+
+  test("observational transform emits memory activity events", async () => {
+    const runner = new MemoryTransformTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+      memory: {
+        observation: {
+          messageTokens: 10,
+          bufferActivation: 1,
+          maxTokensPerBatch: 10,
+        },
+      },
+    });
+    const events: unknown[] = [];
+    runner.subscribe((event) => events.push(event));
+    const transform = runner.createMemoryTransformForTest({
+      provider: "unknown",
+      id: "test",
+    } as Model<any>);
+
+    await expect(
+      transform([
+        {
+          role: "user",
+          content: [{ type: "text", text: "x".repeat(100) }],
+          timestamp: 1,
+        },
+      ]),
+    ).rejects.toThrow();
+
+    expect(events.filter((event) => (event as { type?: string }).type === "memory")).toEqual([
+      {
+        type: "memory",
+        phase: "observation",
+        status: "running",
+        message: "Compacting conversation into memory...",
+      },
+      {
+        type: "memory",
+        phase: "observation",
+        status: "completed",
+        message: "Memory observation complete.",
+      },
+    ]);
+  });
+
+  test("observational transform emits reflection activity events", async () => {
+    const runner = new MemoryTransformTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+      memory: {
+        observation: {
+          messageTokens: 1_000,
+          bufferActivation: 100,
+        },
+        reflection: {
+          observationTokens: 10,
+          bufferActivation: 5,
+        },
+      },
+    });
+    await runner.appendObservationForTest("x".repeat(100));
+    const events: unknown[] = [];
+    runner.subscribe((event) => events.push(event));
+    const transform = runner.createMemoryTransformForTest({
+      provider: "unknown",
+      id: "test",
+    } as Model<any>);
+
+    await expect(
+      transform([
+        {
+          role: "user",
+          content: [{ type: "text", text: "below observation threshold" }],
+          timestamp: 1,
+        },
+      ]),
+    ).rejects.toThrow();
+
+    expect(events.filter((event) => (event as { type?: string }).type === "memory")).toEqual([
+      {
+        type: "memory",
+        phase: "reflection",
+        status: "running",
+        message: "Reflecting memory observations...",
+      },
+      {
+        type: "memory",
+        phase: "reflection",
+        status: "completed",
+        message: "Memory reflection complete.",
+      },
+    ]);
   });
 
   test("routes turn and memory model overrides independently", () => {

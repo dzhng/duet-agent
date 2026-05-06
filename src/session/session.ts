@@ -4,6 +4,7 @@ import { TurnRunner, type TurnEventHandler } from "../turn-runner/turn-runner.js
 import type { TurnRunnerConfig } from "../types/config.js";
 import type {
   TurnAnswerCommand,
+  TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
   TurnMode,
@@ -35,11 +36,16 @@ export interface SessionAnswerInput {
   options?: TurnOptions;
 }
 
+export interface SessionEditFollowUpQueueInput {
+  prompts: string[];
+}
+
 export type SessionEventHandler = (event: TurnEvent) => void;
 
 export interface SessionTurnRunner {
   turn(command: TurnCommand): Promise<TurnTerminalEvent>;
   interrupt(command: TurnInterruptCommand): void;
+  editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void;
   subscribe(handler: TurnEventHandler): () => void;
   dispose(): Promise<void>;
 }
@@ -152,6 +158,13 @@ export class Session {
     const state = await this.requireState();
     this.cancelWake();
     this.runner.interrupt({ type: "interrupt", state });
+  }
+
+  editFollowUpQueue(input: SessionEditFollowUpQueueInput): void {
+    this.runner.editFollowUpQueue({
+      type: "edit_follow_up_queue",
+      prompts: input.prompts,
+    });
   }
 
   async waitForTerminal(): Promise<TurnTerminalEvent> {

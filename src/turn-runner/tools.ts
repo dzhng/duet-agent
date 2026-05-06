@@ -3,7 +3,7 @@ import { createCodingTools } from "@mariozechner/pi-coding-agent";
 import { Ajv } from "ajv";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
-import type { TurnMode, TurnQuestion } from "../types/protocol.js";
+import type { TurnMode, TurnQuestion, TurnTodo } from "../types/protocol.js";
 import type {
   StateMachineAgentState,
   StateMachineDefinition,
@@ -41,6 +41,45 @@ const askUserQuestionSchema = Type.Object({
 });
 
 type AskUserQuestionParams = Static<typeof askUserQuestionSchema>;
+
+const todoStatusSchema = Type.Union([
+  Type.Literal("pending"),
+  Type.Literal("in_progress"),
+  Type.Literal("completed"),
+  Type.Literal("failed"),
+]);
+
+const todoItemSchema = Type.Object({
+  id: Type.String({
+    description: "Stable unique identifier used to edit this todo in later calls.",
+  }),
+  content: Type.String({
+    description: "Imperative description of the task, such as 'Run tests'.",
+  }),
+  status: todoStatusSchema,
+});
+
+const todoWriteSchema = Type.Object({
+  merge: Type.Boolean({
+    description:
+      "If true, upsert todos by id into the existing list. If false, replace the entire list.",
+  }),
+  todos: Type.Array(todoItemSchema, {
+    description: "Todo items to write. Pass the full desired list when merge is false.",
+  }),
+});
+
+type TodoWriteParams = Static<typeof todoWriteSchema>;
+
+export interface TodoWriteToolDetails {
+  type: "todo_write";
+  todos: TurnTodo[];
+}
+
+export interface TodoWriteToolStorage {
+  getTodos(): TurnTodo[];
+  setTodos(todos: TurnTodo[]): void;
+}
 
 const agentOverrideSchema = Type.Partial(
   Type.Object({
@@ -292,14 +331,18 @@ interface TurnRunnerToolsInput {
   cwd: string;
   mode: TurnMode;
   definition?: StateMachineDefinition;
+  todoStorage?: TodoWriteToolStorage;
 }
 
-export function createDefaultTurnRunnerTools(cwd: string): AgentTool[] {
-  return [...createCodingTools(cwd), createAskUserQuestionTool()];
+export function createDefaultTurnRunnerTools(
+  cwd: string,
+  todoStorage: TodoWriteToolStorage = createMemoryTodoStorage(),
+): AgentTool[] {
+  return [...createCodingTools(cwd), createTodoWriteTool(todoStorage), createAskUserQuestionTool()];
 }
 
 export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] {
-  const tools = [...createDefaultTurnRunnerTools(input.cwd)];
+  const tools = [...createDefaultTurnRunnerTools(input.cwd, input.todoStorage)];
   if (input.mode === "agent") {
     return tools;
   }
@@ -344,6 +387,67 @@ function createAskUserQuestionTool(): AgentTool<typeof askUserQuestionSchema> {
       };
     },
   };
+}
+
+export function createTodoWriteTool(
+  storage: TodoWriteToolStorage = createMemoryTodoStorage(),
+): AgentTool<typeof todoWriteSchema> {
+  return {
+    name: "todo_write",
+    label: "Write todos",
+    description:
+      "Create and update the structured todo list for this agent session. Use this for multi-step work so progress is visible. Only one todo should normally be in_progress at a time. Use merge=false to replace the list, or merge=true to upsert by id.",
+    parameters: todoWriteSchema,
+    async execute(_toolCallId, params) {
+      const todos = params.merge
+        ? mergeTodos(storage.getTodos(), params.todos)
+        : normalizeTodos(params.todos);
+      storage.setTodos(todos);
+
+      const details: TodoWriteToolDetails = { type: "todo_write", todos };
+      return {
+        content: [{ type: "text", text: formatTodoWriteResult(todos) }],
+        details,
+      };
+    },
+  };
+}
+
+function createMemoryTodoStorage(): TodoWriteToolStorage {
+  let todos: TurnTodo[] = [];
+  return {
+    getTodos: () => todos,
+    setTodos: (nextTodos) => {
+      todos = nextTodos;
+    },
+  };
+}
+
+function mergeTodos(existing: TurnTodo[], incoming: TodoWriteParams["todos"]): TurnTodo[] {
+  const merged = existing.map((todo) => ({ ...todo }));
+  const indexes = new Map(merged.map((todo, index) => [todo.id, index]));
+
+  for (const todo of normalizeTodos(incoming)) {
+    const index = indexes.get(todo.id);
+    if (index === undefined) {
+      indexes.set(todo.id, merged.length);
+      merged.push(todo);
+    } else {
+      merged[index] = todo;
+    }
+  }
+
+  return merged;
+}
+
+function normalizeTodos(todos: TodoWriteParams["todos"]): TurnTodo[] {
+  return todos.map((todo) => ({ ...todo }));
+}
+
+function formatTodoWriteResult(todos: TurnTodo[]): string {
+  if (todos.length === 0) return "Current task list is empty.";
+  const lines = todos.map((todo) => `- [${todo.status}] ${todo.id}: ${todo.content}`);
+  return ["Current task list:", ...lines].join("\n");
 }
 
 function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSchema> {

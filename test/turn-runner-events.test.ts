@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentEvent } from "@mariozechner/pi-agent-core";
-import { TurnRunner } from "../src/turn-runner/turn-runner.js";
+import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
+import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
+import { waitFor } from "./helpers/async.js";
+import { createAssistantMessage } from "./helpers/messages.js";
 import { createTurnRunner } from "./helpers/turn-runner-protocol.js";
 
 class EventTurnRunner extends TurnRunner {
@@ -10,8 +13,57 @@ class EventTurnRunner extends TurnRunner {
   }
 }
 
+class ToolEventTurnRunner extends TurnRunner {
+  readonly pendingStreams: ReturnType<typeof createAssistantMessageEventStream>[] = [];
+
+  protected override createAgent(
+    input: AgentWorkerInput,
+    onControlResult?: Parameters<TurnRunner["createAgent"]>[1],
+  ): Agent {
+    const agent = super.createAgent(input, onControlResult);
+    agent.streamFn = () => {
+      const stream = createAssistantMessageEventStream();
+      this.pendingStreams.push(stream);
+      return stream;
+    };
+    return agent;
+  }
+
+  completeNextToolCall(name: string, args: Record<string, unknown>): void {
+    const stream = this.pendingStreams.shift();
+    if (!stream) throw new Error("No pending stream");
+    stream.push({
+      type: "done",
+      reason: "toolUse",
+      message: createAssistantMessage({
+        extraContent: [{ type: "toolCall", id: `tool_${Date.now()}`, name, arguments: args }],
+      }),
+    });
+  }
+
+  completeNext(text: string): void {
+    const stream = this.pendingStreams.shift();
+    if (!stream) throw new Error("No pending stream");
+    stream.push({
+      type: "done",
+      reason: "stop",
+      message: createAssistantMessage({ text }),
+    });
+  }
+}
+
 function createEventTurnRunner(): { runner: EventTurnRunner; events: TurnEvent[] } {
   const runner = new EventTurnRunner({
+    model: "anthropic:claude-opus-4-7",
+    skillDiscovery: { includeDefaults: false },
+  });
+  const events: TurnEvent[] = [];
+  runner.subscribe((event) => events.push(event));
+  return { runner, events };
+}
+
+function createToolEventTurnRunner(): { runner: ToolEventTurnRunner; events: TurnEvent[] } {
+  const runner = new ToolEventTurnRunner({
     model: "anthropic:claude-opus-4-7",
     skillDiscovery: { includeDefaults: false },
   });
@@ -102,5 +154,24 @@ describe("TurnRunner event emission", () => {
         },
       },
     ]);
+  });
+
+  test("emits todos events when todo_write runs", async () => {
+    const { runner, events } = createToolEventTurnRunner();
+    const turn = runner.turn({ type: "start", mode: "agent", prompt: "Track work with todos." });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("todo_write", {
+      merge: false,
+      todos: [{ id: "test", content: "Run tests", status: "in_progress" }],
+    });
+    await waitFor(() => events.some((event) => event.type === "todos"));
+    runner.completeNext("Done");
+    await turn;
+
+    expect(events).toContainEqual({
+      type: "todos",
+      todos: [{ id: "test", content: "Run tests", status: "in_progress" }],
+    });
   });
 });

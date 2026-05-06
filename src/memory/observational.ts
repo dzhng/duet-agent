@@ -7,6 +7,7 @@ import type { MemoryStore } from "./store.js";
 import type {
   Observation,
   ObservationPriority,
+  ObservationalMemoryActivityEvent,
   ObservationalMemorySettings,
   ObservationalMemorySettingsInput,
 } from "../types/memory.js";
@@ -159,6 +160,7 @@ export interface ObservationalMemoryTransformOptions {
   actorModel: Model<any>;
   settings?: ObservationalMemorySettingsInput;
   onUsage?: (usage: Usage) => void;
+  onActivity?: (event: ObservationalMemoryActivityEvent) => void;
 }
 
 export function resolveObservationalMemorySettings(
@@ -237,27 +239,53 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
     let retainedMessages = messages;
 
     if (rawTokens >= settings.observation.messageTokens) {
-      const retainedRawMessages = await activateObservations(
-        options.memory,
-        rawMessages,
-        settings,
-        options.actorModel,
-        options.onUsage,
-        signal,
-      );
-      retainedMessages = retainAgentMessageTail(messages, retainedRawMessages);
+      emitMemoryActivity(options.onActivity, {
+        phase: "observation",
+        status: "running",
+        message: "Compacting conversation into memory...",
+      });
+      try {
+        const retainedRawMessages = await activateObservations(
+          options.memory,
+          rawMessages,
+          settings,
+          options.actorModel,
+          options.onUsage,
+          signal,
+        );
+        retainedMessages = retainAgentMessageTail(messages, retainedRawMessages);
+      } finally {
+        emitMemoryActivity(options.onActivity, {
+          phase: "observation",
+          status: "completed",
+          message: "Memory observation complete.",
+        });
+      }
     }
 
     const snapshot = await options.memory.getSnapshot();
     const observationTokens = snapshot.estimatedTokens.observations;
     if (observationTokens >= settings.reflection.observationTokens) {
-      await reflectObservations(
-        options.memory,
-        settings,
-        options.actorModel,
-        options.onUsage,
-        signal,
-      );
+      emitMemoryActivity(options.onActivity, {
+        phase: "reflection",
+        status: "running",
+        message: "Reflecting memory observations...",
+      });
+      try {
+        await reflectObservations(
+          options.memory,
+          settings,
+          options.actorModel,
+          options.onUsage,
+          signal,
+        );
+      } finally {
+        emitMemoryActivity(options.onActivity, {
+          phase: "reflection",
+          status: "completed",
+          message: "Memory reflection complete.",
+        });
+      }
     }
 
     const refreshed = await options.memory.getSnapshot();
@@ -285,6 +313,13 @@ export function optimizeObservationsForContext(observations: string): string {
   optimized = optimized.replace(/ +/g, " ");
   optimized = optimized.replace(/\n{3,}/g, "\n\n");
   return optimized.trim();
+}
+
+function emitMemoryActivity(
+  handler: ObservationalMemoryTransformOptions["onActivity"],
+  event: ObservationalMemoryActivityEvent,
+): void {
+  handler?.(event);
 }
 
 function buildObservationContextMessage(observations: string): AgentMessage {
