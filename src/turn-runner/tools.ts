@@ -422,6 +422,8 @@ function createReadSkillTool(skills: readonly Skill[]): AgentTool<typeof readSki
       Load the full SKILL.md instructions for one of the available skills listed in the system prompt.
 
       The system prompt only lists skill names and one-line descriptions to keep the context small. When a skill's description matches the task at hand, call this tool with its name to fetch the full instructions, then follow them.
+
+      The response also includes the skill file path and base directory so you can read sibling reference files (e.g. \`<baseDir>/reference/<file>\`) referenced by the instructions.
     `,
     parameters: readSkillSchema,
     async execute(_toolCallId, params) {
@@ -432,9 +434,21 @@ function createReadSkillTool(skills: readonly Skill[]): AgentTool<typeof readSki
       }
 
       const instructions = readSkillInstructions(skill);
+      const header = dedent`
+        Skill: ${skill.name}
+        Path: ${skill.filePath}
+        Base directory: ${skill.baseDir}
+
+        ---
+      `;
       return {
-        content: [{ type: "text", text: instructions }],
-        details: { type: "read_skill", name: skill.name },
+        content: [{ type: "text", text: `${header}\n\n${instructions}` }],
+        details: {
+          type: "read_skill",
+          name: skill.name,
+          filePath: skill.filePath,
+          baseDir: skill.baseDir,
+        },
       };
     },
   };
