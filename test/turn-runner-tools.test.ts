@@ -684,12 +684,10 @@ describe("TurnRunner tools", () => {
       const text = result.content[0]?.type === "text" ? result.content[0].text : "";
       expect(text).toContain("Full instructions live here.");
       expect(text).toContain(`Path: ${skillPath}`);
-      expect(text).toContain(`Base directory: ${tempDir}`);
       expect(result.details).toEqual({
         type: "read_skill",
         name: "lazy-skill",
         filePath: skillPath,
-        baseDir: tempDir,
       });
 
       const missing = readSkillTool.execute("tool-2", { name: "does-not-exist" });
