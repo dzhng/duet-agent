@@ -112,9 +112,9 @@ export class TurnRunner {
    */
   private activeAgent?: Agent;
   /**
-   * Active state-machine child pi agent. Child agents run without state-machine
-   * tools, so only structured answers are passed through directly; prompts queue
-   * for the parent to handle after the child state finishes.
+   * Active state-machine child pi agent, when a child state is running. Child
+   * agents run without state-machine tools; only command types explicitly routed
+   * to children should use this slot, while normal prompts queue for the parent.
    */
   private activeChildAgent?: Agent;
   /** Current script or poll abort controller, used to interrupt non-agent state work. */
@@ -203,26 +203,14 @@ export class TurnRunner {
 
   private handleCommandDuringActiveTurn(command: TurnCommand): void {
     if ((command.type === "prompt" || command.type === "answer") && this.activeAgent) {
-      const message = this.commandToUserMessage(command);
-      const agentMessage = { role: "user" as const, content: message, timestamp: Date.now() };
-      if (command.behavior === "steer") {
-        this.activeAgent.steer(agentMessage);
-      } else {
-        // State-machine continuations and normal user input stay linear by
-        // entering the active parent transcript as pi follow-ups.
-        this.activeAgent.followUp(agentMessage);
-      }
+      // State-machine continuations and normal user input stay linear by
+      // entering the active parent transcript as pi follow-ups.
+      this.sendCommandToAgent(this.activeAgent, command);
       return;
     }
 
     if (command.type === "answer" && this.activeChildAgent) {
-      const message = this.commandToUserMessage(command);
-      const agentMessage = { role: "user" as const, content: message, timestamp: Date.now() };
-      if (command.behavior === "steer") {
-        this.activeChildAgent.steer(agentMessage);
-      } else {
-        this.activeChildAgent.followUp(agentMessage);
-      }
+      this.sendCommandToAgent(this.activeChildAgent, command);
       return;
     }
 
@@ -235,6 +223,16 @@ export class TurnRunner {
     }
 
     this.queuedTurnCommands.push(command);
+  }
+
+  private sendCommandToAgent(agent: Agent, command: TurnPromptCommand | TurnAnswerCommand): void {
+    const message = this.commandToUserMessage(command);
+    const agentMessage = { role: "user" as const, content: message, timestamp: Date.now() };
+    if (command.behavior === "steer") {
+      agent.steer(agentMessage);
+    } else {
+      agent.followUp(agentMessage);
+    }
   }
 
   private async drainQueuedTurnCommands(terminal: TurnTerminalEvent): Promise<TurnTerminalEvent> {
