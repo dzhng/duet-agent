@@ -5,6 +5,7 @@ import {
   type ProviderStreamOptions,
   type Tool,
   type ToolCall,
+  type Usage,
 } from "@mariozechner/pi-ai";
 import type { Static, TSchema } from "typebox";
 
@@ -14,6 +15,7 @@ export interface StructuredOutputOptions<TSchemaValue extends TSchema> {
   prompt: string;
   systemPrompt?: string;
   callOptions?: ProviderStreamOptions;
+  onUsage?: (usage: Usage) => void;
 }
 
 export async function generateStructuredOutput<TSchemaValue extends TSchema>(
@@ -31,6 +33,7 @@ export async function generateStructuredOutput<TSchemaValue extends TSchema>(
       toolChoice: forcedToolChoice(options.model, options.tool.name),
     },
   );
+  options.onUsage?.(response.usage);
 
   const toolCall = response.content.find((block) => isNamedToolCall(block, options.tool.name));
   if (!toolCall) {

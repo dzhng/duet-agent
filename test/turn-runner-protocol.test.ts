@@ -6,6 +6,7 @@ import {
   createOutreachStateMachine,
   createStateMachineState,
 } from "./helpers/turn-runner-protocol.js";
+import { createAssistantMessage } from "./helpers/messages.js";
 
 describe("TurnRunner protocol scenarios", () => {
   test("runs a simple auto-classified prompt in agent mode", async () => {
@@ -101,6 +102,56 @@ describe("TurnRunner protocol scenarios", () => {
     expect(runner.workerInputs[0]?.tools.map((tool) => tool.name)).toContain(
       "create_state_machine_definition",
     );
+  });
+
+  test("terminal usage includes state-machine child agent usage", async () => {
+    const { runner } = createTurnRunner();
+    const definition = createOutreachStateMachine();
+    runner.controlResults.push(
+      {
+        type: "create_state_machine_definition",
+        definition,
+        firstState: "research_prospect",
+      },
+      { type: "none" },
+      {
+        type: "select_state_machine_state",
+        decision: { kind: "terminal", state: "meeting_scheduled" },
+      },
+    );
+    const usageByWorker = [
+      { inputTokens: 10, outputTokens: 1, costUsd: 0.11 },
+      { inputTokens: 20, outputTokens: 2, costUsd: 0.22 },
+      { inputTokens: 30, outputTokens: 3, cachedInputTokens: 4, costUsd: 0.33 },
+    ];
+    let workerIndex = 0;
+    runner.worker = async (input, next) => {
+      const result = await next();
+      const usage = usageByWorker[workerIndex++]!;
+      result.terminal.usage = usage;
+      result.terminal.state.agent.messages = [
+        ...input.state.agent.messages,
+        createAssistantMessage({ text: `worker ${workerIndex}`, timestamp: Date.now() }),
+      ];
+      return result;
+    };
+
+    const terminal = await runner.turn({
+      type: "start",
+      prompt: "Prospect Ada until she books a meeting.",
+      mode: "auto",
+    });
+
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      usage: {
+        inputTokens: 60,
+        outputTokens: 6,
+        cachedInputTokens: 4,
+        costUsd: 0.66,
+      },
+    });
   });
 
   test("uses a steering prompt to update and continue an active state-machine session", async () => {

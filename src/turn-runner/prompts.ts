@@ -6,8 +6,9 @@ import type { TurnMode, TurnState } from "../types/protocol.js";
 import { readSkillInstructions } from "./skills.js";
 
 const TOOL_EXECUTION_SYSTEM_PROMPT = dedent`
-  Tool execution:
-  Independent tool calls are executed in parallel. When multiple tool calls do not depend on each other's results, issue them together in the same assistant turn instead of waiting for one result before starting the next.
+  <use_parallel_tool_calls>
+  For maximum efficiency, whenever you perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially. Prioritize calling tools in parallel whenever possible. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. When running multiple read-only commands like \`ls\` or \`list_dir\`, always run all of the commands in parallel. Err on the side of maximizing parallel tool calls rather than running too many tools sequentially.
+  </use_parallel_tool_calls>
 `;
 
 export function createSystemPromptWithAppendedLayers(input: {

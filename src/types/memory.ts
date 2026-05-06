@@ -1,5 +1,3 @@
-import type { Model } from "@mariozechner/pi-ai";
-
 /** Relative importance used for recall ordering and prompt rendering. */
 export type ObservationPriority = "high" | "medium" | "low";
 
@@ -59,16 +57,10 @@ export interface ObservationalMemorySnapshot {
 
 /** Runtime settings for converting turn-runner conversation context into observations. */
 export interface ObservationalMemorySettings {
-  /** Master switch for memory transform behavior. */
-  enabled: boolean;
   /** Scope assigned to newly generated observations. */
   scope: ObservationScope;
-  /** Default model for observation and reflection work unless overridden below. */
-  model?: Model<any>;
   /** Settings for extracting new observations from raw agent messages. */
   observation: {
-    /** Model override for observation extraction. */
-    model?: Model<any>;
     /** Raw message token threshold that triggers observation extraction. */
     messageTokens: number;
     /** Maximum raw-message tokens to send to one observer call. */
@@ -86,8 +78,6 @@ export interface ObservationalMemorySettings {
   };
   /** Settings for condensing the durable observation log. */
   reflection: {
-    /** Model override for reflection/condensation. */
-    model?: Model<any>;
     /** Observation token threshold that triggers reflection. */
     observationTokens: number;
     /** Fraction of the observation budget to target after reflection. */
@@ -108,6 +98,18 @@ export interface ObservationalMemorySettings {
   /** Whether provider/model changes should force observation activation. */
   activateOnProviderChange: boolean;
 }
+
+/**
+ * Caller-provided memory settings. Nested observation and reflection settings
+ * are partial because callers commonly override only thresholds or instructions
+ * while leaving the rest of the runtime defaults intact.
+ */
+export type ObservationalMemorySettingsInput = Partial<
+  Omit<ObservationalMemorySettings, "observation" | "reflection">
+> & {
+  observation?: Partial<ObservationalMemorySettings["observation"]>;
+  reflection?: Partial<ObservationalMemorySettings["reflection"]>;
+};
 
 /** Query used by MemoryStore.recall to filter and rank observations. */
 export interface ObservationQuery {

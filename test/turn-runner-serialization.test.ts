@@ -100,8 +100,10 @@ describe("TurnState serialization", () => {
       }),
     ) as Context;
 
-    expect(context.systemPrompt).toContain("Tool execution:");
-    expect(context.systemPrompt).toContain("Independent tool calls are executed in parallel.");
+    expect(context.systemPrompt).toContain("<use_parallel_tool_calls>");
+    expect(context.systemPrompt).toContain(
+      "whenever you perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially.",
+    );
   });
 
   test("configures pi-agent tool calls for parallel execution", () => {

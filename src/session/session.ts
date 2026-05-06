@@ -167,6 +167,18 @@ export class Session {
     return Boolean(this.activeTurn);
   }
 
+  /** Latest known turn state snapshot, including agent message history. */
+  getState(): TurnState | undefined {
+    return this.state;
+  }
+
+  /** Force-load persisted state for resumed sessions before any command runs. */
+  async hydrate(): Promise<void> {
+    if (!this.state && this.resumeFromStorage) {
+      this.state = await this.readStoredState();
+    }
+  }
+
   async dispose(): Promise<void> {
     this.unsubscribeRunner();
     this.cancelWake();

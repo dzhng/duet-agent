@@ -1,11 +1,11 @@
-import type { ThinkingLevel } from "@mariozechner/pi-ai";
+import type { ImageContent, TextContent, ThinkingLevel } from "@mariozechner/pi-ai";
 import type { AgentSession } from "./agent.js";
 import type { StateMachineDefinition, StateMachineSession } from "./state-machine.js";
 
 /**
  * TurnRunner Protocol
  *
- * A JSON-friendly command/event protocol for operating duet-agent turn runners.
+ * A JSON-friendly command/event protocol for operating duet turn runners.
  * The transport is intentionally unspecified. A CLI, daemon, HTTP server, or
  * parent process can all speak this protocol as long as they can send commands
  * and consume streamed events.
@@ -181,8 +181,14 @@ export interface TurnState {
 export type TurnPromptBehavior = "steer" | "follow_up";
 
 export interface TurnOptions {
-  /** Model override in provider:modelId format. */
+  /** Model override for the user-visible agent turn, in provider:modelId format. */
   model?: string;
+  /**
+   * Model override for observational memory extraction and reflection, in
+   * provider:modelId format. When omitted, memory work uses the runner's
+   * configured `memoryModel`, then the runner's configured `model`.
+   */
+  memoryModel?: string;
   thinkingLevel?: ThinkingLevel;
 }
 
@@ -228,7 +234,10 @@ export type TurnStep =
       toolName: string;
       toolCallId: string;
       status: "pending" | "running" | "completed" | "error";
-      input?: unknown;
+      /** Tool arguments as parsed by the model. Shape is tool-specific. */
+      input?: Record<string, any>;
+      /** Tool result content, present once the tool finishes (status "completed" or "error"). */
+      output?: (TextContent | ImageContent)[];
     }
   | { type: "system"; message: string };
 

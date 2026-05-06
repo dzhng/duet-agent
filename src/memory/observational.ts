@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model, Usage } from "@mariozechner/pi-ai";
 import { nanoid } from "nanoid";
 import { Type } from "typebox";
 import { generateStructuredOutput } from "../core/structured-output.js";
@@ -8,6 +8,7 @@ import type {
   Observation,
   ObservationPriority,
   ObservationalMemorySettings,
+  ObservationalMemorySettingsInput,
 } from "../types/memory.js";
 import {
   reconcileObservationGroupsFromReflection,
@@ -154,23 +155,18 @@ export class ModelByInputTokens {
 export interface ObservationalMemoryTransformOptions {
   memory: MemoryStore;
   actorModel: Model<any>;
-  settings?: boolean | Partial<ObservationalMemorySettings>;
+  settings?: ObservationalMemorySettingsInput;
+  onUsage?: (usage: Usage) => void;
 }
 
 export function resolveObservationalMemorySettings(
-  actorModel: Model<any>,
-  input?: boolean | Partial<ObservationalMemorySettings>,
+  input?: ObservationalMemorySettingsInput,
 ): ObservationalMemorySettings {
-  const partial =
-    input === true || input === undefined ? {} : input === false ? { enabled: false } : input;
-  const model = partial.model ?? actorModel;
+  const partial = input ?? {};
 
   return {
-    enabled: partial.enabled ?? true,
     scope: partial.scope ?? "session",
-    model,
     observation: {
-      model: partial.observation?.model ?? model,
       messageTokens:
         partial.observation?.messageTokens ??
         OBSERVATIONAL_MEMORY_DEFAULTS.observation.messageTokens,
@@ -186,7 +182,6 @@ export function resolveObservationalMemorySettings(
       threadTitle: partial.observation?.threadTitle,
     },
     reflection: {
-      model: partial.reflection?.model ?? model,
       observationTokens:
         partial.reflection?.observationTokens ??
         OBSERVATIONAL_MEMORY_DEFAULTS.reflection.observationTokens,
@@ -222,12 +217,10 @@ export function validateObservationalMemorySettings(settings: ObservationalMemor
 }
 
 export function createObservationalMemoryTransform(options: ObservationalMemoryTransformOptions) {
-  const settings = resolveObservationalMemorySettings(options.actorModel, options.settings);
+  const settings = resolveObservationalMemorySettings(options.settings);
   validateObservationalMemorySettings(settings);
 
   return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
-    if (!settings.enabled) return messages;
-
     const rawMessages = agentMessagesToRaw(messages);
     const rawTokens = estimateRawTokens(rawMessages);
     let retainedMessages = messages;
@@ -237,6 +230,8 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
         options.memory,
         rawMessages,
         settings,
+        options.actorModel,
+        options.onUsage,
         signal,
       );
       retainedMessages = retainAgentMessageTail(messages, retainedRawMessages);
@@ -245,7 +240,13 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
     const snapshot = await options.memory.getSnapshot();
     const observationTokens = snapshot.estimatedTokens.observations;
     if (observationTokens >= settings.reflection.observationTokens) {
-      await reflectObservations(options.memory, settings, signal);
+      await reflectObservations(
+        options.memory,
+        settings,
+        options.actorModel,
+        options.onUsage,
+        signal,
+      );
     }
 
     const refreshed = await options.memory.getSnapshot();
@@ -296,11 +297,14 @@ async function activateObservations(
   store: MemoryStore,
   messages: RawMemoryMessage[],
   settings: ObservationalMemorySettings,
+  model: Model<any>,
+  onUsage?: (usage: Usage) => void,
   _signal?: AbortSignal,
 ): Promise<RawMemoryMessage[]> {
   const snapshot = await store.getSnapshot();
-  const observations = (await observe(messages, snapshot.observations, settings, _signal))
-    .observations;
+  const observations = (
+    await observe(messages, snapshot.observations, settings, model, onUsage, _signal)
+  ).observations;
 
   if (!observations.trim()) {
     return messages;
@@ -328,17 +332,19 @@ async function activateObservations(
 async function reflectObservations(
   store: MemoryStore,
   settings: ObservationalMemorySettings,
+  model: Model<any>,
+  onUsage?: (usage: Usage) => void,
   _signal?: AbortSignal,
 ): Promise<void> {
   const snapshot = await store.getSnapshot();
   const source = snapshot.observations.map((observation) => observation.content).join("\n\n");
   const rendered = renderObservationGroupsForReflection(source) ?? source;
-  const model = settings.reflection.model ?? settings.model;
   const result = await generateStructuredOutput({
-    model: model!,
+    model,
     tool: reflectorResultTool,
     systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
     prompt: buildReflectorPrompt(rendered),
+    onUsage,
   });
   const text = sanitizeObservationLines(result.observations.trim());
   if (!text) {
@@ -364,11 +370,12 @@ async function observe(
   messages: RawMemoryMessage[],
   previousObservations: Observation[],
   settings: ObservationalMemorySettings,
+  model: Model<any>,
+  onUsage?: (usage: Usage) => void,
   _signal?: AbortSignal,
 ): Promise<ObserverResult> {
-  const model = settings.observation.model ?? settings.model;
   const result = await generateStructuredOutput({
-    model: model!,
+    model,
     tool: observerResultTool,
     systemPrompt: buildObserverSystemPrompt(
       settings.observation.instruction,
@@ -378,6 +385,7 @@ async function observe(
       messages,
       previousObservations.map((observation) => observation.content).join("\n\n"),
     ),
+    onUsage,
   });
   return {
     ...result,

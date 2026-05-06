@@ -1,5 +1,5 @@
 /**
- * duet-agent — An opinionated full-stack agent runner.
+ * duet — An opinionated full-stack agent runner.
  *
  * Native memories. Native interrupts. Multi-agent by default.
  * No MCP — everything is files and CLI.

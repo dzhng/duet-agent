@@ -1,20 +1,21 @@
 #!/usr/bin/env node
 
 /**
- * duet-agent CLI
+ * duet CLI
  *
  * Usage:
- *   duet-agent "build a todo app in React"
- *   duet-agent --model claude-opus-4-7 "refactor auth system"
- *   echo "fix the bug in server.ts" | duet-agent
+ *   duet "build a todo app in React"
+ *   duet --model claude-opus-4-7 "refactor auth system"
+ *   echo "fix the bug in server.ts" | duet
  */
 
-import { join } from "node:path";
-import { createInterface } from "node:readline/promises";
+import { basename, join } from "node:path";
+import type { TextContent } from "@mariozechner/pi-ai";
 import dotenv from "dotenv";
 import { SessionManager } from "./session/session-manager.js";
+import { runTui } from "./tui/app.js";
 import type { TurnRunnerConfig } from "./types/config.js";
-import type { TurnStep, TurnTerminalEvent } from "./types/protocol.js";
+import type { TurnStep, TurnTerminalEvent, TurnTokenUsage } from "./types/protocol.js";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -84,8 +85,8 @@ async function main() {
   }
 
   if (!prompt && !resumeSessionId && !interactive) {
-    console.error("Usage: duet-agent <prompt>");
-    console.error('  e.g., duet-agent "build a todo app"');
+    console.error("Usage: duet <prompt>");
+    console.error('  e.g., duet "build a todo app"');
     process.exit(1);
   }
 
@@ -103,16 +104,24 @@ async function main() {
     ...(systemPromptFiles ? { systemPromptFiles } : {}),
   };
 
+  // The TUI owns rendering when active, so we suppress stdout step printing
+  // there to avoid corrupting the alternate-screen UI.
+  const useTui = interactive && !jsonOutput;
+
   const manager = new SessionManager(config);
   let streamedTextThisTurn = false;
   manager.subscribe(({ event }) => {
     if (jsonOutput) {
       process.stdout.write(`${JSON.stringify(event)}\n`);
-    } else if (event.type === "step") {
+    } else if (event.type === "step" && !useTui) {
       if (event.step.type === "text") {
         streamedTextThisTurn = true;
       }
       handleStep(event.step);
+    } else if (event.type === "step" && event.step.type === "text") {
+      // Track streaming even when the TUI is rendering, so post-TUI fallback
+      // result handling stays consistent.
+      streamedTextThisTurn = true;
     }
   });
 
@@ -122,45 +131,54 @@ async function main() {
       : manager.create({ mode: config.mode, prompt });
     let terminal: TurnTerminalEvent | undefined;
     let started = Boolean(prompt || resumeSessionId);
-    if (prompt && resumeSessionId) {
-      streamedTextThisTurn = false;
-      await session.prompt({ message: prompt });
-      terminal = await session.waitForTerminal();
-      handleTerminal(terminal, {
-        suppressHumanOutput: jsonOutput,
-        suppressResult: streamedTextThisTurn,
-      });
-    } else if (prompt && !resumeSessionId) {
-      terminal = await session.waitForTerminal();
-      handleTerminal(terminal, {
-        suppressHumanOutput: jsonOutput,
-        suppressResult: streamedTextThisTurn,
-      });
+    let initialTuiPrompt: string | undefined;
+    let resumedHistory: import("@mariozechner/pi-agent-core").AgentMessage[] | undefined;
+
+    if (resumeSessionId && useTui) {
+      // Force-load the persisted state.json so the TUI can replay past
+      // messages into its transcript before any new turn dispatches.
+      await session.hydrate();
+      resumedHistory = session.getState()?.agent.messages;
     }
 
-    if (interactive) {
-      process.stderr.write(`\nSession: ${session.id}\n`);
-      const readline = createInterface({ input: process.stdin, output: process.stdout });
-      try {
-        while (true) {
-          const prompt = (await readline.question("> ")).trim();
-          if (!prompt || prompt === "/exit" || prompt === "/quit") break;
-          streamedTextThisTurn = false;
-          if (started) {
-            await session.prompt({ message: prompt });
-          } else {
-            await session.start({ prompt, mode: config.mode });
-            started = true;
-          }
-          terminal = await session.waitForTerminal();
-          handleTerminal(terminal, {
-            suppressHumanOutput: jsonOutput,
-            suppressResult: streamedTextThisTurn,
-          });
-        }
-      } finally {
-        readline.close();
+    if (prompt && resumeSessionId) {
+      // Resuming an existing session with a new prompt — run it before the TUI
+      // takes over so any non-interactive output is preserved.
+      streamedTextThisTurn = false;
+      if (useTui) {
+        // Defer to TUI: it will dispatch the prompt itself as a follow-up.
+        initialTuiPrompt = prompt;
+      } else {
+        await session.prompt({ message: prompt });
+        terminal = await session.waitForTerminal();
+        handleTerminal(terminal, {
+          suppressHumanOutput: jsonOutput,
+          suppressResult: streamedTextThisTurn,
+        });
       }
+    } else if (prompt && !resumeSessionId) {
+      if (useTui) {
+        // The session was created with this prompt but not yet started; let the
+        // TUI start it so the user sees streaming inside the UI.
+        initialTuiPrompt = prompt;
+        started = false;
+      } else {
+        terminal = await session.waitForTerminal();
+        handleTerminal(terminal, {
+          suppressHumanOutput: jsonOutput,
+          suppressResult: streamedTextThisTurn,
+        });
+      }
+    }
+
+    if (useTui) {
+      terminal = await runTui({
+        session,
+        started,
+        ...(initialTuiPrompt ? { initialPrompt: initialTuiPrompt } : {}),
+        ...(resumedHistory ? { history: resumedHistory } : {}),
+        mode: config.mode,
+      });
     }
 
     process.stderr.write(
@@ -201,6 +219,17 @@ function handleTerminal(
   if (terminal.type === "sleep") {
     process.stderr.write(`Sleeping until ${new Date(terminal.wakeAt).toISOString()}.\n`);
   }
+  if (terminal.usage) {
+    process.stderr.write(`${formatUsage(terminal.usage)}\n`);
+  }
+}
+
+function formatUsage(usage: TurnTokenUsage): string {
+  const parts = [`in=${usage.inputTokens}`, `out=${usage.outputTokens}`];
+  if (usage.cachedInputTokens !== undefined) parts.push(`cached=${usage.cachedInputTokens}`);
+  let line = `Tokens: ${parts.join(" ")}`;
+  if (usage.costUsd !== undefined) line += ` \u00b7 Cost: $${usage.costUsd.toFixed(4)}`;
+  return line;
 }
 
 function handleStep(step: TurnStep): void {
@@ -227,7 +256,18 @@ function formatReasoning(text: string): string {
 function formatToolCall(step: Extract<TurnStep, { type: "tool_call" }>): string {
   const status = step.status ? ` ${step.status}` : "";
   const input = step.input === undefined ? "" : `\n${JSON.stringify(step.input, null, 2)}`;
-  return `\n[tool ${step.toolName}${status}]${input}\n[/tool]\n`;
+  let output = "";
+  if (step.output && step.output.length > 0) {
+    const text = step.output
+      .filter((b): b is TextContent => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+    if (text) {
+      const label = step.status === "error" ? "output error" : "output";
+      output = `\n[${label}]\n${text}\n[/output]\n`;
+    }
+  }
+  return `\n[tool ${step.toolName}${status}]${input}${output}\n[/tool]\n`;
 }
 
 function fail(message: string): never {
@@ -245,7 +285,7 @@ function resumeCommand(
   },
 ): string {
   const command = [
-    "duet-agent",
+    detectInvocationPrefix(),
     "--resume",
     shellQuote(sessionId),
     "--model",
@@ -268,6 +308,17 @@ function resumeCommand(
   return command.join(" ");
 }
 
+// Detect how this CLI was invoked so the resume hint copy-pastes back into
+// the user's actual shell. `bun run cli` and `bun src/cli.ts` are common
+// during local development; the published bin is `duet`.
+function detectInvocationPrefix(): string {
+  const scriptPath = process.argv[1] ?? "";
+  const base = basename(scriptPath);
+  if (process.env.npm_lifecycle_event === "cli") return "bun run cli";
+  if (base === "cli.ts" || scriptPath.includes("/src/cli.ts")) return "bun src/cli.ts";
+  return "duet";
+}
+
 function shellQuote(value: string): string {
   if (/^[A-Za-z0-9_./:=+-]+$/.test(value)) return value;
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -275,11 +326,11 @@ function shellQuote(value: string): string {
 
 function printHelp() {
   console.log(`
-duet-agent — An opinionated full-stack agent runner
+duet — An opinionated full-stack agent runner
 
 USAGE
-  duet-agent [options] [prompt]
-  echo "prompt" | duet-agent
+  duet [options] [prompt]
+  echo "prompt" | duet
 
 OPTIONS
   -m, --model <name>       TurnRunner model (default: anthropic:claude-opus-4-7)
@@ -293,20 +344,20 @@ OPTIONS
   -h, --help               Show this help
 
 INTERACTIVE
-  In a TTY, duet-agent keeps one local session open after terminal events.
+  In a TTY, duet keeps one local session open after terminal events.
   Type /exit or /quit to end the conversation.
 
 MODELS
   Use provider:modelId syntax, e.g. anthropic:claude-opus-4-7
 
 EXAMPLES
-  duet-agent "build a REST API with Express and TypeScript"
-  duet-agent -m openai:gpt-5.5 "analyze the performance of our test suite"
-  duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.7 "refactor the auth module"
-  duet-agent --system-prompt "Prefer concise answers." "review this repo"
-  duet-agent --system-prompt-file TEAM.md "review this repo"
-  duet-agent --workdir ./my-project "refactor the auth module"
-  duet-agent --resume session_abc123 --workdir ./my-project
+  duet "build a REST API with Express and TypeScript"
+  duet -m openai:gpt-5.5 "analyze the performance of our test suite"
+  duet -m vercel-ai-gateway:anthropic/claude-opus-4.7 "refactor the auth module"
+  duet --system-prompt "Prefer concise answers." "review this repo"
+  duet --system-prompt-file TEAM.md "review this repo"
+  duet --workdir ./my-project "refactor the auth module"
+  duet --resume session_abc123 --workdir ./my-project
 `);
 }
 

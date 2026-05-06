@@ -1,5 +1,10 @@
-import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
-import { getEnvApiKey, getModel, type Model } from "@mariozechner/pi-ai";
+import {
+  Agent,
+  type AgentEvent,
+  type AgentMessage,
+  type AgentTool,
+} from "@mariozechner/pi-agent-core";
+import { getEnvApiKey, getModel, type Model, type Usage } from "@mariozechner/pi-ai";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
 import { execFile, type ExecException } from "node:child_process";
@@ -19,6 +24,7 @@ import type {
   TurnMode,
   TurnPromptCommand,
   TurnState,
+  TurnTokenUsage,
   TurnStartCommand,
   TurnRunnerTerminalStatus,
   TurnTerminalEvent,
@@ -54,6 +60,7 @@ import {
 } from "./tools.js";
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_MODEL = "anthropic:claude-opus-4-7";
 
 export type TurnEventHandler = (event: TurnEvent) => void;
 
@@ -131,6 +138,8 @@ export class TurnRunner {
   private activeTurnPromise?: Promise<TurnTerminalEvent>;
   /** Commands that could not be absorbed into the active pi agent and must run later. */
   private readonly queuedTurnCommands: TurnCommand[] = [];
+  /** Aggregates model usage across parent agents, child agents, and memory work for one turn chain. */
+  private turnUsage?: TurnTokenUsage;
   /** Prevents queued user prompts from recursively preempting continuation prompts. */
   private drainingQueuedCommandsBeforeContinuation = false;
   /** Explicit and discovered skills available for prompt injection and slash commands. */
@@ -186,12 +195,23 @@ export class TurnRunner {
   }
 
   private async runTurnChain(command: TurnCommand): Promise<TurnTerminalEvent> {
-    this.emit({ type: "ready" });
-    let terminal: TurnTerminalEvent;
-    terminal = await this.executeTurnCommand(command);
-    terminal = await this.drainQueuedTurnCommands(terminal);
-    this.emit(terminal);
-    return terminal;
+    this.turnUsage = undefined;
+    try {
+      this.emit({ type: "ready" });
+      let terminal: TurnTerminalEvent;
+      terminal = await this.executeTurnCommand(command);
+      terminal = await this.drainQueuedTurnCommands(terminal);
+      terminal = this.withTurnUsage(terminal);
+      this.emit(terminal);
+      return terminal;
+    } finally {
+      this.turnUsage = undefined;
+    }
+  }
+
+  private withTurnUsage<T extends TurnTerminalEvent>(terminal: T): T {
+    if (!this.turnUsage) return terminal;
+    return { ...terminal, usage: this.turnUsage };
   }
 
   private async executeTurnCommand(command: TurnCommand): Promise<TurnTerminalEvent> {
@@ -445,7 +465,7 @@ export class TurnRunner {
     mode: Exclude<TurnMode, "agent">;
     options?: TurnOptions;
   }): Promise<TurnTerminalEvent> {
-    const workerResult = await this.runAgentWorker({
+    const workerResult = await this.runAgentWorkerWithUsage({
       state: input.state,
       prompt: input.prompt,
       options: input.options,
@@ -534,7 +554,7 @@ export class TurnRunner {
     prompt: string,
     options?: TurnOptions,
   ): Promise<TurnTerminalEvent> {
-    const workerResult = await this.runAgentWorker({
+    const workerResult = await this.runAgentWorkerWithUsage({
       state,
       prompt,
       options,
@@ -592,6 +612,7 @@ export class TurnRunner {
     }
 
     const messages = agent.state.messages;
+    const usage = this.usageFromMessages(messages.slice(input.state.agent.messages.length));
     const status = agent.state.errorMessage ? "failed" : "completed";
     const state = {
       ...input.state,
@@ -610,19 +631,30 @@ export class TurnRunner {
         state,
         result: assistantText(messages),
         error: agent.state.errorMessage,
+        usage,
       },
     };
+  }
+
+  private async runAgentWorkerWithUsage(
+    input: AgentWorkerInput,
+    activeSlot: "parent" | "state_machine_child" = "parent",
+  ): Promise<AgentWorkerResult> {
+    const result = await this.runAgentWorker(input, activeSlot);
+    this.recordUsage(result.terminal.usage);
+    return result;
   }
 
   protected createAgent(
     input: AgentWorkerInput,
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
-    const model = this.resolveModel(input.options);
+    const model = this.resolveTurnModel(input.options);
+    const memoryModel = this.resolveMemoryModel(input.options);
     return new Agent({
       initialState: {
         model,
-        thinkingLevel: input.options?.thinkingLevel ?? "medium",
+        thinkingLevel: input.options?.thinkingLevel ?? this.config.thinkingLevel ?? "medium",
         systemPrompt: this.createBaseSystemPromptWithAppendedLayers({
           append: [input.appendSystemPrompt],
           skills: input.skills,
@@ -630,7 +662,7 @@ export class TurnRunner {
         messages: input.state.agent.messages,
         tools: input.tools,
       },
-      transformContext: this.createMemoryTransform(model),
+      transformContext: this.createMemoryTransform(memoryModel),
       toolExecution: "parallel",
       afterToolCall: async (context) => {
         if (this.isTurnRunnerControlResult(context.result.details)) {
@@ -647,6 +679,7 @@ export class TurnRunner {
       memory: this.memory,
       actorModel: model,
       settings: this.config.memory,
+      onUsage: (usage) => this.recordUsage(usage),
     });
   }
 
@@ -863,18 +896,17 @@ export class TurnRunner {
       stateMachine: undefined,
       agent: { ...session.agent, status: "running" },
     };
-    const childResult = (
-      await this.runAgentWorker(
-        {
-          state: childState,
-          prompt,
-          appendSystemPrompt: state.systemPrompt,
-          skills: this.resolveStateAgentSkills(state),
-          ...this.createTools("agent"),
-        },
-        "state_machine_child",
-      )
-    ).terminal;
+    const childWorkerResult = await this.runAgentWorkerWithUsage(
+      {
+        state: childState,
+        prompt,
+        appendSystemPrompt: state.systemPrompt,
+        skills: this.resolveStateAgentSkills(state),
+        ...this.createTools("agent"),
+      },
+      "state_machine_child",
+    );
+    const childResult = childWorkerResult.terminal;
     const parentSession = { ...session, agent: childResult.state.agent };
     const rawOutput = {
       result: childResult.type === "complete" ? childResult.result : undefined,
@@ -1191,7 +1223,7 @@ export class TurnRunner {
           ? ""
           : `This is retry ${attempt} of 3. You did not call select_state_machine_state last time. You must call select_state_machine_state now.`;
 
-      const workerResult = await this.runAgentWorker({
+      const workerResult = await this.runAgentWorkerWithUsage({
         state: nextSession,
         prompt: dedent`
           The state "${state}" finished.
@@ -1270,8 +1302,72 @@ export class TurnRunner {
     };
   }
 
-  private resolveModel(options?: TurnOptions): Model<any> {
-    const modelName = options?.model ?? this.config.model;
+  protected resolveTurnModel(options?: TurnOptions): Model<any> {
+    return this.resolveModelName(options?.model ?? this.config.model ?? DEFAULT_MODEL);
+  }
+
+  protected resolveMemoryModel(options?: TurnOptions): Model<any> {
+    return this.resolveModelName(
+      options?.memoryModel ?? this.config.memoryModel ?? this.config.model ?? DEFAULT_MODEL,
+    );
+  }
+
+  protected recordUsage(usage?: TurnTokenUsage | Usage): void {
+    if (!usage) return;
+    const normalized = this.normalizeUsage(usage);
+    const current = this.turnUsage ?? { inputTokens: 0, outputTokens: 0 };
+    current.inputTokens += normalized.inputTokens;
+    current.outputTokens += normalized.outputTokens;
+    if (normalized.cachedInputTokens !== undefined) {
+      current.cachedInputTokens = (current.cachedInputTokens ?? 0) + normalized.cachedInputTokens;
+    }
+    if (normalized.costUsd !== undefined) {
+      current.costUsd = (current.costUsd ?? 0) + normalized.costUsd;
+    }
+    this.turnUsage = current;
+  }
+
+  private normalizeUsage(usage: TurnTokenUsage | Usage): TurnTokenUsage {
+    if ("inputTokens" in usage) return usage;
+    return {
+      inputTokens: usage.input,
+      outputTokens: usage.output,
+      cachedInputTokens: usage.cacheRead,
+      costUsd: usage.cost.total,
+    };
+  }
+
+  private usageFromMessages(messages: readonly AgentMessage[]): TurnTokenUsage | undefined {
+    const usage: TurnTokenUsage = { inputTokens: 0, outputTokens: 0 };
+    let hasUsage = false;
+
+    for (const message of messages) {
+      if (!this.isAssistantMessageWithUsage(message)) continue;
+      hasUsage = true;
+      usage.inputTokens += message.usage.input;
+      usage.outputTokens += message.usage.output;
+      usage.cachedInputTokens = (usage.cachedInputTokens ?? 0) + message.usage.cacheRead;
+      usage.costUsd = (usage.costUsd ?? 0) + message.usage.cost.total;
+    }
+
+    return hasUsage ? usage : undefined;
+  }
+
+  private isAssistantMessageWithUsage(
+    message: AgentMessage,
+  ): message is AgentMessage & { usage: Usage } {
+    return (
+      typeof message === "object" &&
+      message !== null &&
+      "role" in message &&
+      message.role === "assistant" &&
+      "usage" in message &&
+      typeof message.usage === "object" &&
+      message.usage !== null
+    );
+  }
+
+  private resolveModelName(modelName: string): Model<any> {
     const separator = modelName.indexOf(":");
     if (separator === -1) {
       throw new Error("Models must use provider:modelId syntax");
@@ -1311,6 +1407,7 @@ export class TurnRunner {
           toolName: event.toolName,
           toolCallId: event.toolCallId,
           status: event.isError ? "error" : "completed",
+          output: event.result?.content,
         },
       });
     }
