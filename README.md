@@ -121,16 +121,22 @@ Pattern-based (fast, regex) and semantic (LLM-evaluated) guardrails compose into
 
 ## CLI Install
 
+The CLI runs on Bun because OpenTUI is Bun-native. Install Bun first if it is not already available:
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
 Install the CLI globally to make the `duet` command available on your PATH:
 
 ```bash
-npm install --global @dzhng/duet-agent
+bun add --global @dzhng/duet-agent
 ```
 
 You can also install it globally with another package manager:
 
 ```bash
-bun add --global @dzhng/duet-agent
+npm install --global @dzhng/duet-agent
 pnpm add --global @dzhng/duet-agent
 yarn global add @dzhng/duet-agent
 ```
