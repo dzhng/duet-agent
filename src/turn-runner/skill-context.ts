@@ -10,10 +10,12 @@ import {
   mergeSkillsByName,
   prepareExplicitSkills,
   readSkillInstructions,
+  type SkillCollision,
 } from "./skills.js";
 
 export class SkillContext {
   private skills: Skill[];
+  private collisions: SkillCollision[] = [];
   private loaded = false;
 
   constructor(private readonly config: TurnRunnerConfig) {
@@ -28,11 +30,16 @@ export class SkillContext {
       this.config.skillDiscovery,
       this.config.cwd ?? process.cwd(),
     );
-    this.skills = mergeSkillsByName(this.skills, discovered);
+    this.skills = mergeSkillsByName(this.skills, discovered.skills);
+    this.collisions = discovered.collisions;
   }
 
   getSkills(): readonly Skill[] {
     return [...this.skills];
+  }
+
+  getSkillCollisions(): readonly SkillCollision[] {
+    return this.collisions;
   }
 
   getSkillInstructions(skillId: string): string {
@@ -90,18 +97,28 @@ export class SkillContext {
     });
   }
 
-  private readSystemPromptFileLayers(): string[] {
+  /** System-prompt files (AGENTS.md by default) that exist on disk. */
+  getResolvedAgentFiles(): Array<{ name: string; path: string }> {
     const cwd = this.config.cwd ?? process.cwd();
     const fileNames = this.config.systemPromptFiles ?? ["AGENTS.md"];
-    const layers: string[] = [];
+    const resolved: Array<{ name: string; path: string }> = [];
     for (const fileName of fileNames) {
       const path = join(cwd, fileName);
-      if (!existsSync(path)) continue;
+      if (existsSync(path)) {
+        resolved.push({ name: fileName, path });
+      }
+    }
+    return resolved;
+  }
+
+  private readSystemPromptFileLayers(): string[] {
+    const layers: string[] = [];
+    for (const file of this.getResolvedAgentFiles()) {
       layers.push(
         toXML({
           system_prompt_file: {
-            _attrs: { path: fileName },
-            content: readFileSync(path, "utf-8").trim(),
+            _attrs: { path: file.name },
+            content: readFileSync(file.path, "utf-8").trim(),
           },
         }),
       );

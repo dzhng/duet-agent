@@ -20,6 +20,7 @@ import { shimDuetApiKeyToAiGateway } from "./duet-gateway/index.js";
 import { formatCompactJson } from "./lib/compact-json.js";
 import { describeModelResolution, resolveCliModel } from "./model-resolution/index.js";
 import { SessionManager } from "./session/session-manager.js";
+import { discoverInstalledSkills, resolveSkillScope } from "./turn-runner/skills.js";
 import { runTui } from "./tui/app.js";
 import type { TurnRunnerConfig } from "./types/config.js";
 import type { TurnStep, TurnTerminalEvent, TurnTokenUsage } from "./types/protocol.js";
@@ -51,6 +52,15 @@ async function main() {
   if (args[0] === "upgrade") {
     try {
       await runUpgradeCommand(args.slice(1));
+    } catch (err: any) {
+      console.error(`Fatal: ${err.message}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (args[0] === "skills") {
+    try {
+      runSkillsCommand(args.slice(1));
     } catch (err: any) {
       console.error(`Fatal: ${err.message}`);
       process.exitCode = 1;
@@ -532,6 +542,39 @@ async function runUpgradeCommand(args: string[]): Promise<void> {
   await runCommand(command[0]!, command.slice(1));
 }
 
+function runSkillsCommand(args: string[]): void {
+  let workDir = process.cwd();
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--workdir":
+      case "-w":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        workDir = args[++i]!;
+        break;
+      case "--help":
+      case "-h":
+        printSkillsHelp();
+        return;
+      default:
+        fail(`Unknown skills option: ${args[i]}`);
+    }
+  }
+
+  const { skills, collisions } = discoverInstalledSkills(workDir);
+  const output = skills.map((skill) => ({
+    name: skill.name,
+    description: skill.description,
+    path: skill.baseDir,
+    scope: resolveSkillScope(skill, workDir),
+  }));
+  process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+  for (const collision of collisions) {
+    process.stderr.write(
+      `[skill collision] "${collision.name}": kept ${collision.winnerPath}, ignored ${collision.loserPath}\n`,
+    );
+  }
+}
+
 function parsePackageManager(value: string): PackageManager {
   if (PACKAGE_MANAGERS.includes(value as PackageManager)) return value as PackageManager;
   fail(`Unsupported package manager: ${value}`);
@@ -709,6 +752,26 @@ EXAMPLES
   duet --workdir ./my-project "refactor the auth module"
   duet --resume session_abc123 --workdir ./my-project
   duet upgrade
+`);
+}
+
+function printSkillsHelp() {
+  console.log(`
+duet skills — List installed skills as JSON
+
+USAGE
+  duet skills [--workdir <path>]
+
+OPTIONS
+  -w, --workdir <path>     Working directory for project-local skills (default: cwd)
+  -h, --help               Show this help
+
+OUTPUT
+  Prints a JSON array of installed skills. Each entry has:
+    name         Skill name
+    description  Skill description (from frontmatter, raw — no shell expansion)
+    path         Absolute path to the skill directory
+    scope        "user", "project", or "temporary"
 `);
 }
 

@@ -42,6 +42,7 @@ import {
   type AgentWorkerResult,
 } from "./agent-worker.js";
 import { SkillContext } from "./skill-context.js";
+import { resolveSkillScope } from "./skills.js";
 import { StateMachineRuntime, type ActiveStateWork } from "./state-machine-runtime.js";
 import { addUsage } from "./usage-accounting.js";
 
@@ -172,7 +173,7 @@ export class TurnRunner {
   private async runTurnChain(command: TurnCommand): Promise<TurnTerminalEvent> {
     this.turnUsage = undefined;
     try {
-      this.emit({ type: "ready" });
+      this.emit(this.buildReadyEvent());
       let terminal: TurnTerminalEvent;
       terminal = await this.executeTurnCommand(command);
       terminal = await this.drainQueuedTurnCommands(terminal);
@@ -418,6 +419,21 @@ export class TurnRunner {
     for (const handler of this.eventHandlers) {
       handler(event);
     }
+  }
+
+  private buildReadyEvent(): TurnEvent {
+    const cwd = this.config.cwd ?? process.cwd();
+    return {
+      type: "ready",
+      skills: this.skillContext.getSkills().map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        path: skill.baseDir,
+        scope: resolveSkillScope(skill, cwd),
+      })),
+      agentFiles: this.skillContext.getResolvedAgentFiles(),
+      skillCollisions: [...this.skillContext.getSkillCollisions()],
+    };
   }
 
   private consumeInterruptedTerminal(): TurnTerminalEvent | undefined {
