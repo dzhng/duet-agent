@@ -56,9 +56,9 @@ stateDiagram-v2
 
 Each state is one of the four kinds the runner understands:
 
-- **agent** states run a sub-agent with a prompt, context scope, and skill access.
+- **agent** states run a sub-agent with a prompt, optional system prompt, and optional skill allowlist.
 - **script** states shell out (`bash`, `curl`, CLIs) for anything with an API.
-- **poll** states wait on an external signal by re-running a script or prompt on an interval.
+- **poll** states wait on an external signal by running one script check per interval, or by using a timer poll for pure delays.
 - **terminal** states record a business outcome (`completed`, `cancelled`, `failed`).
 
 Observational memory, pi coding tools, and guardrails sit underneath every state transition; they
@@ -74,7 +74,7 @@ The memory model follows observational memory: turn runner session messages are 
 
 ### Pi Coding Tools
 
-Sub-agents use the default tools from `@mariozechner/pi-coding-agent`: read, bash, edit, and write. The turn runner supplies a working directory and filters the allowed tool names; it does not wrap those tools in a second sandbox abstraction.
+Sub-agents use the default tools from `@mariozechner/pi-coding-agent`: read, bash, edit, and write. The turn runner supplies a working directory and can restrict which skills are injected into a state-machine agent state; it does not wrap those tools in a second sandbox abstraction.
 
 ### Native Interrupts
 
@@ -82,7 +82,7 @@ Interrupt behavior comes from the underlying pi agent runtime. A user can send a
 
 ### Multi-Agent by Default
 
-The turn runner can delegate durable process steps into agent states. Agent states are not pre-built classes; they are state-machine states with prompts, context scope, model options, and skill access.
+The turn runner can delegate durable process steps into agent states. Agent states are not pre-built classes; they are state-machine states with prompts, optional system prompts, and optional skill allowlists.
 
 ### Three Execution Modes
 
@@ -98,13 +98,13 @@ The current code is still scaffolding, but this is the intended boundary: normal
 
 duet-agent is exploring long-running agent-routed state machines for business processes like outbound sales, conference outreach, and development loops. The design goal is **not** to become a workflow engine like Temporal, Airflow, or GitHub Actions.
 
-Instead, state machines are agent-routed. A state-machine definition describes the available business states: agent states, shell-script states, wait states, and terminal states. A state-machine runner agent sees the original prompt, current state, state history, and available state definitions, then decides what should happen next.
+Instead, state machines are agent-routed. A state-machine definition describes the available business states: agent states, shell-script states, poll states, and terminal states. The runner keeps the state-machine system prompt cache-friendly by including only stable routing instructions plus the original prompt and available state definitions. Current state and history stay in the parent agent conversation, where state transitions, script results, poll results, and user follow-ups are already recorded.
 
 The state machine is higher level than task execution. It tracks one current business state at a time. If a state needs fan-out, parallelism, or a task-level workflow, that belongs inside an agent or script state. The agent can execute a complex workflow internally; the state machine only records the business transition before and after that state.
 
 This keeps state machines flexible enough to start in the middle. For example, a user can say: "prospect person X, I've already sent email, just wait for response." The same outreach state machine can skip research and email sending, then choose the wait-for-response state because the runner agent understands the existing context.
 
-External integrations stay simple: anything with an API or CLI is a script state or polling wait. Email, GitHub, Calendly, CRM systems, and webhooks do not need first-class engine concepts. If the state machine can tolerate a few minutes of polling delay, a bash script is enough.
+External integrations stay simple: anything with an API or CLI is a script state or script poll. Timer polls cover pure delays such as "wait before retry." Email, GitHub, Calendly, CRM systems, and webhooks do not need first-class engine concepts. If the state machine can tolerate a few minutes of polling delay, a bash script is enough.
 
 What this is not:
 
