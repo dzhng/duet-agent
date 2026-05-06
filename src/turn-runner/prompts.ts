@@ -81,7 +81,7 @@ function createSkillsSystemPrompt(skills: readonly Skill[]): string | undefined 
   }
 
   return dedent`
-    Available skills (metadata only — call the \`read_skill\` tool with the skill name to load full instructions on demand, or invoke a skill via slash command like \`/skill-name\` to inline its instructions):
+    Available skills (metadata only — call the \`read_skill\` tool with the skill name to load full instructions on demand):
     ${toXML({
       skills: skills.map((skill) => ({
         skill: [{ _attrs: { name: skill.name } }, { description: skill.description }],
