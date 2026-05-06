@@ -1,5 +1,5 @@
 {
-  "name": "duet-agent",
+  "name": "@dzhng/duet-agent",
   "version": "0.1.0",
   "description": "An opinionated full-stack agent turn runner with native memories, interrupts, and multi-agent orchestration",
   "keywords": [
@@ -16,17 +16,25 @@
     "url": "https://github.com/dzhng/duet-agent"
   },
   "bin": {
-    "duet": "dist/cli.js"
+    "duet": "dist/src/cli.js"
   },
+  "files": [
+    "dist/src",
+    "LICENSE",
+    "README.md"
+  ],
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
     },
     "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "setup": "bash scripts/setup-docker.sh",
@@ -38,7 +46,8 @@
     "format": "oxfmt --write --no-error-on-unmatched-pattern",
     "format:check": "oxfmt --check --no-error-on-unmatched-pattern",
     "lint": "oxlint src/",
-    "test": "docker run --rm -v \"$PWD:/src:ro\" -w /work -e HOME=/tmp/home -e DUET_TEST_IN_DOCKER=1 oven/bun:1.3.11 sh -lc 'cp -R /src/. /work && bun install --frozen-lockfile && bun test test'",
+    "prepack": "bun run build",
+    "test": "docker run --rm -v \"$PWD:/src:ro\" -w /work -e HOME=/tmp/home -e DUET_TEST_IN_DOCKER=1 oven/bun:1.3.11 sh -lc 'cp -R /src/. /work && bun install --frozen-lockfile && bun test ./test/*.test.ts'",
     "example": "bun examples/basic.ts",
     "example:state-machine": "bun examples/state-machine.ts",
     "prepare": "husky",

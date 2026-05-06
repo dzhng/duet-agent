@@ -9,6 +9,7 @@
  *   echo "fix the bug in server.ts" | duet
  */
 
+import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { TextContent } from "@mariozechner/pi-ai";
@@ -18,8 +19,22 @@ import { runTui } from "./tui/app.js";
 import type { TurnRunnerConfig } from "./types/config.js";
 import type { TurnStep, TurnTerminalEvent, TurnTokenUsage } from "./types/protocol.js";
 
+const NPM_PACKAGE_NAME = "@dzhng/duet-agent";
+const PACKAGE_MANAGERS = ["npm", "bun", "pnpm", "yarn"] as const;
+
+type PackageManager = (typeof PACKAGE_MANAGERS)[number];
+
 async function main() {
   const args = process.argv.slice(2);
+  if (args[0] === "upgrade") {
+    try {
+      await runUpgradeCommand(args.slice(1));
+    } catch (err: any) {
+      console.error(`Fatal: ${err.message}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
 
   // Parse flags
   let modelName: string | undefined;
@@ -351,6 +366,72 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+async function runUpgradeCommand(args: string[]): Promise<void> {
+  let packageManager = detectPackageManager();
+  let dryRun = false;
+
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--manager":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        packageManager = parsePackageManager(args[++i]!);
+        break;
+      case "--dry-run":
+        dryRun = true;
+        break;
+      case "--help":
+      case "-h":
+        printUpgradeHelp();
+        return;
+      default:
+        fail(`Unknown upgrade option: ${args[i]}`);
+    }
+  }
+
+  const command = globalUpgradeCommand(packageManager);
+  const commandText = command.map(shellQuote).join(" ");
+  if (dryRun) {
+    console.log(commandText);
+    return;
+  }
+
+  console.error(`Upgrading ${NPM_PACKAGE_NAME} with ${packageManager}...`);
+  await runCommand(command[0]!, command.slice(1));
+}
+
+function parsePackageManager(value: string): PackageManager {
+  if (PACKAGE_MANAGERS.includes(value as PackageManager)) return value as PackageManager;
+  fail(`Unsupported package manager: ${value}`);
+}
+
+function detectPackageManager(): PackageManager {
+  const userAgent = process.env.npm_config_user_agent ?? "";
+  for (const packageManager of PACKAGE_MANAGERS) {
+    if (userAgent.startsWith(`${packageManager}/`)) return packageManager;
+  }
+  if (basename(process.argv[0] ?? "").includes("bun")) return "bun";
+  return "npm";
+}
+
+function globalUpgradeCommand(packageManager: PackageManager): string[] {
+  const packageName = `${NPM_PACKAGE_NAME}@latest`;
+  if (packageManager === "bun") return ["bun", "add", "--global", packageName];
+  if (packageManager === "pnpm") return ["pnpm", "add", "--global", packageName];
+  if (packageManager === "yarn") return ["yarn", "global", "add", packageName];
+  return ["npm", "install", "--global", packageName];
+}
+
+async function runCommand(command: string, args: string[]): Promise<void> {
+  const child = spawn(command, args, { stdio: "inherit" });
+  const exitCode = await new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  if (exitCode !== 0) {
+    process.exitCode = exitCode ?? 1;
+  }
+}
+
 async function readInteractivePrompt(): Promise<string> {
   const rl = createInterface({
     input: process.stdin,
@@ -427,7 +508,11 @@ duet — An opinionated full-stack agent runner
 
 USAGE
   duet [options] [prompt]
+  duet upgrade [--manager npm|bun|pnpm|yarn]
   echo "prompt" | duet
+
+COMMANDS
+  upgrade                  Upgrade the global ${NPM_PACKAGE_NAME} installation
 
 OPTIONS
   -m, --model <name>       TurnRunner model override
@@ -457,6 +542,21 @@ EXAMPLES
   duet --system-prompt-file TEAM.md "review this repo"
   duet --workdir ./my-project "refactor the auth module"
   duet --resume session_abc123 --workdir ./my-project
+  duet upgrade
+`);
+}
+
+function printUpgradeHelp() {
+  console.log(`
+duet upgrade — Upgrade the global ${NPM_PACKAGE_NAME} installation
+
+USAGE
+  duet upgrade [--manager npm|bun|pnpm|yarn]
+
+OPTIONS
+  --manager <name>         Package manager to use (default: detected, fallback: npm)
+  --dry-run                Print the upgrade command without running it
+  -h, --help               Show this help
 `);
 }
 
