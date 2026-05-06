@@ -1,30 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import assert from "node:assert";
 import { Agent, type StreamFn } from "@mariozechner/pi-agent-core";
-import { createAssistantMessageEventStream, type AssistantMessage } from "@mariozechner/pi-ai";
+import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnState } from "../src/types/protocol.js";
-
-function createAbortedMessage(): AssistantMessage {
-  return {
-    role: "assistant",
-    content: [],
-    api: "unknown",
-    provider: "unknown",
-    model: "test",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-    stopReason: "aborted",
-    errorMessage: "Interrupted",
-    timestamp: Date.now(),
-  };
-}
+import { createAssistantMessage } from "./helpers/messages.js";
 
 class InterruptTurnRunner extends TurnRunner {
   streamStarted: Promise<void>;
@@ -60,7 +40,10 @@ class InterruptTurnRunner extends TurnRunner {
       options?.signal?.addEventListener(
         "abort",
         () => {
-          const message = createAbortedMessage();
+          const message = createAssistantMessage({
+            errorMessage: "Interrupted",
+            stopReason: "aborted",
+          });
           stream.push({ type: "error", reason: "aborted", error: message });
           stream.end(message);
         },

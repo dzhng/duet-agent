@@ -1,12 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import {
-  createAssistantMessageEventStream,
-  type AssistantMessage,
-  type Context,
-} from "@mariozechner/pi-ai";
+import { createAssistantMessageEventStream, type Context } from "@mariozechner/pi-ai";
 import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerConfig } from "../src/types/config.js";
 import type { TurnState } from "../src/types/protocol.js";
+import { createAssistantMessage } from "./helpers/messages.js";
 
 class CapturingTurnRunner extends TurnRunner {
   constructor(config?: Partial<TurnRunnerConfig>) {
@@ -27,7 +24,11 @@ class CapturingTurnRunner extends TurnRunner {
       contexts.push(JSON.parse(JSON.stringify(context)) as Context);
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
-        stream.push({ type: "done", reason: "stop", message: createAssistantMessage("ok") });
+        stream.push({
+          type: "done",
+          reason: "stop",
+          message: createAssistantMessage({ text: "ok" }),
+        });
       });
       return stream;
     };
@@ -144,14 +145,18 @@ function createSerializableTurnState(): TurnState {
           content: [{ type: "text", text: "Inspect the deployment." }],
           timestamp: 1,
         },
-        createAssistantMessage("I will inspect the deployment.", [
-          {
-            type: "toolCall",
-            id: "tool-1",
-            name: "read_file",
-            arguments: { path: "package.json" },
-          },
-        ]),
+        createAssistantMessage({
+          text: "I will inspect the deployment.",
+          timestamp: 2,
+          extraContent: [
+            {
+              type: "toolCall",
+              id: "tool-1",
+              name: "read_file",
+              arguments: { path: "package.json" },
+            },
+          ],
+        }),
         {
           role: "toolResult",
           toolCallId: "tool-1",
@@ -161,31 +166,8 @@ function createSerializableTurnState(): TurnState {
           isError: false,
           timestamp: 3,
         },
-        createAssistantMessage("The deployment config is serializable."),
+        createAssistantMessage({ text: "The deployment config is serializable.", timestamp: 2 }),
       ],
     },
-  };
-}
-
-function createAssistantMessage(
-  text: string,
-  extraContent: AssistantMessage["content"] = [],
-): AssistantMessage {
-  return {
-    role: "assistant",
-    content: [{ type: "text", text }, ...extraContent],
-    api: "unknown",
-    provider: "unknown",
-    model: "test",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-    stopReason: "stop",
-    timestamp: 2,
   };
 }

@@ -1,14 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Agent } from "@mariozechner/pi-agent-core";
-import {
-  createAssistantMessageEventStream,
-  type AssistantMessage,
-  type Context,
-} from "@mariozechner/pi-ai";
-import { setTimeout as delay } from "node:timers/promises";
+import { createAssistantMessageEventStream, type Context } from "@mariozechner/pi-ai";
 import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnState, TurnTerminalEvent } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
+import { delay, waitFor } from "./helpers/async.js";
+import { createAssistantMessage } from "./helpers/messages.js";
 import { createStateMachineState } from "./helpers/turn-runner-protocol.js";
 
 class StreamingTurnRunner extends TurnRunner {
@@ -42,7 +39,7 @@ class StreamingTurnRunner extends TurnRunner {
     stream.push({
       type: "done",
       reason: "stop",
-      message: createAssistantMessage(text, options?.error),
+      message: createAssistantMessage({ text, errorMessage: options?.error }),
     });
   }
 
@@ -52,9 +49,12 @@ class StreamingTurnRunner extends TurnRunner {
     stream.push({
       type: "done",
       reason: "toolUse",
-      message: createAssistantMessage("", undefined, [
-        { type: "toolCall", id: `tool_${this.contexts.length}`, name, arguments: args },
-      ]),
+      message: createAssistantMessage({
+        text: "",
+        extraContent: [
+          { type: "toolCall", id: `tool_${this.contexts.length}`, name, arguments: args },
+        ],
+      }),
     });
   }
 }
@@ -730,45 +730,6 @@ function lastUserText(context: Context): string {
   const user = [...context.messages].reverse().find((message) => message.role === "user");
   if (!user) return "";
   return contextText({ ...context, messages: [user] });
-}
-
-async function waitFor(assertion: () => boolean, timeoutMs = 1000): Promise<void> {
-  const started = Date.now();
-  while (!assertion()) {
-    if (Date.now() - started > timeoutMs) {
-      throw new Error("Timed out waiting for condition");
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-}
-
-function createAssistantMessage(
-  text: string,
-  errorMessage?: string,
-  extraContent: AssistantMessage["content"] = [],
-): AssistantMessage {
-  return {
-    role: "assistant",
-    content: [{ type: "text", text }, ...extraContent],
-    api: "unknown",
-    provider: "unknown",
-    model: "test",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-    stopReason: extraContent.some((part) => part.type === "toolCall")
-      ? "toolUse"
-      : errorMessage
-        ? "error"
-        : "stop",
-    ...(errorMessage ? { errorMessage } : {}),
-    timestamp: Date.now(),
-  };
 }
 
 function scriptThenTerminalDefinition(): StateMachineDefinition {

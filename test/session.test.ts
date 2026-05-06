@@ -12,6 +12,7 @@ import type {
   TurnCommand,
 } from "../src/types/protocol.js";
 import { testIfDocker } from "./helpers/docker-only.js";
+import { waitFor } from "./helpers/async.js";
 import { createStateMachineState } from "./helpers/turn-runner-protocol.js";
 
 class FakeTurnRunner implements SessionTurnRunner {
@@ -452,11 +453,3 @@ describe("SessionManager", () => {
     await manager.dispose();
   });
 });
-
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt++) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error("Timed out waiting for condition");
-}
