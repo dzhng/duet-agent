@@ -1,9 +1,13 @@
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { Session, type SessionTurnRunner } from "../src/session/session.js";
-import { SessionManager } from "../src/session/session-manager.js";
+import {
+  DEFAULT_MEMORY_DB_PATH,
+  DEFAULT_SESSION_STORAGE_DIR,
+  SessionManager,
+} from "../src/session/session-manager.js";
 import type {
   TurnEvent,
   TurnEditFollowUpQueueCommand,
@@ -414,6 +418,15 @@ describe("Session", () => {
 });
 
 describe("SessionManager", () => {
+  test("defaults session and memory storage to the home .duet directory", () => {
+    expect(DEFAULT_SESSION_STORAGE_DIR).toBe(join(homedir(), ".duet", "sessions"));
+    expect(DEFAULT_MEMORY_DB_PATH).toBe(join(homedir(), ".duet", "memory.db"));
+
+    const manager = new SessionManager({ model: "anthropic:claude-opus-4-7" });
+
+    expect(manager.config.memoryDbPath).toBe(join(homedir(), ".duet", "memory.db"));
+  });
+
   testIfDocker("creates and stores multiple sessions with manager-wrapped events", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-session-manager-"));
     tempDirs.push(tempDir);
@@ -426,6 +439,7 @@ describe("SessionManager", () => {
           runners.set(sessionId, runner);
           return runner;
         },
+        sessionStoragePath: join(tempDir, ".duet", "sessions"),
       },
     );
     const events: Array<{ sessionId: string; event: TurnEvent }> = [];
@@ -450,7 +464,7 @@ describe("SessionManager", () => {
     expect(
       events.some((event) => event.sessionId === "second" && event.event.type === "ready"),
     ).toBe(true);
-    expect(manager.config.memoryDbPath).toBe(join(".duet", "memory.db"));
+    expect(manager.config.memoryDbPath).toBe(join(homedir(), ".duet", "memory.db"));
 
     const firstState = await readFile(
       join(tempDir, ".duet", "sessions", "first", "state.json"),
@@ -467,7 +481,7 @@ describe("SessionManager", () => {
     const runner = new FakeTurnRunner([complete("resumed")]);
     const manager = new SessionManager(
       { model: "anthropic:claude-opus-4-7", cwd: tempDir },
-      { createRunner: () => runner },
+      { createRunner: () => runner, sessionStoragePath: join(tempDir, ".duet", "sessions") },
     );
     const events: Array<{ sessionId: string; event: TurnEvent }> = [];
     manager.subscribe((event) => events.push(event));

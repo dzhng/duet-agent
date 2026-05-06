@@ -1,0 +1,104 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  compareSemverVersions,
+  formatNewVersionNotice,
+  inferDefaultModelName,
+  resolveCliModelName,
+} from "../src/cli.js";
+
+const MODEL_ENV_KEYS = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_OAUTH_TOKEN",
+  "AI_GATEWAY_API_KEY",
+  "OPENROUTER_API_KEY",
+  "OPENAI_API_KEY",
+] as const;
+
+const originalEnv = new Map<string, string | undefined>();
+
+for (const key of MODEL_ENV_KEYS) {
+  originalEnv.set(key, process.env[key]);
+}
+
+afterEach(() => {
+  for (const key of MODEL_ENV_KEYS) {
+    const value = originalEnv.get(key);
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+});
+
+function clearModelEnv(): void {
+  for (const key of MODEL_ENV_KEYS) {
+    delete process.env[key];
+  }
+}
+
+describe("CLI model inference", () => {
+  test("prefers Anthropic credentials for the default Opus model", () => {
+    clearModelEnv();
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+    process.env.OPENAI_API_KEY = "test-openai";
+
+    expect(inferDefaultModelName()).toBe("anthropic:claude-opus-4-7");
+  });
+
+  test("uses AI Gateway credentials for Opus when Anthropic is absent", () => {
+    clearModelEnv();
+    process.env.AI_GATEWAY_API_KEY = "test-gateway";
+
+    expect(inferDefaultModelName()).toBe("vercel-ai-gateway:anthropic/claude-opus-4.7");
+  });
+
+  test("uses OpenRouter credentials for Opus when Anthropic and AI Gateway are absent", () => {
+    clearModelEnv();
+    process.env.OPENROUTER_API_KEY = "test-openrouter";
+    process.env.OPENAI_API_KEY = "test-openai";
+
+    expect(inferDefaultModelName()).toBe("openrouter:anthropic/claude-opus-4.7");
+  });
+
+  test("uses OpenAI credentials when higher-priority providers are absent", () => {
+    clearModelEnv();
+    process.env.OPENAI_API_KEY = "test-openai";
+
+    expect(inferDefaultModelName()).toBe("openai:gpt-5.5");
+  });
+
+  test("leaves model unset when no supported provider credentials exist", () => {
+    clearModelEnv();
+
+    expect(inferDefaultModelName()).toBeUndefined();
+  });
+
+  test("falls back to the built-in default when no model or provider key is configured", () => {
+    clearModelEnv();
+
+    expect(resolveCliModelName(undefined)).toBe("anthropic:claude-opus-4-7");
+  });
+
+  test("keeps an explicitly provided model", () => {
+    clearModelEnv();
+
+    expect(resolveCliModelName("openai:gpt-5.5")).toBe("openai:gpt-5.5");
+  });
+});
+
+describe("CLI version checks", () => {
+  test("formats the update notice for stderr and TUI display", () => {
+    expect(formatNewVersionNotice("0.1.2", "0.1.3")).toBe(
+      "Update available: @dzhng/duet-agent 0.1.2 -> 0.1.3. Run: duet upgrade",
+    );
+  });
+
+  test("compares semantic versions", () => {
+    expect(compareSemverVersions("0.1.3", "0.1.2")).toBe(1);
+    expect(compareSemverVersions("0.2.0", "0.10.0")).toBe(-1);
+    expect(compareSemverVersions("1.0.0", "1.0.0")).toBe(0);
+    expect(compareSemverVersions("1.0.0", "1.0.0-beta.1")).toBe(1);
+    expect(compareSemverVersions("1.0.0-beta.1", "1.0.0")).toBe(-1);
+  });
+});

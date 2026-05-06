@@ -10,9 +10,11 @@
  */
 
 import { spawn } from "node:child_process";
-import { basename, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import type { TextContent } from "@mariozechner/pi-ai";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { findEnvKeys, type TextContent } from "@mariozechner/pi-ai";
 import dotenv from "dotenv";
 import { SessionManager } from "./session/session-manager.js";
 import { runTui } from "./tui/app.js";
@@ -20,7 +22,18 @@ import type { TurnRunnerConfig } from "./types/config.js";
 import type { TurnStep, TurnTerminalEvent, TurnTokenUsage } from "./types/protocol.js";
 
 const NPM_PACKAGE_NAME = "@dzhng/duet-agent";
+const NPM_PACKAGE_METADATA_URL = `https://registry.npmjs.org/${NPM_PACKAGE_NAME.replace(
+  "/",
+  "%2F",
+)}`;
+const VERSION_CHECK_TIMEOUT_MS = 1_500;
 const PACKAGE_MANAGERS = ["npm", "bun", "pnpm", "yarn"] as const;
+
+const INFERRED_ANTHROPIC_MODEL = "anthropic:claude-opus-4-7";
+const INFERRED_AI_GATEWAY_MODEL = "vercel-ai-gateway:anthropic/claude-opus-4.7";
+const INFERRED_OPENROUTER_MODEL = "openrouter:anthropic/claude-opus-4.7";
+const INFERRED_OPENAI_MODEL = "openai:gpt-5.5";
+const DEFAULT_CLI_MODEL = INFERRED_ANTHROPIC_MODEL;
 
 type PackageManager = (typeof PACKAGE_MANAGERS)[number];
 
@@ -115,14 +128,16 @@ async function main() {
     process.exit(1);
   }
 
+  dotenv.config({ path: join(workDir, ".env"), quiet: true });
+
+  modelName = resolveCliModelName(modelName);
+
   if (modelName && modelName.indexOf(":") <= 0) {
     throw new Error("Models must use provider:modelId syntax");
   }
   if (memoryModelName && memoryModelName.indexOf(":") <= 0) {
     throw new Error("Memory model must use provider:modelId syntax");
   }
-
-  dotenv.config({ path: join(workDir, ".env"), quiet: true });
 
   // Build config
   const config: TurnRunnerConfig = {
@@ -136,6 +151,12 @@ async function main() {
   // The TUI owns rendering when active, so we suppress stdout step printing
   // there to avoid corrupting the alternate-screen UI.
   const useTui = interactive && !jsonOutput;
+
+  const newVersionNotice = await getNewVersionNotice();
+  if (!useTui) {
+    if (newVersionNotice) process.stderr.write(`${newVersionNotice}\n`);
+    process.stderr.write(`Model: ${modelName}\n`);
+  }
 
   const manager = new SessionManager(config);
   let streamedTextThisTurn = false;
@@ -253,6 +274,8 @@ async function main() {
         ...(initialTuiPrompt ? { initialPrompt: initialTuiPrompt } : {}),
         ...(resumedHistory ? { history: resumedHistory } : {}),
         mode: config.mode,
+        modelName,
+        ...(newVersionNotice ? { newVersionNotice } : {}),
       });
     }
 
@@ -364,6 +387,99 @@ function formatToolCall(step: Extract<TurnStep, { type: "tool_call" }>): string 
 function fail(message: string): never {
   console.error(`Fatal: ${message}`);
   process.exit(1);
+}
+
+export function inferDefaultModelName(): string | undefined {
+  if (findEnvKeys("anthropic")) return INFERRED_ANTHROPIC_MODEL;
+  if (findEnvKeys("vercel-ai-gateway")) return INFERRED_AI_GATEWAY_MODEL;
+  if (findEnvKeys("openrouter")) return INFERRED_OPENROUTER_MODEL;
+  if (findEnvKeys("openai")) return INFERRED_OPENAI_MODEL;
+  return undefined;
+}
+
+export function resolveCliModelName(modelName: string | undefined): string {
+  return modelName ?? inferDefaultModelName() ?? DEFAULT_CLI_MODEL;
+}
+
+async function getNewVersionNotice(): Promise<string | undefined> {
+  try {
+    const [currentVersion, latestVersion] = await Promise.all([
+      readInstalledPackageVersion(),
+      fetchLatestPackageVersion(),
+    ]);
+    if (!currentVersion || !latestVersion) return undefined;
+    if (compareSemverVersions(latestVersion, currentVersion) <= 0) return undefined;
+
+    return formatNewVersionNotice(currentVersion, latestVersion);
+  } catch {
+    // Version checks should never block CLI startup or hide the real command output.
+    return undefined;
+  }
+}
+
+export function formatNewVersionNotice(currentVersion: string, latestVersion: string): string {
+  return `Update available: ${NPM_PACKAGE_NAME} ${currentVersion} -> ${latestVersion}. Run: duet upgrade`;
+}
+
+async function readInstalledPackageVersion(): Promise<string | undefined> {
+  const cliDir = dirname(fileURLToPath(import.meta.url));
+  const packagePaths = [
+    join(cliDir, "..", "package.json"),
+    join(cliDir, "..", "..", "package.json"),
+  ];
+
+  for (const packagePath of packagePaths) {
+    try {
+      const packageJson = JSON.parse(await readFile(packagePath, "utf-8")) as {
+        version?: unknown;
+      };
+      if (typeof packageJson.version === "string") return packageJson.version;
+    } catch {
+      // Source builds and published builds place package.json at different depths.
+    }
+  }
+  return undefined;
+}
+
+async function fetchLatestPackageVersion(): Promise<string | undefined> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), VERSION_CHECK_TIMEOUT_MS);
+  try {
+    const response = await fetch(NPM_PACKAGE_METADATA_URL, { signal: controller.signal });
+    if (!response.ok) return undefined;
+    const metadata = (await response.json()) as {
+      "dist-tags"?: { latest?: unknown };
+    };
+    const latest = metadata["dist-tags"]?.latest;
+    return typeof latest === "string" ? latest : undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export function compareSemverVersions(left: string, right: string): number {
+  const leftParts = parseSemverVersion(left);
+  const rightParts = parseSemverVersion(right);
+  for (let i = 0; i < 3; i++) {
+    const delta = leftParts.numbers[i]! - rightParts.numbers[i]!;
+    if (delta !== 0) return Math.sign(delta);
+  }
+  if (leftParts.prerelease === rightParts.prerelease) return 0;
+  if (!leftParts.prerelease) return 1;
+  if (!rightParts.prerelease) return -1;
+  return leftParts.prerelease.localeCompare(rightParts.prerelease);
+}
+
+function parseSemverVersion(version: string): {
+  numbers: [number, number, number];
+  prerelease?: string;
+} {
+  const [main = "", prerelease] = version.replace(/^v/, "").split("-", 2);
+  const [major = "0", minor = "0", patch = "0"] = main.split(".");
+  return {
+    numbers: [Number(major) || 0, Number(minor) || 0, Number(patch) || 0],
+    ...(prerelease ? { prerelease } : {}),
+  };
 }
 
 async function runUpgradeCommand(args: string[]): Promise<void> {
@@ -531,7 +647,10 @@ INTERACTIVE
   Type /exit or /quit to end the conversation.
 
 MODELS
-  Use provider:modelId syntax, e.g. anthropic:claude-opus-4-7
+  Use provider:modelId syntax, e.g. anthropic:claude-opus-4-7.
+  If omitted, duet infers a default from ANTHROPIC_API_KEY,
+  AI_GATEWAY_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY
+  after loading <workdir>/.env.
 
 EXAMPLES
   duet "build a REST API with Express and TypeScript"
@@ -560,4 +679,6 @@ OPTIONS
 `);
 }
 
-main();
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  main();
+}

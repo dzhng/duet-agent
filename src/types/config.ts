@@ -11,7 +11,7 @@ export interface TurnRunnerConfig extends TurnOptions {
   /**
    * PGlite database directory for durable observational memories.
    * SessionManager defaults this to
-   * `.duet/memory.db`; pass `false` to keep memories in process only.
+   * `~/.duet/memory.db`; pass `false` to keep memories in process only.
    */
   memoryDbPath?: string | false;
   cwd?: string;

@@ -23,6 +23,10 @@ export interface RunTuiInput {
   started: boolean;
   initialPrompt?: string;
   mode: TurnRunnerConfig["mode"];
+  /** Fully resolved provider:modelId string used for this CLI session. */
+  modelName: string;
+  /** Best-effort package update notice, shown in-TUI because stderr is hidden. */
+  newVersionNotice?: string;
   /** Past messages to replay into the transcript on resume. */
   history?: AgentMessage[];
 }
@@ -126,13 +130,38 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- transcript helpers ----------------------------------------------------
 
+  // ScrollBox.scrollHeight is only refreshed after the next layout pass, so
+  // setting scrollTop synchronously right after adding a child reads stale
+  // dimensions and leaves the view a few lines short of the bottom. Coalesce
+  // scroll-to-bottom requests onto a single deferred tick instead.
+  let scrollPending = false;
+  function scrollToBottomSoon(): void {
+    if (scrollPending) return;
+    scrollPending = true;
+    setTimeout(() => {
+      scrollPending = false;
+      transcript.scrollTop = transcript.scrollHeight;
+    }, 0);
+  }
+
   function appendLine(content: string, fg: string): void {
     if (!content) return;
     // ScrollBox children stack vertically; one Text per logical line keeps wrapping simple.
     const line = new TextRenderable(renderer, { content, fg });
     transcript.add(line);
-    // Auto-stick to bottom on new content.
-    transcript.scrollTop = transcript.scrollHeight;
+    scrollToBottomSoon();
+  }
+
+  // Tool results can be huge (file dumps, search output). Show only the head
+  // in the transcript so the conversation flow stays readable; the full
+  // payload remains in session history for the model.
+  const TOOL_RESULT_MAX_LINES = 3;
+  function truncateToolResult(text: string): string {
+    const lines = text.split("\n");
+    if (lines.length <= TOOL_RESULT_MAX_LINES) return text;
+    const head = lines.slice(0, TOOL_RESULT_MAX_LINES).join("\n");
+    const remaining = lines.length - TOOL_RESULT_MAX_LINES;
+    return `${head}\n… (+${remaining} more line${remaining === 1 ? "" : "s"})`;
   }
 
   function appendBlock(label: string | null, body: string, fg: string): void {
@@ -160,6 +189,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     line: TextRenderable;
     label: string | null;
     body: string;
+    /** Cap rendered output to TOOL_RESULT_MAX_LINES for noisy streams (e.g. reasoning). */
+    truncate: boolean;
   }
 
   function markRunning(): void {
@@ -264,6 +295,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         "[reasoning]",
         step.delta,
         COLORS.reasoning,
+        true,
       );
     } else if (step.type === "text") {
       if (activeTextStream) {
@@ -279,7 +311,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         activeReasoningStream = undefined;
         return;
       }
-      if (trimmed) appendBlock("[reasoning]", trimmed, COLORS.reasoning);
+      if (trimmed) appendBlock("[reasoning]", truncateToolResult(trimmed), COLORS.reasoning);
     } else if (step.type === "tool_call") {
       const statusSuffix = step.status ? ` (${step.status})` : "";
       const header = `[tool ${step.toolName}${statusSuffix}]`;
@@ -292,7 +324,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
           const label = isError
             ? `[tool error ${step.toolName}]`
             : `[tool result ${step.toolName}]`;
-          appendBlock(label, text, isError ? COLORS.error : COLORS.tool);
+          appendBlock(label, truncateToolResult(text), isError ? COLORS.error : COLORS.tool);
         }
       }
     } else if (step.type === "system") {
@@ -305,6 +337,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     label: string | null,
     delta: string,
     fg: string,
+    truncate = false,
   ): StreamingBlock {
     const next =
       block ??
@@ -312,6 +345,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         line: new TextRenderable(renderer, { content: "", fg }),
         label,
         body: "",
+        truncate,
       } satisfies StreamingBlock);
     if (!block) transcript.add(next.line);
     next.body += delta;
@@ -325,8 +359,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function updateStreamingBlock(block: StreamingBlock): void {
-    block.line.content = block.label ? `${block.label}\n${block.body}` : block.body;
-    transcript.scrollTop = transcript.scrollHeight;
+    const body = block.truncate ? truncateToolResult(block.body) : block.body;
+    block.line.content = block.label ? `${block.label}\n${body}` : body;
+    scrollToBottomSoon();
   }
 
   function renderMemoryStatus(event: Extract<TurnEvent, { type: "memory" }>): void {
@@ -398,15 +433,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- replay history on resume ---------------------------------------------
 
+  if (input.newVersionNotice) {
+    appendLine(input.newVersionNotice, COLORS.system);
+  }
+  appendLine(`[model] ${input.modelName}`, COLORS.hint);
+
   if (input.history && input.history.length > 0) {
     for (const message of input.history) {
       renderHistoryMessage(message);
     }
-    // scrollHeight depends on the next layout pass — defer one tick so the
-    // resumed transcript opens scrolled to the latest message.
-    setTimeout(() => {
-      transcript.scrollTop = transcript.scrollHeight;
-    }, 0);
+    scrollToBottomSoon();
   }
 
   // ---- bootstrap initial prompt ----------------------------------------------
@@ -471,7 +507,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
           appendBlock(null, block.text, COLORS.agent);
         } else if (block.type === "thinking") {
           const trimmed = block.thinking.trim();
-          if (trimmed) appendBlock("[reasoning]", trimmed, COLORS.reasoning);
+          if (trimmed) appendBlock("[reasoning]", truncateToolResult(trimmed), COLORS.reasoning);
         } else if (block.type === "toolCall") {
           const body = JSON.stringify(block.arguments, null, 2);
           appendBlock(`[tool ${block.name}]`, body, COLORS.tool);
@@ -487,7 +523,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         .join("\n");
       if (text) {
         const label = `[tool result ${message.toolName}${message.isError ? " error" : ""}]`;
-        appendBlock(label, text, COLORS.tool);
+        appendBlock(label, truncateToolResult(text), COLORS.tool);
       }
     }
   }

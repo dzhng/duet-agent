@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 import type { TurnRunnerConfig } from "../types/config.js";
@@ -6,8 +7,9 @@ import type { TurnEvent } from "../types/protocol.js";
 import { Session, type SessionStartInput, type SessionTurnRunner } from "./session.js";
 
 export const DEFAULT_DUET_DIR = ".duet";
-export const DEFAULT_SESSION_STORAGE_DIR = join(DEFAULT_DUET_DIR, "sessions");
-export const DEFAULT_MEMORY_DB_PATH = join(DEFAULT_DUET_DIR, "memory.db");
+export const DEFAULT_DUET_HOME = join(homedir(), DEFAULT_DUET_DIR);
+export const DEFAULT_SESSION_STORAGE_DIR = join(DEFAULT_DUET_HOME, "sessions");
+export const DEFAULT_MEMORY_DB_PATH = join(DEFAULT_DUET_HOME, "memory.db");
 
 export interface SessionManagerCreateInput extends Partial<SessionStartInput> {
   sessionId?: string;
@@ -36,8 +38,7 @@ export class SessionManager {
     private readonly options: SessionManagerOptions = {},
   ) {
     this.config = withDefaultMemoryDbPath(config);
-    this.sessionStoragePath =
-      options.sessionStoragePath ?? join(config.cwd ?? process.cwd(), DEFAULT_SESSION_STORAGE_DIR);
+    this.sessionStoragePath = options.sessionStoragePath ?? DEFAULT_SESSION_STORAGE_DIR;
   }
 
   subscribe(handler: SessionManagerEventHandler): () => void {

@@ -174,7 +174,7 @@ The pre-commit hook runs `format`, `check-types`, and `lint`.
 
 ## CLI Quick Start
 
-Set your provider API key, then run `duet` from any project directory:
+Set a provider API key in the environment or in `<workdir>/.env`, then run `duet` from any project directory. When `--model` is omitted, the CLI infers a default from the configured provider: Anthropic, AI Gateway, and OpenRouter use Opus 4.7; OpenAI uses GPT-5.5.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...
@@ -243,12 +243,13 @@ the parent agent rather than creating separate conversation branches.
 
 duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the runtime state container, not a database adapter.
 
-`SessionManager` stores session snapshots under `<cwd>/.duet/sessions` by default and enables durable observational memory at `<cwd>/.duet/memory.db`. Pass `memoryDbPath: false` to keep observational memory in process only, or provide `memoryDbPath` for a custom database location.
+`SessionManager` stores session snapshots under `~/.duet/sessions` by default and enables durable observational memory at `~/.duet/memory.db`. Pass `memoryDbPath: false` to keep observational memory in process only, or provide `memoryDbPath` for a custom database location.
 
 ```typescript
-const turnRunner = new TurnRunner({
+import { SessionManager } from "@dzhng/duet-agent";
+
+const manager = new SessionManager({
   model: "anthropic:claude-opus-4-7",
-  memoryDbPath: ".duet/memory.db",
 });
 ```
 
