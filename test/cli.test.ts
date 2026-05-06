@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   compareSemverVersions,
+  detectPackageManagerFromContext,
   formatNewVersionNotice,
   inferDefaultModelName,
   resolveCliModelName,
@@ -100,5 +101,39 @@ describe("CLI version checks", () => {
     expect(compareSemverVersions("1.0.0", "1.0.0")).toBe(0);
     expect(compareSemverVersions("1.0.0", "1.0.0-beta.1")).toBe(1);
     expect(compareSemverVersions("1.0.0-beta.1", "1.0.0")).toBe(-1);
+  });
+});
+
+describe("CLI upgrade package manager detection", () => {
+  test("detects an npm global install even when the CLI runs under Bun", () => {
+    expect(
+      detectPackageManagerFromContext({
+        runtimeExecutable: "/Users/david/.bun/bin/bun",
+        cliFilePath:
+          "/Users/david/.nvm/versions/node/v24.14.0/lib/node_modules/@dzhng/duet-agent/dist/src/cli.js",
+        scriptPath: "/Users/david/.nvm/versions/node/v24.14.0/bin/duet",
+      }),
+    ).toBe("npm");
+  });
+
+  test("detects a Bun global install from the package location", () => {
+    expect(
+      detectPackageManagerFromContext({
+        runtimeExecutable: "/Users/david/.bun/bin/bun",
+        cliFilePath:
+          "/Users/david/.bun/install/global/node_modules/@dzhng/duet-agent/dist/src/cli.js",
+        scriptPath: "/Users/david/.bun/bin/duet",
+      }),
+    ).toBe("bun");
+  });
+
+  test("lets package-manager user agents override install path detection", () => {
+    expect(
+      detectPackageManagerFromContext({
+        userAgent: "pnpm/10.0.0 npm/? node/v24.0.0 darwin arm64",
+        cliFilePath:
+          "/Users/david/.nvm/versions/node/v24.14.0/lib/node_modules/@dzhng/duet-agent/dist/src/cli.js",
+      }),
+    ).toBe("pnpm");
   });
 });

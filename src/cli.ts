@@ -38,6 +38,13 @@ const DEFAULT_CLI_MODEL = INFERRED_ANTHROPIC_MODEL;
 
 type PackageManager = (typeof PACKAGE_MANAGERS)[number];
 
+type PackageManagerDetectionContext = {
+  userAgent?: string;
+  runtimeExecutable?: string;
+  cliFilePath?: string;
+  scriptPath?: string;
+};
+
 async function main() {
   const args = process.argv.slice(2);
   if (args[0] === "upgrade") {
@@ -586,11 +593,32 @@ function parsePackageManager(value: string): PackageManager {
 }
 
 function detectPackageManager(): PackageManager {
-  const userAgent = process.env.npm_config_user_agent ?? "";
+  return detectPackageManagerFromContext({
+    userAgent: process.env.npm_config_user_agent,
+    runtimeExecutable: process.argv[0],
+    cliFilePath: fileURLToPath(import.meta.url),
+    scriptPath: process.argv[1],
+  });
+}
+
+export function detectPackageManagerFromContext(
+  context: PackageManagerDetectionContext,
+): PackageManager {
+  const userAgent = context.userAgent ?? "";
   for (const packageManager of PACKAGE_MANAGERS) {
     if (userAgent.startsWith(`${packageManager}/`)) return packageManager;
   }
-  if (basename(process.argv[0] ?? "").includes("bun")) return "bun";
+
+  for (const rawPath of [context.cliFilePath, context.scriptPath]) {
+    const path = rawPath?.replace(/\\/g, "/");
+    if (!path) continue;
+    if (path.includes("/.bun/install/global/") || path.includes("/.bun/bin/")) return "bun";
+    if (path.includes("/.pnpm/") || path.includes("/share/pnpm/")) return "pnpm";
+    if (path.includes("/.config/yarn/global/") || path.includes("/yarn/global/")) return "yarn";
+    if (path.includes("/node_modules/")) return "npm";
+  }
+
+  if (basename(context.runtimeExecutable ?? "").includes("bun")) return "bun";
   return "npm";
 }
 
