@@ -1,53 +1,58 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnTerminalEvent } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
+import { testIfDocker } from "../test/helpers/docker-only.js";
 
 const model = process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-opus-4.7";
 
 describe("outreach lifecycle state machine", () => {
-  test("runs research, outreach, wait, reply classification, and terminal completion", async () => {
-    const runner = new TurnRunner({
-      model,
-      mode: outreachDefinition,
-      skillDiscovery: { includeDefaults: false },
-      systemInstructions: [
-        "This is an eval. Use the state-machine tools for the durable outreach workflow.",
-        "Select states in this order: research_prospect, send_outreach, wait_for_reply, fetch_reply, classify_reply, meeting_scheduled.",
-        "When selecting a state with inputSchema, provide the required input object.",
-        "Do not ask the user questions.",
-      ].join("\n"),
-    });
+  testIfDocker(
+    "runs research, outreach, wait, reply classification, and terminal completion",
+    async () => {
+      const runner = new TurnRunner({
+        model,
+        mode: outreachDefinition,
+        skillDiscovery: { includeDefaults: false },
+        systemInstructions: [
+          "This is an eval. Use the state-machine tools for the durable outreach workflow.",
+          "Select states in this order: research_prospect, send_outreach, wait_for_reply, fetch_reply, classify_reply, meeting_scheduled.",
+          "When selecting a state with inputSchema, provide the required input object.",
+          "Do not ask the user questions.",
+        ].join("\n"),
+      });
 
-    const first = await runner.turn({
-      type: "start",
-      mode: outreachDefinition,
-      prompt:
-        "Run the outreach lifecycle for Ada Lovelace at ada@example.com. The fake reply says she is interested in a meeting.",
-    });
+      const first = await runner.turn({
+        type: "start",
+        mode: outreachDefinition,
+        prompt:
+          "Run the outreach lifecycle for Ada Lovelace at ada@example.com. The fake reply says she is interested in a meeting.",
+      });
 
-    expect(first.type).toBe("sleep");
-    expect(first.state.stateMachine?.currentState).toBe("wait_for_reply");
+      expect(first.type).toBe("sleep");
+      expect(first.state.stateMachine?.currentState).toBe("wait_for_reply");
 
-    await delay(10_100);
+      await delay(10_100);
 
-    const terminal = await runner.turn({ type: "wake", state: first.state });
+      const terminal = await runner.turn({ type: "wake", state: first.state });
 
-    expect(terminal.type).toBe("complete");
-    expect(terminal.type === "complete" ? terminal.status : undefined).toBe("completed");
-    expect(terminal.state.stateMachine?.terminal).toMatchObject({
-      state: "meeting_scheduled",
-      status: "completed",
-    });
-    expect(completedStates(terminal)).toEqual([
-      "research_prospect",
-      "send_outreach",
-      "wait_for_reply",
-      "fetch_reply",
-      "classify_reply",
-    ]);
-  }, 120_000);
+      expect(terminal.type).toBe("complete");
+      expect(terminal.type === "complete" ? terminal.status : undefined).toBe("completed");
+      expect(terminal.state.stateMachine?.terminal).toMatchObject({
+        state: "meeting_scheduled",
+        status: "completed",
+      });
+      expect(completedStates(terminal)).toEqual([
+        "research_prospect",
+        "send_outreach",
+        "wait_for_reply",
+        "fetch_reply",
+        "classify_reply",
+      ]);
+    },
+    120_000,
+  );
 });
 
 const outreachDefinition: StateMachineDefinition = {

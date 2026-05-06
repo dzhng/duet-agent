@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import {
   TurnRunner,
@@ -8,9 +8,10 @@ import {
 import type { TurnQuestion, TurnState } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
+import { testIfDocker } from "../test/helpers/docker-only.js";
 
 describe("state-machine child agent resume", () => {
-  test("hydrates a child-agent ask terminal and resumes with an answer", async () => {
+  testIfDocker("hydrates a child-agent ask terminal and resumes with an answer", async () => {
     const firstRunner = new EvalTurnRunner({
       childResults: [
         {

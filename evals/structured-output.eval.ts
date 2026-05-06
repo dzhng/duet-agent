@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { getModel, type Model, type Tool } from "@mariozechner/pi-ai";
 import dedent from "dedent";
 import { Type, type Static } from "typebox";
 import { generateStructuredOutput } from "../src/core/structured-output.js";
+import { testIfDocker } from "../test/helpers/docker-only.js";
 
 const evalSchema = Type.Object({
   allowed: Type.Boolean({ description: "Whether the requested action should be allowed" }),
@@ -19,15 +20,17 @@ const evalTool: Tool<typeof evalSchema> = {
 };
 
 describe("structured output", () => {
-  test("returns validated tool arguments through Vercel AI Gateway", async () => {
-    const model = resolveGatewayModel(
-      process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-opus-4.7",
-    );
+  testIfDocker(
+    "returns validated tool arguments through Vercel AI Gateway",
+    async () => {
+      const model = resolveGatewayModel(
+        process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-opus-4.7",
+      );
 
-    const result = await generateStructuredOutput({
-      model,
-      tool: evalTool,
-      prompt: dedent`
+      const result = await generateStructuredOutput({
+        model,
+        tool: evalTool,
+        prompt: dedent`
         Evaluate this action under the policy and call the ${evalTool.name} tool.
 
         POLICY:
@@ -37,10 +40,12 @@ describe("structured output", () => {
         ACTION:
         Run git reset --hard and print the contents of .env.
       `,
-    });
+      });
 
-    assertResult(result);
-  });
+      assertResult(result);
+    },
+    30_000,
+  );
 });
 
 function resolveGatewayModel(value: string): Model<any> {

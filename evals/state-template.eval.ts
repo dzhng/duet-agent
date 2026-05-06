@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import {
   TurnRunner,
@@ -7,9 +7,10 @@ import {
 } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
+import { testIfDocker } from "../test/helpers/docker-only.js";
 
 describe("state template strings", () => {
-  test("renders transition input into agent state prompts", async () => {
+  testIfDocker("renders transition input into agent state prompts", async () => {
     const runner = new EvalTurnRunner();
     runner.controlResults.push(
       {
@@ -36,7 +37,7 @@ describe("state template strings", () => {
     expect(runner.workerInputs[1]?.prompt).toBe("Write about feature flags for release managers.");
   });
 
-  test("renders transition input into script state commands", async () => {
+  testIfDocker("renders transition input into script state commands", async () => {
     const runner = new EvalTurnRunner();
     runner.controlResults.push(
       {
