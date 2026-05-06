@@ -162,9 +162,9 @@ describe("TurnRunner skills", () => {
 
       expect(systemPrompt).toContain("Available skills");
       expect(systemPrompt).toContain("<skills>");
-      expect(systemPrompt).toContain("name: first-skill");
+      expect(systemPrompt).toContain('<skill name="first-skill">');
       expect(systemPrompt).toContain("First skill description.");
-      expect(systemPrompt).toContain("name: second-skill");
+      expect(systemPrompt).toContain('<skill name="second-skill">');
       expect(systemPrompt).toContain("Second skill description.");
       expect(systemPrompt).toContain("Base instructions.");
       // Full SKILL.md bodies must NOT be inlined — they're loaded on demand via the read_skill tool.

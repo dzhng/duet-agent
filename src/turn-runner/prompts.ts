@@ -84,7 +84,7 @@ function createSkillsSystemPrompt(skills: readonly Skill[]): string | undefined 
     Available skills (metadata only — call the \`read_skill\` tool with the skill name to load full instructions on demand):
     ${toXML({
       skills: skills.map((skill) => ({
-        skill: [{ _attrs: { name: skill.name } }, { description: skill.description }],
+        skill: { _attrs: { name: skill.name }, description: skill.description },
       })),
     })}
   `;
