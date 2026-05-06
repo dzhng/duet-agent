@@ -83,7 +83,7 @@ class FakeTurnRunner implements SessionTurnRunner {
               history: [
                 ...this.state.stateMachine.history,
                 {
-                  type: "session_completed",
+                  type: "state_machine_completed",
                   timestamp: Date.now(),
                   terminal: { state: "interrupted", status: "cancelled" },
                 },

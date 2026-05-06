@@ -296,7 +296,7 @@ export interface StateMachineTerminalResult {
 }
 
 export type StateMachineSessionEvent =
-  | { type: "session_started"; timestamp: number }
+  | { type: "state_machine_started"; timestamp: number }
   | { type: "runner_decided"; timestamp: number; decision: unknown }
   | {
       type: "state_started";
@@ -306,4 +306,4 @@ export type StateMachineSessionEvent =
     }
   | { type: "state_completed"; timestamp: number; state: string; output?: unknown }
   | { type: "state_failed"; timestamp: number; state: string; error: string }
-  | { type: "session_completed"; timestamp: number; terminal: StateMachineTerminalResult };
+  | { type: "state_machine_completed"; timestamp: number; terminal: StateMachineTerminalResult };
