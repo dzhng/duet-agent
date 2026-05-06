@@ -84,8 +84,6 @@ type ActiveStateWork =
       promptTerminal?: Promise<TurnTerminalEvent>;
     };
 
-type ActiveAgentSlot = "parent" | "state_machine_child";
-
 function parseSlashCommands(prompt: string): {
   commands: string[];
 } {
@@ -544,7 +542,7 @@ export class TurnRunner {
 
   protected async runAgentWorker(
     input: AgentWorkerInput,
-    activeSlot: ActiveAgentSlot = "parent",
+    activeSlot: "parent" | "state_machine_child" = "parent",
   ): Promise<AgentWorkerResult> {
     if (activeSlot === "parent" && this.activeAgent) {
       throw new Error("Cannot start a parent agent while another parent agent is active.");
