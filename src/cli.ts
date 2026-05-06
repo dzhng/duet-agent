@@ -16,6 +16,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { findEnvKeys, type TextContent } from "@mariozechner/pi-ai";
 import dotenv from "dotenv";
+import { formatCompactJson } from "./lib/compact-json.js";
 import { SessionManager } from "./session/session-manager.js";
 import { runTui } from "./tui/app.js";
 import type { TurnRunnerConfig } from "./types/config.js";
@@ -95,6 +96,12 @@ async function main() {
       case "--json":
         jsonOutput = true;
         break;
+      case "--version":
+      case "-v": {
+        const version = (await readInstalledPackageVersion()) ?? "unknown";
+        console.log(version);
+        process.exit(0);
+      }
       case "--help":
       case "-h":
         printHelp();
@@ -369,7 +376,7 @@ function formatReasoning(text: string): string {
 
 function formatToolCall(step: Extract<TurnStep, { type: "tool_call" }>): string {
   const status = step.status ? ` ${step.status}` : "";
-  const input = step.input === undefined ? "" : `\n${JSON.stringify(step.input, null, 2)}`;
+  const input = step.input === undefined ? "" : `\n${formatCompactJson(step.input)}`;
   let output = "";
   if (step.output && step.output.length > 0) {
     const text = step.output
@@ -640,6 +647,7 @@ OPTIONS
                             Load a file into the system prompt; repeatable
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
   --json                    Print streamed events as JSON lines
+  -v, --version            Print the installed duet version and exit
   -h, --help               Show this help
 
 INTERACTIVE

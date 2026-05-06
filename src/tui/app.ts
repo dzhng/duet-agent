@@ -8,6 +8,7 @@ import {
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
+import { formatCompactJson } from "../lib/compact-json.js";
 import type { Session } from "../session/session.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type {
@@ -315,7 +316,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     } else if (step.type === "tool_call") {
       const statusSuffix = step.status ? ` (${step.status})` : "";
       const header = `[tool ${step.toolName}${statusSuffix}]`;
-      const body = step.input === undefined ? "" : JSON.stringify(step.input, null, 2);
+      const body = step.input === undefined ? "" : formatCompactJson(step.input);
       appendBlock(header, body, COLORS.tool);
       if (step.output && step.output.length > 0) {
         const text = textFromContent(step.output);
@@ -509,7 +510,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
           const trimmed = block.thinking.trim();
           if (trimmed) appendBlock("[reasoning]", truncateToolResult(trimmed), COLORS.reasoning);
         } else if (block.type === "toolCall") {
-          const body = JSON.stringify(block.arguments, null, 2);
+          const body = formatCompactJson(block.arguments);
           appendBlock(`[tool ${block.name}]`, body, COLORS.tool);
         }
       }
