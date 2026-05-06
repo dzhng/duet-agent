@@ -18,7 +18,7 @@ import { findEnvKeys, type TextContent } from "@mariozechner/pi-ai";
 import dotenv from "dotenv";
 import { formatCompactJson } from "./lib/compact-json.js";
 import { SessionManager } from "./session/session-manager.js";
-import { discoverInstalledSkills } from "./turn-runner/skills.js";
+import { discoverInstalledSkills, resolveSkillScope } from "./turn-runner/skills.js";
 import { runTui } from "./tui/app.js";
 import type { TurnRunnerConfig } from "./types/config.js";
 import type { TurnStep, TurnTerminalEvent, TurnTokenUsage } from "./types/protocol.js";
@@ -620,7 +620,7 @@ function runSkillsCommand(args: string[]): void {
     name: skill.name,
     description: skill.description,
     path: skill.baseDir,
-    scope: skill.sourceInfo.scope,
+    scope: resolveSkillScope(skill, workDir),
   }));
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
 }

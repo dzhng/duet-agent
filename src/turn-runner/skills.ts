@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import { loadSkills } from "@mariozechner/pi-coding-agent";
 import type { SkillDiscoveryOptions } from "../types/config.js";
@@ -92,4 +92,32 @@ export function mergeSkillsByName(primary: readonly Skill[], secondary: readonly
 export function readSkillInstructions(skill: Skill): string {
   const content = readFileSync(skill.filePath, "utf-8");
   return expandSkillShellCommands(content, skill.baseDir);
+}
+
+/**
+ * Resolve the effective scope of a skill based on which discovery root it
+ * actually lives under.
+ *
+ * pi-coding-agent only labels a single user dir + a single project dir as
+ * "user"/"project" — anything else routes to "temporary". duet-agent scans
+ * three roots (.duet, .agents, .claude) per scope, so we re-label here so
+ * downstream consumers get the truth instead of mostly-"temporary".
+ */
+export function resolveSkillScope(skill: Skill, cwd: string): "user" | "project" | "temporary" {
+  const baseDir = resolve(skill.baseDir);
+  const home = homedir();
+  for (const dirName of DEFAULT_SKILL_DIR_NAMES) {
+    if (isUnderPath(baseDir, join(home, dirName, "skills"))) return "user";
+  }
+  for (const dirName of DEFAULT_SKILL_DIR_NAMES) {
+    if (isUnderPath(baseDir, join(cwd, dirName, "skills"))) return "project";
+  }
+  return "temporary";
+}
+
+function isUnderPath(target: string, root: string): boolean {
+  const normalizedRoot = resolve(root);
+  if (target === normalizedRoot) return true;
+  const prefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
+  return target.startsWith(prefix);
 }
