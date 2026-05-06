@@ -97,9 +97,9 @@ class EvalTurnRunner extends TurnRunner {
 
   protected override async runAgentWorker(
     input: AgentWorkerInput,
-    activeSlot: "parent" | "child" = "parent",
+    activeSlot: "parent" | "state_machine_child" = "parent",
   ): Promise<AgentWorkerResult> {
-    if (activeSlot === "child") {
+    if (activeSlot === "state_machine_child") {
       this.childInputs.push(input);
       const result = this.childResults.shift();
       if (!result) throw new Error("Missing child result");

@@ -84,6 +84,8 @@ type ActiveStateWork =
       promptTerminal?: Promise<TurnTerminalEvent>;
     };
 
+type ActiveAgentSlot = "parent" | "state_machine_child";
+
 function parseSlashCommands(prompt: string): {
   commands: string[];
 } {
@@ -542,13 +544,15 @@ export class TurnRunner {
 
   protected async runAgentWorker(
     input: AgentWorkerInput,
-    activeSlot: "parent" | "child" = "parent",
+    activeSlot: ActiveAgentSlot = "parent",
   ): Promise<AgentWorkerResult> {
     if (activeSlot === "parent" && this.activeAgent) {
       throw new Error("Cannot start a parent agent while another parent agent is active.");
     }
-    if (activeSlot === "child" && this.activeChildAgent) {
-      throw new Error("Cannot start a child agent while another child agent is active.");
+    if (activeSlot === "state_machine_child" && this.activeChildAgent) {
+      throw new Error(
+        "Cannot start a state-machine child agent while another child agent is active.",
+      );
     }
 
     let control: TurnRunnerControlResult = { type: "none" };
@@ -863,7 +867,7 @@ export class TurnRunner {
           skills: this.resolveStateAgentSkills(state),
           ...this.createTools("agent"),
         },
-        "child",
+        "state_machine_child",
       )
     ).terminal;
     const parentSession = { ...session, agent: childResult.state.agent };
