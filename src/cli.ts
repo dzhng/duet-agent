@@ -14,9 +14,11 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { findEnvKeys, type TextContent } from "@mariozechner/pi-ai";
+import { type TextContent } from "@mariozechner/pi-ai";
 import dotenv from "dotenv";
+import { shimDuetApiKeyToAiGateway } from "./duet-gateway/index.js";
 import { formatCompactJson } from "./lib/compact-json.js";
+import { describeModelResolution, resolveCliModel } from "./model-resolution/index.js";
 import { SessionManager } from "./session/session-manager.js";
 import { runTui } from "./tui/app.js";
 import type { TurnRunnerConfig } from "./types/config.js";
@@ -30,12 +32,6 @@ const NPM_PACKAGE_METADATA_URL = `https://registry.npmjs.org/${NPM_PACKAGE_NAME.
 const VERSION_CHECK_TIMEOUT_MS = 1_500;
 const PACKAGE_MANAGERS = ["npm", "bun", "pnpm", "yarn"] as const;
 
-const INFERRED_ANTHROPIC_MODEL = "anthropic:claude-opus-4-7";
-const INFERRED_AI_GATEWAY_MODEL = "vercel-ai-gateway:anthropic/claude-opus-4.7";
-const INFERRED_OPENROUTER_MODEL = "openrouter:anthropic/claude-opus-4.7";
-const INFERRED_OPENAI_MODEL = "openai:gpt-5.5";
-const DEFAULT_CLI_MODEL = INFERRED_ANTHROPIC_MODEL;
-
 type PackageManager = (typeof PACKAGE_MANAGERS)[number];
 
 type PackageManagerDetectionContext = {
@@ -46,6 +42,11 @@ type PackageManagerDetectionContext = {
 };
 
 async function main() {
+  // Bridge DUET_API_KEY → AI_GATEWAY_API_KEY so the duet-gateway provider
+  // resolves auth through pi-ai's vercel-ai-gateway path. Idempotent — caller's
+  // explicit AI_GATEWAY_API_KEY wins.
+  shimDuetApiKeyToAiGateway();
+
   const args = process.argv.slice(2);
   if (args[0] === "upgrade") {
     try {
@@ -407,71 +408,15 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-/**
- * Describes how the CLI arrived at a model selection. Used to render a
- * provenance hint at startup so users understand why their session is talking
- * to the model it picked.
- */
-export interface ModelResolution {
-  modelName: string;
-  /** explicit: --model flag; inferred: provider env var present; default: built-in fallback. */
-  source: "explicit" | "inferred" | "default";
-  /** Provider env var that triggered inference, e.g. "ANTHROPIC_API_KEY". */
-  envVar?: string;
-  /** True when the env var was loaded from <workdir>/.env rather than the shell. */
-  fromDotenv?: boolean;
-}
-
-const PROVIDER_INFERENCE: Array<{ provider: string; model: string }> = [
-  { provider: "anthropic", model: INFERRED_ANTHROPIC_MODEL },
-  { provider: "vercel-ai-gateway", model: INFERRED_AI_GATEWAY_MODEL },
-  { provider: "openrouter", model: INFERRED_OPENROUTER_MODEL },
-  { provider: "openai", model: INFERRED_OPENAI_MODEL },
-];
-
-export function inferDefaultModelName(): string | undefined {
-  for (const entry of PROVIDER_INFERENCE) {
-    if (findEnvKeys(entry.provider)) return entry.model;
-  }
-  return undefined;
-}
-
-export function resolveCliModelName(modelName: string | undefined): string {
-  return resolveCliModel(modelName).modelName;
-}
-
-/**
- * Same selection logic as resolveCliModelName, but also reports the provenance
- * so callers can show "inferred from ANTHROPIC_API_KEY in .env" etc.
- */
-export function resolveCliModel(
-  modelName: string | undefined,
-  dotenvKeys: Set<string> = new Set(),
-): ModelResolution {
-  if (modelName) return { modelName, source: "explicit" };
-  for (const entry of PROVIDER_INFERENCE) {
-    const envVars = findEnvKeys(entry.provider);
-    if (envVars && envVars.length > 0) {
-      const envVar = envVars[0]!;
-      return {
-        modelName: entry.model,
-        source: "inferred",
-        envVar,
-        fromDotenv: dotenvKeys.has(envVar),
-      };
-    }
-  }
-  return { modelName: DEFAULT_CLI_MODEL, source: "default" };
-}
-
-export function describeModelResolution(resolution: ModelResolution): string {
-  if (resolution.source === "explicit") return "--model flag";
-  if (resolution.source === "inferred") {
-    const where = resolution.fromDotenv ? "<workdir>/.env" : "shell environment";
-    return `inferred from ${resolution.envVar} in ${where}`;
-  }
-  return "built-in default (no provider env vars set)";
-}
+// Re-exported so tests and external callers keep their existing
+// `../src/cli.js` import paths after the model-resolution split.
+export {
+  describeModelResolution,
+  inferDefaultModelName,
+  type ModelResolution,
+  resolveCliModel,
+  resolveCliModelName,
+} from "./model-resolution/index.js";
 
 async function getNewVersionNotice(): Promise<string | undefined> {
   try {
@@ -717,10 +662,12 @@ duet — An opinionated full-stack agent runner
 
 USAGE
   duet [options] [prompt]
+  duet skills [--workdir <path>]
   duet upgrade [--manager npm|bun|pnpm|yarn]
   echo "prompt" | duet
 
 COMMANDS
+  skills                   List installed skills as JSON (name, description, path, scope)
   upgrade                  Upgrade the global ${NPM_PACKAGE_NAME} installation
 
 OPTIONS
@@ -743,14 +690,20 @@ INTERACTIVE
 MODELS
   Use provider:modelId syntax, e.g. anthropic:claude-opus-4-7.
   If omitted, duet infers a default from ANTHROPIC_API_KEY,
-  AI_GATEWAY_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY
-  after loading <workdir>/.env.
+  DUET_API_KEY, AI_GATEWAY_API_KEY, OPENROUTER_API_KEY, or
+  OPENAI_API_KEY after loading <workdir>/.env.
+
+  duet-gateway: routes through the Duet gateway proxy
+  (https://duet.so/api/v1/ai-gateway by default; override via
+  DUET_GATEWAY_BASE_URL). It mirrors vercel-ai-gateway's model
+  catalog and authenticates with DUET_API_KEY.
 
 EXAMPLES
   duet "build a REST API with Express and TypeScript"
   duet -m openai:gpt-5.5 "analyze the performance of our test suite"
   duet --memory-model anthropic:claude-sonnet-4-6 "summarize this repo"
   duet -m vercel-ai-gateway:anthropic/claude-opus-4.7 "refactor the auth module"
+  duet -m duet-gateway:anthropic/claude-opus-4.7 "review this repo"
   duet --system-prompt "Prefer concise answers." "review this repo"
   duet --system-prompt-file TEAM.md "review this repo"
   duet --workdir ./my-project "refactor the auth module"

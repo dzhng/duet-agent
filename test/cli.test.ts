@@ -11,6 +11,7 @@ const MODEL_ENV_KEYS = [
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_OAUTH_TOKEN",
   "AI_GATEWAY_API_KEY",
+  "DUET_API_KEY",
   "OPENROUTER_API_KEY",
   "OPENAI_API_KEY",
 ] as const;
@@ -47,7 +48,19 @@ describe("CLI model inference", () => {
     expect(inferDefaultModelName()).toBe("anthropic:claude-opus-4-7");
   });
 
-  test("uses AI Gateway credentials for Opus when Anthropic is absent", () => {
+  test("uses Duet sandbox credentials when only DUET_API_KEY is set", () => {
+    // Bare DUET_API_KEY should route through the duet-gateway provider rather
+    // than Vercel's gateway directly. The CLI startup shim copies the token
+    // into AI_GATEWAY_API_KEY so the underlying vercel-ai-gateway auth path
+    // resolves — without the priority ordering this test guards, that shim
+    // would silently downgrade the inference to vercel-ai-gateway.
+    clearModelEnv();
+    process.env.DUET_API_KEY = "duet_gt_test";
+
+    expect(inferDefaultModelName()).toBe("duet-gateway:anthropic/claude-opus-4.7");
+  });
+
+  test("uses AI Gateway credentials for Opus when Anthropic and Duet are absent", () => {
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
 
