@@ -1,7 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { MemoryStorageOptions } from "../types/config.js";
 import type {
   MemoryStoreEvent,
   Observation,
@@ -12,15 +11,15 @@ import type { MemoryStore } from "./store.js";
 type MemoryDatabase = PGlite;
 
 export async function loadStoredMemory(
-  storageOptions: MemoryStorageOptions | undefined,
+  memoryPath: string | false | undefined,
   cwd: string,
   store: MemoryStore,
 ): Promise<() => Promise<void>> {
-  if (!storageOptions?.path) {
+  if (!memoryPath) {
     return async () => {};
   }
 
-  const database = await openMemoryDatabase(resolveMemoryPath(storageOptions.path, cwd));
+  const database = await openMemoryDatabase(resolveMemoryPath(memoryPath, cwd));
   const snapshot = await readMemorySnapshot(database);
   await store.replaceObservations(snapshot.observations);
 

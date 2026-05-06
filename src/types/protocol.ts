@@ -186,7 +186,7 @@ export interface TurnOptions {
   /**
    * Model override for observational memory extraction and reflection, in
    * provider:modelId format. When omitted, memory work uses the runner's
-   * configured `memoryModel`, then the runner's configured `model`.
+   * configured `memoryModel`, then the default memory model.
    */
   memoryModel?: string;
   thinkingLevel?: ThinkingLevel;

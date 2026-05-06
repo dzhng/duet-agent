@@ -394,9 +394,11 @@ describe("Session", () => {
 
 describe("SessionManager", () => {
   testIfDocker("creates and stores multiple sessions with manager-wrapped events", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-session-manager-"));
+    tempDirs.push(tempDir);
     const runners = new Map<string, FakeTurnRunner>();
     const manager = new SessionManager(
-      { model: "anthropic:claude-opus-4-7" },
+      { model: "anthropic:claude-opus-4-7", cwd: tempDir },
       {
         createRunner: (sessionId) => {
           const runner = new FakeTurnRunner([complete(sessionId)]);
@@ -427,14 +429,23 @@ describe("SessionManager", () => {
     expect(
       events.some((event) => event.sessionId === "second" && event.event.type === "ready"),
     ).toBe(true);
+    expect(manager.config.memoryDbPath).toBe(join(".duet", "memory.db"));
+
+    const firstState = await readFile(
+      join(tempDir, ".duet", "sessions", "first", "state.json"),
+      "utf-8",
+    );
+    expect(JSON.parse(firstState).sessionId).toBe("first");
 
     await manager.dispose();
   });
 
   testIfDocker("resumes one session without relying on turn state object identity", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-session-manager-"));
+    tempDirs.push(tempDir);
     const runner = new FakeTurnRunner([complete("resumed")]);
     const manager = new SessionManager(
-      { model: "anthropic:claude-opus-4-7" },
+      { model: "anthropic:claude-opus-4-7", cwd: tempDir },
       { createRunner: () => runner },
     );
     const events: Array<{ sessionId: string; event: TurnEvent }> = [];

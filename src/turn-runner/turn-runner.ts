@@ -61,6 +61,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_MODEL = "anthropic:claude-opus-4-7";
+const DEFAULT_MEMORY_MODEL = "anthropic:claude-sonnet-4-6";
 
 export type TurnEventHandler = (event: TurnEvent) => void;
 
@@ -112,7 +113,7 @@ export class TurnRunner {
   /** In-memory observation store used by context transforms during agent turns. */
   protected readonly memory = new MemoryStore();
   /** Stops memory persistence subscriptions/databases when the runner is disposed. */
-  private memoryStorageDispose?: () => Promise<void>;
+  private memoryDispose?: () => Promise<void>;
   /**
    * Active parent pi agent. Prompts, steers, and follow-ups only target this
    * transcript so all user-visible conversation stays linear in the parent.
@@ -159,8 +160,8 @@ export class TurnRunner {
     this.activeAgent?.clearAllQueues();
     this.activeChildAgent?.clearAllQueues();
     this.queuedTurnCommands.length = 0;
-    await this.memoryStorageDispose?.();
-    this.memoryStorageDispose = undefined;
+    await this.memoryDispose?.();
+    this.memoryDispose = undefined;
   }
 
   subscribe(handler: TurnEventHandler): () => void {
@@ -747,8 +748,8 @@ export class TurnRunner {
     if (this.memoryLoaded) return;
     this.memoryLoaded = true;
 
-    this.memoryStorageDispose = await loadStoredMemory(
-      this.config.memoryStorage,
+    this.memoryDispose = await loadStoredMemory(
+      this.config.memoryDbPath,
       this.config.cwd ?? process.cwd(),
       this.memory,
     );
@@ -1308,7 +1309,7 @@ export class TurnRunner {
 
   protected resolveMemoryModel(options?: TurnOptions): Model<any> {
     return this.resolveModelName(
-      options?.memoryModel ?? this.config.memoryModel ?? this.config.model ?? DEFAULT_MODEL,
+      options?.memoryModel ?? this.config.memoryModel ?? DEFAULT_MEMORY_MODEL,
     );
   }
 

@@ -5,6 +5,10 @@ import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnEvent } from "../types/protocol.js";
 import { Session, type SessionStartInput, type SessionTurnRunner } from "./session.js";
 
+export const DEFAULT_DUET_DIR = ".duet";
+export const DEFAULT_SESSION_STORAGE_DIR = join(DEFAULT_DUET_DIR, "sessions");
+export const DEFAULT_MEMORY_DB_PATH = join(DEFAULT_DUET_DIR, "memory.db");
+
 export interface SessionManagerCreateInput extends Partial<SessionStartInput> {
   sessionId?: string;
 }
@@ -25,13 +29,15 @@ export class SessionManager {
   private readonly sessions = new Map<string, Session>();
   private readonly eventHandlers = new Set<SessionManagerEventHandler>();
   private readonly sessionStoragePath: string;
+  readonly config: TurnRunnerConfig;
 
   constructor(
-    readonly config: TurnRunnerConfig,
+    config: TurnRunnerConfig,
     private readonly options: SessionManagerOptions = {},
   ) {
+    this.config = withDefaultMemoryDbPath(config);
     this.sessionStoragePath =
-      options.sessionStoragePath ?? join(config.cwd ?? process.cwd(), ".agents", "sessions");
+      options.sessionStoragePath ?? join(config.cwd ?? process.cwd(), DEFAULT_SESSION_STORAGE_DIR);
   }
 
   subscribe(handler: SessionManagerEventHandler): () => void {
@@ -90,6 +96,14 @@ export class SessionManager {
       handler(event);
     }
   }
+}
+
+function withDefaultMemoryDbPath(config: TurnRunnerConfig): TurnRunnerConfig {
+  if (config.memoryDbPath !== undefined) return config;
+  return {
+    ...config,
+    memoryDbPath: DEFAULT_MEMORY_DB_PATH,
+  };
 }
 
 function createSessionId(): string {

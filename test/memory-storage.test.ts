@@ -20,13 +20,24 @@ describe("Memory storage", () => {
     expect(snapshot.observations).toHaveLength(1);
   });
 
+  test("is a no-op when storage is disabled", async () => {
+    const store = new MemoryStore();
+    const dispose = await loadStoredMemory(false, process.cwd(), store);
+
+    await store.appendObservation(createObservation("Not persisted."));
+    await dispose();
+
+    const snapshot = await store.getSnapshot();
+    expect(snapshot.observations[0]?.content).toBe("Not persisted.");
+  });
+
   testIfDocker("creates a PGlite memory database and persists observations", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
-    const memoryPath = join(tempDir, "memory-pglite");
+    const memoryPath = join(tempDir, "memory.db");
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadStoredMemory({ path: memoryPath }, tempDir, store);
+      const dispose = await loadStoredMemory(memoryPath, tempDir, store);
       await store.appendObservation(createObservation("Created database."));
       await dispose();
 
@@ -39,13 +50,13 @@ describe("Memory storage", () => {
 
   testIfDocker("loads existing observations with optional fields intact", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
-    const memoryPath = join(tempDir, "memory-pglite");
+    const memoryPath = join(tempDir, "memory.db");
     const seeded = await openSeededDatabase(memoryPath);
     await seeded.close();
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadStoredMemory({ path: memoryPath }, tempDir, store);
+      const dispose = await loadStoredMemory(memoryPath, tempDir, store);
       const snapshot = await store.getSnapshot();
       await dispose();
 
@@ -71,13 +82,13 @@ describe("Memory storage", () => {
 
   testIfDocker("replaceObservations deletes only removed observations", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
-    const memoryPath = join(tempDir, "memory-pglite");
+    const memoryPath = join(tempDir, "memory.db");
     const seeded = await openSeededDatabase(memoryPath);
     await seeded.close();
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadStoredMemory({ path: memoryPath }, tempDir, store);
+      const dispose = await loadStoredMemory(memoryPath, tempDir, store);
       await store.appendObservation(createObservation("Kept memory."));
 
       await store.replaceObservations([
@@ -97,11 +108,11 @@ describe("Memory storage", () => {
 
   testIfDocker("dispose stops future persistence writes", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
-    const memoryPath = join(tempDir, "memory-pglite");
+    const memoryPath = join(tempDir, "memory.db");
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadStoredMemory({ path: memoryPath }, tempDir, store);
+      const dispose = await loadStoredMemory(memoryPath, tempDir, store);
       await store.appendObservation(createObservation("Before dispose."));
       await dispose();
 
@@ -114,11 +125,11 @@ describe("Memory storage", () => {
 
   testIfDocker("serializes rapid writes before dispose completes", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
-    const memoryPath = join(tempDir, "memory-pglite");
+    const memoryPath = join(tempDir, "memory.db");
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadStoredMemory({ path: memoryPath }, tempDir, store);
+      const dispose = await loadStoredMemory(memoryPath, tempDir, store);
       await Promise.all(
         Array.from({ length: 5 }, (_, index) =>
           store.appendObservation(createObservation(`Queued memory ${index}.`)),

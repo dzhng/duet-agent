@@ -6,13 +6,14 @@ import type { TurnMode, TurnOptions } from "./protocol.js";
 /** Directly mirrors pi-coding-agent's loadSkills options. */
 export type SkillDiscoveryOptions = Partial<Parameters<typeof loadSkills>[0]>;
 
-export interface MemoryStorageOptions {
-  path: string;
-}
-
 export interface TurnRunnerConfig extends TurnOptions {
   memory?: ObservationalMemorySettingsInput;
-  memoryStorage?: MemoryStorageOptions;
+  /**
+   * PGlite database directory for durable observational memories.
+   * SessionManager defaults this to
+   * `.duet/memory.db`; pass `false` to keep memories in process only.
+   */
+  memoryDbPath?: string | false;
   cwd?: string;
   /** Default mode for TurnRunner.turn. "auto" lets the runner classify each prompt. */
   mode?: TurnMode;

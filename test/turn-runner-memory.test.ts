@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { createAssistantMessageEventStream, type Model } from "@mariozechner/pi-ai";
-import { includeToolPairMessages } from "../src/memory/observational.js";
+import {
+  enforceObservationTokenBudget,
+  includeToolPairMessages,
+} from "../src/memory/observational.js";
 import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import type { TurnOptions } from "../src/types/protocol.js";
@@ -107,7 +110,7 @@ describe("TurnRunner memory", () => {
       model: "anthropic:claude-sonnet-4-5",
     });
     expect(withAgentOverride.agentModel.id).toBe("claude-sonnet-4-5");
-    expect(withAgentOverride.memoryModel.id).toBe("claude-opus-4-7");
+    expect(withAgentOverride.memoryModel.id).toBe("claude-sonnet-4-6");
 
     const withConfiguredMemoryOverride = new ModelRoutingTurnRunner({
       model: "anthropic:claude-opus-4-7",
@@ -195,5 +198,32 @@ describe("TurnRunner memory", () => {
     includeToolPairMessages(messages, retainedIds);
 
     expect([...retainedIds].sort()).toEqual(["msg_assistant_response_123", "msg_tool_toolu_123"]);
+  });
+
+  test("memory output budget retries once when over budget", async () => {
+    let retryTokens: number | undefined;
+
+    const result = await enforceObservationTokenBudget({
+      text: "x".repeat(100),
+      targetTokens: 10,
+      retry: async (actualTokens) => {
+        retryTokens = actualTokens;
+        return "short";
+      },
+    });
+
+    expect(retryTokens).toBe(25);
+    expect(result).toBe("short");
+  });
+
+  test("memory output budget hard trims when retry remains over budget", async () => {
+    const result = await enforceObservationTokenBudget({
+      text: "x".repeat(100),
+      targetTokens: 10,
+      retry: async () => "y".repeat(100),
+    });
+
+    expect(result.length).toBeLessThanOrEqual(40);
+    expect(result).toContain("y");
   });
 });

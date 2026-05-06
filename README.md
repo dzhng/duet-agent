@@ -138,7 +138,7 @@ bun run eval   # runs live evals inside Docker
 bun run test   # runs the test suite inside Docker
 ```
 
-Use `bun run test` and `bun run eval`, not raw `bun test`, as the source of truth. File-writing tests and evals run in Docker so focused host runs cannot create `.agents`, PGlite databases, or home-directory skill fixtures in the checkout.
+Use `bun run test` and `bun run eval`, not raw `bun test`, as the source of truth. File-writing tests and evals run in Docker so focused host runs cannot create `.duet`, PGlite databases, or home-directory skill fixtures in the checkout.
 
 The pre-commit hook runs `format`, `check-types`, and `lint`.
 
@@ -161,6 +161,9 @@ bun run cli
 
 # With options
 bun run cli -- -m anthropic:claude-opus-4-7 --workdir ./my-project "refactor the auth module"
+
+# With a custom observational memory model
+bun run cli -- --memory-model anthropic:claude-sonnet-4-6 "summarize this repo"
 
 # With additional system instructions
 bun run cli -- --system-prompt "Prefer concise answers." "review this repo"
@@ -208,12 +211,12 @@ the parent agent rather than creating separate conversation branches.
 
 duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the runtime state container, not a database adapter.
 
+`SessionManager` stores session snapshots under `<cwd>/.duet/sessions` by default and enables durable observational memory at `<cwd>/.duet/memory.db`. Pass `memoryDbPath: false` to keep observational memory in process only, or provide `memoryDbPath` for a custom database location.
+
 ```typescript
 const turnRunner = new TurnRunner({
   model: "anthropic:claude-opus-4-7",
-  memoryStorage: {
-    path: ".agents/memory-pglite",
-  },
+  memoryDbPath: ".duet/memory.db",
 });
 ```
 
@@ -232,11 +235,11 @@ const terminal = await turnRunner.turn({
 
 Resume continues turn runner session state, not an in-flight model/tool call. Any `in_progress` todo is retried from `pending`.
 
-Observational memory is enabled by default with conservative long-context thresholds:
+Observational memory is enabled by default with thresholds tuned for modern 200k-token model windows:
 
-- Raw messages are observed around `30_000` tokens.
-- Observation logs are reflected around `40_000` tokens.
-- Raw-tail retention uses `bufferActivation` to keep recent unobserved messages after observation activation.
+- Raw messages are observed around `150_000` tokens so exact transcript context and prompt caching are used before compaction.
+- Observation logs are reflected around `90_000` tokens, targeting about `65_000` tokens after reflection.
+- Raw-tail retention keeps about `40_000` exact message tokens after observation activation.
 - Observation context is injected as reminder messages; replacing raw context with observations/reflections is the compaction path.
 
 ## Skills

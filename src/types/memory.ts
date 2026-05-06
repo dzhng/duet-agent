@@ -65,7 +65,7 @@ export interface ObservationalMemorySettings {
     messageTokens: number;
     /** Maximum raw-message tokens to send to one observer call. */
     maxTokensPerBatch: number;
-    /** Recent raw context to retain after observation, as ratio or absolute token count. */
+    /** Raw-message token budget to retain after observation compacts older context. */
     bufferActivation: number;
     /** Optional hard stop for observation work after a caller-defined threshold. */
     blockAfter?: number;
@@ -80,7 +80,7 @@ export interface ObservationalMemorySettings {
   reflection: {
     /** Observation token threshold that triggers reflection. */
     observationTokens: number;
-    /** Fraction of the observation budget to target after reflection. */
+    /** Observation token budget to target after reflection condenses the log. */
     bufferActivation: number;
     /** Optional hard stop for reflection work after a caller-defined threshold. */
     blockAfter?: number;

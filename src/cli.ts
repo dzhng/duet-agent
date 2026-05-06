@@ -21,7 +21,8 @@ async function main() {
   const args = process.argv.slice(2);
 
   // Parse flags
-  let modelName = "anthropic:claude-opus-4-7";
+  let modelName: string | undefined;
+  let memoryModelName: string | undefined;
   let workDir = process.cwd();
   let resumeSessionId: string | undefined;
   let systemInstructions: string | undefined;
@@ -36,6 +37,10 @@ async function main() {
       case "-m":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         modelName = args[++i];
+        break;
+      case "--memory-model":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        memoryModelName = args[++i];
         break;
       case "--workdir":
       case "-w":
@@ -90,15 +95,19 @@ async function main() {
     process.exit(1);
   }
 
-  if (modelName.indexOf(":") <= 0) {
+  if (modelName && modelName.indexOf(":") <= 0) {
     throw new Error("Models must use provider:modelId syntax");
+  }
+  if (memoryModelName && memoryModelName.indexOf(":") <= 0) {
+    throw new Error("Memory model must use provider:modelId syntax");
   }
 
   dotenv.config({ path: join(workDir, ".env"), quiet: true });
 
   // Build config
   const config: TurnRunnerConfig = {
-    model: modelName,
+    ...(modelName ? { model: modelName } : {}),
+    ...(memoryModelName ? { memoryModel: memoryModelName } : {}),
     cwd: workDir,
     ...(systemInstructions ? { systemInstructions } : {}),
     ...(systemPromptFiles ? { systemPromptFiles } : {}),
@@ -184,6 +193,7 @@ async function main() {
     process.stderr.write(
       `Resume: ${resumeCommand(session.id, {
         modelName,
+        memoryModelName,
         workDir,
         systemInstructions,
         systemPromptFiles,
@@ -278,7 +288,8 @@ function fail(message: string): never {
 function resumeCommand(
   sessionId: string,
   input: {
-    modelName: string;
+    modelName?: string;
+    memoryModelName?: string;
     workDir: string;
     systemInstructions?: string;
     systemPromptFiles?: string[];
@@ -288,11 +299,15 @@ function resumeCommand(
     detectInvocationPrefix(),
     "--resume",
     shellQuote(sessionId),
-    "--model",
-    shellQuote(input.modelName),
     "--workdir",
     shellQuote(input.workDir),
   ];
+  if (input.modelName) {
+    command.push("--model", shellQuote(input.modelName));
+  }
+  if (input.memoryModelName) {
+    command.push("--memory-model", shellQuote(input.memoryModelName));
+  }
   if (input.systemInstructions) {
     command.push("--system-prompt", shellQuote(input.systemInstructions));
   }
@@ -333,7 +348,8 @@ USAGE
   echo "prompt" | duet
 
 OPTIONS
-  -m, --model <name>       TurnRunner model (default: anthropic:claude-opus-4-7)
+  -m, --model <name>       TurnRunner model override
+  --memory-model <name>    Observational memory model (default: anthropic:claude-sonnet-4-6)
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
   --system-prompt <text>   Additional system instructions for the runner
@@ -353,6 +369,7 @@ MODELS
 EXAMPLES
   duet "build a REST API with Express and TypeScript"
   duet -m openai:gpt-5.5 "analyze the performance of our test suite"
+  duet --memory-model anthropic:claude-sonnet-4-6 "summarize this repo"
   duet -m vercel-ai-gateway:anthropic/claude-opus-4.7 "refactor the auth module"
   duet --system-prompt "Prefer concise answers." "review this repo"
   duet --system-prompt-file TEAM.md "review this repo"

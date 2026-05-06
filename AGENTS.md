@@ -47,7 +47,7 @@
 ## Run File-Writing Tests And Evals In Docker
 
 - Use `bun run test` for the test suite and `bun run eval` for live evals. Do not use raw `bun test` as the source of truth.
-- Tests that write files, create databases, touch `.agents`, or depend on the home directory must use `testIfDocker` so host-only focused runs skip them.
+- Tests that write files, create databases, touch `.duet`, or depend on the home directory must use `testIfDocker` so host-only focused runs skip them.
 - If a focused host run creates runtime artifacts, fix the test/eval boundary instead of committing or relying on cleanup.
 
 ## Keep Prompt Literals Aligned

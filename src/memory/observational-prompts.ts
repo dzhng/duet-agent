@@ -170,8 +170,19 @@ export function buildObserverSystemPrompt(
 export function buildObserverPrompt(
   messages: RawMemoryMessage[],
   existingObservations: string,
+  targetTokens: number,
+  retry?: { actualTokens: number },
   now = new Date(),
 ): string {
+  const retryInstruction = retry
+    ? dedent`
+        The previous observation log was approximately ${retry.actualTokens.toLocaleString("en-US")} tokens, which exceeded the ${targetTokens.toLocaleString("en-US")}-token budget.
+
+        Retry with a shorter observation log under approximately ${targetTokens.toLocaleString("en-US")} tokens. Preserve the highest-priority user facts, unresolved work, concrete decisions, and completion markers first.
+      `
+    : dedent`
+        Target budget: keep the new observation log under approximately ${targetTokens.toLocaleString("en-US")} tokens.
+      `;
   const previous = existingObservations.trim()
     ? dedent`
         ## Existing Observations
@@ -192,6 +203,8 @@ export function buildObserverPrompt(
     ${formatMessagesForObserver(messages)}
 
     ---
+
+    ${retryInstruction}
 
     Extract new observations from this message history.
   `;
@@ -222,9 +235,23 @@ export function buildReflectorSystemPrompt(instruction?: string): string {
   `;
 }
 
-export function buildReflectorPrompt(observations: string): string {
+export function buildReflectorPrompt(
+  observations: string,
+  targetTokens: number,
+  retry?: { actualTokens: number },
+): string {
+  const budgetInstruction = retry
+    ? dedent`
+        The previous reflected observation log was approximately ${retry.actualTokens.toLocaleString("en-US")} tokens, which exceeded the ${targetTokens.toLocaleString("en-US")}-token budget.
+
+        Retry with a shorter reflected observation log under approximately ${targetTokens.toLocaleString("en-US")} tokens. Preserve high-priority facts, unresolved work, concrete decisions, chronology, and completion markers first.
+      `
+    : `Target budget: keep the reflected observation log under approximately ${targetTokens.toLocaleString("en-US")} tokens.`;
+
   return dedent`
     Reflect on these observations and return a condensed observation log.
+
+    ${budgetInstruction}
 
     ${observations}
   `;

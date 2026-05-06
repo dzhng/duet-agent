@@ -29,22 +29,24 @@ import {
 
 export const OBSERVATIONAL_MEMORY_DEFAULTS = {
   observation: {
-    // Start converting raw conversation history into observations once the raw
-    // message log reaches this approximate token count.
-    messageTokens: 30_000,
-    // Limit each observer call to a bounded slice of raw history so observation
-    // generation stays predictable on very long sessions.
-    maxTokensPerBatch: 10_000,
-    // Keep this fraction of the raw-history budget after observations activate,
-    // so the actor still sees the most recent unobserved conversation tail.
-    bufferActivation: 0.8,
+    // Start observing only after the raw transcript is large enough to threaten
+    // a modern 200k-token actor window; prompt caching makes exact history cheap
+    // enough to keep until then.
+    messageTokens: 150_000,
+    // Keep observer calls below the model's practical reasoning ceiling while
+    // still allowing large transcript slices when observation work activates.
+    maxTokensPerBatch: 40_000,
+    // Retain this many raw-message tokens after observation so the actor keeps a
+    // substantial exact tail instead of relying only on derived observations.
+    bufferActivation: 40_000,
   },
   reflection: {
-    // Condense the observation log once it reaches this approximate size.
-    observationTokens: 40_000,
-    // Keep this fraction of observationTokens after reflection, leaving room for
-    // future observations before another reflection pass is needed.
-    bufferActivation: 0.5,
+    // Let the derived observation log grow before reflecting; it is usually much
+    // smaller than raw tool-heavy transcripts and also benefits from caching.
+    observationTokens: 90_000,
+    // Target this many observation tokens after reflection so the pass dedupes
+    // without aggressively summarizing away useful specifics.
+    bufferActivation: 65_000,
   },
 } as const;
 
@@ -200,18 +202,27 @@ export function resolveObservationalMemorySettings(
 }
 
 export function validateObservationalMemorySettings(settings: ObservationalMemorySettings): void {
-  if (
-    settings.observation.bufferActivation <= 0 ||
-    (settings.observation.bufferActivation > 1 && settings.observation.bufferActivation < 1000)
-  ) {
+  if (settings.observation.bufferActivation <= 0) {
     throw new Error(
-      `observation.bufferActivation must be <= 1 (ratio) or >= 1000 (absolute retention), got ${settings.observation.bufferActivation}`,
+      `observation.bufferActivation must be a positive retained-token budget, got ${settings.observation.bufferActivation}`,
     );
   }
 
-  if (settings.reflection.bufferActivation <= 0 || settings.reflection.bufferActivation > 1) {
+  if (settings.observation.bufferActivation >= settings.observation.messageTokens) {
     throw new Error(
-      `reflection.bufferActivation must be in range (0, 1], got ${settings.reflection.bufferActivation}`,
+      `observation.bufferActivation (${settings.observation.bufferActivation}) must be lower than observation.messageTokens (${settings.observation.messageTokens})`,
+    );
+  }
+
+  if (settings.reflection.bufferActivation <= 0) {
+    throw new Error(
+      `reflection.bufferActivation must be a positive retained-token budget, got ${settings.reflection.bufferActivation}`,
+    );
+  }
+
+  if (settings.reflection.bufferActivation >= settings.reflection.observationTokens) {
+    throw new Error(
+      `reflection.bufferActivation (${settings.reflection.bufferActivation}) must be lower than reflection.observationTokens (${settings.reflection.observationTokens})`,
     );
   }
 }
@@ -321,11 +332,7 @@ async function activateObservations(
     tags: ["observational-memory"],
   });
 
-  const retainedRawMessages = retainRawTail(
-    messages,
-    settings.observation.bufferActivation,
-    settings.observation.messageTokens,
-  );
+  const retainedRawMessages = retainRawTail(messages, settings.observation.bufferActivation);
   return retainedRawMessages;
 }
 
@@ -339,14 +346,28 @@ async function reflectObservations(
   const snapshot = await store.getSnapshot();
   const source = snapshot.observations.map((observation) => observation.content).join("\n\n");
   const rendered = renderObservationGroupsForReflection(source) ?? source;
+  const targetTokens = settings.reflection.bufferActivation;
   const result = await generateStructuredOutput({
     model,
     tool: reflectorResultTool,
     systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
-    prompt: buildReflectorPrompt(rendered),
+    prompt: buildReflectorPrompt(rendered, targetTokens),
     onUsage,
   });
-  const text = sanitizeObservationLines(result.observations.trim());
+  const text = await enforceObservationTokenBudget({
+    text: result.observations,
+    targetTokens,
+    retry: async (actualTokens) => {
+      const retryResult = await generateStructuredOutput({
+        model,
+        tool: reflectorResultTool,
+        systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
+        prompt: buildReflectorPrompt(rendered, targetTokens, { actualTokens }),
+        onUsage,
+      });
+      return retryResult.observations;
+    },
+  });
   if (!text) {
     return;
   }
@@ -374,6 +395,7 @@ async function observe(
   onUsage?: (usage: Usage) => void,
   _signal?: AbortSignal,
 ): Promise<ObserverResult> {
+  const targetTokens = settings.observation.maxTokensPerBatch;
   const result = await generateStructuredOutput({
     model,
     tool: observerResultTool,
@@ -384,21 +406,73 @@ async function observe(
     prompt: buildObserverPrompt(
       messages,
       previousObservations.map((observation) => observation.content).join("\n\n"),
+      targetTokens,
     ),
     onUsage,
   });
+  const observations = await enforceObservationTokenBudget({
+    text: result.observations,
+    targetTokens,
+    retry: async (actualTokens) => {
+      const retryResult = await generateStructuredOutput({
+        model,
+        tool: observerResultTool,
+        systemPrompt: buildObserverSystemPrompt(
+          settings.observation.instruction,
+          settings.observation.threadTitle,
+        ),
+        prompt: buildObserverPrompt(
+          messages,
+          previousObservations.map((observation) => observation.content).join("\n\n"),
+          targetTokens,
+          { actualTokens },
+        ),
+        onUsage,
+      });
+      return retryResult.observations;
+    },
+  });
   return {
     ...result,
-    observations: sanitizeObservationLines(result.observations),
+    observations,
   };
 }
 
-function retainRawTail(
-  messages: RawMemoryMessage[],
-  activation: number,
-  messageTokens: number,
-): RawMemoryMessage[] {
-  const retainTokens = activation <= 1 ? Math.floor(messageTokens * (1 - activation)) : activation;
+export async function enforceObservationTokenBudget(options: {
+  text: string;
+  targetTokens: number;
+  retry: (actualTokens: number) => Promise<string>;
+}): Promise<string> {
+  const first = sanitizeObservationLines(options.text.trim());
+  const firstTokens = estimateTokens(first);
+  if (firstTokens <= options.targetTokens) {
+    return first;
+  }
+
+  const retried = sanitizeObservationLines((await options.retry(firstTokens)).trim());
+  const retriedTokens = estimateTokens(retried);
+  if (retriedTokens <= options.targetTokens) {
+    return retried;
+  }
+
+  return trimObservationTextToTokenBudget(retried, options.targetTokens);
+}
+
+export function trimObservationTextToTokenBudget(text: string, targetTokens: number): string {
+  if (targetTokens <= 0) return "";
+  if (estimateTokens(text) <= targetTokens) return text;
+
+  const targetChars = Math.max(0, targetTokens * 4);
+  const marker = "\n… [truncated to fit memory token budget]";
+  if (targetChars <= marker.length) {
+    return text.slice(0, targetChars).trimEnd();
+  }
+
+  const trimmed = text.slice(0, targetChars - marker.length).trimEnd();
+  return `${trimmed}${marker}`;
+}
+
+function retainRawTail(messages: RawMemoryMessage[], retainTokens: number): RawMemoryMessage[] {
   let tokens = 0;
   const retained: RawMemoryMessage[] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
