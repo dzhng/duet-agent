@@ -52,11 +52,13 @@ const HINT_RUNNING =
  * keyboard protocol is enabled. We opt into it via `useKittyKeyboard`.
  */
 export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | undefined> {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
     useKittyKeyboard: {},
     targetFps: 60,
   });
+  restoreWindowGlobal(previousWindow);
 
   const layout = new BoxRenderable(renderer, {
     flexDirection: "column",
@@ -190,6 +192,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       renderMemoryStatus(event);
     } else if (event.type === "system") {
       appendBlock("[system]", event.message, COLORS.system);
+      if (event.level === "error") markIdle();
     } else if (event.type === "ask") {
       appendBlock("[question]", event.questions.map((q) => q.question).join("\n"), COLORS.system);
       renderUsage(event.usage);
@@ -488,4 +491,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       }
     }
   }
+}
+
+function restoreWindowGlobal(previousWindow: PropertyDescriptor | undefined): void {
+  // OpenTUI installs `window.requestAnimationFrame` for browser-style
+  // animation compatibility. In Bun, the presence of `window` can send fetch
+  // internals down browser-only paths, while `global.requestAnimationFrame`
+  // remains enough for OpenTUI after initialization.
+  if (previousWindow) {
+    Object.defineProperty(globalThis, "window", previousWindow);
+    return;
+  }
+  delete (globalThis as typeof globalThis & { window?: unknown }).window;
 }

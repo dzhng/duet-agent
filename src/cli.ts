@@ -10,6 +10,7 @@
  */
 
 import { basename, join } from "node:path";
+import { createInterface } from "node:readline/promises";
 import type { TextContent } from "@mariozechner/pi-ai";
 import dotenv from "dotenv";
 import { SessionManager } from "./session/session-manager.js";
@@ -87,6 +88,10 @@ async function main() {
       chunks.push(chunk as Buffer);
     }
     prompt = Buffer.concat(chunks).toString("utf-8").trim();
+  }
+
+  if (!prompt && jsonOutput && interactive) {
+    prompt = await readInteractivePrompt();
   }
 
   if (!prompt && !resumeSessionId && !interactive) {
@@ -177,7 +182,10 @@ async function main() {
   try {
     const session = resumeSessionId
       ? manager.resume(resumeSessionId)
-      : manager.create({ mode: config.mode, prompt });
+      : manager.create({
+          mode: config.mode,
+          ...(useTui && prompt ? {} : { prompt }),
+        });
     let terminal: TurnTerminalEvent | undefined;
     let started = Boolean(prompt || resumeSessionId);
     let initialTuiPrompt: string | undefined;
@@ -341,6 +349,22 @@ function formatToolCall(step: Extract<TurnStep, { type: "tool_call" }>): string 
 function fail(message: string): never {
   console.error(`Fatal: ${message}`);
   process.exit(1);
+}
+
+async function readInteractivePrompt(): Promise<string> {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+  try {
+    let prompt = "";
+    while (!prompt) {
+      prompt = (await rl.question("> ")).trim();
+    }
+    return prompt;
+  } finally {
+    rl.close();
+  }
 }
 
 function resumeCommand(
