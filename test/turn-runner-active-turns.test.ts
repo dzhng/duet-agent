@@ -5,6 +5,7 @@ import {
   type AssistantMessage,
   type Context,
 } from "@mariozechner/pi-ai";
+import { setTimeout as delay } from "node:timers/promises";
 import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnState, TurnTerminalEvent } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
@@ -739,10 +740,6 @@ async function waitFor(assertion: () => boolean, timeoutMs = 1000): Promise<void
     }
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
-}
-
-async function delay(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function createAssistantMessage(
