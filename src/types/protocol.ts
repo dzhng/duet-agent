@@ -19,41 +19,46 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  *
  * ## Turn Model
  *
- * The runner is a stateless turn executor: every command carries the full
- * `TurnState` snapshot needed to resume work, and every terminal event returns
- * the next snapshot. The session is the long-lived session owner. It assigns
- * session ids, persists snapshots, schedules wakeups, and can run an unbounded
- * number of turn-runner turns for the same user session.
+ * The runner is a stateful turn executor: `start` bootstraps the current
+ * `TurnState`, and each terminal event returns the next snapshot. The session
+ * is the persistence owner. It assigns session ids, hydrates stored snapshots
+ * before start, persists terminal snapshots, schedules wakeups, and can run an
+ * unbounded number of turn-runner turns for the same user session.
  *
- * A caller starts a turn-runner turn by sending one of:
+ * A caller initializes a session by sending `start`. This is a setup command,
+ * not a turn: the runner loads memory and skills, emits `turn_started`
+ * with the initial empty `TurnState`, and returns. Skills, agent files, and
+ * skill collisions are exposed through `getSkills()`, `getResolvedAgentFiles()`,
+ * and `getSkillCollisions()` for callers (CLI/TUI) that want to render a
+ * setup summary; no agent work runs until the caller sends a follow-up.
  *
- * - `start`: begin a new turn state from a prompt
- * - `prompt`: send a follow-up prompt while state exists
+ * Once the session is set up, callers run turns by sending one of:
+ *
+ * - `prompt`: send a user prompt against the current state
  * - `answer`: answer questions from the previous terminal `ask` event
  * - `wake`: resume a sleeping session for one scheduled polling attempt
  *
- * The turn runner must emit `ready` before any other event. A turn runner that is not
- * ready should not emit session, progress, or terminal events. After `ready`, the
- * runner emits any number of during-turn events (`step`, `todos`, `follow_up_queue`,
- * `state_machine`, `log`). The turn ends with exactly one terminal event:
+ * Each turn emits any number of during-turn events (`step`, `todos`,
+ * `follow_up_queue`, `state_machine`, `log`). The turn ends with exactly one
+ * terminal event:
  * `complete`, `ask`, `interrupted`, or `sleep`.
  * Terminal events carry the turn runner-owned state needed to continue a later turn.
  * `complete` means this turn-runner turn ended; it does not mean the session
  * session is finished. A user can follow up with another prompt for the same
- * session, and the session will pass the latest `TurnState`
- * back into the runner. The agent session is always present because the agent owns the conversation
+ * session; the runner continues from its internally held `TurnState`. The
+ * agent session is always present because the agent owns the conversation
  * history and, for state-machine mode, drives state transitions.
  *
  * ## Scenario 1: One-Shot Agent Task
  *
  * The user asks for a normal task, such as "summarize this file" or "fix this
- * bug." The start command omits `mode` or sets `mode: "auto"`. The turn runner
- * classifies the prompt as agent mode and emits:
+ * bug." The caller sends `start` (omitting `mode` or setting `mode: "auto"`)
+ * to set the session up; the runner emits `turn_started` with an empty
+ * `state.agent`. When the user types their first prompt, the caller sends a
+ * `prompt` command and the runner classifies it as agent mode and emits:
  *
- * 1. `ready`
- * 2. `session_started` with `state.agent` populated
- * 3. zero or more `step`, `todos`, `follow_up_queue`, or `log` events
- * 4. `complete` with the final answer and updated `state.agent`
+ * 1. zero or more `step`, `todos`, `follow_up_queue`, or `log` events
+ * 2. `complete` with the final answer and updated `state.agent`
  *
  * This behaves like a normal agent runner. There is no state-machine UI because
  * the session is not a long-running business process.
@@ -62,9 +67,9 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  *
  * The user asks for a task with a complex lifecycle, such as "prospect this
  * customer until they book a meeting" or "implement this change, open a PR, and
- * watch it until merge." With `mode: "auto"`, the runner chooses a state
- * machine and emits `session_started` with `state.agent` and `state.stateMachine`
- * populated.
+ * watch it until merge." With `mode: "auto"`, the first `prompt` after `start`
+ * routes through the runner, which chooses a state machine and populates
+ * `state.stateMachine` on the next emitted state.
  *
  * During the turn, the runner emits events that the UI can render directly:
  *
@@ -256,30 +261,42 @@ export type TurnStep =
   | { type: "system"; message: string };
 
 /**
- * Start a new turn state.
+ * Set up a new turn-runner session.
  *
- * The mode decides routing. Omit it to use the turn runner's configured default.
+ * `start` is a setup command, not a turn. The runner loads memory and skills,
+ * stores its initial `TurnState` (either fresh or the resumed one passed via
+ * `state`), and emits `turn_started`. No agent work runs. The caller sends
+ * `prompt` afterwards to actually run a turn. Skills, agent files, and skill
+ * collisions are exposed through dedicated runner methods so callers can
+ * render the setup summary without subscribing to a dedicated event.
+ *
+ * The CLI/TUI sends this on launch so the user sees the available skills
+ * before typing the first prompt.
  */
 export interface TurnStartCommand {
   type: "start";
-  /** User prompt to route through the runner. */
-  prompt: string;
-  /** Routing mode. Omit to use the turn runner's configured default. */
+  /** Routing mode for subsequent prompts. Omit to use the turn runner's configured default. */
   mode?: TurnMode;
+  /**
+   * Existing state to resume. When provided, the runner emits `turn_started`
+   * with this state instead of creating a fresh one. Resumed sessions keep
+   * their persisted agent and state-machine history.
+   */
+  state?: TurnState;
   options?: TurnOptions;
 }
 
 /**
- * Send a new user prompt while turn state exists.
+ * Send a new user prompt against the runner's current state.
  *
  * Callers may send prompt commands even while a previous `turn()` call is
  * active. The turn runner maps `behavior` onto the active pi agent when it can
- * and otherwise queues the command behind active non-agent work.
+ * and otherwise queues the command behind active non-agent work. State is held
+ * inside the runner; it was bootstrapped at `start` and is updated from the
+ * runner's own terminal events.
  */
 export interface TurnPromptCommand {
   type: "prompt";
-  /** Existing turn state to continue. */
-  state: TurnState;
   message: string;
   /** Pi handles the underlying interruption/follow-up behavior. */
   behavior: TurnPromptBehavior;
@@ -295,8 +312,6 @@ export interface TurnPromptCommand {
  */
 export interface TurnAnswerCommand {
   type: "answer";
-  /** Existing turn state to continue. */
-  state: TurnState;
   questions: TurnQuestion[];
   answers: Record<string, string>;
   /** Pi handles the underlying interruption/follow-up behavior. */
@@ -304,11 +319,9 @@ export interface TurnAnswerCommand {
   options?: TurnOptions;
 }
 
-/** Wake sleeping turn state. If the state is not sleeping on a poll state, this is a no-op. */
+/** Wake the runner's sleeping state. If the state is not sleeping on a poll state, this is a no-op. */
 export interface TurnWakeCommand {
   type: "wake";
-  /** Existing turn state to wake. */
-  state: TurnState;
   options?: TurnOptions;
 }
 
@@ -325,60 +338,33 @@ export interface TurnEditFollowUpQueueCommand {
   prompts: string[];
 }
 
-export type TurnCommand =
-  | TurnStartCommand
-  | TurnPromptCommand
-  | TurnAnswerCommand
-  | TurnWakeCommand;
+/**
+ * Commands that drive a single turn-runner turn. `start` is excluded because
+ * setup is not a turn and is handled by `TurnRunner.start()` directly.
+ */
+export type TurnCommand = TurnPromptCommand | TurnAnswerCommand | TurnWakeCommand;
 
 /** Out-of-band control message that interrupts the currently running turn. */
 export interface TurnInterruptCommand {
   type: "interrupt";
-  /** Current turn state known by the caller at the time of interruption. */
-  state: TurnState;
 }
 
-export type TurnRunnerCommand = TurnCommand | TurnInterruptCommand | TurnEditFollowUpQueueCommand;
+export type TurnRunnerCommand =
+  | TurnStartCommand
+  | TurnCommand
+  | TurnInterruptCommand
+  | TurnEditFollowUpQueueCommand;
 
-export interface TurnReadySkillInfo {
-  /** Skill name (from frontmatter or directory). */
-  name: string;
-  /** Skill description (from frontmatter, raw — no shell expansion). */
-  description: string;
-  /** Absolute path to the skill directory. */
-  path: string;
-  /** Where the skill was discovered. */
-  scope: "user" | "project" | "temporary";
-}
-
-export interface TurnReadyAgentFile {
+/** A system-prompt file that was resolved on disk for the session. */
+export interface TurnAgentFile {
   /** Configured file name relative to the working directory, e.g. "AGENTS.md". */
   name: string;
   /** Absolute path on disk. */
   path: string;
 }
 
-export interface TurnReadySkillCollision {
-  /** Skill name that collided. */
-  name: string;
-  /** Path that won (this is the skill that was actually loaded). */
-  winnerPath: string;
-  /** Path that was skipped due to the collision. */
-  loserPath: string;
-}
-
-export interface TurnReadyEvent {
-  type: "ready";
-  /** Skills discovered for this session. */
-  skills: TurnReadySkillInfo[];
-  /** System-prompt files that were resolved on disk for this session. */
-  agentFiles: TurnReadyAgentFile[];
-  /** Skill name collisions where one definition shadowed another. */
-  skillCollisions: TurnReadySkillCollision[];
-}
-
-export interface TurnStateStartedEvent {
-  type: "session_started";
+export interface TurnStartedEvent {
+  type: "turn_started";
   /** Full turn state after applying config/options/auto routing. */
   state: TurnState;
 }
@@ -458,8 +444,4 @@ export type TurnTerminalEvent =
   | TurnInterruptedEvent
   | TurnSleepEvent;
 
-export type TurnEvent =
-  | TurnReadyEvent
-  | TurnStateStartedEvent
-  | TurnDuringEvent
-  | TurnTerminalEvent;
+export type TurnEvent = TurnStartedEvent | TurnDuringEvent | TurnTerminalEvent;

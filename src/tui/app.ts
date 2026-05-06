@@ -10,12 +10,10 @@ import {
 } from "@opentui/core";
 import { formatCompactJson } from "../lib/compact-json.js";
 import type { Session } from "../session/session.js";
-import type { TurnRunnerConfig } from "../types/config.js";
+import type { SkillCollision } from "../turn-runner/skills.js";
 import type {
+  TurnAgentFile,
   TurnEvent,
-  TurnReadyAgentFile,
-  TurnReadySkillCollision,
-  TurnReadySkillInfo,
   TurnStep,
   TurnTerminalEvent,
   TurnTodo,
@@ -24,13 +22,15 @@ import type {
 
 export interface RunTuiInput {
   session: Session;
-  started: boolean;
   initialPrompt?: string;
-  mode: TurnRunnerConfig["mode"];
   /** Fully resolved provider:modelId string used for this CLI session. */
   modelName: string;
   /** Human-readable provenance for modelName, e.g. "inferred from ANTHROPIC_API_KEY in .env". */
   modelSource?: string;
+  /** Fully resolved provider:modelId string used for observational memory work. */
+  memoryModelName: string;
+  /** Human-readable provenance for memoryModelName. */
+  memoryModelSource?: string;
   /** Best-effort package update notice, shown in-TUI because stderr is hidden. */
   newVersionNotice?: string;
   /** Past messages to replay into the transcript on resume. */
@@ -49,9 +49,8 @@ const COLORS = {
   border: "#374151",
 } as const;
 
-const HINT_IDLE = "Enter: send · Esc: quit · Ctrl+C: force quit";
-const HINT_RUNNING =
-  "Enter: steer · Shift+Enter: queue follow-up · Esc: interrupt · Ctrl+C: force quit";
+const HINT_IDLE = "Enter: send · Esc/Ctrl+C: quit";
+const HINT_RUNNING = "Enter: steer · Shift+Enter: queue follow-up · Esc/Ctrl+C: interrupt";
 
 /**
  * Runs the interactive TUI for a session. Resolves with the most recent
@@ -64,7 +63,7 @@ const HINT_RUNNING =
 export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | undefined> {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
+    exitOnCtrlC: false,
     useKittyKeyboard: {},
     targetFps: 60,
   });
@@ -195,7 +194,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- runtime state ---------------------------------------------------------
 
-  let started = input.started;
   let running = false;
   let lastTerminal: TurnTerminalEvent | undefined;
   let activeTextStream: StreamingBlock | undefined;
@@ -223,7 +221,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function markRunning(): void {
     running = true;
     setHint(true);
-    setStatus("● working… (Esc to interrupt)");
+    setStatus("● working… (Esc/Ctrl+C to interrupt)");
   }
 
   function markIdle(): void {
@@ -239,14 +237,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- session subscription --------------------------------------------------
 
-  let renderedReadyIntro = false;
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
-    if (event.type === "ready") {
-      if (!renderedReadyIntro) {
-        renderedReadyIntro = true;
-        renderReadyIntro(event.skills, event.agentFiles, event.skillCollisions);
-      }
-    } else if (event.type === "step") {
+    if (event.type === "step") {
       renderStep(event.step);
     } else if (event.type === "todos") {
       renderTodos(event.todos);
@@ -286,10 +278,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   });
 
-  function renderReadyIntro(
-    skills: TurnReadySkillInfo[],
-    agentFiles: TurnReadyAgentFile[],
-    skillCollisions: TurnReadySkillCollision[],
+  function renderSetupIntro(
+    skills: ReadonlyArray<{ name: string }>,
+    agentFiles: readonly TurnAgentFile[],
+    skillCollisions: readonly SkillCollision[],
   ): void {
     if (agentFiles.length === 0) {
       appendLine("[agent file] none", COLORS.hint);
@@ -334,7 +326,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderFollowUpQueue(prompts: string[]): void {
     if (prompts.length === 0) {
-      setStatus(running ? "● working… (Esc to interrupt)" : "");
+      setStatus(running ? "● working… (Esc/Ctrl+C to interrupt)" : "");
       return;
     }
     setStatus(`queued follow-ups: ${prompts.length}`);
@@ -465,11 +457,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderMemoryStatus(event: Extract<TurnEvent, { type: "memory" }>): void {
     if (event.status === "running") {
-      setStatus(`● ${event.message} (Esc to interrupt)`);
+      setStatus(`● ${event.message} (Esc/Ctrl+C to interrupt)`);
       return;
     }
     if (running) {
-      setStatus("● working… (Esc to interrupt)");
+      setStatus("● working… (Esc/Ctrl+C to interrupt)");
     }
   }
 
@@ -480,9 +472,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // capture the modifier here and read it during the ENTER event below.
   let lastEnterShift = false;
 
-  const handleEsc = () => {
+  let closingAfterInterrupt = false;
+
+  const requestExit = async (): Promise<void> => {
     if (running) {
-      void input.session.interrupt().catch(reportError);
+      if (closingAfterInterrupt) return;
+      closingAfterInterrupt = true;
+      setStatus("● interrupting…");
+      try {
+        await input.session.interrupt();
+        await input.session.waitForTerminal();
+      } catch (error) {
+        reportError(error);
+      } finally {
+        renderer.stop();
+      }
     } else {
       renderer.stop();
     }
@@ -505,7 +509,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
     if (key.name === "escape") {
-      handleEsc();
+      void requestExit();
+      return;
+    }
+    if (key.name === "c" && key.ctrl) {
+      void requestExit();
     }
   };
 
@@ -520,13 +528,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
 
-    // Idle: just start (or follow up) a fresh turn.
-    if (!started) {
-      void input.session.start({ prompt: message, mode: input.mode }).catch(reportError);
-      started = true;
-    } else {
-      void input.session.prompt({ message, behavior: "follow_up" }).catch(reportError);
-    }
+    // Idle: dispatch a prompt against the already-set-up session. Setup
+    // happens before the TUI starts so skills are visible right away.
+    void input.session.prompt({ message, behavior: "follow_up" }).catch(reportError);
     markRunning();
   }
 
@@ -539,6 +543,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     ? `[model] ${input.modelName} — ${input.modelSource}`
     : `[model] ${input.modelName}`;
   appendLine(modelLine, COLORS.hint);
+  const memoryModelLine = input.memoryModelSource
+    ? `[memory model] ${input.memoryModelName} — ${input.memoryModelSource}`
+    : `[memory model] ${input.memoryModelName}`;
+  appendLine(memoryModelLine, COLORS.hint);
+
+  // Setup already ran before the TUI launched, so we can read the resolved
+  // skills/agent-files synchronously through the session getters.
+  const [skills, agentFiles, skillCollisions] = await Promise.all([
+    input.session.getSkills(),
+    input.session.getResolvedAgentFiles(),
+    input.session.getSkillCollisions(),
+  ]);
+  renderSetupIntro(skills, agentFiles, skillCollisions);
 
   if (input.history && input.history.length > 0) {
     for (const message of input.history) {
@@ -551,21 +568,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   if (input.initialPrompt) {
     appendBlock("you:", input.initialPrompt, COLORS.user);
-    if (!started) {
-      void input.session
-        .start({ prompt: input.initialPrompt, mode: input.mode })
-        .catch(reportError);
-      started = true;
-    } else {
-      void input.session
-        .prompt({ message: input.initialPrompt, behavior: "follow_up" })
-        .catch(reportError);
-    }
+    void input.session
+      .prompt({ message: input.initialPrompt, behavior: "follow_up" })
+      .catch(reportError);
     markRunning();
-  } else if (input.started) {
-    // Resumed session — assume nothing currently running until we see events.
-    markIdle();
   } else {
+    // No initial prompt — wait for the user. Setup already ran above, so
+    // the skill summary is rendered before the user types.
     markIdle();
   }
 
@@ -574,8 +583,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   await new Promise<void>((resolve) => {
     const onDestroy = () => resolve();
     renderer.once("destroy", onDestroy);
-    // Fallback — if the renderer is stopped without emitting destroy, settle on
-    // process exit signals which createCliRenderer already wires up.
   });
 
   unsubscribe();

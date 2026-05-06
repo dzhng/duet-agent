@@ -27,10 +27,9 @@ describe("session resume history", () => {
 
       const firstManager = createManager(sessionStoragePath);
       try {
-        const firstSession = firstManager.create({ sessionId });
-        await firstSession.start({
-          prompt: `Remember this exact session token for the next turn: ${resumeToken}. Reply with exactly: stored.`,
-          mode: "agent",
+        const firstSession = firstManager.create({ sessionId, mode: "agent" });
+        await firstSession.prompt({
+          message: `Remember this exact session token for the next turn: ${resumeToken}. Reply with exactly: stored.`,
           options: { thinkingLevel: "low" },
         });
         const firstTerminal = await firstSession.waitForTerminal();
@@ -45,8 +44,9 @@ describe("session resume history", () => {
       const secondManager = createManager(sessionStoragePath);
       try {
         const resumedSession = secondManager.resume(sessionId);
-        await resumedSession.start({
-          prompt: "What exact session token did I ask you to remember? Reply with only the token.",
+        await resumedSession.start();
+        await resumedSession.prompt({
+          message: "What exact session token did I ask you to remember? Reply with only the token.",
           options: { thinkingLevel: "low" },
         });
         const terminal = await resumedSession.waitForTerminal();

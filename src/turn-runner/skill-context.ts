@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { toXML } from "../lib/xml.js";
 import type { TurnRunnerConfig } from "../types/config.js";
+import type { TurnAgentFile } from "../types/protocol.js";
 import type { StateMachineAgentState } from "../types/state-machine.js";
 import { createSystemPromptWithAppendedLayers } from "./prompts.js";
 import {
@@ -98,10 +99,10 @@ export class SkillContext {
   }
 
   /** System-prompt files (AGENTS.md by default) that exist on disk. */
-  getResolvedAgentFiles(): Array<{ name: string; path: string }> {
+  getResolvedAgentFiles(): TurnAgentFile[] {
     const cwd = this.config.cwd ?? process.cwd();
     const fileNames = this.config.systemPromptFiles ?? ["AGENTS.md"];
-    const resolved: Array<{ name: string; path: string }> = [];
+    const resolved: TurnAgentFile[] = [];
     for (const fileName of fileNames) {
       const path = join(cwd, fileName);
       if (existsSync(path)) {

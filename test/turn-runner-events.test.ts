@@ -5,7 +5,7 @@ import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runne
 import type { TurnEvent } from "../src/types/protocol.js";
 import { waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
-import { createTurnRunner } from "./helpers/turn-runner-protocol.js";
+import { createTurnRunner, startTurn } from "./helpers/turn-runner-protocol.js";
 
 class EventTurnRunner extends TurnRunner {
   emitAgentEventForTest(event: AgentEvent): void {
@@ -73,16 +73,14 @@ function createToolEventTurnRunner(): { runner: ToolEventTurnRunner; events: Tur
 }
 
 describe("TurnRunner event emission", () => {
-  test("emits ready, session_started, and the terminal event for a turn", async () => {
+  test("emits turn_started and the terminal event for a turn", async () => {
     const { runner, events } = createTurnRunner();
 
-    const terminal = await runner.turn({
-      type: "start",
-      mode: "agent",
-      prompt: "Summarize this file.",
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: "agent", prompt: "Summarize this file." })
+    ).turn;
 
-    expect(events.map((event) => event.type)).toEqual(["ready", "session_started", "complete"]);
+    expect(events.map((event) => event.type)).toEqual(["turn_started", "complete"]);
     expect(events.at(-1)).toBe(terminal);
   });
 
@@ -221,7 +219,7 @@ describe("TurnRunner event emission", () => {
 
   test("emits todos events when todo_write runs", async () => {
     const { runner, events } = createToolEventTurnRunner();
-    const turn = runner.turn({ type: "start", mode: "agent", prompt: "Track work with todos." });
+    const { turn } = await startTurn(runner, { mode: "agent", prompt: "Track work with todos." });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("todo_write", {

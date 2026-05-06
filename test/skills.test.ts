@@ -6,7 +6,7 @@ import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import { testIfDocker } from "./helpers/docker-only.js";
-import { createTurnRunner } from "./helpers/turn-runner-protocol.js";
+import { createTurnRunner, startTurn } from "./helpers/turn-runner-protocol.js";
 import { createTestTurnRunner, type TestTurnRunnerApp } from "./helpers/skills-turn-runner.js";
 
 let app: TestTurnRunnerApp | undefined;
@@ -206,7 +206,9 @@ describe("TurnRunner skills", () => {
         ],
       });
 
-      await runner.turn({ type: "start", prompt: "/review audit this diff" });
+      await (
+        await startTurn(runner, { prompt: "/review audit this diff" })
+      ).turn;
 
       expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       /review audit this diff
@@ -280,7 +282,9 @@ describe("TurnRunner skills", () => {
       ],
     });
 
-    await runner.turn({ type: "start", prompt: "/review /repo-map audit this diff" });
+    await (
+      await startTurn(runner, { prompt: "/review /repo-map audit this diff" })
+    ).turn;
 
     expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       /review /repo-map audit this diff
@@ -343,7 +347,9 @@ describe("TurnRunner skills", () => {
       ],
     });
 
-    await runner.turn({ type: "start", prompt: "audit this diff /review carefully" });
+    await (
+      await startTurn(runner, { prompt: "audit this diff /review carefully" })
+    ).turn;
 
     expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       audit this diff /review carefully
@@ -390,7 +396,9 @@ describe("TurnRunner skills", () => {
       ],
     });
 
-    await runner.turn({ type: "start", prompt: "/missing /review audit this diff" });
+    await (
+      await startTurn(runner, { prompt: "/missing /review audit this diff" })
+    ).turn;
 
     expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       /missing /review audit this diff
@@ -412,13 +420,15 @@ describe("TurnRunner skills", () => {
   test("leaves unknown slash command prompts unchanged at runner level", async () => {
     const { runner } = createTurnRunner({ mode: "agent" });
 
-    await runner.turn({ type: "start", prompt: "/missing do work" });
+    await (
+      await startTurn(runner, { prompt: "/missing do work" })
+    ).turn;
 
     expect(runner.workerInputs[0]?.prompt).toBe("/missing do work");
   });
 
   testIfDocker("discovers project skills from .duet in the configured cwd", async () => {
-    app = createTestTurnRunner();
+    app = await createTestTurnRunner();
     const skillPath = await app.addProjectDuetSkill({
       name: "code-review",
       description: "Review changed code for correctness and simplicity.",
@@ -437,7 +447,7 @@ describe("TurnRunner skills", () => {
   });
 
   testIfDocker("discovers standard project skills from .agents in the configured cwd", async () => {
-    app = createTestTurnRunner();
+    app = await createTestTurnRunner();
     const skillPath = await app.addProjectAgentSkill({
       name: "standard-review",
       description: "Review changed code from the standard skill directory.",
@@ -454,7 +464,7 @@ describe("TurnRunner skills", () => {
   });
 
   testIfDocker("discovers project skills from both .duet and .agents", async () => {
-    app = createTestTurnRunner();
+    app = await createTestTurnRunner();
     const duetSkillPath = await app.addProjectDuetSkill({
       name: "duet-docs",
       description: "Document Duet-specific workflows.",
@@ -486,7 +496,7 @@ describe("TurnRunner skills", () => {
   });
 
   testIfDocker("discovers global skills from .duet in the home directory", async () => {
-    app = createTestTurnRunner();
+    app = await createTestTurnRunner();
     const skillPath = await app.addGlobalDuetSkill({
       name: "release-notes",
       description: "Draft concise release notes from completed work.",
@@ -502,7 +512,7 @@ describe("TurnRunner skills", () => {
   });
 
   testIfDocker("discovers standard global skills from .agents in the home directory", async () => {
-    app = createTestTurnRunner();
+    app = await createTestTurnRunner();
     const skillPath = await app.addGlobalAgentSkill({
       name: "standard-release-notes",
       description: "Draft release notes from the standard skill directory.",
@@ -519,7 +529,7 @@ describe("TurnRunner skills", () => {
   });
 
   testIfDocker("parses block scalar skill descriptions", async () => {
-    app = createTestTurnRunner();
+    app = await createTestTurnRunner();
     await app.addProjectDuetSkill({
       name: "browser-qa",
       description: "|\n  Fast headless browser for QA testing.\n  Use when checking UI flows.",
@@ -534,7 +544,7 @@ describe("TurnRunner skills", () => {
   });
 
   testIfDocker("expands bash commands when injecting selected skill instructions", async () => {
-    app = createTestTurnRunner();
+    app = await createTestTurnRunner();
     await app.addProjectDuetSkill({
       name: "repo-map",
       description: "Summarize the files in the current repository.",

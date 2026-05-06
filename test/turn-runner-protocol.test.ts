@@ -5,6 +5,7 @@ import {
   createTurnRunner,
   createOutreachStateMachine,
   createStateMachineState,
+  startTurn,
 } from "./helpers/turn-runner-protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 
@@ -12,15 +13,12 @@ describe("TurnRunner protocol scenarios", () => {
   test("runs a simple auto-classified prompt in agent mode", async () => {
     const { runner, events } = createTurnRunner();
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "Summarize this file.",
-      mode: "auto",
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: "auto", prompt: "Summarize this file." })
+    ).turn;
 
-    expect(events[0]).toMatchObject({ type: "ready" });
-    expect(events[1]).toMatchObject({
-      type: "session_started",
+    expect(events[0]).toMatchObject({
+      type: "turn_started",
       state: { status: "running", mode: "auto", agent: { status: "running" } },
     });
     expect(events.some((event) => event.type === "state_machine")).toBe(false);
@@ -44,11 +42,9 @@ describe("TurnRunner protocol scenarios", () => {
       ],
     });
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "Deploy the app.",
-      mode: "agent",
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: "agent", prompt: "Deploy the app." })
+    ).turn;
 
     expect(terminal).toMatchObject({
       type: "ask",
@@ -72,15 +68,10 @@ describe("TurnRunner protocol scenarios", () => {
       firstState: "research_prospect",
     });
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt,
-      mode: "auto",
-    });
+    const terminal = await (await startTurn(runner, { mode: "auto", prompt })).turn;
 
-    expect(events[0]).toMatchObject({ type: "ready" });
-    expect(events[1]).toMatchObject({
-      type: "session_started",
+    expect(events[0]).toMatchObject({
+      type: "turn_started",
       state: {
         status: "running",
         mode: "auto",
@@ -136,11 +127,9 @@ describe("TurnRunner protocol scenarios", () => {
       return result;
     };
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "Prospect Ada until she books a meeting.",
-      mode: "auto",
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: "auto", prompt: "Prospect Ada until she books a meeting." })
+    ).turn;
 
     expect(terminal).toMatchObject({
       type: "complete",
@@ -157,6 +146,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("uses a steering prompt to update and continue an active state-machine session", async () => {
     const { runner, events } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "classify_reply" },
@@ -164,7 +154,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "I've already received this email: yes, happy to meet next week.",
       behavior: "steer",
     });
@@ -183,10 +172,10 @@ describe("TurnRunner protocol scenarios", () => {
   test("answers unrelated prompts during an active state-machine session without changing state", async () => {
     const { runner, events } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
+    await runner.start({ type: "start", state: turnState });
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "What is the capital of France?",
       behavior: "follow_up",
     });
@@ -206,6 +195,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("sleeps between poll attempts while waiting for an external email response", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("poll_email_reply");
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "poll_email_reply" },
@@ -213,7 +203,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Continue polling.",
       behavior: "follow_up",
     });
@@ -236,10 +225,10 @@ describe("TurnRunner protocol scenarios", () => {
       ...createStateMachineState("poll_email_reply"),
       status: "sleeping" as const,
     };
+    await runner.start({ type: "start", state: turnState });
 
     const terminal = await runner.turn({
       type: "wake",
-      state: turnState,
     });
 
     expect(terminal).toMatchObject({
@@ -254,23 +243,23 @@ describe("TurnRunner protocol scenarios", () => {
   test("wake is a no-op when the session is not sleeping on a poll", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
+    await runner.start({ type: "start", state: turnState });
 
     const terminal = await runner.turn({
       type: "wake",
-      state: turnState,
     });
 
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
       result: "Nothing to wake.",
-      state: turnState,
     });
   });
 
   test("interrupts a running turn and resolves it with the current session", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("send_email");
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "fail", reason: "Interrupted" },
@@ -278,7 +267,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const turn = runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Send the email now.",
       behavior: "steer",
     });
@@ -305,15 +293,10 @@ describe("TurnRunner protocol scenarios", () => {
       decision: { kind: "run_state", state: "research_prospect" },
     });
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt,
-      mode: definition,
-    });
+    const terminal = await (await startTurn(runner, { mode: definition, prompt })).turn;
 
-    expect(events[0]).toMatchObject({ type: "ready" });
-    expect(events[1]).toMatchObject({
-      type: "session_started",
+    expect(events[0]).toMatchObject({
+      type: "turn_started",
       state: {
         status: "running",
         mode: definition,
@@ -344,15 +327,12 @@ describe("TurnRunner protocol scenarios", () => {
     const { runner, events } = createTurnRunner();
     const definition = createOutreachStateMachine();
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "What is the capital of France?",
-      mode: definition,
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: definition, prompt: "What is the capital of France?" })
+    ).turn;
 
-    expect(events[0]).toMatchObject({ type: "ready" });
-    expect(events[1]).toMatchObject({
-      type: "session_started",
+    expect(events[0]).toMatchObject({
+      type: "turn_started",
       state: { status: "running", mode: definition, agent: { status: "running" } },
     });
     expect(terminal).toMatchObject({
@@ -371,11 +351,12 @@ describe("TurnRunner protocol scenarios", () => {
       decision: { kind: "run_state", state: "invented_state" },
     });
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "Prospect Ada until she books a meeting.",
-      mode: definition,
-    });
+    const terminal = await (
+      await startTurn(runner, {
+        mode: definition,
+        prompt: "Prospect Ada until she books a meeting.",
+      })
+    ).turn;
 
     if (terminal.type !== "complete") {
       throw new Error("Expected complete event");
@@ -391,6 +372,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("uses transition overrides for one state attempt without mutating the definition", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("research_prospect");
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: {
@@ -402,7 +384,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Focus on Grace.",
       behavior: "steer",
     });
@@ -416,6 +397,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("uses optional state agent system prompts without injecting state-machine context", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("research_prospect");
+    await runner.start({ type: "start", state: turnState });
     if (!turnState.stateMachine) throw new Error("Expected state machine session");
     turnState.stateMachine.definition = {
       ...turnState.stateMachine.definition,
@@ -432,7 +414,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Continue outreach.",
       behavior: "follow_up",
     });
@@ -465,6 +446,7 @@ describe("TurnRunner protocol scenarios", () => {
       ],
     });
     const turnState = createStateMachineState("research_prospect");
+    await runner.start({ type: "start", state: turnState });
     if (!turnState.stateMachine) throw new Error("Expected state machine session");
     turnState.stateMachine.definition = {
       ...turnState.stateMachine.definition,
@@ -481,7 +463,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Continue outreach.",
       behavior: "follow_up",
     });
@@ -493,6 +474,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("asks the parent runner for the next state immediately after a state completes", async () => {
     const { runner, events } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push(
       {
         type: "select_state_machine_state",
@@ -507,7 +489,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Continue.",
       behavior: "follow_up",
     });
@@ -531,6 +512,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("renders parent-provided transition input into agent prompts", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("research_prospect");
+    await runner.start({ type: "start", state: turnState });
     assert(turnState.stateMachine);
     turnState.stateMachine.definition = {
       ...turnState.stateMachine.definition,
@@ -589,7 +571,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Continue.",
       behavior: "follow_up",
     });
@@ -610,7 +591,10 @@ describe("TurnRunner protocol scenarios", () => {
 
   test("timer poll continues without script and forwards elapsed output", async () => {
     const { runner } = createTurnRunner();
-    const turnState = createStateMachineState("wait_before_retry");
+    const turnState = {
+      ...createStateMachineState("wait_before_retry"),
+      status: "sleeping" as const,
+    };
     const startedAt = Date.now() - 12_000;
     turnState.stateMachine?.history.push({
       type: "state_started",
@@ -621,10 +605,10 @@ describe("TurnRunner protocol scenarios", () => {
       type: "select_state_machine_state",
       decision: { kind: "terminal", state: "meeting_scheduled" },
     });
+    await runner.start({ type: "start", state: turnState });
 
     const terminal = await runner.turn({
       type: "wake",
-      state: { ...turnState, status: "sleeping" },
     });
 
     expect(runner.workerInputs).toHaveLength(1);
@@ -646,6 +630,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("timer poll sleeps when first selected before producing output on wake", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("wait_before_retry");
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "wait_before_retry" },
@@ -653,7 +638,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Wait before retrying.",
       behavior: "follow_up",
     });
@@ -671,7 +655,10 @@ describe("TurnRunner protocol scenarios", () => {
 
   test("poll timeout fails after the maximum time in the poll state", async () => {
     const { runner } = createTurnRunner();
-    const turnState = createStateMachineState("wait_before_retry");
+    const turnState = {
+      ...createStateMachineState("wait_before_retry"),
+      status: "sleeping" as const,
+    };
     const startedAt = Date.now() - 10_000;
     if (!turnState.stateMachine) throw new Error("Expected state machine session");
     turnState.stateMachine.definition = {
@@ -687,10 +674,10 @@ describe("TurnRunner protocol scenarios", () => {
       timestamp: startedAt,
       state: "wait_before_retry",
     });
+    await runner.start({ type: "start", state: turnState });
 
     const terminal = await runner.turn({
       type: "wake",
-      state: { ...turnState, status: "sleeping" },
     });
 
     expect(terminal).toMatchObject({
@@ -707,6 +694,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("script states honor successCodes and forward stdout plus parsed state", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("send_email");
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push(
       {
         type: "select_state_machine_state",
@@ -731,7 +719,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Send the email.",
       behavior: "follow_up",
     });
@@ -753,6 +740,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("retries when the parent runner does not choose the next state after completion", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "research_prospect" },
@@ -760,7 +748,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Continue.",
       behavior: "follow_up",
     });
@@ -779,6 +766,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("cannot create a new state-machine definition while one is active", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
+    await runner.start({ type: "start", state: turnState });
     const definition = {
       name: "follow_up_flow",
       prompt: "Use after outreach needs a new follow-up process.",
@@ -805,7 +793,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Continue.",
       behavior: "follow_up",
     });
@@ -821,6 +808,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("can create a new state-machine definition after the previous one is terminal", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("meeting_scheduled");
+    await runner.start({ type: "start", state: turnState });
     assert(turnState.stateMachine);
     const terminalState = {
       ...turnState,
@@ -829,6 +817,7 @@ describe("TurnRunner protocol scenarios", () => {
         terminal: { state: "meeting_scheduled", status: "completed" as const },
       },
     };
+    await runner.start({ type: "start", state: terminalState });
     const definition = {
       name: "follow_up_flow",
       prompt: "Use after a completed outreach process needs follow-up.",
@@ -848,7 +837,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: terminalState,
       message: "Start a follow-up process.",
       behavior: "follow_up",
     });
@@ -869,6 +857,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("bubbles an agent state's ask terminal status to the parent turn runner", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("research_prospect");
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "research_prospect" },
@@ -891,7 +880,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Continue.",
       behavior: "steer",
     });
@@ -905,6 +893,7 @@ describe("TurnRunner protocol scenarios", () => {
       ...createStateMachineState("research_prospect"),
       status: "waiting_for_human" as const,
     };
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push(
       { type: "none" },
       {
@@ -915,7 +904,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "answer",
-      state: turnState,
       questions: [{ question: "Which prospect?", options: [{ label: "Ada" }] }],
       answers: { prospect: "Ada Lovelace" },
       behavior: "follow_up",
@@ -956,6 +944,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("lets the parent runner prompt the current state-machine agent", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push(
       {
         type: "prompt_state_machine_agent",
@@ -970,7 +959,6 @@ describe("TurnRunner protocol scenarios", () => {
 
     const terminal = await runner.turn({
       type: "prompt",
-      state: turnState,
       message: "Ada replied yes.",
       behavior: "follow_up",
     });

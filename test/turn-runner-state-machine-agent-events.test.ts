@@ -6,7 +6,7 @@ import {
   type AgentWorkerResult,
 } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
-import { createStateMachineState } from "./helpers/turn-runner-protocol.js";
+import { createOutreachStateMachine } from "./helpers/turn-runner-protocol.js";
 
 class StateMachineAgentEventTurnRunner extends TurnRunner {
   private workerCalls = 0;
@@ -87,10 +87,10 @@ describe("State-machine agent state events", () => {
     const runner = new StateMachineAgentEventTurnRunner();
     const events: TurnEvent[] = [];
     runner.subscribe((event) => events.push(event));
+    await runner.start({ type: "start", mode: createOutreachStateMachine() });
 
     await runner.turn({
       type: "prompt",
-      state: createStateMachineState("waiting_for_reply"),
       message: "Continue.",
       behavior: "follow_up",
     });

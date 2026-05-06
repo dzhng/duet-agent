@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnState } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
@@ -16,12 +17,13 @@ describe("prompt cache resume", () => {
         systemInstructions: createStableCachePrefix(),
       });
 
-      const first = await runner.turn({
-        type: "start",
-        mode: "agent",
-        prompt:
-          "Do not call tools. Reply with exactly this sentence: first prompt cache turn complete.",
-      });
+      const first = await (
+        await startTurn(runner, {
+          mode: "agent",
+          prompt:
+            "Do not call tools. Reply with exactly this sentence: first prompt cache turn complete.",
+        })
+      ).turn;
       expect(first.type).toBe("complete");
       const firstUsage = latestAssistantUsage(first.state);
       // The stable prefix may already be warm from a previous eval run, in which case
@@ -29,9 +31,16 @@ describe("prompt cache resume", () => {
       expect(firstUsage.cacheRead + firstUsage.cacheWrite).toBeGreaterThan(0);
 
       const resumedState = JSON.parse(JSON.stringify(first.state)) as TurnState;
-      const second = await runner.turn({
+      const resumedRunner = new TurnRunner({
+        model,
+        mode: "agent",
+        skillDiscovery: { includeDefaults: false },
+        systemInstructions: createStableCachePrefix(),
+      });
+      await resumedRunner.start({ type: "start", state: resumedState });
+
+      const second = await resumedRunner.turn({
         type: "prompt",
-        state: resumedState,
         message:
           "Do not call tools. Reply with exactly this sentence: second prompt cache turn complete.",
         behavior: "follow_up",

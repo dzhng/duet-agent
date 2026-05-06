@@ -3,16 +3,26 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 import type { TurnRunnerConfig } from "../types/config.js";
-import type { TurnEvent } from "../types/protocol.js";
-import { Session, type SessionStartInput, type SessionTurnRunner } from "./session.js";
+import type { TurnEvent, TurnMode, TurnOptions } from "../types/protocol.js";
+import { Session, type SessionTurnRunner } from "./session.js";
 
 export const DEFAULT_DUET_DIR = ".duet";
 export const DEFAULT_DUET_HOME = join(homedir(), DEFAULT_DUET_DIR);
 export const DEFAULT_SESSION_STORAGE_DIR = join(DEFAULT_DUET_HOME, "sessions");
 export const DEFAULT_MEMORY_DB_PATH = join(DEFAULT_DUET_HOME, "memory.db");
 
-export interface SessionManagerCreateInput extends Partial<SessionStartInput> {
+export interface SessionManagerCreateInput {
+  /** Optional fixed id; the manager generates one when omitted. */
   sessionId?: string;
+  /** Routing mode for the new session. */
+  mode?: TurnMode;
+  /**
+   * When provided, the manager dispatches this prompt as the first turn after
+   * setup completes. Omit to leave the session idle until the caller sends a
+   * prompt directly.
+   */
+  prompt?: string;
+  options?: TurnOptions;
 }
 
 export interface SessionManagerOptions {
@@ -51,8 +61,18 @@ export class SessionManager {
   create(input: SessionManagerCreateInput): Session {
     const session = this.createSession(input.sessionId, false);
     this.sessions.set(session.id, session);
+    const setup = session.start({
+      ...(input.mode ? { mode: input.mode } : {}),
+      ...(input.options ? { options: input.options } : {}),
+    });
     if (input.prompt) {
-      void session.start({ prompt: input.prompt, mode: input.mode, options: input.options });
+      const prompt = input.prompt;
+      void setup.then(() =>
+        session.prompt({
+          message: prompt,
+          ...(input.options ? { options: input.options } : {}),
+        }),
+      );
     }
     return session;
   }

@@ -70,6 +70,7 @@ interface StateMachineRuntimeDeps {
   hasQueuedTurnCommands(): boolean;
   isDrainingQueuedCommandsBeforeContinuation(): boolean;
   setDrainingQueuedCommandsBeforeContinuation(value: boolean): void;
+  setCurrentState(state: TurnState): void;
   consumeInterruptedTerminal(): TurnTerminalEvent | undefined;
   setActiveAbortController(controller: AbortController | undefined): void;
   setActiveStateWork(work: ActiveStateWork | undefined): void;
@@ -364,10 +365,10 @@ export class StateMachineRuntime {
     prompt: string,
   ): void {
     if (work.promptTerminal) return;
+    this.deps.setCurrentState({ ...work.session, status: "running" });
     work.promptTerminal = this.deps
       .prompt({
         type: "prompt",
-        state: { ...work.session, status: "running" },
         message: prompt,
         behavior: command.behavior,
         options: command.options,
@@ -431,7 +432,7 @@ export class StateMachineRuntime {
           terminal,
           history: [
             ...session.stateMachine.history,
-            { type: "session_completed" as const, timestamp: Date.now(), terminal },
+            { type: "state_machine_completed" as const, timestamp: Date.now(), terminal },
           ],
         }
       : undefined;
@@ -551,7 +552,7 @@ export class StateMachineRuntime {
         definition,
         prompt,
         currentState,
-        history: [{ type: "session_started", timestamp: now }],
+        history: [{ type: "state_machine_started", timestamp: now }],
         createdAt: now,
         updatedAt: now,
       },
@@ -687,7 +688,7 @@ export class StateMachineRuntime {
         terminal,
         history: [
           ...stateMachine.history,
-          { type: "session_completed" as const, timestamp: Date.now(), terminal },
+          { type: "state_machine_completed" as const, timestamp: Date.now(), terminal },
         ],
         updatedAt: Date.now(),
       },

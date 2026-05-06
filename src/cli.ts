@@ -18,7 +18,11 @@ import { type TextContent } from "@mariozechner/pi-ai";
 import dotenv from "dotenv";
 import { shimDuetApiKeyToAiGateway } from "./duet-gateway/index.js";
 import { formatCompactJson } from "./lib/compact-json.js";
-import { describeModelResolution, resolveCliModel } from "./model-resolution/index.js";
+import {
+  describeModelResolution,
+  resolveCliMemoryModel,
+  resolveCliModel,
+} from "./model-resolution/index.js";
 import { SessionManager } from "./session/session-manager.js";
 import { discoverInstalledSkills, resolveSkillScope } from "./turn-runner/skills.js";
 import { runTui } from "./tui/app.js";
@@ -158,6 +162,8 @@ async function main() {
 
   const modelResolution = resolveCliModel(modelName, dotenvKeys);
   modelName = modelResolution.modelName;
+  const memoryModelResolution = resolveCliMemoryModel(memoryModelName, dotenvKeys);
+  memoryModelName = memoryModelResolution.modelName;
 
   if (modelName && modelName.indexOf(":") <= 0) {
     throw new Error("Models must use provider:modelId syntax");
@@ -184,6 +190,8 @@ async function main() {
     if (newVersionNotice) process.stderr.write(`${newVersionNotice}\n`);
     process.stderr.write(`Model: ${modelName}\n`);
     process.stderr.write(`Source: ${describeModelResolution(modelResolution)}\n`);
+    process.stderr.write(`Memory model: ${memoryModelName}\n`);
+    process.stderr.write(`Memory source: ${describeModelResolution(memoryModelResolution)}\n`);
   }
 
   const manager = new SessionManager(config);
@@ -247,30 +255,31 @@ async function main() {
     const session = resumeSessionId
       ? manager.resume(resumeSessionId)
       : manager.create({
-          mode: config.mode,
-          ...(useTui && prompt ? {} : { prompt }),
+          ...(config.mode ? { mode: config.mode } : {}),
+          // Defer the prompt for TUI sessions so the user sees the prompt
+          // streamed inside the UI rather than during the pre-TUI phase.
+          ...(useTui || !prompt ? {} : { prompt }),
         });
     let terminal: TurnTerminalEvent | undefined;
-    let started = Boolean(prompt || resumeSessionId);
     let initialTuiPrompt: string | undefined;
     let resumedHistory: import("@mariozechner/pi-agent-core").AgentMessage[] | undefined;
 
-    if (resumeSessionId && useTui) {
-      // Force-load the persisted state.json so the TUI can replay past
-      // messages into its transcript before any new turn dispatches.
+    if (resumeSessionId) {
+      // Force-load the persisted state.json so setup hands the resumed
+      // state to the runner and any TUI history replays before new turns.
       await session.hydrate();
       if (!session.getState()) {
         throw new Error(`Unknown session: ${resumeSessionId}`);
       }
+      // Setup runs against the hydrated state; manager.create() already
+      // dispatched setup for fresh sessions.
+      await session.start();
       resumedHistory = session.getState()?.agent.messages;
     }
 
     if (prompt && resumeSessionId) {
-      // Resuming an existing session with a new prompt — run it before the TUI
-      // takes over so any non-interactive output is preserved.
       streamedTextThisTurn = false;
       if (useTui) {
-        // Defer to TUI: it will dispatch the prompt itself as a follow-up.
         initialTuiPrompt = prompt;
       } else {
         await session.prompt({ message: prompt });
@@ -282,10 +291,7 @@ async function main() {
       }
     } else if (prompt && !resumeSessionId) {
       if (useTui) {
-        // The session was created with this prompt but not yet started; let the
-        // TUI start it so the user sees streaming inside the UI.
         initialTuiPrompt = prompt;
-        started = false;
       } else {
         terminal = await session.waitForTerminal();
         handleTerminal(terminal, {
@@ -298,12 +304,12 @@ async function main() {
     if (useTui) {
       terminal = await runTui({
         session,
-        started,
         ...(initialTuiPrompt ? { initialPrompt: initialTuiPrompt } : {}),
         ...(resumedHistory ? { history: resumedHistory } : {}),
-        mode: config.mode,
         modelName,
         modelSource: describeModelResolution(modelResolution),
+        memoryModelName,
+        memoryModelSource: describeModelResolution(memoryModelResolution),
         ...(newVersionNotice ? { newVersionNotice } : {}),
       });
     }
@@ -417,16 +423,6 @@ function fail(message: string): never {
   console.error(`Fatal: ${message}`);
   process.exit(1);
 }
-
-// Re-exported so tests and external callers keep their existing
-// `../src/cli.js` import paths after the model-resolution split.
-export {
-  describeModelResolution,
-  inferDefaultModelName,
-  type ModelResolution,
-  resolveCliModel,
-  resolveCliModelName,
-} from "./model-resolution/index.js";
 
 async function getNewVersionNotice(): Promise<string | undefined> {
   try {
@@ -715,7 +711,7 @@ COMMANDS
 
 OPTIONS
   -m, --model <name>       TurnRunner model override
-  --memory-model <name>    Observational memory model (default: anthropic:claude-sonnet-4-6)
+  --memory-model <name>    Observational memory model (default inferred from provider env)
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
   --system-prompt <text>   Additional system instructions for the runner

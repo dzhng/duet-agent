@@ -9,22 +9,20 @@ import { DUET_GATEWAY_API_KEY_ENV } from "../duet-gateway/index.js";
  * the I/O harness — provider list changes don't touch the CLI surface.
  */
 
-const INFERRED_ANTHROPIC_MODEL = "anthropic:claude-opus-4-7";
-const INFERRED_AI_GATEWAY_MODEL = "vercel-ai-gateway:anthropic/claude-opus-4.7";
-const INFERRED_DUET_GATEWAY_MODEL = "duet-gateway:anthropic/claude-opus-4.7";
-const INFERRED_OPENROUTER_MODEL = "openrouter:anthropic/claude-opus-4.7";
-const INFERRED_OPENAI_MODEL = "openai:gpt-5.5";
-
-export const DEFAULT_CLI_MODEL = INFERRED_ANTHROPIC_MODEL;
-
 export interface ModelResolution {
   modelName: string;
-  /** explicit: --model flag; inferred: provider env var present; default: built-in fallback. */
+  /** explicit: CLI flag; inferred: provider env var present; default: built-in fallback. */
   source: "explicit" | "inferred" | "default";
   /** Provider env var that triggered inference, e.g. "ANTHROPIC_API_KEY". */
   envVar?: string;
   /** True when the env var was loaded from <workdir>/.env rather than the shell. */
   fromDotenv?: boolean;
+}
+
+interface ProviderInferenceEntry {
+  provider: string;
+  model: string;
+  customEnvVar?: () => string | null;
 }
 
 /**
@@ -36,23 +34,57 @@ export interface ModelResolution {
  * copies `DUET_API_KEY` into `AI_GATEWAY_API_KEY`, which would otherwise route
  * through Vercel's gateway directly when the user only set `DUET_API_KEY`.
  */
-const PROVIDER_INFERENCE: Array<{
-  provider: string;
-  model: string;
-  customEnvVar?: () => string | null;
-}> = [
-  { provider: "anthropic", model: INFERRED_ANTHROPIC_MODEL },
+const MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
+  {
+    provider: "anthropic",
+    model: "anthropic:claude-opus-4-7",
+  },
   {
     provider: "duet-gateway",
-    model: INFERRED_DUET_GATEWAY_MODEL,
+    model: "duet-gateway:anthropic/claude-opus-4.7",
     customEnvVar: () => (process.env[DUET_GATEWAY_API_KEY_ENV] ? DUET_GATEWAY_API_KEY_ENV : null),
   },
-  { provider: "vercel-ai-gateway", model: INFERRED_AI_GATEWAY_MODEL },
-  { provider: "openrouter", model: INFERRED_OPENROUTER_MODEL },
-  { provider: "openai", model: INFERRED_OPENAI_MODEL },
+  {
+    provider: "vercel-ai-gateway",
+    model: "vercel-ai-gateway:anthropic/claude-opus-4.7",
+  },
+  {
+    provider: "openrouter",
+    model: "openrouter:anthropic/claude-opus-4.7",
+  },
+  {
+    provider: "openai",
+    model: "openai:gpt-5.5",
+  },
 ];
 
-function lookupProviderEnvVar(entry: (typeof PROVIDER_INFERENCE)[number]): string | undefined {
+const MEMORY_MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
+  {
+    provider: "anthropic",
+    model: "anthropic:claude-haiku-4-5",
+  },
+  {
+    provider: "duet-gateway",
+    model: "duet-gateway:anthropic/claude-haiku-4.5",
+    customEnvVar: () => (process.env[DUET_GATEWAY_API_KEY_ENV] ? DUET_GATEWAY_API_KEY_ENV : null),
+  },
+  {
+    provider: "vercel-ai-gateway",
+    model: "vercel-ai-gateway:anthropic/claude-haiku-4.5",
+  },
+  {
+    provider: "openrouter",
+    model: "openrouter:anthropic/claude-haiku-4.5",
+  },
+  {
+    provider: "openai",
+    model: "openai:gpt-5.4-mini",
+  },
+];
+
+export const DEFAULT_CLI_MODEL = MODEL_PROVIDER_INFERENCE[0].model;
+
+function lookupProviderEnvVar(entry: ProviderInferenceEntry): string | undefined {
   if (entry.customEnvVar) {
     return entry.customEnvVar() ?? undefined;
   }
@@ -60,42 +92,58 @@ function lookupProviderEnvVar(entry: (typeof PROVIDER_INFERENCE)[number]): strin
   return envVars && envVars.length > 0 ? envVars[0] : undefined;
 }
 
-export function inferDefaultModelName(): string | undefined {
-  for (const entry of PROVIDER_INFERENCE) {
-    if (lookupProviderEnvVar(entry)) return entry.model;
+/**
+ * Same selection logic as resolveCliModel, but picks each provider's cheaper
+ * observational-memory model.
+ */
+export function resolveCliMemoryModel(
+  memoryModelName: string | undefined,
+  dotenvKeys: Set<string>,
+): ModelResolution {
+  return resolveCliModelWith(memoryModelName, MEMORY_MODEL_PROVIDER_INFERENCE, dotenvKeys);
+}
+
+/**
+ * Resolve the user-visible model and report provenance so callers can show
+ * "inferred from ANTHROPIC_API_KEY in .env" etc.
+ */
+export function resolveCliModel(
+  modelName: string | undefined,
+  dotenvKeys: Set<string>,
+): ModelResolution {
+  return resolveCliModelWith(modelName, MODEL_PROVIDER_INFERENCE, dotenvKeys);
+}
+
+function resolveCliModelWith(
+  modelName: string | undefined,
+  providerInference: ProviderInferenceEntry[],
+  dotenvKeys: Set<string>,
+): ModelResolution {
+  if (modelName) return { modelName, source: "explicit" };
+  const inferred = findInferredProviderEntry(providerInference);
+  if (inferred) {
+    return {
+      modelName: inferred.entry.model,
+      source: "inferred",
+      envVar: inferred.envVar,
+      fromDotenv: dotenvKeys.has(inferred.envVar),
+    };
+  }
+  return { modelName: providerInference[0].model, source: "default" };
+}
+
+function findInferredProviderEntry(
+  providerInference: ProviderInferenceEntry[],
+): { entry: ProviderInferenceEntry; envVar: string } | undefined {
+  for (const entry of providerInference) {
+    const envVar = lookupProviderEnvVar(entry);
+    if (envVar) return { entry, envVar };
   }
   return undefined;
 }
 
-export function resolveCliModelName(modelName: string | undefined): string {
-  return resolveCliModel(modelName).modelName;
-}
-
-/**
- * Same selection logic as resolveCliModelName, but also reports the provenance
- * so callers can show "inferred from ANTHROPIC_API_KEY in .env" etc.
- */
-export function resolveCliModel(
-  modelName: string | undefined,
-  dotenvKeys: Set<string> = new Set(),
-): ModelResolution {
-  if (modelName) return { modelName, source: "explicit" };
-  for (const entry of PROVIDER_INFERENCE) {
-    const envVar = lookupProviderEnvVar(entry);
-    if (envVar) {
-      return {
-        modelName: entry.model,
-        source: "inferred",
-        envVar,
-        fromDotenv: dotenvKeys.has(envVar),
-      };
-    }
-  }
-  return { modelName: DEFAULT_CLI_MODEL, source: "default" };
-}
-
 export function describeModelResolution(resolution: ModelResolution): string {
-  if (resolution.source === "explicit") return "--model flag";
+  if (resolution.source === "explicit") return "explicit CLI flag";
   if (resolution.source === "inferred") {
     const where = resolution.fromDotenv ? "<workdir>/.env" : "shell environment";
     return `inferred from ${resolution.envVar} in ${where}`;

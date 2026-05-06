@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import dedent from "dedent";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnTodo } from "../src/types/protocol.js";
@@ -27,10 +28,10 @@ describe("todo tool", () => {
         }
       });
 
-      const terminal = await runner.turn({
-        type: "start",
-        mode: "agent",
-        prompt: dedent`
+      const terminal = await (
+        await startTurn(runner, {
+          mode: "agent",
+          prompt: dedent`
           Exercise the todo_write tool with these exact steps:
 
           1. Call todo_write with merge=false and two todos:
@@ -43,7 +44,8 @@ describe("todo tool", () => {
 
           After the tool calls, answer with exactly: todo eval complete
         `,
-      });
+        })
+      ).turn;
 
       expect(terminal.type).toBe("complete");
       expect(todoEvents.length).toBeGreaterThanOrEqual(2);

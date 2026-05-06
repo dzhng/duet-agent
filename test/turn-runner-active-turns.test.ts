@@ -6,7 +6,7 @@ import type { TurnEvent, TurnState, TurnTerminalEvent } from "../src/types/proto
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { delay, waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
-import { createStateMachineState } from "./helpers/turn-runner-protocol.js";
+import { createStateMachineState, startTurn } from "./helpers/turn-runner-protocol.js";
 
 class StreamingTurnRunner extends TurnRunner {
   readonly contexts: Context[] = [];
@@ -62,13 +62,11 @@ class StreamingTurnRunner extends TurnRunner {
 describe("TurnRunner active turns", () => {
   test("repeated prompt turns join the active agent chain and emit one terminal", async () => {
     const { runner, events } = createStreamingRunner();
-    const first = runner.turn({ type: "start", mode: "agent", prompt: "first" });
-    const state = await waitForStartedState(events);
+    const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "first" });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     const second = runner.turn({
       type: "prompt",
-      state,
       message: "second",
       behavior: "follow_up",
     });
@@ -94,13 +92,11 @@ describe("TurnRunner active turns", () => {
 
   test("editing active follow-up queue replaces queued prompts", async () => {
     const { runner, events } = createStreamingRunner();
-    const first = runner.turn({ type: "start", mode: "agent", prompt: "first" });
-    const state = await waitForStartedState(events);
+    const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "first" });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     const queued = runner.turn({
       type: "prompt",
-      state,
       message: "queued before edit",
       behavior: "follow_up",
     });
@@ -127,13 +123,11 @@ describe("TurnRunner active turns", () => {
 
   test("steer is handled through turn and still shares the active terminal", async () => {
     const { runner, events } = createStreamingRunner();
-    const first = runner.turn({ type: "start", mode: "agent", prompt: "first" });
-    const state = await waitForStartedState(events);
+    const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "first" });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     const steer = runner.turn({
       type: "prompt",
-      state,
       message: "steer now",
       behavior: "steer",
     });
@@ -150,13 +144,14 @@ describe("TurnRunner active turns", () => {
 
   test("answers behave like prompts after serialization during active turns", async () => {
     const { runner, events } = createStreamingRunner();
-    const first = runner.turn({ type: "start", mode: "agent", prompt: "ask me later" });
-    const state = await waitForStartedState(events);
+    const { turn: first } = await startTurn(runner, {
+      mode: "agent",
+      prompt: "ask me later",
+    });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     const answer = runner.turn({
       type: "answer",
-      state,
       questions: [{ question: "Pick one", options: [{ label: "A" }] }],
       answers: { choice: "A" },
       behavior: "follow_up",
@@ -172,32 +167,13 @@ describe("TurnRunner active turns", () => {
     expect(messageTexts(firstTerminal.state).join("\n")).toContain("Here are my answers");
   });
 
-  test("start during an active turn rejects without creating another branch", async () => {
-    const { runner, events } = createStreamingRunner();
-    const first = runner.turn({ type: "start", mode: "agent", prompt: "first" });
-    await waitForStartedState(events);
-    await waitFor(() => runner.pendingStreams.length === 1);
-
-    const second = runner.turn({ type: "start", mode: "agent", prompt: "second" });
-    await expect(second).rejects.toThrow("Cannot start a new turn while another turn is active.");
-
-    runner.completeNext("first response");
-
-    const terminal = await first;
-    expect(terminal).toMatchObject({ type: "complete", status: "completed" });
-    expect(messageTexts(terminal.state)).not.toContain("second");
-    expect(terminalEvents(events)).toHaveLength(1);
-  });
-
   test("queued wake rebases onto latest state and no-ops when no longer sleeping on a poll", async () => {
     const { runner, events } = createStreamingRunner();
-    const first = runner.turn({ type: "start", mode: "agent", prompt: "finish work" });
-    await waitForStartedState(events);
+    const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "finish work" });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     const wake = runner.turn({
       type: "wake",
-      state: { ...createStateMachineState("poll_email_reply"), status: "sleeping" },
     });
 
     runner.completeNext("done");
@@ -214,12 +190,10 @@ describe("TurnRunner active turns", () => {
 
   test("prompts sent during script work run before state-machine continuation", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: scriptThenTerminalDefinition(),
       prompt: "run script flow",
     });
-    const state = await waitForStartedState(events);
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
@@ -233,7 +207,6 @@ describe("TurnRunner active turns", () => {
 
     const prompt = runner.turn({
       type: "prompt",
-      state,
       message: "question during script",
       behavior: "follow_up",
     });
@@ -257,12 +230,10 @@ describe("TurnRunner active turns", () => {
 
   test("answers sent during script work run before state-machine continuation", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: scriptThenTerminalDefinition(),
       prompt: "run script flow",
     });
-    const state = await waitForStartedState(events);
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
@@ -276,7 +247,6 @@ describe("TurnRunner active turns", () => {
 
     const answer = runner.turn({
       type: "answer",
-      state,
       questions: [{ question: "Pick one", options: [{ label: "A" }] }],
       answers: { choice: "A" },
       behavior: "follow_up",
@@ -300,12 +270,10 @@ describe("TurnRunner active turns", () => {
 
   test("steer prompts sent during script work run before state-machine continuation", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: scriptThenTerminalDefinition(),
       prompt: "run script flow",
     });
-    const state = await waitForStartedState(events);
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
@@ -319,7 +287,6 @@ describe("TurnRunner active turns", () => {
 
     const steer = runner.turn({
       type: "prompt",
-      state,
       message: "steer during script",
       behavior: "steer",
     });
@@ -342,12 +309,10 @@ describe("TurnRunner active turns", () => {
 
   test("prompts sent during poll checks run immediately and return to sleep when unresolved", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: unresolvedPollDefinition(),
       prompt: "run poll flow",
     });
-    const state = await waitForStartedState(events);
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
@@ -359,7 +324,6 @@ describe("TurnRunner active turns", () => {
 
     const prompt = runner.turn({
       type: "prompt",
-      state,
       message: "question during poll",
       behavior: "follow_up",
     });
@@ -376,12 +340,10 @@ describe("TurnRunner active turns", () => {
 
   test("steer prompts sent during poll checks run immediately and return to sleep", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: unresolvedPollDefinition(),
       prompt: "run poll flow",
     });
-    const state = await waitForStartedState(events);
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
@@ -393,7 +355,6 @@ describe("TurnRunner active turns", () => {
 
     const steer = runner.turn({
       type: "prompt",
-      state,
       message: "steer during poll",
       behavior: "steer",
     });
@@ -410,17 +371,14 @@ describe("TurnRunner active turns", () => {
 
   test("queued wake behind state-machine work rebases onto sleeping poll state", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: immediateUnresolvedPollDefinition(),
       prompt: "run poll flow",
     });
-    await waitForStartedState(events);
     await waitFor(() => runner.pendingStreams.length === 1);
 
     const wake = runner.turn({
       type: "wake",
-      state: { ...createStateMachineState("poll_email_reply"), status: "sleeping" },
     });
 
     runner.completeNextToolCall("select_state_machine_state", {
@@ -436,12 +394,10 @@ describe("TurnRunner active turns", () => {
 
   test("additional prompts during a mid-poll answer join the active parent agent", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: unresolvedPollDefinition(),
       prompt: "run poll flow",
     });
-    const state = await waitForStartedState(events);
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
@@ -453,7 +409,6 @@ describe("TurnRunner active turns", () => {
 
     const firstPrompt = runner.turn({
       type: "prompt",
-      state,
       message: "first question during poll",
       behavior: "follow_up",
     });
@@ -461,7 +416,6 @@ describe("TurnRunner active turns", () => {
 
     const secondPrompt = runner.turn({
       type: "prompt",
-      state,
       message: "second question during poll",
       behavior: "follow_up",
     });
@@ -484,12 +438,10 @@ describe("TurnRunner active turns", () => {
 
   test("resolved polls enqueue state-machine continuation after the mid-poll agent answer", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: resolvedPollDefinition(),
       prompt: "run resolved poll flow",
     });
-    const state = await waitForStartedState(events);
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
@@ -501,7 +453,6 @@ describe("TurnRunner active turns", () => {
 
     const prompt = runner.turn({
       type: "prompt",
-      state,
       message: "question during resolving poll",
       behavior: "follow_up",
     });
@@ -530,10 +481,10 @@ describe("TurnRunner active turns", () => {
       ...createStateMachineState("poll_email_reply"),
       status: "sleeping" as const,
     };
+    await runner.start({ type: "start", state: sleeping });
 
     const turn = runner.turn({
       type: "prompt",
-      state: sleeping,
       message: "anything new?",
       behavior: "follow_up",
     });
@@ -555,13 +506,11 @@ describe("TurnRunner active turns", () => {
 
   test("failed active turns emit one failed terminal and drop queued commands", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({ type: "start", mode: "agent", prompt: "start" });
-    await waitForStartedState(events);
+    const { turn } = await startTurn(runner, { mode: "agent", prompt: "start" });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     const wake = runner.turn({
       type: "wake",
-      state: { ...createStateMachineState("poll_email_reply"), status: "sleeping" },
     });
 
     runner.completeNext("", { error: "model failed" });
@@ -577,19 +526,17 @@ describe("TurnRunner active turns", () => {
 
   test("interrupt drops queued work and emits one interrupted terminal", async () => {
     const { runner, events } = createStreamingRunner();
-    const first = runner.turn({ type: "start", mode: "agent", prompt: "start" });
-    const state = await waitForStartedState(events);
+    const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "start" });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     const followUp = runner.turn({
       type: "prompt",
-      state,
       message: "queued",
       behavior: "follow_up",
     });
     await waitFor(() => followUpQueueEvents(events).some((queue) => queue[0] === "queued"));
     expect(followUpQueueEvents(events)).toContainEqual(["queued"]);
-    runner.interrupt({ type: "interrupt", state });
+    runner.interrupt({ type: "interrupt" });
     runner.completeNext("", { error: "aborted" });
 
     const [firstTerminal, followUpTerminal] = await Promise.all([first, followUp]);
@@ -602,17 +549,14 @@ describe("TurnRunner active turns", () => {
 
   test("dispose drops queued work without starting another command", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({ type: "start", mode: "agent", prompt: "start" });
-    await waitForStartedState(events);
+    const { turn } = await startTurn(runner, { mode: "agent", prompt: "start" });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     const wake = runner.turn({
       type: "wake",
-      state: { ...createStateMachineState("poll_email_reply"), status: "sleeping" },
     });
     void runner.turn({
       type: "prompt",
-      state: await waitForStartedState(events),
       message: "queued before dispose",
       behavior: "follow_up",
     });
@@ -637,12 +581,10 @@ describe("TurnRunner active turns", () => {
 
   test("answers can follow up the active child agent directly", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: childAgentDefinition(),
       prompt: "run child flow",
     });
-    const state = await waitForStartedState(events);
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
@@ -657,7 +599,6 @@ describe("TurnRunner active turns", () => {
 
     const answer = runner.turn({
       type: "answer",
-      state,
       questions: [{ question: "Child question", options: [{ label: "A" }] }],
       answers: { choice: "A" },
       behavior: "follow_up",
@@ -679,12 +620,10 @@ describe("TurnRunner active turns", () => {
 
   test("prompts during active child agent work queue for the parent", async () => {
     const { runner, events } = createStreamingRunner();
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: childAgentDefinition(),
       prompt: "run child flow",
     });
-    const state = await waitForStartedState(events);
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
@@ -699,7 +638,6 @@ describe("TurnRunner active turns", () => {
 
     const prompt = runner.turn({
       type: "prompt",
-      state,
       message: "parent should handle this",
       behavior: "follow_up",
     });
@@ -727,13 +665,6 @@ function createStreamingRunner(): { runner: StreamingTurnRunner; events: TurnEve
   const events: TurnEvent[] = [];
   runner.subscribe((event) => events.push(event));
   return { runner, events };
-}
-
-async function waitForStartedState(events: TurnEvent[]): Promise<TurnState> {
-  await waitFor(() => events.some((event) => event.type === "session_started"));
-  const event = events.find((item) => item.type === "session_started");
-  if (!event || event.type !== "session_started") throw new Error("Missing session_started event");
-  return event.state;
 }
 
 function terminalEvents(events: TurnEvent[]): TurnTerminalEvent[] {
