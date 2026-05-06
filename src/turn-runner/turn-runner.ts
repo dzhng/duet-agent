@@ -147,6 +147,9 @@ export class TurnRunner {
   }
 
   async dispose(): Promise<void> {
+    this.activeAgent?.clearAllQueues();
+    this.activeChildAgent?.clearAllQueues();
+    this.queuedTurnCommands.length = 0;
     await this.memoryStorageDispose?.();
     this.memoryStorageDispose = undefined;
   }
@@ -162,6 +165,9 @@ export class TurnRunner {
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
     if (this.activeTurnPromise) {
+      if (command.type === "start") {
+        throw new Error("Cannot start a new turn while another turn is active.");
+      }
       // turn() is the concurrency boundary: repeated calls extend or queue
       // behind the active chain instead of creating a separate parent transcript.
       this.handleCommandDuringActiveTurn(command);

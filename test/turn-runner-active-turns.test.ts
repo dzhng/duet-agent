@@ -135,6 +135,23 @@ describe("TurnRunner active turns", () => {
     expect(messageTexts(firstTerminal.state).join("\n")).toContain("Here are my answers");
   });
 
+  test("start during an active turn rejects without creating another branch", async () => {
+    const { runner, events } = createStreamingRunner();
+    const first = runner.turn({ type: "start", mode: "agent", prompt: "first" });
+    await waitForStartedState(events);
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const second = runner.turn({ type: "start", mode: "agent", prompt: "second" });
+    await expect(second).rejects.toThrow("Cannot start a new turn while another turn is active.");
+
+    runner.completeNext("first response");
+
+    const terminal = await first;
+    expect(terminal).toMatchObject({ type: "complete", status: "completed" });
+    expect(messageTexts(terminal.state)).not.toContain("second");
+    expect(terminalEvents(events)).toHaveLength(1);
+  });
+
   test("queued wake rebases onto latest state and no-ops when no longer sleeping on a poll", async () => {
     const { runner, events } = createStreamingRunner();
     const first = runner.turn({ type: "start", mode: "agent", prompt: "finish work" });
@@ -201,6 +218,91 @@ describe("TurnRunner active turns", () => {
     expect(turnTerminal).toMatchObject({ type: "complete", status: "completed" });
   });
 
+  test("answers sent during script work run before state-machine continuation", async () => {
+    const { runner, events } = createStreamingRunner();
+    const turn = runner.turn({
+      type: "start",
+      mode: scriptThenTerminalDefinition(),
+      prompt: "run script flow",
+    });
+    const state = await waitForStartedState(events);
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "run_state", state: "script_step" },
+    });
+    await waitFor(() =>
+      events.some(
+        (event) => event.type === "state_machine" && event.currentState === "script_step",
+      ),
+    );
+
+    const answer = runner.turn({
+      type: "answer",
+      state,
+      questions: [{ question: "Pick one", options: [{ label: "A" }] }],
+      answers: { choice: "A" },
+      behavior: "follow_up",
+    });
+
+    await waitFor(() => runner.contexts.length >= 2);
+    expect(lastUserText(runner.contexts[1]!)).toContain("Here are my answers");
+    runner.completeNext("answer after script");
+
+    await waitFor(() => runner.contexts.length >= 3);
+    expect(lastUserText(runner.contexts[2]!)).toContain('The state "script_step" finished');
+    expect(contextText(runner.contexts[2]!)).toContain("answer after script");
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "terminal", state: "done" },
+    });
+
+    const [turnTerminal, answerTerminal] = await Promise.all([turn, answer]);
+    expect(turnTerminal).toBe(answerTerminal);
+    expect(terminalEvents(events)).toHaveLength(1);
+  });
+
+  test("steer prompts sent during script work run before state-machine continuation", async () => {
+    const { runner, events } = createStreamingRunner();
+    const turn = runner.turn({
+      type: "start",
+      mode: scriptThenTerminalDefinition(),
+      prompt: "run script flow",
+    });
+    const state = await waitForStartedState(events);
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "run_state", state: "script_step" },
+    });
+    await waitFor(() =>
+      events.some(
+        (event) => event.type === "state_machine" && event.currentState === "script_step",
+      ),
+    );
+
+    const steer = runner.turn({
+      type: "prompt",
+      state,
+      message: "steer during script",
+      behavior: "steer",
+    });
+
+    await waitFor(() => runner.contexts.length >= 2);
+    expect(lastUserText(runner.contexts[1]!)).toContain("steer during script");
+    runner.completeNext("steer after script");
+
+    await waitFor(() => runner.contexts.length >= 3);
+    expect(lastUserText(runner.contexts[2]!)).toContain('The state "script_step" finished');
+    expect(contextText(runner.contexts[2]!)).toContain("steer after script");
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "terminal", state: "done" },
+    });
+
+    const [turnTerminal, steerTerminal] = await Promise.all([turn, steer]);
+    expect(turnTerminal).toBe(steerTerminal);
+    expect(terminalEvents(events)).toHaveLength(1);
+  });
+
   test("prompts sent during poll checks run immediately and return to sleep when unresolved", async () => {
     const { runner, events } = createStreamingRunner();
     const turn = runner.turn({
@@ -232,6 +334,66 @@ describe("TurnRunner active turns", () => {
     const [turnTerminal, promptTerminal] = await Promise.all([turn, prompt]);
     expect(turnTerminal).toBe(promptTerminal);
     expect(turnTerminal.type).toBe("sleep");
+    expect(terminalEvents(events)).toHaveLength(1);
+  });
+
+  test("steer prompts sent during poll checks run immediately and return to sleep", async () => {
+    const { runner, events } = createStreamingRunner();
+    const turn = runner.turn({
+      type: "start",
+      mode: unresolvedPollDefinition(),
+      prompt: "run poll flow",
+    });
+    const state = await waitForStartedState(events);
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "run_state", state: "poll_reply" },
+    });
+    await waitFor(() =>
+      events.some((event) => event.type === "state_machine" && event.currentState === "poll_reply"),
+    );
+
+    const steer = runner.turn({
+      type: "prompt",
+      state,
+      message: "steer during poll",
+      behavior: "steer",
+    });
+
+    await waitFor(() => runner.contexts.length >= 2, 100);
+    expect(lastUserText(runner.contexts[1]!)).toContain("steer during poll");
+    runner.completeNext("poll still waiting after steer");
+
+    const [turnTerminal, steerTerminal] = await Promise.all([turn, steer]);
+    expect(turnTerminal).toBe(steerTerminal);
+    expect(turnTerminal.type).toBe("sleep");
+    expect(terminalEvents(events)).toHaveLength(1);
+  });
+
+  test("queued wake behind state-machine work rebases onto sleeping poll state", async () => {
+    const { runner, events } = createStreamingRunner();
+    const turn = runner.turn({
+      type: "start",
+      mode: immediateUnresolvedPollDefinition(),
+      prompt: "run poll flow",
+    });
+    await waitForStartedState(events);
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const wake = runner.turn({
+      type: "wake",
+      state: { ...createStateMachineState("poll_email_reply"), status: "sleeping" },
+    });
+
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "run_state", state: "poll_reply" },
+    });
+
+    const [turnTerminal, wakeTerminal] = await Promise.all([turn, wake]);
+    expect(turnTerminal).toBe(wakeTerminal);
+    expect(turnTerminal.type).toBe("sleep");
+    expect(turnTerminal.state.stateMachine?.currentState).toBe("poll_reply");
     expect(terminalEvents(events)).toHaveLength(1);
   });
 
@@ -354,6 +516,28 @@ describe("TurnRunner active turns", () => {
     ).toEqual([]);
   });
 
+  test("failed active turns emit one failed terminal and drop queued commands", async () => {
+    const { runner, events } = createStreamingRunner();
+    const turn = runner.turn({ type: "start", mode: "agent", prompt: "start" });
+    await waitForStartedState(events);
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const wake = runner.turn({
+      type: "wake",
+      state: { ...createStateMachineState("poll_email_reply"), status: "sleeping" },
+    });
+
+    runner.completeNext("", { error: "model failed" });
+
+    const [turnTerminal, wakeTerminal] = await Promise.all([turn, wake]);
+    expect(turnTerminal).toBe(wakeTerminal);
+    expect(turnTerminal).toMatchObject({ type: "complete", status: "failed" });
+    expect(turnTerminal.type === "complete" ? turnTerminal.result : "").not.toBe(
+      "Nothing to wake.",
+    );
+    expect(terminalEvents(events)).toHaveLength(1);
+  });
+
   test("interrupt drops queued work and emits one interrupted terminal", async () => {
     const { runner, events } = createStreamingRunner();
     const first = runner.turn({ type: "start", mode: "agent", prompt: "start" });
@@ -374,6 +558,30 @@ describe("TurnRunner active turns", () => {
     expect(terminalEvents(events)).toHaveLength(1);
     expect(firstTerminal.type).toBe("interrupted");
     expect(messageTexts(firstTerminal.state)).not.toContain("queued");
+  });
+
+  test("dispose drops queued work without starting another command", async () => {
+    const { runner, events } = createStreamingRunner();
+    const turn = runner.turn({ type: "start", mode: "agent", prompt: "start" });
+    await waitForStartedState(events);
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const wake = runner.turn({
+      type: "wake",
+      state: { ...createStateMachineState("poll_email_reply"), status: "sleeping" },
+    });
+    await delay(0);
+    await runner.dispose();
+
+    runner.completeNext("done");
+
+    const [turnTerminal, wakeTerminal] = await Promise.all([turn, wake]);
+    expect(turnTerminal).toBe(wakeTerminal);
+    expect(turnTerminal).toMatchObject({ type: "complete", status: "completed" });
+    expect(turnTerminal.type === "complete" ? turnTerminal.result : "").not.toBe(
+      "Nothing to wake.",
+    );
+    expect(terminalEvents(events)).toHaveLength(1);
   });
 
   test("answers can follow up the active child agent directly", async () => {
@@ -607,6 +815,22 @@ function resolvedPollDefinition(): StateMachineDefinition {
         name: "poll_reply",
         intervalMs: 60_000,
         poll: { kind: "script", command: 'sleep 0.05; printf \'{"reply":"yes"}\'' },
+      },
+      { kind: "terminal", name: "done", status: "completed" },
+    ],
+  };
+}
+
+function immediateUnresolvedPollDefinition(): StateMachineDefinition {
+  return {
+    name: "immediate_poll_flow",
+    prompt: "Use for immediate poll test.",
+    states: [
+      {
+        kind: "poll",
+        name: "poll_reply",
+        intervalMs: 60_000,
+        poll: { kind: "script", command: "printf '{}'" },
       },
       { kind: "terminal", name: "done", status: "completed" },
     ],
