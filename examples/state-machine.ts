@@ -44,10 +44,9 @@ async function main() {
     }
   });
 
-  const initialState = await runner.start({ type: "start", mode: definition });
+  await runner.start({ type: "start", mode: definition });
   const terminal = await runner.turn({
     type: "prompt",
-    state: initialState,
     message: "Write a brief recommendation for using feature flags during risky launches.",
     behavior: "follow_up",
   });

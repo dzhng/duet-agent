@@ -92,7 +92,6 @@ export async function startTurn<
   });
   const turn = runner.turn({
     type: "prompt",
-    state,
     message: args.prompt,
     behavior: "follow_up",
   });

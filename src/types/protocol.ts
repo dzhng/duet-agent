@@ -19,11 +19,11 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  *
  * ## Turn Model
  *
- * The runner is a stateless turn executor: every command carries the full
- * `TurnState` snapshot needed to resume work, and every terminal event returns
- * the next snapshot. The session is the long-lived session owner. It assigns
- * session ids, persists snapshots, schedules wakeups, and can run an unbounded
- * number of turn-runner turns for the same user session.
+ * The runner is a stateful turn executor: `start` bootstraps the current
+ * `TurnState`, and each terminal event returns the next snapshot. The session
+ * is the persistence owner. It assigns session ids, hydrates stored snapshots
+ * before start, persists terminal snapshots, schedules wakeups, and can run an
+ * unbounded number of turn-runner turns for the same user session.
  *
  * A caller initializes a session by sending `start`. This is a setup command,
  * not a turn: the runner loads memory and skills, emits `session_started`
@@ -45,8 +45,8 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  * Terminal events carry the turn runner-owned state needed to continue a later turn.
  * `complete` means this turn-runner turn ended; it does not mean the session
  * session is finished. A user can follow up with another prompt for the same
- * session, and the session will pass the latest `TurnState`
- * back into the runner. The agent session is always present because the agent owns the conversation
+ * session; the runner continues from its internally held `TurnState`. The
+ * agent session is always present because the agent owns the conversation
  * history and, for state-machine mode, drives state transitions.
  *
  * ## Scenario 1: One-Shot Agent Task
@@ -264,9 +264,11 @@ export type TurnStep =
  * Set up a new turn-runner session.
  *
  * `start` is a setup command, not a turn. The runner loads memory and skills,
- * emits `ready` with the resolved skill/agent-file context, and emits
- * `session_started` with an empty `TurnState`. No agent work runs. The caller
- * sends `prompt` afterwards to actually run a turn.
+ * stores its initial `TurnState` (either fresh or the resumed one passed via
+ * `state`), and emits `session_started`. No agent work runs. The caller sends
+ * `prompt` afterwards to actually run a turn. Skills, agent files, and skill
+ * collisions are exposed through dedicated runner methods so callers can
+ * render the setup summary without subscribing to a dedicated event.
  *
  * The CLI/TUI sends this on launch so the user sees the available skills
  * before typing the first prompt.
@@ -285,16 +287,16 @@ export interface TurnStartCommand {
 }
 
 /**
- * Send a new user prompt while turn state exists.
+ * Send a new user prompt against the runner's current state.
  *
  * Callers may send prompt commands even while a previous `turn()` call is
  * active. The turn runner maps `behavior` onto the active pi agent when it can
- * and otherwise queues the command behind active non-agent work.
+ * and otherwise queues the command behind active non-agent work. State is held
+ * inside the runner; it was bootstrapped at `start` and is updated from the
+ * runner's own terminal events.
  */
 export interface TurnPromptCommand {
   type: "prompt";
-  /** Existing turn state to continue. */
-  state: TurnState;
   message: string;
   /** Pi handles the underlying interruption/follow-up behavior. */
   behavior: TurnPromptBehavior;
@@ -310,8 +312,6 @@ export interface TurnPromptCommand {
  */
 export interface TurnAnswerCommand {
   type: "answer";
-  /** Existing turn state to continue. */
-  state: TurnState;
   questions: TurnQuestion[];
   answers: Record<string, string>;
   /** Pi handles the underlying interruption/follow-up behavior. */
@@ -319,11 +319,9 @@ export interface TurnAnswerCommand {
   options?: TurnOptions;
 }
 
-/** Wake sleeping turn state. If the state is not sleeping on a poll state, this is a no-op. */
+/** Wake the runner's sleeping state. If the state is not sleeping on a poll state, this is a no-op. */
 export interface TurnWakeCommand {
   type: "wake";
-  /** Existing turn state to wake. */
-  state: TurnState;
   options?: TurnOptions;
 }
 
@@ -342,15 +340,13 @@ export interface TurnEditFollowUpQueueCommand {
 
 /**
  * Commands that drive a single turn-runner turn. `start` is excluded because
- * setup is not a turn; it is handled separately and emits `ready` only.
+ * setup is not a turn and is handled by `TurnRunner.start()` directly.
  */
 export type TurnCommand = TurnPromptCommand | TurnAnswerCommand | TurnWakeCommand;
 
 /** Out-of-band control message that interrupts the currently running turn. */
 export interface TurnInterruptCommand {
   type: "interrupt";
-  /** Current turn state known by the caller at the time of interruption. */
-  state: TurnState;
 }
 
 export type TurnRunnerCommand =

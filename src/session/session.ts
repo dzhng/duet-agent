@@ -150,7 +150,6 @@ export class Session {
     this.restoreSleepAfterTurn = wasSleeping && this.isWaitingOnPoll(state);
     const command: TurnCommand = {
       type: "prompt",
-      state,
       message: input.message,
       behavior: input.behavior ?? "follow_up",
       ...(input.options ? { options: input.options } : {}),
@@ -166,7 +165,6 @@ export class Session {
     this.restoreSleepAfterTurn = wasSleeping && this.isWaitingOnPoll(state);
     const command: TurnAnswerCommand = {
       type: "answer",
-      state,
       questions: input.questions,
       answers: input.answers,
       behavior: input.behavior ?? "follow_up",
@@ -177,9 +175,8 @@ export class Session {
 
   async interrupt(): Promise<void> {
     await this.ensureStarted();
-    const state = await this.requireState();
     this.cancelWake();
-    this.runner.interrupt({ type: "interrupt", state });
+    this.runner.interrupt({ type: "interrupt" });
   }
 
   private async ensureStarted(): Promise<void> {
@@ -322,7 +319,7 @@ export class Session {
       () => {
         this.wakeTimer = undefined;
         if (!this.state || this.state.status !== "sleeping") return;
-        this.dispatchTurn({ type: "wake", state: this.state });
+        this.dispatchTurn({ type: "wake" });
       },
       Math.max(0, terminal.wakeAt - Date.now()),
     );

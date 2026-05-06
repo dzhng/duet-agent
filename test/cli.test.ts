@@ -52,7 +52,7 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "anthropic:claude-sonnet-4-6",
+      modelName: "anthropic:claude-haiku-4-5",
       source: "inferred",
       envVar: "ANTHROPIC_API_KEY",
       fromDotenv: false,
@@ -75,7 +75,7 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "duet-gateway:anthropic/claude-sonnet-4.6",
+      modelName: "duet-gateway:anthropic/claude-haiku-4.5",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
@@ -93,7 +93,7 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "vercel-ai-gateway:anthropic/claude-sonnet-4.6",
+      modelName: "vercel-ai-gateway:anthropic/claude-haiku-4.5",
       source: "inferred",
       envVar: "AI_GATEWAY_API_KEY",
       fromDotenv: false,
@@ -112,7 +112,7 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "openrouter:anthropic/claude-sonnet-4.6",
+      modelName: "openrouter:anthropic/claude-haiku-4.5",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
@@ -145,7 +145,7 @@ describe("CLI model inference", () => {
       source: "default",
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "anthropic:claude-sonnet-4-6",
+      modelName: "anthropic:claude-haiku-4-5",
       source: "default",
     });
   });

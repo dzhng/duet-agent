@@ -19,10 +19,9 @@ async function main() {
     }
   });
 
-  const initialState = await runner.start({ type: "start", mode: "agent" });
+  await runner.start({ type: "start", mode: "agent" });
   const terminal = await runner.turn({
     type: "prompt",
-    state: initialState,
     message:
       "Create a simple HTTP server in Node.js that serves a JSON API with a /health endpoint",
     behavior: "follow_up",

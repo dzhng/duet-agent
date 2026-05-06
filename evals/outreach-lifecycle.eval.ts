@@ -37,7 +37,7 @@ describe("outreach lifecycle state machine", () => {
 
       await delay(10_100);
 
-      const terminal = await runner.turn({ type: "wake", state: first.state });
+      const terminal = await runner.turn({ type: "wake" });
 
       expect(terminal.type).toBe("complete");
       expect(terminal.type === "complete" ? terminal.status : undefined).toBe("completed");

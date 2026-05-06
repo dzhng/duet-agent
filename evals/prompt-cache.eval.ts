@@ -30,10 +30,8 @@ describe("prompt cache resume", () => {
       // the first turn reads from cache instead of reporting another cache write.
       expect(firstUsage.cacheRead + firstUsage.cacheWrite).toBeGreaterThan(0);
 
-      const resumedState = JSON.parse(JSON.stringify(first.state)) as TurnState;
       const second = await runner.turn({
         type: "prompt",
-        state: resumedState,
         message:
           "Do not call tools. Reply with exactly this sentence: second prompt cache turn complete.",
         behavior: "follow_up",

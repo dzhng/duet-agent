@@ -49,9 +49,8 @@ const COLORS = {
   border: "#374151",
 } as const;
 
-const HINT_IDLE = "Enter: send · Esc: quit · Ctrl+C: force quit";
-const HINT_RUNNING =
-  "Enter: steer · Shift+Enter: queue follow-up · Esc: interrupt · Ctrl+C: force quit";
+const HINT_IDLE = "Enter: send · Esc/Ctrl+C: quit";
+const HINT_RUNNING = "Enter: steer · Shift+Enter: queue follow-up · Esc/Ctrl+C: interrupt";
 
 /**
  * Runs the interactive TUI for a session. Resolves with the most recent
@@ -64,7 +63,7 @@ const HINT_RUNNING =
 export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | undefined> {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
+    exitOnCtrlC: false,
     useKittyKeyboard: {},
     targetFps: 60,
   });
@@ -473,9 +472,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // capture the modifier here and read it during the ENTER event below.
   let lastEnterShift = false;
 
-  const handleEsc = () => {
+  let closingAfterInterrupt = false;
+
+  const requestExit = async (): Promise<void> => {
     if (running) {
-      void input.session.interrupt().catch(reportError);
+      if (closingAfterInterrupt) return;
+      closingAfterInterrupt = true;
+      setStatus("● interrupting…");
+      try {
+        await input.session.interrupt();
+        await input.session.waitForTerminal();
+      } catch (error) {
+        reportError(error);
+      } finally {
+        renderer.stop();
+      }
     } else {
       renderer.stop();
     }
@@ -498,7 +509,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
     if (key.name === "escape") {
-      handleEsc();
+      void requestExit();
+      return;
+    }
+    if (key.name === "c" && key.ctrl) {
+      void requestExit();
     }
   };
 

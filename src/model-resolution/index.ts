@@ -61,20 +61,20 @@ const MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
 const MEMORY_MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
   {
     provider: "anthropic",
-    model: "anthropic:claude-sonnet-4-6",
+    model: "anthropic:claude-haiku-4-5",
   },
   {
     provider: "duet-gateway",
-    model: "duet-gateway:anthropic/claude-sonnet-4.6",
+    model: "duet-gateway:anthropic/claude-haiku-4.5",
     customEnvVar: () => (process.env[DUET_GATEWAY_API_KEY_ENV] ? DUET_GATEWAY_API_KEY_ENV : null),
   },
   {
     provider: "vercel-ai-gateway",
-    model: "vercel-ai-gateway:anthropic/claude-sonnet-4.6",
+    model: "vercel-ai-gateway:anthropic/claude-haiku-4.5",
   },
   {
     provider: "openrouter",
-    model: "openrouter:anthropic/claude-sonnet-4.6",
+    model: "openrouter:anthropic/claude-haiku-4.5",
   },
   {
     provider: "openai",

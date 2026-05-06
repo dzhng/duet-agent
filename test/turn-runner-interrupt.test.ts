@@ -73,7 +73,7 @@ describe("TurnRunner interrupts", () => {
     expect(turnState).toBeDefined();
     assert(turnState);
 
-    runner.interrupt({ type: "interrupt", state: turnState });
+    runner.interrupt({ type: "interrupt" });
 
     const terminal = await turn;
     const interruptedEvent = events.find((event) => event.type === "interrupted");

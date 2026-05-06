@@ -46,10 +46,10 @@ describe("state-machine child agent resume", () => {
         { type: "select_state_machine_state", decision: { kind: "terminal", state: "done" } },
       ],
     });
+    await secondRunner.start({ type: "start", state: hydratedState });
 
     const terminal = await secondRunner.turn({
       type: "answer",
-      state: hydratedState,
       questions: askTerminal.questions,
       answers: { company: "Analytical Engines Ltd." },
       behavior: "follow_up",

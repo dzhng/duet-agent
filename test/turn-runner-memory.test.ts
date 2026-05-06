@@ -157,6 +157,52 @@ describe("TurnRunner memory", () => {
     ]);
   });
 
+  test("observational transform waits for a full new suffix after first observation", async () => {
+    const runner = new MemoryTransformTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+      memory: {
+        observation: {
+          messageTokens: 20,
+          bufferActivation: 10,
+        },
+        reflection: {
+          observationTokens: 1_000,
+          bufferActivation: 500,
+        },
+      },
+    });
+    await runner.appendObservationForTest(
+      '<observation-group id="test" range="msg_assistant_observed:msg_assistant_observed">\n* 🔴 Already observed the long message.\n</observation-group>',
+    );
+    const events: unknown[] = [];
+    runner.subscribe((event) => events.push(event));
+    const transform = runner.createMemoryTransformForTest({
+      provider: "unknown",
+      id: "test",
+    } as Model<any>);
+    const messages: AgentMessage[] = [
+      {
+        ...createAssistantMessage({ text: "x".repeat(100), timestamp: 1 }),
+        responseId: "observed",
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: "tiny follow-up" }],
+        timestamp: 2,
+      },
+    ];
+
+    const transformed = await transform(messages);
+
+    expect(events.filter((event) => (event as { type?: string }).type === "memory")).toEqual([]);
+    expect(transformed).toHaveLength(3);
+    expect(transformed.at(-1)).toMatchObject({
+      role: "user",
+      content: [{ type: "text", text: "tiny follow-up" }],
+    });
+  });
+
   test("observational transform emits reflection activity events", async () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",

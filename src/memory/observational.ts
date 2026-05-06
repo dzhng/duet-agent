@@ -12,6 +12,7 @@ import type {
   ObservationalMemorySettingsInput,
 } from "../types/memory.js";
 import {
+  parseObservationGroups,
   reconcileObservationGroupsFromReflection,
   renderObservationGroupsForReflection,
   stripObservationGroups,
@@ -30,24 +31,22 @@ import {
 
 export const OBSERVATIONAL_MEMORY_DEFAULTS = {
   observation: {
-    // Start observing only after the raw transcript is large enough to threaten
-    // a modern 200k-token actor window; prompt caching makes exact history cheap
-    // enough to keep until then.
-    messageTokens: 150_000,
-    // Keep observer calls below the model's practical reasoning ceiling while
-    // still allowing large transcript slices when observation work activates.
-    maxTokensPerBatch: 40_000,
-    // Retain this many raw-message tokens after observation so the actor keeps a
-    // substantial exact tail instead of relying only on derived observations.
-    bufferActivation: 40_000,
+    // Observe before the actor window gets tight; prompt caching keeps the exact
+    // tail cheap while memory preserves older task state.
+    messageTokens: 100_000,
+    // Keep observer calls comfortably below the model's practical reasoning
+    // ceiling while still batching enough transcript to avoid noisy churn.
+    maxTokensPerBatch: 35_000,
+    // Retain enough exact history for active tool work after older messages are
+    // represented by observations.
+    bufferActivation: 30_000,
   },
   reflection: {
-    // Let the derived observation log grow before reflecting; it is usually much
-    // smaller than raw tool-heavy transcripts and also benefits from caching.
-    observationTokens: 90_000,
+    // Reflect before observations become a second large prompt layer.
+    observationTokens: 60_000,
     // Target this many observation tokens after reflection so the pass dedupes
     // without aggressively summarizing away useful specifics.
-    bufferActivation: 65_000,
+    bufferActivation: 40_000,
   },
 } as const;
 
@@ -239,28 +238,38 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
     let retainedMessages = messages;
 
     if (rawTokens >= settings.observation.messageTokens) {
-      emitMemoryActivity(options.onActivity, {
-        phase: "observation",
-        status: "running",
-        message: "Compacting conversation into memory...",
-      });
-      try {
-        const retainedRawMessages = await activateObservations(
-          options.memory,
-          rawMessages,
-          settings,
-          options.actorModel,
-          options.onUsage,
-          signal,
-        );
-        retainedMessages = retainAgentMessageTail(messages, retainedRawMessages);
-      } finally {
+      const snapshot = await options.memory.getSnapshot();
+      const unobservedMessages = getUnobservedMessageTail(rawMessages, snapshot.observations);
+
+      if (estimateRawTokens(unobservedMessages) >= settings.observation.messageTokens) {
         emitMemoryActivity(options.onActivity, {
           phase: "observation",
-          status: "completed",
-          message: "Memory observation complete.",
+          status: "running",
+          message: "Compacting conversation into memory...",
         });
+        try {
+          await activateObservations(
+            options.memory,
+            unobservedMessages,
+            snapshot.observations,
+            settings,
+            options.actorModel,
+            options.onUsage,
+            signal,
+          );
+        } finally {
+          emitMemoryActivity(options.onActivity, {
+            phase: "observation",
+            status: "completed",
+            message: "Memory observation complete.",
+          });
+        }
       }
+
+      retainedMessages = retainAgentMessageTail(
+        messages,
+        retainRawTail(rawMessages, settings.observation.bufferActivation),
+      );
     }
 
     const snapshot = await options.memory.getSnapshot();
@@ -342,18 +351,18 @@ function buildContinuationMessage(): AgentMessage {
 async function activateObservations(
   store: MemoryStore,
   messages: RawMemoryMessage[],
+  previousObservations: Observation[],
   settings: ObservationalMemorySettings,
   model: Model<any>,
   onUsage?: (usage: Usage) => void,
   _signal?: AbortSignal,
-): Promise<RawMemoryMessage[]> {
-  const snapshot = await store.getSnapshot();
+): Promise<void> {
   const observations = (
-    await observe(messages, snapshot.observations, settings, model, onUsage, _signal)
+    await observe(messages, previousObservations, settings, model, onUsage, _signal)
   ).observations;
 
   if (!observations.trim()) {
-    return messages;
+    return;
   }
 
   const range = `${messages[0]?.id ?? "unknown"}:${messages[messages.length - 1]?.id ?? "unknown"}`;
@@ -366,9 +375,6 @@ async function activateObservations(
     content: wrapInObservationGroup(observations, range),
     tags: ["observational-memory"],
   });
-
-  const retainedRawMessages = retainRawTail(messages, settings.observation.bufferActivation);
-  return retainedRawMessages;
 }
 
 async function reflectObservations(
@@ -517,6 +523,38 @@ function retainRawTail(messages: RawMemoryMessage[], retainTokens: number): RawM
     retained.unshift(message);
   }
   return retained;
+}
+
+function getUnobservedMessageTail(
+  messages: RawMemoryMessage[],
+  observations: Observation[],
+): RawMemoryMessage[] {
+  const lastObservedIndex = getLastObservedMessageIndex(messages, observations);
+  if (lastObservedIndex < 0) {
+    return messages;
+  }
+  return messages.slice(lastObservedIndex + 1);
+}
+
+function getLastObservedMessageIndex(
+  messages: RawMemoryMessage[],
+  observations: Observation[],
+): number {
+  const messageIndexById = new Map(messages.map((message, index) => [message.id, index]));
+  let lastObservedIndex = -1;
+
+  for (const observation of observations) {
+    const groups = parseObservationGroups(observation.content);
+    for (const group of groups) {
+      const endId = group.range.split(":").at(-1)?.trim();
+      const endIndex = endId ? messageIndexById.get(endId) : undefined;
+      if (endIndex !== undefined) {
+        lastObservedIndex = Math.max(lastObservedIndex, endIndex);
+      }
+    }
+  }
+
+  return lastObservedIndex;
 }
 
 function retainAgentMessageTail(

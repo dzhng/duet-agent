@@ -29,6 +29,7 @@ class FakeTurnRunner implements SessionTurnRunner {
   readonly interrupts: TurnInterruptCommand[] = [];
   readonly followUpQueueEdits: TurnEditFollowUpQueueCommand[] = [];
   readonly handlers = new Set<(event: TurnEvent) => void>();
+  state = turnState;
   skills: readonly Skill[] = [];
   skillInstructions = new Map<string, string>();
   disposed = false;
@@ -54,7 +55,7 @@ class FakeTurnRunner implements SessionTurnRunner {
         type: "complete",
         status: "completed",
         result: "Nothing to wake.",
-        state: command.state,
+        state: this.state,
       };
       this.emit(terminal);
       return terminal;
@@ -72,15 +73,15 @@ class FakeTurnRunner implements SessionTurnRunner {
     const terminal: TurnTerminalEvent = {
       type: "interrupted",
       state: {
-        ...command.state,
+        ...this.state,
         status: "interrupted",
-        agent: { ...command.state.agent, status: "cancelled" },
-        stateMachine: command.state.stateMachine
+        agent: { ...this.state.agent, status: "cancelled" },
+        stateMachine: this.state.stateMachine
           ? {
-              ...command.state.stateMachine,
+              ...this.state.stateMachine,
               terminal: { state: "interrupted", status: "cancelled" },
               history: [
-                ...command.state.stateMachine.history,
+                ...this.state.stateMachine.history,
                 {
                   type: "session_completed",
                   timestamp: Date.now(),
@@ -91,6 +92,7 @@ class FakeTurnRunner implements SessionTurnRunner {
           : undefined,
       },
     };
+    this.state = terminal.state;
     this.terminals.push(terminal);
     this.emit(terminal);
     this.resolveNext();
@@ -129,6 +131,7 @@ class FakeTurnRunner implements SessionTurnRunner {
   resolveNext(terminal = this.terminals.shift()): void {
     const pending = this.pendingTurns.shift();
     if (!pending || !terminal) return;
+    this.state = terminal.state;
     this.emit(terminal);
     pending.resolve(terminal);
   }
@@ -178,9 +181,7 @@ describe("Session", () => {
     await session.waitForTerminal();
 
     expect(session.id).toStartWith("session_");
-    expect(runner.commands).toEqual([
-      { type: "prompt", state: turnState, message: "hello", behavior: "follow_up" },
-    ]);
+    expect(runner.commands).toEqual([{ type: "prompt", message: "hello", behavior: "follow_up" }]);
   });
 
   testIfDocker("forwards follow-up queue edits to the runner", async () => {
@@ -229,8 +230,8 @@ describe("Session", () => {
     await waitFor(() => runner.commands.length >= 2);
 
     expect(runner.commands).toEqual([
-      { type: "prompt", state: turnState, message: "poll", behavior: "follow_up" },
-      { type: "wake", state: sleeping },
+      { type: "prompt", message: "poll", behavior: "follow_up" },
+      { type: "wake" },
     ]);
   });
 
@@ -286,7 +287,7 @@ describe("Session", () => {
     await second.waitForTerminal();
 
     expect(secondTurnRunner.commands).toEqual([
-      { type: "prompt", state: turnState, message: "continue", behavior: "follow_up" },
+      { type: "prompt", message: "continue", behavior: "follow_up" },
     ]);
   });
 
@@ -300,8 +301,8 @@ describe("Session", () => {
     await session.prompt({ message: "steer now", behavior: "steer" });
 
     expect(runner.commands).toEqual([
-      { type: "prompt", state: turnState, message: "start", behavior: "follow_up" },
-      { type: "prompt", state: turnState, message: "steer now", behavior: "steer" },
+      { type: "prompt", message: "start", behavior: "follow_up" },
+      { type: "prompt", message: "steer now", behavior: "steer" },
     ]);
   });
 
@@ -315,8 +316,8 @@ describe("Session", () => {
     await session.prompt({ message: "queue later", behavior: "follow_up" });
 
     expect(runner.commands).toEqual([
-      { type: "prompt", state: turnState, message: "start", behavior: "follow_up" },
-      { type: "prompt", state: turnState, message: "queue later", behavior: "follow_up" },
+      { type: "prompt", message: "start", behavior: "follow_up" },
+      { type: "prompt", message: "queue later", behavior: "follow_up" },
     ]);
   });
 
@@ -335,7 +336,6 @@ describe("Session", () => {
 
     expect(runner.commands.at(-1)).toMatchObject({
       type: "answer",
-      state: waiting,
       behavior: "follow_up",
     });
   });
@@ -381,7 +381,7 @@ describe("Session", () => {
     if (!interrupted || interrupted.type !== "interrupted") {
       throw new Error("Expected interrupted event");
     }
-    const staleWake = await runner.turn({ type: "wake", state: interrupted.state });
+    const staleWake = await runner.turn({ type: "wake" });
 
     expect(staleWake).toMatchObject({
       type: "complete",
@@ -439,8 +439,8 @@ describe("Session", () => {
       await session.prompt({ message: "next" });
 
       expect(runner.commands).toEqual([
-        { type: "prompt", state: turnState, message: "start", behavior: "follow_up" },
-        { type: "prompt", state: turnState, message: "next", behavior: "follow_up" },
+        { type: "prompt", message: "start", behavior: "follow_up" },
+        { type: "prompt", message: "next", behavior: "follow_up" },
       ]);
     },
   );
@@ -482,10 +482,10 @@ describe("SessionManager", () => {
     expect(manager.get("first")).toBe(first);
     expect(manager.get("second")).toBe(second);
     expect(runners.get("first")?.commands).toEqual([
-      { type: "prompt", state: turnState, message: "one", behavior: "follow_up" },
+      { type: "prompt", message: "one", behavior: "follow_up" },
     ]);
     expect(runners.get("second")?.commands).toEqual([
-      { type: "prompt", state: turnState, message: "two", behavior: "follow_up" },
+      { type: "prompt", message: "two", behavior: "follow_up" },
     ]);
     expect(
       events.some((event) => event.sessionId === "first" && event.event.type === "session_started"),
