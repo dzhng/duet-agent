@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnTerminalEvent } from "../src/types/protocol.js";
@@ -23,12 +24,13 @@ describe("outreach lifecycle state machine", () => {
         ].join("\n"),
       });
 
-      const first = await runner.turn({
-        type: "start",
-        mode: outreachDefinition,
-        prompt:
-          "Run the outreach lifecycle for Ada Lovelace at ada@example.com. The fake reply says she is interested in a meeting.",
-      });
+      const first = await (
+        await startTurn(runner, {
+          mode: outreachDefinition,
+          prompt:
+            "Run the outreach lifecycle for Ada Lovelace at ada@example.com. The fake reply says she is interested in a meeting.",
+        })
+      ).turn;
 
       expect(first.type).toBe("sleep");
       expect(first.state.stateMachine?.currentState).toBe("wait_for_reply");

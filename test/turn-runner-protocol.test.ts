@@ -5,6 +5,7 @@ import {
   createTurnRunner,
   createOutreachStateMachine,
   createStateMachineState,
+  startTurn,
 } from "./helpers/turn-runner-protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 
@@ -12,14 +13,11 @@ describe("TurnRunner protocol scenarios", () => {
   test("runs a simple auto-classified prompt in agent mode", async () => {
     const { runner, events } = createTurnRunner();
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "Summarize this file.",
-      mode: "auto",
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: "auto", prompt: "Summarize this file." })
+    ).turn;
 
-    expect(events[0]).toMatchObject({ type: "ready" });
-    expect(events[1]).toMatchObject({
+    expect(events[0]).toMatchObject({
       type: "session_started",
       state: { status: "running", mode: "auto", agent: { status: "running" } },
     });
@@ -44,11 +42,9 @@ describe("TurnRunner protocol scenarios", () => {
       ],
     });
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "Deploy the app.",
-      mode: "agent",
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: "agent", prompt: "Deploy the app." })
+    ).turn;
 
     expect(terminal).toMatchObject({
       type: "ask",
@@ -72,14 +68,9 @@ describe("TurnRunner protocol scenarios", () => {
       firstState: "research_prospect",
     });
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt,
-      mode: "auto",
-    });
+    const terminal = await (await startTurn(runner, { mode: "auto", prompt })).turn;
 
-    expect(events[0]).toMatchObject({ type: "ready" });
-    expect(events[1]).toMatchObject({
+    expect(events[0]).toMatchObject({
       type: "session_started",
       state: {
         status: "running",
@@ -136,11 +127,9 @@ describe("TurnRunner protocol scenarios", () => {
       return result;
     };
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "Prospect Ada until she books a meeting.",
-      mode: "auto",
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: "auto", prompt: "Prospect Ada until she books a meeting." })
+    ).turn;
 
     expect(terminal).toMatchObject({
       type: "complete",
@@ -305,14 +294,9 @@ describe("TurnRunner protocol scenarios", () => {
       decision: { kind: "run_state", state: "research_prospect" },
     });
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt,
-      mode: definition,
-    });
+    const terminal = await (await startTurn(runner, { mode: definition, prompt })).turn;
 
-    expect(events[0]).toMatchObject({ type: "ready" });
-    expect(events[1]).toMatchObject({
+    expect(events[0]).toMatchObject({
       type: "session_started",
       state: {
         status: "running",
@@ -344,14 +328,11 @@ describe("TurnRunner protocol scenarios", () => {
     const { runner, events } = createTurnRunner();
     const definition = createOutreachStateMachine();
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "What is the capital of France?",
-      mode: definition,
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: definition, prompt: "What is the capital of France?" })
+    ).turn;
 
-    expect(events[0]).toMatchObject({ type: "ready" });
-    expect(events[1]).toMatchObject({
+    expect(events[0]).toMatchObject({
       type: "session_started",
       state: { status: "running", mode: definition, agent: { status: "running" } },
     });
@@ -371,11 +352,12 @@ describe("TurnRunner protocol scenarios", () => {
       decision: { kind: "run_state", state: "invented_state" },
     });
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "Prospect Ada until she books a meeting.",
-      mode: definition,
-    });
+    const terminal = await (
+      await startTurn(runner, {
+        mode: definition,
+        prompt: "Prospect Ada until she books a meeting.",
+      })
+    ).turn;
 
     if (terminal.type !== "complete") {
       throw new Error("Expected complete event");

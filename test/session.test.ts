@@ -8,10 +8,14 @@ import {
   DEFAULT_SESSION_STORAGE_DIR,
   SessionManager,
 } from "../src/session/session-manager.js";
+import type { Skill } from "@mariozechner/pi-coding-agent";
+import type { SkillCollision } from "../src/turn-runner/skills.js";
 import type {
+  TurnAgentFile,
   TurnEvent,
   TurnEditFollowUpQueueCommand,
   TurnInterruptCommand,
+  TurnStartCommand,
   TurnState,
   TurnTerminalEvent,
   TurnCommand,
@@ -25,7 +29,7 @@ class FakeTurnRunner implements SessionTurnRunner {
   readonly interrupts: TurnInterruptCommand[] = [];
   readonly followUpQueueEdits: TurnEditFollowUpQueueCommand[] = [];
   readonly handlers = new Set<(event: TurnEvent) => void>();
-  skills: readonly { name: string }[] = [];
+  skills: readonly Skill[] = [];
   skillInstructions = new Map<string, string>();
   disposed = false;
   terminals: TurnTerminalEvent[];
@@ -38,12 +42,13 @@ class FakeTurnRunner implements SessionTurnRunner {
     this.terminals = [...terminals];
   }
 
+  async start(_command: TurnStartCommand): Promise<TurnState> {
+    this.emit({ type: "session_started", state: turnState });
+    return turnState;
+  }
+
   async turn(command: TurnCommand): Promise<TurnTerminalEvent> {
     this.commands.push(command);
-    this.emit({ type: "ready", skills: [], agentFiles: [], skillCollisions: [] });
-    if (command.type === "start") {
-      this.emit({ type: "session_started", state: turnState });
-    }
     if (command.type === "wake" && this.terminals.length === 0) {
       const terminal: TurnTerminalEvent = {
         type: "complete",
@@ -101,8 +106,16 @@ class FakeTurnRunner implements SessionTurnRunner {
     return () => this.handlers.delete(handler);
   }
 
-  async getSkills(): Promise<readonly { name: string }[]> {
+  async getSkills(): Promise<readonly Skill[]> {
     return this.skills;
+  }
+
+  async getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]> {
+    return [];
+  }
+
+  async getSkillCollisions(): Promise<readonly SkillCollision[]> {
+    return [];
   }
 
   getSkillInstructions(skillId: string): string {
@@ -160,11 +173,14 @@ describe("Session", () => {
     const runner = new FakeTurnRunner([complete()]);
     const session = await createSession(runner);
 
-    await session.start({ prompt: "hello" });
+    await session.start();
+    await session.prompt({ message: "hello" });
     await session.waitForTerminal();
 
     expect(session.id).toStartWith("session_");
-    expect(runner.commands).toEqual([{ type: "start", mode: undefined, prompt: "hello" }]);
+    expect(runner.commands).toEqual([
+      { type: "prompt", state: turnState, message: "hello", behavior: "follow_up" },
+    ]);
   });
 
   testIfDocker("forwards follow-up queue edits to the runner", async () => {
@@ -187,17 +203,14 @@ describe("Session", () => {
     const events: TurnEvent[] = [];
 
     const unsubscribe = session.subscribe((event) => events.push(event));
-    await session.start({ prompt: "hello" });
+    await session.start();
+    await session.prompt({ message: "hello" });
     await session.waitForTerminal();
     unsubscribe();
     runner.emit({ type: "system", level: "info", message: "ignored" });
 
-    expect(events[0]).toEqual({
-      type: "ready",
-      skills: [],
-      agentFiles: [],
-      skillCollisions: [],
-    });
+    expect(events[0]).toMatchObject({ type: "session_started" });
+    expect(events.at(-1)).toMatchObject({ type: "complete" });
   });
 
   testIfDocker("schedules wake after sleep without blocking command submission", async () => {
@@ -211,11 +224,12 @@ describe("Session", () => {
     ]);
     const session = await createSession(runner);
 
-    await session.start({ prompt: "poll" });
+    await session.start();
+    await session.prompt({ message: "poll" });
     await waitFor(() => runner.commands.length >= 2);
 
     expect(runner.commands).toEqual([
-      { type: "start", mode: undefined, prompt: "poll" },
+      { type: "prompt", state: turnState, message: "poll", behavior: "follow_up" },
       { type: "wake", state: sleeping },
     ]);
   });
@@ -230,7 +244,8 @@ describe("Session", () => {
       { id: "existing-session", runner: runner, sessionPath: join(tempDir, "existing-session") },
     );
 
-    await session.start({ prompt: "remember me" });
+    await session.start();
+    await session.prompt({ message: "remember me" });
     await session.waitForTerminal();
     const content = await readFile(join(tempDir, "existing-session", "state.json"), "utf-8");
     const stored = JSON.parse(content);
@@ -257,7 +272,8 @@ describe("Session", () => {
       { model: "anthropic:claude-opus-4-7" },
       { id: "continuable", runner: firstTurnRunner, sessionPath: join(tempDir, "continuable") },
     );
-    await first.start({ prompt: "start" });
+    await first.start();
+    await first.prompt({ message: "start" });
     await first.waitForTerminal();
     const secondTurnRunner = new FakeTurnRunner([complete("second")]);
 
@@ -265,7 +281,8 @@ describe("Session", () => {
       { model: "anthropic:claude-opus-4-7" },
       { id: "continuable", runner: secondTurnRunner, sessionPath: join(tempDir, "continuable") },
     );
-    await second.start({ prompt: "continue" });
+    await second.start();
+    await second.prompt({ message: "continue" });
     await second.waitForTerminal();
 
     expect(secondTurnRunner.commands).toEqual([
@@ -277,12 +294,13 @@ describe("Session", () => {
     const runner = new FakeTurnRunner([]);
     const session = await createSession(runner);
 
-    await session.start({ prompt: "start" });
+    await session.start();
+    await session.prompt({ message: "start" });
     await waitFor(() => runner.commands.length === 1);
     await session.prompt({ message: "steer now", behavior: "steer" });
 
     expect(runner.commands).toEqual([
-      { type: "start", mode: undefined, prompt: "start" },
+      { type: "prompt", state: turnState, message: "start", behavior: "follow_up" },
       { type: "prompt", state: turnState, message: "steer now", behavior: "steer" },
     ]);
   });
@@ -291,12 +309,13 @@ describe("Session", () => {
     const runner = new FakeTurnRunner([]);
     const session = await createSession(runner);
 
-    await session.start({ prompt: "start" });
+    await session.start();
+    await session.prompt({ message: "start" });
     await waitFor(() => runner.commands.length === 1);
     await session.prompt({ message: "queue later", behavior: "follow_up" });
 
     expect(runner.commands).toEqual([
-      { type: "start", mode: undefined, prompt: "start" },
+      { type: "prompt", state: turnState, message: "start", behavior: "follow_up" },
       { type: "prompt", state: turnState, message: "queue later", behavior: "follow_up" },
     ]);
   });
@@ -306,7 +325,8 @@ describe("Session", () => {
     const runner = new FakeTurnRunner([{ type: "ask", questions: [], state: waiting }]);
     const session = await createSession(runner);
 
-    await session.start({ prompt: "question" });
+    await session.start();
+    await session.prompt({ message: "question" });
     await session.waitForTerminal();
     await session.answer({
       questions: [{ question: "Pick one", options: [{ label: "A" }] }],
@@ -326,7 +346,8 @@ describe("Session", () => {
       const runner = new FakeTurnRunner([]);
       const session = await createSession(runner);
 
-      await session.start({ prompt: "start" });
+      await session.start();
+      await session.prompt({ message: "start" });
       await waitFor(() => runner.commands.length === 1);
       await session.interrupt();
       const terminal = await session.waitForTerminal();
@@ -351,7 +372,8 @@ describe("Session", () => {
     const events: TurnEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    await session.start({ prompt: "poll" });
+    await session.start();
+    await session.prompt({ message: "poll" });
     await session.waitForTerminal();
     await session.interrupt();
     await waitFor(() => events.some((event) => event.type === "interrupted"));
@@ -386,7 +408,8 @@ describe("Session", () => {
       ]);
       const session = await createSession(runner);
 
-      await session.start({ prompt: "poll" });
+      await session.start();
+      await session.prompt({ message: "poll" });
       await session.waitForTerminal();
       await session.prompt({ message: "anything new?" });
       runner.terminals.push({
@@ -410,12 +433,13 @@ describe("Session", () => {
       const runner = new FakeTurnRunner([complete("first"), complete("second")]);
       const session = await createSession(runner);
 
-      await session.start({ prompt: "start" });
+      await session.start();
+      await session.prompt({ message: "start" });
       await session.waitForTerminal();
       await session.prompt({ message: "next" });
 
       expect(runner.commands).toEqual([
-        { type: "start", mode: undefined, prompt: "start" },
+        { type: "prompt", state: turnState, message: "start", behavior: "follow_up" },
         { type: "prompt", state: turnState, message: "next", behavior: "follow_up" },
       ]);
     },
@@ -458,16 +482,18 @@ describe("SessionManager", () => {
     expect(manager.get("first")).toBe(first);
     expect(manager.get("second")).toBe(second);
     expect(runners.get("first")?.commands).toEqual([
-      { type: "start", mode: undefined, prompt: "one" },
+      { type: "prompt", state: turnState, message: "one", behavior: "follow_up" },
     ]);
     expect(runners.get("second")?.commands).toEqual([
-      { type: "start", mode: undefined, prompt: "two" },
+      { type: "prompt", state: turnState, message: "two", behavior: "follow_up" },
     ]);
     expect(
-      events.some((event) => event.sessionId === "first" && event.event.type === "ready"),
+      events.some((event) => event.sessionId === "first" && event.event.type === "session_started"),
     ).toBe(true);
     expect(
-      events.some((event) => event.sessionId === "second" && event.event.type === "ready"),
+      events.some(
+        (event) => event.sessionId === "second" && event.event.type === "session_started",
+      ),
     ).toBe(true);
     expect(manager.config.memoryDbPath).toBe(join(homedir(), ".duet", "memory.db"));
 
@@ -492,7 +518,8 @@ describe("SessionManager", () => {
     manager.subscribe((event) => events.push(event));
 
     const session = manager.resume("resumable");
-    await session.start({ prompt: "resume" });
+    await session.start();
+    await session.prompt({ message: "resume" });
     await session.waitForTerminal();
 
     expect(manager.get("resumable")).toBe(session);

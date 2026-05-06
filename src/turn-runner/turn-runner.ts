@@ -1,6 +1,7 @@
 import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import { getEnvApiKey, getModel, type Model, type Usage } from "@mariozechner/pi-ai";
 import type { Skill } from "@mariozechner/pi-coding-agent";
+import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
 
 import { isDuetGatewayModelName, resolveDuetGatewayModel } from "../duet-gateway/index.js";
@@ -10,6 +11,7 @@ import { loadStoredMemory } from "../memory/storage.js";
 import { MemoryStore } from "../memory/store.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type {
+  TurnAgentFile,
   TurnAnswerCommand,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
@@ -18,8 +20,8 @@ import type {
   TurnPromptCommand,
   TurnState,
   TurnTokenUsage,
-  TurnStartCommand,
   TurnRunnerTerminalStatus,
+  TurnStartCommand,
   TurnTerminalEvent,
   TurnCommand,
   TurnOptions,
@@ -42,7 +44,6 @@ import {
   type AgentWorkerResult,
 } from "./agent-worker.js";
 import { SkillContext } from "./skill-context.js";
-import { resolveSkillScope } from "./skills.js";
 import { StateMachineRuntime, type ActiveStateWork } from "./state-machine-runtime.js";
 import { addUsage } from "./usage-accounting.js";
 
@@ -146,13 +147,29 @@ export class TurnRunner {
     this.replaceFollowUpQueue(command.prompts);
   }
 
+  /**
+   * Set up a session before any turn runs. Loads memory and skills, emits
+   * `ready` with the resolved skill/agent-file context, and emits
+   * `session_started` with an initial empty `TurnState`. No agent work runs.
+   *
+   * Callers (CLI/TUI/session managers) call this once on launch so the user
+   * sees available skills before typing the first prompt. The returned state
+   * is the same one delivered via `session_started` and should be threaded
+   * into the first `prompt` command.
+   */
+  async start(command: TurnStartCommand): Promise<TurnState> {
+    await this.ensureMemoryLoaded();
+    await this.ensureSkillsLoaded();
+    const mode = command.mode ?? this.config.mode ?? "auto";
+    const state = command.state ?? this.stateMachineRuntime.createInitialState(mode);
+    this.emit({ type: "session_started", state });
+    return state;
+  }
+
   async turn(command: TurnCommand): Promise<TurnTerminalEvent> {
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
     if (this.activeTurnPromise) {
-      if (command.type === "start") {
-        throw new Error("Cannot start a new turn while another turn is active.");
-      }
       // turn() is the concurrency boundary: repeated calls extend or queue
       // behind the active chain instead of creating a separate parent transcript.
       this.handleCommandDuringActiveTurn(command);
@@ -173,7 +190,6 @@ export class TurnRunner {
   private async runTurnChain(command: TurnCommand): Promise<TurnTerminalEvent> {
     this.turnUsage = undefined;
     try {
-      this.emit(this.buildReadyEvent());
       let terminal: TurnTerminalEvent;
       terminal = await this.executeTurnCommand(command);
       terminal = await this.drainQueuedTurnCommands(terminal);
@@ -192,8 +208,6 @@ export class TurnRunner {
 
   private async executeTurnCommand(command: TurnCommand): Promise<TurnTerminalEvent> {
     switch (command.type) {
-      case "start":
-        return this.start(command);
       case "prompt":
         return this.prompt(command);
       case "answer":
@@ -259,14 +273,6 @@ export class TurnRunner {
 
   private rebaseQueuedCommand(command: TurnCommand, state: TurnState): TurnCommand {
     switch (command.type) {
-      case "start":
-        return {
-          type: "prompt",
-          state,
-          message: command.prompt,
-          behavior: "follow_up",
-          options: command.options,
-        };
       case "prompt":
         return { ...command, state };
       case "answer":
@@ -421,43 +427,10 @@ export class TurnRunner {
     }
   }
 
-  private buildReadyEvent(): TurnEvent {
-    const cwd = this.config.cwd ?? process.cwd();
-    return {
-      type: "ready",
-      skills: this.skillContext.getSkills().map((skill) => ({
-        name: skill.name,
-        description: skill.description,
-        path: skill.baseDir,
-        scope: resolveSkillScope(skill, cwd),
-      })),
-      agentFiles: this.skillContext.getResolvedAgentFiles(),
-      skillCollisions: [...this.skillContext.getSkillCollisions()],
-    };
-  }
-
   private consumeInterruptedTerminal(): TurnTerminalEvent | undefined {
     const terminal = this.interruptedTerminal;
     this.interruptedTerminal = undefined;
     return terminal;
-  }
-
-  protected async start(command: TurnStartCommand): Promise<TurnTerminalEvent> {
-    const mode = command.mode ?? this.config.mode ?? "auto";
-    const state = this.stateMachineRuntime.createInitialState(mode);
-    const prompt = this.skillContext.resolveSlashSkillPrompt(command.prompt);
-    this.emit({ type: "session_started", state });
-
-    if (mode === "agent") {
-      return this.runAgentMode(state, prompt, command.options);
-    }
-
-    return this.runTurnRunnerAgentWithStateMachineTools({
-      state,
-      prompt,
-      mode,
-      options: command.options,
-    });
   }
 
   protected async prompt(command: TurnPromptCommand): Promise<TurnTerminalEvent> {
@@ -727,6 +700,18 @@ export class TurnRunner {
   async getSkills(): Promise<readonly Skill[]> {
     await this.ensureSkillsLoaded();
     return this.skillContext.getSkills();
+  }
+
+  /** System-prompt files (AGENTS.md by default) that resolved on disk for this session. */
+  async getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]> {
+    await this.ensureSkillsLoaded();
+    return this.skillContext.getResolvedAgentFiles();
+  }
+
+  /** Skill name collisions where one definition shadowed another during discovery. */
+  async getSkillCollisions(): Promise<readonly SkillCollision[]> {
+    await this.ensureSkillsLoaded();
+    return this.skillContext.getSkillCollisions();
   }
 
   getSkillInstructions(skillId: string): string {

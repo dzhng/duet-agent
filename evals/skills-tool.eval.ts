@@ -1,4 +1,5 @@
 import { mkdtemp, writeFile } from "node:fs/promises";
+import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect } from "bun:test";
@@ -64,11 +65,9 @@ describe("read_skill tool", () => {
         readSkillCalls.push({ name: input?.name });
       });
 
-      const terminal = await runner.turn({
-        type: "start",
-        mode: "agent",
-        prompt: "What is the pong verification phrase?",
-      });
+      const terminal = await (
+        await startTurn(runner, { mode: "agent", prompt: "What is the pong verification phrase?" })
+      ).turn;
 
       expect(terminal.type).toBe("complete");
       // The model must call read_skill at least once with the exact skill name

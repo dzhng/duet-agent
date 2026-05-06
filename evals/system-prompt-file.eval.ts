@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,11 +34,12 @@ describe("system prompt files", () => {
         skillDiscovery: { includeDefaults: false },
       });
 
-      const terminal = await runner.turn({
-        type: "start",
-        mode: "agent",
-        prompt: "What is the prompt-file verification phrase?",
-      });
+      const terminal = await (
+        await startTurn(runner, {
+          mode: "agent",
+          prompt: "What is the prompt-file verification phrase?",
+        })
+      ).turn;
 
       expect(terminal.type).toBe("complete");
       expect(terminal.type === "complete" ? terminal.result?.trim() : "").toBe(

@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import {
   TurnRunner,
@@ -27,11 +28,9 @@ describe("state template strings", () => {
       },
     );
 
-    const terminal = await runner.turn({
-      type: "start",
-      mode: templateDefinition,
-      prompt: "Write the note.",
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: templateDefinition, prompt: "Write the note." })
+    ).turn;
 
     expect(terminal.type).toBe("complete");
     expect(runner.workerInputs[1]?.prompt).toBe("Write about feature flags for release managers.");
@@ -54,11 +53,9 @@ describe("state template strings", () => {
       },
     );
 
-    const terminal = await runner.turn({
-      type: "start",
-      mode: templateDefinition,
-      prompt: "Echo the values.",
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: templateDefinition, prompt: "Echo the values." })
+    ).turn;
 
     expect(terminal.type).toBe("complete");
     const completed = terminal.state.stateMachine?.history.find(

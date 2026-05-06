@@ -2,7 +2,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TurnRunner, type TurnEventHandler } from "../turn-runner/turn-runner.js";
 import type { TurnRunnerConfig } from "../types/config.js";
+import type { Skill } from "@mariozechner/pi-coding-agent";
+import type { SkillCollision } from "../turn-runner/skills.js";
 import type {
+  TurnAgentFile,
   TurnAnswerCommand,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
@@ -10,6 +13,7 @@ import type {
   TurnMode,
   TurnPromptBehavior,
   TurnQuestion,
+  TurnStartCommand,
   TurnState,
   TurnTerminalEvent,
   TurnCommand,
@@ -18,7 +22,7 @@ import type {
 import type { StateMachinePollState } from "../types/state-machine.js";
 
 export interface SessionStartInput {
-  prompt: string;
+  /** Routing mode for subsequent prompts. Omit to use the session's configured default. */
   mode?: TurnMode;
   options?: TurnOptions;
 }
@@ -43,10 +47,14 @@ export interface SessionEditFollowUpQueueInput {
 export type SessionEventHandler = (event: TurnEvent) => void;
 
 export interface SessionTurnRunner {
+  start(command: TurnStartCommand): Promise<TurnState>;
   turn(command: TurnCommand): Promise<TurnTerminalEvent>;
   interrupt(command: TurnInterruptCommand): void;
   editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void;
   subscribe(handler: TurnEventHandler): () => void;
+  getSkills(): Promise<readonly Skill[]>;
+  getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]>;
+  getSkillCollisions(): Promise<readonly SkillCollision[]>;
   dispose(): Promise<void>;
 }
 
@@ -72,6 +80,10 @@ export class Session {
   private state?: TurnState;
   /** In-flight runner turn, used to distinguish active work from a reusable terminal result. */
   private activeTurn?: Promise<void>;
+  /** In-flight runner setup, awaited before any turn dispatches so ready/session_started land first. */
+  private startPromise?: Promise<void>;
+  /** Tracks whether `start()` has already issued setup so repeat calls stay idempotent. */
+  private hasStarted = false;
   /** Most recent terminal event, returned immediately when callers wait after a turn has settled. */
   private lastTerminal?: TurnTerminalEvent;
   /** Scheduled wake for sleeping poll states; cancelled when user input or interrupt arrives. */
@@ -102,28 +114,36 @@ export class Session {
     };
   }
 
-  async start(input: SessionStartInput): Promise<void> {
+  /**
+   * Initialize the session before any turn runs. Calls the runner's setup
+   * step once so the caller (CLI/TUI) sees the `ready` event with skills and
+   * agent files immediately on launch, before the user types a prompt.
+   *
+   * Repeat calls are no-ops; resumed sessions reuse the persisted state.
+   */
+  async start(input: SessionStartInput = {}): Promise<void> {
+    if (this.hasStarted) {
+      await this.startPromise;
+      return;
+    }
+    this.hasStarted = true;
     if (!this.state && this.resumeFromStorage) {
       this.state = await this.readStoredState();
     }
-    const command: TurnCommand = this.state
-      ? {
-          type: "prompt",
-          state: this.state,
-          message: input.prompt,
-          behavior: "follow_up",
-          ...(input.options ? { options: input.options } : {}),
-        }
-      : {
-          type: "start",
-          mode: input.mode ?? this.config.mode,
-          prompt: input.prompt,
-          ...(input.options ? { options: input.options } : {}),
-        };
-    this.dispatchTurn(command);
+    const command: TurnStartCommand = {
+      type: "start",
+      ...((input.mode ?? this.config.mode) ? { mode: input.mode ?? this.config.mode } : {}),
+      ...(this.state ? { state: this.state } : {}),
+      ...(input.options ? { options: input.options } : {}),
+    };
+    // The runner emits `session_started` synchronously while `start` runs;
+    // `handleTurnEvent` captures that state, so we only need to await setup.
+    this.startPromise = this.runner.start(command).then(() => undefined);
+    await this.startPromise;
   }
 
   async prompt(input: SessionPromptInput): Promise<void> {
+    await this.ensureStarted();
     const state = await this.requireState();
     this.cancelWake();
     const wasSleeping = state.status === "sleeping";
@@ -139,6 +159,7 @@ export class Session {
   }
 
   async answer(input: SessionAnswerInput): Promise<void> {
+    await this.ensureStarted();
     const state = await this.requireState();
     this.cancelWake();
     const wasSleeping = state.status === "sleeping";
@@ -155,9 +176,18 @@ export class Session {
   }
 
   async interrupt(): Promise<void> {
+    await this.ensureStarted();
     const state = await this.requireState();
     this.cancelWake();
     this.runner.interrupt({ type: "interrupt", state });
+  }
+
+  private async ensureStarted(): Promise<void> {
+    if (!this.hasStarted) {
+      await this.start();
+      return;
+    }
+    await this.startPromise;
   }
 
   editFollowUpQueue(input: SessionEditFollowUpQueueInput): void {
@@ -183,6 +213,24 @@ export class Session {
   /** Latest known turn state snapshot, including agent message history. */
   getState(): TurnState | undefined {
     return this.state;
+  }
+
+  /**
+   * Skills discovered for this session. Available after `start()` resolves;
+   * loading happens lazily on first call otherwise.
+   */
+  getSkills(): Promise<readonly Skill[]> {
+    return this.runner.getSkills();
+  }
+
+  /** System-prompt files (AGENTS.md by default) that resolved on disk. */
+  getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]> {
+    return this.runner.getResolvedAgentFiles();
+  }
+
+  /** Skill name collisions where one definition shadowed another during discovery. */
+  getSkillCollisions(): Promise<readonly SkillCollision[]> {
+    return this.runner.getSkillCollisions();
   }
 
   /** Force-load persisted state for resumed sessions before any command runs. */

@@ -10,12 +10,10 @@ import {
 } from "@opentui/core";
 import { formatCompactJson } from "../lib/compact-json.js";
 import type { Session } from "../session/session.js";
-import type { TurnRunnerConfig } from "../types/config.js";
+import type { SkillCollision } from "../turn-runner/skills.js";
 import type {
+  TurnAgentFile,
   TurnEvent,
-  TurnReadyAgentFile,
-  TurnReadySkillCollision,
-  TurnReadySkillInfo,
   TurnStep,
   TurnTerminalEvent,
   TurnTodo,
@@ -24,13 +22,15 @@ import type {
 
 export interface RunTuiInput {
   session: Session;
-  started: boolean;
   initialPrompt?: string;
-  mode: TurnRunnerConfig["mode"];
   /** Fully resolved provider:modelId string used for this CLI session. */
   modelName: string;
   /** Human-readable provenance for modelName, e.g. "inferred from ANTHROPIC_API_KEY in .env". */
   modelSource?: string;
+  /** Fully resolved provider:modelId string used for observational memory work. */
+  memoryModelName: string;
+  /** Human-readable provenance for memoryModelName. */
+  memoryModelSource?: string;
   /** Best-effort package update notice, shown in-TUI because stderr is hidden. */
   newVersionNotice?: string;
   /** Past messages to replay into the transcript on resume. */
@@ -195,7 +195,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- runtime state ---------------------------------------------------------
 
-  let started = input.started;
   let running = false;
   let lastTerminal: TurnTerminalEvent | undefined;
   let activeTextStream: StreamingBlock | undefined;
@@ -239,14 +238,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- session subscription --------------------------------------------------
 
-  let renderedReadyIntro = false;
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
-    if (event.type === "ready") {
-      if (!renderedReadyIntro) {
-        renderedReadyIntro = true;
-        renderReadyIntro(event.skills, event.agentFiles, event.skillCollisions);
-      }
-    } else if (event.type === "step") {
+    if (event.type === "step") {
       renderStep(event.step);
     } else if (event.type === "todos") {
       renderTodos(event.todos);
@@ -286,10 +279,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   });
 
-  function renderReadyIntro(
-    skills: TurnReadySkillInfo[],
-    agentFiles: TurnReadyAgentFile[],
-    skillCollisions: TurnReadySkillCollision[],
+  function renderSetupIntro(
+    skills: ReadonlyArray<{ name: string }>,
+    agentFiles: readonly TurnAgentFile[],
+    skillCollisions: readonly SkillCollision[],
   ): void {
     if (agentFiles.length === 0) {
       appendLine("[agent file] none", COLORS.hint);
@@ -520,13 +513,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
 
-    // Idle: just start (or follow up) a fresh turn.
-    if (!started) {
-      void input.session.start({ prompt: message, mode: input.mode }).catch(reportError);
-      started = true;
-    } else {
-      void input.session.prompt({ message, behavior: "follow_up" }).catch(reportError);
-    }
+    // Idle: dispatch a prompt against the already-set-up session. Setup
+    // happens before the TUI starts so skills are visible right away.
+    void input.session.prompt({ message, behavior: "follow_up" }).catch(reportError);
     markRunning();
   }
 
@@ -539,6 +528,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     ? `[model] ${input.modelName} — ${input.modelSource}`
     : `[model] ${input.modelName}`;
   appendLine(modelLine, COLORS.hint);
+  const memoryModelLine = input.memoryModelSource
+    ? `[memory model] ${input.memoryModelName} — ${input.memoryModelSource}`
+    : `[memory model] ${input.memoryModelName}`;
+  appendLine(memoryModelLine, COLORS.hint);
+
+  // Setup already ran before the TUI launched, so we can read the resolved
+  // skills/agent-files synchronously through the session getters.
+  const [skills, agentFiles, skillCollisions] = await Promise.all([
+    input.session.getSkills(),
+    input.session.getResolvedAgentFiles(),
+    input.session.getSkillCollisions(),
+  ]);
+  renderSetupIntro(skills, agentFiles, skillCollisions);
 
   if (input.history && input.history.length > 0) {
     for (const message of input.history) {
@@ -551,21 +553,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   if (input.initialPrompt) {
     appendBlock("you:", input.initialPrompt, COLORS.user);
-    if (!started) {
-      void input.session
-        .start({ prompt: input.initialPrompt, mode: input.mode })
-        .catch(reportError);
-      started = true;
-    } else {
-      void input.session
-        .prompt({ message: input.initialPrompt, behavior: "follow_up" })
-        .catch(reportError);
-    }
+    void input.session
+      .prompt({ message: input.initialPrompt, behavior: "follow_up" })
+      .catch(reportError);
     markRunning();
-  } else if (input.started) {
-    // Resumed session — assume nothing currently running until we see events.
-    markIdle();
   } else {
+    // No initial prompt — wait for the user. Setup already ran above, so
+    // the skill summary is rendered before the user types.
     markIdle();
   }
 

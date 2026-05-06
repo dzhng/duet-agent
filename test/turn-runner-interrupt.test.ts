@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { startTurn } from "./helpers/turn-runner-protocol.js";
 import assert from "node:assert";
 import { Agent, type StreamFn } from "@mariozechner/pi-agent-core";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
@@ -60,8 +61,7 @@ describe("TurnRunner interrupts", () => {
     const events: TurnEvent[] = [];
     runner.subscribe((event) => events.push(event));
 
-    const turn = runner.turn({
-      type: "start",
+    const { turn } = await startTurn(runner, {
       mode: "agent",
       prompt: "Keep working until interrupted.",
     });

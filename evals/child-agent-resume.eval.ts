@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import {
   TurnRunner,
@@ -26,11 +27,12 @@ describe("state-machine child agent resume", () => {
       ],
     });
 
-    const askTerminal = await firstRunner.turn({
-      type: "start",
-      mode: childResumeDefinition,
-      prompt: "Run the child state and ask for missing company context.",
-    });
+    const askTerminal = await (
+      await startTurn(firstRunner, {
+        mode: childResumeDefinition,
+        prompt: "Run the child state and ask for missing company context.",
+      })
+    ).turn;
 
     expect(askTerminal.type).toBe("ask");
     if (askTerminal.type !== "ask") throw new Error("Expected child agent to ask a question.");

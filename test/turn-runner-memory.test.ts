@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { startTurn } from "./helpers/turn-runner-protocol.js";
 import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { createAssistantMessageEventStream, type Model } from "@mariozechner/pi-ai";
 import {
@@ -241,11 +242,9 @@ describe("TurnRunner memory", () => {
     const events: unknown[] = [];
     runner.subscribe((event) => events.push(event));
 
-    const terminal = await runner.turn({
-      type: "start",
-      prompt: "Check usage.",
-      mode: "agent",
-    });
+    const terminal = await (
+      await startTurn(runner, { mode: "agent", prompt: "Check usage." })
+    ).turn;
 
     expect(terminal.usage).toEqual({
       inputTokens: 16,

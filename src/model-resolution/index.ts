@@ -14,6 +14,11 @@ const INFERRED_AI_GATEWAY_MODEL = "vercel-ai-gateway:anthropic/claude-opus-4.7";
 const INFERRED_DUET_GATEWAY_MODEL = "duet-gateway:anthropic/claude-opus-4.7";
 const INFERRED_OPENROUTER_MODEL = "openrouter:anthropic/claude-opus-4.7";
 const INFERRED_OPENAI_MODEL = "openai:gpt-5.5";
+const INFERRED_ANTHROPIC_MEMORY_MODEL = "anthropic:claude-sonnet-4-6";
+const INFERRED_AI_GATEWAY_MEMORY_MODEL = "vercel-ai-gateway:anthropic/claude-sonnet-4.6";
+const INFERRED_DUET_GATEWAY_MEMORY_MODEL = "duet-gateway:anthropic/claude-sonnet-4.6";
+const INFERRED_OPENROUTER_MEMORY_MODEL = "openrouter:anthropic/claude-sonnet-4.6";
+const INFERRED_OPENAI_MEMORY_MODEL = "openai:gpt-5.4-mini";
 
 export const DEFAULT_CLI_MODEL = INFERRED_ANTHROPIC_MODEL;
 
@@ -39,17 +44,35 @@ export interface ModelResolution {
 const PROVIDER_INFERENCE: Array<{
   provider: string;
   model: string;
+  memoryModel: string;
   customEnvVar?: () => string | null;
 }> = [
-  { provider: "anthropic", model: INFERRED_ANTHROPIC_MODEL },
+  {
+    provider: "anthropic",
+    model: INFERRED_ANTHROPIC_MODEL,
+    memoryModel: INFERRED_ANTHROPIC_MEMORY_MODEL,
+  },
   {
     provider: "duet-gateway",
     model: INFERRED_DUET_GATEWAY_MODEL,
+    memoryModel: INFERRED_DUET_GATEWAY_MEMORY_MODEL,
     customEnvVar: () => (process.env[DUET_GATEWAY_API_KEY_ENV] ? DUET_GATEWAY_API_KEY_ENV : null),
   },
-  { provider: "vercel-ai-gateway", model: INFERRED_AI_GATEWAY_MODEL },
-  { provider: "openrouter", model: INFERRED_OPENROUTER_MODEL },
-  { provider: "openai", model: INFERRED_OPENAI_MODEL },
+  {
+    provider: "vercel-ai-gateway",
+    model: INFERRED_AI_GATEWAY_MODEL,
+    memoryModel: INFERRED_AI_GATEWAY_MEMORY_MODEL,
+  },
+  {
+    provider: "openrouter",
+    model: INFERRED_OPENROUTER_MODEL,
+    memoryModel: INFERRED_OPENROUTER_MEMORY_MODEL,
+  },
+  {
+    provider: "openai",
+    model: INFERRED_OPENAI_MODEL,
+    memoryModel: INFERRED_OPENAI_MEMORY_MODEL,
+  },
 ];
 
 function lookupProviderEnvVar(entry: (typeof PROVIDER_INFERENCE)[number]): string | undefined {
@@ -61,14 +84,34 @@ function lookupProviderEnvVar(entry: (typeof PROVIDER_INFERENCE)[number]): strin
 }
 
 export function inferDefaultModelName(): string | undefined {
-  for (const entry of PROVIDER_INFERENCE) {
-    if (lookupProviderEnvVar(entry)) return entry.model;
-  }
-  return undefined;
+  return findInferredProviderEntry()?.entry.model;
 }
 
 export function resolveCliModelName(modelName: string | undefined): string {
   return resolveCliModel(modelName).modelName;
+}
+
+export function resolveCliMemoryModelName(
+  memoryModelName: string | undefined,
+  dotenvKeys: Set<string> = new Set(),
+): string {
+  return resolveCliMemoryModel(memoryModelName, dotenvKeys).modelName;
+}
+
+/**
+ * Same selection logic as resolveCliModel, but picks each provider's cheaper
+ * observational-memory model.
+ */
+export function resolveCliMemoryModel(
+  memoryModelName: string | undefined,
+  dotenvKeys: Set<string> = new Set(),
+): ModelResolution {
+  return resolveCliModelWith({
+    modelName: memoryModelName,
+    dotenvKeys,
+    selectInferredModel: (entry) => entry.memoryModel,
+    defaultModel: INFERRED_ANTHROPIC_MEMORY_MODEL,
+  });
 }
 
 /**
@@ -79,19 +122,41 @@ export function resolveCliModel(
   modelName: string | undefined,
   dotenvKeys: Set<string> = new Set(),
 ): ModelResolution {
-  if (modelName) return { modelName, source: "explicit" };
+  return resolveCliModelWith({
+    modelName,
+    dotenvKeys,
+    selectInferredModel: (entry) => entry.model,
+    defaultModel: DEFAULT_CLI_MODEL,
+  });
+}
+
+function resolveCliModelWith(input: {
+  modelName: string | undefined;
+  dotenvKeys: Set<string>;
+  selectInferredModel: (entry: (typeof PROVIDER_INFERENCE)[number]) => string;
+  defaultModel: string;
+}): ModelResolution {
+  if (input.modelName) return { modelName: input.modelName, source: "explicit" };
+  const inferred = findInferredProviderEntry();
+  if (inferred) {
+    return {
+      modelName: input.selectInferredModel(inferred.entry),
+      source: "inferred",
+      envVar: inferred.envVar,
+      fromDotenv: input.dotenvKeys.has(inferred.envVar),
+    };
+  }
+  return { modelName: input.defaultModel, source: "default" };
+}
+
+function findInferredProviderEntry():
+  | { entry: (typeof PROVIDER_INFERENCE)[number]; envVar: string }
+  | undefined {
   for (const entry of PROVIDER_INFERENCE) {
     const envVar = lookupProviderEnvVar(entry);
-    if (envVar) {
-      return {
-        modelName: entry.model,
-        source: "inferred",
-        envVar,
-        fromDotenv: dotenvKeys.has(envVar),
-      };
-    }
+    if (envVar) return { entry, envVar };
   }
-  return { modelName: DEFAULT_CLI_MODEL, source: "default" };
+  return undefined;
 }
 
 export function describeModelResolution(resolution: ModelResolution): string {

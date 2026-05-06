@@ -4,6 +4,8 @@ import {
   detectPackageManagerFromContext,
   formatNewVersionNotice,
   inferDefaultModelName,
+  resolveCliMemoryModel,
+  resolveCliMemoryModelName,
   resolveCliModelName,
 } from "../src/cli.js";
 
@@ -98,6 +100,38 @@ describe("CLI model inference", () => {
     clearModelEnv();
 
     expect(resolveCliModelName("openai:gpt-5.5")).toBe("openai:gpt-5.5");
+  });
+
+  test("infers default memory from Duet gateway credentials", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "duet_gt_test";
+
+    expect(resolveCliMemoryModelName(undefined)).toBe("duet-gateway:anthropic/claude-sonnet-4.6");
+    expect(resolveCliMemoryModel(undefined)).toEqual({
+      modelName: "duet-gateway:anthropic/claude-sonnet-4.6",
+      source: "inferred",
+      envVar: "DUET_API_KEY",
+      fromDotenv: false,
+    });
+  });
+
+  test("infers default memory from OpenAI credentials", () => {
+    clearModelEnv();
+    process.env.OPENAI_API_KEY = "test-openai";
+
+    expect(resolveCliMemoryModelName(undefined)).toBe("openai:gpt-5.4-mini");
+  });
+
+  test("uses the Anthropic memory default when no provider credentials exist", () => {
+    clearModelEnv();
+
+    expect(resolveCliMemoryModelName(undefined)).toBe("anthropic:claude-sonnet-4-6");
+  });
+
+  test("keeps an explicitly provided memory model", () => {
+    expect(resolveCliMemoryModelName("anthropic:claude-3-5-haiku-latest")).toBe(
+      "anthropic:claude-3-5-haiku-latest",
+    );
   });
 });
 

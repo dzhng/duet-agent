@@ -25,17 +25,22 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  * session ids, persists snapshots, schedules wakeups, and can run an unbounded
  * number of turn-runner turns for the same user session.
  *
- * A caller starts a turn-runner turn by sending one of:
+ * A caller initializes a session by sending `start`. This is a setup command,
+ * not a turn: the runner loads memory and skills, emits `session_started`
+ * with the initial empty `TurnState`, and returns. Skills, agent files, and
+ * skill collisions are exposed through `getSkills()`, `getResolvedAgentFiles()`,
+ * and `getSkillCollisions()` for callers (CLI/TUI) that want to render a
+ * setup summary; no agent work runs until the caller sends a follow-up.
  *
- * - `start`: begin a new turn state from a prompt
- * - `prompt`: send a follow-up prompt while state exists
+ * Once the session is set up, callers run turns by sending one of:
+ *
+ * - `prompt`: send a user prompt against the current state
  * - `answer`: answer questions from the previous terminal `ask` event
  * - `wake`: resume a sleeping session for one scheduled polling attempt
  *
- * The turn runner must emit `ready` before any other event. A turn runner that is not
- * ready should not emit session, progress, or terminal events. After `ready`, the
- * runner emits any number of during-turn events (`step`, `todos`, `follow_up_queue`,
- * `state_machine`, `log`). The turn ends with exactly one terminal event:
+ * Each turn emits any number of during-turn events (`step`, `todos`,
+ * `follow_up_queue`, `state_machine`, `log`). The turn ends with exactly one
+ * terminal event:
  * `complete`, `ask`, `interrupted`, or `sleep`.
  * Terminal events carry the turn runner-owned state needed to continue a later turn.
  * `complete` means this turn-runner turn ended; it does not mean the session
@@ -47,13 +52,13 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  * ## Scenario 1: One-Shot Agent Task
  *
  * The user asks for a normal task, such as "summarize this file" or "fix this
- * bug." The start command omits `mode` or sets `mode: "auto"`. The turn runner
- * classifies the prompt as agent mode and emits:
+ * bug." The caller sends `start` (omitting `mode` or setting `mode: "auto"`)
+ * to set the session up; the runner emits `session_started` with an empty
+ * `state.agent`. When the user types their first prompt, the caller sends a
+ * `prompt` command and the runner classifies it as agent mode and emits:
  *
- * 1. `ready`
- * 2. `session_started` with `state.agent` populated
- * 3. zero or more `step`, `todos`, `follow_up_queue`, or `log` events
- * 4. `complete` with the final answer and updated `state.agent`
+ * 1. zero or more `step`, `todos`, `follow_up_queue`, or `log` events
+ * 2. `complete` with the final answer and updated `state.agent`
  *
  * This behaves like a normal agent runner. There is no state-machine UI because
  * the session is not a long-running business process.
@@ -62,9 +67,9 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  *
  * The user asks for a task with a complex lifecycle, such as "prospect this
  * customer until they book a meeting" or "implement this change, open a PR, and
- * watch it until merge." With `mode: "auto"`, the runner chooses a state
- * machine and emits `session_started` with `state.agent` and `state.stateMachine`
- * populated.
+ * watch it until merge." With `mode: "auto"`, the first `prompt` after `start`
+ * routes through the runner, which chooses a state machine and populates
+ * `state.stateMachine` on the next emitted state.
  *
  * During the turn, the runner emits events that the UI can render directly:
  *
@@ -256,16 +261,26 @@ export type TurnStep =
   | { type: "system"; message: string };
 
 /**
- * Start a new turn state.
+ * Set up a new turn-runner session.
  *
- * The mode decides routing. Omit it to use the turn runner's configured default.
+ * `start` is a setup command, not a turn. The runner loads memory and skills,
+ * emits `ready` with the resolved skill/agent-file context, and emits
+ * `session_started` with an empty `TurnState`. No agent work runs. The caller
+ * sends `prompt` afterwards to actually run a turn.
+ *
+ * The CLI/TUI sends this on launch so the user sees the available skills
+ * before typing the first prompt.
  */
 export interface TurnStartCommand {
   type: "start";
-  /** User prompt to route through the runner. */
-  prompt: string;
-  /** Routing mode. Omit to use the turn runner's configured default. */
+  /** Routing mode for subsequent prompts. Omit to use the turn runner's configured default. */
   mode?: TurnMode;
+  /**
+   * Existing state to resume. When provided, the runner emits `session_started`
+   * with this state instead of creating a fresh one. Resumed sessions keep
+   * their persisted agent and state-machine history.
+   */
+  state?: TurnState;
   options?: TurnOptions;
 }
 
@@ -325,11 +340,11 @@ export interface TurnEditFollowUpQueueCommand {
   prompts: string[];
 }
 
-export type TurnCommand =
-  | TurnStartCommand
-  | TurnPromptCommand
-  | TurnAnswerCommand
-  | TurnWakeCommand;
+/**
+ * Commands that drive a single turn-runner turn. `start` is excluded because
+ * setup is not a turn; it is handled separately and emits `ready` only.
+ */
+export type TurnCommand = TurnPromptCommand | TurnAnswerCommand | TurnWakeCommand;
 
 /** Out-of-band control message that interrupts the currently running turn. */
 export interface TurnInterruptCommand {
@@ -338,43 +353,18 @@ export interface TurnInterruptCommand {
   state: TurnState;
 }
 
-export type TurnRunnerCommand = TurnCommand | TurnInterruptCommand | TurnEditFollowUpQueueCommand;
+export type TurnRunnerCommand =
+  | TurnStartCommand
+  | TurnCommand
+  | TurnInterruptCommand
+  | TurnEditFollowUpQueueCommand;
 
-export interface TurnReadySkillInfo {
-  /** Skill name (from frontmatter or directory). */
-  name: string;
-  /** Skill description (from frontmatter, raw — no shell expansion). */
-  description: string;
-  /** Absolute path to the skill directory. */
-  path: string;
-  /** Where the skill was discovered. */
-  scope: "user" | "project" | "temporary";
-}
-
-export interface TurnReadyAgentFile {
+/** A system-prompt file that was resolved on disk for the session. */
+export interface TurnAgentFile {
   /** Configured file name relative to the working directory, e.g. "AGENTS.md". */
   name: string;
   /** Absolute path on disk. */
   path: string;
-}
-
-export interface TurnReadySkillCollision {
-  /** Skill name that collided. */
-  name: string;
-  /** Path that won (this is the skill that was actually loaded). */
-  winnerPath: string;
-  /** Path that was skipped due to the collision. */
-  loserPath: string;
-}
-
-export interface TurnReadyEvent {
-  type: "ready";
-  /** Skills discovered for this session. */
-  skills: TurnReadySkillInfo[];
-  /** System-prompt files that were resolved on disk for this session. */
-  agentFiles: TurnReadyAgentFile[];
-  /** Skill name collisions where one definition shadowed another. */
-  skillCollisions: TurnReadySkillCollision[];
 }
 
 export interface TurnStateStartedEvent {
@@ -458,8 +448,4 @@ export type TurnTerminalEvent =
   | TurnInterruptedEvent
   | TurnSleepEvent;
 
-export type TurnEvent =
-  | TurnReadyEvent
-  | TurnStateStartedEvent
-  | TurnDuringEvent
-  | TurnTerminalEvent;
+export type TurnEvent = TurnStateStartedEvent | TurnDuringEvent | TurnTerminalEvent;
