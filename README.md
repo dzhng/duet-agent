@@ -119,10 +119,34 @@ The turn runner should provide enough structure for an agent to make good proces
 
 Pattern-based (fast, regex) and semantic (LLM-evaluated) guardrails compose into a firewall. Every bash command and file write can be checked before execution.
 
-## Install
+## CLI Install
+
+Install the CLI globally to make the `duet` command available on your PATH:
 
 ```bash
-npm install duet-agent
+npm install --global @dzhng/duet-agent
+```
+
+You can also install it globally with another package manager:
+
+```bash
+bun add --global @dzhng/duet-agent
+pnpm add --global @dzhng/duet-agent
+yarn global add @dzhng/duet-agent
+```
+
+Upgrade an existing global installation:
+
+```bash
+duet upgrade
+```
+
+## SDK Install
+
+Install the package as a dependency when you want to use the turn runner from TypeScript or JavaScript:
+
+```bash
+npm install @dzhng/duet-agent
 ```
 
 ## Development
@@ -142,50 +166,52 @@ Use `bun run test` and `bun run eval`, not raw `bun test`, as the source of trut
 
 The pre-commit hook runs `format`, `check-types`, and `lint`.
 
-## Quick Start
+## CLI Quick Start
 
-### CLI
+Set your provider API key, then run `duet` from any project directory:
 
 ```bash
-# Set your API key
 export ANTHROPIC_API_KEY=sk-...
 
-# Session
-npx duet-agent "build a REST API with Express"
-
-# Local checkout
-bun run cli -- "build a REST API with Express"
+# Start a session
+duet "build a REST API with Express"
 
 # Open an interactive session without an initial prompt
-bun run cli
+duet
 
 # With options
-bun run cli -- -m anthropic:claude-opus-4-7 --workdir ./my-project "refactor the auth module"
+duet -m anthropic:claude-opus-4-7 --workdir ./my-project "refactor the auth module"
 
 # With a custom observational memory model
-bun run cli -- --memory-model anthropic:claude-sonnet-4-6 "summarize this repo"
+duet --memory-model anthropic:claude-sonnet-4-6 "summarize this repo"
 
 # With additional system instructions
-bun run cli -- --system-prompt "Prefer concise answers." "review this repo"
+duet --system-prompt "Prefer concise answers." "review this repo"
 
 # Override the default AGENTS.md system prompt file
-bun run cli -- --system-prompt-file TEAM.md "review this repo"
+duet --system-prompt-file TEAM.md "review this repo"
 
 # Disable system prompt file loading
-bun run cli -- --no-system-prompt-files "review this repo"
+duet --no-system-prompt-files "review this repo"
 
 # Resume a saved session
-bun run cli -- --resume session_abc123 --workdir ./my-project
+duet --resume session_abc123 --workdir ./my-project
 
 # Through Vercel AI Gateway
 export AI_GATEWAY_API_KEY=...
-npx duet-agent -m vercel-ai-gateway:anthropic/claude-opus-4.7 "review this repo"
+duet -m vercel-ai-gateway:anthropic/claude-opus-4.7 "review this repo"
 ```
 
-### Programmatic
+For local development from a checkout, use the package script:
+
+```bash
+bun run cli -- "build a REST API with Express"
+```
+
+## SDK Quick Start
 
 ```typescript
-import { TurnRunner } from "duet-agent";
+import { TurnRunner } from "@dzhng/duet-agent";
 
 const turnRunner = new TurnRunner({
   model: "anthropic:claude-opus-4-7",
