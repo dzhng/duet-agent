@@ -563,9 +563,9 @@ export class TurnRunner {
       }
     } finally {
       unsubscribe();
-      if (activeSlot === "parent" && this.activeAgent === agent) {
+      if (activeSlot === "parent") {
         this.activeAgent = undefined;
-      } else if (activeSlot === "child" && this.activeChildAgent === agent) {
+      } else {
         this.activeChildAgent = undefined;
       }
     }
