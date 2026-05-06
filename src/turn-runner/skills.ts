@@ -2,9 +2,23 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import type { Skill } from "@mariozechner/pi-coding-agent";
+import type { ResourceDiagnostic, Skill } from "@mariozechner/pi-coding-agent";
 import { loadSkills } from "@mariozechner/pi-coding-agent";
 import type { SkillDiscoveryOptions } from "../types/config.js";
+
+export interface SkillCollision {
+  /** Skill name that collided. */
+  name: string;
+  /** Path that won (this is the skill that's actually loaded). */
+  winnerPath: string;
+  /** Path that was skipped due to the collision. */
+  loserPath: string;
+}
+
+export interface DiscoveredSkillsResult {
+  skills: Skill[];
+  collisions: SkillCollision[];
+}
 
 const SKILL_SHELL_EXPANSION_PATTERN = /!`([\s\S]*?)`/g;
 const DEFAULT_SKILL_DIR_NAMES = [".duet", ".agents", ".claude"] as const;
@@ -27,9 +41,12 @@ function buildSkillDiscoveryOptions(options: SkillDiscoveryOptions | undefined, 
 }
 
 function defaultSkillPaths(globalSkillRoots: string[], cwd: string): string[] {
+  // Project before global so a project-local skill can shadow a same-named
+  // global one. Within each scope, .duet > .agents > .claude (first scanned
+  // wins on name collisions).
   return [
-    ...globalSkillRoots.map((root) => join(root, "skills")),
     ...DEFAULT_SKILL_DIR_NAMES.map((dirName) => join(cwd, dirName, "skills")),
+    ...globalSkillRoots.map((root) => join(root, "skills")),
   ];
 }
 
@@ -63,9 +80,12 @@ export function prepareExplicitSkills(skills: readonly Skill[]): Skill[] {
 export function loadDiscoveredSkills(
   discoveryOptions: SkillDiscoveryOptions | undefined,
   cwd: string,
-): Skill[] {
-  const { skills } = loadSkills(buildSkillDiscoveryOptions(discoveryOptions, cwd));
-  return skills.map(expandSkillMetadata);
+): DiscoveredSkillsResult {
+  const { skills, diagnostics } = loadSkills(buildSkillDiscoveryOptions(discoveryOptions, cwd));
+  return {
+    skills: skills.map(expandSkillMetadata),
+    collisions: extractSkillCollisions(diagnostics),
+  };
 }
 
 /**
@@ -73,9 +93,25 @@ export function loadDiscoveredSkills(
  * Intended for read-only listing (e.g. `duet skills`) where executing the
  * skills' shell commands would be a side effect users don't want.
  */
-export function discoverInstalledSkills(cwd: string): Skill[] {
-  const { skills } = loadSkills(buildSkillDiscoveryOptions(undefined, cwd));
-  return skills;
+export function discoverInstalledSkills(cwd: string): DiscoveredSkillsResult {
+  const { skills, diagnostics } = loadSkills(buildSkillDiscoveryOptions(undefined, cwd));
+  return { skills, collisions: extractSkillCollisions(diagnostics) };
+}
+
+function extractSkillCollisions(diagnostics: ResourceDiagnostic[]): SkillCollision[] {
+  const collisions: SkillCollision[] = [];
+  for (const diagnostic of diagnostics) {
+    const collision = diagnostic.collision;
+    if (diagnostic.type !== "collision" || !collision || collision.resourceType !== "skill") {
+      continue;
+    }
+    collisions.push({
+      name: collision.name,
+      winnerPath: collision.winnerPath,
+      loserPath: collision.loserPath,
+    });
+  }
+  return collisions;
 }
 
 export function mergeSkillsByName(primary: readonly Skill[], secondary: readonly Skill[]): Skill[] {

@@ -14,6 +14,7 @@ import type { TurnRunnerConfig } from "../types/config.js";
 import type {
   TurnEvent,
   TurnReadyAgentFile,
+  TurnReadySkillCollision,
   TurnReadySkillInfo,
   TurnStep,
   TurnTerminalEvent,
@@ -243,7 +244,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (event.type === "ready") {
       if (!renderedReadyIntro) {
         renderedReadyIntro = true;
-        renderReadyIntro(event.skills, event.agentFiles);
+        renderReadyIntro(event.skills, event.agentFiles, event.skillCollisions);
       }
     } else if (event.type === "step") {
       renderStep(event.step);
@@ -285,7 +286,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   });
 
-  function renderReadyIntro(skills: TurnReadySkillInfo[], agentFiles: TurnReadyAgentFile[]): void {
+  function renderReadyIntro(
+    skills: TurnReadySkillInfo[],
+    agentFiles: TurnReadyAgentFile[],
+    skillCollisions: TurnReadySkillCollision[],
+  ): void {
     if (agentFiles.length === 0) {
       appendLine("[agent file] none", COLORS.hint);
     } else {
@@ -297,6 +302,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     } else {
       const names = skills.map((skill) => skill.name).join(", ");
       appendLine(`[skills] ${skills.length} loaded: ${names}`, COLORS.hint);
+    }
+
+    for (const collision of skillCollisions) {
+      appendLine(
+        `[skill collision] "${collision.name}": kept ${collision.winnerPath}, ignored ${collision.loserPath}`,
+        COLORS.system,
+      );
     }
   }
 

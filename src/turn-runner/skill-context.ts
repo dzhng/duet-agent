@@ -10,10 +10,12 @@ import {
   mergeSkillsByName,
   prepareExplicitSkills,
   readSkillInstructions,
+  type SkillCollision,
 } from "./skills.js";
 
 export class SkillContext {
   private skills: Skill[];
+  private collisions: SkillCollision[] = [];
   private loaded = false;
 
   constructor(private readonly config: TurnRunnerConfig) {
@@ -28,11 +30,16 @@ export class SkillContext {
       this.config.skillDiscovery,
       this.config.cwd ?? process.cwd(),
     );
-    this.skills = mergeSkillsByName(this.skills, discovered);
+    this.skills = mergeSkillsByName(this.skills, discovered.skills);
+    this.collisions = discovered.collisions;
   }
 
   getSkills(): readonly Skill[] {
     return [...this.skills];
+  }
+
+  getSkillCollisions(): readonly SkillCollision[] {
+    return this.collisions;
   }
 
   getSkillInstructions(skillId: string): string {

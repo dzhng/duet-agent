@@ -358,12 +358,23 @@ export interface TurnReadyAgentFile {
   path: string;
 }
 
+export interface TurnReadySkillCollision {
+  /** Skill name that collided. */
+  name: string;
+  /** Path that won (this is the skill that was actually loaded). */
+  winnerPath: string;
+  /** Path that was skipped due to the collision. */
+  loserPath: string;
+}
+
 export interface TurnReadyEvent {
   type: "ready";
   /** Skills discovered for this session. */
   skills: TurnReadySkillInfo[];
   /** System-prompt files that were resolved on disk for this session. */
   agentFiles: TurnReadyAgentFile[];
+  /** Skill name collisions where one definition shadowed another. */
+  skillCollisions: TurnReadySkillCollision[];
 }
 
 export interface TurnStateStartedEvent {

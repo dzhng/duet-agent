@@ -40,7 +40,7 @@ class FakeTurnRunner implements SessionTurnRunner {
 
   async turn(command: TurnCommand): Promise<TurnTerminalEvent> {
     this.commands.push(command);
-    this.emit({ type: "ready", skills: [], agentFiles: [] });
+    this.emit({ type: "ready", skills: [], agentFiles: [], skillCollisions: [] });
     if (command.type === "start") {
       this.emit({ type: "session_started", state: turnState });
     }
@@ -192,7 +192,12 @@ describe("Session", () => {
     unsubscribe();
     runner.emit({ type: "system", level: "info", message: "ignored" });
 
-    expect(events[0]).toEqual({ type: "ready", skills: [], agentFiles: [] });
+    expect(events[0]).toEqual({
+      type: "ready",
+      skills: [],
+      agentFiles: [],
+      skillCollisions: [],
+    });
   });
 
   testIfDocker("schedules wake after sleep without blocking command submission", async () => {

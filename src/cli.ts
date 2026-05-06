@@ -615,7 +615,7 @@ function runSkillsCommand(args: string[]): void {
     }
   }
 
-  const skills = discoverInstalledSkills(workDir);
+  const { skills, collisions } = discoverInstalledSkills(workDir);
   const output = skills.map((skill) => ({
     name: skill.name,
     description: skill.description,
@@ -623,6 +623,11 @@ function runSkillsCommand(args: string[]): void {
     scope: resolveSkillScope(skill, workDir),
   }));
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+  for (const collision of collisions) {
+    process.stderr.write(
+      `[skill collision] "${collision.name}": kept ${collision.winnerPath}, ignored ${collision.loserPath}\n`,
+    );
+  }
 }
 
 function parsePackageManager(value: string): PackageManager {

@@ -430,6 +430,7 @@ export class TurnRunner {
         scope: resolveSkillScope(skill, cwd),
       })),
       agentFiles: this.skillContext.getResolvedAgentFiles(),
+      skillCollisions: [...this.skillContext.getSkillCollisions()],
     };
   }
 
