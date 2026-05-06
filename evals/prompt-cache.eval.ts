@@ -21,7 +21,9 @@ describe("prompt cache resume", () => {
     });
     expect(first.type).toBe("complete");
     const firstUsage = latestAssistantUsage(first.state);
-    expect(firstUsage.cacheWrite).toBeGreaterThan(0);
+    // The stable prefix may already be warm from a previous eval run, in which case
+    // the first turn reads from cache instead of reporting another cache write.
+    expect(firstUsage.cacheRead + firstUsage.cacheWrite).toBeGreaterThan(0);
 
     const resumedState = JSON.parse(JSON.stringify(first.state)) as TurnState;
     const second = await runner.turn({
