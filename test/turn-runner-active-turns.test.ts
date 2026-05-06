@@ -417,6 +417,50 @@ describe("TurnRunner active turns", () => {
     expect(turnTerminal).toBe(answerTerminal);
     expect(terminalEvents(events)).toHaveLength(1);
   });
+
+  test("prompts during active child agent work queue for the parent", async () => {
+    const { runner, events } = createStreamingRunner();
+    const turn = runner.turn({
+      type: "start",
+      mode: childAgentDefinition(),
+      prompt: "run child flow",
+    });
+    const state = await waitForStartedState(events);
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "run_state", state: "child_agent" },
+    });
+    await waitFor(() =>
+      events.some(
+        (event) => event.type === "state_machine" && event.currentState === "child_agent",
+      ),
+    );
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const prompt = runner.turn({
+      type: "prompt",
+      state,
+      message: "parent should handle this",
+      behavior: "follow_up",
+    });
+
+    runner.completeNext("child response");
+    await waitFor(() => runner.contexts.length >= 3);
+    expect(lastUserText(runner.contexts[1]!)).not.toContain("parent should handle this");
+    expect(lastUserText(runner.contexts[2]!)).toContain("parent should handle this");
+    runner.completeNext("parent response");
+
+    await waitFor(() => runner.contexts.length >= 4);
+    expect(lastUserText(runner.contexts[3]!)).toContain('The state "child_agent" finished');
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "terminal", state: "done" },
+    });
+
+    const [turnTerminal, promptTerminal] = await Promise.all([turn, prompt]);
+    expect(turnTerminal).toBe(promptTerminal);
+    expect(terminalEvents(events)).toHaveLength(1);
+  });
 });
 
 function createStreamingRunner(): { runner: StreamingTurnRunner; events: TurnEvent[] } {

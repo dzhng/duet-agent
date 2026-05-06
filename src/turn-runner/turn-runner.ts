@@ -64,7 +64,6 @@ export interface AgentWorkerInput {
   appendSystemPrompt?: string;
   skills?: Skill[];
   tools: AgentTool[];
-  agentScope?: "parent" | "child";
 }
 
 export interface AgentWorkerResult {
@@ -107,10 +106,17 @@ export class TurnRunner {
   protected readonly memory = new MemoryStore();
   /** Stops memory persistence subscriptions/databases when the runner is disposed. */
   private memoryStorageDispose?: () => Promise<void>;
-  /** Current pi agent, if a model turn is active; used for out-of-band interruption. */
+  /**
+   * Active parent pi agent. Prompts, steers, and follow-ups only target this
+   * transcript so all user-visible conversation stays linear in the parent.
+   */
   private activeAgent?: Agent;
-  /** Whether the active pi agent owns the parent transcript or a state-machine child turn. */
-  private activeAgentScope?: "parent" | "child";
+  /**
+   * Active state-machine child pi agent. Child agents run without state-machine
+   * tools, so only structured answers are passed through directly; prompts queue
+   * for the parent to handle after the child state finishes.
+   */
+  private activeChildAgent?: Agent;
   /** Current script or poll abort controller, used to interrupt non-agent state work. */
   private activeAbortController?: AbortController;
   /** Current non-agent state work, if a script or poll owns the active turn. */
@@ -197,10 +203,6 @@ export class TurnRunner {
 
   private handleCommandDuringActiveTurn(command: TurnCommand): void {
     if ((command.type === "prompt" || command.type === "answer") && this.activeAgent) {
-      if (this.activeAgentScope === "child" && command.type !== "answer") {
-        this.queuedTurnCommands.push(command);
-        return;
-      }
       const message = this.commandToUserMessage(command);
       const agentMessage = { role: "user" as const, content: message, timestamp: Date.now() };
       if (command.behavior === "steer") {
@@ -209,6 +211,17 @@ export class TurnRunner {
         // State-machine continuations and normal user input stay linear by
         // entering the active parent transcript as pi follow-ups.
         this.activeAgent.followUp(agentMessage);
+      }
+      return;
+    }
+
+    if (command.type === "answer" && this.activeChildAgent) {
+      const message = this.commandToUserMessage(command);
+      const agentMessage = { role: "user" as const, content: message, timestamp: Date.now() };
+      if (command.behavior === "steer") {
+        this.activeChildAgent.steer(agentMessage);
+      } else {
+        this.activeChildAgent.followUp(agentMessage);
       }
       return;
     }
@@ -318,17 +331,19 @@ export class TurnRunner {
         agent: { ...interruptedState.agent, status: "cancelled" },
       },
     };
-    if (this.activeAgent || this.activeAbortController) {
+    if (this.activeAgent || this.activeChildAgent || this.activeAbortController) {
       // The active turn emits this terminal event after agent.prompt() unwinds.
       // interrupt() only aborts out-of-band; it does not own turn completion.
       this.interruptedTerminal = terminal;
     }
     this.activeAgent?.abort();
+    this.activeChildAgent?.abort();
     this.activeAbortController?.abort();
     this.activeAgent?.clearAllQueues();
+    this.activeChildAgent?.clearAllQueues();
     this.queuedTurnCommands.length = 0;
     this.activeAgent = undefined;
-    this.activeAgentScope = undefined;
+    this.activeChildAgent = undefined;
     this.activeAbortController = undefined;
     this.activeStateWork = undefined;
   }
@@ -527,13 +542,19 @@ export class TurnRunner {
     return workerResult.terminal;
   }
 
-  protected async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+  protected async runAgentWorker(
+    input: AgentWorkerInput,
+    activeSlot: "parent" | "child" = "parent",
+  ): Promise<AgentWorkerResult> {
     let control: TurnRunnerControlResult = { type: "none" };
     const agent = this.createAgent(input, (result) => {
       control = result;
     });
-    this.activeAgent = agent;
-    this.activeAgentScope = input.agentScope ?? "parent";
+    if (activeSlot === "parent") {
+      this.activeAgent = agent;
+    } else {
+      this.activeChildAgent = agent;
+    }
 
     const unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event));
     try {
@@ -544,9 +565,10 @@ export class TurnRunner {
       }
     } finally {
       unsubscribe();
-      if (this.activeAgent === agent) {
+      if (activeSlot === "parent" && this.activeAgent === agent) {
         this.activeAgent = undefined;
-        this.activeAgentScope = undefined;
+      } else if (activeSlot === "child" && this.activeChildAgent === agent) {
+        this.activeChildAgent = undefined;
       }
     }
 
@@ -828,14 +850,16 @@ export class TurnRunner {
       agent: { ...session.agent, status: "running" },
     };
     const childResult = (
-      await this.runAgentWorker({
-        state: childState,
-        prompt,
-        appendSystemPrompt: state.systemPrompt,
-        skills: this.resolveStateAgentSkills(state),
-        agentScope: "child",
-        ...this.createTools("agent"),
-      })
+      await this.runAgentWorker(
+        {
+          state: childState,
+          prompt,
+          appendSystemPrompt: state.systemPrompt,
+          skills: this.resolveStateAgentSkills(state),
+          ...this.createTools("agent"),
+        },
+        "child",
+      )
     ).terminal;
     const parentSession = { ...session, agent: childResult.state.agent };
     const rawOutput = {
