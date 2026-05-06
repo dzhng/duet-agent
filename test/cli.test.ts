@@ -1,10 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import {
   compareSemverVersions,
   detectPackageManagerFromContext,
   formatNewVersionNotice,
+  parseResumeHistoryLines,
 } from "../src/cli.js";
 import { resolveCliMemoryModel, resolveCliModel } from "../src/model-resolution/index.js";
+import {
+  historyDisplayBlocks,
+  limitHistoryDisplayBlocks,
+  startupHeaderLines,
+} from "../src/tui/app.js";
+import { createAssistantMessage } from "./helpers/messages.js";
 
 const MODEL_ENV_KEYS = [
   "ANTHROPIC_API_KEY",
@@ -169,7 +177,7 @@ describe("CLI model inference", () => {
 
 describe("CLI version checks", () => {
   test("formats the update notice for stderr and TUI display", () => {
-    expect(formatNewVersionNotice("0.1.2", "0.1.3")).toBe(
+    expect(formatNewVersionNotice("@dzhng/duet-agent", "0.1.2", "0.1.3")).toBe(
       "Update available: @dzhng/duet-agent 0.1.2 -> 0.1.3. Run: duet upgrade",
     );
   });
@@ -180,6 +188,109 @@ describe("CLI version checks", () => {
     expect(compareSemverVersions("1.0.0", "1.0.0")).toBe(0);
     expect(compareSemverVersions("1.0.0", "1.0.0-beta.1")).toBe(1);
     expect(compareSemverVersions("1.0.0-beta.1", "1.0.0")).toBe(-1);
+  });
+});
+
+describe("CLI resume history display", () => {
+  test("parses non-negative resume history line limits", () => {
+    expect(parseResumeHistoryLines("0")).toBe(0);
+    expect(parseResumeHistoryLines("40")).toBe(40);
+    expect(() => parseResumeHistoryLines("-1")).toThrow(
+      "--resume-history-lines must be a non-negative integer",
+    );
+    expect(() => parseResumeHistoryLines("all")).toThrow(
+      "--resume-history-lines must be a non-negative integer",
+    );
+  });
+
+  test("limits resumed history to the newest display lines", () => {
+    const limited = limitHistoryDisplayBlocks(
+      [
+        { kind: "user", content: "you:\nold question" },
+        { kind: "agent", content: "old answer" },
+        { kind: "user", content: "you:\nnew question" },
+        { kind: "agent", content: "line one\nline two\nline three" },
+      ],
+      4,
+    );
+
+    expect(limited.omittedLines).toBe(4);
+    expect(limited.blocks.map((block) => block.content)).toEqual([
+      "new question",
+      "line one\nline two\nline three",
+    ]);
+  });
+
+  test("zero resume history lines disables replay", () => {
+    const limited = limitHistoryDisplayBlocks([{ kind: "agent", content: "one\ntwo" }], 0);
+
+    expect(limited.blocks).toEqual([]);
+    expect(limited.omittedLines).toBe(2);
+  });
+
+  test("formats resumed messages before limiting", () => {
+    const history: AgentMessage[] = [
+      { role: "user", content: "hello", timestamp: 1 },
+      createAssistantMessage({ text: "hi" }),
+    ];
+    const blocks = historyDisplayBlocks(history);
+
+    expect(blocks).toEqual([
+      { kind: "user", content: "you:\nhello" },
+      { kind: "agent", content: "hi" },
+    ]);
+  });
+
+  test("pairs resumed tool calls with their results", () => {
+    const history: AgentMessage[] = [
+      createAssistantMessage({
+        extraContent: [
+          {
+            type: "toolCall",
+            id: "tool-1",
+            name: "read_file",
+            arguments: { path: "package.json" },
+          },
+        ],
+      }),
+      {
+        role: "toolResult",
+        toolCallId: "tool-1",
+        toolName: "read_file",
+        content: [{ type: "text", text: "ok" }],
+        details: {},
+        isError: false,
+        timestamp: 2,
+      },
+    ];
+
+    expect(historyDisplayBlocks(history)).toEqual([
+      {
+        kind: "tool",
+        content: '[tool read_file] ✓\n{"path":"package.json"}\n[result]\nok',
+      },
+    ]);
+  });
+
+  test("prints startup header before any resumed history", () => {
+    const header = startupHeaderLines({
+      packageVersion: "0.1.12",
+      workDir: "/repo",
+      sessionId: "session_123",
+      modelName: "anthropic:claude-opus-4-7",
+      modelSource: "default",
+      memoryModelName: "anthropic:claude-haiku-4-5",
+    });
+    const history = limitHistoryDisplayBlocks([{ kind: "agent", content: "previous answer" }], 40);
+
+    expect([...header, ...history.blocks.map((block) => block.content)]).toEqual([
+      "[duet] v0.1.12",
+      "[cwd] /repo",
+      "[session] session_123",
+      "[model] anthropic:claude-opus-4-7 — default",
+      "[memory model] anthropic:claude-haiku-4-5",
+      "previous answer",
+    ]);
   });
 });
 

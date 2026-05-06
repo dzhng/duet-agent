@@ -23,6 +23,12 @@ import type {
 export interface RunTuiInput {
   session: Session;
   initialPrompt?: string;
+  /** Current working directory shown in the startup header. */
+  workDir: string;
+  /** Session id shown in the startup header and resume context. */
+  sessionId: string;
+  /** Installed package version shown in the startup header. */
+  packageVersion: string;
   /** Fully resolved provider:modelId string used for this CLI session. */
   modelName: string;
   /** Human-readable provenance for modelName, e.g. "inferred from ANTHROPIC_API_KEY in .env". */
@@ -35,6 +41,31 @@ export interface RunTuiInput {
   newVersionNotice?: string;
   /** Past messages to replay into the transcript on resume. */
   history?: AgentMessage[];
+  /** Maximum prior-session display lines to replay on resume; 0 disables replay. */
+  resumeHistoryLines?: number;
+}
+
+type HistoryBlockKind = "user" | "agent" | "reasoning" | "tool" | "error";
+
+export interface HistoryDisplayBlock {
+  kind: HistoryBlockKind;
+  content: string;
+}
+
+export interface LimitedHistory {
+  blocks: HistoryDisplayBlock[];
+  omittedLines: number;
+}
+
+export interface StartupHeaderInput {
+  packageVersion: string;
+  workDir: string;
+  sessionId: string;
+  modelName: string;
+  modelSource?: string;
+  memoryModelName: string;
+  memoryModelSource?: string;
+  newVersionNotice?: string;
 }
 
 const COLORS = {
@@ -49,8 +80,13 @@ const COLORS = {
   border: "#374151",
 } as const;
 
-const HINT_IDLE = "Enter: send · Esc/Ctrl+C: quit";
-const HINT_RUNNING = "Enter: steer · Shift+Enter: queue follow-up · Esc/Ctrl+C: interrupt";
+const HINT_IDLE = "Enter: send · Esc: quit · Ctrl+C: force quit";
+const HINT_RUNNING =
+  "Enter: steer · Shift+Enter: queue follow-up · Esc: interrupt and quit · Ctrl+C: force quit";
+
+interface InternalKeyHandlerLike {
+  onInternal(event: "keypress", handler: (key: KeyEvent) => void): void;
+}
 
 /**
  * Runs the interactive TUI for a session. Resolves with the most recent
@@ -63,7 +99,7 @@ const HINT_RUNNING = "Enter: steer · Shift+Enter: queue follow-up · Esc/Ctrl+C
 export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | undefined> {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const renderer = await createCliRenderer({
-    exitOnCtrlC: false,
+    exitOnCtrlC: true,
     useKittyKeyboard: {},
     targetFps: 60,
   });
@@ -221,7 +257,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function markRunning(): void {
     running = true;
     setHint(true);
-    setStatus("● working… (Esc/Ctrl+C to interrupt)");
+    setStatus("● working… (Esc to interrupt, Ctrl+C to force quit)");
   }
 
   function markIdle(): void {
@@ -283,6 +319,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     agentFiles: readonly TurnAgentFile[],
     skillCollisions: readonly SkillCollision[],
   ): void {
+    const [title, ...details] = startupHeaderLines(input);
+    appendLine(title ?? "[duet]", COLORS.status);
+    for (const line of details) {
+      appendLine(line, line === input.newVersionNotice ? COLORS.system : COLORS.hint);
+    }
+
     if (agentFiles.length === 0) {
       appendLine("[agent file] none", COLORS.hint);
     } else {
@@ -326,7 +368,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderFollowUpQueue(prompts: string[]): void {
     if (prompts.length === 0) {
-      setStatus(running ? "● working… (Esc/Ctrl+C to interrupt)" : "");
+      setStatus(running ? "● working… (Esc to interrupt, Ctrl+C to force quit)" : "");
       return;
     }
     setStatus(`queued follow-ups: ${prompts.length}`);
@@ -457,11 +499,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderMemoryStatus(event: Extract<TurnEvent, { type: "memory" }>): void {
     if (event.status === "running") {
-      setStatus(`● ${event.message} (Esc/Ctrl+C to interrupt)`);
+      setStatus(`● ${event.message} (Esc to interrupt, Ctrl+C to force quit)`);
       return;
     }
     if (running) {
-      setStatus("● working… (Esc/Ctrl+C to interrupt)");
+      setStatus("● working… (Esc to interrupt, Ctrl+C to force quit)");
     }
   }
 
@@ -485,12 +527,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       } catch (error) {
         reportError(error);
       } finally {
-        renderer.stop();
+        renderer.destroy();
       }
     } else {
-      renderer.stop();
+      renderer.destroy();
     }
   };
+
+  const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
+  keyHandler.onInternal("keypress", (key: KeyEvent) => {
+    if (key.name !== "escape") return;
+    key.preventDefault();
+    void requestExit();
+  });
 
   // Attach directly to the focused InputRenderable. The Textarea-based input
   // consumes escape via its own keybindings before any global keypress handler
@@ -511,9 +560,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (key.name === "escape") {
       void requestExit();
       return;
-    }
-    if (key.name === "c" && key.ctrl) {
-      void requestExit();
     }
   };
 
@@ -536,18 +582,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- replay history on resume ---------------------------------------------
 
-  if (input.newVersionNotice) {
-    appendLine(input.newVersionNotice, COLORS.system);
-  }
-  const modelLine = input.modelSource
-    ? `[model] ${input.modelName} — ${input.modelSource}`
-    : `[model] ${input.modelName}`;
-  appendLine(modelLine, COLORS.hint);
-  const memoryModelLine = input.memoryModelSource
-    ? `[memory model] ${input.memoryModelName} — ${input.memoryModelSource}`
-    : `[memory model] ${input.memoryModelName}`;
-  appendLine(memoryModelLine, COLORS.hint);
-
   // Setup already ran before the TUI launched, so we can read the resolved
   // skills/agent-files synchronously through the session getters.
   const [skills, agentFiles, skillCollisions] = await Promise.all([
@@ -557,9 +591,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   ]);
   renderSetupIntro(skills, agentFiles, skillCollisions);
 
-  if (input.history && input.history.length > 0) {
-    for (const message of input.history) {
-      renderHistoryMessage(message);
+  const resumeHistoryLines = input.resumeHistoryLines ?? Number.POSITIVE_INFINITY;
+  if (resumeHistoryLines > 0 && input.history && input.history.length > 0) {
+    const limited = limitHistoryDisplayBlocks(
+      historyDisplayBlocks(input.history),
+      resumeHistoryLines,
+    );
+    if (limited.omittedLines > 0) {
+      appendLine(
+        `[resume] showing last ${resumeHistoryLines} lines of prior session history`,
+        COLORS.hint,
+      );
+    }
+    for (const block of limited.blocks) {
+      appendDisplayBlock(block);
     }
     scrollToBottomSoon();
   }
@@ -597,53 +642,137 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       .join("\n");
   }
 
-  function renderHistoryMessage(message: AgentMessage): void {
-    if (!("role" in message)) return;
+  function appendDisplayBlock(block: HistoryDisplayBlock): void {
+    appendBlock(null, block.content, colorForHistoryBlock(block.kind));
+  }
+
+  function colorForHistoryBlock(kind: HistoryBlockKind): string {
+    if (kind === "user") return COLORS.user;
+    if (kind === "reasoning") return COLORS.reasoning;
+    if (kind === "tool") return COLORS.tool;
+    if (kind === "error") return COLORS.error;
+    return COLORS.agent;
+  }
+}
+
+export function historyDisplayBlocks(history: readonly AgentMessage[]): HistoryDisplayBlock[] {
+  const blocks: HistoryDisplayBlock[] = [];
+  const activeToolBlockIndexes = new Map<string, number>();
+  for (const message of history) {
+    if (!("role" in message)) continue;
     if (message.role === "user") {
-      const content = message.content;
-      if (typeof content === "string") {
-        appendBlock("you:", content, COLORS.user);
-        return;
-      }
-      const text = content
-        .filter((b): b is { type: "text"; text: string } => b.type === "text")
-        .map((b) => b.text)
-        .join("");
-      if (text) appendBlock("you:", text, COLORS.user);
+      const text = userMessageText(message.content);
+      if (text) blocks.push({ kind: "user", content: `you:\n${text}` });
     } else if (message.role === "assistant") {
       for (const block of message.content) {
         if (block.type === "text") {
-          appendBlock(null, block.text, COLORS.agent);
+          blocks.push({ kind: "agent", content: block.text });
         } else if (block.type === "thinking") {
           const trimmed = block.thinking.trim();
-          if (trimmed) appendBlock("[reasoning]", truncateToolResult(trimmed), COLORS.reasoning);
+          if (trimmed) blocks.push({ kind: "reasoning", content: `[reasoning]\n${trimmed}` });
         } else if (block.type === "toolCall") {
-          // Mirror the live flow: open the call as a running block keyed by
-          // toolCallId. The matching toolResult message below finalizes it in
-          // place, producing the same combined layout users see during a
-          // live turn.
-          renderToolCall({
-            type: "tool_call",
-            toolName: block.name,
-            toolCallId: block.id,
-            status: "running",
-            input: block.arguments,
-          });
+          const input =
+            block.arguments === undefined ? "" : `\n${formatCompactJson(block.arguments)}`;
+          activeToolBlockIndexes.set(block.id, blocks.length);
+          blocks.push({ kind: "tool", content: `[tool ${block.name}] ⏳${input}` });
         }
       }
       if (message.errorMessage) {
-        appendBlock("[error]", message.errorMessage, COLORS.error);
+        blocks.push({ kind: "error", content: `[error]\n${message.errorMessage}` });
       }
     } else if (message.role === "toolResult") {
-      renderToolCall({
-        type: "tool_call",
-        toolName: message.toolName,
-        toolCallId: message.toolCallId,
-        status: message.isError ? "error" : "completed",
-        output: message.content,
-      });
+      const text = textFromHistoryContent(message.content);
+      const existingIndex = activeToolBlockIndexes.get(message.toolCallId);
+      const marker = message.isError ? "✗" : "✓";
+      const label = message.isError ? "[error]" : "[result]";
+      if (existingIndex !== undefined) {
+        const existing = blocks[existingIndex]!;
+        const [, ...inputLines] = existing.content.split("\n");
+        const input = inputLines.length > 0 ? `\n${inputLines.join("\n")}` : "";
+        existing.kind = message.isError ? "error" : "tool";
+        existing.content = text
+          ? `[tool ${message.toolName}] ${marker}${input}\n${label}\n${text}`
+          : `[tool ${message.toolName}] ${marker}${input}`;
+        activeToolBlockIndexes.delete(message.toolCallId);
+      } else {
+        const content = text
+          ? `[tool ${message.toolName}] ${marker}\n${label}\n${text}`
+          : `[tool ${message.toolName}] ${marker}`;
+        blocks.push({ kind: message.isError ? "error" : "tool", content });
+      }
     }
   }
+  return blocks;
+}
+
+export function startupHeaderLines(input: StartupHeaderInput): string[] {
+  const lines = [
+    `[duet] v${input.packageVersion}`,
+    `[cwd] ${input.workDir}`,
+    `[session] ${input.sessionId}`,
+    input.modelSource
+      ? `[model] ${input.modelName} — ${input.modelSource}`
+      : `[model] ${input.modelName}`,
+    input.memoryModelSource
+      ? `[memory model] ${input.memoryModelName} — ${input.memoryModelSource}`
+      : `[memory model] ${input.memoryModelName}`,
+  ];
+  if (input.newVersionNotice) lines.push(input.newVersionNotice);
+  return lines;
+}
+
+export function limitHistoryDisplayBlocks(
+  blocks: readonly HistoryDisplayBlock[],
+  maxLines: number,
+): LimitedHistory {
+  if (maxLines <= 0) return { blocks: [], omittedLines: countHistoryLines(blocks) };
+
+  const selected: HistoryDisplayBlock[] = [];
+  let remaining = maxLines;
+  let omittedLines = 0;
+
+  for (let index = blocks.length - 1; index >= 0; index--) {
+    const block = blocks[index]!;
+    const lines = block.content.split("\n");
+    if (lines.length <= remaining) {
+      selected.unshift(block);
+      remaining -= lines.length;
+      continue;
+    }
+    if (remaining > 0) {
+      selected.unshift({ ...block, content: lines.slice(-remaining).join("\n") });
+      omittedLines += lines.length - remaining;
+      remaining = 0;
+    } else {
+      omittedLines += lines.length;
+    }
+  }
+
+  return { blocks: selected, omittedLines };
+}
+
+function countHistoryLines(blocks: readonly HistoryDisplayBlock[]): number {
+  return blocks.reduce((count, block) => count + block.content.split("\n").length, 0);
+}
+
+type UserHistoryContent = string | ReadonlyArray<{ type: string; text?: unknown }>;
+
+function userMessageText(content: UserHistoryContent): string {
+  if (typeof content === "string") return content;
+  return content
+    .filter(
+      (block): block is { type: "text"; text: string } =>
+        block.type === "text" && typeof block.text === "string",
+    )
+    .map((block) => block.text)
+    .join("");
+}
+
+function textFromHistoryContent(content: ReadonlyArray<TextContent | ImageContent>): string {
+  return content
+    .filter((block): block is TextContent => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
 }
 
 function restoreWindowGlobal(previousWindow: PropertyDescriptor | undefined): void {

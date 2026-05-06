@@ -10,12 +10,12 @@
  */
 
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { type TextContent } from "@mariozechner/pi-ai";
 import dotenv from "dotenv";
+import packageJson from "../package.json" with { type: "json" };
 import { shimDuetApiKeyToAiGateway } from "./duet-gateway/index.js";
 import { formatCompactJson } from "./lib/compact-json.js";
 import {
@@ -29,12 +29,8 @@ import { runTui } from "./tui/app.js";
 import type { TurnRunnerConfig } from "./types/config.js";
 import type { TurnStep, TurnTerminalEvent, TurnTokenUsage } from "./types/protocol.js";
 
-const NPM_PACKAGE_NAME = "@dzhng/duet-agent";
-const NPM_PACKAGE_METADATA_URL = `https://registry.npmjs.org/${NPM_PACKAGE_NAME.replace(
-  "/",
-  "%2F",
-)}`;
 const VERSION_CHECK_TIMEOUT_MS = 1_500;
+const DEFAULT_RESUME_HISTORY_LINES = 40;
 const PACKAGE_MANAGERS = ["npm", "bun", "pnpm", "yarn"] as const;
 
 type PackageManager = (typeof PACKAGE_MANAGERS)[number];
@@ -45,6 +41,16 @@ type PackageManagerDetectionContext = {
   cliFilePath?: string;
   scriptPath?: string;
 };
+
+const PACKAGE_METADATA = {
+  name: packageJson.name,
+  version: packageJson.version,
+} satisfies PackageMetadata;
+
+interface PackageMetadata {
+  name: string;
+  version: string;
+}
 
 async function main() {
   // Bridge DUET_API_KEY → AI_GATEWAY_API_KEY so the duet-gateway provider
@@ -79,6 +85,8 @@ async function main() {
   let resumeSessionId: string | undefined;
   let systemInstructions: string | undefined;
   let systemPromptFiles: string[] | undefined;
+  let resumeHistoryLines = DEFAULT_RESUME_HISTORY_LINES;
+  let resumeHistoryLinesExplicit = false;
   let jsonOutput = false;
   const promptParts: string[] = [];
   const interactive = Boolean(process.stdin.isTTY ?? process.stdout.isTTY);
@@ -104,6 +112,15 @@ async function main() {
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         resumeSessionId = args[++i];
         break;
+      case "--resume-history-lines":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        try {
+          resumeHistoryLines = parseResumeHistoryLines(args[++i]!, args[i - 1]!);
+        } catch (error) {
+          fail(error instanceof Error ? error.message : String(error));
+        }
+        resumeHistoryLinesExplicit = true;
+        break;
       case "--system-prompt":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         systemInstructions = args[++i];
@@ -120,13 +137,12 @@ async function main() {
         break;
       case "--version":
       case "-v": {
-        const version = (await readInstalledPackageVersion()) ?? "unknown";
-        console.log(version);
+        console.log(PACKAGE_METADATA.version);
         process.exit(0);
       }
       case "--help":
       case "-h":
-        printHelp();
+        printHelp(PACKAGE_METADATA.name);
         process.exit(0);
       default:
         if (args[i]?.startsWith("-")) {
@@ -306,10 +322,14 @@ async function main() {
         session,
         ...(initialTuiPrompt ? { initialPrompt: initialTuiPrompt } : {}),
         ...(resumedHistory ? { history: resumedHistory } : {}),
+        resumeHistoryLines,
         modelName,
         modelSource: describeModelResolution(modelResolution),
         memoryModelName,
         memoryModelSource: describeModelResolution(memoryModelResolution),
+        workDir,
+        sessionId: session.id,
+        packageVersion: PACKAGE_METADATA.version,
         ...(newVersionNotice ? { newVersionNotice } : {}),
       });
     }
@@ -321,6 +341,7 @@ async function main() {
         workDir,
         systemInstructions,
         systemPromptFiles,
+        ...(resumeHistoryLinesExplicit ? { resumeHistoryLines } : {}),
       })}\n`,
     );
   } catch (err: any) {
@@ -424,51 +445,43 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+export function parseResumeHistoryLines(
+  value: string,
+  optionName = "--resume-history-lines",
+): number {
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${optionName} must be a non-negative integer`);
+  }
+  return Number(value);
+}
+
 async function getNewVersionNotice(): Promise<string | undefined> {
   try {
-    const [currentVersion, latestVersion] = await Promise.all([
-      readInstalledPackageVersion(),
-      fetchLatestPackageVersion(),
-    ]);
-    if (!currentVersion || !latestVersion) return undefined;
-    if (compareSemverVersions(latestVersion, currentVersion) <= 0) return undefined;
+    const latestVersion = await fetchLatestPackageVersion(PACKAGE_METADATA.name);
+    if (!latestVersion) return undefined;
+    if (compareSemverVersions(latestVersion, PACKAGE_METADATA.version) <= 0) return undefined;
 
-    return formatNewVersionNotice(currentVersion, latestVersion);
+    return formatNewVersionNotice(PACKAGE_METADATA.name, PACKAGE_METADATA.version, latestVersion);
   } catch {
     // Version checks should never block CLI startup or hide the real command output.
     return undefined;
   }
 }
 
-export function formatNewVersionNotice(currentVersion: string, latestVersion: string): string {
-  return `Update available: ${NPM_PACKAGE_NAME} ${currentVersion} -> ${latestVersion}. Run: duet upgrade`;
+export function formatNewVersionNotice(
+  packageName: string,
+  currentVersion: string,
+  latestVersion: string,
+): string {
+  return `Update available: ${packageName} ${currentVersion} -> ${latestVersion}. Run: duet upgrade`;
 }
 
-async function readInstalledPackageVersion(): Promise<string | undefined> {
-  const cliDir = dirname(fileURLToPath(import.meta.url));
-  const packagePaths = [
-    join(cliDir, "..", "package.json"),
-    join(cliDir, "..", "..", "package.json"),
-  ];
-
-  for (const packagePath of packagePaths) {
-    try {
-      const packageJson = JSON.parse(await readFile(packagePath, "utf-8")) as {
-        version?: unknown;
-      };
-      if (typeof packageJson.version === "string") return packageJson.version;
-    } catch {
-      // Source builds and published builds place package.json at different depths.
-    }
-  }
-  return undefined;
-}
-
-async function fetchLatestPackageVersion(): Promise<string | undefined> {
+async function fetchLatestPackageVersion(packageName: string): Promise<string | undefined> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), VERSION_CHECK_TIMEOUT_MS);
   try {
-    const response = await fetch(NPM_PACKAGE_METADATA_URL, { signal: controller.signal });
+    const metadataUrl = `https://registry.npmjs.org/${packageName.replace("/", "%2F")}`;
+    const response = await fetch(metadataUrl, { signal: controller.signal });
     if (!response.ok) return undefined;
     const metadata = (await response.json()) as {
       "dist-tags"?: { latest?: unknown };
@@ -508,6 +521,7 @@ function parseSemverVersion(version: string): {
 async function runUpgradeCommand(args: string[]): Promise<void> {
   let packageManager = detectPackageManager();
   let dryRun = false;
+  const packageName = PACKAGE_METADATA.name;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -520,21 +534,21 @@ async function runUpgradeCommand(args: string[]): Promise<void> {
         break;
       case "--help":
       case "-h":
-        printUpgradeHelp();
+        printUpgradeHelp(packageName);
         return;
       default:
         fail(`Unknown upgrade option: ${args[i]}`);
     }
   }
 
-  const command = globalUpgradeCommand(packageManager);
+  const command = globalUpgradeCommand(packageManager, packageName);
   const commandText = command.map(shellQuote).join(" ");
   if (dryRun) {
     console.log(commandText);
     return;
   }
 
-  console.error(`Upgrading ${NPM_PACKAGE_NAME} with ${packageManager}...`);
+  console.error(`Upgrading ${packageName} with ${packageManager}...`);
   await runCommand(command[0]!, command.slice(1));
 }
 
@@ -606,12 +620,12 @@ export function detectPackageManagerFromContext(
   return "npm";
 }
 
-function globalUpgradeCommand(packageManager: PackageManager): string[] {
-  const packageName = `${NPM_PACKAGE_NAME}@latest`;
-  if (packageManager === "bun") return ["bun", "add", "--global", packageName];
-  if (packageManager === "pnpm") return ["pnpm", "add", "--global", packageName];
-  if (packageManager === "yarn") return ["yarn", "global", "add", packageName];
-  return ["npm", "install", "--global", packageName];
+function globalUpgradeCommand(packageManager: PackageManager, packageName: string): string[] {
+  const packageSpec = `${packageName}@latest`;
+  if (packageManager === "bun") return ["bun", "add", "--global", packageSpec];
+  if (packageManager === "pnpm") return ["pnpm", "add", "--global", packageSpec];
+  if (packageManager === "yarn") return ["yarn", "global", "add", packageSpec];
+  return ["npm", "install", "--global", packageSpec];
 }
 
 async function runCommand(command: string, args: string[]): Promise<void> {
@@ -649,6 +663,7 @@ function resumeCommand(
     workDir: string;
     systemInstructions?: string;
     systemPromptFiles?: string[];
+    resumeHistoryLines?: number;
   },
 ): string {
   const command = [
@@ -676,6 +691,9 @@ function resumeCommand(
       }
     }
   }
+  if (input.resumeHistoryLines !== undefined) {
+    command.push("--resume-history-lines", String(input.resumeHistoryLines));
+  }
   return command.join(" ");
 }
 
@@ -695,7 +713,7 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function printHelp() {
+function printHelp(packageName: string) {
   console.log(`
 duet — An opinionated full-stack agent runner
 
@@ -707,13 +725,15 @@ USAGE
 
 COMMANDS
   skills                   List installed skills as JSON (name, description, path, scope)
-  upgrade                  Upgrade the global ${NPM_PACKAGE_NAME} installation
+  upgrade                  Upgrade the global ${packageName} installation
 
 OPTIONS
   -m, --model <name>       TurnRunner model override
   --memory-model <name>    Observational memory model (default inferred from provider env)
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
+  --resume-history-lines <n>
+                            Display up to n prior-session lines in the TUI (default: ${DEFAULT_RESUME_HISTORY_LINES})
   --system-prompt <text>   Additional system instructions for the runner
   --system-prompt-file <path>
                             Load a file into the system prompt; repeatable
@@ -771,9 +791,9 @@ OUTPUT
 `);
 }
 
-function printUpgradeHelp() {
+function printUpgradeHelp(packageName: string) {
   console.log(`
-duet upgrade — Upgrade the global ${NPM_PACKAGE_NAME} installation
+duet upgrade — Upgrade the global ${packageName} installation
 
 USAGE
   duet upgrade [--manager npm|bun|pnpm|yarn]
