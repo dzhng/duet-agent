@@ -2,6 +2,8 @@ import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-c
 import { getEnvApiKey, getModel, type Model, type Usage } from "@mariozechner/pi-ai";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
+
+import { isDuetGatewayModelName, resolveDuetGatewayModel } from "../duet-gateway/index.js";
 import { toXML } from "../lib/xml.js";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
 import { loadStoredMemory } from "../memory/storage.js";
@@ -764,6 +766,14 @@ export class TurnRunner {
     const separator = modelName.indexOf(":");
     if (separator === -1) {
       throw new Error("Models must use provider:modelId syntax");
+    }
+    if (isDuetGatewayModelName(modelName)) {
+      const modelId = modelName.slice(separator + 1);
+      const resolved = resolveDuetGatewayModel(modelId);
+      if (!resolved) {
+        throw new Error(`Unknown duet-gateway model: ${modelId}`);
+      }
+      return resolved;
     }
     const provider = modelName.slice(0, separator) as Parameters<typeof getModel>[0];
     const model = modelName.slice(separator + 1) as Parameters<typeof getModel>[1];
