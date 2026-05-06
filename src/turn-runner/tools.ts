@@ -43,15 +43,18 @@ const askUserQuestionSchema = Type.Object({
 
 type AskUserQuestionParams = Static<typeof askUserQuestionSchema>;
 
-const todoStatusSchema = Type.Union([
-  Type.Literal("pending"),
-  Type.Literal("in_progress"),
-  Type.Literal("completed"),
-  Type.Literal("failed"),
-], {
-  description:
-    "pending = not started; in_progress = actively being worked on (keep at most one); completed = done; failed = could not finish, leave a note in content if useful.",
-});
+const todoStatusSchema = Type.Union(
+  [
+    Type.Literal("pending"),
+    Type.Literal("in_progress"),
+    Type.Literal("completed"),
+    Type.Literal("failed"),
+  ],
+  {
+    description:
+      "pending = not started; in_progress = actively being worked on (keep at most one); completed = done; failed = could not finish, leave a note in content if useful.",
+  },
+);
 
 const todoItemSchema = Type.Object({
   id: Type.String({
