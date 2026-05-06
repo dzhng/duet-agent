@@ -1,6 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { createCodingTools } from "@mariozechner/pi-coding-agent";
 import { Ajv } from "ajv";
+import dedent from "dedent";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import type { TurnMode, TurnQuestion, TurnTodo } from "../types/protocol.js";
@@ -47,14 +48,19 @@ const todoStatusSchema = Type.Union([
   Type.Literal("in_progress"),
   Type.Literal("completed"),
   Type.Literal("failed"),
-]);
+], {
+  description:
+    "pending = not started; in_progress = actively being worked on (keep at most one); completed = done; failed = could not finish, leave a note in content if useful.",
+});
 
 const todoItemSchema = Type.Object({
   id: Type.String({
-    description: "Stable unique identifier used to edit this todo in later calls.",
+    description:
+      "Stable unique identifier used to edit this todo in later calls. Pick something short and memorable so you can reuse it with merge=true to flip status.",
   }),
   content: Type.String({
-    description: "Imperative description of the task, such as 'Run tests'.",
+    description:
+      "Imperative description of the task, such as 'Run tests' or 'Update README model section'. One sentence; no narration.",
   }),
   status: todoStatusSchema,
 });
@@ -62,10 +68,11 @@ const todoItemSchema = Type.Object({
 const todoWriteSchema = Type.Object({
   merge: Type.Boolean({
     description:
-      "If true, upsert todos by id into the existing list. If false, replace the entire list.",
+      "false = replace the entire list (use this when you first plan the work). true = upsert by id (use this to flip a single todo's status without re-sending the rest).",
   }),
   todos: Type.Array(todoItemSchema, {
-    description: "Todo items to write. Pass the full desired list when merge is false.",
+    description:
+      "Todo items to write. With merge=false, pass the full desired list. With merge=true, pass only the items being added or updated.",
   }),
 });
 
@@ -395,8 +402,23 @@ export function createTodoWriteTool(
   return {
     name: "todo_write",
     label: "Write todos",
-    description:
-      "Create and update the structured todo list for this agent session. Use this for multi-step work so progress is visible. Only one todo should normally be in_progress at a time. Use merge=false to replace the list, or merge=true to upsert by id.",
+    description: dedent`
+      Track multi-step work as a structured, visible todo list. The list is shown to the user in real time — it is your shared scratchpad of "what we agreed to do" and "where we are."
+
+      Reach for this tool whenever any of these are true:
+      - The user's message contains more than one independent task ("do X, also Y, and don't forget Z").
+      - The work needs three or more non-trivial steps to finish (research, edit, test, commit, etc.).
+      - You are about to spend several tool calls on something — write the plan first so the user can see and correct it.
+      - You are resuming or interrupting work and want to make state explicit.
+
+      How to use it well:
+      - Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.
+      - As you finish each item, call again with merge=true and just that item flipped to completed; advance the next one to in_progress in the same call.
+      - If the plan changes (user redirects, you discover new work), update the list immediately so it stays honest.
+      - Skip the tool only for genuinely single-step requests — a one-shot answer or a single file edit doesn't need a list.
+
+      Treat "the user gave me a list of asks" as an automatic cue to call this tool before doing anything else.
+    `,
     parameters: todoWriteSchema,
     async execute(_toolCallId, params) {
       const todos = params.merge

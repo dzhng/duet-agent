@@ -26,6 +26,8 @@ export interface RunTuiInput {
   mode: TurnRunnerConfig["mode"];
   /** Fully resolved provider:modelId string used for this CLI session. */
   modelName: string;
+  /** Human-readable provenance for modelName, e.g. "inferred from ANTHROPIC_API_KEY in .env". */
+  modelSource?: string;
   /** Best-effort package update notice, shown in-TUI because stderr is hidden. */
   newVersionNotice?: string;
   /** Past messages to replay into the transcript on resume. */
@@ -498,7 +500,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   if (input.newVersionNotice) {
     appendLine(input.newVersionNotice, COLORS.system);
   }
-  appendLine(`[model] ${input.modelName}`, COLORS.hint);
+  const modelLine = input.modelSource
+    ? `[model] ${input.modelName} — ${input.modelSource}`
+    : `[model] ${input.modelName}`;
+  appendLine(modelLine, COLORS.hint);
 
   if (input.history && input.history.length > 0) {
     for (const message of input.history) {
@@ -571,22 +576,30 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
           const trimmed = block.thinking.trim();
           if (trimmed) appendBlock("[reasoning]", truncateToolResult(trimmed), COLORS.reasoning);
         } else if (block.type === "toolCall") {
-          const body = formatCompactJson(block.arguments);
-          appendBlock(`[tool ${block.name}]`, body, COLORS.tool);
+          // Mirror the live flow: open the call as a running block keyed by
+          // toolCallId. The matching toolResult message below finalizes it in
+          // place, producing the same combined layout users see during a
+          // live turn.
+          renderToolCall({
+            type: "tool_call",
+            toolName: block.name,
+            toolCallId: block.id,
+            status: "running",
+            input: block.arguments,
+          });
         }
       }
       if (message.errorMessage) {
         appendBlock("[error]", message.errorMessage, COLORS.error);
       }
     } else if (message.role === "toolResult") {
-      const text = message.content
-        .filter((b): b is { type: "text"; text: string } => b.type === "text")
-        .map((b) => b.text)
-        .join("\n");
-      if (text) {
-        const label = `[tool result ${message.toolName}${message.isError ? " error" : ""}]`;
-        appendBlock(label, truncateToolResult(text), COLORS.tool);
-      }
+      renderToolCall({
+        type: "tool_call",
+        toolName: message.toolName,
+        toolCallId: message.toolCallId,
+        status: message.isError ? "error" : "completed",
+        output: message.content,
+      });
     }
   }
 }

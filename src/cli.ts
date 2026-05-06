@@ -135,9 +135,11 @@ async function main() {
     process.exit(1);
   }
 
-  dotenv.config({ path: join(workDir, ".env"), quiet: true });
+  const dotenvResult = dotenv.config({ path: join(workDir, ".env"), quiet: true });
+  const dotenvKeys = new Set<string>(Object.keys(dotenvResult.parsed ?? {}));
 
-  modelName = resolveCliModelName(modelName);
+  const modelResolution = resolveCliModel(modelName, dotenvKeys);
+  modelName = modelResolution.modelName;
 
   if (modelName && modelName.indexOf(":") <= 0) {
     throw new Error("Models must use provider:modelId syntax");
@@ -163,6 +165,7 @@ async function main() {
   if (!useTui) {
     if (newVersionNotice) process.stderr.write(`${newVersionNotice}\n`);
     process.stderr.write(`Model: ${modelName}\n`);
+    process.stderr.write(`Source: ${describeModelResolution(modelResolution)}\n`);
   }
 
   const manager = new SessionManager(config);
@@ -282,6 +285,7 @@ async function main() {
         ...(resumedHistory ? { history: resumedHistory } : {}),
         mode: config.mode,
         modelName,
+        modelSource: describeModelResolution(modelResolution),
         ...(newVersionNotice ? { newVersionNotice } : {}),
       });
     }
@@ -396,16 +400,70 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+/**
+ * Describes how the CLI arrived at a model selection. Used to render a
+ * provenance hint at startup so users understand why their session is talking
+ * to the model it picked.
+ */
+export interface ModelResolution {
+  modelName: string;
+  /** explicit: --model flag; inferred: provider env var present; default: built-in fallback. */
+  source: "explicit" | "inferred" | "default";
+  /** Provider env var that triggered inference, e.g. "ANTHROPIC_API_KEY". */
+  envVar?: string;
+  /** True when the env var was loaded from <workdir>/.env rather than the shell. */
+  fromDotenv?: boolean;
+}
+
+const PROVIDER_INFERENCE: Array<{ provider: string; model: string }> = [
+  { provider: "anthropic", model: INFERRED_ANTHROPIC_MODEL },
+  { provider: "vercel-ai-gateway", model: INFERRED_AI_GATEWAY_MODEL },
+  { provider: "openrouter", model: INFERRED_OPENROUTER_MODEL },
+  { provider: "openai", model: INFERRED_OPENAI_MODEL },
+];
+
 export function inferDefaultModelName(): string | undefined {
-  if (findEnvKeys("anthropic")) return INFERRED_ANTHROPIC_MODEL;
-  if (findEnvKeys("vercel-ai-gateway")) return INFERRED_AI_GATEWAY_MODEL;
-  if (findEnvKeys("openrouter")) return INFERRED_OPENROUTER_MODEL;
-  if (findEnvKeys("openai")) return INFERRED_OPENAI_MODEL;
+  for (const entry of PROVIDER_INFERENCE) {
+    if (findEnvKeys(entry.provider)) return entry.model;
+  }
   return undefined;
 }
 
 export function resolveCliModelName(modelName: string | undefined): string {
-  return modelName ?? inferDefaultModelName() ?? DEFAULT_CLI_MODEL;
+  return resolveCliModel(modelName).modelName;
+}
+
+/**
+ * Same selection logic as resolveCliModelName, but also reports the provenance
+ * so callers can show "inferred from ANTHROPIC_API_KEY in .env" etc.
+ */
+export function resolveCliModel(
+  modelName: string | undefined,
+  dotenvKeys: Set<string> = new Set(),
+): ModelResolution {
+  if (modelName) return { modelName, source: "explicit" };
+  for (const entry of PROVIDER_INFERENCE) {
+    const envVars = findEnvKeys(entry.provider);
+    if (envVars && envVars.length > 0) {
+      const envVar = envVars[0]!;
+      return {
+        modelName: entry.model,
+        source: "inferred",
+        envVar,
+        fromDotenv: dotenvKeys.has(envVar),
+      };
+    }
+  }
+  return { modelName: DEFAULT_CLI_MODEL, source: "default" };
+}
+
+export function describeModelResolution(resolution: ModelResolution): string {
+  if (resolution.source === "explicit") return "--model flag";
+  if (resolution.source === "inferred") {
+    const where = resolution.fromDotenv ? "<workdir>/.env" : "shell environment";
+    return `inferred from ${resolution.envVar} in ${where}`;
+  }
+  return "built-in default (no provider env vars set)";
 }
 
 async function getNewVersionNotice(): Promise<string | undefined> {
