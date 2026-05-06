@@ -3,11 +3,11 @@ import {
   type AgentWorkerInput,
   type AgentWorkerResult,
 } from "../../src/turn-runner/turn-runner.js";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { TurnRunnerControlResult } from "../../src/turn-runner/tools.js";
 import type { TurnRunnerConfig } from "../../src/types/config.js";
 import type { TurnEvent, TurnState } from "../../src/types/protocol.js";
 import type { StateMachineDefinition } from "../../src/types/state-machine.js";
+import { createAssistantMessage } from "./messages.js";
 
 export class TestTurnRunner extends TurnRunner {
   readonly workerInputs: AgentWorkerInput[] = [];
@@ -31,23 +31,7 @@ export class TestTurnRunner extends TurnRunner {
     const resultText = input.prompt.includes("capital of France")
       ? "Paris"
       : `Completed: ${input.prompt}`;
-    const assistantMessage: AssistantMessage = {
-      role: "assistant",
-      content: [{ type: "text", text: resultText }],
-      api: "unknown",
-      provider: "unknown",
-      model: "test",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "stop",
-      timestamp: Date.now(),
-    };
+    const assistantMessage = createAssistantMessage({ text: resultText });
     const state = {
       ...input.state,
       status: "completed" as const,

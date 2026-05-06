@@ -105,7 +105,7 @@ export class Session {
           type: "prompt",
           state: this.state,
           message: input.prompt,
-          behavior: "steer",
+          behavior: "follow_up",
           ...(input.options ? { options: input.options } : {}),
         }
       : {
@@ -122,13 +122,14 @@ export class Session {
     this.cancelWake();
     const wasSleeping = state.status === "sleeping";
     this.restoreSleepAfterTurn = wasSleeping && this.isWaitingOnPoll(state);
-    this.dispatchTurn({
+    const command: TurnCommand = {
       type: "prompt",
       state,
       message: input.message,
-      behavior: input.behavior ?? "steer",
+      behavior: input.behavior ?? "follow_up",
       ...(input.options ? { options: input.options } : {}),
-    });
+    };
+    this.dispatchTurn(command);
   }
 
   async answer(input: SessionAnswerInput): Promise<void> {
@@ -162,6 +163,10 @@ export class Session {
     });
   }
 
+  isTurnActive(): boolean {
+    return Boolean(this.activeTurn);
+  }
+
   async dispose(): Promise<void> {
     this.unsubscribeRunner();
     this.cancelWake();
@@ -175,7 +180,7 @@ export class Session {
       .then(() => undefined)
       .catch((error) => {
         this.emit({
-          type: "log",
+          type: "system",
           level: "error",
           message: error instanceof Error ? error.message : String(error),
         });
@@ -214,6 +219,13 @@ export class Session {
       this.isWaitingOnPoll(event.state)
     ) {
       this.restoreSleepAfterTurn = false;
+      if (event.status === "failed") {
+        this.emit({
+          type: "system",
+          level: "error",
+          message: event.error ?? event.result ?? "Prompt failed while waiting on poll.",
+        });
+      }
       const state = this.currentPollState(event.state);
       return {
         type: "sleep",

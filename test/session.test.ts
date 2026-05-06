@@ -12,6 +12,7 @@ import type {
   TurnCommand,
 } from "../src/types/protocol.js";
 import { testIfDocker } from "./helpers/docker-only.js";
+import { waitFor } from "./helpers/async.js";
 import { createStateMachineState } from "./helpers/turn-runner-protocol.js";
 
 class FakeTurnRunner implements SessionTurnRunner {
@@ -164,7 +165,7 @@ describe("Session", () => {
     await session.start({ prompt: "hello" });
     await session.waitForTerminal();
     unsubscribe();
-    runner.emit({ type: "log", level: "info", message: "ignored" });
+    runner.emit({ type: "system", level: "info", message: "ignored" });
 
     expect(events[0]).toEqual({ type: "ready" });
   });
@@ -238,22 +239,34 @@ describe("Session", () => {
     await second.waitForTerminal();
 
     expect(secondTurnRunner.commands).toEqual([
-      { type: "prompt", state: turnState, message: "continue", behavior: "steer" },
+      { type: "prompt", state: turnState, message: "continue", behavior: "follow_up" },
     ]);
   });
 
-  testIfDocker("forwards steer and follow-up prompts while a turn is active", async () => {
+  testIfDocker("sends active prompts through turn runner", async () => {
     const runner = new FakeTurnRunner([]);
     const session = await createSession(runner);
 
     await session.start({ prompt: "start" });
     await waitFor(() => runner.commands.length === 1);
     await session.prompt({ message: "steer now", behavior: "steer" });
-    await session.prompt({ message: "queue later", behavior: "follow_up" });
 
     expect(runner.commands).toEqual([
       { type: "start", mode: undefined, prompt: "start" },
       { type: "prompt", state: turnState, message: "steer now", behavior: "steer" },
+    ]);
+  });
+
+  testIfDocker("sends follow-up prompts through turn runner while active", async () => {
+    const runner = new FakeTurnRunner([]);
+    const session = await createSession(runner);
+
+    await session.start({ prompt: "start" });
+    await waitFor(() => runner.commands.length === 1);
+    await session.prompt({ message: "queue later", behavior: "follow_up" });
+
+    expect(runner.commands).toEqual([
+      { type: "start", mode: undefined, prompt: "start" },
       { type: "prompt", state: turnState, message: "queue later", behavior: "follow_up" },
     ]);
   });
@@ -373,7 +386,7 @@ describe("Session", () => {
 
       expect(runner.commands).toEqual([
         { type: "start", mode: undefined, prompt: "start" },
-        { type: "prompt", state: turnState, message: "next", behavior: "steer" },
+        { type: "prompt", state: turnState, message: "next", behavior: "follow_up" },
       ]);
     },
   );
@@ -440,11 +453,3 @@ describe("SessionManager", () => {
     await manager.dispose();
   });
 });
-
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt++) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-  throw new Error("Timed out waiting for condition");
-}
