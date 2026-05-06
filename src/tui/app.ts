@@ -148,6 +148,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let started = input.started;
   let running = false;
   let lastTerminal: TurnTerminalEvent | undefined;
+  let activeTextStream: StreamingBlock | undefined;
+  let activeReasoningStream: StreamingBlock | undefined;
+
+  interface StreamingBlock {
+    line: TextRenderable;
+    label: string | null;
+    body: string;
+  }
 
   function markRunning(): void {
     running = true;
@@ -237,10 +245,29 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function renderStep(step: TurnStep): void {
-    if (step.type === "text") {
+    if (step.type === "text_delta") {
+      activeTextStream = renderDelta(activeTextStream, null, step.delta, COLORS.agent);
+    } else if (step.type === "reasoning_delta") {
+      activeReasoningStream = renderDelta(
+        activeReasoningStream,
+        "[reasoning]",
+        step.delta,
+        COLORS.reasoning,
+      );
+    } else if (step.type === "text") {
+      if (activeTextStream) {
+        finalizeDelta(activeTextStream, step.text);
+        activeTextStream = undefined;
+        return;
+      }
       appendBlock(null, step.text, COLORS.agent);
     } else if (step.type === "reasoning") {
       const trimmed = step.text.trim();
+      if (activeReasoningStream) {
+        finalizeDelta(activeReasoningStream, trimmed);
+        activeReasoningStream = undefined;
+        return;
+      }
       if (trimmed) appendBlock("[reasoning]", trimmed, COLORS.reasoning);
     } else if (step.type === "tool_call") {
       const statusSuffix = step.status ? ` (${step.status})` : "";
@@ -260,6 +287,35 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     } else if (step.type === "system") {
       appendBlock("[system]", step.message, COLORS.system);
     }
+  }
+
+  function renderDelta(
+    block: StreamingBlock | undefined,
+    label: string | null,
+    delta: string,
+    fg: string,
+  ): StreamingBlock {
+    const next =
+      block ??
+      ({
+        line: new TextRenderable(renderer, { content: "", fg }),
+        label,
+        body: "",
+      } satisfies StreamingBlock);
+    if (!block) transcript.add(next.line);
+    next.body += delta;
+    updateStreamingBlock(next);
+    return next;
+  }
+
+  function finalizeDelta(block: StreamingBlock, body: string): void {
+    block.body = body;
+    updateStreamingBlock(block);
+  }
+
+  function updateStreamingBlock(block: StreamingBlock): void {
+    block.line.content = block.label ? `${block.label}\n${block.body}` : block.body;
+    transcript.scrollTop = transcript.scrollHeight;
   }
 
   function renderMemoryStatus(event: Extract<TurnEvent, { type: "memory" }>): void {

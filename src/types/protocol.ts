@@ -231,6 +231,16 @@ export interface TurnTokenUsage {
 }
 
 export type TurnStep =
+  | {
+      type: "text_delta";
+      /** Partial assistant text streamed before the canonical `text` step arrives. */
+      delta: string;
+    }
+  | {
+      type: "reasoning_delta";
+      /** Partial reasoning streamed before the canonical `reasoning` step arrives. */
+      delta: string;
+    }
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
   | {

@@ -116,6 +116,69 @@ describe("TurnRunner event emission", () => {
     ]);
   });
 
+  test("translates streaming assistant text and reasoning deltas into step events", () => {
+    const { runner, events } = createEventTurnRunner();
+
+    runner.emitAgentEventForTest({
+      type: "message_update",
+      message: { role: "assistant" } as never,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "Partial ",
+        partial: { role: "assistant" } as never,
+      },
+    });
+    runner.emitAgentEventForTest({
+      type: "message_update",
+      message: { role: "assistant" } as never,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "answer",
+        partial: { role: "assistant" } as never,
+      },
+    });
+    runner.emitAgentEventForTest({
+      type: "message_update",
+      message: { role: "assistant" } as never,
+      assistantMessageEvent: {
+        type: "text_end",
+        contentIndex: 0,
+        content: "Partial answer",
+        partial: { role: "assistant" } as never,
+      },
+    });
+    runner.emitAgentEventForTest({
+      type: "message_update",
+      message: { role: "assistant" } as never,
+      assistantMessageEvent: {
+        type: "thinking_delta",
+        contentIndex: 1,
+        delta: "Reason",
+        partial: { role: "assistant" } as never,
+      },
+    });
+    runner.emitAgentEventForTest({
+      type: "message_update",
+      message: { role: "assistant" } as never,
+      assistantMessageEvent: {
+        type: "thinking_end",
+        contentIndex: 1,
+        content: "Reasoning summary",
+        partial: { role: "assistant" } as never,
+      },
+    });
+
+    expect(events).toEqual([
+      { type: "step", step: { type: "text_delta", delta: "Partial " } },
+      { type: "step", step: { type: "text_delta", delta: "answer" } },
+      { type: "step", step: { type: "text", text: "Partial answer" } },
+      { type: "step", step: { type: "reasoning_delta", delta: "Reason" } },
+      { type: "step", step: { type: "reasoning", text: "Reasoning summary" } },
+    ]);
+  });
+
   test("translates tool execution lifecycle into tool_call step events", () => {
     const { runner, events } = createEventTurnRunner();
 

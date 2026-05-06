@@ -1504,6 +1504,12 @@ export class TurnRunner {
     }
     if (event.type === "message_update") {
       const update = event.assistantMessageEvent;
+      if (update.type === "text_delta") {
+        this.emit({ type: "step", step: { type: "text_delta", delta: update.delta } });
+      }
+      if (update.type === "thinking_delta") {
+        this.emit({ type: "step", step: { type: "reasoning_delta", delta: update.delta } });
+      }
       if (update.type === "text_end") {
         this.emit({ type: "step", step: { type: "text", text: update.content } });
       }

@@ -119,18 +119,58 @@ async function main() {
 
   const manager = new SessionManager(config);
   let streamedTextThisTurn = false;
+  let activeTextDelta = false;
+  let activeTextDeltaNeedsNewline = false;
+  let activeReasoningDelta = false;
+  let activeReasoningDeltaNeedsNewline = false;
+  const finishActiveDeltaStreams = () => {
+    if (activeTextDelta) {
+      if (activeTextDeltaNeedsNewline) process.stdout.write("\n");
+      activeTextDelta = false;
+      activeTextDeltaNeedsNewline = false;
+    }
+    if (activeReasoningDelta) {
+      if (activeReasoningDeltaNeedsNewline) process.stderr.write("\n");
+      process.stderr.write("[/reasoning]\n");
+      activeReasoningDelta = false;
+      activeReasoningDeltaNeedsNewline = false;
+    }
+  };
   manager.subscribe(({ event }) => {
     if (jsonOutput) {
       process.stdout.write(`${JSON.stringify(event)}\n`);
     } else if (event.type === "step" && !useTui) {
-      if (event.step.type === "text") {
+      if (event.step.type === "text_delta") {
         streamedTextThisTurn = true;
+        activeTextDelta = true;
+        activeTextDeltaNeedsNewline = !event.step.delta.endsWith("\n");
+        process.stdout.write(event.step.delta);
+      } else if (event.step.type === "reasoning_delta") {
+        if (!activeReasoningDelta) process.stderr.write("\n[reasoning]\n");
+        activeReasoningDelta = true;
+        activeReasoningDeltaNeedsNewline = !event.step.delta.endsWith("\n");
+        process.stderr.write(event.step.delta);
+      } else if (event.step.type === "text") {
+        streamedTextThisTurn = true;
+        if (activeTextDelta) {
+          finishActiveDeltaStreams();
+        } else {
+          handleStep(event.step);
+        }
+      } else if (event.step.type === "reasoning" && activeReasoningDelta) {
+        finishActiveDeltaStreams();
+      } else {
+        handleStep(event.step);
       }
-      handleStep(event.step);
-    } else if (event.type === "step" && event.step.type === "text") {
+    } else if (
+      event.type === "step" &&
+      (event.step.type === "text" || event.step.type === "text_delta")
+    ) {
       // Track streaming even when the TUI is rendering, so post-TUI fallback
       // result handling stays consistent.
       streamedTextThisTurn = true;
+    } else if (!jsonOutput && !useTui && isTerminalEvent(event)) {
+      finishActiveDeltaStreams();
     }
   });
 
@@ -234,6 +274,15 @@ function handleTerminal(
   }
 }
 
+function isTerminalEvent(event: { type: string }): event is TurnTerminalEvent {
+  return (
+    event.type === "complete" ||
+    event.type === "ask" ||
+    event.type === "interrupted" ||
+    event.type === "sleep"
+  );
+}
+
 function formatUsage(usage: TurnTokenUsage): string {
   const parts = [`in=${usage.inputTokens}`, `out=${usage.outputTokens}`];
   if (usage.cachedInputTokens !== undefined) parts.push(`cached=${usage.cachedInputTokens}`);
@@ -243,6 +292,12 @@ function formatUsage(usage: TurnTokenUsage): string {
 }
 
 function handleStep(step: TurnStep): void {
+  if (step.type === "text_delta") {
+    process.stdout.write(step.delta);
+  }
+  if (step.type === "reasoning_delta") {
+    process.stderr.write(step.delta);
+  }
   if (step.type === "text") {
     process.stdout.write(`${step.text}\n`);
   }

@@ -40,6 +40,16 @@ class StateMachineAgentEventTurnRunner extends TurnRunner {
       type: "message_update",
       message: { role: "assistant" } as never,
       assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "Child agent",
+        partial: { role: "assistant" } as never,
+      },
+    } satisfies AgentEvent);
+    this.emitAgentEvent({
+      type: "message_update",
+      message: { role: "assistant" } as never,
+      assistantMessageEvent: {
         type: "text_end",
         contentIndex: 0,
         content: "Child agent researched the prospect.",
@@ -85,6 +95,10 @@ describe("State-machine agent state events", () => {
       behavior: "follow_up",
     });
 
+    expect(events).toContainEqual({
+      type: "step",
+      step: { type: "text_delta", delta: "Child agent" },
+    });
     expect(events).toContainEqual({
       type: "step",
       step: { type: "text", text: "Child agent researched the prospect." },
