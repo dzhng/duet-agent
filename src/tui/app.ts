@@ -166,8 +166,18 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function appendBlock(label: string | null, body: string, fg: string): void {
+    beginBlock();
     const text = label ? `${label}\n${body}` : body;
     for (const line of text.split("\n")) appendLine(line, fg);
+  }
+
+  // Insert a blank separator before each new logical block so distinct steps
+  // (text, reasoning, tool calls, system messages) are easy to tell apart.
+  // The first block in the transcript skips the separator.
+  let hasRenderedAnyBlock = false;
+  function beginBlock(): void {
+    if (hasRenderedAnyBlock) appendLine(" ", COLORS.hint);
+    hasRenderedAnyBlock = true;
   }
 
   function setStatus(text: string): void {
@@ -185,6 +195,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let lastTerminal: TurnTerminalEvent | undefined;
   let activeTextStream: StreamingBlock | undefined;
   let activeReasoningStream: StreamingBlock | undefined;
+  // Tool calls fire twice (running → completed/error). Track the rendered
+  // block by toolCallId so the second event updates the same line in place
+  // — swapping the spinner for a check/cross and appending the result —
+  // instead of pushing a separate block.
+  const activeToolBlocks = new Map<string, ToolBlock>();
 
   interface StreamingBlock {
     line: TextRenderable;
@@ -192,6 +207,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     body: string;
     /** Cap rendered output to TOOL_RESULT_MAX_LINES for noisy streams (e.g. reasoning). */
     truncate: boolean;
+  }
+
+  interface ToolBlock {
+    line: TextRenderable;
+    toolName: string;
+    inputBody: string;
   }
 
   function markRunning(): void {
@@ -314,20 +335,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       }
       if (trimmed) appendBlock("[reasoning]", truncateToolResult(trimmed), COLORS.reasoning);
     } else if (step.type === "tool_call") {
-      const statusSuffix = step.status ? ` (${step.status})` : "";
-      const header = `[tool ${step.toolName}${statusSuffix}]`;
-      const body = step.input === undefined ? "" : formatCompactJson(step.input);
-      appendBlock(header, body, COLORS.tool);
-      if (step.output && step.output.length > 0) {
-        const text = textFromContent(step.output);
-        if (text) {
-          const isError = step.status === "error";
-          const label = isError
-            ? `[tool error ${step.toolName}]`
-            : `[tool result ${step.toolName}]`;
-          appendBlock(label, truncateToolResult(text), isError ? COLORS.error : COLORS.tool);
-        }
-      }
+      renderToolCall(step);
     } else if (step.type === "system") {
       appendBlock("[system]", step.message, COLORS.system);
     }
@@ -348,10 +356,63 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         body: "",
         truncate,
       } satisfies StreamingBlock);
-    if (!block) transcript.add(next.line);
+    if (!block) {
+      beginBlock();
+      transcript.add(next.line);
+    }
     next.body += delta;
     updateStreamingBlock(next);
     return next;
+  }
+
+  // Render a tool call as a single, self-updating block. The first event
+  // (`status: "running"`) creates the block with a spinner; the second event
+  // (`completed` or `error`) replaces the spinner with ✓/✗ and appends the
+  // truncated result inline so the call and its outcome stay visually paired.
+  function renderToolCall(step: Extract<TurnStep, { type: "tool_call" }>): void {
+    const existing = activeToolBlocks.get(step.toolCallId);
+    if (!existing) {
+      const inputBody = step.input === undefined ? "" : formatCompactJson(step.input);
+      const header = `[tool ${step.toolName}] ⏳`;
+      const fg = step.status === "error" ? COLORS.error : COLORS.tool;
+      const line = new TextRenderable(renderer, {
+        content: inputBody ? `${header}\n${inputBody}` : header,
+        fg,
+      });
+      beginBlock();
+      transcript.add(line);
+      const block: ToolBlock = { line, toolName: step.toolName, inputBody };
+      activeToolBlocks.set(step.toolCallId, block);
+      scrollToBottomSoon();
+      // The same event may already carry a terminal status (cached/replayed
+      // history). Fall through to finalize against the just-created block.
+      if (step.status !== "running" && step.status !== "pending") {
+        finalizeToolCall(step, block);
+      }
+      return;
+    }
+    finalizeToolCall(step, existing);
+  }
+
+  function finalizeToolCall(
+    step: Extract<TurnStep, { type: "tool_call" }>,
+    block: ToolBlock,
+  ): void {
+    const isError = step.status === "error";
+    const marker = isError ? "✗" : "✓";
+    const header = `[tool ${block.toolName}] ${marker}`;
+    const sections = [block.inputBody ? `${header}\n${block.inputBody}` : header];
+    if (step.output && step.output.length > 0) {
+      const text = textFromContent(step.output);
+      if (text) {
+        const label = isError ? "[error]" : "[result]";
+        sections.push(`${label}\n${truncateToolResult(text)}`);
+      }
+    }
+    block.line.content = sections.join("\n");
+    block.line.fg = isError ? COLORS.error : COLORS.tool;
+    activeToolBlocks.delete(step.toolCallId);
+    scrollToBottomSoon();
   }
 
   function finalizeDelta(block: StreamingBlock, body: string): void {

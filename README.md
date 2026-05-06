@@ -92,7 +92,7 @@ The turn runner has three top-level modes:
 - `state_machine`: route the prompt into an agent-routed state machine. This is for long-running business processes with durable state, waits, and terminal business outcomes.
 - `auto`: let the turn runner classify the prompt and choose either `agent` or `state_machine`.
 
-The current code is still scaffolding, but this is the intended boundary: normal agent mode handles immediate work, while state-machine mode handles business processes that may pause, resume, wait on external systems, or start in the middle based on the user's prompt.
+Normal agent mode handles immediate work; state-machine mode handles business processes that may pause, resume, wait on external systems, or start in the middle based on the user's prompt. In `auto`, the runner classifies the prompt and routes to whichever fits.
 
 ### Agent-Routed State Machines
 
