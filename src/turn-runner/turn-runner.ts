@@ -616,8 +616,9 @@ export class TurnRunner {
         this.todos = todos;
       },
     };
+    const skills = this.skillContext.getSkills();
     if (mode === "agent") {
-      return { tools: createDefaultTurnRunnerTools(cwd, todoStorage) };
+      return { tools: createDefaultTurnRunnerTools(cwd, todoStorage, skills) };
     }
 
     return {
@@ -626,6 +627,7 @@ export class TurnRunner {
         mode,
         definition: session?.stateMachine?.definition,
         todoStorage,
+        skills,
       }),
     };
   }

@@ -3,7 +3,6 @@ import dedent from "dedent";
 import { toXML } from "../lib/xml.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
-import { readSkillInstructions } from "./skills.js";
 
 function currentDateSystemPrompt(): string {
   // Day-level resolution keeps the prompt stable for the whole UTC day so prompt
@@ -82,14 +81,10 @@ function createSkillsSystemPrompt(skills: readonly Skill[]): string | undefined 
   }
 
   return dedent`
-    Available skills:
+    Available skills (metadata only — call the \`read_skill\` tool with the skill name to load full instructions on demand, or invoke a skill via slash command like \`/skill-name\` to inline its instructions):
     ${toXML({
       skills: skills.map((skill) => ({
-        skill: [
-          { _attrs: { name: skill.name } },
-          { description: skill.description },
-          { instructions: readSkillInstructions(skill) },
-        ],
+        skill: [{ _attrs: { name: skill.name } }, { description: skill.description }],
       })),
     })}
   `;

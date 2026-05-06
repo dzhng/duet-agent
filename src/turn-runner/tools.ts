@@ -1,5 +1,5 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { createCodingTools } from "@mariozechner/pi-coding-agent";
+import { createCodingTools, type Skill } from "@mariozechner/pi-coding-agent";
 import { Ajv } from "ajv";
 import dedent from "dedent";
 import { Type, type Static } from "typebox";
@@ -12,6 +12,7 @@ import type {
   StateMachineScriptState,
   StateMachineState,
 } from "../types/state-machine.js";
+import { readSkillInstructions } from "./skills.js";
 
 const jsonSchemaValidator = new Ajv({ strictSchema: false });
 
@@ -42,6 +43,13 @@ const askUserQuestionSchema = Type.Object({
 });
 
 type AskUserQuestionParams = Static<typeof askUserQuestionSchema>;
+
+const readSkillSchema = Type.Object({
+  name: Type.String({
+    description:
+      "Skill name from the available skills metadata in the system prompt. Returns the full SKILL.md instructions (with shell expansions resolved).",
+  }),
+});
 
 const todoStatusSchema = Type.Union(
   [
@@ -342,17 +350,24 @@ interface TurnRunnerToolsInput {
   mode: TurnMode;
   definition?: StateMachineDefinition;
   todoStorage?: TodoWriteToolStorage;
+  skills?: readonly Skill[];
 }
 
 export function createDefaultTurnRunnerTools(
   cwd: string,
   todoStorage: TodoWriteToolStorage = createMemoryTodoStorage(),
+  skills: readonly Skill[] = [],
 ): AgentTool[] {
-  return [...createCodingTools(cwd), createTodoWriteTool(todoStorage), createAskUserQuestionTool()];
+  return [
+    ...createCodingTools(cwd),
+    createTodoWriteTool(todoStorage),
+    createAskUserQuestionTool(),
+    createReadSkillTool(skills),
+  ];
 }
 
 export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] {
-  const tools = [...createDefaultTurnRunnerTools(input.cwd, input.todoStorage)];
+  const tools = [...createDefaultTurnRunnerTools(input.cwd, input.todoStorage, input.skills)];
   if (input.mode === "agent") {
     return tools;
   }
@@ -394,6 +409,32 @@ function createAskUserQuestionTool(): AgentTool<typeof askUserQuestionSchema> {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         details: result,
         terminate: true,
+      };
+    },
+  };
+}
+
+function createReadSkillTool(skills: readonly Skill[]): AgentTool<typeof readSkillSchema> {
+  return {
+    name: "read_skill",
+    label: "Read skill",
+    description: dedent`
+      Load the full SKILL.md instructions for one of the available skills listed in the system prompt.
+
+      The system prompt only lists skill names and one-line descriptions to keep the context small. When a skill's description matches the task at hand, call this tool with its name to fetch the full instructions, then follow them.
+    `,
+    parameters: readSkillSchema,
+    async execute(_toolCallId, params) {
+      const skill = skills.find((candidate) => candidate.name === params.name);
+      if (!skill) {
+        const available = skills.map((candidate) => candidate.name).join(", ") || "(none)";
+        throw new Error(`Unknown skill: ${params.name}. Available skills: ${available}`);
+      }
+
+      const instructions = readSkillInstructions(skill);
+      return {
+        content: [{ type: "text", text: instructions }],
+        details: { type: "read_skill", name: skill.name },
       };
     },
   };
