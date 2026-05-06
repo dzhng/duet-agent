@@ -5,6 +5,18 @@ import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
 import { readSkillInstructions } from "./skills.js";
 
+function currentDateSystemPrompt(): string {
+  // Day-level resolution keeps the prompt stable for the whole UTC day so prompt
+  // caching is not invalidated on every turn. Agents that need finer-grained
+  // time should shell out via bash (e.g. `date`).
+  const today = new Date().toISOString().slice(0, 10);
+  return dedent`
+    <current_date>
+    Today's date (UTC): ${today}. Resolution is intentionally limited to the day to preserve prompt caching. If you need finer-grained time, run \`date\` via bash.
+    </current_date>
+  `;
+}
+
 const TOOL_EXECUTION_SYSTEM_PROMPT = dedent`
   <use_parallel_tool_calls>
   For maximum efficiency, whenever you perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially. Prioritize calling tools in parallel whenever possible. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. When running multiple read-only commands like \`ls\` or \`list_dir\`, always run all of the commands in parallel. Err on the side of maximizing parallel tool calls rather than running too many tools sequentially.
@@ -54,7 +66,12 @@ export function createStateMachineSystemPromptLayer(input: {
 }
 
 function createBaseSystemPrompt(config: TurnRunnerConfig, skills: readonly Skill[]): string {
-  return [config.systemInstructions, TOOL_EXECUTION_SYSTEM_PROMPT, createSkillsSystemPrompt(skills)]
+  return [
+    config.systemInstructions,
+    currentDateSystemPrompt(),
+    TOOL_EXECUTION_SYSTEM_PROMPT,
+    createSkillsSystemPrompt(skills),
+  ]
     .filter(Boolean)
     .join("\n\n");
 }
