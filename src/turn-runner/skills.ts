@@ -68,6 +68,16 @@ export function loadDiscoveredSkills(
   return skills.map(expandSkillMetadata);
 }
 
+/**
+ * Discover installed skills without running shell-expansion in their metadata.
+ * Intended for read-only listing (e.g. `duet skills`) where executing the
+ * skills' shell commands would be a side effect users don't want.
+ */
+export function discoverInstalledSkills(cwd: string): Skill[] {
+  const { skills } = loadSkills(buildSkillDiscoveryOptions(undefined, cwd));
+  return skills;
+}
+
 export function mergeSkillsByName(primary: readonly Skill[], secondary: readonly Skill[]): Skill[] {
   const merged = [...primary];
   const seenNames = new Set(primary.map((skill) => skill.name));
