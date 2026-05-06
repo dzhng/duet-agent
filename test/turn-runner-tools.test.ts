@@ -1,4 +1,9 @@
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
+import type { Skill } from "@mariozechner/pi-coding-agent";
+import dedent from "dedent";
 import { createTurnRunnerTools, type TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 
 describe("TurnRunner tools", () => {
@@ -641,6 +646,55 @@ describe("TurnRunner tools", () => {
     );
     expect(stateMachineTools.some((tool) => tool.name === "select_state_machine_state")).toBe(true);
     expect(stateMachineTools.some((tool) => tool.name === "prompt_state_machine_agent")).toBe(true);
+  });
+
+  test("read_skill returns full SKILL.md instructions for a known skill", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "duet-skill-tool-"));
+    try {
+      const skillPath = join(tempDir, "SKILL.md");
+      writeFileSync(
+        skillPath,
+        dedent`
+          ---
+          name: lazy-skill
+          description: Lazy-loaded skill body.
+          ---
+
+          # Lazy Skill
+
+          Full instructions live here.
+        `,
+      );
+      const skill: Skill = {
+        name: "lazy-skill",
+        description: "Lazy-loaded skill body.",
+        filePath: skillPath,
+        baseDir: tempDir,
+        sourceInfo: {} as Skill["sourceInfo"],
+        disableModelInvocation: false,
+      };
+
+      const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "agent", skills: [skill] });
+      const readSkillTool = tools.find((tool) => tool.name === "read_skill");
+
+      expect(readSkillTool).toBeDefined();
+      if (!readSkillTool) throw new Error("read_skill tool missing");
+
+      const result = await readSkillTool.execute("tool-1", { name: "lazy-skill" });
+      const text = result.content[0]?.type === "text" ? result.content[0].text : "";
+      expect(text).toContain("Full instructions live here.");
+      expect(text).toContain(`Path: ${skillPath}`);
+      expect(result.details).toEqual({
+        type: "read_skill",
+        name: "lazy-skill",
+        filePath: skillPath,
+      });
+
+      const missing = readSkillTool.execute("tool-2", { name: "does-not-exist" });
+      await expect(missing).rejects.toThrow(/Unknown skill: does-not-exist/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("describes tool schema properties for provider tool prompts", () => {

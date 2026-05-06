@@ -101,13 +101,15 @@ describe("TurnRunner skills", () => {
     expect(skill?.description).toBe("Use when description expansion.");
   });
 
-  testIfDocker("injects all loaded skill instructions into the system prompt", async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
-    const firstSkillPath = join(tempDir, "first.md");
-    const secondSkillPath = join(tempDir, "second.md");
-    await writeFile(
-      firstSkillPath,
-      dedent`
+  testIfDocker(
+    "injects skill metadata only (not full instructions) into the system prompt",
+    async () => {
+      tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
+      const firstSkillPath = join(tempDir, "first.md");
+      const secondSkillPath = join(tempDir, "second.md");
+      await writeFile(
+        firstSkillPath,
+        dedent`
         ---
         name: first-skill
         description: First skill description.
@@ -117,10 +119,10 @@ describe("TurnRunner skills", () => {
 
         First skill instructions.
       `,
-    );
-    await writeFile(
-      secondSkillPath,
-      dedent`
+      );
+      await writeFile(
+        secondSkillPath,
+        dedent`
         ---
         name: second-skill
         description: Second skill description.
@@ -130,42 +132,47 @@ describe("TurnRunner skills", () => {
 
         Second skill instructions.
       `,
-    );
-    const runner = new SkillPromptTurnRunner({
-      model: "anthropic:claude-opus-4-7",
-      cwd: process.cwd(),
-      skillDiscovery: { includeDefaults: false },
-      skills: [
-        {
-          name: "first-skill",
-          description: "First skill description.",
-          filePath: firstSkillPath,
-          baseDir: tempDir,
-          sourceInfo: {} as Skill["sourceInfo"],
-          disableModelInvocation: false,
-        },
-        {
-          name: "second-skill",
-          description: "Second skill description.",
-          filePath: secondSkillPath,
-          baseDir: tempDir,
-          sourceInfo: {} as Skill["sourceInfo"],
-          disableModelInvocation: false,
-        },
-      ],
-    });
+      );
+      const runner = new SkillPromptTurnRunner({
+        model: "anthropic:claude-opus-4-7",
+        cwd: process.cwd(),
+        skillDiscovery: { includeDefaults: false },
+        skills: [
+          {
+            name: "first-skill",
+            description: "First skill description.",
+            filePath: firstSkillPath,
+            baseDir: tempDir,
+            sourceInfo: {} as Skill["sourceInfo"],
+            disableModelInvocation: false,
+          },
+          {
+            name: "second-skill",
+            description: "Second skill description.",
+            filePath: secondSkillPath,
+            baseDir: tempDir,
+            sourceInfo: {} as Skill["sourceInfo"],
+            disableModelInvocation: false,
+          },
+        ],
+      });
 
-    await runner.getSkills();
-    const systemPrompt = runner.systemPromptForTest("Base instructions.");
+      await runner.getSkills();
+      const systemPrompt = runner.systemPromptForTest("Base instructions.");
 
-    expect(systemPrompt).toContain("Available skills:");
-    expect(systemPrompt).toContain("<skills>");
-    expect(systemPrompt).toContain("name: first-skill");
-    expect(systemPrompt).toContain("First skill instructions.");
-    expect(systemPrompt).toContain("name: second-skill");
-    expect(systemPrompt).toContain("Second skill instructions.");
-    expect(systemPrompt).toContain("Base instructions.");
-  });
+      expect(systemPrompt).toContain("Available skills");
+      expect(systemPrompt).toContain("<skills>");
+      expect(systemPrompt).toContain('<skill name="first-skill">');
+      expect(systemPrompt).toContain("First skill description.");
+      expect(systemPrompt).toContain('<skill name="second-skill">');
+      expect(systemPrompt).toContain("Second skill description.");
+      expect(systemPrompt).toContain("Base instructions.");
+      // Full SKILL.md bodies must NOT be inlined — they're loaded on demand via the read_skill tool.
+      expect(systemPrompt).not.toContain("First skill instructions.");
+      expect(systemPrompt).not.toContain("Second skill instructions.");
+      expect(systemPrompt).toContain("read_skill");
+    },
+  );
 
   testIfDocker(
     "injects full skill instructions for slash command prompts at runner level",
