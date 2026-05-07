@@ -70,6 +70,7 @@ interface StateMachineRuntimeDeps {
   hasQueuedTurnCommands(): boolean;
   isDrainingQueuedCommandsBeforeContinuation(): boolean;
   setDrainingQueuedCommandsBeforeContinuation(value: boolean): void;
+  getCurrentState(): TurnState | undefined;
   setCurrentState(state: TurnState): void;
   consumeInterruptedTerminal(): TurnTerminalEvent | undefined;
   setActiveAbortController(controller: AbortController | undefined): void;
@@ -111,7 +112,12 @@ export class StateMachineRuntime {
       decision.kind === "run_state" ? decision.input : undefined,
     );
 
-    this.deps.emit({ type: "state_machine", currentState: effectiveState.name });
+    this.deps.setCurrentState(nextSession);
+    this.deps.emit({
+      type: "state_machine",
+      currentState: effectiveState.name,
+      state: nextSession,
+    });
 
     switch (effectiveState.kind) {
       case "agent":
@@ -172,7 +178,14 @@ export class StateMachineRuntime {
       "state_machine_child",
     );
     const childResult = childWorkerResult.terminal;
-    const parentSession = { ...session, agent: childResult.state.agent };
+    // Parent session = parent's everything (mode, stateMachine, latest todos)
+    // + the child's new agent transcript. Read from runner state so todo
+    // mutations made during the child worker run are preserved.
+    const parentBase = this.deps.getCurrentState() ?? session;
+    const parentSession: TurnState = {
+      ...parentBase,
+      agent: childResult.state.agent,
+    };
     const rawOutput = {
       result: childResult.type === "complete" ? childResult.result : undefined,
       childStatus: childResult.state.status,
@@ -535,6 +548,7 @@ export class StateMachineRuntime {
         status: "running",
         messages: [],
       },
+      todos: [],
     };
   }
 

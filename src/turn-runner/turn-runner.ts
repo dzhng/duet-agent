@@ -27,6 +27,7 @@ import type {
   TurnOptions,
   TurnTodo,
 } from "../types/protocol.js";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { createStateMachineSystemPromptLayer } from "./prompts.js";
 import {
   createDefaultTurnRunnerTools,
@@ -88,8 +89,6 @@ export class TurnRunner {
   private state?: TurnState;
   /** User-visible mirror of follow-up prompts accepted by this runner. */
   private followUpQueuePrompts: string[] = [];
-  /** Current todo list emitted through todo protocol events. */
-  private todos: TurnTodo[] = [];
   /** Aggregates model usage across parent agents, child agents, and memory work for one turn chain. */
   private turnUsage?: TurnTokenUsage;
   /** Prevents queued user prompts from recursively preempting continuation prompts. */
@@ -118,6 +117,7 @@ export class TurnRunner {
       setDrainingQueuedCommandsBeforeContinuation: (value) => {
         this.drainingQueuedCommandsBeforeContinuation = value;
       },
+      getCurrentState: () => this.state,
       setCurrentState: (state) => {
         this.state = state;
       },
@@ -418,6 +418,36 @@ export class TurnRunner {
     }
   }
 
+  /** Shallow clone so emitted events do not share the runner's mutable wrapper. */
+  private snapshotState(): TurnState {
+    if (!this.state) {
+      throw new Error("Cannot snapshot turn state before start() has run.");
+    }
+    return {
+      ...this.state,
+      agent: { ...this.state.agent },
+      todos: [...this.state.todos],
+    };
+  }
+
+  /**
+   * Sync the runner's `state.agent` with the live agent's messages and status
+   * before emitting a `step` event. Callers snapshot the updated state into
+   * the emitted event payload.
+   */
+  protected syncAgentState(messages: AgentMessage[], errorMessage: string | undefined): void {
+    if (!this.state) return;
+    const status = errorMessage ? "failed" : "running";
+    this.state = {
+      ...this.state,
+      agent: {
+        ...this.state.agent,
+        status,
+        messages,
+      },
+    };
+  }
+
   private consumeInterruptedTerminal(): TurnTerminalEvent | undefined {
     const terminal = this.interruptedTerminal;
     this.interruptedTerminal = undefined;
@@ -584,9 +614,11 @@ export class TurnRunner {
   } {
     const cwd = this.config.cwd ?? process.cwd();
     const todoStorage = {
-      getTodos: () => this.todos,
+      getTodos: (): TurnTodo[] => this.state?.todos ?? [],
       setTodos: (todos: TurnTodo[]) => {
-        this.todos = todos;
+        if (this.state) {
+          this.state = { ...this.state, todos };
+        }
       },
     };
     const skills = this.skillContext.getSkills();
@@ -638,8 +670,9 @@ export class TurnRunner {
         },
         createAgent: (workerInput, onControlResult) =>
           this.createAgent(workerInput, onControlResult),
-        emitAgentEvent: (event) => this.emitAgentEvent(event),
+        emitAgentEvent: (event, agent) => this.emitAgentEvent(event, agent),
         consumeInterruptedTerminal: () => this.consumeInterruptedTerminal(),
+        getCurrentState: () => this.state,
       },
       input,
       activeSlot,
@@ -679,7 +712,7 @@ export class TurnRunner {
           onControlResult?.(context.result.details);
         }
         if (isTodoWriteToolDetails(context.result.details)) {
-          this.emit({ type: "todos", todos: context.result.details.todos });
+          this.emit({ type: "todos", state: this.snapshotState() });
         }
         return undefined;
       },
@@ -783,10 +816,13 @@ export class TurnRunner {
     return getModel(provider, model);
   }
 
-  protected emitAgentEvent(event: AgentEvent): void {
+  protected emitAgentEvent(event: AgentEvent, agent: Agent): void {
+    // Sync the live agent's messages/status into runner state so the snapshot
+    // attached to each `step` event reflects the agent's current transcript.
+    this.syncAgentState(agent.state.messages, agent.state.errorMessage);
     emitAgentWorkerEvent(
       event,
-      (turnEvent) => this.emit(turnEvent),
+      (step) => this.emit({ type: "step", step, state: this.snapshotState() }),
       (prompt) => this.removeFollowUpPrompt(prompt),
     );
   }

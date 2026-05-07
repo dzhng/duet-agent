@@ -177,6 +177,8 @@ export interface TurnState {
   agent: AgentSession;
   /** Present when this session is executing in state-machine mode. */
   stateMachine?: StateMachineSession;
+  /** Current todo list for this session. Mutated by the TodoWrite tool. */
+  todos: TurnTodo[];
 }
 
 /**
@@ -369,14 +371,24 @@ export interface TurnStartedEvent {
   state: TurnState;
 }
 
-export interface TurnStepEvent {
+/**
+ * Events that mutate `TurnState` carry the latest snapshot so the session layer
+ * can persist mid-turn and resume from any event. Today this covers `step`,
+ * `todos`, and `state_machine`; `follow_up_queue`, `memory`, and `system` are
+ * UI/diagnostic signals and stay stateless.
+ */
+export interface TurnStateEvent {
+  /** Latest turn state at the moment this event was emitted. */
+  state: TurnState;
+}
+
+export interface TurnStepEvent extends TurnStateEvent {
   type: "step";
   step: TurnStep;
 }
 
-export interface TurnTodosEvent {
+export interface TurnTodosEvent extends TurnStateEvent {
   type: "todos";
-  todos: TurnTodo[];
 }
 
 export interface TurnFollowUpQueueEvent {
@@ -385,7 +397,7 @@ export interface TurnFollowUpQueueEvent {
   prompts: string[];
 }
 
-export interface TurnStateMachineEvent {
+export interface TurnStateMachineEvent extends TurnStateEvent {
   type: "state_machine";
   /** Display name/title of the current state. */
   currentState: string;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentEvent } from "@mariozechner/pi-agent-core";
+import type { Agent, AgentEvent } from "@mariozechner/pi-agent-core";
 import {
   TurnRunner,
   type AgentWorkerInput,
@@ -36,32 +36,44 @@ class StateMachineAgentEventTurnRunner extends TurnRunner {
       };
     }
 
-    this.emitAgentEvent({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "text_delta",
-        contentIndex: 0,
-        delta: "Child agent",
-        partial: { role: "assistant" } as never,
+    const fakeAgent = {
+      state: { messages: input.state.agent.messages, errorMessage: undefined },
+    } as unknown as Agent;
+    this.emitAgentEvent(
+      {
+        type: "message_update",
+        message: { role: "assistant" } as never,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "Child agent",
+          partial: { role: "assistant" } as never,
+        },
+      } satisfies AgentEvent,
+      fakeAgent,
+    );
+    this.emitAgentEvent(
+      {
+        type: "message_update",
+        message: { role: "assistant" } as never,
+        assistantMessageEvent: {
+          type: "text_end",
+          contentIndex: 0,
+          content: "Child agent researched the prospect.",
+          partial: { role: "assistant" } as never,
+        },
+      } satisfies AgentEvent,
+      fakeAgent,
+    );
+    this.emitAgentEvent(
+      {
+        type: "tool_execution_start",
+        toolCallId: "tool-1",
+        toolName: "read",
+        args: { path: "profile.md" },
       },
-    } satisfies AgentEvent);
-    this.emitAgentEvent({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "text_end",
-        contentIndex: 0,
-        content: "Child agent researched the prospect.",
-        partial: { role: "assistant" } as never,
-      },
-    } satisfies AgentEvent);
-    this.emitAgentEvent({
-      type: "tool_execution_start",
-      toolCallId: "tool-1",
-      toolName: "read",
-      args: { path: "profile.md" },
-    });
+      fakeAgent,
+    );
 
     return {
       control: { type: "none" },
@@ -95,23 +107,18 @@ describe("State-machine agent state events", () => {
       behavior: "follow_up",
     });
 
-    expect(events).toContainEqual({
-      type: "step",
-      step: { type: "text_delta", delta: "Child agent" },
+    const stepEvents = events.flatMap((event) => (event.type === "step" ? [event.step] : []));
+    expect(stepEvents).toContainEqual({ type: "text_delta", delta: "Child agent" });
+    expect(stepEvents).toContainEqual({
+      type: "text",
+      text: "Child agent researched the prospect.",
     });
-    expect(events).toContainEqual({
-      type: "step",
-      step: { type: "text", text: "Child agent researched the prospect." },
-    });
-    expect(events).toContainEqual({
-      type: "step",
-      step: {
-        type: "tool_call",
-        toolName: "read",
-        toolCallId: "tool-1",
-        status: "running",
-        input: { path: "profile.md" },
-      },
+    expect(stepEvents).toContainEqual({
+      type: "tool_call",
+      toolName: "read",
+      toolCallId: "tool-1",
+      status: "running",
+      input: { path: "profile.md" },
     });
   });
 });

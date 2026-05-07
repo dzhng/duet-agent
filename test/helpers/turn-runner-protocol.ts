@@ -115,6 +115,7 @@ export function createStateMachineState(currentState: string): TurnState {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     },
+    todos: [],
   };
 }
 

@@ -204,5 +204,6 @@ function createSerializableTurnState(): TurnState {
         createAssistantMessage({ text: "The deployment config is serializable.", timestamp: 2 }),
       ],
     },
+    todos: [],
   };
 }

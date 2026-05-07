@@ -24,7 +24,7 @@ describe("todo tool", () => {
       const todoEvents: TurnTodo[][] = [];
       runner.subscribe((event) => {
         if (event.type === "todos") {
-          todoEvents.push(event.todos);
+          todoEvents.push(event.state.todos);
         }
       });
 

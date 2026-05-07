@@ -6,7 +6,7 @@ import {
 } from "@mariozechner/pi-agent-core";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import { assistantText } from "../core/serializer.js";
-import type { TurnEvent, TurnOptions, TurnState, TurnTerminalEvent } from "../types/protocol.js";
+import type { TurnOptions, TurnState, TurnStep, TurnTerminalEvent } from "../types/protocol.js";
 import type { TodoWriteToolDetails, TurnRunnerControlResult } from "./tools.js";
 import { usageFromMessages } from "./usage-accounting.js";
 
@@ -33,8 +33,10 @@ export interface AgentWorkerRuntime {
     input: AgentWorkerInput,
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent;
-  emitAgentEvent(event: AgentEvent): void;
+  emitAgentEvent(event: AgentEvent, agent: Agent): void;
   consumeInterruptedTerminal(): TurnTerminalEvent | undefined;
+  /** Returns the runner's latest TurnState snapshot, used to compose worker terminals. */
+  getCurrentState(): TurnState | undefined;
 }
 
 export async function runAgentWorker(
@@ -57,7 +59,7 @@ export async function runAgentWorker(
   });
   runtime.setActiveAgent(activeSlot, agent);
 
-  const unsubscribe = agent.subscribe((event) => runtime.emitAgentEvent(event));
+  const unsubscribe = agent.subscribe((event) => runtime.emitAgentEvent(event, agent));
   let interruptedDuringPrompt: TurnTerminalEvent | undefined;
   try {
     await agent.prompt(input.prompt);
@@ -79,8 +81,12 @@ export async function runAgentWorker(
   const messages = agent.state.messages;
   const usage = usageFromMessages(messages.slice(input.state.agent.messages.length));
   const status = agent.state.errorMessage ? "failed" : "completed";
+  // Pull the runner-owned state to capture mid-turn mutations (todos, etc.)
+  // that happened during this worker run; fall back to `input.state` for
+  // standalone callers that have no runner-owned snapshot.
+  const liveState = runtime.getCurrentState() ?? input.state;
   const state = {
-    ...input.state,
+    ...liveState,
     status,
     agent: {
       status,
@@ -103,7 +109,7 @@ export async function runAgentWorker(
 
 export function emitAgentEvent(
   event: AgentEvent,
-  emit: (event: TurnEvent) => void,
+  emitStep: (step: TurnStep) => void,
   removeFollowUpPrompt: (prompt: string) => void,
 ): void {
   if (event.type === "message_start" && event.message.role === "user") {
@@ -112,40 +118,34 @@ export function emitAgentEvent(
   if (event.type === "message_update") {
     const update = event.assistantMessageEvent;
     if (update.type === "text_delta") {
-      emit({ type: "step", step: { type: "text_delta", delta: update.delta } });
+      emitStep({ type: "text_delta", delta: update.delta });
     }
     if (update.type === "thinking_delta") {
-      emit({ type: "step", step: { type: "reasoning_delta", delta: update.delta } });
+      emitStep({ type: "reasoning_delta", delta: update.delta });
     }
     if (update.type === "text_end") {
-      emit({ type: "step", step: { type: "text", text: update.content } });
+      emitStep({ type: "text", text: update.content });
     }
     if (update.type === "thinking_end") {
-      emit({ type: "step", step: { type: "reasoning", text: update.content } });
+      emitStep({ type: "reasoning", text: update.content });
     }
   }
   if (event.type === "tool_execution_start") {
-    emit({
-      type: "step",
-      step: {
-        type: "tool_call",
-        toolName: event.toolName,
-        toolCallId: event.toolCallId,
-        status: "running",
-        input: event.args,
-      },
+    emitStep({
+      type: "tool_call",
+      toolName: event.toolName,
+      toolCallId: event.toolCallId,
+      status: "running",
+      input: event.args,
     });
   }
   if (event.type === "tool_execution_end") {
-    emit({
-      type: "step",
-      step: {
-        type: "tool_call",
-        toolName: event.toolName,
-        toolCallId: event.toolCallId,
-        status: event.isError ? "error" : "completed",
-        output: event.result?.content,
-      },
+    emitStep({
+      type: "tool_call",
+      toolName: event.toolName,
+      toolCallId: event.toolCallId,
+      status: event.isError ? "error" : "completed",
+      output: event.result?.content,
     });
   }
 }

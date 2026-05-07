@@ -277,7 +277,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (event.type === "step") {
       renderStep(event.step);
     } else if (event.type === "todos") {
-      renderTodos(event.todos);
+      renderTodos(event.state.todos);
     } else if (event.type === "follow_up_queue") {
       renderFollowUpQueue(event.prompts);
     } else if (event.type === "memory") {

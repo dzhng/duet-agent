@@ -1,16 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { emitAgentEvent } from "../src/turn-runner/agent-worker.js";
 import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
-import type { TurnEvent } from "../src/types/protocol.js";
+import type { TurnEvent, TurnStep } from "../src/types/protocol.js";
 import { waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 import { createTurnRunner, startTurn } from "./helpers/turn-runner-protocol.js";
 
-class EventTurnRunner extends TurnRunner {
-  emitAgentEventForTest(event: AgentEvent): void {
-    this.emitAgentEvent(event);
+function captureSteps(events: AgentEvent[]): TurnStep[] {
+  const steps: TurnStep[] = [];
+  for (const event of events) {
+    emitAgentEvent(
+      event,
+      (step) => steps.push(step),
+      () => {},
+    );
   }
+  return steps;
 }
 
 class ToolEventTurnRunner extends TurnRunner {
@@ -52,16 +59,6 @@ class ToolEventTurnRunner extends TurnRunner {
   }
 }
 
-function createEventTurnRunner(): { runner: EventTurnRunner; events: TurnEvent[] } {
-  const runner = new EventTurnRunner({
-    model: "anthropic:claude-opus-4-7",
-    skillDiscovery: { includeDefaults: false },
-  });
-  const events: TurnEvent[] = [];
-  runner.subscribe((event) => events.push(event));
-  return { runner, events };
-}
-
 function createToolEventTurnRunner(): { runner: ToolEventTurnRunner; events: TurnEvent[] } {
   const runner = new ToolEventTurnRunner({
     model: "anthropic:claude-opus-4-7",
@@ -85,134 +82,128 @@ describe("TurnRunner event emission", () => {
   });
 
   test("translates complete assistant text and reasoning blocks into step events", () => {
-    const { runner, events } = createEventTurnRunner();
-
-    runner.emitAgentEventForTest({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "text_end",
-        contentIndex: 0,
-        content: "Final answer",
-        partial: { role: "assistant" } as never,
+    const steps = captureSteps([
+      {
+        type: "message_update",
+        message: { role: "assistant" } as never,
+        assistantMessageEvent: {
+          type: "text_end",
+          contentIndex: 0,
+          content: "Final answer",
+          partial: { role: "assistant" } as never,
+        },
       },
-    });
-    runner.emitAgentEventForTest({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "thinking_end",
-        contentIndex: 0,
-        content: "Reasoning summary",
-        partial: { role: "assistant" } as never,
+      {
+        type: "message_update",
+        message: { role: "assistant" } as never,
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 0,
+          content: "Reasoning summary",
+          partial: { role: "assistant" } as never,
+        },
       },
-    });
+    ]);
 
-    expect(events).toEqual([
-      { type: "step", step: { type: "text", text: "Final answer" } },
-      { type: "step", step: { type: "reasoning", text: "Reasoning summary" } },
+    expect(steps).toEqual([
+      { type: "text", text: "Final answer" },
+      { type: "reasoning", text: "Reasoning summary" },
     ]);
   });
 
   test("translates streaming assistant text and reasoning deltas into step events", () => {
-    const { runner, events } = createEventTurnRunner();
+    const steps = captureSteps([
+      {
+        type: "message_update",
+        message: { role: "assistant" } as never,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "Partial ",
+          partial: { role: "assistant" } as never,
+        },
+      },
+      {
+        type: "message_update",
+        message: { role: "assistant" } as never,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "answer",
+          partial: { role: "assistant" } as never,
+        },
+      },
+      {
+        type: "message_update",
+        message: { role: "assistant" } as never,
+        assistantMessageEvent: {
+          type: "text_end",
+          contentIndex: 0,
+          content: "Partial answer",
+          partial: { role: "assistant" } as never,
+        },
+      },
+      {
+        type: "message_update",
+        message: { role: "assistant" } as never,
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 1,
+          delta: "Reason",
+          partial: { role: "assistant" } as never,
+        },
+      },
+      {
+        type: "message_update",
+        message: { role: "assistant" } as never,
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 1,
+          content: "Reasoning summary",
+          partial: { role: "assistant" } as never,
+        },
+      },
+    ]);
 
-    runner.emitAgentEventForTest({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "text_delta",
-        contentIndex: 0,
-        delta: "Partial ",
-        partial: { role: "assistant" } as never,
-      },
-    });
-    runner.emitAgentEventForTest({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "text_delta",
-        contentIndex: 0,
-        delta: "answer",
-        partial: { role: "assistant" } as never,
-      },
-    });
-    runner.emitAgentEventForTest({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "text_end",
-        contentIndex: 0,
-        content: "Partial answer",
-        partial: { role: "assistant" } as never,
-      },
-    });
-    runner.emitAgentEventForTest({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "thinking_delta",
-        contentIndex: 1,
-        delta: "Reason",
-        partial: { role: "assistant" } as never,
-      },
-    });
-    runner.emitAgentEventForTest({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "thinking_end",
-        contentIndex: 1,
-        content: "Reasoning summary",
-        partial: { role: "assistant" } as never,
-      },
-    });
-
-    expect(events).toEqual([
-      { type: "step", step: { type: "text_delta", delta: "Partial " } },
-      { type: "step", step: { type: "text_delta", delta: "answer" } },
-      { type: "step", step: { type: "text", text: "Partial answer" } },
-      { type: "step", step: { type: "reasoning_delta", delta: "Reason" } },
-      { type: "step", step: { type: "reasoning", text: "Reasoning summary" } },
+    expect(steps).toEqual([
+      { type: "text_delta", delta: "Partial " },
+      { type: "text_delta", delta: "answer" },
+      { type: "text", text: "Partial answer" },
+      { type: "reasoning_delta", delta: "Reason" },
+      { type: "reasoning", text: "Reasoning summary" },
     ]);
   });
 
   test("translates tool execution lifecycle into tool_call step events", () => {
-    const { runner, events } = createEventTurnRunner();
-
-    runner.emitAgentEventForTest({
-      type: "tool_execution_start",
-      toolCallId: "tool-1",
-      toolName: "read",
-      args: { path: "README.md" },
-    });
-    runner.emitAgentEventForTest({
-      type: "tool_execution_end",
-      toolCallId: "tool-1",
-      toolName: "read",
-      result: undefined,
-      isError: false,
-    });
-
-    expect(events).toEqual([
+    const steps = captureSteps([
       {
-        type: "step",
-        step: {
-          type: "tool_call",
-          toolName: "read",
-          toolCallId: "tool-1",
-          status: "running",
-          input: { path: "README.md" },
-        },
+        type: "tool_execution_start",
+        toolCallId: "tool-1",
+        toolName: "read",
+        args: { path: "README.md" },
       },
       {
-        type: "step",
-        step: {
-          type: "tool_call",
-          toolName: "read",
-          toolCallId: "tool-1",
-          status: "completed",
-        },
+        type: "tool_execution_end",
+        toolCallId: "tool-1",
+        toolName: "read",
+        result: undefined,
+        isError: false,
+      },
+    ]);
+
+    expect(steps).toEqual([
+      {
+        type: "tool_call",
+        toolName: "read",
+        toolCallId: "tool-1",
+        status: "running",
+        input: { path: "README.md" },
+      },
+      {
+        type: "tool_call",
+        toolName: "read",
+        toolCallId: "tool-1",
+        status: "completed",
       },
     ]);
   });
@@ -230,9 +221,11 @@ describe("TurnRunner event emission", () => {
     runner.completeNext("Done");
     await turn;
 
-    expect(events).toContainEqual({
-      type: "todos",
-      todos: [{ id: "test", content: "Run tests", status: "in_progress" }],
-    });
+    const todosEvent = events.find(
+      (event): event is Extract<TurnEvent, { type: "todos" }> => event.type === "todos",
+    );
+    expect(todosEvent?.state.todos).toEqual([
+      { id: "test", content: "Run tests", status: "in_progress" },
+    ]);
   });
 });
