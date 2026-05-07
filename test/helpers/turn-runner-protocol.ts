@@ -4,6 +4,10 @@ import {
   type AgentWorkerResult,
 } from "../../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../../src/turn-runner/tools.js";
+import type {
+  StateAgentHandle,
+  StateAgentResult,
+} from "../../src/turn-runner/state-machine-controller.js";
 import type { TurnRunnerConfig } from "../../src/types/config.js";
 import type {
   TurnEvent,
@@ -11,7 +15,10 @@ import type {
   TurnState,
   TurnTerminalEvent,
 } from "../../src/types/protocol.js";
-import type { StateMachineDefinition } from "../../src/types/state-machine.js";
+import type {
+  StateMachineAgentState,
+  StateMachineDefinition,
+} from "../../src/types/state-machine.js";
 import { createAssistantMessage } from "./messages.js";
 
 export class TestTurnRunner extends TurnRunner {
@@ -30,7 +37,7 @@ export class TestTurnRunner extends TurnRunner {
     return this.runDefaultWorker(input);
   }
 
-  private async runDefaultWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+  protected async runDefaultWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     this.workerInputs.push(input);
     const control = this.controlResults.shift() ?? { type: "none" };
     const resultText = input.prompt.includes("capital of France")
@@ -54,6 +61,48 @@ export class TestTurnRunner extends TurnRunner {
         result: resultText,
         state,
       },
+    };
+  }
+
+  protected override createStateAgentHandle(input: {
+    state: StateMachineAgentState;
+    prompt: string;
+  }): StateAgentHandle {
+    const state: TurnState = {
+      status: "running",
+      mode: "agent",
+      options: this.getState()?.options,
+      agent: { status: "running", messages: [] },
+    };
+    const workerInput: AgentWorkerInput = {
+      state,
+      prompt: input.prompt,
+      appendSystemPrompt: input.state.systemPrompt,
+      skills: this.skillContext.resolveStateAgentSkills(input.state),
+      ...this.createTools("agent"),
+    };
+    let terminal: StateAgentResult | undefined;
+    return {
+      prompt: async () => {
+        const result = this.worker
+          ? await this.worker(workerInput, () => this.runDefaultWorker(workerInput))
+          : await this.runDefaultWorker(workerInput);
+        this.recordUsage(result.terminal.usage);
+        if (result.control.type === "ask_user_question") {
+          terminal = { type: "ask", questions: result.control.questions };
+        } else if (result.terminal.type !== "complete") {
+          terminal = { type: result.terminal.type } as StateAgentResult;
+        } else if (result.terminal.status === "failed") {
+          terminal = { type: "failed", error: result.terminal.error ?? "State agent failed." };
+        } else {
+          terminal = { type: "complete", result: result.terminal.result };
+        }
+        return terminal;
+      },
+      interrupt: () => {
+        terminal = { type: "interrupted" };
+      },
+      partialAssistantText: () => (terminal?.type === "complete" ? terminal.result : undefined),
     };
   }
 }

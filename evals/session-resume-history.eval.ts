@@ -30,7 +30,6 @@ describe("session resume history", () => {
         const firstSession = firstManager.create({ sessionId, mode: "agent" });
         await firstSession.prompt({
           message: `Remember this exact session token for the next turn: ${resumeToken}. Reply with exactly: stored.`,
-          options: { thinkingLevel: "low" },
         });
         const firstTerminal = await firstSession.waitForTerminal();
         expect(firstTerminal.type).toBe("complete");
@@ -47,7 +46,6 @@ describe("session resume history", () => {
         await resumedSession.start();
         await resumedSession.prompt({
           message: "What exact session token did I ask you to remember? Reply with only the token.",
-          options: { thinkingLevel: "low" },
         });
         const terminal = await resumedSession.waitForTerminal();
 

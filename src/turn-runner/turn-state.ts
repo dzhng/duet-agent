@@ -19,20 +19,6 @@ export function createInitialTurnState(mode: TurnMode, options?: TurnOptions): T
   };
 }
 
-export function appendChildUserMessage(turnState: TurnState, text: string): TurnState {
-  const childAgent = turnState.childAgent ?? { status: "running" as const, messages: [] };
-  return {
-    ...turnState,
-    childAgent: {
-      ...childAgent,
-      messages: [
-        ...childAgent.messages,
-        { role: "user", content: [{ type: "text", text }], timestamp: Date.now() },
-      ],
-    },
-  };
-}
-
 export function withStateMachine(
   turnState: TurnState,
   update: (stateMachine: NonNullable<TurnState["stateMachine"]>) => TurnState["stateMachine"],

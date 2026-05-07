@@ -1,3 +1,7 @@
+import type { TurnQuestion } from "./protocol.js";
+
+export const INTERRUPTED_STATE_MACHINE_STATE = "interrupted";
+
 /**
  * Durable state-machine definitions and runtime state.
  *
@@ -171,7 +175,13 @@ export interface StateMachineSession {
   definition: StateMachineDefinition;
   /** Original user request that started the state machine. */
   prompt: string;
-  /** Current business state, selected by the runner agent. */
+  /**
+   * Current business state, selected by the runner agent.
+   *
+   * The reserved value "interrupted" means runtime work was aborted before the
+   * state could finish. It is not a user-authored state name; the previous
+   * running state and its input remain available in history.
+   */
   currentState?: string;
   /**
    * Input supplied by the parent runner when it selected the current state.
@@ -306,4 +316,17 @@ export type StateMachineSessionEvent =
     }
   | { type: "state_completed"; timestamp: number; state: string; output?: unknown }
   | { type: "state_failed"; timestamp: number; state: string; error: string }
+  | {
+      type: "state_interrupted";
+      timestamp: number;
+      state: string;
+      reason?: string;
+      output?: { assistantText?: string } | { stdout: string; stderr: string };
+    }
+  | {
+      type: "state_asked_user";
+      timestamp: number;
+      state: string;
+      questions: TurnQuestion[];
+    }
   | { type: "state_machine_completed"; timestamp: number; terminal: StateMachineTerminalResult };

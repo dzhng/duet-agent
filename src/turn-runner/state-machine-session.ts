@@ -4,6 +4,8 @@ import type {
   StateMachineSession,
   StateMachineState,
 } from "../types/state-machine.js";
+import { INTERRUPTED_STATE_MACHINE_STATE as INTERRUPTED_STATE } from "../types/state-machine.js";
+import type { TurnQuestion } from "../types/protocol.js";
 import type { StateMachineRunnerDecision } from "./tools.js";
 
 export function createStateMachineSession(
@@ -109,11 +111,14 @@ export function recordStateFailed(
   state: string,
   error: string,
 ): StateMachineSession {
+  const terminal = { state, status: "failed" as const, reason: error };
   return {
     ...stateMachine,
+    terminal,
     history: [
       ...stateMachine.history,
       { type: "state_failed", timestamp: Date.now(), state, error },
+      { type: "state_machine_completed" as const, timestamp: Date.now(), terminal },
     ],
     updatedAt: Date.now(),
   };
@@ -121,15 +126,38 @@ export function recordStateFailed(
 
 export function recordStateInterrupted(
   stateMachine: StateMachineSession,
+  state: string,
   reason?: string,
+  output?: { assistantText?: string } | { stdout: string; stderr: string },
 ): StateMachineSession {
-  const terminal = { state: "interrupted", status: "cancelled" as const, reason };
   return {
     ...stateMachine,
-    terminal,
+    currentState: INTERRUPTED_STATE,
+    currentInput: undefined,
     history: [
       ...stateMachine.history,
-      { type: "state_machine_completed" as const, timestamp: Date.now(), terminal },
+      {
+        type: "state_interrupted" as const,
+        timestamp: Date.now(),
+        state,
+        reason,
+        output,
+      },
+    ],
+    updatedAt: Date.now(),
+  };
+}
+
+export function recordStateAskedUser(
+  stateMachine: StateMachineSession,
+  state: string,
+  questions: TurnQuestion[],
+): StateMachineSession {
+  return {
+    ...stateMachine,
+    history: [
+      ...stateMachine.history,
+      { type: "state_asked_user" as const, timestamp: Date.now(), state, questions },
     ],
     updatedAt: Date.now(),
   };

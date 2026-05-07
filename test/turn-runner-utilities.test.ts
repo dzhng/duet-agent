@@ -3,6 +3,8 @@ import {
   parseJsonObject,
   parseStructuredOutput,
   renderTemplate,
+  runShellCommand,
+  ShellCommandError,
 } from "../src/turn-runner/shell-exec.js";
 import { addUsage, usageFromMessages } from "../src/turn-runner/usage-accounting.js";
 import { createAssistantMessage, createUsage } from "./helpers/messages.js";
@@ -32,6 +34,43 @@ describe("turn-runner shell execution utilities", () => {
     );
 
     expect(rendered).toBe("send Ada 3 ");
+  });
+
+  test("captures streamed stdout and stderr when aborted", async () => {
+    const abortController = new AbortController();
+    const command = "printf partial-out; printf partial-err >&2; sleep 2";
+    const result = runShellCommand(command, { cwd: process.cwd(), signal: abortController.signal });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    abortController.abort();
+
+    await expect(result).rejects.toMatchObject({
+      output: {
+        stdout: "partial-out",
+        stderr: "partial-err",
+      },
+    });
+  });
+
+  test("honors success codes and reports non-success output", async () => {
+    await expect(
+      runShellCommand("printf ok; exit 7", {
+        cwd: process.cwd(),
+        signal: new AbortController().signal,
+        successCodes: [7],
+      }),
+    ).resolves.toEqual({ stdout: "ok", stderr: "", exitCode: 7 });
+
+    try {
+      await runShellCommand("printf nope; exit 9", {
+        cwd: process.cwd(),
+        signal: new AbortController().signal,
+      });
+      throw new Error("Expected shell command to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ShellCommandError);
+      expect(error).toMatchObject({ output: { stdout: "nope", exitCode: 9 } });
+    }
   });
 });
 

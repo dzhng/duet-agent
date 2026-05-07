@@ -25,7 +25,7 @@ class InterruptTurnRunner extends TurnRunner {
     return new Agent({
       initialState: {
         model: { provider: "unknown", id: "test" } as never,
-        thinkingLevel: input.options?.thinkingLevel ?? "medium",
+        thinkingLevel: input.state.options?.thinkingLevel ?? "medium",
         systemPrompt: input.appendSystemPrompt ?? "",
         messages: input.state.agent.messages,
         tools: input.tools,

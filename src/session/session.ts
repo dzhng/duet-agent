@@ -30,14 +30,12 @@ export interface SessionStartInput {
 export interface SessionPromptInput {
   message: string;
   behavior?: TurnPromptBehavior;
-  options?: TurnOptions;
 }
 
 export interface SessionAnswerInput {
   questions: TurnQuestion[];
   answers: Record<string, string>;
   behavior?: TurnPromptBehavior;
-  options?: TurnOptions;
 }
 
 export interface SessionEditFollowUpQueueInput {
@@ -142,7 +140,6 @@ export class Session {
       type: "prompt",
       message: input.message,
       behavior: input.behavior ?? "follow_up",
-      ...(input.options ? { options: input.options } : {}),
     };
     this.dispatchTurn(command);
   }
@@ -158,7 +155,6 @@ export class Session {
       questions: input.questions,
       answers: input.answers,
       behavior: input.behavior ?? "follow_up",
-      ...(input.options ? { options: input.options } : {}),
     };
     this.dispatchTurn(command);
   }

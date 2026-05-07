@@ -181,13 +181,6 @@ export interface TurnState {
   options?: TurnOptions;
   /** The agent conversation is always present, including state-machine sessions. */
   agent: AgentSession;
-  /**
-   * Active state-machine child agent transcript. Parent-agent prompts, routing
-   * decisions, and user-visible conversation remain in `agent`; child agent
-   * states use this snapshot so resume can continue the child without
-   * overwriting the parent transcript.
-   */
-  childAgent?: AgentSession;
   /** Present when this session is executing in state-machine mode. */
   stateMachine?: StateMachineSession;
   /**
@@ -313,6 +306,11 @@ export interface TurnStartCommand {
    * their persisted agent and state-machine history.
    */
   state?: TurnState;
+  /**
+   * Session-scoped runtime options. These are fixed when the runner starts so
+   * the parent pi-agent keeps a stable model, thinking level, and prompt cache
+   * shape across every pi-agent turn inside later duet-agent turns.
+   */
   options?: TurnOptions;
 }
 
@@ -328,31 +326,33 @@ export interface TurnStartCommand {
 export interface TurnPromptCommand {
   type: "prompt";
   message: string;
-  /** Pi handles the underlying interruption/follow-up behavior. */
+  /**
+   * Delivery behavior for this user message. The runner decides whether the
+   * parent pi-agent or state-machine work is currently driving the public
+   * duet-agent turn; that driver determines whether this reaches pi immediately
+   * or waits for state-transition context.
+   */
   behavior: TurnPromptBehavior;
-  options?: TurnOptions;
 }
 
 /**
  * Provide answers to a structured question emitted by the runner.
  *
  * Answers serialize into parent-agent prompt text and follow the same active
- * turn behavior as prompts, except answers to current child-agent questions may
- * be routed directly to that child agent.
+ * turn behavior as prompts. State-agent answers also route through the parent,
+ * which can inspect state-machine history and select the appropriate state.
  */
 export interface TurnAnswerCommand {
   type: "answer";
   questions: TurnQuestion[];
   answers: Record<string, string>;
-  /** Pi handles the underlying interruption/follow-up behavior. */
+  /** Same delivery behavior as prompts after the answers are serialized. */
   behavior: TurnPromptBehavior;
-  options?: TurnOptions;
 }
 
 /** Wake the runner's sleeping state. If the state is not sleeping on a poll state, this is a no-op. */
 export interface TurnWakeCommand {
   type: "wake";
-  options?: TurnOptions;
 }
 
 /**

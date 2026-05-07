@@ -17,7 +17,7 @@ class CapturingTurnRunner extends TurnRunner {
   async captureLlmContext(input: Omit<AgentWorkerInput, "tools">): Promise<string> {
     const agent = this.createAgent({
       ...input,
-      ...this.createTools(input.state.mode, input.state),
+      ...this.createTools(input.state.mode),
     });
     const contexts: Context[] = [];
     agent.streamFn = (_model, context) => {
@@ -43,7 +43,7 @@ class CapturingTurnRunner extends TurnRunner {
   captureToolExecution(input: Omit<AgentWorkerInput, "tools">): string {
     const agent = this.createAgent({
       ...input,
-      ...this.createTools(input.state.mode, input.state),
+      ...this.createTools(input.state.mode),
     });
     return agent.toolExecution;
   }
@@ -55,7 +55,7 @@ class CapturingTurnRunner extends TurnRunner {
   } {
     const agent = this.createAgent({
       ...input,
-      ...this.createTools(input.state.mode, input.state),
+      ...this.createTools(input.state.mode),
     });
     return {
       modelProvider: agent.state.model.provider,

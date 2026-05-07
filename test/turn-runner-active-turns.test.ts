@@ -11,6 +11,7 @@ import { createStateMachineState, startTurn } from "./helpers/turn-runner-protoc
 class StreamingTurnRunner extends TurnRunner {
   readonly contexts: Context[] = [];
   readonly pendingStreams: ReturnType<typeof createAssistantMessageEventStream>[] = [];
+  parentAgentsCreated = 0;
 
   constructor() {
     super({
@@ -23,6 +24,7 @@ class StreamingTurnRunner extends TurnRunner {
     input: AgentWorkerInput,
     onControlResult?: Parameters<TurnRunner["createAgent"]>[1],
   ): Agent {
+    if (input.prompt === "") this.parentAgentsCreated += 1;
     const agent = super.createAgent(input, onControlResult);
     agent.streamFn = (_model, context) => {
       this.contexts.push(JSON.parse(JSON.stringify(context)) as Context);
@@ -102,6 +104,25 @@ describe("TurnRunner active turns", () => {
       "second",
       "second response",
     ]);
+  });
+
+  test("uses one parent agent across multiple pi-agent turns in a session", async () => {
+    const { runner } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "first" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("first response");
+    await first;
+
+    const second = runner.turn({
+      type: "prompt",
+      message: "second",
+      behavior: "follow_up",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("second response");
+    await second;
+
+    expect(runner.parentAgentsCreated).toBe(1);
   });
 
   test("editing active follow-up queue replaces queued prompts", async () => {
@@ -374,7 +395,7 @@ describe("TurnRunner active turns", () => {
     expect(terminalEvents(events)).toHaveLength(1);
   });
 
-  test("prompts sent during poll checks run immediately and return to sleep when unresolved", async () => {
+  test("follow-up prompts sent during active poll checks queue until the poll resolves", async () => {
     const { runner, events } = createStreamingRunner();
     const { turn } = await startTurn(runner, {
       mode: unresolvedPollDefinition(),
@@ -395,13 +416,11 @@ describe("TurnRunner active turns", () => {
       behavior: "follow_up",
     });
 
-    await waitFor(() => runner.contexts.length >= 2, 100);
-    expect(lastUserText(runner.contexts[1]!)).toContain("question during poll");
-    runner.completeNext("poll still waiting");
-
     const [turnTerminal, promptTerminal] = await Promise.all([turn, prompt]);
     expect(turnTerminal).toBe(promptTerminal);
     expect(turnTerminal.type).toBe("sleep");
+    expect(runner.contexts).toHaveLength(1);
+    expect(turnTerminal.state.queuedCommands).toHaveLength(1);
     expect(terminalEvents(events)).toHaveLength(1);
   });
 
@@ -459,7 +478,7 @@ describe("TurnRunner active turns", () => {
     expect(terminalEvents(events)).toHaveLength(1);
   });
 
-  test("additional prompts during a mid-poll answer join the active parent agent", async () => {
+  test("multiple follow-up prompts during active poll checks remain queued in order", async () => {
     const { runner, events } = createStreamingRunner();
     const { turn } = await startTurn(runner, {
       mode: unresolvedPollDefinition(),
@@ -479,18 +498,12 @@ describe("TurnRunner active turns", () => {
       message: "first question during poll",
       behavior: "follow_up",
     });
-    await waitFor(() => runner.contexts.length >= 2);
 
     const secondPrompt = runner.turn({
       type: "prompt",
       message: "second question during poll",
       behavior: "follow_up",
     });
-
-    runner.completeNext("first poll answer");
-    await waitFor(() => runner.contexts.length >= 3);
-    expect(lastUserText(runner.contexts[2]!)).toContain("second question during poll");
-    runner.completeNext("second poll answer");
 
     const [turnTerminal, firstTerminal, secondTerminal] = await Promise.all([
       turn,
@@ -500,6 +513,14 @@ describe("TurnRunner active turns", () => {
     expect(turnTerminal).toBe(firstTerminal);
     expect(firstTerminal).toBe(secondTerminal);
     expect(turnTerminal.type).toBe("sleep");
+    expect(turnTerminal.state.queuedCommands?.map((command) => command.type)).toEqual([
+      "prompt",
+      "prompt",
+    ]);
+    expect(turnTerminal.state.followUpQueue).toEqual([
+      "first question during poll",
+      "second question during poll",
+    ]);
     expect(terminalEvents(events)).toHaveLength(1);
   });
 
@@ -646,35 +667,35 @@ describe("TurnRunner active turns", () => {
     expect(followUpQueueEvents(events).at(-1)).toEqual([]);
   });
 
-  test("answers can follow up the active child agent directly", async () => {
+  test("answers during active state-agent work queue through the parent", async () => {
     const { runner, events } = createStreamingRunner();
     const { turn } = await startTurn(runner, {
-      mode: childAgentDefinition(),
-      prompt: "run child flow",
+      mode: stateAgentDefinition(),
+      prompt: "run state-agent flow",
     });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "child_agent" },
+      decision: { kind: "run_state", state: "state_agent" },
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "child_agent",
+        (event) => event.type === "state_machine" && event.currentState === "state_agent",
       ),
     );
     await waitFor(() => runner.pendingStreams.length === 1);
 
     const answer = runner.turn({
       type: "answer",
-      questions: [{ question: "Child question", options: [{ label: "A" }] }],
+      questions: [{ question: "State-agent question", options: [{ label: "A" }] }],
       answers: { choice: "A" },
       behavior: "follow_up",
     });
 
-    runner.completeNext("child first response");
+    runner.completeNext("state-agent first response");
     await waitFor(() => runner.contexts.length >= 3);
     expect(lastUserText(runner.contexts[2]!)).toContain("Here are my answers");
-    runner.completeNext("child answer response");
+    runner.completeNext("state-agent answer response");
     await waitFor(() => runner.contexts.length >= 4);
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
@@ -685,31 +706,31 @@ describe("TurnRunner active turns", () => {
     expect(terminalEvents(events)).toHaveLength(1);
   });
 
-  test("snapshots active child agent state before child completion", async () => {
+  test("does not persist active state-agent transcripts before completion", async () => {
     const { runner, events } = createStreamingRunner();
     const { turn } = await startTurn(runner, {
-      mode: childAgentDefinition(),
-      prompt: "run child flow",
+      mode: stateAgentDefinition(),
+      prompt: "run state-agent flow",
     });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "child_agent" },
+      decision: { kind: "run_state", state: "state_agent" },
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "child_agent",
+        (event) => event.type === "state_machine" && event.currentState === "state_agent",
       ),
     );
-    await waitFor(() => runner.getState()?.childAgent !== undefined);
+    await waitFor(() => runner.getState()?.stateMachine?.currentState === "state_agent");
 
     const snapshot = runner.getState();
-    expect(snapshot?.childAgent?.messages.length).toBeGreaterThan(0);
-    expect(messageTexts({ ...snapshot!, agent: snapshot!.childAgent! })).toContain(
-      "Ask the child question.",
+    expect(snapshot?.stateMachine?.currentState).toBe("state_agent");
+    expect(snapshot?.stateMachine?.history.some((event) => event.type === "state_started")).toBe(
+      true,
     );
 
-    runner.completeNext("child response");
+    runner.completeNext("state-agent response");
     await waitFor(() => runner.contexts.length >= 3);
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
@@ -717,69 +738,61 @@ describe("TurnRunner active turns", () => {
     await turn;
   });
 
-  test("resumes child agent transcripts across persisted child statuses", async () => {
-    const statuses = ["waiting", "completed", "failed", "cancelled"] as const;
+  test("reruns state-agent states from fresh transcripts after resume", async () => {
+    const { runner } = createStreamingRunner();
+    const state: TurnState = {
+      status: "running",
+      mode: stateAgentDefinition(),
+      agent: { status: "running", messages: [] },
+      stateMachine: {
+        definition: stateAgentDefinition(),
+        prompt: "Run state-agent flow.",
+        currentState: "interrupted",
+        history: [
+          { type: "state_started", timestamp: Date.now(), state: "state_agent" },
+          { type: "state_interrupted", timestamp: Date.now(), state: "state_agent" },
+        ],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+    };
+    await runner.start({ type: "start", state: JSON.parse(JSON.stringify(state)) as TurnState });
 
-    for (const status of statuses) {
-      const { runner } = createStreamingRunner();
-      const state: TurnState = {
-        status: "running",
-        mode: childAgentDefinition(),
-        agent: { status: "running", messages: [] },
-        stateMachine: {
-          definition: childAgentDefinition(),
-          prompt: "Run child flow.",
-          currentState: "child_agent",
-          history: [],
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        },
-        childAgent: {
-          status,
-          messages: [
-            {
-              role: "user",
-              content: [{ type: "text", text: `prior child ${status}` }],
-              timestamp: Date.now(),
-            },
-          ],
-        },
-      };
-      await runner.start({ type: "start", state: JSON.parse(JSON.stringify(state)) as TurnState });
+    const turn = runner.turn({
+      type: "prompt",
+      message: "resume parent",
+      behavior: "follow_up",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "run_state", state: "state_agent" },
+    });
+    await waitFor(() => runner.contexts.length >= 2);
 
-      const turn = runner.turn({
-        type: "prompt",
-        message: "resume parent",
-        behavior: "follow_up",
-      });
-      await waitFor(() => runner.pendingStreams.length === 1);
-      runner.completeNextToolCall("prompt_state_machine_agent", { prompt: "resume child" });
-      await waitFor(() => runner.contexts.length >= 2);
-
-      expect(contextText(runner.contexts[1]!)).toContain(`prior child ${status}`);
-      runner.completeNext("child resumed");
-      await waitFor(() => runner.contexts.length >= 3);
-      runner.completeNextToolCall("select_state_machine_state", {
-        decision: { kind: "terminal", state: "done" },
-      });
-      await turn;
-    }
+    expect(lastUserText(runner.contexts[1]!)).toContain("Ask the state-agent question.");
+    expect(contextText(runner.contexts[1]!)).not.toContain("resume parent");
+    runner.completeNext("state-agent rerun");
+    await waitFor(() => runner.contexts.length >= 3);
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "terminal", state: "done" },
+    });
+    await turn;
   });
 
-  test("prompts during active child agent work queue for the parent", async () => {
+  test("prompts during active state-agent work queue for the parent", async () => {
     const { runner, events } = createStreamingRunner();
     const { turn } = await startTurn(runner, {
-      mode: childAgentDefinition(),
-      prompt: "run child flow",
+      mode: stateAgentDefinition(),
+      prompt: "run state-agent flow",
     });
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "child_agent" },
+      decision: { kind: "run_state", state: "state_agent" },
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "child_agent",
+        (event) => event.type === "state_machine" && event.currentState === "state_agent",
       ),
     );
     await waitFor(() => runner.pendingStreams.length === 1);
@@ -790,14 +803,14 @@ describe("TurnRunner active turns", () => {
       behavior: "follow_up",
     });
 
-    runner.completeNext("child response");
+    runner.completeNext("state-agent response");
     await waitFor(() => runner.contexts.length >= 3);
     expect(lastUserText(runner.contexts[1]!)).not.toContain("parent should handle this");
     expect(lastUserText(runner.contexts[2]!)).toContain("parent should handle this");
     runner.completeNext("parent response");
 
     await waitFor(() => runner.contexts.length >= 4);
-    expect(lastUserText(runner.contexts[3]!)).toContain('The state "child_agent" finished');
+    expect(lastUserText(runner.contexts[3]!)).toContain('The state "state_agent" finished');
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
@@ -933,12 +946,12 @@ function immediateUnresolvedPollDefinition(): StateMachineDefinition {
   };
 }
 
-function childAgentDefinition(): StateMachineDefinition {
+function stateAgentDefinition(): StateMachineDefinition {
   return {
-    name: "child_flow",
-    prompt: "Use for child test.",
+    name: "state_agent_flow",
+    prompt: "Use for state-agent test.",
     states: [
-      { kind: "agent", name: "child_agent", prompt: "Ask the child question." },
+      { kind: "agent", name: "state_agent", prompt: "Ask the state-agent question." },
       { kind: "terminal", name: "done", status: "completed" },
     ],
   };

@@ -6,6 +6,7 @@ import {
   type AgentWorkerResult,
 } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
+import type { StateAgentHandle } from "../src/turn-runner/state-machine-controller.js";
 import { createOutreachStateMachine } from "./helpers/turn-runner-protocol.js";
 
 class StateMachineAgentEventTurnRunner extends TurnRunner {
@@ -36,39 +37,12 @@ class StateMachineAgentEventTurnRunner extends TurnRunner {
       };
     }
 
-    this.emitAgentEvent({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "text_delta",
-        contentIndex: 0,
-        delta: "Child agent",
-        partial: { role: "assistant" } as never,
-      },
-    } satisfies AgentEvent);
-    this.emitAgentEvent({
-      type: "message_update",
-      message: { role: "assistant" } as never,
-      assistantMessageEvent: {
-        type: "text_end",
-        contentIndex: 0,
-        content: "Child agent researched the prospect.",
-        partial: { role: "assistant" } as never,
-      },
-    } satisfies AgentEvent);
-    this.emitAgentEvent({
-      type: "tool_execution_start",
-      toolCallId: "tool-1",
-      toolName: "read",
-      args: { path: "profile.md" },
-    });
-
     return {
       control: { type: "none" },
       terminal: {
         type: "complete",
         status: "completed",
-        result: "Child state complete.",
+        result: "State-agent state complete.",
         state: {
           ...input.state,
           status: "completed",
@@ -80,10 +54,46 @@ class StateMachineAgentEventTurnRunner extends TurnRunner {
       },
     };
   }
+
+  protected override createStateAgentHandle(): StateAgentHandle {
+    return {
+      prompt: async () => {
+        this.emitAgentEvent({
+          type: "message_update",
+          message: { role: "assistant" } as never,
+          assistantMessageEvent: {
+            type: "text_delta",
+            contentIndex: 0,
+            delta: "State agent",
+            partial: { role: "assistant" } as never,
+          },
+        } satisfies AgentEvent);
+        this.emitAgentEvent({
+          type: "message_update",
+          message: { role: "assistant" } as never,
+          assistantMessageEvent: {
+            type: "text_end",
+            contentIndex: 0,
+            content: "State agent researched the prospect.",
+            partial: { role: "assistant" } as never,
+          },
+        } satisfies AgentEvent);
+        this.emitAgentEvent({
+          type: "tool_execution_start",
+          toolCallId: "tool-1",
+          toolName: "read",
+          args: { path: "profile.md" },
+        });
+        return { type: "complete", result: "State-agent state complete." };
+      },
+      interrupt: () => undefined,
+      partialAssistantText: () => undefined,
+    };
+  }
 }
 
 describe("State-machine agent state events", () => {
-  test("emits child agent step events through the parent runner subscription", async () => {
+  test("emits state-agent step events through the parent runner subscription", async () => {
     const runner = new StateMachineAgentEventTurnRunner();
     const events: TurnEvent[] = [];
     runner.subscribe((event) => events.push(event));
@@ -97,11 +107,11 @@ describe("State-machine agent state events", () => {
 
     expect(events).toContainEqual({
       type: "step",
-      step: { type: "text_delta", delta: "Child agent" },
+      step: { type: "text_delta", delta: "State agent" },
     });
     expect(events).toContainEqual({
       type: "step",
-      step: { type: "text", text: "Child agent researched the prospect." },
+      step: { type: "text", text: "State agent researched the prospect." },
     });
     expect(events).toContainEqual({
       type: "step",

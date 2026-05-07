@@ -70,7 +70,6 @@ export class SessionManager {
       void setup.then(() =>
         session.prompt({
           message: prompt,
-          ...(input.options ? { options: input.options } : {}),
         }),
       );
     }

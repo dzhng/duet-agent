@@ -28,52 +28,24 @@ import type {
   TurnOptions,
   TurnTodo,
 } from "../types/protocol.js";
-import type {
-  StateMachineAgentState,
-  StateMachineDefinition,
-  StateMachinePollState,
-  StateMachineScriptState,
-  StateMachineTerminalState,
-} from "../types/state-machine.js";
+import type { StateMachineAgentState } from "../types/state-machine.js";
 import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
 import { createStateMachineSystemPromptLayer } from "./prompts.js";
 import {
-  applyStateOverride,
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
   isTurnRunnerControlResult,
-  type StateMachineRunnerDecision,
   type TurnRunnerControlResult,
 } from "./tools.js";
 import { SkillContext } from "./skill-context.js";
+import { currentPollState, isWaitingOnPoll } from "./state-machine-session.js";
 import {
-  parseJsonObject,
-  parseStructuredOutput,
-  renderTemplate,
-  runShellCommand,
-  type ShellCommandOutput,
-} from "./shell-exec.js";
-import {
-  createStateMachineSession,
-  currentPollState,
-  elapsedSinceStateStarted,
-  findState,
-  isWaitingOnPoll,
-  recordRunnerDecision,
-  recordStateCompleted,
-  recordStateFailed,
-  recordStateInterrupted,
-  recordStateMachineCompleted,
-  recordStateStarted,
-} from "./state-machine-session.js";
-import {
-  appendChildUserMessage,
-  completeTurn,
-  copyOptionalArray,
-  createInitialTurnState,
-  sleepPollState,
-  withStateMachine,
-} from "./turn-state.js";
+  StateMachineController,
+  type StateAgentHandle,
+  type StateAgentResult,
+  type StateMachineExecutionResult,
+} from "./state-machine-controller.js";
+import { completeTurn, copyOptionalArray, createInitialTurnState } from "./turn-state.js";
 import { addUsage, usageFromMessages } from "./usage-accounting.js";
 
 export type TurnEventHandler = (event: TurnEvent) => void;
@@ -81,7 +53,6 @@ export type TurnEventHandler = (event: TurnEvent) => void;
 export interface AgentWorkerInput {
   state: TurnState;
   prompt: string;
-  options?: TurnOptions;
   appendSystemPrompt?: string;
   skills?: Skill[];
   tools: AgentTool[];
@@ -92,19 +63,6 @@ export interface AgentWorkerResult {
   control: TurnRunnerControlResult;
 }
 
-type ActiveAgentSlot = "parent" | "state_machine_child";
-
-type ActiveStateWork =
-  | { kind: "script" }
-  | {
-      kind: "poll";
-      turnState: TurnState;
-      state: StateMachinePollState;
-      promptStarted: Promise<void>;
-      resolvePromptStarted: () => void;
-      promptTerminal?: Promise<TurnTerminalEvent>;
-    };
-
 export class TurnRunner {
   private readonly eventHandlers = new Set<TurnEventHandler>();
   /** In-memory observation store used by context transforms during agent turns. */
@@ -112,47 +70,46 @@ export class TurnRunner {
   /** Stops memory persistence subscriptions/databases when the runner is disposed. */
   private memoryDispose?: () => Promise<void>;
   /**
-   * Active parent pi agent. Prompts, steers, and follow-ups only target this
-   * transcript so all user-visible conversation stays linear in the parent.
+   * Session-scoped parent pi agent. It is created once during start() so model,
+   * tools, and system prompt shape stay stable for prompt caching while the
+   * transcript grows across every pi-agent turn in this duet-agent session.
    */
-  private activeAgent?: Agent;
-  /**
-   * Active state-machine child pi agent, when a child state is running. Child
-   * agents run without state-machine tools; only command types explicitly routed
-   * to children should use this slot, while normal prompts queue for the parent.
-   */
-  private activeChildAgent?: Agent;
-  /** Current script or poll abort controller, used to interrupt non-agent state work. */
-  private activeAbortController?: AbortController;
-  /** Current non-agent state work, if a script or poll owns the active turn. */
-  private activeStateWork?: ActiveStateWork;
+  private parentAgent?: Agent;
+  /** True only while the parent pi agent is actively producing the public terminal event. */
+  private parentAgentRunning = false;
+  /** Last turn-runner control tool result observed from the parent agent. */
+  private parentControlResult: TurnRunnerControlResult = { type: "none" };
+  /** Runtime owner for state-machine progress and active state work. */
+  private readonly stateMachineController: StateMachineController;
   /** Terminal event prepared by `interrupt()` and returned when active work unwinds. */
   private interruptedTerminal?: TurnTerminalEvent;
   /**
    * Active work-chain promise. Callers may call turn() repeatedly while this is
-   * set; those commands either join the active pi agent as steer/follow-up or
-   * queue behind non-agent work. The runner emits one terminal for the chain.
+   * set; those commands are folded into the same duet-agent turn. A duet-agent
+   * turn may contain multiple parent pi-agent turns and multiple state-machine
+   * transitions, but it emits one public terminal event for the whole chain.
    */
   private activeTurnPromise?: Promise<TurnTerminalEvent>;
   /** Latest runner-owned state, hydrated by start() and advanced by terminal events. */
   private state?: TurnState;
   /** True after `start()` has emitted the initial `turn_started` event. */
   private started = false;
-  /** Aggregates model usage across parent agents, child agents, and memory work for one turn chain. */
+  /** Aggregates model usage across parent agents, state agents, and memory work for one turn chain. */
   private turnUsage?: TurnTokenUsage;
-  /** Prevents queued user prompts from recursively preempting continuation prompts. */
-  private drainingQueuedCommandsBeforeContinuation = false;
   /** Ensures persisted memory hydrates once before the first turn that needs it. */
   private memoryLoaded = false;
-  private readonly skillContext: SkillContext;
+  protected readonly skillContext: SkillContext;
 
   constructor(readonly config: TurnRunnerConfig) {
     this.skillContext = new SkillContext(config);
+    this.stateMachineController = new StateMachineController({
+      cwd: config.cwd ?? process.cwd(),
+      createStateAgent: (input) => this.createStateAgentHandle(input),
+    });
   }
 
   async dispose(): Promise<void> {
-    this.activeAgent?.clearAllQueues();
-    this.activeChildAgent?.clearAllQueues();
+    this.parentAgent?.clearAllQueues();
     this.setQueuedCommands([]);
     this.clearFollowUpQueue();
     await this.memoryDispose?.();
@@ -183,13 +140,16 @@ export class TurnRunner {
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
     const mode = command.mode ?? this.config.mode ?? "auto";
+    const startOptions = command.options;
     const state = command.state
       ? {
           ...command.state,
-          options: this.resolveTurnOptions(command.options, command.state.options),
+          options: this.resolveTurnOptions(startOptions, command.state.options),
         }
-      : createInitialTurnState(mode, this.resolveTurnOptions(command.options));
+      : createInitialTurnState(mode, this.resolveTurnOptions(startOptions));
+    this.stateMachineController.hydrate(state.stateMachine);
     this.setState(state);
+    this.initializeParentAgent();
     this.started = true;
     const hydratedState = this.requireRunnerState();
     this.emit({ type: "turn_started", state: hydratedState });
@@ -248,24 +208,37 @@ export class TurnRunner {
   }
 
   private handleCommandDuringActiveTurn(command: TurnCommand): void {
-    if ((command.type === "prompt" || command.type === "answer") && this.activeAgent) {
-      // State-machine continuations and normal user input stay linear by
-      // entering the active parent transcript as pi follow-ups.
-      this.sendCommandToAgent(this.activeAgent, command);
+    if ((command.type === "prompt" || command.type === "answer") && this.parentAgentRunning) {
+      // The parent pi-agent is currently driving the public terminal event, so
+      // user input can go straight to pi using pi's native steer/follow-up queues.
+      this.sendCommandToAgent(this.requireParentAgent(), command);
       return;
     }
 
-    if (command.type === "answer" && this.activeChildAgent) {
-      this.sendCommandToAgent(this.activeChildAgent, command);
-      return;
-    }
+    if (command.type === "prompt" || command.type === "answer") {
+      const message = this.commandToUserMessage(command);
+      if (this.stateMachineController.hasActiveStateAgent()) {
+        if (command.behavior === "follow_up") {
+          // State-machine work is driving the terminal event. Follow-ups are
+          // transition context, so replay them before the next state decision.
+          this.enqueueTurnCommand(command);
+          return;
+        }
+        void this.runParentPromptDuringActiveStateWork(message, command);
+        return;
+      }
 
-    if (
-      (command.type === "prompt" || command.type === "answer") &&
-      this.activeStateWork?.kind === "poll"
-    ) {
-      this.runPromptDuringActivePoll(this.activeStateWork, command);
-      return;
+      if (this.stateMachineController.hasActiveWork()) {
+        if (command.behavior === "follow_up") {
+          // Active script/poll work follows the same rule as agent states:
+          // steer can update the parent immediately, follow-up waits for the
+          // next transition decision.
+          this.enqueueTurnCommand(command);
+          return;
+        }
+        void this.runParentPromptDuringActiveStateWork(message, command);
+        return;
+      }
     }
 
     this.enqueueTurnCommand(command);
@@ -282,9 +255,41 @@ export class TurnRunner {
     }
   }
 
+  private async runParentPromptDuringActiveStateWork(
+    message: string,
+    command: TurnPromptCommand | TurnAnswerCommand,
+  ): Promise<StateMachineExecutionResult> {
+    const prompt =
+      command.behavior === "steer"
+        ? dedent`
+            The user sent this as a steer message while state-machine work is running.
+            If the state-machine should change course, call select_state_machine_state to restart the current state with updated input or choose a different state.
+
+            ${message}
+          `
+        : message;
+    const terminal = await this.prompt({
+      type: "prompt",
+      message: prompt,
+      behavior: command.behavior,
+    });
+    this.setState(terminal.state);
+    const result = this.controllerResultFromTerminal(terminal);
+    if (result.type === "state_completed") {
+      await this.driveStateMachineResult(result, terminal.state);
+    }
+    return result;
+  }
+
   private async drainQueuedTurnCommands(terminal: TurnTerminalEvent): Promise<TurnTerminalEvent> {
     let latest = terminal;
     while (this.getQueuedCommands().length > 0) {
+      if (
+        latest.type === "sleep" &&
+        this.getQueuedCommands().every((command) => this.isFollowUpQueueCommand(command))
+      ) {
+        return latest;
+      }
       if (
         latest.type === "interrupted" ||
         (latest.type === "complete" && latest.status === "failed")
@@ -304,25 +309,6 @@ export class TurnRunner {
       latest = await this.executeTurnCommand(queued);
     }
     return latest;
-  }
-
-  private runPromptDuringActivePoll(
-    work: Extract<ActiveStateWork, { kind: "poll" }>,
-    command: TurnPromptCommand | TurnAnswerCommand,
-  ): void {
-    if (work.promptTerminal) {
-      this.enqueueTurnCommand(command);
-      return;
-    }
-
-    this.setState({ ...work.turnState, status: "running" });
-    work.promptTerminal = this.prompt({
-      type: "prompt",
-      message: this.commandToUserMessage(command),
-      behavior: command.behavior,
-      options: command.options,
-    }).then((terminal) => this.restorePollSleepAfterMidPollPrompt(work, terminal));
-    work.resolvePromptStarted();
   }
 
   private commandToUserMessage(command: TurnPromptCommand | TurnAnswerCommand): string {
@@ -349,9 +335,9 @@ export class TurnRunner {
 
   private replaceFollowUpQueue(prompts: string[]): void {
     this.setFollowUpQueue(prompts);
-    this.activeAgent?.clearFollowUpQueue();
+    this.parentAgent?.clearFollowUpQueue();
     for (const prompt of this.getFollowUpQueue()) {
-      this.activeAgent?.followUp({
+      this.parentAgent?.followUp({
         role: "user",
         content: prompt,
         timestamp: Date.now(),
@@ -363,7 +349,7 @@ export class TurnRunner {
 
   private replaceQueuedFollowUpCommands(prompts: string[]): void {
     this.removeQueuedFollowUpCommands();
-    if (!this.state || this.activeAgent) return;
+    if (!this.state || this.parentAgentRunning) return;
     this.setQueuedCommands([
       ...this.getQueuedCommands(),
       ...prompts.map(
@@ -422,9 +408,9 @@ export class TurnRunner {
   interrupt(_command: TurnInterruptCommand): void {
     this.requireStarted();
     if (!this.state) return;
-    const interruptedState = withStateMachine(this.state, (stateMachine) =>
-      recordStateInterrupted(stateMachine, "Interrupted"),
-    );
+    const hadActiveControllerWork = this.stateMachineController.hasActiveWork();
+    this.stateMachineController.interrupt("Interrupted");
+    const interruptedState = this.snapshotState(this.state);
     const terminal: TurnTerminalEvent = {
       type: "interrupted",
       state: {
@@ -434,22 +420,16 @@ export class TurnRunner {
       },
     };
     this.setState(terminal.state);
-    if (this.activeAgent || this.activeChildAgent || this.activeAbortController) {
+    if (this.parentAgentRunning || hadActiveControllerWork) {
       // The active turn emits this terminal event after agent.prompt() unwinds.
       // interrupt() only aborts out-of-band; it does not own turn completion.
       this.interruptedTerminal = terminal;
     }
-    this.activeAgent?.abort();
-    this.activeChildAgent?.abort();
-    this.activeAbortController?.abort();
-    this.activeAgent?.clearAllQueues();
-    this.activeChildAgent?.clearAllQueues();
+    this.parentAgent?.abort();
+    this.parentAgent?.clearAllQueues();
     this.setQueuedCommands([]);
     this.clearFollowUpQueue();
-    this.activeAgent = undefined;
-    this.activeChildAgent = undefined;
-    this.activeAbortController = undefined;
-    this.activeStateWork = undefined;
+    this.parentAgentRunning = false;
   }
 
   protected emit(event: TurnEvent): void {
@@ -470,13 +450,12 @@ export class TurnRunner {
     const prompt = this.skillContext.resolveSlashSkillPrompt(command.message);
     let terminal: TurnTerminalEvent;
     if (state.mode === "agent") {
-      terminal = await this.runAgentMode(state, prompt, command.options);
+      terminal = await this.runAgentMode(state, prompt);
     } else {
       terminal = await this.runTurnRunnerAgentWithStateMachineTools({
         state,
         prompt,
         mode: state.mode,
-        options: command.options,
       });
     }
 
@@ -485,36 +464,23 @@ export class TurnRunner {
 
   protected async answer(command: TurnAnswerCommand): Promise<TurnTerminalEvent> {
     const message = this.commandToUserMessage(command);
-
-    const currentRunnerState = this.requireRunnerState();
-    const stateMachine = currentRunnerState.stateMachine;
-    const currentState = stateMachine?.currentState
-      ? findState(stateMachine, stateMachine.currentState)
-      : undefined;
-
-    if (currentRunnerState.status === "waiting_for_human" && currentState?.kind === "agent") {
-      const state = appendChildUserMessage({ ...currentRunnerState, status: "running" }, message);
-      return this.runAgentState(state, currentState);
-    }
-
     return this.prompt({
       type: "prompt",
       message,
       behavior: command.behavior,
-      options: command.options,
     });
   }
 
   protected async wake(): Promise<TurnTerminalEvent> {
     const originalState = this.requireRunnerState();
     const state: TurnState = { ...originalState, status: "running" };
-    const stateMachine = state.stateMachine;
-    const currentState = stateMachine?.currentState
-      ? findState(stateMachine, stateMachine.currentState)
-      : undefined;
 
-    if (originalState.status === "sleeping" && currentState?.kind === "poll") {
-      return this.runPollState(state, currentState, { woke: true });
+    if (originalState.status === "sleeping") {
+      // A sleeping poll already ended the previous duet-agent turn. Wake starts
+      // a new state-machine-driven turn for one poll attempt; normal prompts
+      // while sleeping instead start parent-driven turns.
+      const result = await this.stateMachineController.wake();
+      if (result) return this.driveStateMachineResult(result, state);
     }
 
     return {
@@ -523,330 +489,6 @@ export class TurnRunner {
       state: originalState,
       result: "Nothing to wake.",
     };
-  }
-
-  private async runStateMachineState(
-    turnState: TurnState,
-    decision: StateMachineRunnerDecision,
-  ): Promise<TurnTerminalEvent> {
-    const stateMachine = turnState.stateMachine;
-    if (!stateMachine) {
-      return completeTurn(turnState, "failed", undefined, "No state machine is active.");
-    }
-
-    const decidedStateMachine = recordRunnerDecision(stateMachine, decision);
-    const decidedState: TurnState = {
-      ...turnState,
-      stateMachine: decidedStateMachine,
-    };
-
-    if (decision.kind === "fail") {
-      return completeTurn(decidedState, "failed", undefined, decision.reason);
-    }
-
-    const selectedState = findState(decidedStateMachine, decision.state);
-    if (!selectedState) {
-      const validStates = decidedStateMachine.definition.states.map((state) => state.name);
-      return completeTurn(
-        decidedState,
-        "failed",
-        undefined,
-        `Unknown state: ${decision.state}. Valid states: ${validStates.join(", ")}`,
-      );
-    }
-
-    const effectiveState =
-      decision.kind === "run_state"
-        ? applyStateOverride(selectedState, decision.override)
-        : selectedState;
-    const nextTurnState: TurnState = {
-      ...decidedState,
-      stateMachine: recordStateStarted(
-        decidedStateMachine,
-        effectiveState,
-        decision.kind === "run_state" ? decision.input : undefined,
-      ),
-    };
-
-    this.emit({ type: "state_machine", currentState: effectiveState.name });
-    this.setState(nextTurnState);
-
-    switch (effectiveState.kind) {
-      case "agent":
-        return this.runAgentState(nextTurnState, effectiveState);
-      case "script":
-        return this.runScriptState(nextTurnState, effectiveState);
-      case "poll":
-        return this.runPollState(nextTurnState, effectiveState);
-      case "terminal":
-        return this.runTerminalState(nextTurnState, effectiveState);
-    }
-  }
-
-  private async runAgentState(
-    turnState: TurnState,
-    state: StateMachineAgentState,
-  ): Promise<TurnTerminalEvent> {
-    const childPrompt = renderTemplate(state.prompt, turnState.stateMachine?.currentInput ?? {});
-    return this.runAgentStatePrompt(turnState, state, childPrompt);
-  }
-
-  private async promptStateMachineAgent(
-    turnState: TurnState,
-    prompt: string,
-  ): Promise<TurnTerminalEvent> {
-    const stateMachine = turnState.stateMachine;
-    const currentState = stateMachine?.currentState
-      ? findState(stateMachine, stateMachine.currentState)
-      : undefined;
-    if (!stateMachine || currentState?.kind !== "agent") {
-      return completeTurn(
-        turnState,
-        "failed",
-        undefined,
-        "Cannot prompt state-machine agent because the current state is not an agent state.",
-      );
-    }
-    return this.runAgentStatePrompt(turnState, currentState, prompt);
-  }
-
-  private async runAgentStatePrompt(
-    turnState: TurnState,
-    state: StateMachineAgentState,
-    prompt: string,
-  ): Promise<TurnTerminalEvent> {
-    const childState: TurnState = {
-      status: "running",
-      mode: "agent",
-      options: turnState.options,
-      agent: turnState.childAgent
-        ? { ...turnState.childAgent, status: "running" }
-        : { status: "running", messages: [] },
-    };
-    const childWorkerResult = await this.runAgentWorkerWithUsage(
-      {
-        state: childState,
-        prompt,
-        appendSystemPrompt: state.systemPrompt,
-        skills: this.skillContext.resolveStateAgentSkills(state),
-        ...this.createTools("agent"),
-      },
-      "state_machine_child",
-    );
-    const childResult = childWorkerResult.terminal;
-    const parentState = { ...turnState, childAgent: childResult.state.agent };
-    const rawOutput = {
-      result: childResult.type === "complete" ? childResult.result : undefined,
-      childStatus: childResult.state.status,
-      terminal: childResult,
-    };
-    const updatedState = withStateMachine(parentState, (stateMachine) =>
-      recordStateCompleted(stateMachine, state.name, rawOutput),
-    );
-
-    if (childResult.type === "ask") {
-      return { ...childResult, state: { ...updatedState, status: "waiting_for_human" } };
-    }
-    if (childResult.type === "sleep") {
-      return { ...childResult, state: { ...updatedState, status: "sleeping" } };
-    }
-    if (childResult.type === "interrupted") {
-      return { ...childResult, state: { ...updatedState, status: "interrupted" } };
-    }
-
-    return this.continueAfterStateCompleted(
-      { ...updatedState, status: "running" },
-      state.name,
-      rawOutput,
-    );
-  }
-
-  private async runScriptState(
-    turnState: TurnState,
-    state: StateMachineScriptState,
-  ): Promise<TurnTerminalEvent> {
-    const abortController = new AbortController();
-    this.activeAbortController = abortController;
-    this.activeStateWork = { kind: "script" };
-    try {
-      const command = renderTemplate(state.command, turnState.stateMachine?.currentInput ?? {});
-      const shellOutput = await runShellCommand(command, {
-        cwd: state.cwd ?? this.config.cwd ?? process.cwd(),
-        timeoutMs: state.timeoutMs,
-        signal: abortController.signal,
-        successCodes: state.successCodes,
-      });
-      const { stdout } = shellOutput;
-      const output = parseStructuredOutput(stdout);
-      const rawOutput = {
-        ...shellOutput,
-        stdout: stdout.trim(),
-        stderr: shellOutput.stderr.trim(),
-        parsed: output,
-      };
-      return this.continueAfterStateCompleted(
-        withStateMachine(turnState, (stateMachine) =>
-          recordStateCompleted(stateMachine, state.name, rawOutput),
-        ),
-        state.name,
-        rawOutput,
-      );
-    } catch (error) {
-      const interrupted = this.consumeInterruptedTerminal();
-      if (interrupted) return interrupted;
-      const message = error instanceof Error ? error.message : String(error);
-      return completeTurn(
-        withStateMachine(turnState, (stateMachine) =>
-          recordStateFailed(stateMachine, state.name, message),
-        ),
-        "failed",
-        undefined,
-        message,
-      );
-    } finally {
-      this.activeAbortController = undefined;
-      this.activeStateWork = undefined;
-    }
-  }
-
-  private async runPollState(
-    turnState: TurnState,
-    state: StateMachinePollState,
-    options?: { woke?: boolean },
-  ): Promise<TurnTerminalEvent> {
-    const elapsedMs = elapsedSinceStateStarted(turnState.stateMachine, state.name);
-    if (state.timeoutMs !== undefined && elapsedMs >= state.timeoutMs) {
-      const message = `Poll state "${state.name}" timed out after ${elapsedMs}ms.`;
-      return completeTurn(
-        withStateMachine(turnState, (stateMachine) =>
-          recordStateFailed(stateMachine, state.name, message),
-        ),
-        "failed",
-        undefined,
-        message,
-      );
-    }
-
-    if (state.poll.kind === "timer") {
-      if (!options?.woke) {
-        return sleepPollState(turnState, state);
-      }
-      const output = { elapsedMs };
-      return this.continueAfterStateCompleted(
-        withStateMachine(turnState, (stateMachine) =>
-          recordStateCompleted(stateMachine, state.name, output),
-        ),
-        state.name,
-        output,
-      );
-    }
-
-    const abortController = new AbortController();
-    let resolvePromptStarted!: () => void;
-    const promptStarted = new Promise<void>((resolve) => {
-      resolvePromptStarted = resolve;
-    });
-    const work: Extract<ActiveStateWork, { kind: "poll" }> = {
-      kind: "poll",
-      turnState,
-      state,
-      promptStarted,
-      resolvePromptStarted,
-    };
-    this.activeAbortController = abortController;
-    this.activeStateWork = work;
-    try {
-      const command = renderTemplate(
-        state.poll.command,
-        turnState.stateMachine?.currentInput ?? {},
-      );
-      let settledShell:
-        | { status: "fulfilled"; value: ShellCommandOutput }
-        | { status: "rejected"; reason: unknown }
-        | undefined;
-      const shellPromise = runShellCommand(command, {
-        cwd: state.poll.cwd ?? this.config.cwd ?? process.cwd(),
-        signal: abortController.signal,
-        successCodes: state.poll.successCodes,
-      }).then(
-        (value) => {
-          settledShell = { status: "fulfilled", value };
-          return value;
-        },
-        (reason) => {
-          settledShell = { status: "rejected", reason };
-          throw reason;
-        },
-      );
-      shellPromise.catch(() => undefined);
-
-      const first = await Promise.race([
-        shellPromise.then(
-          () => "shell" as const,
-          () => "shell" as const,
-        ),
-        work.promptStarted.then(() => "prompt" as const),
-      ]);
-
-      if (first === "prompt") {
-        const promptTerminal = await work.promptTerminal;
-        if (!promptTerminal) {
-          return sleepPollState(turnState, state);
-        }
-        if (!settledShell) {
-          abortController.abort();
-          return promptTerminal;
-        }
-        if (settledShell.status === "rejected") {
-          return promptTerminal;
-        }
-        return this.completePollStateAfterShellResult(
-          { ...promptTerminal.state, status: "running" },
-          state,
-          settledShell.value,
-        );
-      }
-
-      if (work.promptTerminal) {
-        const promptTerminal = await work.promptTerminal;
-        if (settledShell?.status === "fulfilled") {
-          return this.completePollStateAfterShellResult(
-            { ...promptTerminal.state, status: "running" },
-            state,
-            settledShell.value,
-          );
-        }
-        return promptTerminal;
-      }
-
-      if (settledShell?.status === "fulfilled") {
-        return this.completePollStateAfterShellResult(turnState, state, settledShell.value);
-      }
-    } catch {
-      const interrupted = this.consumeInterruptedTerminal();
-      if (interrupted) return interrupted;
-    } finally {
-      this.activeAbortController = undefined;
-      this.activeStateWork = undefined;
-    }
-
-    return sleepPollState(turnState, state);
-  }
-
-  private restorePollSleepAfterMidPollPrompt(
-    work: Extract<ActiveStateWork, { kind: "poll" }>,
-    terminal: TurnTerminalEvent,
-  ): TurnTerminalEvent {
-    if (terminal.type !== "complete" || terminal.status !== "completed") {
-      return terminal;
-    }
-
-    const currentPoll = currentPollState(terminal.state.stateMachine);
-    if (!currentPoll || currentPoll.name !== work.state.name) {
-      return terminal;
-    }
-
-    return sleepPollState(terminal.state, currentPoll);
   }
 
   private restoreSleepAfterPromptIfNeeded(
@@ -877,55 +519,85 @@ export class TurnRunner {
     };
   }
 
-  private async runTerminalState(
-    turnState: TurnState,
-    state: StateMachineTerminalState,
-  ): Promise<TurnTerminalEvent> {
-    const terminal = { state: state.name, status: state.status, reason: state.reason };
-    const stateMachine = turnState.stateMachine
-      ? recordStateMachineCompleted(turnState.stateMachine, terminal)
-      : undefined;
-
-    return completeTurn({ ...turnState, stateMachine }, state.status, state.reason);
+  private controllerResultToTerminal(
+    result: StateMachineExecutionResult,
+    baseState = this.requireRunnerState(),
+  ): TurnTerminalEvent {
+    const state = this.snapshotState(baseState);
+    switch (result.type) {
+      case "state_completed":
+        return completeTurn(state, "completed", JSON.stringify(result.output ?? null));
+      case "ask":
+        return {
+          type: "ask",
+          questions: result.questions,
+          state: { ...state, status: "waiting_for_human" },
+        };
+      case "sleep":
+        return { type: "sleep", wakeAt: result.wakeAt, state: { ...state, status: "sleeping" } };
+      case "interrupted":
+        return { type: "interrupted", state: { ...state, status: "interrupted" } };
+      case "terminal":
+        return completeTurn(state, result.status, result.result, result.error);
+    }
   }
 
-  private async continueAfterStateCompleted(
-    turnState: TurnState,
-    state: string,
-    output?: unknown,
+  private controllerResultFromTerminal(terminal: TurnTerminalEvent): StateMachineExecutionResult {
+    switch (terminal.type) {
+      case "ask":
+        return { type: "ask", questions: terminal.questions };
+      case "sleep":
+        return { type: "sleep", wakeAt: terminal.wakeAt };
+      case "interrupted":
+        return { type: "interrupted" };
+      case "complete":
+        return {
+          type: "terminal",
+          status: terminal.status,
+          result: terminal.result,
+          error: terminal.error,
+        };
+    }
+  }
+
+  private async driveStateMachineResult(
+    result: StateMachineExecutionResult,
+    baseState = this.requireRunnerState(),
   ): Promise<TurnTerminalEvent> {
-    if (turnState.mode === "agent") {
-      return completeTurn(turnState, "completed", typeof output === "string" ? output : undefined);
+    let next = result;
+    let state = baseState;
+    // The controller only executes states. TurnRunner owns the continuation
+    // loop so queued follow-ups always update the parent transcript before the
+    // parent chooses the next state.
+    while (next.type === "state_completed") {
+      state = this.requireRunnerState();
+      const queued = await this.drainQueuedTurnCommands({
+        type: "complete",
+        status: "completed",
+        state: this.snapshotState({ ...state, status: "running" }),
+      });
+      if (queued.type !== "complete" || queued.status !== "completed") return queued;
+      this.setState(queued.state);
+      state = queued.state;
+      next = await this.selectNextStateAfterCompletion(next.stateName, next.output);
     }
+    return this.controllerResultToTerminal(next, state);
+  }
 
-    if (!this.drainingQueuedCommandsBeforeContinuation && this.getQueuedCommands().length > 0) {
-      this.drainingQueuedCommandsBeforeContinuation = true;
-      try {
-        const terminal = await this.drainQueuedTurnCommands({
-          type: "complete",
-          status: "completed",
-          state: turnState,
-        });
-        if (terminal.type !== "complete" || terminal.status !== "completed") {
-          return terminal;
-        }
-        turnState = terminal.state;
-      } finally {
-        this.drainingQueuedCommandsBeforeContinuation = false;
-      }
-    }
-
-    let nextTurnState = turnState;
+  private async selectNextStateAfterCompletion(
+    stateName: string,
+    output?: unknown,
+  ): Promise<StateMachineExecutionResult> {
     for (let attempt = 1; attempt <= 3; attempt++) {
       const retryInstruction =
         attempt === 1
-          ? ""
+          ? undefined
           : `This is retry ${attempt} of 3. You did not call select_state_machine_state last time. You must call select_state_machine_state now.`;
-
+      const turnState = this.snapshotState({ ...this.requireRunnerState(), status: "running" });
       const workerResult = await this.runAgentWorkerWithUsage({
-        state: nextTurnState,
+        state: turnState,
         prompt: dedent`
-          The state "${state}" finished.
+          The state "${stateName}" finished.
 
           ${toXML({
             state_completed: {
@@ -933,82 +605,88 @@ export class TurnRunner {
             },
           })}
 
-          ${retryInstruction}
+          ${retryInstruction ?? ""}
 
           You must call the select_state_machine_state tool to choose the next state, terminal state, or failure outcome.
           Do not answer normally. Do not return text instead of calling the tool.
         `,
-        appendSystemPrompt: createStateMachineSystemPromptLayer({
-          mode: turnState.mode,
-          session: turnState,
-        }),
-        ...this.createTools(turnState.mode, turnState),
+        ...this.createTools(turnState.mode),
       });
-
-      nextTurnState = workerResult.terminal.state;
-      if (workerResult.control.type === "ask_user_question") {
-        return this.askUserQuestion(workerResult.terminal, workerResult.control);
+      this.setState(workerResult.terminal.state);
+      const result = await this.controllerResultFromWorkerResult(
+        workerResult,
+        workerResult.terminal.state,
+      );
+      if (!result) {
+        continue;
       }
-
-      if (workerResult.control.type === "select_state_machine_state") {
-        return this.runStateMachineState(nextTurnState, workerResult.control.decision);
-      }
-
-      if (workerResult.control.type === "create_state_machine_definition") {
-        return completeTurn(
-          nextTurnState,
-          "failed",
-          undefined,
-          "Cannot create a new state-machine definition while the current state machine is still active.",
-        );
-      }
+      return result;
     }
 
-    return completeTurn(
-      nextTurnState,
-      "failed",
-      undefined,
-      "State completed, but the runner did not call select_state_machine_state.",
-    );
-  }
-
-  private initializeState(
-    turnState: TurnState,
-    prompt: string,
-    definition: StateMachineDefinition,
-    currentState: string,
-  ): TurnState {
     return {
-      ...turnState,
-      status: "running",
-      stateMachine: createStateMachineSession(prompt, definition, currentState),
+      type: "terminal",
+      status: "failed",
+      error: "State completed, but the runner did not call select_state_machine_state.",
     };
   }
 
-  private completePollStateAfterShellResult(
-    turnState: TurnState,
-    state: StateMachinePollState,
-    shellOutput: ShellCommandOutput,
-  ): Promise<TurnTerminalEvent> | TurnTerminalEvent {
-    const { stdout } = shellOutput;
-    const output = parseJsonObject(stdout);
-    if (Object.keys(output).length === 0) {
-      return sleepPollState(turnState, state);
-    }
-
-    const rawOutput = {
-      ...shellOutput,
-      stdout: stdout.trim(),
-      stderr: shellOutput.stderr.trim(),
-      parsed: output,
+  protected createStateAgentHandle(input: {
+    state: StateMachineAgentState;
+    prompt: string;
+  }): StateAgentHandle {
+    let control: TurnRunnerControlResult = { type: "none" };
+    const state: TurnState = {
+      status: "running",
+      mode: "agent",
+      options: this.requireRunnerState().options,
+      agent: { status: "running", messages: [] },
     };
-    return this.continueAfterStateCompleted(
-      withStateMachine(turnState, (stateMachine) =>
-        recordStateCompleted(stateMachine, state.name, rawOutput),
-      ),
-      state.name,
-      rawOutput,
+    const agent = this.createAgent(
+      {
+        state,
+        prompt: input.prompt,
+        appendSystemPrompt: input.state.systemPrompt,
+        skills: this.skillContext.resolveStateAgentSkills(input.state),
+        ...this.createTools("agent"),
+      },
+      (result) => {
+        control = result;
+      },
     );
+    let unsubscribe: (() => void) | undefined;
+    const finish = (): StateAgentResult => {
+      const usage = usageFromMessages(agent.state.messages);
+      this.recordUsage(usage);
+      if (control.type === "ask_user_question") {
+        return { type: "ask", questions: control.questions };
+      }
+      if (agent.state.errorMessage) {
+        return { type: "failed", error: agent.state.errorMessage };
+      }
+      return { type: "complete", result: assistantText(agent.state.messages) };
+    };
+
+    return {
+      prompt: async () => {
+        unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event));
+        try {
+          await agent.prompt(input.prompt);
+          return finish();
+        } catch (error) {
+          if (this.consumeInterruptedTerminal()) return { type: "interrupted" };
+          if (error instanceof Error) return { type: "failed", error: error.message };
+          return { type: "failed", error: String(error) };
+        } finally {
+          unsubscribe?.();
+        }
+      },
+      interrupt: () => {
+        agent.abort();
+        agent.clearAllQueues();
+        unsubscribe?.();
+      },
+      partialAssistantText: () => assistantText(agent.state.messages) || undefined,
+    };
   }
 
   private requireRunnerState(): TurnState {
@@ -1024,23 +702,17 @@ export class TurnRunner {
   }
 
   private snapshotState(state: TurnState): TurnState {
-    const parentAgent = this.activeAgent
+    const parentAgent = this.parentAgent
       ? {
           ...state.agent,
           status: state.agent.status,
-          messages: this.activeAgent.state.messages,
+          messages: this.parentAgent.state.messages,
         }
       : state.agent;
-    const childAgent = this.activeChildAgent
-      ? {
-          status: state.childAgent?.status ?? "running",
-          messages: this.activeChildAgent.state.messages,
-        }
-      : state.childAgent;
     return {
       ...state,
       agent: parentAgent,
-      ...(childAgent ? { childAgent } : {}),
+      stateMachine: this.stateMachineController.getSession(),
       todos: copyOptionalArray(state.todos ?? this.state?.todos),
       followUpQueue: copyOptionalArray(state.followUpQueue ?? this.state?.followUpQueue),
       queuedCommands: copyOptionalArray(state.queuedCommands ?? this.state?.queuedCommands),
@@ -1096,84 +768,111 @@ export class TurnRunner {
     }
   }
 
+  private requireParentAgent(): Agent {
+    if (!this.parentAgent) {
+      throw new Error("Turn runner parent agent has not been initialized.");
+    }
+    return this.parentAgent;
+  }
+
+  private initializeParentAgent(): void {
+    const state = this.requireRunnerState();
+    const appendSystemPrompt =
+      typeof state.mode === "object"
+        ? createStateMachineSystemPromptLayer({ mode: state.mode, session: state })
+        : undefined;
+    this.parentControlResult = { type: "none" };
+    this.parentAgent = this.createAgent(
+      {
+        state,
+        prompt: "",
+        appendSystemPrompt,
+        ...this.createTools(state.mode),
+      },
+      (result) => {
+        this.parentControlResult = result;
+      },
+    );
+    this.replayFollowUpQueueIntoAgent(this.parentAgent);
+    this.snapshotActiveAgentState();
+  }
+
   protected async runTurnRunnerAgentWithStateMachineTools(input: {
     state: TurnState;
     prompt: string;
     mode: Exclude<TurnMode, "agent">;
-    options?: TurnOptions;
   }): Promise<TurnTerminalEvent> {
     const workerResult = await this.runAgentWorkerWithUsage({
       state: input.state,
       prompt: input.prompt,
-      options: input.options,
-      appendSystemPrompt: createStateMachineSystemPromptLayer({
-        mode: input.mode,
-        session: input.state,
-      }),
-      ...this.createTools(input.mode, input.state),
+      ...this.createTools(input.mode),
     });
 
-    if (workerResult.control.type === "none") return workerResult.terminal;
+    const result = await this.controllerResultFromWorkerResult(workerResult, input.state);
+    if (!result) return workerResult.terminal;
+    return this.driveStateMachineResult(result, workerResult.terminal.state);
+  }
 
+  private async controllerResultFromWorkerResult(
+    workerResult: AgentWorkerResult,
+    state: TurnState,
+  ): Promise<StateMachineExecutionResult | undefined> {
+    if (workerResult.control.type === "none") return undefined;
     if (workerResult.control.type === "ask_user_question") {
-      return this.askUserQuestion(workerResult.terminal, workerResult.control);
+      return { type: "ask", questions: workerResult.control.questions };
     }
-
     if (workerResult.control.type === "create_state_machine_definition") {
       if (
-        workerResult.terminal.state.stateMachine &&
-        !workerResult.terminal.state.stateMachine.terminal
+        this.stateMachineController.getSession() &&
+        !this.stateMachineController.getSession()?.terminal
       ) {
-        return completeTurn(
-          workerResult.terminal.state,
-          "failed",
-          undefined,
-          "Cannot create a new state-machine definition while the current state machine is still active.",
-        );
+        return {
+          type: "terminal",
+          status: "failed",
+          error:
+            "Cannot create a new state-machine definition while the current state machine is still active.",
+        };
       }
 
       const firstState =
         workerResult.control.firstState ?? workerResult.control.definition.states[0]?.name ?? "";
-      const state = this.initializeState(
-        workerResult.terminal.state,
-        input.prompt,
-        workerResult.control.definition,
-        firstState,
-      );
-      return this.runStateMachineState(state, { kind: "run_state", state: firstState });
-    }
-
-    if (workerResult.control.type === "prompt_state_machine_agent") {
-      return this.promptStateMachineAgent(workerResult.terminal.state, workerResult.control.prompt);
+      this.stateMachineController.startSession({
+        prompt:
+          workerResult.terminal.type === "complete" ? (workerResult.terminal.result ?? "") : "",
+        definition: workerResult.control.definition,
+        currentState: firstState,
+      });
+      this.emit({ type: "state_machine", currentState: firstState });
+      return this.stateMachineController.runDecision({ kind: "run_state", state: firstState });
     }
 
     if (workerResult.control.type !== "select_state_machine_state") {
-      return completeTurn(
-        workerResult.terminal.state,
-        "failed",
-        undefined,
-        "Unsupported state-machine control result.",
-      );
+      return {
+        type: "terminal",
+        status: "failed",
+        error: "Unsupported state-machine control result.",
+      };
     }
 
-    const selectedState =
-      !workerResult.terminal.state.stateMachine &&
-      typeof input.mode === "object" &&
+    if (
+      !this.stateMachineController.getSession() &&
+      typeof state.mode === "object" &&
       workerResult.control.decision.kind !== "fail"
-        ? this.initializeState(
-            workerResult.terminal.state,
-            input.prompt,
-            input.mode,
-            workerResult.control.decision.state,
-          )
-        : workerResult.terminal.state;
-    return this.runStateMachineState(selectedState, workerResult.control.decision);
+    ) {
+      this.stateMachineController.startSession({
+        prompt:
+          workerResult.terminal.type === "complete" ? (workerResult.terminal.result ?? "") : "",
+        definition: state.mode as Exclude<TurnMode, "agent" | "auto">,
+        currentState: workerResult.control.decision.state,
+      });
+    }
+    if (workerResult.control.decision.kind !== "fail") {
+      this.emit({ type: "state_machine", currentState: workerResult.control.decision.state });
+    }
+    return this.stateMachineController.runDecision(workerResult.control.decision);
   }
 
-  protected createTools(
-    mode: TurnMode,
-    session?: TurnState,
-  ): {
+  protected createTools(mode: TurnMode): {
     tools: AgentTool[];
   } {
     const cwd = this.config.cwd ?? process.cwd();
@@ -1193,7 +892,8 @@ export class TurnRunner {
       tools: createTurnRunnerTools({
         cwd,
         mode,
-        definition: session?.stateMachine?.definition,
+        getDefinition: () => this.stateMachineController.getSession()?.definition,
+        getStateMachine: () => this.stateMachineController.getSession(),
         todoStorage,
         skills,
       }),
@@ -1210,15 +910,10 @@ export class TurnRunner {
     }
   }
 
-  protected async runAgentMode(
-    state: TurnState,
-    prompt: string,
-    options?: TurnOptions,
-  ): Promise<TurnTerminalEvent> {
+  protected async runAgentMode(state: TurnState, prompt: string): Promise<TurnTerminalEvent> {
     const workerResult = await this.runAgentWorkerWithUsage({
       state,
       prompt,
-      options,
       ...this.createTools("agent"),
     });
     if (workerResult.control.type === "ask_user_question") {
@@ -1227,20 +922,15 @@ export class TurnRunner {
     return workerResult.terminal;
   }
 
-  protected async runAgentWorker(
-    input: AgentWorkerInput,
-    activeSlot: ActiveAgentSlot = "parent",
-  ): Promise<AgentWorkerResult> {
-    if (this.getActiveAgent(activeSlot)) {
-      const description = this.activeAgentDescription(activeSlot);
-      throw new Error(`Cannot start a ${description} while another ${description} is active.`);
+  protected async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    if (this.parentAgentRunning) {
+      throw new Error("Cannot start a parent agent while another parent agent is active.");
     }
 
-    let control: TurnRunnerControlResult = { type: "none" };
-    const agent = this.createAgent(input, (result) => {
-      control = result;
-    });
-    this.setActiveAgent(activeSlot, agent);
+    const agent = this.requireParentAgent();
+    this.parentControlResult = { type: "none" };
+    const previousMessageCount = agent.state.messages.length;
+    this.setParentAgentRunning(true);
 
     const unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event));
     let interruptedDuringPrompt: TurnTerminalEvent | undefined;
@@ -1253,16 +943,16 @@ export class TurnRunner {
       }
     } finally {
       unsubscribe();
-      this.setActiveAgent(activeSlot, undefined);
+      this.setParentAgentRunning(false);
     }
 
     const interrupted = interruptedDuringPrompt ?? this.consumeInterruptedTerminal();
     if (interrupted) {
-      return { control, terminal: interrupted };
+      return { control: this.parentControlResult, terminal: interrupted };
     }
 
     const messages = agent.state.messages;
-    const usage = usageFromMessages(messages.slice(input.state.agent.messages.length));
+    const usage = usageFromMessages(messages.slice(previousMessageCount));
     const status = agent.state.errorMessage ? "failed" : "completed";
     const state = {
       ...input.state,
@@ -1275,7 +965,7 @@ export class TurnRunner {
     } satisfies TurnState;
 
     return {
-      control,
+      control: this.parentControlResult,
       terminal: {
         type: "complete",
         status,
@@ -1287,32 +977,13 @@ export class TurnRunner {
     };
   }
 
-  private getActiveAgent(slot: ActiveAgentSlot): Agent | undefined {
-    return slot === "parent" ? this.activeAgent : this.activeChildAgent;
-  }
-
-  private setActiveAgent(slot: ActiveAgentSlot, agent: Agent | undefined): void {
-    if (slot === "parent") {
-      this.activeAgent = agent;
-      if (agent) this.replayFollowUpQueueIntoAgent(agent);
-    } else {
-      this.activeChildAgent = agent;
-    }
+  private setParentAgentRunning(running: boolean): void {
+    this.parentAgentRunning = running;
     this.snapshotActiveAgentState();
   }
 
-  private activeAgentDescription(slot: ActiveAgentSlot): string {
-    return slot === "parent" ? "parent agent" : "state-machine child agent";
-  }
-
-  private async runAgentWorkerWithUsage(
-    input: AgentWorkerInput,
-    activeSlot: ActiveAgentSlot = "parent",
-  ): Promise<AgentWorkerResult> {
-    const result = await this.runAgentWorker(
-      { ...input, state: this.withRuntimeOptions(input.state, input.options) },
-      activeSlot,
-    );
+  private async runAgentWorkerWithUsage(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    const result = await this.runAgentWorker(input);
     this.recordUsage(result.terminal.usage);
     return result;
   }
@@ -1321,9 +992,12 @@ export class TurnRunner {
     input: AgentWorkerInput,
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
-    const options = this.resolveTurnOptions(input.options, input.state.options);
+    const options = this.resolveTurnOptions(undefined, input.state.options);
     const model = this.resolveTurnModel(options);
     const memoryModel = this.resolveMemoryModel(options);
+    // Parent agent configuration is derived from start/session options, not
+    // per-prompt command options. Keeping model and prompt shape stable protects
+    // prompt caching across all pi-agent turns inside a duet-agent session.
     return new Agent({
       initialState: {
         model,
@@ -1409,13 +1083,6 @@ export class TurnRunner {
       type: "ask",
       questions: control.questions,
       state: { ...terminal.state, status: "waiting_for_human" },
-    };
-  }
-
-  private withRuntimeOptions(state: TurnState, options?: TurnOptions): TurnState {
-    return {
-      ...state,
-      options: this.resolveTurnOptions(options, state.options),
     };
   }
 

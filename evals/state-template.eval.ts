@@ -7,6 +7,7 @@ import {
   type AgentWorkerResult,
 } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
+import type { StateAgentHandle } from "../src/turn-runner/state-machine-controller.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
@@ -150,6 +151,25 @@ class EvalTurnRunner extends TurnRunner {
         result: resultText,
         state,
       },
+    };
+  }
+
+  protected override createStateAgentHandle(input: { prompt: string }): StateAgentHandle {
+    const workerInput: AgentWorkerInput = {
+      state: {
+        status: "running",
+        mode: "agent",
+        options: this.getState()?.options,
+        agent: { status: "running", messages: [] },
+      },
+      prompt: input.prompt,
+      ...this.createTools("agent"),
+    };
+    this.workerInputs.push(workerInput);
+    return {
+      prompt: async () => ({ type: "complete", result: `Completed: ${input.prompt}` }),
+      interrupt: () => undefined,
+      partialAssistantText: () => undefined,
     };
   }
 }

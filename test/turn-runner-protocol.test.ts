@@ -95,7 +95,7 @@ describe("TurnRunner protocol scenarios", () => {
     );
   });
 
-  test("terminal usage includes state-machine child agent usage", async () => {
+  test("terminal usage includes state-machine state-agent usage", async () => {
     const { runner } = createTurnRunner();
     const definition = createOutreachStateMachine();
     runner.controlResults.push(
@@ -163,9 +163,9 @@ describe("TurnRunner protocol scenarios", () => {
     expect(
       stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
     ).not.toBe("");
-    expect(terminal.state.agent.messages.at(-1)).toMatchObject({
-      role: "assistant",
-    });
+    expect(terminal.state.stateMachine?.history).toContainEqual(
+      expect.objectContaining({ type: "state_started", state: "classify_reply" }),
+    );
     expect(terminal.state.stateMachine?.currentState).not.toBe("waiting_for_reply");
   });
 
@@ -316,11 +316,7 @@ describe("TurnRunner protocol scenarios", () => {
     expect(runner.workerInputs[0]?.tools.map((tool) => tool.name)).not.toContain(
       "create_state_machine_definition",
     );
-    expect(runner.workerInputs[0]?.appendSystemPrompt).toContain(
-      "Explicit state-machine definition",
-    );
-    expect(runner.workerInputs[0]?.appendSystemPrompt).toContain('"name": "conference_outreach"');
-    expect(runner.workerInputs[0]?.appendSystemPrompt).toContain('"name": "research_prospect"');
+    expect(runner.workerInputs[0]?.appendSystemPrompt).toBeUndefined();
   });
 
   test("answers normally when an explicit state machine does not fit the prompt", async () => {
@@ -467,8 +463,8 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
-    const childInput = runner.workerInputs[1];
-    expect(childInput?.skills?.map((skill) => skill.name)).toEqual(["allowed-skill"]);
+    const stateAgentInput = runner.workerInputs[1];
+    expect(stateAgentInput?.skills?.map((skill) => skill.name)).toEqual(["allowed-skill"]);
   });
 
   test("asks the parent runner for the next state immediately after a state completes", async () => {
@@ -585,8 +581,6 @@ describe("TurnRunner protocol scenarios", () => {
     const parentPrompt = runner.workerInputs[2]?.prompt ?? "";
     expect(parentPrompt).toContain("<output>");
     expect(parentPrompt).toContain("Research complete.");
-    expect(parentPrompt).toContain("childStatus");
-    expect(parentPrompt).toContain("<terminal>");
   });
 
   test("timer poll continues without script and forwards elapsed output", async () => {
@@ -685,9 +679,18 @@ describe("TurnRunner protocol scenarios", () => {
       status: "failed",
       error: expect.stringContaining('Poll state "wait_before_retry" timed out'),
     });
+    expect(terminal.state.stateMachine?.history).toContainEqual(
+      expect.objectContaining({
+        type: "state_failed",
+        state: "wait_before_retry",
+      }),
+    );
     expect(terminal.state.stateMachine?.history.at(-1)).toMatchObject({
-      type: "state_failed",
-      state: "wait_before_retry",
+      type: "state_machine_completed",
+      terminal: {
+        state: "wait_before_retry",
+        status: "failed",
+      },
     });
   });
 
@@ -887,15 +890,22 @@ describe("TurnRunner protocol scenarios", () => {
     expect(terminal).toMatchObject({ type: "ask", state: { status: "waiting_for_human" } });
   });
 
-  test("routes answers back to the current agent state when it is waiting for human input", async () => {
+  test("routes answers through the parent after an agent state asks for human input", async () => {
     const { runner } = createTurnRunner();
     const turnState = {
       ...createStateMachineState("research_prospect"),
       status: "waiting_for_human" as const,
-      childAgent: { status: "waiting" as const, messages: [] },
     };
     await runner.start({ type: "start", state: turnState });
     runner.controlResults.push(
+      {
+        type: "select_state_machine_state",
+        decision: {
+          kind: "run_state",
+          state: "research_prospect",
+          input: { prospect: "Ada Lovelace" },
+        },
+      },
       { type: "none" },
       {
         type: "select_state_machine_state",
@@ -910,25 +920,18 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
-    expect(runner.workerInputs).toHaveLength(2);
-    const answerMessage = runner.workerInputs[0]?.state.agent.messages.at(-1);
-    expect(answerMessage).toMatchObject({
-      role: "user",
-      content: [
-        {
-          type: "text",
-        },
-      ],
-    });
-    const answerContent = answerMessage?.role === "user" ? answerMessage.content : undefined;
-    const answerText =
-      typeof answerContent === "string"
-        ? answerContent
-        : Array.isArray(answerContent) && answerContent[0]?.type === "text"
-          ? answerContent[0].text
-          : "";
+    expect(runner.workerInputs).toHaveLength(3);
+    const answerText = runner.workerInputs[0]?.prompt ?? "";
     expect(answerText).toContain("Here are my answers to your questions.");
     expect(answerText).toContain("Ada Lovelace");
+    expect(
+      terminal.state.stateMachine?.history.some(
+        (event) =>
+          event.type === "state_started" &&
+          event.state === "research_prospect" &&
+          event.input?.prospect === "Ada Lovelace",
+      ),
+    ).toBe(true);
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
@@ -942,21 +945,14 @@ describe("TurnRunner protocol scenarios", () => {
     });
   });
 
-  test("lets the parent runner prompt the current state-machine agent", async () => {
+  test("replaces active state work when the parent selects a state again", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
     await runner.start({ type: "start", state: turnState });
-    runner.controlResults.push(
-      {
-        type: "prompt_state_machine_agent",
-        prompt: "Use the user's answer to continue the waiting state.",
-      },
-      { type: "none" },
-      {
-        type: "select_state_machine_state",
-        decision: { kind: "terminal", state: "meeting_scheduled" },
-      },
-    );
+    runner.controlResults.push({
+      type: "select_state_machine_state",
+      decision: { kind: "run_state", state: "research_prospect" },
+    });
 
     const terminal = await runner.turn({
       type: "prompt",
@@ -964,19 +960,7 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
-    expect(runner.workerInputs).toHaveLength(3);
-    expect(runner.workerInputs[1]?.prompt).toBe(
-      "Use the user's answer to continue the waiting state.",
-    );
-    expect(runner.workerInputs[1]?.appendSystemPrompt).toBeUndefined();
-    expect(terminal).toMatchObject({
-      type: "complete",
-      status: "completed",
-      state: {
-        stateMachine: {
-          terminal: { state: "meeting_scheduled", status: "completed" },
-        },
-      },
-    });
+    expect(runner.workerInputs.length).toBeGreaterThan(1);
+    expect(terminal.state.stateMachine?.currentState).toBe("research_prospect");
   });
 });

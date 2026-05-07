@@ -572,31 +572,41 @@ describe("TurnRunner tools", () => {
     await expect(rejected).rejects.toThrow('Invalid input for state "send_email"');
   });
 
-  test("returns state-machine agent prompts in tool details and model-visible content", async () => {
-    const tools = createTurnRunnerTools({
-      cwd: process.cwd(),
-      mode: {
+  test("returns trimmed current state-machine state for parent inspection", async () => {
+    const stateMachine = {
+      definition: {
         name: "outreach",
         prompt: "Use for outreach work.",
-        states: [{ kind: "agent", name: "waiting", prompt: "Wait for a reply." }],
+        states: [
+          { kind: "agent" as const, name: "waiting", prompt: "Wait for a reply." },
+          { kind: "terminal" as const, name: "done", status: "completed" as const },
+        ],
       },
+      prompt: "Wait for reply.",
+      currentState: "interrupted",
+      history: Array.from({ length: 12 }, (_, index) => ({
+        type: "state_started" as const,
+        timestamp: index,
+        state: `state-${index}`,
+      })),
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: stateMachine.definition,
+      getStateMachine: () => stateMachine,
     });
-    const promptAgentTool = tools.find((tool) => tool.name === "prompt_state_machine_agent");
+    const inspectTool = tools.find((tool) => tool.name === "get_current_state_machine_state");
 
-    expect(promptAgentTool).toBeDefined();
-    if (!promptAgentTool) throw new Error("prompt_state_machine_agent tool missing");
+    expect(inspectTool).toBeDefined();
+    if (!inspectTool) throw new Error("get_current_state_machine_state tool missing");
 
-    const result = await promptAgentTool.execute("tool-1", {
-      prompt: "Use the user's reply to continue.",
-    });
-
-    const details: TurnRunnerControlResult = result.details;
-    expect(details).toEqual({
-      type: "prompt_state_machine_agent",
-      prompt: "Use the user's reply to continue.",
-    });
-    expect(result.terminate).toBe(true);
-    expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
+    const result = await inspectTool.execute("tool-1", {});
+    const details = result.details as { currentState?: string; history: unknown[] };
+    expect(details.currentState).toBe("interrupted");
+    expect(details.history).toContainEqual(expect.objectContaining({ state: "state-11" }));
+    expect(details.history).toHaveLength(10);
   });
 
   test("rejects selected states outside the active definition", async () => {
@@ -629,14 +639,14 @@ describe("TurnRunner tools", () => {
     const tools = createTurnRunnerTools({
       cwd: process.cwd(),
       mode: "auto",
-      definition: {
+      getDefinition: () => ({
         name: "outreach",
         prompt: "Use for outreach work.",
         states: [
           { kind: "agent", name: "research", prompt: "Research the prospect." },
           { kind: "terminal", name: "done", status: "completed" },
         ],
-      },
+      }),
     });
     const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
 
@@ -670,7 +680,6 @@ describe("TurnRunner tools", () => {
       false,
     );
     expect(stateMachineTools.some((tool) => tool.name === "select_state_machine_state")).toBe(true);
-    expect(stateMachineTools.some((tool) => tool.name === "prompt_state_machine_agent")).toBe(true);
   });
 
   test("read_skill returns full SKILL.md instructions for a known skill", async () => {

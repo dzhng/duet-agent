@@ -6,12 +6,16 @@ import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import type { TurnMode, TurnQuestion, TurnTodo } from "../types/protocol.js";
 import type {
+  StateMachineSession,
+  StateMachineSessionEvent,
   StateMachineAgentState,
   StateMachineDefinition,
   StateMachinePollState,
   StateMachineScriptState,
   StateMachineState,
+  StateMachineTerminalResult,
 } from "../types/state-machine.js";
+import { INTERRUPTED_STATE_MACHINE_STATE } from "../types/state-machine.js";
 import { readSkillInstructions } from "./skills.js";
 
 const jsonSchemaValidator = new Ajv({ strictSchema: false });
@@ -307,13 +311,12 @@ const selectStateSchema = Type.Object({
 type SelectStateParams = Static<typeof selectStateSchema>;
 type ToolRunnerDecision = SelectStateParams["decision"];
 
-const promptStateMachineAgentSchema = Type.Object({
-  prompt: Type.String({
-    description: "Follow-up user prompt to send to the current state-machine agent state.",
-  }),
-});
-
-type PromptStateMachineAgentParams = Static<typeof promptStateMachineAgentSchema>;
+export interface CurrentStateMachineStateResult {
+  currentState?: string;
+  currentInput?: Record<string, unknown>;
+  terminal?: StateMachineTerminalResult;
+  history: StateMachineSessionEvent[];
+}
 
 export type StateMachineRunnerDecision =
   | (ToolRunnerDecision & {
@@ -335,10 +338,7 @@ export type TurnRunnerControlResult =
       type: "create_state_machine_definition";
       definition: ToolStateMachineDefinition;
     } & Pick<CreateDefinitionParams, "firstState">)
-  | { type: "select_state_machine_state"; decision: StateMachineRunnerDecision }
-  | ({
-      type: "prompt_state_machine_agent";
-    } & PromptStateMachineAgentParams);
+  | { type: "select_state_machine_state"; decision: StateMachineRunnerDecision };
 
 export function isTurnRunnerControlResult(value: unknown): value is TurnRunnerControlResult {
   if (!value || typeof value !== "object" || !("type" in value)) return false;
@@ -347,8 +347,7 @@ export function isTurnRunnerControlResult(value: unknown): value is TurnRunnerCo
     type === "none" ||
     type === "ask_user_question" ||
     type === "create_state_machine_definition" ||
-    type === "select_state_machine_state" ||
-    type === "prompt_state_machine_agent"
+    type === "select_state_machine_state"
   );
 }
 
@@ -356,7 +355,8 @@ interface TurnRunnerToolsInput {
   cwd: string;
   mode: TurnMode;
   todoStorage: TodoWriteToolStorage;
-  definition?: StateMachineDefinition;
+  getDefinition?: () => StateMachineDefinition | undefined;
+  getStateMachine?: () => StateMachineSession | undefined;
   skills?: readonly Skill[];
 }
 
@@ -383,9 +383,12 @@ export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] 
     tools.push(createStateMachineDefinitionTool());
   }
 
-  const definition = typeof input.mode === "object" ? input.mode : input.definition;
-  tools.push(createSelectStateTool(definition));
-  tools.push(createPromptStateMachineAgentTool());
+  const getDefinition =
+    typeof input.mode === "object"
+      ? () => input.mode as StateMachineDefinition
+      : input.getDefinition;
+  tools.push(createSelectStateTool(getDefinition));
+  tools.push(createCurrentStateMachineStateTool(input.getStateMachine));
   return tools;
 }
 
@@ -544,7 +547,7 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
 }
 
 function createSelectStateTool(
-  definition: StateMachineDefinition | undefined,
+  getDefinition: (() => StateMachineDefinition | undefined) | undefined,
 ): AgentTool<typeof selectStateSchema> {
   return {
     name: "select_state_machine_state",
@@ -554,6 +557,7 @@ function createSelectStateTool(
     parameters: selectStateSchema,
     async execute(_toolCallId, params) {
       const decision = normalizeRunnerDecision(params.decision);
+      const definition = getDefinition?.();
       assertValidSelectedState(decision, definition);
 
       const result: TurnRunnerControlResult = { type: "select_state_machine_state", decision };
@@ -566,22 +570,26 @@ function createSelectStateTool(
   };
 }
 
-function createPromptStateMachineAgentTool(): AgentTool<typeof promptStateMachineAgentSchema> {
+function createCurrentStateMachineStateTool(
+  getStateMachine: (() => StateMachineSession | undefined) | undefined,
+): AgentTool {
   return {
-    name: "prompt_state_machine_agent",
-    label: "Prompt state-machine agent",
+    name: "get_current_state_machine_state",
+    label: "Get current state-machine state",
     description:
-      "Send a prompt to the current state-machine agent state instead of selecting a new state. Use this when the current state is an agent state that needs user context or a direct answer before the state machine can continue.",
-    parameters: promptStateMachineAgentSchema,
-    async execute(_toolCallId, params) {
-      const result: TurnRunnerControlResult = {
-        type: "prompt_state_machine_agent",
-        prompt: params.prompt,
+      "Inspect the current state-machine progress. Use this after resume, interruption, or uncertainty before selecting the next state.",
+    parameters: Type.Object({}),
+    async execute() {
+      const stateMachine = getStateMachine?.();
+      const result: CurrentStateMachineStateResult = {
+        currentState: stateMachine?.currentState,
+        currentInput: stateMachine?.currentInput,
+        terminal: stateMachine?.terminal,
+        history: stateMachine?.history.slice(-10) ?? [],
       };
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         details: result,
-        terminate: true,
       };
     },
   };
@@ -648,6 +656,9 @@ function assertValidStateInput(state: StateMachineState, input: unknown): void {
 
 function assertValidDefinitionInputSchemas(definition: StateMachineDefinition): void {
   for (const state of definition.states) {
+    if (state.name === INTERRUPTED_STATE_MACHINE_STATE) {
+      throw new Error(`State name "${INTERRUPTED_STATE_MACHINE_STATE}" is reserved.`);
+    }
     assertValidStateInputSchema(state);
   }
 }

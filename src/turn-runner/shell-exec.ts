@@ -1,11 +1,18 @@
-import { execFile, type ExecException } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { spawn } from "node:child_process";
 const TEMPLATE_PLACEHOLDER_PATTERN = /\{\{\s*input\.([A-Za-z0-9_.-]+)\s*\}\}/g;
 const TEMPLATE_PLACEHOLDER_CAPTURE_PATTERN = /^\{\{\s*input\.([A-Za-z0-9_.-]+)\s*\}\}$/;
 
 export type ShellCommandOutput = { stdout: string; stderr: string; exitCode: number };
+
+export class ShellCommandError extends Error {
+  constructor(
+    message: string,
+    readonly output: ShellCommandOutput,
+  ) {
+    super(message);
+    this.name = "ShellCommandError";
+  }
+}
 
 export async function runShellCommand(
   command: string,
@@ -16,33 +23,85 @@ export async function runShellCommand(
     successCodes?: number[];
   },
 ): Promise<ShellCommandOutput> {
-  try {
-    const result = await execFileAsync("sh", ["-lc", command], {
+  const successCodes = options.successCodes ?? [0];
+  let stdout = "";
+  let stderr = "";
+  let timedOut = false;
+  let aborted = false;
+  let settled = false;
+
+  return await new Promise<ShellCommandOutput>((resolve, reject) => {
+    const child = spawn("sh", ["-lc", command], {
       cwd: options.cwd,
-      timeout: options.timeoutMs,
-      signal: options.signal,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
-  } catch (error) {
-    const execError = error as ExecException & {
-      stdout?: string;
-      stderr?: string;
-      code?: number | string;
+    const output = (exitCode: number): ShellCommandOutput => ({ stdout, stderr, exitCode });
+    const cleanup = () => {
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      options.signal.removeEventListener("abort", abort);
     };
-    const code =
-      typeof execError.code === "number"
-        ? execError.code
-        : typeof execError.code === "string"
-          ? Number(execError.code)
-          : undefined;
-    if (code !== undefined && (options.successCodes ?? [0]).includes(code)) {
-      return {
-        stdout: execError.stdout ?? "",
-        stderr: execError.stderr ?? "",
-        exitCode: code,
-      };
+    const abort = () => {
+      aborted = true;
+      killProcessTree(child.pid);
+    };
+    const timeout =
+      options.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            killProcessTree(child.pid);
+          }, options.timeoutMs);
+
+    options.signal.addEventListener("abort", abort, { once: true });
+    if (options.signal.aborted) abort();
+
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      cleanup();
+      reject(error);
+    });
+    child.on("close", (code, signal) => {
+      if (settled) return;
+      cleanup();
+      const exitCode = typeof code === "number" ? code : signal ? 128 : 1;
+      const captured = output(exitCode);
+      if (aborted) {
+        reject(new ShellCommandError("Command aborted.", captured));
+        return;
+      }
+      if (timedOut) {
+        reject(new ShellCommandError("Command timed out.", captured));
+        return;
+      }
+      if (successCodes.includes(exitCode)) {
+        resolve(captured);
+        return;
+      }
+      reject(new ShellCommandError(`Command exited with code ${exitCode}.`, captured));
+    });
+  });
+}
+
+function killProcessTree(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      // Process already exited.
     }
-    throw error;
   }
 }
 
