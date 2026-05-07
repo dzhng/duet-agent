@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -25,6 +25,7 @@ import { waitFor } from "./helpers/async.js";
 import { createStateMachineState } from "./helpers/turn-runner-protocol.js";
 
 class FakeTurnRunner implements SessionTurnRunner {
+  readonly startCommands: TurnStartCommand[] = [];
   readonly commands: TurnCommand[] = [];
   readonly interrupts: TurnInterruptCommand[] = [];
   readonly followUpQueueEdits: TurnEditFollowUpQueueCommand[] = [];
@@ -43,7 +44,8 @@ class FakeTurnRunner implements SessionTurnRunner {
     this.terminals = [...terminals];
   }
 
-  async start(_command: TurnStartCommand): Promise<TurnState> {
+  async start(command: TurnStartCommand): Promise<TurnState> {
+    this.startCommands.push(command);
     this.emit({ type: "turn_started", state: turnState });
     return turnState;
   }
@@ -173,6 +175,14 @@ function complete(result = "done"): TurnTerminalEvent {
     result,
     state: turnState,
   };
+}
+
+async function writeStoredState(sessionPath: string, state: TurnState): Promise<void> {
+  await writeFile(
+    join(sessionPath, "state.json"),
+    `${JSON.stringify({ sessionId: "resumed-options", updatedAt: Date.now(), state }, null, 2)}\n`,
+    "utf-8",
+  );
 }
 
 describe("Session", () => {
@@ -329,6 +339,52 @@ describe("Session", () => {
     expect(secondTurnRunner.commands).toEqual([
       { type: "prompt", message: "continue", behavior: "follow_up" },
     ]);
+  });
+
+  testIfDocker("resumed sessions start with current config options", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
+    tempDirs.push(tempDir);
+    const sessionPath = join(tempDir, "resumed-options");
+    await mkdir(sessionPath, { recursive: true });
+    await writeStoredState(sessionPath, {
+      ...turnState,
+      options: {
+        model: "anthropic:old-persisted-model",
+        memoryModel: "anthropic:old-memory-model",
+        thinkingLevel: "medium",
+      },
+    });
+    const runner = new FakeTurnRunner([complete("resumed")]);
+    const session = new Session(
+      {
+        model: "anthropic:new-config-model",
+        memoryModel: "anthropic:new-memory-model",
+        thinkingLevel: "high",
+      },
+      {
+        id: "resumed-options",
+        runner,
+        sessionPath,
+        resumeFromStorage: true,
+      },
+    );
+
+    await session.start();
+
+    expect(runner.startCommands).toHaveLength(1);
+    expect(runner.startCommands[0]).toMatchObject({
+      type: "start",
+      options: {
+        model: "anthropic:new-config-model",
+        memoryModel: "anthropic:new-memory-model",
+        thinkingLevel: "high",
+      },
+    });
+    expect(runner.startCommands[0].state?.options).toMatchObject({
+      model: "anthropic:old-persisted-model",
+      memoryModel: "anthropic:old-memory-model",
+      thinkingLevel: "medium",
+    });
   });
 
   testIfDocker("sends active prompts through turn runner", async () => {

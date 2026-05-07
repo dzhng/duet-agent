@@ -124,7 +124,7 @@ export class Session {
       type: "start",
       ...((input.mode ?? this.config.mode) ? { mode: input.mode ?? this.config.mode } : {}),
       ...(state ? { state } : {}),
-      ...(input.options ? { options: input.options } : {}),
+      ...this.startOptions(input.options),
     };
     this.startPromise = this.runner.start(command).then(() => undefined);
     await this.startPromise;
@@ -225,7 +225,9 @@ export class Session {
     if (!this.resumeFromStorage) return;
     const state = await this.readStoredState();
     if (!state) return;
-    this.startPromise = this.runner.start({ type: "start", state }).then(() => undefined);
+    this.startPromise = this.runner
+      .start({ type: "start", state, ...this.startOptions() })
+      .then(() => undefined);
     await this.startPromise;
   }
 
@@ -336,6 +338,18 @@ export class Session {
     const state = this.runner.getState();
     if (!state) return;
     await this.writeStoredState(state);
+  }
+
+  private startOptions(options?: TurnOptions): { options?: TurnOptions } {
+    // CLI/TUI config is the current session contract. On resume it should
+    // override persisted options so flags like --model take effect immediately.
+    const effective: TurnOptions = {
+      ...(this.config.model ? { model: this.config.model } : {}),
+      ...(this.config.memoryModel ? { memoryModel: this.config.memoryModel } : {}),
+      ...(this.config.thinkingLevel ? { thinkingLevel: this.config.thinkingLevel } : {}),
+      ...options,
+    };
+    return Object.keys(effective).length > 0 ? { options: effective } : {};
   }
 
   private isWaitingOnPoll(state: TurnState | undefined): boolean {
