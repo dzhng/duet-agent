@@ -103,6 +103,10 @@ class FakeTurnRunner implements SessionTurnRunner {
     this.emit({ type: "follow_up_queue", prompts: command.prompts });
   }
 
+  getState(): TurnState | undefined {
+    return this.state;
+  }
+
   subscribe(handler: (event: TurnEvent) => void): () => void {
     this.handlers.add(handler);
     return () => this.handlers.delete(handler);
@@ -253,6 +257,42 @@ describe("Session", () => {
 
     expect(stored.sessionId).toBe("existing-session");
     expect(stored.state.agent.messages).toEqual(turnState.agent.messages);
+  });
+
+  testIfDocker("persists latest runner state during dispose without a terminal event", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
+    tempDirs.push(tempDir);
+    const runner = new FakeTurnRunner([]);
+    const latestState: TurnState = {
+      ...turnState,
+      todos: [{ id: "persist", content: "Persist latest state", status: "in_progress" }],
+      followUpQueue: ["keep this follow-up"],
+    };
+    runner.state = latestState;
+    await mkdir(join(tempDir, "dispose-session"), { recursive: true });
+    const session = new Session(
+      { model: "anthropic:claude-opus-4-7" },
+      { id: "dispose-session", runner, sessionPath: join(tempDir, "dispose-session") },
+    );
+
+    await session.start();
+    await session.dispose();
+    const content = await readFile(join(tempDir, "dispose-session", "state.json"), "utf-8");
+    const stored = JSON.parse(content);
+
+    expect(stored.state.todos).toEqual(latestState.todos);
+    expect(stored.state.followUpQueue).toEqual(["keep this follow-up"]);
+  });
+
+  testIfDocker("reads current state from the runner", async () => {
+    const runner = new FakeTurnRunner([complete()]);
+    const session = await createSession(runner);
+    const latestState: TurnState = { ...turnState, status: "sleeping" };
+
+    await session.start();
+    runner.state = latestState;
+
+    expect(session.getState()).toEqual(latestState);
   });
 
   testIfDocker("disposes runner resources", async () => {

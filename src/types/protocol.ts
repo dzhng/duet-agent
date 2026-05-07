@@ -173,10 +173,40 @@ export interface TurnState {
    * stay constrained to their provided state set.
    */
   mode: TurnMode;
+  /**
+   * Effective runtime options for future turns. Persisted separately from agent
+   * transcripts so model, memory model, and thinking level survive resume even
+   * when process defaults change.
+   */
+  options?: TurnOptions;
   /** The agent conversation is always present, including state-machine sessions. */
   agent: AgentSession;
+  /**
+   * Active state-machine child agent transcript. Parent-agent prompts, routing
+   * decisions, and user-visible conversation remain in `agent`; child agent
+   * states use this snapshot so resume can continue the child without
+   * overwriting the parent transcript.
+   */
+  childAgent?: AgentSession;
   /** Present when this session is executing in state-machine mode. */
   stateMachine?: StateMachineSession;
+  /**
+   * Current todo list written by the todo tool. Persisted with the turn state so
+   * resumed runners preserve the same work plan instead of starting with an
+   * empty tool-local list.
+   */
+  todos?: TurnTodo[];
+  /**
+   * User-visible follow-up prompts waiting to be delivered. The runner mirrors
+   * this into pi-agent follow-up queues when a parent agent is active.
+   */
+  followUpQueue?: string[];
+  /**
+   * Commands accepted by the runner but not yet executed because active work
+   * could not absorb them. These are replayed after resume in the original
+   * order when the runner can safely continue.
+   */
+  queuedCommands?: TurnCommand[];
 }
 
 /**
@@ -387,7 +417,7 @@ export interface TurnFollowUpQueueEvent {
 
 export interface TurnStateMachineEvent {
   type: "state_machine";
-  /** Display name/title of the current state. */
+  /** Display name of the current state. */
   currentState: string;
 }
 

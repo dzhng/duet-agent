@@ -60,6 +60,20 @@ class StreamingTurnRunner extends TurnRunner {
 }
 
 describe("TurnRunner active turns", () => {
+  test("rejects non-start commands before turn_started is emitted", async () => {
+    const { runner } = createStreamingRunner();
+
+    await expect(
+      runner.turn({ type: "prompt", message: "too early", behavior: "follow_up" }),
+    ).rejects.toThrow("Turn runner has not been started.");
+    expect(() => runner.interrupt({ type: "interrupt" })).toThrow(
+      "Turn runner has not been started.",
+    );
+    expect(() =>
+      runner.editFollowUpQueue({ type: "edit_follow_up_queue", prompts: ["later"] }),
+    ).toThrow("Turn runner has not been started.");
+  });
+
   test("repeated prompt turns join the active agent chain and emit one terminal", async () => {
     const { runner, events } = createStreamingRunner();
     const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "first" });
@@ -119,6 +133,59 @@ describe("TurnRunner active turns", () => {
     const [firstTerminal, queuedTerminal] = await Promise.all([first, queued]);
     expect(firstTerminal).toBe(queuedTerminal);
     expect(followUpQueueEvents(events).at(-1)).toEqual([]);
+  });
+
+  test("hydrates persisted follow-up queue and injects it into the next parent agent", async () => {
+    const { runner, events } = createStreamingRunner();
+    const state: TurnState = {
+      status: "completed",
+      mode: "agent",
+      agent: { status: "completed", messages: [] },
+      followUpQueue: ["persisted follow-up"],
+    };
+
+    await runner.start({ type: "start", state: JSON.parse(JSON.stringify(state)) as TurnState });
+    const turn = runner.turn({
+      type: "prompt",
+      message: "resume",
+      behavior: "follow_up",
+    });
+    await waitFor(() => runner.contexts.length >= 1);
+    expect(lastUserText(runner.contexts[0]!)).toContain("resume");
+    runner.completeNext("resume response");
+    await waitFor(() => runner.contexts.length >= 2);
+    expect(lastUserText(runner.contexts[1]!)).toContain("persisted follow-up");
+    runner.completeNext("follow-up response");
+
+    const terminal = await turn;
+    expect(messageTexts(terminal.state)).toEqual([
+      "resume",
+      "resume response",
+      "persisted follow-up",
+      "follow-up response",
+    ]);
+    expect(followUpQueueEvents(events).at(-1)).toEqual([]);
+  });
+
+  test("persists todos in turn state snapshots", async () => {
+    const { runner } = createStreamingRunner();
+    const { turn } = await startTurn(runner, { mode: "agent", prompt: "write todos" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("todo_write", {
+      merge: false,
+      todos: [{ id: "todo", content: "Keep todo state", status: "in_progress" }],
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(runner.getState()?.todos).toEqual([
+      { id: "todo", content: "Keep todo state", status: "in_progress" },
+    ]);
+    runner.completeNext("done");
+
+    const terminal = await turn;
+    expect(terminal.state.todos).toEqual([
+      { id: "todo", content: "Keep todo state", status: "in_progress" },
+    ]);
   });
 
   test("steer is handled through turn and still shares the active terminal", async () => {
@@ -616,6 +683,87 @@ describe("TurnRunner active turns", () => {
     const [turnTerminal, answerTerminal] = await Promise.all([turn, answer]);
     expect(turnTerminal).toBe(answerTerminal);
     expect(terminalEvents(events)).toHaveLength(1);
+  });
+
+  test("snapshots active child agent state before child completion", async () => {
+    const { runner, events } = createStreamingRunner();
+    const { turn } = await startTurn(runner, {
+      mode: childAgentDefinition(),
+      prompt: "run child flow",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "run_state", state: "child_agent" },
+    });
+    await waitFor(() =>
+      events.some(
+        (event) => event.type === "state_machine" && event.currentState === "child_agent",
+      ),
+    );
+    await waitFor(() => runner.getState()?.childAgent !== undefined);
+
+    const snapshot = runner.getState();
+    expect(snapshot?.childAgent?.messages.length).toBeGreaterThan(0);
+    expect(messageTexts({ ...snapshot!, agent: snapshot!.childAgent! })).toContain(
+      "Ask the child question.",
+    );
+
+    runner.completeNext("child response");
+    await waitFor(() => runner.contexts.length >= 3);
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "terminal", state: "done" },
+    });
+    await turn;
+  });
+
+  test("resumes child agent transcripts across persisted child statuses", async () => {
+    const statuses = ["waiting", "completed", "failed", "cancelled"] as const;
+
+    for (const status of statuses) {
+      const { runner } = createStreamingRunner();
+      const state: TurnState = {
+        status: "running",
+        mode: childAgentDefinition(),
+        agent: { status: "running", messages: [] },
+        stateMachine: {
+          definition: childAgentDefinition(),
+          prompt: "Run child flow.",
+          currentState: "child_agent",
+          history: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+        childAgent: {
+          status,
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: `prior child ${status}` }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+      };
+      await runner.start({ type: "start", state: JSON.parse(JSON.stringify(state)) as TurnState });
+
+      const turn = runner.turn({
+        type: "prompt",
+        message: "resume parent",
+        behavior: "follow_up",
+      });
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNextToolCall("prompt_state_machine_agent", { prompt: "resume child" });
+      await waitFor(() => runner.contexts.length >= 2);
+
+      expect(contextText(runner.contexts[1]!)).toContain(`prior child ${status}`);
+      runner.completeNext("child resumed");
+      await waitFor(() => runner.contexts.length >= 3);
+      runner.completeNextToolCall("select_state_machine_state", {
+        decision: { kind: "terminal", state: "done" },
+      });
+      await turn;
+    }
   });
 
   test("prompts during active child agent work queue for the parent", async () => {

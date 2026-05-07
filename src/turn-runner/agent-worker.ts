@@ -1,13 +1,8 @@
-import {
-  Agent,
-  type AgentEvent,
-  type AgentMessage,
-  type AgentTool,
-} from "@mariozechner/pi-agent-core";
+import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import { assistantText } from "../core/serializer.js";
 import type { TurnEvent, TurnOptions, TurnState, TurnTerminalEvent } from "../types/protocol.js";
-import type { TodoWriteToolDetails, TurnRunnerControlResult } from "./tools.js";
+import type { TurnRunnerControlResult } from "./tools.js";
 import { usageFromMessages } from "./usage-accounting.js";
 
 export interface AgentWorkerInput {
@@ -42,13 +37,9 @@ export async function runAgentWorker(
   input: AgentWorkerInput,
   activeSlot: ActiveAgentSlot = "parent",
 ): Promise<AgentWorkerResult> {
-  if (activeSlot === "parent" && runtime.getActiveAgent("parent")) {
-    throw new Error("Cannot start a parent agent while another parent agent is active.");
-  }
-  if (activeSlot === "state_machine_child" && runtime.getActiveAgent("state_machine_child")) {
-    throw new Error(
-      "Cannot start a state-machine child agent while another child agent is active.",
-    );
+  if (runtime.getActiveAgent(activeSlot)) {
+    const description = activeSlot === "parent" ? "parent agent" : "state-machine child agent";
+    throw new Error(`Cannot start a ${description} while another ${description} is active.`);
   }
 
   let control: TurnRunnerControlResult = { type: "none" };
@@ -83,6 +74,7 @@ export async function runAgentWorker(
     ...input.state,
     status,
     agent: {
+      ...input.state.agent,
       status,
       messages,
     },
@@ -101,82 +93,49 @@ export async function runAgentWorker(
   };
 }
 
-export function emitAgentEvent(
-  event: AgentEvent,
-  emit: (event: TurnEvent) => void,
-  removeFollowUpPrompt: (prompt: string) => void,
-): void {
-  if (event.type === "message_start" && event.message.role === "user") {
-    removeFollowUpPrompt(agentMessageText(event.message));
-  }
-  if (event.type === "message_update") {
-    const update = event.assistantMessageEvent;
-    if (update.type === "text_delta") {
-      emit({ type: "step", step: { type: "text_delta", delta: update.delta } });
+export function emitAgentEvent(event: AgentEvent, emit: (event: TurnEvent) => void): void {
+  switch (event.type) {
+    case "message_update": {
+      const update = event.assistantMessageEvent;
+      switch (update.type) {
+        case "text_delta":
+          emit({ type: "step", step: { type: "text_delta", delta: update.delta } });
+          return;
+        case "thinking_delta":
+          emit({ type: "step", step: { type: "reasoning_delta", delta: update.delta } });
+          return;
+        case "text_end":
+          emit({ type: "step", step: { type: "text", text: update.content } });
+          return;
+        case "thinking_end":
+          emit({ type: "step", step: { type: "reasoning", text: update.content } });
+          return;
+      }
+      return;
     }
-    if (update.type === "thinking_delta") {
-      emit({ type: "step", step: { type: "reasoning_delta", delta: update.delta } });
-    }
-    if (update.type === "text_end") {
-      emit({ type: "step", step: { type: "text", text: update.content } });
-    }
-    if (update.type === "thinking_end") {
-      emit({ type: "step", step: { type: "reasoning", text: update.content } });
-    }
+    case "tool_execution_start":
+      emit({
+        type: "step",
+        step: {
+          type: "tool_call",
+          toolName: event.toolName,
+          toolCallId: event.toolCallId,
+          status: "running",
+          input: event.args,
+        },
+      });
+      return;
+    case "tool_execution_end":
+      emit({
+        type: "step",
+        step: {
+          type: "tool_call",
+          toolName: event.toolName,
+          toolCallId: event.toolCallId,
+          status: event.isError ? "error" : "completed",
+          output: event.result?.content,
+        },
+      });
+      return;
   }
-  if (event.type === "tool_execution_start") {
-    emit({
-      type: "step",
-      step: {
-        type: "tool_call",
-        toolName: event.toolName,
-        toolCallId: event.toolCallId,
-        status: "running",
-        input: event.args,
-      },
-    });
-  }
-  if (event.type === "tool_execution_end") {
-    emit({
-      type: "step",
-      step: {
-        type: "tool_call",
-        toolName: event.toolName,
-        toolCallId: event.toolCallId,
-        status: event.isError ? "error" : "completed",
-        output: event.result?.content,
-      },
-    });
-  }
-}
-
-export function isTurnRunnerControlResult(value: unknown): value is TurnRunnerControlResult {
-  if (!value || typeof value !== "object" || !("type" in value)) return false;
-  const type = value.type;
-  return (
-    type === "none" ||
-    type === "ask_user_question" ||
-    type === "create_state_machine_definition" ||
-    type === "select_state_machine_state" ||
-    type === "prompt_state_machine_agent"
-  );
-}
-
-export function isTodoWriteToolDetails(value: unknown): value is TodoWriteToolDetails {
-  return Boolean(
-    value && typeof value === "object" && "type" in value && value.type === "todo_write",
-  );
-}
-
-function agentMessageText(message: AgentMessage): string {
-  const content = "content" in message ? message.content : undefined;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .flatMap((part) =>
-      part && typeof part === "object" && "text" in part && typeof part.text === "string"
-        ? [part.text]
-        : [],
-    )
-    .join("\n");
 }

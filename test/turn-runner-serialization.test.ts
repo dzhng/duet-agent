@@ -47,6 +47,22 @@ class CapturingTurnRunner extends TurnRunner {
     });
     return agent.toolExecution;
   }
+
+  captureRuntimeSettings(input: Omit<AgentWorkerInput, "tools">): {
+    modelProvider: string;
+    modelId: string;
+    thinkingLevel: string;
+  } {
+    const agent = this.createAgent({
+      ...input,
+      ...this.createTools(input.state.mode, input.state),
+    });
+    return {
+      modelProvider: agent.state.model.provider,
+      modelId: agent.state.model.id,
+      thinkingLevel: agent.state.thinkingLevel,
+    };
+  }
 }
 
 describe("TurnState serialization", () => {
@@ -115,6 +131,33 @@ describe("TurnState serialization", () => {
     });
 
     expect(toolExecution).toBe("parallel");
+  });
+
+  test("restores persisted model and thinking level", () => {
+    const runner = new CapturingTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      thinkingLevel: "medium",
+      systemPromptFiles: [],
+    });
+    const state: TurnState = {
+      ...createSerializableTurnState(),
+      options: {
+        model: "anthropic:claude-sonnet-4-6",
+        memoryModel: "anthropic:claude-sonnet-4-6",
+        thinkingLevel: "high",
+      },
+    };
+
+    const settings = runner.captureRuntimeSettings({
+      state: JSON.parse(JSON.stringify(state)) as TurnState,
+      prompt: "Check restored runtime settings.",
+    });
+
+    expect(settings).toEqual({
+      modelProvider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      thinkingLevel: "high",
+    });
   });
 
   test("includes both configured base instructions and system prompt files", async () => {

@@ -262,7 +262,7 @@ describe("TurnRunner memory", () => {
       model: "anthropic:claude-sonnet-4-5",
     });
     expect(withAgentOverride.agentModel.id).toBe("claude-sonnet-4-5");
-    expect(withAgentOverride.memoryModel.id).toBe("claude-sonnet-4-6");
+    expect(withAgentOverride.memoryModel.id).toBe("claude-haiku-4-5");
 
     const withConfiguredMemoryOverride = new ModelRoutingTurnRunner({
       model: "anthropic:claude-opus-4-7",

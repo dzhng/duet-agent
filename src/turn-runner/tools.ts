@@ -89,11 +89,6 @@ const todoWriteSchema = Type.Object({
 
 type TodoWriteParams = Static<typeof todoWriteSchema>;
 
-export interface TodoWriteToolDetails {
-  type: "todo_write";
-  todos: TurnTodo[];
-}
-
 export interface TodoWriteToolStorage {
   getTodos(): TurnTodo[];
   setTodos(todos: TurnTodo[]): void;
@@ -345,17 +340,29 @@ export type TurnRunnerControlResult =
       type: "prompt_state_machine_agent";
     } & PromptStateMachineAgentParams);
 
+export function isTurnRunnerControlResult(value: unknown): value is TurnRunnerControlResult {
+  if (!value || typeof value !== "object" || !("type" in value)) return false;
+  const type = value.type;
+  return (
+    type === "none" ||
+    type === "ask_user_question" ||
+    type === "create_state_machine_definition" ||
+    type === "select_state_machine_state" ||
+    type === "prompt_state_machine_agent"
+  );
+}
+
 interface TurnRunnerToolsInput {
   cwd: string;
   mode: TurnMode;
+  todoStorage: TodoWriteToolStorage;
   definition?: StateMachineDefinition;
-  todoStorage?: TodoWriteToolStorage;
   skills?: readonly Skill[];
 }
 
 export function createDefaultTurnRunnerTools(
   cwd: string,
-  todoStorage: TodoWriteToolStorage = createMemoryTodoStorage(),
+  todoStorage: TodoWriteToolStorage,
   skills: readonly Skill[] = [],
 ): AgentTool[] {
   return [
@@ -449,7 +456,7 @@ function createReadSkillTool(skills: readonly Skill[]): AgentTool<typeof readSki
 }
 
 export function createTodoWriteTool(
-  storage: TodoWriteToolStorage = createMemoryTodoStorage(),
+  storage: TodoWriteToolStorage,
 ): AgentTool<typeof todoWriteSchema> {
   return {
     name: "todo_write",
@@ -478,21 +485,10 @@ export function createTodoWriteTool(
         : normalizeTodos(params.todos);
       storage.setTodos(todos);
 
-      const details: TodoWriteToolDetails = { type: "todo_write", todos };
       return {
         content: [{ type: "text", text: formatTodoWriteResult(todos) }],
-        details,
+        details: todos,
       };
-    },
-  };
-}
-
-function createMemoryTodoStorage(): TodoWriteToolStorage {
-  let todos: TurnTodo[] = [];
-  return {
-    getTodos: () => todos,
-    setTodos: (nextTodos) => {
-      todos = nextTodos;
     },
   };
 }

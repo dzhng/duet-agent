@@ -38,6 +38,7 @@ describe("state-machine child agent resume", () => {
     if (askTerminal.type !== "ask") throw new Error("Expected child agent to ask a question.");
     expect(askTerminal.state.status).toBe("waiting_for_human");
     expect(askTerminal.state.stateMachine?.currentState).toBe("ask_child");
+    expect(messageTextFromAgent(askTerminal.state.childAgent)).toContain("What company?");
 
     const hydratedState = JSON.parse(JSON.stringify(askTerminal.state)) as TurnState;
     const secondRunner = new EvalTurnRunner({
@@ -65,6 +66,59 @@ describe("state-machine child agent resume", () => {
     });
     expect(secondRunner.childInputs).toHaveLength(1);
     expect(messageText(secondRunner.childInputs[0]!.state)).toContain("Analytical Engines Ltd.");
+    expect(messageTextFromAgent(terminal.state.childAgent)).toContain("Used the hydrated answer.");
+    expect(messageText(terminal.state)).not.toContain("Used the hydrated answer.");
+  });
+
+  testIfDocker("resumes child-agent transcripts across persisted statuses", async () => {
+    const statuses = ["waiting", "completed", "failed", "cancelled"] as const;
+
+    for (const status of statuses) {
+      const runner = new EvalTurnRunner({
+        childResults: [{ type: "complete", text: `Completed child ${status}.` }],
+        parentControls: [
+          { type: "prompt_state_machine_agent", prompt: "Continue the child state." },
+          { type: "select_state_machine_state", decision: { kind: "terminal", state: "done" } },
+        ],
+      });
+      const state: TurnState = {
+        status: "running",
+        mode: childResumeDefinition,
+        agent: { status: "running", messages: [] },
+        childAgent: {
+          status,
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: `prior child ${status}` }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        stateMachine: {
+          definition: childResumeDefinition,
+          prompt: "Resume persisted child state.",
+          currentState: "ask_child",
+          history: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      };
+      await runner.start({ type: "start", state: JSON.parse(JSON.stringify(state)) as TurnState });
+
+      const terminal = await runner.turn({
+        type: "prompt",
+        message: "Resume the child.",
+        behavior: "follow_up",
+      });
+
+      expect(terminal).toMatchObject({ type: "complete", status: "completed" });
+      expect(runner.childInputs).toHaveLength(1);
+      expect(messageText(runner.childInputs[0]!.state)).toContain(`prior child ${status}`);
+      expect(messageTextFromAgent(terminal.state.childAgent)).toContain(
+        `Completed child ${status}.`,
+      );
+    }
   });
 });
 
@@ -176,7 +230,11 @@ function assistantMessage(text: string): AssistantMessage {
 }
 
 function messageText(state: TurnState): string {
-  return state.agent.messages
+  return messageTextFromAgent(state.agent);
+}
+
+function messageTextFromAgent(agent: TurnState["agent"] | undefined): string {
+  return (agent?.messages ?? [])
     .map((message) => {
       const content = "content" in message ? message.content : undefined;
       if (typeof content === "string") return content;

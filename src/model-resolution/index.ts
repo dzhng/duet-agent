@@ -83,6 +83,7 @@ const MEMORY_MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
 ];
 
 export const DEFAULT_CLI_MODEL = MODEL_PROVIDER_INFERENCE[0].model;
+export const DEFAULT_CLI_MEMORY_MODEL = MEMORY_MODEL_PROVIDER_INFERENCE[0].model;
 
 function lookupProviderEnvVar(entry: ProviderInferenceEntry): string | undefined {
   if (entry.customEnvVar) {

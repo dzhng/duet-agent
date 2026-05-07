@@ -4,11 +4,40 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import dedent from "dedent";
-import { createTurnRunnerTools, type TurnRunnerControlResult } from "../src/turn-runner/tools.js";
+import {
+  createTurnRunnerTools as createTurnRunnerToolsWithStorage,
+  type TurnRunnerControlResult,
+} from "../src/turn-runner/tools.js";
+import type { TurnTodo } from "../src/types/protocol.js";
+
+type TurnRunnerToolsInput = Parameters<typeof createTurnRunnerToolsWithStorage>[0];
+
+function createTurnRunnerTools(input: Omit<TurnRunnerToolsInput, "todoStorage">) {
+  let storedTodos: TurnTodo[] = [];
+  return createTurnRunnerToolsWithStorage({
+    ...input,
+    todoStorage: {
+      getTodos: () => storedTodos,
+      setTodos: (todos) => {
+        storedTodos = todos;
+      },
+    },
+  });
+}
 
 describe("TurnRunner tools", () => {
   test("todo_write replaces and merges todo lists", async () => {
-    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "agent" });
+    let storedTodos: TurnTodo[] = [];
+    const tools = createTurnRunnerToolsWithStorage({
+      cwd: process.cwd(),
+      mode: "agent",
+      todoStorage: {
+        getTodos: () => storedTodos,
+        setTodos: (todos) => {
+          storedTodos = todos;
+        },
+      },
+    });
     const todoTool = tools.find((tool) => tool.name === "todo_write");
 
     expect(todoTool).toBeDefined();
@@ -23,13 +52,11 @@ describe("TurnRunner tools", () => {
     });
 
     expect(initial.terminate).toBeUndefined();
-    expect(initial.details).toEqual({
-      type: "todo_write",
-      todos: [
-        { id: "plan", content: "Plan the work", status: "completed" },
-        { id: "test", content: "Run tests", status: "pending" },
-      ],
-    });
+    expect(storedTodos).toEqual([
+      { id: "plan", content: "Plan the work", status: "completed" },
+      { id: "test", content: "Run tests", status: "pending" },
+    ]);
+    expect(initial.details).toEqual(storedTodos);
     expect(initial.content).toEqual([
       {
         type: "text",
@@ -49,14 +76,12 @@ describe("TurnRunner tools", () => {
       ],
     });
 
-    expect(merged.details).toEqual({
-      type: "todo_write",
-      todos: [
-        { id: "plan", content: "Plan the work", status: "completed" },
-        { id: "test", content: "Run tests", status: "in_progress" },
-        { id: "verify", content: "Verify behavior", status: "failed" },
-      ],
-    });
+    expect(storedTodos).toEqual([
+      { id: "plan", content: "Plan the work", status: "completed" },
+      { id: "test", content: "Run tests", status: "in_progress" },
+      { id: "verify", content: "Verify behavior", status: "failed" },
+    ]);
+    expect(merged.details).toEqual(storedTodos);
   });
 
   test("returns user questions in tool details and model-visible content", async () => {

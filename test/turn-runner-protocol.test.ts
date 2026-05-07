@@ -892,6 +892,7 @@ describe("TurnRunner protocol scenarios", () => {
     const turnState = {
       ...createStateMachineState("research_prospect"),
       status: "waiting_for_human" as const,
+      childAgent: { status: "waiting" as const, messages: [] },
     };
     await runner.start({ type: "start", state: turnState });
     runner.controlResults.push(
