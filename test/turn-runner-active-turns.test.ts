@@ -442,6 +442,64 @@ describe("TurnRunner active turns", () => {
     );
   });
 
+  test("second steer during active state work steers the running parent prompt", async () => {
+    const { runner, events } = createStreamingRunner();
+    const { turn } = await startTurn(runner, {
+      mode: longScriptDefinition(),
+      prompt: "run long script flow",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "run_state", state: "script_step" },
+    });
+    await waitFor(() =>
+      events.some(
+        (event) => event.type === "state_machine" && event.currentState === "script_step",
+      ),
+    );
+
+    const firstSteer = runner.turn({
+      type: "prompt",
+      message: "first steer during script",
+      behavior: "steer",
+    });
+    await waitFor(() => runner.contexts.length >= 2);
+    expect(lastUserText(runner.contexts[1]!)).toContain("first steer during script");
+    expect(runner.pendingStreams).toHaveLength(1);
+
+    const secondSteer = runner.turn({
+      type: "prompt",
+      message: "second steer during parent prompt",
+      behavior: "steer",
+    });
+    expect(runner.pendingStreams).toHaveLength(1);
+
+    runner.completeNext("first parent steer response");
+    await waitFor(() => runner.contexts.length >= 3);
+    expect(lastUserText(runner.contexts[2]!)).toContain("second steer during parent prompt");
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: {
+        kind: "run_state",
+        state: "script_step",
+        override: { kind: "script", state: { command: "printf '{\"replacement\":true}'" } },
+      },
+    });
+    await waitFor(() => runner.contexts.length >= 4);
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "terminal", state: "done" },
+    });
+
+    const [turnTerminal, firstSteerTerminal, secondSteerTerminal] = await Promise.all([
+      turn,
+      firstSteer,
+      secondSteer,
+    ]);
+    expect(turnTerminal).toBe(firstSteerTerminal);
+    expect(turnTerminal).toBe(secondSteerTerminal);
+    expect(turnTerminal).toMatchObject({ type: "complete", status: "completed" });
+  });
+
   test("follow-up prompts sent during active poll checks queue until the poll resolves", async () => {
     const { runner, events } = createStreamingRunner();
     const { turn } = await startTurn(runner, {

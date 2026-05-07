@@ -1,174 +1,144 @@
 import { describe, expect } from "bun:test";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
-import {
-  TurnRunner,
-  type AgentWorkerInput,
-  type AgentWorkerResult,
-} from "../src/turn-runner/turn-runner.js";
-import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
-import type { StateAgentHandle } from "../src/turn-runner/state-machine-controller.js";
-import type { StateMachineDefinition } from "../src/types/state-machine.js";
+import { TurnRunner } from "../src/turn-runner/turn-runner.js";
+import type {
+  StateMachineDefinition,
+  StateMachineSessionEvent,
+} from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-describe("state template strings", () => {
-  testIfDocker("renders transition input into agent state prompts", async () => {
-    const runner = new EvalTurnRunner();
-    runner.controlResults.push(
-      {
-        type: "select_state_machine_state",
-        decision: {
-          kind: "run_state",
-          state: "write_note",
-          input: { topic: "feature flags", audience: "release managers" },
-        },
-      },
-      {
-        type: "select_state_machine_state",
-        decision: { kind: "terminal", state: "done" },
-      },
-    );
+const model = process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-sonnet-4.6";
 
-    const terminal = await (
-      await startTurn(runner, { mode: templateDefinition, prompt: "Write the note." })
-    ).turn;
+describe("state template rendering", () => {
+  testIfDocker(
+    "renders prior state output into later agent and script states",
+    async () => {
+      const runner = new TurnRunner({
+        model,
+        mode: templateDefinition,
+        skillDiscovery: { includeDefaults: false },
+        systemInstructions: [
+          "This is a live eval. Use the state-machine tools for every workflow step.",
+          "Select states in this exact order: collect_release_data, write_release_note, render_payload, done.",
+          'When selecting collect_release_data, use input {"release":"v1.2.3","owner":"Ada"}.',
+          'When selecting write_release_note and render_payload, use input {"release":"v1.2.3","owner":"Ada","summary":"feature flags enabled"}.',
+          "Do not ask the user questions.",
+        ].join("\n"),
+      });
 
-    expect(terminal.type).toBe("complete");
-    expect(runner.workerInputs[1]?.prompt).toBe("Write about feature flags for release managers.");
-  });
+      const terminal = await (
+        await startTurn(runner, {
+          mode: templateDefinition,
+          prompt:
+            "Run the template rendering workflow. The release includes feature flags and the release manager Ada.",
+        })
+      ).turn;
 
-  testIfDocker("renders transition input into script state commands", async () => {
-    const runner = new EvalTurnRunner();
-    runner.controlResults.push(
-      {
-        type: "select_state_machine_state",
-        decision: {
-          kind: "run_state",
-          state: "echo_values",
-          input: { topic: "feature flags", audience: "release managers" },
-        },
-      },
-      {
-        type: "select_state_machine_state",
-        decision: { kind: "terminal", state: "done" },
-      },
-    );
+      expect(terminal.type).toBe("complete");
+      expect(terminal.type === "complete" ? terminal.status : undefined).toBe("completed");
 
-    const terminal = await (
-      await startTurn(runner, { mode: templateDefinition, prompt: "Echo the values." })
-    ).turn;
+      const history = terminal.state.stateMachine?.history ?? [];
+      expect(completedStateNames(history)).toEqual([
+        "collect_release_data",
+        "write_release_note",
+        "render_payload",
+      ]);
 
-    expect(terminal.type).toBe("complete");
-    const completed = terminal.state.stateMachine?.history.find(
-      (event) => event.type === "state_completed" && event.state === "echo_values",
-    );
-    expect(completed?.type === "state_completed" ? completed.output : undefined).toMatchObject({
-      parsed: { topic: "feature flags", audience: "release managers" },
-    });
-  });
+      const releaseNote = outputFor(history, "write_release_note");
+      expect(releaseNote).toContain("v1.2.3");
+      expect(releaseNote).toContain("Ada");
+      expect(releaseNote.toLowerCase()).toContain("feature flags");
+
+      const payload = outputFor(history, "render_payload");
+      expect(payload).toContain("release=v1.2.3");
+      expect(payload).toContain("owner=Ada");
+      expect(payload).toContain("summary=feature flags enabled");
+    },
+    90_000,
+  );
 });
 
 const templateDefinition: StateMachineDefinition = {
-  name: "template_eval",
-  prompt: "Use this state machine for template rendering evals.",
+  name: "state_template_eval",
+  prompt:
+    "Use this workflow to validate that state outputs and transition inputs are rendered into later state prompts and scripts.",
   states: [
     {
-      kind: "agent",
-      name: "write_note",
+      kind: "script",
+      name: "collect_release_data",
       inputSchema: {
         type: "object",
         properties: {
-          topic: { type: "string" },
-          audience: { type: "string" },
+          release: { type: "string" },
+          owner: { type: "string" },
         },
-        required: ["topic", "audience"],
+        required: ["release", "owner"],
       },
-      prompt: "Write about {{ input.topic }} for {{ input.audience }}.",
+      command:
+        'printf \'{"release":"{{ input.release }}","owner":"{{ input.owner }}","summary":"feature flags enabled"}\'',
+    },
+    {
+      kind: "agent",
+      name: "write_release_note",
+      inputSchema: {
+        type: "object",
+        properties: {
+          release: { type: "string" },
+          owner: { type: "string" },
+          summary: { type: "string" },
+        },
+        required: ["release", "owner", "summary"],
+      },
+      prompt:
+        "Do not call tools. Write one short release note that mentions release {{ input.release }}, owner {{ input.owner }}, and summary {{ input.summary }}.",
     },
     {
       kind: "script",
-      name: "echo_values",
+      name: "render_payload",
       inputSchema: {
         type: "object",
         properties: {
-          topic: { type: "string" },
-          audience: { type: "string" },
+          release: { type: "string" },
+          owner: { type: "string" },
+          summary: { type: "string" },
         },
-        required: ["topic", "audience"],
+        required: ["release", "owner", "summary"],
       },
-      command: 'printf \'{"topic":"{{ input.topic }}","audience":"{{ input.audience }}"}\'',
+      command:
+        "printf 'release={{ input.release }}\\nowner={{ input.owner }}\\nsummary={{ input.summary }}\\n'",
     },
-    { kind: "terminal", name: "done", status: "completed" },
+    {
+      kind: "terminal",
+      name: "done",
+      status: "completed",
+      reason: "Template rendering succeeded.",
+    },
   ],
 };
 
-class EvalTurnRunner extends TurnRunner {
-  readonly workerInputs: AgentWorkerInput[] = [];
-  readonly controlResults: TurnRunnerControlResult[] = [];
+function completedStateNames(history: StateMachineSessionEvent[]): string[] {
+  return history.filter((event) => event.type === "state_completed").map((event) => event.state);
+}
 
-  constructor() {
-    super({
-      model: "anthropic:claude-opus-4-7",
-      skillDiscovery: { includeDefaults: false },
-    });
+function outputFor(history: StateMachineSessionEvent[], state: string): string {
+  const event = history.find(
+    (candidate) => candidate.type === "state_completed" && candidate.state === state,
+  );
+  if (!event || event.type !== "state_completed") {
+    throw new Error(`Expected completed state ${state}`);
   }
+  return stringResult(event.output);
+}
 
-  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
-    this.workerInputs.push(input);
-    const control = this.controlResults.shift() ?? { type: "none" };
-    const resultText = `Completed: ${input.prompt}`;
-    const assistantMessage: AssistantMessage = {
-      role: "assistant",
-      content: [{ type: "text", text: resultText }],
-      api: "unknown",
-      provider: "unknown",
-      model: "eval",
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      stopReason: "stop",
-      timestamp: Date.now(),
-    };
-    const state = {
-      ...input.state,
-      status: "completed" as const,
-      agent: {
-        status: "completed" as const,
-        messages: [...input.state.agent.messages, assistantMessage],
-      },
-    };
-
-    return {
-      control,
-      terminal: {
-        type: "complete",
-        status: "completed",
-        result: resultText,
-        state,
-      },
-    };
+function stringResult(output: unknown): string {
+  if (
+    output &&
+    typeof output === "object" &&
+    "result" in output &&
+    typeof output.result === "string"
+  ) {
+    return output.result;
   }
-
-  protected override createStateAgentHandle(input: { prompt: string }): StateAgentHandle {
-    const workerInput: AgentWorkerInput = {
-      state: {
-        status: "running",
-        mode: "agent",
-        options: this.getState()?.options,
-        agent: { status: "running", messages: [] },
-      },
-      prompt: input.prompt,
-    };
-    this.workerInputs.push(workerInput);
-    return {
-      prompt: async () => ({ type: "complete", result: `Completed: ${input.prompt}` }),
-      interrupt: () => undefined,
-      partialAssistantText: () => undefined,
-    };
-  }
+  if (output !== undefined) return JSON.stringify(output);
+  throw new Error("Expected state output with a string result");
 }
