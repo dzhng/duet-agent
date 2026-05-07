@@ -78,8 +78,12 @@ export class Session {
   private readonly eventHandlers = new Set<SessionEventHandler>();
   /** Removes the session's subscription to its owned runner during disposal. */
   private readonly unsubscribeRunner: () => void;
-  /** Latest turn state snapshot used to continue prompts, answers, wakes, and interrupts. */
-  private state?: TurnState;
+  /**
+   * Initial state passed at construction time, consumed once on `start()` and
+   * cleared. After start, `runner.getState()` is the single source of truth;
+   * the session no longer caches state.
+   */
+  private initialState?: TurnState;
   /** In-flight runner turn, used to distinguish active work from a reusable terminal result. */
   private activeTurn?: Promise<void>;
   /** In-flight runner setup, awaited before any turn dispatches so turn_started lands first. */
@@ -102,7 +106,7 @@ export class Session {
     options: SessionOptions,
   ) {
     this.id = options.id;
-    this.state = options.initialState;
+    this.initialState = options.initialState;
     this.resumeFromStorage = options.resumeFromStorage ?? Boolean(options.id);
     this.runner = options.runner ?? new TurnRunner(config);
     this.sessionPath = options.sessionPath;
@@ -129,17 +133,17 @@ export class Session {
       return;
     }
     this.hasStarted = true;
-    if (!this.state && this.resumeFromStorage) {
-      this.state = await this.readStoredState();
+    let resumed = this.initialState;
+    if (!resumed && this.resumeFromStorage) {
+      resumed = await this.readStoredState();
     }
+    this.initialState = undefined;
     const command: TurnStartCommand = {
       type: "start",
       ...((input.mode ?? this.config.mode) ? { mode: input.mode ?? this.config.mode } : {}),
-      ...(this.state ? { state: this.state } : {}),
+      ...(resumed ? { state: resumed } : {}),
       ...(input.options ? { options: input.options } : {}),
     };
-    // The runner emits `turn_started` synchronously while `start` runs;
-    // `handleTurnEvent` captures that state, so we only need to await setup.
     this.startPromise = this.runner.start(command).then(() => undefined);
     await this.startPromise;
   }
@@ -210,13 +214,12 @@ export class Session {
   }
 
   /**
-   * Latest turn state snapshot. Pulls from the runner so mid-turn callers
-   * (e.g., shutdown flushes) get current agent transcript, todos, and
-   * follow-up queue rather than the last terminal snapshot. Falls back to
-   * the cached terminal state when the runner has not started.
+   * Latest turn state snapshot, sourced from the runner. Always returns the
+   * live snapshot when the runner has been started; otherwise returns the
+   * pre-start initial state if one was provided to the constructor.
    */
   getState(): TurnState | undefined {
-    return this.runner.getState() ?? this.state;
+    return this.runner.getState() ?? this.initialState;
   }
 
   /**
@@ -228,7 +231,6 @@ export class Session {
   async flush(): Promise<void> {
     const state = this.getState();
     if (!state) return;
-    this.state = state;
     await this.writeStoredState(state);
   }
 
@@ -248,13 +250,6 @@ export class Session {
   /** Skill name collisions where one definition shadowed another during discovery. */
   getSkillCollisions(): Promise<readonly SkillCollision[]> {
     return this.runner.getSkillCollisions();
-  }
-
-  /** Force-load persisted state for resumed sessions before any command runs. */
-  async hydrate(): Promise<void> {
-    if (!this.state && this.resumeFromStorage) {
-      this.state = await this.readStoredState();
-    }
   }
 
   async dispose(): Promise<void> {
@@ -287,7 +282,6 @@ export class Session {
     let emitted = event;
     if (isTerminalEvent(event)) {
       emitted = this.normalizeTerminalEvent(event);
-      this.state = emitted.state;
       this.lastTerminal = emitted;
       await this.writeStoredState(emitted.state);
       if (emitted.type === "sleep") {
@@ -296,8 +290,6 @@ export class Session {
       for (const resolve of this.terminalWaiters.splice(0)) {
         resolve(emitted);
       }
-    } else if (event.type === "turn_started") {
-      this.state = event.state;
     }
     this.emit(emitted);
   }
@@ -338,7 +330,8 @@ export class Session {
     this.wakeTimer = setTimeout(
       () => {
         this.wakeTimer = undefined;
-        if (!this.state || this.state.status !== "sleeping") return;
+        const state = this.runner.getState();
+        if (!state || state.status !== "sleeping") return;
         this.dispatchTurn({ type: "wake" });
       },
       Math.max(0, terminal.wakeAt - Date.now()),
@@ -353,13 +346,11 @@ export class Session {
   }
 
   private async requireState(): Promise<TurnState> {
-    if (!this.state && this.resumeFromStorage) {
-      this.state = await this.readStoredState();
-    }
-    if (!this.state) {
+    const state = this.runner.getState();
+    if (!state) {
       throw new Error(`Unknown session: ${this.id}`);
     }
-    return this.state;
+    return state;
   }
 
   private isWaitingOnPoll(state: TurnState | undefined): boolean {

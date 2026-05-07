@@ -295,15 +295,12 @@ async function main() {
     let resumedHistory: import("@mariozechner/pi-agent-core").AgentMessage[] | undefined;
 
     if (resumeSessionId) {
-      // Force-load the persisted state.json so setup hands the resumed
-      // state to the runner and any TUI history replays before new turns.
-      await session.hydrate();
+      // Setup loads persisted state.json and hands it to the runner;
+      // manager.create() already dispatched setup for fresh sessions.
+      await session.start();
       if (!session.getState()) {
         throw new Error(`Unknown session: ${resumeSessionId}`);
       }
-      // Setup runs against the hydrated state; manager.create() already
-      // dispatched setup for fresh sessions.
-      await session.start();
       resumedHistory = session.getState()?.agent.messages;
     }
 
