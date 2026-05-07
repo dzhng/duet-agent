@@ -535,6 +535,8 @@ export class StateMachineRuntime {
         status: "running",
         messages: [],
       },
+      todos: [],
+      followUpQueue: [],
     };
   }
 

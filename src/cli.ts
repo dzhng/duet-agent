@@ -211,6 +211,20 @@ async function main() {
   }
 
   const manager = new SessionManager(config);
+  // Best-effort state flush on signal-driven shutdown so Ctrl+C / SIGTERM
+  // preserves mid-turn progress (in-flight agent messages, queued follow-ups,
+  // todos written but not yet committed via terminal).
+  let signalFlushed = false;
+  const flushAndExit = (signal: NodeJS.Signals) => {
+    if (signalFlushed) return;
+    signalFlushed = true;
+    void manager
+      .flush()
+      .catch((err) => console.error(`Flush during ${signal} failed:`, err))
+      .finally(() => process.exit(signal === "SIGTERM" ? 143 : 130));
+  };
+  process.once("SIGINT", () => flushAndExit("SIGINT"));
+  process.once("SIGTERM", () => flushAndExit("SIGTERM"));
   let streamedTextThisTurn = false;
   let activeTextDelta = false;
   let activeTextDeltaNeedsNewline = false;

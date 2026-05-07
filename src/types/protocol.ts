@@ -177,6 +177,14 @@ export interface TurnState {
   agent: AgentSession;
   /** Present when this session is executing in state-machine mode. */
   stateMachine?: StateMachineSession;
+  /** Current todo list for this session. Mutated by the TodoWrite tool. */
+  todos: TurnTodo[];
+  /**
+   * User prompts queued behind active work that have not yet been consumed by
+   * the pi agent. Persisted on `TurnState` so a resumed session can replay them
+   * into the next pi agent on the next turn instead of dropping them.
+   */
+  followUpQueue: string[];
 }
 
 /**

@@ -978,4 +978,30 @@ describe("TurnRunner protocol scenarios", () => {
       },
     });
   });
+
+  test("resumed state replays followUpQueue on start and exposes it via getState", async () => {
+    const { runner, events } = createTurnRunner();
+    const resumed = createStateMachineState("draft");
+    resumed.followUpQueue = ["queued one", "queued two"];
+
+    await runner.start({ type: "start", state: resumed });
+
+    const followUpEvents = events.filter((event) => event.type === "follow_up_queue");
+    expect(followUpEvents).toEqual([
+      { type: "follow_up_queue", prompts: ["queued one", "queued two"] },
+    ]);
+    expect(runner.getState()?.followUpQueue).toEqual(["queued one", "queued two"]);
+  });
+
+  test("getState returns a defensive snapshot, not the runner's mutable cell", async () => {
+    const { runner } = createTurnRunner();
+    await runner.start({ type: "start", mode: "agent" });
+
+    const snapshot = runner.getState();
+    expect(snapshot).toBeDefined();
+    snapshot!.todos.push({ id: "x", content: "noise", status: "pending" });
+
+    // Mutating the returned snapshot must not leak into the runner.
+    expect(runner.getState()?.todos).toEqual([]);
+  });
 });

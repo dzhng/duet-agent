@@ -89,7 +89,26 @@ export class SessionManager {
     return session;
   }
 
+  /**
+   * Persist every active session's current state to disk. Call this before
+   * process exit (signal handlers, normal shutdown) so mid-turn work survives.
+   * Errors per session are caught and logged so one failure doesn't block the
+   * others — flushing is best-effort.
+   */
+  async flush(): Promise<void> {
+    await Promise.all(
+      Array.from(this.sessions.values()).map(async (session) => {
+        try {
+          await session.flush();
+        } catch (error) {
+          console.error(`Failed to flush session ${session.id}:`, error);
+        }
+      }),
+    );
+  }
+
   async dispose(): Promise<void> {
+    await this.flush();
     for (const session of this.sessions.values()) {
       await session.dispose();
     }

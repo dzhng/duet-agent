@@ -1,4 +1,9 @@
-import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
+import {
+  Agent,
+  type AgentEvent,
+  type AgentMessage,
+  type AgentTool,
+} from "@mariozechner/pi-agent-core";
 import { getEnvApiKey, getModel, type Model, type Usage } from "@mariozechner/pi-ai";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
@@ -84,18 +89,26 @@ export class TurnRunner {
   private activeTurnPromise?: Promise<TurnTerminalEvent>;
   /** Commands that could not be absorbed into the active pi agent and must run later. */
   private readonly queuedTurnCommands: TurnCommand[] = [];
-  /** Latest runner-owned state, hydrated by start() and advanced by terminal events. */
+  /**
+   * Latest runner-owned state. Hydrated by start(), advanced through terminal
+   * events, and continuously updated mid-turn so `getState()` returns a fresh
+   * snapshot at any instant: agent messages sync on each agent event, the
+   * TodoWrite tool mutates `state.todos`, and follow-up queue ops mutate
+   * `state.followUpQueue`.
+   */
   private state?: TurnState;
-  /** User-visible mirror of follow-up prompts accepted by this runner. */
-  private followUpQueuePrompts: string[] = [];
-  /** Current todo list emitted through todo protocol events. */
-  private todos: TurnTodo[] = [];
   /** Aggregates model usage across parent agents, child agents, and memory work for one turn chain. */
   private turnUsage?: TurnTokenUsage;
   /** Prevents queued user prompts from recursively preempting continuation prompts. */
   private drainingQueuedCommandsBeforeContinuation = false;
   /** Ensures persisted memory hydrates once before the first turn that needs it. */
   private memoryLoaded = false;
+  /**
+   * Set by `start()` when resumed state carries a non-empty follow-up queue.
+   * The first parent pi agent created after start consumes the flag and
+   * replays the queue into pi's follow-up channel.
+   */
+  private pendingFollowUpReplay = false;
   private readonly skillContext: SkillContext;
   private readonly stateMachineRuntime: StateMachineRuntime;
 
@@ -163,10 +176,29 @@ export class TurnRunner {
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
     const mode = command.mode ?? this.config.mode ?? "auto";
-    const state = command.state ?? this.stateMachineRuntime.createInitialState(mode);
+    const state = this.normalizeResumedState(
+      command.state ?? this.stateMachineRuntime.createInitialState(mode),
+    );
     this.state = state;
+    this.pendingFollowUpReplay = state.followUpQueue.length > 0;
+    if (this.pendingFollowUpReplay) {
+      this.emit({ type: "follow_up_queue", prompts: [...state.followUpQueue] });
+    }
     this.emit({ type: "turn_started", state });
     return state;
+  }
+
+  /**
+   * Backfill `todos` and `followUpQueue` for resumed states written before
+   * those fields were on `TurnState`. Without this, hydrated state from disk
+   * would be missing required fields.
+   */
+  private normalizeResumedState(state: TurnState): TurnState {
+    return {
+      ...state,
+      todos: state.todos ?? [],
+      followUpQueue: state.followUpQueue ?? [],
+    };
   }
 
   async turn(command: TurnCommand): Promise<TurnTerminalEvent> {
@@ -311,9 +343,9 @@ export class TurnRunner {
   }
 
   private replaceFollowUpQueue(prompts: string[]): void {
-    this.followUpQueuePrompts = [...prompts];
+    this.setFollowUpQueue([...prompts]);
     this.activeAgent?.clearFollowUpQueue();
-    for (const prompt of this.followUpQueuePrompts) {
+    for (const prompt of prompts) {
       this.activeAgent?.followUp({
         role: "user",
         content: prompt,
@@ -352,8 +384,17 @@ export class TurnRunner {
     );
   }
 
+  private getFollowUpQueue(): string[] {
+    return this.state?.followUpQueue ?? [];
+  }
+
+  private setFollowUpQueue(prompts: string[]): void {
+    if (!this.state) return;
+    this.state = { ...this.state, followUpQueue: prompts };
+  }
+
   private appendFollowUpPrompt(prompt: string): void {
-    this.followUpQueuePrompts.push(prompt);
+    this.setFollowUpQueue([...this.getFollowUpQueue(), prompt]);
     this.emitFollowUpQueue();
   }
 
@@ -363,20 +404,23 @@ export class TurnRunner {
   }
 
   private removeFollowUpPrompt(prompt: string): void {
-    const index = this.followUpQueuePrompts.indexOf(prompt);
+    const queue = this.getFollowUpQueue();
+    const index = queue.indexOf(prompt);
     if (index === -1) return;
-    this.followUpQueuePrompts.splice(index, 1);
+    const next = queue.slice();
+    next.splice(index, 1);
+    this.setFollowUpQueue(next);
     this.emitFollowUpQueue();
   }
 
   private clearFollowUpQueue(): void {
-    if (this.followUpQueuePrompts.length === 0) return;
-    this.followUpQueuePrompts = [];
+    if (this.getFollowUpQueue().length === 0) return;
+    this.setFollowUpQueue([]);
     this.emitFollowUpQueue();
   }
 
   private emitFollowUpQueue(): void {
-    this.emit({ type: "follow_up_queue", prompts: [...this.followUpQueuePrompts] });
+    this.emit({ type: "follow_up_queue", prompts: [...this.getFollowUpQueue()] });
   }
 
   interrupt(_command: TurnInterruptCommand): void {
@@ -416,6 +460,41 @@ export class TurnRunner {
     for (const handler of this.eventHandlers) {
       handler(event);
     }
+  }
+
+  /**
+   * Latest turn-runner state. Returns a fresh snapshot at any moment,
+   * including mid-turn: agent messages and status are synced as the live
+   * agent emits events; todos and follow-up queue mutations write through
+   * `this.state` directly. Use this for shutdown flushes when you need to
+   * persist whatever state is current right now.
+   */
+  getState(): TurnState | undefined {
+    if (!this.state) return undefined;
+    return {
+      ...this.state,
+      agent: { ...this.state.agent, messages: [...this.state.agent.messages] },
+      todos: [...this.state.todos],
+      followUpQueue: [...this.state.followUpQueue],
+    };
+  }
+
+  /**
+   * Sync the runner's `state.agent` with the live agent's messages and status.
+   * Called on each agent event so `getState()` returns a fresh transcript at
+   * any moment (e.g., mid-turn shutdown flushes).
+   */
+  protected syncAgentState(messages: AgentMessage[], errorMessage: string | undefined): void {
+    if (!this.state) return;
+    const status = errorMessage ? "failed" : "running";
+    this.state = {
+      ...this.state,
+      agent: {
+        ...this.state.agent,
+        status,
+        messages,
+      },
+    };
   }
 
   private consumeInterruptedTerminal(): TurnTerminalEvent | undefined {
@@ -584,9 +663,11 @@ export class TurnRunner {
   } {
     const cwd = this.config.cwd ?? process.cwd();
     const todoStorage = {
-      getTodos: () => this.todos,
+      getTodos: (): TurnTodo[] => this.state?.todos ?? [],
       setTodos: (todos: TurnTodo[]) => {
-        this.todos = todos;
+        if (this.state) {
+          this.state = { ...this.state, todos };
+        }
       },
     };
     const skills = this.skillContext.getSkills();
@@ -632,6 +713,7 @@ export class TurnRunner {
         setActiveAgent: (slot, agent) => {
           if (slot === "parent") {
             this.activeAgent = agent;
+            if (agent) this.replayPendingFollowUpsInto(agent);
           } else {
             this.activeChildAgent = agent;
           }
@@ -661,7 +743,7 @@ export class TurnRunner {
   ): Agent {
     const model = this.resolveTurnModel(input.options);
     const memoryModel = this.resolveMemoryModel(input.options);
-    return new Agent({
+    const agent = new Agent({
       initialState: {
         model,
         thinkingLevel: input.options?.thinkingLevel ?? this.config.thinkingLevel ?? "medium",
@@ -685,6 +767,27 @@ export class TurnRunner {
       },
       getApiKey: getEnvApiKey,
     });
+    return agent;
+  }
+
+  /**
+   * On resume, push each persisted follow-up prompt into the freshly created
+   * parent pi agent so it drains them after the current user prompt. Only
+   * runs once per session (consumes a flag set by `start()`), and only for
+   * the parent slot — child state-machine agents share the parent's transcript
+   * but should not absorb user-level follow-ups.
+   */
+  private replayPendingFollowUpsInto(agent: Agent): void {
+    if (!this.pendingFollowUpReplay) return;
+    this.pendingFollowUpReplay = false;
+    const queue = this.getFollowUpQueue();
+    for (const prompt of queue) {
+      agent.followUp({
+        role: "user",
+        content: prompt,
+        timestamp: Date.now(),
+      });
+    }
   }
 
   protected createMemoryTransform(model: Model<any>) {
@@ -784,6 +887,15 @@ export class TurnRunner {
   }
 
   protected emitAgentEvent(event: AgentEvent): void {
+    // Sync the live agent's transcript into runner state so `getState()`
+    // returns a fresh snapshot mid-turn (e.g., for shutdown flushes). The
+    // child slot is preferred when active because its events are what's
+    // currently driving the conversation; child transcripts share the parent
+    // message list (child starts with parent.messages and appends).
+    const liveAgent = this.activeChildAgent ?? this.activeAgent;
+    if (liveAgent) {
+      this.syncAgentState(liveAgent.state.messages, liveAgent.state.errorMessage);
+    }
     emitAgentWorkerEvent(
       event,
       (turnEvent) => this.emit(turnEvent),

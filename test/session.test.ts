@@ -124,6 +124,10 @@ class FakeTurnRunner implements SessionTurnRunner {
     return this.skillInstructions.get(skillId) ?? "";
   }
 
+  getState(): TurnState | undefined {
+    return this.state;
+  }
+
   async dispose(): Promise<void> {
     this.disposed = true;
   }
@@ -444,6 +448,30 @@ describe("Session", () => {
       ]);
     },
   );
+
+  testIfDocker("flush writes the runner's current state to disk mid-turn", async () => {
+    const runner = new FakeTurnRunner([complete()]);
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-session-flush-"));
+    tempDirs.push(tempDir);
+    const session = new Session(
+      { model: "anthropic:claude-opus-4-7" },
+      { id: "session_flush_test", runner, sessionPath: tempDir },
+    );
+    await session.start();
+
+    // Simulate mid-turn state without going through a terminal event.
+    runner.state = {
+      ...turnState,
+      todos: [{ id: "t1", content: "ship it", status: "in_progress" }],
+      followUpQueue: ["queued"],
+    };
+
+    await session.flush();
+
+    const written = JSON.parse(await readFile(join(tempDir, "state.json"), "utf-8"));
+    expect(written.state.todos).toEqual([{ id: "t1", content: "ship it", status: "in_progress" }]);
+    expect(written.state.followUpQueue).toEqual(["queued"]);
+  });
 });
 
 describe("SessionManager", () => {

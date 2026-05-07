@@ -55,6 +55,8 @@ export interface SessionTurnRunner {
   getSkills(): Promise<readonly Skill[]>;
   getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]>;
   getSkillCollisions(): Promise<readonly SkillCollision[]>;
+  /** Latest runner-owned state, kept fresh mid-turn for shutdown flushes. */
+  getState(): TurnState | undefined;
   dispose(): Promise<void>;
 }
 
@@ -207,9 +209,27 @@ export class Session {
     return Boolean(this.activeTurn);
   }
 
-  /** Latest known turn state snapshot, including agent message history. */
+  /**
+   * Latest turn state snapshot. Pulls from the runner so mid-turn callers
+   * (e.g., shutdown flushes) get current agent transcript, todos, and
+   * follow-up queue rather than the last terminal snapshot. Falls back to
+   * the cached terminal state when the runner has not started.
+   */
   getState(): TurnState | undefined {
-    return this.state;
+    return this.runner.getState() ?? this.state;
+  }
+
+  /**
+   * Persist the current state to disk. Call this before process exit so
+   * mid-turn progress (in-flight agent messages, queued follow-ups, todos
+   * touched but not yet committed via terminal) survives the shutdown.
+   * No-op when no state exists yet.
+   */
+  async flush(): Promise<void> {
+    const state = this.getState();
+    if (!state) return;
+    this.state = state;
+    await this.writeStoredState(state);
   }
 
   /**
