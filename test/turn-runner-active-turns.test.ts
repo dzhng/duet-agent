@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Agent } from "@mariozechner/pi-agent-core";
 import { createAssistantMessageEventStream, type Context } from "@mariozechner/pi-ai";
-import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
+import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnState, TurnTerminalEvent } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { delay, waitFor } from "./helpers/async.js";
@@ -11,7 +11,7 @@ import { createStateMachineState, startTurn } from "./helpers/turn-runner-protoc
 class StreamingTurnRunner extends TurnRunner {
   readonly contexts: Context[] = [];
   readonly pendingStreams: ReturnType<typeof createAssistantMessageEventStream>[] = [];
-  parentAgentsCreated = 0;
+  agentsCreated = 0;
 
   constructor() {
     super({
@@ -21,10 +21,10 @@ class StreamingTurnRunner extends TurnRunner {
   }
 
   protected override createAgent(
-    input: AgentWorkerInput,
+    input: AgentConfigInput,
     onControlResult?: Parameters<TurnRunner["createAgent"]>[1],
   ): Agent {
-    if (input.prompt === "") this.parentAgentsCreated += 1;
+    this.agentsCreated += 1;
     const agent = super.createAgent(input, onControlResult);
     agent.streamFn = (_model, context) => {
       this.contexts.push(JSON.parse(JSON.stringify(context)) as Context);
@@ -122,7 +122,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNext("second response");
     await second;
 
-    expect(runner.parentAgentsCreated).toBe(1);
+    expect(runner.agentsCreated).toBe(1);
   });
 
   test("editing active follow-up queue replaces queued prompts", async () => {
@@ -393,6 +393,53 @@ describe("TurnRunner active turns", () => {
     const [turnTerminal, steerTerminal] = await Promise.all([turn, steer]);
     expect(turnTerminal).toBe(steerTerminal);
     expect(terminalEvents(events)).toHaveLength(1);
+  });
+
+  test("steer replacement during script work follows the replacement state", async () => {
+    const { runner, events } = createStreamingRunner();
+    const { turn } = await startTurn(runner, {
+      mode: longScriptDefinition(),
+      prompt: "run long script flow",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "run_state", state: "script_step" },
+    });
+    await waitFor(() =>
+      events.some(
+        (event) => event.type === "state_machine" && event.currentState === "script_step",
+      ),
+    );
+
+    const steer = runner.turn({
+      type: "prompt",
+      message: "replace the active script",
+      behavior: "steer",
+    });
+    await waitFor(() => runner.contexts.length >= 2);
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: {
+        kind: "run_state",
+        state: "script_step",
+        override: { kind: "script", state: { command: "printf '{\"replacement\":true}'" } },
+      },
+    });
+    await waitFor(() => runner.contexts.length >= 3);
+    runner.completeNextToolCall("select_state_machine_state", {
+      decision: { kind: "terminal", state: "done" },
+    });
+
+    const [turnTerminal, steerTerminal] = await Promise.all([turn, steer]);
+    expect(turnTerminal).toBe(steerTerminal);
+    expect(turnTerminal).toMatchObject({ type: "complete", status: "completed" });
+    expect(turnTerminal.state.stateMachine?.terminal).toMatchObject({
+      state: "done",
+      status: "completed",
+    });
+    expect(turnTerminal.state.stateMachine?.history).toContainEqual(
+      expect.objectContaining({ type: "state_interrupted", state: "script_step" }),
+    );
   });
 
   test("follow-up prompts sent during active poll checks queue until the poll resolves", async () => {
@@ -892,6 +939,21 @@ function scriptThenTerminalDefinition(): StateMachineDefinition {
         kind: "script",
         name: "script_step",
         command: "sleep 0.05; printf '{\"scriptDone\":true}'",
+      },
+      { kind: "terminal", name: "done", status: "completed" },
+    ],
+  };
+}
+
+function longScriptDefinition(): StateMachineDefinition {
+  return {
+    name: "long_script_flow",
+    prompt: "Use for script replacement test.",
+    states: [
+      {
+        kind: "script",
+        name: "script_step",
+        command: "sleep 2; printf '{\"scriptDone\":true}'",
       },
       { kind: "terminal", name: "done", status: "completed" },
     ],

@@ -6,7 +6,7 @@ import {
   enforceObservationTokenBudget,
   includeToolPairMessages,
 } from "../src/memory/observational.js";
-import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
+import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import type { TurnOptions } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
@@ -58,7 +58,7 @@ class UsageTrackingTurnRunner extends TurnRunner {
   }
 
   protected override createAgent(
-    input: AgentWorkerInput,
+    input: AgentConfigInput,
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
     const agent = super.createAgent(input, onControlResult);

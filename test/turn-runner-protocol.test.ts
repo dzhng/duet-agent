@@ -90,7 +90,7 @@ describe("TurnRunner protocol scenarios", () => {
       terminal.state.stateMachine?.history.some((event) => event.type === "state_completed"),
     ).toBe(true);
 
-    expect(runner.workerInputs[0]?.tools.map((tool) => tool.name)).toContain(
+    expect(runner.agentConfigs[0]?.tools.map((tool) => tool.name)).toContain(
       "create_state_machine_definition",
     );
   });
@@ -190,6 +190,57 @@ describe("TurnRunner protocol scenarios", () => {
         stateMachine: { currentState: "waiting_for_reply" },
       },
     });
+  });
+
+  test("answers unrelated prompts after poll interruption without terminalizing the state machine", async () => {
+    const { runner, events } = createTurnRunner();
+    const turnState = createStateMachineState("poll_email_reply");
+    const stateMachine = turnState.stateMachine;
+    assert(stateMachine);
+    await runner.start({
+      type: "start",
+      state: {
+        ...turnState,
+        status: "interrupted",
+        stateMachine: {
+          ...stateMachine,
+          currentState: "interrupted",
+          currentInput: undefined,
+          terminal: undefined,
+          history: [
+            ...stateMachine.history,
+            { type: "state_started", timestamp: Date.now(), state: "poll_email_reply" },
+            {
+              type: "state_interrupted",
+              timestamp: Date.now(),
+              state: "poll_email_reply",
+              reason: "Interrupted",
+            },
+          ],
+        },
+      },
+    });
+
+    const terminal = await runner.turn({
+      type: "prompt",
+      message: "What is the capital of France?",
+      behavior: "follow_up",
+    });
+
+    expect(events.some((event) => event.type === "state_machine")).toBe(false);
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      result: expect.stringContaining("Paris"),
+      state: {
+        status: "completed",
+        stateMachine: { currentState: "interrupted" },
+      },
+    });
+    expect(terminal.state.stateMachine?.terminal).toBeUndefined();
+    expect(terminal.state.stateMachine?.history).toContainEqual(
+      expect.objectContaining({ type: "state_interrupted", state: "poll_email_reply" }),
+    );
   });
 
   test("sleeps between poll attempts while waiting for an external email response", async () => {
@@ -313,10 +364,12 @@ describe("TurnRunner protocol scenarios", () => {
       stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
     ).not.toBe("");
 
-    expect(runner.workerInputs[0]?.tools.map((tool) => tool.name)).not.toContain(
+    expect(runner.agentConfigs[0]?.tools.map((tool) => tool.name)).not.toContain(
       "create_state_machine_definition",
     );
-    expect(runner.workerInputs[0]?.appendSystemPrompt).toBeUndefined();
+    expect(runner.agentConfigs[0]?.appendSystemPrompt).toContain(
+      "Explicit state-machine definition",
+    );
   });
 
   test("answers normally when an explicit state machine does not fit the prompt", async () => {
@@ -414,8 +467,8 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
-    const agentStatePrompt = runner.workerInputs[1]?.prompt ?? "";
-    const agentStateSystemPrompt = runner.workerInputs[1]?.appendSystemPrompt ?? "";
+    const agentStatePrompt = runner.stateAgentInputs[0]?.prompt ?? "";
+    const agentStateSystemPrompt = runner.stateAgentInputs[0]?.appendSystemPrompt ?? "";
     expect(agentStatePrompt).toBe("Wait for or incorporate the prospect reply.");
     expect(agentStateSystemPrompt).toBe("You are handling the waiting state.");
   });
@@ -463,7 +516,7 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
-    const stateAgentInput = runner.workerInputs[1];
+    const stateAgentInput = runner.stateAgentInputs[0];
     expect(stateAgentInput?.skills?.map((skill) => skill.name)).toEqual(["allowed-skill"]);
   });
 

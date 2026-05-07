@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
-import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
+import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
@@ -17,7 +17,7 @@ class ToolEventTurnRunner extends TurnRunner {
   readonly pendingStreams: ReturnType<typeof createAssistantMessageEventStream>[] = [];
 
   protected override createAgent(
-    input: AgentWorkerInput,
+    input: AgentConfigInput,
     onControlResult?: Parameters<TurnRunner["createAgent"]>[1],
   ): Agent {
     const agent = super.createAgent(input, onControlResult);

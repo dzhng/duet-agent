@@ -1,5 +1,7 @@
+import { Agent } from "@mariozechner/pi-agent-core";
 import {
   TurnRunner,
+  type AgentConfigInput,
   type AgentWorkerInput,
   type AgentWorkerResult,
 } from "../../src/turn-runner/turn-runner.js";
@@ -23,6 +25,13 @@ import { createAssistantMessage } from "./messages.js";
 
 export class TestTurnRunner extends TurnRunner {
   readonly workerInputs: AgentWorkerInput[] = [];
+  readonly agentConfigs: AgentConfigInput[] = [];
+  readonly stateAgentInputs: Array<
+    AgentWorkerInput & {
+      appendSystemPrompt?: string;
+      skills?: readonly { name: string }[];
+    }
+  > = [];
   controlResults: TurnRunnerControlResult[] = [];
   worker?: (
     input: AgentWorkerInput,
@@ -35,6 +44,14 @@ export class TestTurnRunner extends TurnRunner {
     }
 
     return this.runDefaultWorker(input);
+  }
+
+  protected override createAgent(
+    input: AgentConfigInput,
+    onControlResult?: Parameters<TurnRunner["createAgent"]>[1],
+  ): Agent {
+    this.agentConfigs.push(input);
+    return super.createAgent(input, onControlResult);
   }
 
   protected async runDefaultWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
@@ -74,13 +91,13 @@ export class TestTurnRunner extends TurnRunner {
       options: this.getState()?.options,
       agent: { status: "running", messages: [] },
     };
-    const workerInput: AgentWorkerInput = {
+    const workerInput = {
       state,
       prompt: input.prompt,
       appendSystemPrompt: input.state.systemPrompt,
       skills: this.skillContext.resolveStateAgentSkills(input.state),
-      ...this.createTools("agent"),
     };
+    this.stateAgentInputs.push(workerInput);
     let terminal: StateAgentResult | undefined;
     return {
       prompt: async () => {

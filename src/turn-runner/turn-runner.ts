@@ -53,6 +53,10 @@ export type TurnEventHandler = (event: TurnEvent) => void;
 export interface AgentWorkerInput {
   state: TurnState;
   prompt: string;
+}
+
+export interface AgentConfigInput {
+  state: TurnState;
   appendSystemPrompt?: string;
   skills?: Skill[];
   tools: AgentTool[];
@@ -81,6 +85,8 @@ export class TurnRunner {
   private parentControlResult: TurnRunnerControlResult = { type: "none" };
   /** Runtime owner for state-machine progress and active state work. */
   private readonly stateMachineController: StateMachineController;
+  /** Parent prompt started by a steer while state-machine work is driving the turn. */
+  private activeStateWorkPrompt?: Promise<TurnTerminalEvent>;
   /** Terminal event prepared by `interrupt()` and returned when active work unwinds. */
   private interruptedTerminal?: TurnTerminalEvent;
   /**
@@ -110,6 +116,7 @@ export class TurnRunner {
 
   async dispose(): Promise<void> {
     this.parentAgent?.clearAllQueues();
+    this.activeStateWorkPrompt = undefined;
     this.setQueuedCommands([]);
     this.clearFollowUpQueue();
     await this.memoryDispose?.();
@@ -217,26 +224,14 @@ export class TurnRunner {
 
     if (command.type === "prompt" || command.type === "answer") {
       const message = this.commandToUserMessage(command);
-      if (this.stateMachineController.hasActiveStateAgent()) {
+      if (this.stateMachineController.hasActiveWork()) {
         if (command.behavior === "follow_up") {
           // State-machine work is driving the terminal event. Follow-ups are
           // transition context, so replay them before the next state decision.
           this.enqueueTurnCommand(command);
           return;
         }
-        void this.runParentPromptDuringActiveStateWork(message, command);
-        return;
-      }
-
-      if (this.stateMachineController.hasActiveWork()) {
-        if (command.behavior === "follow_up") {
-          // Active script/poll work follows the same rule as agent states:
-          // steer can update the parent immediately, follow-up waits for the
-          // next transition decision.
-          this.enqueueTurnCommand(command);
-          return;
-        }
-        void this.runParentPromptDuringActiveStateWork(message, command);
+        this.startParentPromptDuringActiveStateWork(message, command);
         return;
       }
     }
@@ -255,15 +250,28 @@ export class TurnRunner {
     }
   }
 
+  private startParentPromptDuringActiveStateWork(
+    message: string,
+    command: TurnPromptCommand | TurnAnswerCommand,
+  ): void {
+    const prompt = this.runParentPromptDuringActiveStateWork(message, command);
+    this.activeStateWorkPrompt = prompt;
+    void prompt.finally(() => {
+      if (this.activeStateWorkPrompt === prompt) this.activeStateWorkPrompt = undefined;
+    });
+  }
+
   private async runParentPromptDuringActiveStateWork(
     message: string,
     command: TurnPromptCommand | TurnAnswerCommand,
-  ): Promise<StateMachineExecutionResult> {
+  ): Promise<TurnTerminalEvent> {
     const prompt =
       command.behavior === "steer"
         ? dedent`
+            <system-reminder>
             The user sent this as a steer message while state-machine work is running.
             If the state-machine should change course, call select_state_machine_state to restart the current state with updated input or choose a different state.
+            </system-reminder>
 
             ${message}
           `
@@ -274,11 +282,7 @@ export class TurnRunner {
       behavior: command.behavior,
     });
     this.setState(terminal.state);
-    const result = this.controllerResultFromTerminal(terminal);
-    if (result.type === "state_completed") {
-      await this.driveStateMachineResult(result, terminal.state);
-    }
-    return result;
+    return terminal;
   }
 
   private async drainQueuedTurnCommands(terminal: TurnTerminalEvent): Promise<TurnTerminalEvent> {
@@ -427,6 +431,7 @@ export class TurnRunner {
     }
     this.parentAgent?.abort();
     this.parentAgent?.clearAllQueues();
+    this.activeStateWorkPrompt = undefined;
     this.setQueuedCommands([]);
     this.clearFollowUpQueue();
     this.parentAgentRunning = false;
@@ -542,24 +547,6 @@ export class TurnRunner {
     }
   }
 
-  private controllerResultFromTerminal(terminal: TurnTerminalEvent): StateMachineExecutionResult {
-    switch (terminal.type) {
-      case "ask":
-        return { type: "ask", questions: terminal.questions };
-      case "sleep":
-        return { type: "sleep", wakeAt: terminal.wakeAt };
-      case "interrupted":
-        return { type: "interrupted" };
-      case "complete":
-        return {
-          type: "terminal",
-          status: terminal.status,
-          result: terminal.result,
-          error: terminal.error,
-        };
-    }
-  }
-
   private async driveStateMachineResult(
     result: StateMachineExecutionResult,
     baseState = this.requireRunnerState(),
@@ -580,6 +567,9 @@ export class TurnRunner {
       this.setState(queued.state);
       state = queued.state;
       next = await this.selectNextStateAfterCompletion(next.stateName, next.output);
+    }
+    if (next.type === "interrupted" && this.activeStateWorkPrompt) {
+      return this.activeStateWorkPrompt;
     }
     return this.controllerResultToTerminal(next, state);
   }
@@ -644,7 +634,6 @@ export class TurnRunner {
     const agent = this.createAgent(
       {
         state,
-        prompt: input.prompt,
         appendSystemPrompt: input.state.systemPrompt,
         skills: this.skillContext.resolveStateAgentSkills(input.state),
         ...this.createTools("agent"),
@@ -785,7 +774,6 @@ export class TurnRunner {
     this.parentAgent = this.createAgent(
       {
         state,
-        prompt: "",
         appendSystemPrompt,
         ...this.createTools(state.mode),
       },
@@ -805,7 +793,6 @@ export class TurnRunner {
     const workerResult = await this.runAgentWorkerWithUsage({
       state: input.state,
       prompt: input.prompt,
-      ...this.createTools(input.mode),
     });
 
     const result = await this.controllerResultFromWorkerResult(workerResult, input.state);
@@ -914,7 +901,6 @@ export class TurnRunner {
     const workerResult = await this.runAgentWorkerWithUsage({
       state,
       prompt,
-      ...this.createTools("agent"),
     });
     if (workerResult.control.type === "ask_user_question") {
       return this.askUserQuestion(workerResult.terminal, workerResult.control);
@@ -989,7 +975,7 @@ export class TurnRunner {
   }
 
   protected createAgent(
-    input: AgentWorkerInput,
+    input: AgentConfigInput,
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
     const options = this.resolveTurnOptions(undefined, input.state.options);

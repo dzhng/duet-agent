@@ -260,6 +260,53 @@ describe("state-machine interrupt resume", () => {
     );
     expect(pollStarts?.at(-1)).toMatchObject({ input: { value: "same-input" } });
   });
+
+  testIfDocker("steer during active script work can replace the running state", async () => {
+    const runner = new EvalTurnRunner({
+      parentControls: [
+        {
+          type: "select_state_machine_state",
+          decision: { kind: "run_state", state: "script_step" },
+        },
+        {
+          type: "select_state_machine_state",
+          decision: {
+            kind: "run_state",
+            state: "script_step",
+            override: { kind: "script", state: { command: "printf '{\"replacement\":true}'" } },
+          },
+        },
+        { type: "select_state_machine_state", decision: { kind: "terminal", state: "done" } },
+      ],
+      agentTerminals: [],
+    });
+
+    const { turn } = await startTurn(runner, {
+      mode: interruptDefinition,
+      prompt: "Run the script step.",
+    });
+    await waitFor(() => runner.events.includes("script_step"));
+    const steer = runner.turn({
+      type: "prompt",
+      message: "replace the running script",
+      behavior: "steer",
+    });
+    const terminal = await turn;
+    const steerTerminal = await steer;
+
+    expect(terminal).toBe(steerTerminal);
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      state: { stateMachine: { terminal: { state: "done", status: "completed" } } },
+    });
+    expect(runner.parentPrompts).toContainEqual(
+      expect.stringContaining("replace the running script"),
+    );
+    expect(terminal.state.stateMachine?.history).toContainEqual(
+      expect.objectContaining({ type: "state_interrupted", state: "script_step" }),
+    );
+  });
 });
 
 const interruptDefinition: StateMachineDefinition = {
@@ -300,6 +347,7 @@ const answerDefinition: StateMachineDefinition = {
 
 class EvalTurnRunner extends TurnRunner {
   readonly stateAgentPrompts: string[] = [];
+  readonly parentPrompts: string[] = [];
   readonly events: string[] = [];
   startedStateAgents = 0;
   private readonly parentControls: TurnRunnerControlResult[];
@@ -321,6 +369,7 @@ class EvalTurnRunner extends TurnRunner {
   }
 
   protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    this.parentPrompts.push(input.prompt);
     const control = this.parentControls.shift() ?? { type: "none" };
     return {
       control,

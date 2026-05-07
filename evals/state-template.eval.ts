@@ -163,7 +163,6 @@ class EvalTurnRunner extends TurnRunner {
         agent: { status: "running", messages: [] },
       },
       prompt: input.prompt,
-      ...this.createTools("agent"),
     };
     this.workerInputs.push(workerInput);
     return {

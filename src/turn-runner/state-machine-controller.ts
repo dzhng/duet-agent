@@ -53,11 +53,24 @@ export interface StateAgentHandle {
   partialAssistantText(): string | undefined;
 }
 
-type ActiveStateWork =
-  | { kind: "script"; state: string }
+type ActiveStateRun =
+  | {
+      kind: "agent";
+      state: string | undefined;
+      agent: StateAgentHandle;
+      interruptedReason?: string;
+    }
+  | {
+      kind: "script";
+      state: string;
+      abortController: AbortController;
+      interruptedReason?: string;
+    }
   | {
       kind: "poll";
       state: StateMachinePollState;
+      abortController: AbortController;
+      interruptedReason?: string;
     };
 
 export interface StateMachineControllerConfig {
@@ -69,10 +82,7 @@ export interface StateMachineControllerConfig {
 
 export class StateMachineController {
   private session?: StateMachineSession;
-  private activeAbortController?: AbortController;
-  private activeStateWork?: ActiveStateWork;
-  private activeStateAgent?: StateAgentHandle;
-  private interruptedReason?: string;
+  private activeRun?: ActiveStateRun;
 
   constructor(private readonly config: StateMachineControllerConfig) {}
 
@@ -85,11 +95,7 @@ export class StateMachineController {
   }
 
   hasActiveWork(): boolean {
-    return Boolean(this.activeAbortController || this.activeStateWork || this.activeStateAgent);
-  }
-
-  hasActiveStateAgent(): boolean {
-    return Boolean(this.activeStateAgent);
+    return Boolean(this.activeRun);
   }
 
   startSession(input: {
@@ -101,16 +107,23 @@ export class StateMachineController {
   }
 
   interrupt(reason = "Interrupted"): void {
-    this.interruptedReason = reason;
-    const state = this.interruptibleStateName();
+    const run = this.activeRun;
+    if (!run) return;
+    run.interruptedReason = reason;
+    const state = this.interruptibleStateName(run);
     if (this.session && state) {
-      this.session = recordStateInterrupted(this.session, state, reason, this.interruptedOutput());
+      this.session = recordStateInterrupted(
+        this.session,
+        state,
+        reason,
+        this.interruptedOutput(run),
+      );
     }
-    this.activeStateAgent?.interrupt();
-    this.activeAbortController?.abort();
-    this.activeStateAgent = undefined;
-    this.activeStateWork = undefined;
-    this.activeAbortController = undefined;
+    if (run.kind === "agent") {
+      run.agent.interrupt();
+    } else {
+      run.abortController.abort();
+    }
   }
 
   async runDecision(decision: StateMachineRunnerDecision): Promise<StateMachineExecutionResult> {
@@ -172,7 +185,8 @@ export class StateMachineController {
   private async runAgentState(state: StateMachineAgentState): Promise<StateMachineExecutionResult> {
     const prompt = renderTemplate(state.prompt, this.session?.currentInput ?? {});
     const agent = this.config.createStateAgent({ state, prompt });
-    this.activeStateAgent = agent;
+    const run: ActiveStateRun = { kind: "agent", state: state.name, agent };
+    this.activeRun = run;
     try {
       const terminal = await agent.prompt();
       if (terminal.type === "ask") {
@@ -184,7 +198,7 @@ export class StateMachineController {
         return { type: "terminal", status: "failed", error: terminal.error };
       }
       if (terminal.type === "interrupted") {
-        this.recordInterruptedState(state.name);
+        if (this.activeRun === run) this.recordInterruptedState(run, state.name);
         return { type: "interrupted" };
       }
 
@@ -192,7 +206,7 @@ export class StateMachineController {
       this.session = recordStateCompleted(this.requireSession(), state.name, output);
       return { type: "state_completed", stateName: state.name, output };
     } finally {
-      this.activeStateAgent = undefined;
+      if (this.activeRun === run) this.activeRun = undefined;
     }
   }
 
@@ -200,8 +214,8 @@ export class StateMachineController {
     state: StateMachineScriptState,
   ): Promise<StateMachineExecutionResult> {
     const abortController = new AbortController();
-    this.activeAbortController = abortController;
-    this.activeStateWork = { kind: "script", state: state.name };
+    const run: ActiveStateRun = { kind: "script", state: state.name, abortController };
+    this.activeRun = run;
     try {
       const command = renderTemplate(state.command, this.session?.currentInput ?? {});
       const shellOutput = await runShellCommand(command, {
@@ -214,17 +228,16 @@ export class StateMachineController {
       this.session = recordStateCompleted(this.requireSession(), state.name, rawOutput);
       return { type: "state_completed", stateName: state.name, output: rawOutput };
     } catch (error) {
-      if (this.interruptedReason) {
-        this.recordInterruptedState(state.name, shellPartialOutput(error));
+      if (run.interruptedReason) {
+        if (this.activeRun === run)
+          this.recordInterruptedState(run, state.name, shellPartialOutput(error));
         return { type: "interrupted" };
       }
       const message = error instanceof Error ? error.message : String(error);
       this.session = recordStateFailed(this.requireSession(), state.name, message);
       return { type: "terminal", status: "failed", error: message };
     } finally {
-      this.activeAbortController = undefined;
-      this.activeStateWork = undefined;
-      this.interruptedReason = undefined;
+      if (this.activeRun === run) this.activeRun = undefined;
     }
   }
 
@@ -249,8 +262,8 @@ export class StateMachineController {
     }
 
     const abortController = new AbortController();
-    this.activeAbortController = abortController;
-    this.activeStateWork = { kind: "poll", state };
+    const run: ActiveStateRun = { kind: "poll", state, abortController };
+    this.activeRun = run;
     try {
       const command = renderTemplate(state.poll.command, this.session?.currentInput ?? {});
       const shellOutput = await runShellCommand(command, {
@@ -266,15 +279,14 @@ export class StateMachineController {
       this.session = recordStateCompleted(this.requireSession(), state.name, rawOutput);
       return { type: "state_completed", stateName: state.name, output: rawOutput };
     } catch (error) {
-      if (this.interruptedReason) {
-        this.recordInterruptedState(state.name, shellPartialOutput(error));
+      if (run.interruptedReason) {
+        if (this.activeRun === run)
+          this.recordInterruptedState(run, state.name, shellPartialOutput(error));
         return { type: "interrupted" };
       }
       return { type: "sleep", wakeAt: Date.now() + state.intervalMs };
     } finally {
-      this.activeAbortController = undefined;
-      this.activeStateWork = undefined;
-      this.interruptedReason = undefined;
+      if (this.activeRun === run) this.activeRun = undefined;
     }
   }
 
@@ -287,6 +299,7 @@ export class StateMachineController {
   }
 
   private recordInterruptedState(
+    run: ActiveStateRun,
     stateName: string,
     output?: { assistantText?: string } | { stdout: string; stderr: string },
   ): void {
@@ -303,7 +316,7 @@ export class StateMachineController {
           ...session.history.slice(0, -1),
           {
             ...last,
-            reason: this.interruptedReason ?? last.reason,
+            reason: run.interruptedReason ?? last.reason,
             output: output ?? last.output,
           },
         ],
@@ -314,27 +327,25 @@ export class StateMachineController {
     this.session = recordStateInterrupted(
       session,
       stateName,
-      this.interruptedReason ?? "Interrupted",
+      run.interruptedReason ?? "Interrupted",
       output,
     );
   }
 
-  private interruptedOutput():
-    | { assistantText?: string }
-    | { stdout: string; stderr: string }
-    | undefined {
-    if (this.activeStateAgent) {
-      const assistantText = this.activeStateAgent.partialAssistantText();
+  private interruptedOutput(
+    run: ActiveStateRun,
+  ): { assistantText?: string } | { stdout: string; stderr: string } | undefined {
+    if (run.kind === "agent") {
+      const assistantText = run.agent.partialAssistantText();
       return assistantText ? { assistantText } : undefined;
     }
     return undefined;
   }
 
-  private interruptibleStateName(): string | undefined {
-    if (this.activeStateAgent) return this.session?.currentState;
-    if (this.activeStateWork?.kind === "script") return this.activeStateWork.state;
-    if (this.activeStateWork?.kind === "poll") return this.activeStateWork.state.name;
-    return undefined;
+  private interruptibleStateName(run: ActiveStateRun): string | undefined {
+    if (run.kind === "agent") return run.state;
+    if (run.kind === "script") return run.state;
+    return run.state.name;
   }
 
   private requireSession(): StateMachineSession {

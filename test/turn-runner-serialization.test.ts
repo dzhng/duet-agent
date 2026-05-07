@@ -14,9 +14,9 @@ class CapturingTurnRunner extends TurnRunner {
     });
   }
 
-  async captureLlmContext(input: Omit<AgentWorkerInput, "tools">): Promise<string> {
+  async captureLlmContext(input: AgentWorkerInput): Promise<string> {
     const agent = this.createAgent({
-      ...input,
+      state: input.state,
       ...this.createTools(input.state.mode),
     });
     const contexts: Context[] = [];
@@ -40,21 +40,21 @@ class CapturingTurnRunner extends TurnRunner {
     return JSON.stringify(context);
   }
 
-  captureToolExecution(input: Omit<AgentWorkerInput, "tools">): string {
+  captureToolExecution(input: AgentWorkerInput): string {
     const agent = this.createAgent({
-      ...input,
+      state: input.state,
       ...this.createTools(input.state.mode),
     });
     return agent.toolExecution;
   }
 
-  captureRuntimeSettings(input: Omit<AgentWorkerInput, "tools">): {
+  captureRuntimeSettings(input: AgentWorkerInput): {
     modelProvider: string;
     modelId: string;
     thinkingLevel: string;
   } {
     const agent = this.createAgent({
-      ...input,
+      state: input.state,
       ...this.createTools(input.state.mode),
     });
     return {

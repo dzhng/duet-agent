@@ -3,7 +3,7 @@ import { startTurn } from "./helpers/turn-runner-protocol.js";
 import assert from "node:assert";
 import { Agent, type StreamFn } from "@mariozechner/pi-agent-core";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
-import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
+import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnState } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 
@@ -21,7 +21,7 @@ class InterruptTurnRunner extends TurnRunner {
     });
   }
 
-  protected override createAgent(input: AgentWorkerInput): Agent {
+  protected override createAgent(input: AgentConfigInput): Agent {
     return new Agent({
       initialState: {
         model: { provider: "unknown", id: "test" } as never,
