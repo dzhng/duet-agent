@@ -1,4 +1,4 @@
-import type { Model, Tool } from "@mariozechner/pi-ai";
+import type { Tool } from "@mariozechner/pi-ai";
 import dedent from "dedent";
 import { Type } from "typebox";
 import { generateStructuredOutput } from "../core/structured-output.js";
@@ -28,7 +28,7 @@ export class SemanticGuardrail implements Guardrail {
   description = "LLM-evaluated action safety check";
 
   constructor(
-    private readonly model: Model<any>,
+    private readonly model: string,
     private readonly policy: string,
   ) {}
 

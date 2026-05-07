@@ -1,18 +1,23 @@
 import {
   complete,
   validateToolArguments,
+  type ImageContent,
   type Model,
   type ProviderStreamOptions,
+  type TextContent,
   type Tool,
   type ToolCall,
   type Usage,
 } from "@mariozechner/pi-ai";
 import type { Static, TSchema } from "typebox";
+import { resolveModelName } from "../model-resolution/index.js";
+
+export type StructuredOutputPrompt = string | Array<TextContent | ImageContent>;
 
 export interface StructuredOutputOptions<TSchemaValue extends TSchema> {
-  model: Model<any>;
+  model: string;
   tool: Tool<TSchemaValue>;
-  prompt: string;
+  prompt: StructuredOutputPrompt;
   systemPrompt?: string;
   callOptions?: ProviderStreamOptions;
   onUsage?: (usage: Usage) => void;
@@ -21,8 +26,9 @@ export interface StructuredOutputOptions<TSchemaValue extends TSchema> {
 export async function generateStructuredOutput<TSchemaValue extends TSchema>(
   options: StructuredOutputOptions<TSchemaValue>,
 ): Promise<Static<TSchemaValue>> {
+  const model = resolveModelName(options.model);
   const response = await complete(
-    options.model,
+    model,
     {
       systemPrompt: options.systemPrompt,
       tools: [options.tool],
@@ -30,7 +36,7 @@ export async function generateStructuredOutput<TSchemaValue extends TSchema>(
     },
     {
       ...options.callOptions,
-      toolChoice: forcedToolChoice(options.model, options.tool.name),
+      toolChoice: forcedToolChoice(model, options.tool.name),
     },
   );
   options.onUsage?.(response.usage);

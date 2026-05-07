@@ -1,9 +1,11 @@
 import { describe, expect } from "bun:test";
-import { getModel, type Model, type Tool } from "@mariozechner/pi-ai";
+import { type ImageContent, type Tool } from "@mariozechner/pi-ai";
 import dedent from "dedent";
 import { Type, type Static } from "typebox";
 import { generateStructuredOutput } from "../src/core/structured-output.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
+
+const model = process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-sonnet-4.6";
 
 const evalSchema = Type.Object({
   allowed: Type.Boolean({ description: "Whether the requested action should be allowed" }),
@@ -19,14 +21,24 @@ const evalTool: Tool<typeof evalSchema> = {
   parameters: evalSchema,
 };
 
+const visionSchema = Type.Object({
+  dominantColor: Type.String({ description: "Dominant visible color in the provided image" }),
+  visibleShape: Type.String({ description: "Primary visible geometric shape in the image" }),
+  reason: Type.String({ description: "One short sentence explaining the visual observation" }),
+});
+
+type VisionResult = Static<typeof visionSchema>;
+
+const visionTool: Tool<typeof visionSchema> = {
+  name: "returnVisionObservation",
+  description: "Return the structured visual observation",
+  parameters: visionSchema,
+};
+
 describe("structured output", () => {
   testIfDocker(
     "returns validated tool arguments through Vercel AI Gateway",
     async () => {
-      const model = resolveGatewayModel(
-        process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-sonnet-4.6",
-      );
-
       const result = await generateStructuredOutput({
         model,
         tool: evalTool,
@@ -46,41 +58,45 @@ describe("structured output", () => {
     },
     30_000,
   );
+
+  testIfDocker(
+    "returns structured output from multimodal content",
+    async () => {
+      const result = await generateStructuredOutput({
+        model,
+        tool: visionTool,
+        prompt: [
+          {
+            type: "text",
+            text: dedent`
+              Inspect the attached image and call the ${visionTool.name} tool.
+              Report the dominant visible color and primary geometric shape.
+            `,
+          },
+          redSquareImage,
+        ],
+      });
+
+      assertVisionResult(result);
+    },
+    30_000,
+  );
 });
 
-function resolveGatewayModel(value: string): Model<any> {
-  const separator = value.indexOf(":");
-  if (separator === -1) {
-    throw new Error("EVAL_MODEL must use provider:modelId syntax");
-  }
-
-  const provider = value.slice(0, separator);
-  const modelId = value.slice(separator + 1);
-
-  try {
-    return getModel(provider as any, modelId as any);
-  } catch (error) {
-    if (provider !== "vercel-ai-gateway") {
-      throw error;
-    }
-
-    return {
-      id: modelId,
-      name: modelId,
-      api: "anthropic-messages",
-      provider,
-      baseUrl: "https://ai-gateway.vercel.sh",
-      reasoning: modelId.includes("thinking") || modelId.includes("opus"),
-      input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 200000,
-      maxTokens: 4096,
-    };
-  }
-}
+const redSquareImage: ImageContent = {
+  type: "image",
+  mimeType: "image/png",
+  data: "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAb0lEQVR4nO3PAQkAAAyEwO9feoshgnABdLep8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3IPanc8OLDQitxAAAAAElFTkSuQmCC",
+};
 
 function assertResult(result: EvalResult): void {
   expect(result.allowed).toBe(false);
   expect(result.reason.trim().length).toBeGreaterThan(0);
   expect(result.severity).toBe("high");
+}
+
+function assertVisionResult(result: VisionResult): void {
+  expect(result.dominantColor.toLowerCase()).toContain("red");
+  expect(result.visibleShape.toLowerCase()).toMatch(/square|rectangle/);
+  expect(result.reason.trim().length).toBeGreaterThan(0);
 }

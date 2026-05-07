@@ -1,16 +1,19 @@
 import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
-import { getEnvApiKey, getModel, type Model, type Usage } from "@mariozechner/pi-ai";
+import { getEnvApiKey, type Usage } from "@mariozechner/pi-ai";
 import type { Skill } from "@mariozechner/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
 
 import { assistantText } from "../core/serializer.js";
-import { isDuetGatewayModelName, resolveDuetGatewayModel } from "../duet-gateway/index.js";
 import { toXML } from "../lib/xml.js";
 import { createObservationalMemoryTransform } from "../memory/observational.js";
 import { loadStoredMemory } from "../memory/storage.js";
 import { MemoryStore } from "../memory/store.js";
-import { DEFAULT_CLI_MEMORY_MODEL, DEFAULT_CLI_MODEL } from "../model-resolution/index.js";
+import {
+  DEFAULT_CLI_MEMORY_MODEL,
+  DEFAULT_CLI_MODEL,
+  resolveModelName,
+} from "../model-resolution/index.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type {
   TurnAgentFile,
@@ -979,8 +982,8 @@ export class TurnRunner {
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
     const options = this.resolveTurnOptions(undefined, input.state.options);
-    const model = this.resolveTurnModel(options);
-    const memoryModel = this.resolveMemoryModel(options);
+    const model = resolveModelName(options.model ?? DEFAULT_CLI_MODEL);
+    const memoryModel = options.memoryModel ?? DEFAULT_CLI_MEMORY_MODEL;
     // Parent agent configuration is derived from start/session options, not
     // per-prompt command options. Keeping model and prompt shape stable protects
     // prompt caching across all pi-agent turns inside a duet-agent session.
@@ -1008,7 +1011,7 @@ export class TurnRunner {
     });
   }
 
-  protected createMemoryTransform(model: Model<any>) {
+  protected createMemoryTransform(model: string) {
     return createObservationalMemoryTransform({
       memory: this.memory,
       actorModel: model,
@@ -1072,16 +1075,6 @@ export class TurnRunner {
     };
   }
 
-  protected resolveMemoryModel(options?: TurnOptions): Model<any> {
-    return this.resolveModelName(
-      options?.memoryModel ?? this.config.memoryModel ?? DEFAULT_CLI_MEMORY_MODEL,
-    );
-  }
-
-  protected resolveTurnModel(options?: TurnOptions): Model<any> {
-    return this.resolveModelName(options?.model ?? this.config.model ?? DEFAULT_CLI_MODEL);
-  }
-
   private resolveTurnOptions(options?: TurnOptions, base?: TurnOptions): TurnOptions {
     return {
       model: options?.model ?? base?.model ?? this.config.model ?? DEFAULT_CLI_MODEL,
@@ -1096,24 +1089,6 @@ export class TurnRunner {
 
   protected recordUsage(usage?: TurnTokenUsage | Usage): void {
     this.turnUsage = addUsage(this.turnUsage, usage);
-  }
-
-  private resolveModelName(modelName: string): Model<any> {
-    const separator = modelName.indexOf(":");
-    if (separator === -1) {
-      throw new Error("Models must use provider:modelId syntax");
-    }
-    if (isDuetGatewayModelName(modelName)) {
-      const modelId = modelName.slice(separator + 1);
-      const resolved = resolveDuetGatewayModel(modelId);
-      if (!resolved) {
-        throw new Error(`Unknown duet-gateway model: ${modelId}`);
-      }
-      return resolved;
-    }
-    const provider = modelName.slice(0, separator) as Parameters<typeof getModel>[0];
-    const model = modelName.slice(separator + 1) as Parameters<typeof getModel>[1];
-    return getModel(provider, model);
   }
 
   protected emitAgentEvent(event: AgentEvent): void {

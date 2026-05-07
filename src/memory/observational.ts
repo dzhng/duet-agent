@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Model, Usage } from "@mariozechner/pi-ai";
+import type { ImageContent, Model, TextContent, Usage } from "@mariozechner/pi-ai";
 import { nanoid } from "nanoid";
 import { Type } from "typebox";
 import { generateStructuredOutput } from "../core/structured-output.js";
@@ -156,7 +156,7 @@ export class ModelByInputTokens {
 
 export interface ObservationalMemoryTransformOptions {
   memory: MemoryStore;
-  actorModel: Model<any>;
+  actorModel: string;
   settings?: ObservationalMemorySettingsInput;
   onUsage?: (usage: Usage) => void;
   onActivity?: (event: ObservationalMemoryActivityEvent) => void;
@@ -353,7 +353,7 @@ async function activateObservations(
   messages: RawMemoryMessage[],
   previousObservations: Observation[],
   settings: ObservationalMemorySettings,
-  model: Model<any>,
+  model: string,
   onUsage?: (usage: Usage) => void,
   _signal?: AbortSignal,
 ): Promise<void> {
@@ -380,7 +380,7 @@ async function activateObservations(
 async function reflectObservations(
   store: MemoryStore,
   settings: ObservationalMemorySettings,
-  model: Model<any>,
+  model: string,
   onUsage?: (usage: Usage) => void,
   _signal?: AbortSignal,
 ): Promise<void> {
@@ -432,7 +432,7 @@ async function observe(
   messages: RawMemoryMessage[],
   previousObservations: Observation[],
   settings: ObservationalMemorySettings,
-  model: Model<any>,
+  model: string,
   onUsage?: (usage: Usage) => void,
   _signal?: AbortSignal,
 ): Promise<ObserverResult> {
@@ -518,7 +518,7 @@ function retainRawTail(messages: RawMemoryMessage[], retainTokens: number): RawM
   const retained: RawMemoryMessage[] = [];
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]!;
-    tokens += message.estimatedTokens ?? estimateTokens(message.content);
+    tokens += message.estimatedTokens ?? estimateTokens(message.textPreview);
     if (tokens > retainTokens) break;
     retained.unshift(message);
   }
@@ -624,30 +624,34 @@ function messageToolCallIds(message: AgentMessage): string[] {
     .map((part) => part.id);
 }
 
-function agentMessagesToRaw(messages: AgentMessage[]): RawMemoryMessage[] {
+export function agentMessagesToRaw(messages: AgentMessage[]): RawMemoryMessage[] {
   return messages
     .map((message) => agentMessageToRaw(message))
     .filter((message): message is RawMemoryMessage => Boolean(message));
 }
 
-function agentMessageToRaw(message: AgentMessage): RawMemoryMessage | undefined {
-  const content = messageToText(message);
-  if (content.trim().length === 0) {
+export function agentMessageToRaw(message: AgentMessage): RawMemoryMessage | undefined {
+  const normalized = normalizeMessageContent(message);
+  if (normalized.textPreview.trim().length === 0) {
     return undefined;
   }
   return {
-    id: stableRawMessageId(message),
+    id: stableRawMessageId(message, normalized.textPreview),
     createdAt:
       "timestamp" in message && typeof message.timestamp === "number"
         ? message.timestamp
         : Date.now(),
     role: normalizeRole(String(message.role)),
-    content,
-    estimatedTokens: estimateTokens(content),
+    content: normalized.content,
+    textPreview: normalized.textPreview,
+    estimatedTokens: estimateTokens(normalized.textPreview),
   };
 }
 
-function stableRawMessageId(message: AgentMessage): RawMemoryMessage["id"] {
+function stableRawMessageId(
+  message: AgentMessage,
+  textPreview: string = normalizeMessageContent(message).textPreview,
+): RawMemoryMessage["id"] {
   if (message.role === "assistant" && "responseId" in message && message.responseId) {
     return `msg_assistant_${message.responseId}`;
   }
@@ -656,7 +660,7 @@ function stableRawMessageId(message: AgentMessage): RawMemoryMessage["id"] {
   }
   const timestamp =
     "timestamp" in message && typeof message.timestamp === "number" ? message.timestamp : 0;
-  return `msg_${String(message.role)}_${timestamp}_${hashText(messageToText(message))}`;
+  return `msg_${String(message.role)}_${timestamp}_${hashText(textPreview)}`;
 }
 
 function normalizeRole(role: string): RawMemoryMessage["role"] {
@@ -669,23 +673,129 @@ function normalizeRole(role: string): RawMemoryMessage["role"] {
   return "system";
 }
 
-function messageToText(message: AgentMessage): string {
+interface NormalizedMessageContent {
+  content: Array<TextContent | ImageContent>;
+  textPreview: string;
+}
+
+function normalizeMessageContent(message: AgentMessage): NormalizedMessageContent {
   const maybeContent = (message as { content?: unknown }).content;
-  if (typeof maybeContent === "string") return maybeContent;
+  if (typeof maybeContent === "string") {
+    return {
+      content: [{ type: "text", text: maybeContent }],
+      textPreview: maybeContent,
+    };
+  }
   if (Array.isArray(maybeContent)) {
-    return maybeContent
-      .map((part) => {
-        if (part && typeof part === "object" && "text" in part && typeof part.text === "string") {
-          return part.text;
-        }
-        return JSON.stringify(part);
-      })
-      .join("\n");
+    const content: Array<TextContent | ImageContent> = [];
+    const previews: string[] = [];
+    for (const part of maybeContent) {
+      if (isTextContent(part)) {
+        content.push(part);
+        previews.push(part.text);
+        continue;
+      }
+      if (isImageContent(part)) {
+        content.push(part);
+        previews.push(imageContentPreview(part));
+        continue;
+      }
+      const preview = unsupportedContentPreview(part);
+      if (preview) previews.push(preview);
+    }
+    return {
+      content,
+      textPreview: previews.join("\n"),
+    };
   }
   if ("summary" in message && typeof message.summary === "string") {
-    return message.summary;
+    return {
+      content: [{ type: "text", text: message.summary }],
+      textPreview: message.summary,
+    };
   }
-  return "";
+  return { content: [], textPreview: "" };
+}
+
+function isTextContent(part: unknown): part is TextContent {
+  return (
+    part !== null &&
+    typeof part === "object" &&
+    "type" in part &&
+    part.type === "text" &&
+    "text" in part &&
+    typeof part.text === "string"
+  );
+}
+
+function isImageContent(part: unknown): part is ImageContent {
+  return part !== null && typeof part === "object" && "type" in part && part.type === "image";
+}
+
+function imageContentPreview(part: ImageContent): string {
+  const record = part as unknown as Record<string, unknown>;
+  const details = [imageMediaType(record), imageSourcePreview(record)].filter(
+    (detail): detail is string => Boolean(detail),
+  );
+  return details.length > 0 ? `[image: ${details.join(" ")}]` : "[image]";
+}
+
+function imageMediaType(record: Record<string, unknown>): string | undefined {
+  return (
+    stringField(record, "mediaType") ??
+    stringField(record, "mimeType") ??
+    stringField(record, "media_type") ??
+    sourceMediaType(record.source)
+  );
+}
+
+function sourceMediaType(source: unknown): string | undefined {
+  if (!source || typeof source !== "object") return undefined;
+  const sourceRecord = source as Record<string, unknown>;
+  return (
+    stringField(sourceRecord, "mediaType") ??
+    stringField(sourceRecord, "mimeType") ??
+    stringField(sourceRecord, "media_type")
+  );
+}
+
+function imageSourcePreview(record: Record<string, unknown>): string | undefined {
+  const directUrl = safeImageUrl(stringField(record, "url") ?? stringField(record, "imageUrl"));
+  if (directUrl) return `url=${directUrl}`;
+  if (stringField(record, "data")) return "source=data omitted";
+  const source = record.source;
+  if (!source) return undefined;
+  if (typeof source === "string") {
+    return source.startsWith("data:") ? "source=data omitted" : "source=string";
+  }
+  if (typeof source !== "object") return undefined;
+  const sourceRecord = source as Record<string, unknown>;
+  const sourceType = stringField(sourceRecord, "type");
+  const sourceUrl = safeImageUrl(stringField(sourceRecord, "url"));
+  if (sourceUrl) return `url=${sourceUrl}`;
+  if (sourceType) return `source=${sourceType} omitted`;
+  return "source=object omitted";
+}
+
+function safeImageUrl(value: string | undefined): string | undefined {
+  if (!value || value.startsWith("data:")) return undefined;
+  return value;
+}
+
+function stringField(record: Record<string, unknown>, field: string): string | undefined {
+  const value = record[field];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function unsupportedContentPreview(part: unknown): string | undefined {
+  if (!part || typeof part !== "object" || !("type" in part)) {
+    return undefined;
+  }
+  const record = part as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : "unknown";
+  const id = stringField(record, "id");
+  const name = stringField(record, "name");
+  return `[${[type, id, name].filter(Boolean).join(": ")}]`;
 }
 
 const MAX_OBSERVATION_LINE_CHARS = 10_000;
@@ -711,7 +821,7 @@ function inferPriority(observations: string): ObservationPriority {
 
 function estimateRawTokens(messages: RawMemoryMessage[]): number {
   return messages.reduce(
-    (total, message) => total + (message.estimatedTokens ?? estimateTokens(message.content)),
+    (total, message) => total + (message.estimatedTokens ?? estimateTokens(message.textPreview)),
     0,
   );
 }

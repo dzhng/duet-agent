@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { type TextContent } from "@mariozechner/pi-ai";
 import dotenv from "dotenv";
 import packageJson from "../package.json" with { type: "json" };
-import { shimDuetApiKeyToAiGateway } from "./duet-gateway/index.js";
+import { shimDuetApiKeyToAiGateway } from "./model-resolution/duet-gateway.js";
 import { formatCompactJson } from "./lib/compact-json.js";
 import {
   describeModelResolution,

@@ -1,11 +1,16 @@
 import dedent from "dedent";
+import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
 
-/** Temporary text serialization of AgentMessage used only while observing context. */
+export type RawMemoryContent = Array<TextContent | ImageContent>;
+
+/** Temporary multimodal serialization of AgentMessage used only while observing context. */
 export interface RawMemoryMessage {
   id: string;
   createdAt: number;
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: RawMemoryContent;
+  /** Compact text view used for token estimates, message ids, and text-only observer context. */
+  textPreview: string;
   estimatedTokens?: number;
 }
 
@@ -173,7 +178,7 @@ export function buildObserverPrompt(
   targetTokens: number,
   retry?: { actualTokens: number },
   now = new Date(),
-): string {
+): RawMemoryContent {
   const retryInstruction = retry
     ? dedent`
         The previous observation log was approximately ${retry.actualTokens.toLocaleString("en-US")} tokens, which exceeded the ${targetTokens.toLocaleString("en-US")}-token budget.
@@ -194,29 +199,45 @@ export function buildObserverPrompt(
         ---
       `
     : "";
-  return dedent`
+  const header = dedent`
     ${previous}
     ## New Message History to Observe
 
     Current date: ${now.toISOString()}
-
-    ${formatMessagesForObserver(messages)}
-
-    ---
-
-    ${retryInstruction}
-
-    Extract new observations from this message history.
   `;
+
+  return [
+    { type: "text", text: header },
+    ...formatMessagesForObserver(messages),
+    {
+      type: "text",
+      text: dedent`
+        ---
+
+        ${retryInstruction}
+
+        Extract new observations from this message history. When images are attached to a message, inspect them directly and summarize relevant visual details, user-visible text, UI state, diagrams, errors, or other facts needed for future continuity.
+      `,
+    },
+  ];
 }
 
-export function formatMessagesForObserver(messages: RawMemoryMessage[]): string {
-  return messages
-    .map((message) => {
-      const date = new Date(message.createdAt).toISOString();
-      return `--- message boundary (${date}) ---\n${message.role.toUpperCase()} [${message.id}]\n${message.content}`;
-    })
-    .join("\n\n");
+export function formatMessagesForObserver(messages: RawMemoryMessage[]): RawMemoryContent {
+  return messages.flatMap((message) => {
+    const date = new Date(message.createdAt).toISOString();
+    const parts: RawMemoryContent = [
+      {
+        type: "text",
+        text: `--- message boundary (${date}) ---\n${message.role.toUpperCase()} [${message.id}]\n${message.textPreview}`,
+      },
+    ];
+    parts.push(...message.content.filter(isImageContent));
+    return parts;
+  });
+}
+
+function isImageContent(part: TextContent | ImageContent): part is ImageContent {
+  return part.type !== "text";
 }
 
 export function buildReflectorSystemPrompt(instruction?: string): string {

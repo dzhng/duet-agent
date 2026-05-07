@@ -1,6 +1,10 @@
-import { findEnvKeys } from "@mariozechner/pi-ai";
+import { findEnvKeys, getModel, type Model } from "@mariozechner/pi-ai";
 
-import { DUET_GATEWAY_API_KEY_ENV } from "../duet-gateway/index.js";
+import {
+  DUET_GATEWAY_API_KEY_ENV,
+  isDuetGatewayModelName,
+  resolveDuetGatewayModel,
+} from "./duet-gateway.js";
 
 /**
  * Resolves which provider:modelId the CLI talks to, plus the provenance for
@@ -84,6 +88,24 @@ const MEMORY_MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
 
 export const DEFAULT_CLI_MODEL = MODEL_PROVIDER_INFERENCE[0].model;
 export const DEFAULT_CLI_MEMORY_MODEL = MEMORY_MODEL_PROVIDER_INFERENCE[0].model;
+
+export function resolveModelName(model: string): Model<any> {
+  const separator = model.indexOf(":");
+  if (separator === -1) {
+    throw new Error("Models must use provider:modelId syntax");
+  }
+  if (isDuetGatewayModelName(model)) {
+    const modelId = model.slice(separator + 1);
+    const resolved = resolveDuetGatewayModel(modelId);
+    if (!resolved) {
+      throw new Error(`Unknown duet-gateway model: ${modelId}`);
+    }
+    return resolved;
+  }
+  const provider = model.slice(0, separator) as Parameters<typeof getModel>[0];
+  const modelId = model.slice(separator + 1) as Parameters<typeof getModel>[1];
+  return getModel(provider, modelId);
+}
 
 function lookupProviderEnvVar(entry: ProviderInferenceEntry): string | undefined {
   if (entry.customEnvVar) {

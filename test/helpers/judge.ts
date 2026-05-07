@@ -1,4 +1,4 @@
-import { getModel, type Model, type Tool } from "@mariozechner/pi-ai";
+import { type Tool } from "@mariozechner/pi-ai";
 import dedent from "dedent";
 import { Type, type Static } from "typebox";
 import { generateStructuredOutput } from "../../src/core/structured-output.js";
@@ -16,12 +16,12 @@ const judgeTool: Tool<typeof judgeSchema> = {
   parameters: judgeSchema,
 };
 
-const judgeModel = getModel("anthropic", "claude-opus-4-7");
+const judgeModel = "anthropic:claude-opus-4-7";
 
 export async function judge(input: {
   prompt: string;
   value: unknown;
-  model?: Model<any>;
+  model?: string;
   systemPrompt?: string;
 }): Promise<JudgeResult> {
   return generateStructuredOutput({

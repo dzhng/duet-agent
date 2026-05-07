@@ -1,18 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { startTurn } from "./helpers/turn-runner-protocol.js";
 import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
-import { createAssistantMessageEventStream, type Model } from "@mariozechner/pi-ai";
 import {
+  createAssistantMessageEventStream,
+  type ImageContent,
+  type Model,
+} from "@mariozechner/pi-ai";
+import {
+  agentMessageToRaw,
   enforceObservationTokenBudget,
   includeToolPairMessages,
 } from "../src/memory/observational.js";
+import { buildObserverPrompt } from "../src/memory/observational-prompts.js";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import type { TurnOptions } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 
 class MemoryTransformTurnRunner extends TurnRunner {
-  createMemoryTransformForTest(model: Model<any>) {
+  createMemoryTransformForTest(model: string) {
     return this.createMemoryTransform(model);
   }
 
@@ -33,19 +39,58 @@ class MemoryTransformTurnRunner extends TurnRunner {
 }
 
 class ModelRoutingTurnRunner extends TurnRunner {
-  captureModels(options?: TurnOptions): {
+  private capturedAgentModel?: Model<any>;
+  private capturedMemoryModel?: string;
+
+  async captureModels(options?: TurnOptions): Promise<{
     agentModel: Model<any>;
-    memoryModel: Model<any>;
-  } {
+    memoryModel: string;
+  }> {
+    this.capturedAgentModel = undefined;
+    this.capturedMemoryModel = undefined;
+    await this.start({ type: "start", mode: "agent", options });
+    await this.turn({
+      type: "prompt",
+      message: "Capture model routing.",
+      behavior: "follow_up",
+    });
+    if (!this.capturedAgentModel || !this.capturedMemoryModel) {
+      throw new Error("Expected agent and memory models to be captured");
+    }
     return {
-      agentModel: this.resolveTurnModel(options),
-      memoryModel: this.resolveMemoryModel(options),
+      agentModel: this.capturedAgentModel,
+      memoryModel: this.capturedMemoryModel,
     };
+  }
+
+  protected override createMemoryTransform(model: string) {
+    this.capturedMemoryModel = model;
+    return async (messages: AgentMessage[]) => messages;
+  }
+
+  protected override createAgent(
+    input: AgentConfigInput,
+    onControlResult?: (result: TurnRunnerControlResult) => void,
+  ): Agent {
+    const agent = super.createAgent(input, onControlResult);
+    this.capturedAgentModel = agent.state.model;
+    agent.streamFn = () => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({
+          type: "done",
+          reason: "stop",
+          message: createAssistantMessage({ text: "ok" }),
+        });
+      });
+      return stream;
+    };
+    return agent;
   }
 }
 
 class UsageTrackingTurnRunner extends TurnRunner {
-  protected override createMemoryTransform(_model: Model<any>) {
+  protected override createMemoryTransform(_model: string) {
     return async (messages: AgentMessage[]) => {
       this.recordUsage({
         inputTokens: 5,
@@ -91,10 +136,7 @@ describe("TurnRunner memory", () => {
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
     });
-    const transform = runner.createMemoryTransformForTest({
-      provider: "unknown",
-      id: "test",
-    } as Model<any>);
+    const transform = runner.createMemoryTransformForTest("anthropic:claude-opus-4-7");
     const messages: AgentMessage[] = [
       {
         role: "user",
@@ -126,10 +168,7 @@ describe("TurnRunner memory", () => {
     });
     const events: unknown[] = [];
     runner.subscribe((event) => events.push(event));
-    const transform = runner.createMemoryTransformForTest({
-      provider: "unknown",
-      id: "test",
-    } as Model<any>);
+    const transform = runner.createMemoryTransformForTest("anthropic:claude-opus-4-7");
 
     await expect(
       transform([
@@ -177,10 +216,7 @@ describe("TurnRunner memory", () => {
     );
     const events: unknown[] = [];
     runner.subscribe((event) => events.push(event));
-    const transform = runner.createMemoryTransformForTest({
-      provider: "unknown",
-      id: "test",
-    } as Model<any>);
+    const transform = runner.createMemoryTransformForTest("anthropic:claude-opus-4-7");
     const messages: AgentMessage[] = [
       {
         ...createAssistantMessage({ text: "x".repeat(100), timestamp: 1 }),
@@ -203,6 +239,70 @@ describe("TurnRunner memory", () => {
     });
   });
 
+  test("raw memory keeps image-only messages with compact text previews", () => {
+    const imageData = "base64-image-payload".repeat(100);
+    const image: ImageContent = {
+      type: "image",
+      mimeType: "image/png",
+      data: imageData,
+    };
+    const message: AgentMessage = {
+      role: "user",
+      content: [image],
+      timestamp: 1,
+    };
+    const raw = agentMessageToRaw(message);
+
+    expect(raw).toBeDefined();
+    expect(raw?.content).toEqual([
+      {
+        type: "image",
+        mimeType: "image/png",
+        data: imageData,
+      },
+    ]);
+    expect(raw?.textPreview).toContain("[image:");
+    expect(raw?.textPreview).toContain("image/png");
+    expect(raw?.textPreview).toContain("source=data omitted");
+    expect(raw?.textPreview).not.toContain(imageData);
+    expect(raw?.id).not.toContain(imageData);
+    expect(raw?.estimatedTokens).toBeLessThan(20);
+  });
+
+  test("observer prompt places image blocks next to their message boundary", () => {
+    const image: ImageContent = {
+      type: "image",
+      mimeType: "image/png",
+      data: "opaque-image-bytes",
+    };
+    const message: AgentMessage = {
+      role: "user",
+      content: [{ type: "text", text: "Please inspect this UI." }, image],
+      timestamp: 1,
+    };
+    const raw = agentMessageToRaw(message);
+
+    expect(raw).toBeDefined();
+    const prompt = buildObserverPrompt(
+      [raw!],
+      "",
+      100,
+      undefined,
+      new Date("2026-05-07T10:00:00Z"),
+    );
+    const text = prompt
+      .filter((part): part is { type: "text"; text: string } => part.type === "text")
+      .map((part) => part.text)
+      .join("\n");
+
+    expect(prompt.some((part) => part.type === "image")).toBe(true);
+    expect(text).toContain("USER");
+    expect(text).toContain(raw!.id);
+    expect(text).toContain("Please inspect this UI.");
+    expect(text).toContain("[image:");
+    expect(text).not.toContain("opaque-image-bytes");
+  });
+
   test("observational transform emits reflection activity events", async () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",
@@ -221,10 +321,7 @@ describe("TurnRunner memory", () => {
     await runner.appendObservationForTest("x".repeat(100));
     const events: unknown[] = [];
     runner.subscribe((event) => events.push(event));
-    const transform = runner.createMemoryTransformForTest({
-      provider: "unknown",
-      id: "test",
-    } as Model<any>);
+    const transform = runner.createMemoryTransformForTest("anthropic:claude-opus-4-7");
 
     await expect(
       transform([
@@ -252,32 +349,32 @@ describe("TurnRunner memory", () => {
     ]);
   });
 
-  test("routes turn and memory model overrides independently", () => {
+  test("routes turn and memory model overrides independently", async () => {
     const runner = new ModelRoutingTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
     });
 
-    const withAgentOverride = runner.captureModels({
+    const withAgentOverride = await runner.captureModels({
       model: "anthropic:claude-sonnet-4-5",
     });
     expect(withAgentOverride.agentModel.id).toBe("claude-sonnet-4-5");
-    expect(withAgentOverride.memoryModel.id).toBe("claude-haiku-4-5");
+    expect(withAgentOverride.memoryModel).toBe("anthropic:claude-haiku-4-5");
 
-    const withConfiguredMemoryOverride = new ModelRoutingTurnRunner({
+    const withConfiguredMemoryOverride = await new ModelRoutingTurnRunner({
       model: "anthropic:claude-opus-4-7",
       memoryModel: "anthropic:claude-haiku-4-5",
       skillDiscovery: { includeDefaults: false },
     }).captureModels();
     expect(withConfiguredMemoryOverride.agentModel.id).toBe("claude-opus-4-7");
-    expect(withConfiguredMemoryOverride.memoryModel.id).toBe("claude-haiku-4-5");
+    expect(withConfiguredMemoryOverride.memoryModel).toBe("anthropic:claude-haiku-4-5");
 
-    const withMemoryOverride = runner.captureModels({
+    const withMemoryOverride = await runner.captureModels({
       model: "anthropic:claude-sonnet-4-5",
       memoryModel: "anthropic:claude-3-5-haiku-latest",
     });
     expect(withMemoryOverride.agentModel.id).toBe("claude-sonnet-4-5");
-    expect(withMemoryOverride.memoryModel.id).toBe("claude-3-5-haiku-latest");
+    expect(withMemoryOverride.memoryModel).toBe("anthropic:claude-3-5-haiku-latest");
   });
 
   test("includes memory operation usage in emitted terminal usage", async () => {
