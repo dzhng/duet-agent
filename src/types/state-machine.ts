@@ -188,6 +188,11 @@ export interface StateMachineSession {
    * Persisted so sleeping poll states can resume with the same template values.
    */
   currentInput?: Record<string, unknown>;
+  /**
+   * Compact progress counters for status questions. This stays separate from
+   * history so frequent poll sleeps do not spam the audit log.
+   */
+  progress?: StateMachineProgress;
   /** Append-only audit log used for debugging, replay, and persistence. */
   history: StateMachineSessionEvent[];
   /** Present only after a session reaches a named terminal state. */
@@ -201,6 +206,22 @@ export type StateMachineState =
   | StateMachineScriptState
   | StateMachinePollState
   | StateMachineTerminalState;
+
+export interface StateMachineProgress {
+  /** Per-state counters keyed by state name for compact status reporting. */
+  states: Record<string, StateMachineStateProgress>;
+}
+
+export interface StateMachineStateProgress {
+  /** State kind from the active definition when the progress entry was updated. */
+  kind?: StateMachineState["kind"];
+  /** Number of times the parent selected this state. */
+  runs: number;
+  /** Number of times this state emitted sleep while waiting for a later wake. */
+  sleeps: number;
+  /** Scheduled wake time from the latest sleep, cleared when the state runs again. */
+  nextWakeAt?: number;
+}
 
 export interface StateMachineBaseState {
   /** Name shown in status output and used by the runner when choosing a state. */

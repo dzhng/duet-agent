@@ -578,12 +578,27 @@ describe("TurnRunner tools", () => {
         name: "outreach",
         prompt: "Use for outreach work.",
         states: [
-          { kind: "agent" as const, name: "waiting", prompt: "Wait for a reply." },
+          {
+            kind: "poll" as const,
+            name: "waiting",
+            intervalMs: 60_000,
+            poll: { kind: "timer" as const },
+          },
           { kind: "terminal" as const, name: "done", status: "completed" as const },
         ],
       },
       prompt: "Wait for reply.",
       currentState: "interrupted",
+      progress: {
+        states: {
+          waiting: {
+            kind: "poll" as const,
+            runs: 1,
+            sleeps: 6,
+            nextWakeAt: 123,
+          },
+        },
+      },
       history: Array.from({ length: 12 }, (_, index) => ({
         type: "state_started" as const,
         timestamp: index,
@@ -607,6 +622,19 @@ describe("TurnRunner tools", () => {
     expect(details.currentState).toBe("interrupted");
     expect(details.history).toContainEqual(expect.objectContaining({ state: "state-11" }));
     expect(details.history).toHaveLength(10);
+    expect(result.details).toMatchObject({ historyCount: 12 });
+    expect(result.details).toMatchObject({
+      progress: {
+        states: {
+          waiting: {
+            kind: "poll",
+            runs: 1,
+            sleeps: 6,
+            nextWakeAt: 123,
+          },
+        },
+      },
+    });
   });
 
   test("rejects selected states outside the active definition", async () => {

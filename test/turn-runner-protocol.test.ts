@@ -146,7 +146,27 @@ describe("TurnRunner protocol scenarios", () => {
   test("uses a steering prompt to update and continue an active state-machine session", async () => {
     const { runner, events } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
-    await runner.start({ type: "start", state: turnState });
+    const stateMachine = turnState.stateMachine;
+    assert(stateMachine);
+    await runner.start({
+      type: "start",
+      state: {
+        ...turnState,
+        stateMachine: {
+          ...stateMachine,
+          progress: {
+            states: {
+              poll_email_reply: {
+                kind: "poll",
+                runs: 1,
+                sleeps: 1,
+                nextWakeAt: Date.now() + 60_000,
+              },
+            },
+          },
+        },
+      },
+    });
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { kind: "run_state", state: "classify_reply" },
@@ -167,6 +187,9 @@ describe("TurnRunner protocol scenarios", () => {
       expect.objectContaining({ type: "state_started", state: "classify_reply" }),
     );
     expect(terminal.state.stateMachine?.currentState).not.toBe("waiting_for_reply");
+    expect(terminal.state.stateMachine?.progress?.states.poll_email_reply?.nextWakeAt).toBe(
+      undefined,
+    );
   });
 
   test("answers unrelated prompts during an active state-machine session without changing state", async () => {
@@ -268,6 +291,11 @@ describe("TurnRunner protocol scenarios", () => {
       },
     });
     expect(terminal.type === "sleep" ? terminal.wakeAt : 0).toBeGreaterThan(Date.now());
+    expect(terminal.state.stateMachine?.progress?.states.poll_email_reply).toMatchObject({
+      runs: 1,
+      sleeps: 1,
+      nextWakeAt: terminal.type === "sleep" ? terminal.wakeAt : expect.any(Number),
+    });
   });
 
   test("wakes a sleeping poll session for one polling attempt", async () => {
@@ -288,6 +316,10 @@ describe("TurnRunner protocol scenarios", () => {
         status: "sleeping",
         stateMachine: { currentState: "poll_email_reply" },
       },
+    });
+    expect(terminal.state.stateMachine?.progress?.states.poll_email_reply).toMatchObject({
+      sleeps: 1,
+      nextWakeAt: terminal.type === "sleep" ? terminal.wakeAt : expect.any(Number),
     });
   });
 

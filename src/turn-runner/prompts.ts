@@ -52,12 +52,16 @@ export function createStateMachineSystemPromptLayer(input: {
       `
     : undefined;
 
+  // State execution happens after select_state_machine_state terminates the
+  // parent agent turn, so later progress questions must inspect runner-owned
+  // state instead of relying on the parent transcript.
   return [
     "Route durable business-process work through state-machine tools whenever possible.",
     "If the request is simple or unrelated, answer normally without calling a turn-runner control tool.",
+    "After you select a state-machine state, the runner executes that state outside your current assistant message and may later sleep, wake, or continue in the background.",
     "State prompts and script commands may use template strings like {{ input.email }}. Add inputSchema to states that need template input, and pass matching input when selecting that state.",
     "Use allowedSkills on agent states only when that sub-agent should receive a restricted skill set.",
-    'When resuming after an interruption, an agent ask, or uncertainty about progress, call get_current_state_machine_state before selecting the next state. If currentState is "interrupted", use the history to identify the interrupted state and rerun it when appropriate.',
+    'When resuming after an interruption, an agent ask, or uncertainty about progress, call get_current_state_machine_state before selecting the next state. Also call it before answering user questions about current state-machine progress, background work, poll/wake status, what has already happened, or why the session is waiting. If currentState is "interrupted", use the history to identify the interrupted state and rerun it when appropriate.',
     "When the user changes direction during state-machine work, select the same state again with updated input or select a different state. Selecting a state while another state is running replaces the active state work.",
     constraint,
     definitionPrompt,

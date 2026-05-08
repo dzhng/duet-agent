@@ -1,7 +1,9 @@
 import type {
   StateMachineDefinition,
   StateMachinePollState,
+  StateMachineProgress,
   StateMachineSession,
+  StateMachineStateProgress,
   StateMachineState,
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE as INTERRUPTED_STATE } from "../types/state-machine.js";
@@ -60,20 +62,34 @@ export function recordStateStarted(
   state: StateMachineState,
   input?: Record<string, unknown>,
 ): StateMachineSession {
+  const now = Date.now();
+  const stateMachineWithoutScheduledWake = {
+    ...stateMachine,
+    progress: clearProgressWakeTimes(stateMachine.progress),
+  };
   return {
     ...stateMachine,
     currentState: state.name,
     currentInput: input,
+    progress: updateStateProgress(
+      stateMachineWithoutScheduledWake,
+      state.name,
+      state.kind,
+      (entry) => ({
+        ...entry,
+        runs: entry.runs + 1,
+      }),
+    ),
     history: [
       ...stateMachine.history,
       {
         type: "state_started",
-        timestamp: Date.now(),
+        timestamp: now,
         state: state.name,
         input,
       },
     ],
-    updatedAt: Date.now(),
+    updatedAt: now,
   };
 }
 
@@ -82,13 +98,33 @@ export function recordStateCompleted(
   state: string,
   output: unknown,
 ): StateMachineSession {
+  const now = Date.now();
+  const kind = findState(stateMachine, state)?.kind;
   return {
     ...stateMachine,
-    history: [
-      ...stateMachine.history,
-      { type: "state_completed", timestamp: Date.now(), state, output },
-    ],
-    updatedAt: Date.now(),
+    progress: updateStateProgress(stateMachine, state, kind, (entry) => ({
+      ...entry,
+      nextWakeAt: undefined,
+    })),
+    history: [...stateMachine.history, { type: "state_completed", timestamp: now, state, output }],
+    updatedAt: now,
+  };
+}
+
+export function recordPollSleep(
+  stateMachine: StateMachineSession,
+  state: StateMachinePollState,
+  wakeAt: number,
+): StateMachineSession {
+  const now = Date.now();
+  return {
+    ...stateMachine,
+    progress: updateStateProgress(stateMachine, state.name, state.kind, (entry) => ({
+      ...entry,
+      sleeps: entry.sleeps + 1,
+      nextWakeAt: wakeAt,
+    })),
+    updatedAt: now,
   };
 }
 
@@ -111,16 +147,22 @@ export function recordStateFailed(
   state: string,
   error: string,
 ): StateMachineSession {
+  const now = Date.now();
   const terminal = { state, status: "failed" as const, reason: error };
+  const kind = findState(stateMachine, state)?.kind;
   return {
     ...stateMachine,
     terminal,
+    progress: updateStateProgress(stateMachine, state, kind, (entry) => ({
+      ...entry,
+      nextWakeAt: undefined,
+    })),
     history: [
       ...stateMachine.history,
-      { type: "state_failed", timestamp: Date.now(), state, error },
-      { type: "state_machine_completed" as const, timestamp: Date.now(), terminal },
+      { type: "state_failed", timestamp: now, state, error },
+      { type: "state_machine_completed" as const, timestamp: now, terminal },
     ],
-    updatedAt: Date.now(),
+    updatedAt: now,
   };
 }
 
@@ -130,21 +172,27 @@ export function recordStateInterrupted(
   reason?: string,
   output?: { assistantText?: string } | { stdout: string; stderr: string },
 ): StateMachineSession {
+  const now = Date.now();
+  const kind = findState(stateMachine, state)?.kind;
   return {
     ...stateMachine,
     currentState: INTERRUPTED_STATE,
     currentInput: undefined,
+    progress: updateStateProgress(stateMachine, state, kind, (entry) => ({
+      ...entry,
+      nextWakeAt: undefined,
+    })),
     history: [
       ...stateMachine.history,
       {
         type: "state_interrupted" as const,
-        timestamp: Date.now(),
+        timestamp: now,
         state,
         reason,
         output,
       },
     ],
-    updatedAt: Date.now(),
+    updatedAt: now,
   };
 }
 
@@ -153,13 +201,14 @@ export function recordStateAskedUser(
   state: string,
   questions: TurnQuestion[],
 ): StateMachineSession {
+  const now = Date.now();
   return {
     ...stateMachine,
     history: [
       ...stateMachine.history,
-      { type: "state_asked_user" as const, timestamp: Date.now(), state, questions },
+      { type: "state_asked_user" as const, timestamp: now, state, questions },
     ],
-    updatedAt: Date.now(),
+    updatedAt: now,
   };
 }
 
@@ -167,13 +216,53 @@ export function recordStateMachineCompleted(
   stateMachine: StateMachineSession,
   terminal: { state: string; status: "completed" | "failed" | "cancelled"; reason?: string },
 ): StateMachineSession {
+  const now = Date.now();
   return {
     ...stateMachine,
     terminal,
     history: [
       ...stateMachine.history,
-      { type: "state_machine_completed" as const, timestamp: Date.now(), terminal },
+      { type: "state_machine_completed" as const, timestamp: now, terminal },
     ],
-    updatedAt: Date.now(),
+    updatedAt: now,
   };
+}
+
+function updateStateProgress(
+  stateMachine: StateMachineSession,
+  state: string,
+  kind: StateMachineState["kind"] | undefined,
+  update: (entry: StateMachineStateProgress) => StateMachineStateProgress,
+): StateMachineProgress {
+  const states = stateMachine.progress?.states ?? {};
+  const current = normalizeStateProgress(states[state], kind);
+  return {
+    states: {
+      ...states,
+      [state]: update(current),
+    },
+  };
+}
+
+function normalizeStateProgress(
+  entry: StateMachineStateProgress | undefined,
+  kind: StateMachineState["kind"] | undefined,
+): StateMachineStateProgress {
+  return {
+    kind: entry?.kind ?? kind,
+    runs: entry?.runs ?? 0,
+    sleeps: entry?.sleeps ?? 0,
+    nextWakeAt: entry?.nextWakeAt,
+  };
+}
+
+function clearProgressWakeTimes(
+  progress: StateMachineProgress | undefined,
+): StateMachineProgress | undefined {
+  if (!progress) return undefined;
+  const states: Record<string, StateMachineStateProgress> = {};
+  for (const [state, entry] of Object.entries(progress.states)) {
+    states[state] = { ...entry, nextWakeAt: undefined };
+  }
+  return { states };
 }

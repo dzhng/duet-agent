@@ -11,6 +11,7 @@ import type {
   StateMachineAgentState,
   StateMachineDefinition,
   StateMachinePollState,
+  StateMachineProgress,
   StateMachineScriptState,
   StateMachineState,
   StateMachineTerminalResult,
@@ -315,6 +316,10 @@ export interface CurrentStateMachineStateResult {
   currentState?: string;
   currentInput?: Record<string, unknown>;
   terminal?: StateMachineTerminalResult;
+  /** Compact per-state counters for obvious progress questions. */
+  progress?: StateMachineProgress;
+  /** Total state-machine history records; `history` below is only the recent tail. */
+  historyCount: number;
   history: StateMachineSessionEvent[];
 }
 
@@ -577,7 +582,7 @@ function createCurrentStateMachineStateTool(
     name: "get_current_state_machine_state",
     label: "Get current state-machine state",
     description:
-      "Inspect the current state-machine progress. Use this after resume, interruption, or uncertainty before selecting the next state.",
+      "Inspect current state-machine progress, including background work that ran after selecting a state. Use this after resume, interruption, or uncertainty before selecting the next state, and before answering user questions about state-machine progress, poll/wake status, what has already happened, or why the session is waiting.",
     parameters: Type.Object({}),
     async execute() {
       const stateMachine = getStateMachine?.();
@@ -585,6 +590,8 @@ function createCurrentStateMachineStateTool(
         currentState: stateMachine?.currentState,
         currentInput: stateMachine?.currentInput,
         terminal: stateMachine?.terminal,
+        progress: stateMachine?.progress,
+        historyCount: stateMachine?.history.length ?? 0,
         history: stateMachine?.history.slice(-10) ?? [],
       };
       return {

@@ -19,6 +19,7 @@ import {
   recordStateInterrupted,
   recordStateMachineCompleted,
   recordStateStarted,
+  recordPollSleep,
   createStateMachineSession,
 } from "./state-machine-session.js";
 import {
@@ -254,7 +255,9 @@ export class StateMachineController {
 
     if (state.poll.kind === "timer") {
       if (!options?.woke) {
-        return { type: "sleep", wakeAt: Date.now() + state.intervalMs };
+        const wakeAt = Date.now() + state.intervalMs;
+        this.session = recordPollSleep(this.requireSession(), state, wakeAt);
+        return { type: "sleep", wakeAt };
       }
       const output = { elapsedMs };
       this.session = recordStateCompleted(this.requireSession(), state.name, output);
@@ -273,7 +276,9 @@ export class StateMachineController {
       });
       const output = parseJsonObject(shellOutput.stdout);
       if (Object.keys(output).length === 0) {
-        return { type: "sleep", wakeAt: Date.now() + state.intervalMs };
+        const wakeAt = Date.now() + state.intervalMs;
+        this.session = recordPollSleep(this.requireSession(), state, wakeAt);
+        return { type: "sleep", wakeAt };
       }
       const rawOutput = normalizePollShellOutput(shellOutput, output);
       this.session = recordStateCompleted(this.requireSession(), state.name, rawOutput);
@@ -284,7 +289,9 @@ export class StateMachineController {
           this.recordInterruptedState(run, state.name, shellPartialOutput(error));
         return { type: "interrupted" };
       }
-      return { type: "sleep", wakeAt: Date.now() + state.intervalMs };
+      const wakeAt = Date.now() + state.intervalMs;
+      this.session = recordPollSleep(this.requireSession(), state, wakeAt);
+      return { type: "sleep", wakeAt };
     } finally {
       if (this.activeRun === run) this.activeRun = undefined;
     }
