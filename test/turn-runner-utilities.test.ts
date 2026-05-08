@@ -7,7 +7,7 @@ import {
   ShellCommandError,
 } from "../src/turn-runner/shell-state-handle.js";
 import { addUsage, usageFromMessages } from "../src/turn-runner/usage-accounting.js";
-import { createAssistantMessage, createUsage } from "./helpers/messages.js";
+import { createAssistantMessage } from "./helpers/messages.js";
 
 describe("turn-runner shell execution utilities", () => {
   test("parses structured output values", () => {
@@ -77,20 +77,40 @@ describe("turn-runner shell execution utilities", () => {
 describe("turn-runner usage accounting", () => {
   test("adds protocol and provider usage values", () => {
     const total = addUsage(
-      { inputTokens: 2, outputTokens: 3 },
-      createUsage({
+      {
+        input: 2,
+        output: 3,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 5,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      {
         input: 5,
         output: 7,
         cacheRead: 11,
+        cacheWrite: 0,
+        totalTokens: 12,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.13 },
-      }),
+      },
     );
 
-    expect(addUsage(total, { inputTokens: 1, outputTokens: 4, cachedInputTokens: 6 })).toEqual({
-      inputTokens: 8,
-      outputTokens: 14,
-      cachedInputTokens: 17,
-      costUsd: 0.13,
+    expect(
+      addUsage(total, {
+        input: 1,
+        output: 4,
+        cacheRead: 6,
+        cacheWrite: 0,
+        totalTokens: 5,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      }),
+    ).toEqual({
+      input: 8,
+      output: 14,
+      totalTokens: 22,
+      cacheRead: 17,
+      cacheWrite: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.13 },
     });
   });
 
@@ -108,10 +128,12 @@ describe("turn-runner usage accounting", () => {
     ]);
 
     expect(usage).toEqual({
-      inputTokens: 4,
-      outputTokens: 8,
-      cachedInputTokens: 2,
-      costUsd: 0.25,
+      input: 4,
+      output: 8,
+      totalTokens: 12,
+      cacheRead: 2,
+      cacheWrite: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 },
     });
   });
 });

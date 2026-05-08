@@ -92,12 +92,16 @@ class ModelRoutingTurnRunner extends TurnRunner {
 class UsageTrackingTurnRunner extends TurnRunner {
   protected override createMemoryTransform(_model: string) {
     return async (messages: AgentMessage[]) => {
-      this.recordUsage({
-        inputTokens: 5,
-        outputTokens: 7,
-        cachedInputTokens: 2,
-        costUsd: 0.03,
-      });
+      this.recordUsage(
+        {
+          input: 5,
+          output: 7,
+          cacheRead: 2,
+          cacheWrite: 0,
+          totalTokens: 12,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+        },
+      );
       return messages;
     };
   }
@@ -390,10 +394,12 @@ describe("TurnRunner memory", () => {
     ).turn;
 
     expect(terminal.usage).toEqual({
-      inputTokens: 16,
-      outputTokens: 20,
-      cachedInputTokens: 5,
-      costUsd: 0.18,
+      input: 16,
+      output: 20,
+      totalTokens: 36,
+      cacheRead: 5,
+      cacheWrite: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.18 },
     });
     expect(events.at(-1)).toMatchObject({ usage: terminal.usage });
   });

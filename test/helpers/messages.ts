@@ -1,5 +1,14 @@
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 
+const EMPTY_USAGE: Usage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
 export function createAssistantMessage(input: {
   text?: string;
   errorMessage?: string;
@@ -12,13 +21,19 @@ export function createAssistantMessage(input: {
     ...(input.text !== undefined ? [{ type: "text" as const, text: input.text }] : []),
     ...(input.extraContent ?? []),
   ];
+  const usage = {
+    ...EMPTY_USAGE,
+    ...input.usage,
+    cost: { ...EMPTY_USAGE.cost, ...input.usage?.cost },
+  };
+  usage.totalTokens = input.usage?.totalTokens ?? usage.input + usage.output;
   return {
     role: "assistant",
     content,
     api: "unknown",
     provider: "unknown",
     model: "test",
-    usage: createUsage(input.usage),
+    usage,
     stopReason:
       input.stopReason ??
       (input.extraContent?.some((part) => part.type === "toolCall")
@@ -28,22 +43,5 @@ export function createAssistantMessage(input: {
           : "stop"),
     ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
     timestamp: input.timestamp ?? Date.now(),
-  };
-}
-
-export function createUsage(input?: Partial<Usage>): Usage {
-  return {
-    input: input?.input ?? 0,
-    output: input?.output ?? 0,
-    cacheRead: input?.cacheRead ?? 0,
-    cacheWrite: input?.cacheWrite ?? 0,
-    totalTokens: input?.totalTokens ?? 0,
-    cost: {
-      input: input?.cost?.input ?? 0,
-      output: input?.cost?.output ?? 0,
-      cacheRead: input?.cost?.cacheRead ?? 0,
-      cacheWrite: input?.cost?.cacheWrite ?? 0,
-      total: input?.cost?.total ?? 0,
-    },
   };
 }

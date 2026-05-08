@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent, ThinkingLevel } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "./agent.js";
 import type { ObservationalMemoryActivityEvent } from "./memory.js";
 import type { StateMachineDefinition, StateMachineSession } from "./state-machine.js";
@@ -252,12 +252,8 @@ export interface TurnTodo {
   status: TurnTodoStatus;
 }
 
-export interface TurnTokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens?: number;
-  costUsd?: number;
-}
+/** Token accounting mirrors pi's Usage shape so runner events can forward provider usage without renaming fields. */
+export type TurnTokenUsage = Usage;
 
 export type TurnStep =
   | {
@@ -450,6 +446,14 @@ export interface TurnMemoryEvent extends ObservationalMemoryActivityEvent {
   type: "memory";
 }
 
+export interface TurnContextUsageEvent {
+  type: "context_usage";
+  /** Token accounting reported by the parent model for the latest request context. */
+  usage: TurnTokenUsage;
+  /** Maximum context window for the resolved parent model, from pi's model registry. */
+  contextWindow: number;
+}
+
 export interface TurnTerminalBaseEvent {
   state: TurnState;
   usage?: TurnTokenUsage;
@@ -490,6 +494,7 @@ export type TurnDuringEvent =
   | TurnFollowUpQueueEvent
   | TurnStateMachineEvent
   | TurnMemoryEvent
+  | TurnContextUsageEvent
   | TurnSystemEvent;
 
 /** Events that end the current turn. */

@@ -435,10 +435,10 @@ function isTerminalEvent(event: { type: string }): event is TurnTerminalEvent {
 }
 
 function formatUsage(usage: TurnTokenUsage): string {
-  const parts = [`in=${usage.inputTokens}`, `out=${usage.outputTokens}`];
-  if (usage.cachedInputTokens !== undefined) parts.push(`cached=${usage.cachedInputTokens}`);
+  const parts = [`in=${usage.input}`, `out=${usage.output}`];
+  if (usage.cacheRead > 0) parts.push(`cached=${usage.cacheRead}`);
   let line = `Tokens: ${parts.join(" ")}`;
-  if (usage.costUsd !== undefined) line += ` \u00b7 Cost: $${usage.costUsd.toFixed(4)}`;
+  if (usage.cost.total > 0) line += ` \u00b7 Cost: $${usage.cost.total.toFixed(4)}`;
   return line;
 }
 

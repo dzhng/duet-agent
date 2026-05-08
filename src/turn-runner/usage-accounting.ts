@@ -1,46 +1,44 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Usage } from "@earendil-works/pi-ai";
 import type { TurnTokenUsage } from "../types/protocol.js";
 
 export function addUsage(
   current: TurnTokenUsage | undefined,
-  usage: TurnTokenUsage | Usage | undefined,
+  usage: TurnTokenUsage | undefined,
 ): TurnTokenUsage | undefined {
   if (!usage) return current;
-  const normalized = normalizeUsage(usage);
-  const next = current ?? { inputTokens: 0, outputTokens: 0 };
-  next.inputTokens += normalized.inputTokens;
-  next.outputTokens += normalized.outputTokens;
-  if (normalized.cachedInputTokens !== undefined) {
-    next.cachedInputTokens = (next.cachedInputTokens ?? 0) + normalized.cachedInputTokens;
-  }
-  if (normalized.costUsd !== undefined) {
-    next.costUsd = (next.costUsd ?? 0) + normalized.costUsd;
-  }
+  const next = current ?? emptyUsage();
+  next.input += usage.input;
+  next.output += usage.output;
+  next.cacheRead += usage.cacheRead;
+  next.cacheWrite += usage.cacheWrite;
+  next.totalTokens += usage.totalTokens;
+  next.cost.input += usage.cost.input;
+  next.cost.output += usage.cost.output;
+  next.cost.cacheRead += usage.cost.cacheRead;
+  next.cost.cacheWrite += usage.cost.cacheWrite;
+  next.cost.total += usage.cost.total;
   return next;
 }
 
-export function normalizeUsage(usage: TurnTokenUsage | Usage): TurnTokenUsage {
-  if ("inputTokens" in usage) return usage;
+function emptyUsage(): TurnTokenUsage {
   return {
-    inputTokens: usage.input,
-    outputTokens: usage.output,
-    cachedInputTokens: usage.cacheRead,
-    costUsd: usage.cost.total,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
 }
 
 export function usageFromMessages(messages: readonly AgentMessage[]): TurnTokenUsage | undefined {
-  const usage: TurnTokenUsage = { inputTokens: 0, outputTokens: 0 };
+  const usage = emptyUsage();
   let hasUsage = false;
 
   for (const message of messages) {
     if (!isAssistantMessageWithUsage(message)) continue;
     hasUsage = true;
-    usage.inputTokens += message.usage.input;
-    usage.outputTokens += message.usage.output;
-    usage.cachedInputTokens = (usage.cachedInputTokens ?? 0) + message.usage.cacheRead;
-    usage.costUsd = (usage.costUsd ?? 0) + message.usage.cost.total;
+    addUsage(usage, message.usage);
   }
 
   return hasUsage ? usage : undefined;
@@ -48,7 +46,7 @@ export function usageFromMessages(messages: readonly AgentMessage[]): TurnTokenU
 
 function isAssistantMessageWithUsage(
   message: AgentMessage,
-): message is AgentMessage & { usage: Usage } {
+): message is AgentMessage & { usage: TurnTokenUsage } {
   return (
     typeof message === "object" &&
     message !== null &&

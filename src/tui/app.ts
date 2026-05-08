@@ -15,6 +15,7 @@ import type { Session } from "../session/session.js";
 import type { SkillCollision } from "../turn-runner/skills.js";
 import type {
   TurnAgentFile,
+  TurnContextUsageEvent,
   TurnEvent,
   TurnStep,
   TurnTerminalEvent,
@@ -199,8 +200,32 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   smPanel.add(smTitle);
   smPanel.add(smBody);
 
+  const contextPanel = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    border: true,
+    borderColor: COLORS.border,
+    padding: 1,
+    height: 7,
+    flexShrink: 0,
+  });
+  const contextTitle = new TextRenderable(renderer, {
+    content: "context",
+    fg: COLORS.status,
+    height: 1,
+    flexShrink: 0,
+  });
+  const contextBody = new TextRenderable(renderer, {
+    content: "(waiting for usage)",
+    fg: COLORS.hint,
+    flexGrow: 1,
+    flexShrink: 1,
+  });
+  contextPanel.add(contextTitle);
+  contextPanel.add(contextBody);
+
   sidebar.add(todoPanel);
   sidebar.add(smPanel);
+  sidebar.add(contextPanel);
 
   const transcript = new ScrollBoxRenderable(renderer, {
     flexGrow: 1,
@@ -357,6 +382,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   let running = false;
   let lastTerminal: TurnTerminalEvent | undefined;
+  let latestContextUsage: TurnContextUsageEvent | undefined;
   let activeTextStream: StreamingBlock | undefined;
   let activeReasoningStream: StreamingBlock | undefined;
   // Tool calls fire twice (running → completed/error). Track the rendered
@@ -402,6 +428,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const state = input.session.getState();
     renderTodoSidebar(state?.todos ?? []);
     renderStateMachineSidebar(state?.stateMachine);
+    renderContextUsageSidebar(latestContextUsage);
   }
 
   function renderTodoSidebar(todos: readonly TurnTodo[]): void {
@@ -440,6 +467,39 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     smBody.fg = COLORS.agent;
   }
 
+  function renderContextUsageSidebar(usage: TurnContextUsageEvent | undefined): void {
+    if (!usage) {
+      contextBody.content = "(waiting for usage)";
+      contextBody.fg = COLORS.hint;
+      return;
+    }
+    const usedTokens = usage.usage.totalTokens;
+    const percent = Math.min(1, usedTokens / usage.contextWindow);
+    contextBody.content = [
+      progressBar(percent, 18),
+      `${formatTokenCount(usedTokens)} / ${formatTokenCount(usage.contextWindow)}`,
+    ].join("\n");
+    contextBody.fg = usedTokens >= usage.contextWindow ? COLORS.error : COLORS.agent;
+  }
+
+  function progressBar(value: number, width: number): string {
+    const clamped = Math.max(0, Math.min(1, value));
+    const filled = Math.round(clamped * width);
+    const empty = width - filled;
+    return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${Math.round(clamped * 100)}%`;
+  }
+
+  function formatTokenCount(tokens: number): string {
+    if (tokens >= 1_000_000) return `${formatCompactNumber(tokens / 1_000_000)}m`;
+    if (tokens >= 1_000) return `${formatCompactNumber(tokens / 1_000)}k`;
+    return String(tokens);
+  }
+
+  function formatCompactNumber(value: number): string {
+    const rounded = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  }
+
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
     // Sidebar mirrors the runner's authoritative state, so refresh it on
     // every event rather than threading specific updates through each branch.
@@ -452,6 +512,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       renderFollowUpQueue(event.prompts);
     } else if (event.type === "memory") {
       renderMemoryStatus(event);
+    } else if (event.type === "context_usage") {
+      latestContextUsage = event;
+      renderContextUsageSidebar(event);
     } else if (event.type === "system") {
       appendBlock("[system]", event.message, COLORS.system);
       if (event.level === "error") markIdle();
@@ -518,9 +581,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderUsage(usage?: TurnTokenUsage): void {
     if (!usage) return;
-    const parts = [`in=${usage.inputTokens}`, `out=${usage.outputTokens}`];
-    if (usage.cachedInputTokens !== undefined) parts.push(`cached=${usage.cachedInputTokens}`);
-    const cost = usage.costUsd === undefined ? "" : ` · Cost: $${usage.costUsd.toFixed(4)}`;
+    const parts = [`in=${usage.input}`, `out=${usage.output}`];
+    if (usage.cacheRead > 0) parts.push(`cached=${usage.cacheRead}`);
+    const cost = usage.cost.total === 0 ? "" : ` · Cost: $${usage.cost.total.toFixed(4)}`;
     appendLine(`[usage] Tokens: ${parts.join(" ")}${cost}`, COLORS.hint);
   }
 

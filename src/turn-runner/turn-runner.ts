@@ -938,7 +938,7 @@ export class TurnRunner {
     const previousMessageCount = agent.state.messages.length;
     this.setParentAgentRunning(true);
 
-    const unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event));
+    const unsubscribe = agent.subscribe((event) => this.emitParentAgentEvent(event));
     let interruptedDuringPrompt: TurnTerminalEvent | undefined;
     try {
       await agent.prompt(input.prompt);
@@ -1125,5 +1125,16 @@ export class TurnRunner {
     for (const turnEvent of agentEventToTurnEvents(event)) {
       this.emit(turnEvent);
     }
+  }
+
+  protected emitParentAgentEvent(event: AgentEvent): void {
+    this.emitAgentEvent(event);
+    if (event.type !== "message_end" || event.message.role !== "assistant") return;
+
+    this.emit({
+      type: "context_usage",
+      usage: event.message.usage,
+      contextWindow: this.requireParentAgent().state.model.contextWindow,
+    });
   }
 }

@@ -111,9 +111,30 @@ describe("TurnRunner protocol scenarios", () => {
       },
     );
     const usageByWorker = [
-      { inputTokens: 10, outputTokens: 1, costUsd: 0.11 },
-      { inputTokens: 20, outputTokens: 2, costUsd: 0.22 },
-      { inputTokens: 30, outputTokens: 3, cachedInputTokens: 4, costUsd: 0.33 },
+      {
+        input: 10,
+        output: 1,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 11,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.11 },
+      },
+      {
+        input: 20,
+        output: 2,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 22,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.22 },
+      },
+      {
+        input: 30,
+        output: 3,
+        cacheRead: 4,
+        cacheWrite: 0,
+        totalTokens: 33,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.33 },
+      },
     ];
     let workerIndex = 0;
     runner.worker = async (input, next) => {
@@ -135,10 +156,12 @@ describe("TurnRunner protocol scenarios", () => {
       type: "complete",
       status: "completed",
       usage: {
-        inputTokens: 60,
-        outputTokens: 6,
-        cachedInputTokens: 4,
-        costUsd: 0.66,
+        input: 60,
+        output: 6,
+        totalTokens: 66,
+        cacheRead: 4,
+        cacheWrite: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.66 },
       },
     });
   });
