@@ -414,7 +414,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     refreshActiveToolBlocks();
     if (workingStartedAt === undefined) return;
     const elapsed = formatElapsed(Date.now() - workingStartedAt);
-    setStatus(`● ${workingMessage} (${elapsed} · Esc to interrupt, Ctrl+C to force quit)`);
+    setStatus(`● ${workingMessage} (${elapsed})`);
   }
 
   // Sub-second precision for short tool calls keeps fast operations honest;

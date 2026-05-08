@@ -248,8 +248,10 @@ export function replaceSkillAutocompleteToken(
 }
 
 /**
- * Replace the @-token under the cursor with the file's repo-relative path.
- * Behaviour mirrors the skill replacer: trailing space inserted only when
+ * Replace the @-token under the cursor with a markdown link of the form
+ * `[@<basename>](<repo-relative-path>)`. The visible label keeps the `@`
+ * prefix so it still reads as a mention; the link target is the path the
+ * model can hand to its `read` tool. Trailing space is inserted only when
  * the next character is not whitespace, so chained mentions stay clean.
  */
 export function replaceFileAutocompleteToken(
@@ -257,7 +259,11 @@ export function replaceFileAutocompleteToken(
   token: AutocompleteToken,
   relativePath: string,
 ): SkillAutocompleteReplacement {
-  return replaceTriggerToken(text, token, `@${relativePath}`);
+  const slash = relativePath.lastIndexOf("/");
+  const basename = slash === -1 ? relativePath : relativePath.slice(slash + 1);
+  // Prefix the target with `./` so it is unambiguously a repo-relative
+  // path rather than a URL, package name, or absolute path.
+  return replaceTriggerToken(text, token, `[@${basename}](./${relativePath})`);
 }
 
 function replaceTriggerToken(
