@@ -12,6 +12,7 @@ import type {
   TurnInterruptCommand,
   TurnMode,
   TurnPromptBehavior,
+  TurnPromptImage,
   TurnQuestion,
   TurnStartCommand,
   TurnState,
@@ -39,6 +40,11 @@ export interface SessionStartInput {
 export interface SessionPromptInput {
   message: string;
   behavior?: TurnPromptBehavior;
+  /**
+   * Optional image attachments forwarded to the runner alongside the prompt
+   * text. Each entry is a base64-encoded image plus its MIME type.
+   */
+  images?: TurnPromptImage[];
 }
 
 export interface SessionAnswerInput {
@@ -179,6 +185,7 @@ export class Session {
       type: "prompt",
       message: input.message,
       behavior: input.behavior ?? "follow_up",
+      ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
     };
     this.dispatchTurn(command);
   }

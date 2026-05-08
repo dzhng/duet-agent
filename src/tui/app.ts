@@ -2,13 +2,22 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   BoxRenderable,
   createCliRenderer,
+  decodePasteBytes,
   fg,
   type KeyEvent,
+  type PasteEvent,
   ScrollBoxRenderable,
   t,
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
+import {
+  loadImageFromPath,
+  looksLikeImageFilePath,
+  type PendingImage,
+  persistPastedImage,
+  sniffImageMimeType,
+} from "./paste.js";
 import type { Session } from "../session/session.js";
 import type {
   TurnAgentFile,
@@ -349,12 +358,29 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function setHint(running: boolean): void {
-    hint.content = running ? HINT_RUNNING : HINT_IDLE;
+    const base = running ? HINT_RUNNING : HINT_IDLE;
+    hint.content = pendingImages.length > 0 ? `${attachmentHint()} · ${base}` : base;
+  }
+
+  function attachmentHint(): string {
+    const n = pendingImages.length;
+    return n === 1 ? "📎 1 image attached" : `📎 ${n} images attached`;
+  }
+
+  function refreshAttachmentHint(): void {
+    setHint(running);
   }
 
   // ---- runtime state ---------------------------------------------------------
 
   let running = false;
+  // Image attachments collected via paste / `/image` and forwarded to the
+  // runner with the next prompt submission. Cleared after submit so each turn
+  // ships its own attachments without leaking into the next.
+  let pendingImages: PendingImage[] = [];
+  // Monotonic counter for the next `[Image #N]` placeholder. Reset alongside
+  // `pendingImages` so users see a fresh `#1` label after each submit.
+  let nextImageId = 1;
   let lastTerminal: TurnTerminalEvent | undefined;
   let latestContextUsage: TurnContextUsageEvent | undefined;
   let activeTextStream: StreamingBlock | undefined;
@@ -1220,18 +1246,173 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   inputField.onContentChange = () => refreshAutocomplete();
   inputField.onCursorChange = () => refreshAutocomplete();
 
-  function submit(message: string, shiftEnter: boolean): void {
-    appendBlock("you:", message, COLORS.user);
-    hideQuestions();
+  // Paste handling. Terminals that forward binary clipboard contents (kitty,
+  // ghostty, recent iTerm2 builds) deliver image bytes directly via the paste
+  // event — we intercept those, persist them under the session cache, and
+  // surface a `[Image #N]` placeholder in the prompt buffer. Plain text pastes
+  // fall through to the Textarea's default insert path so existing behavior
+  // is unchanged for non-image clipboards.
+  inputField.onPaste = (event: PasteEvent) => {
+    void handlePasteEvent(event).catch((error) => {
+      appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
+    });
+  };
 
-    if (running) {
-      const behavior = shiftEnter ? "follow_up" : "steer";
-      void input.session.prompt({ message, behavior }).catch(reportError);
+  async function handlePasteEvent(event: PasteEvent): Promise<void> {
+    const metadata = event.metadata;
+    const sniffed = sniffImageMimeType(event.bytes);
+    const inferredMime =
+      metadata?.mimeType && metadata.mimeType.startsWith("image/") ? metadata.mimeType : sniffed;
+
+    if (inferredMime) {
+      event.preventDefault();
+      await attachPastedImageBytes(event.bytes, inferredMime);
       return;
     }
 
-    void input.session.prompt({ message, behavior: "follow_up" }).catch(reportError);
+    if (metadata?.kind === "binary") {
+      // Non-image binary paste — we cannot meaningfully forward it, but the
+      // terminal already swallowed the keystroke, so suppress the default
+      // text-insert path that would otherwise garble the prompt.
+      event.preventDefault();
+      appendBlock(
+        "[paste]",
+        "Unsupported binary clipboard contents (only PNG/JPEG/GIF/WebP).",
+        COLORS.system,
+      );
+      return;
+    }
+
+    // Text paste path: opportunistically auto-attach if the clipboard text
+    // resolves to a single existing image file path (Finder / Files drag-paste
+    // pattern). Otherwise let the default Textarea handler insert the text.
+    const text = decodePasteBytes(event.bytes);
+    const candidate = looksLikeImageFilePath(text);
+    if (candidate) {
+      try {
+        const pending = await loadImageFromPath({
+          cwd: input.workDir,
+          rawPath: candidate,
+          id: nextImageId,
+        });
+        nextImageId += 1;
+        pendingImages.push(pending);
+        inputField.insertText(pending.label);
+        appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
+        refreshAttachmentHint();
+        event.preventDefault();
+        return;
+      } catch {
+        // Fall through to default text paste — the path-looking string is
+        // probably a real string the user wants in the message.
+      }
+    }
+  }
+
+  async function attachPastedImageBytes(bytes: Uint8Array, mimeType: string): Promise<void> {
+    try {
+      const pending = await persistPastedImage({
+        sessionId: input.sessionId,
+        id: nextImageId,
+        bytes,
+        mimeType,
+      });
+      nextImageId += 1;
+      pendingImages.push(pending);
+      inputField.insertText(pending.label);
+      appendBlock(
+        "[paste]",
+        `attached ${pending.label} (${mimeType}, ${formatBytes(bytes.length)})`,
+        COLORS.system,
+      );
+      refreshAttachmentHint();
+    } catch (error) {
+      appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
+    }
+  }
+
+  function clearPendingImages(): void {
+    if (pendingImages.length === 0) return;
+    pendingImages = [];
+    nextImageId = 1;
+    refreshAttachmentHint();
+  }
+
+  function submit(message: string, shiftEnter: boolean): void {
+    // Slash-style attach commands run locally and never reach the runner so
+    // users on terminals that do not forward image bytes still have a way to
+    // attach images by path.
+    if (message.startsWith("/image ") || message === "/image") {
+      void handleImageSlashCommand(message);
+      return;
+    }
+    if (message === "/clear-images") {
+      clearPendingImages();
+      appendBlock("[paste]", "cleared pending image attachments", COLORS.system);
+      return;
+    }
+
+    const submittedImages = pendingImages;
+    const annotation =
+      submittedImages.length > 0
+        ? `\n${submittedImages.map((p) => `(${p.label} → ${p.path})`).join("\n")}`
+        : "";
+    appendBlock("you:", `${message}${annotation}`, COLORS.user);
+    hideQuestions();
+
+    const images =
+      submittedImages.length > 0 ? submittedImages.map((p) => p.attachment) : undefined;
+
+    // Reset before dispatch so an in-flight error does not leave the user
+    // double-charged with the same attachments on retry.
+    clearPendingImages();
+
+    if (running) {
+      const behavior = shiftEnter ? "follow_up" : "steer";
+      void input.session
+        .prompt({ message, behavior, ...(images ? { images } : {}) })
+        .catch(reportError);
+      return;
+    }
+
+    void input.session
+      .prompt({ message, behavior: "follow_up", ...(images ? { images } : {}) })
+      .catch(reportError);
     markRunning();
+  }
+
+  async function handleImageSlashCommand(raw: string): Promise<void> {
+    const rest = raw.slice("/image".length).trim();
+    if (!rest) {
+      appendBlock(
+        "[paste]",
+        "Usage: /image <path>  — attach a PNG/JPEG/GIF/WebP from disk",
+        COLORS.system,
+      );
+      return;
+    }
+    try {
+      const pending = await loadImageFromPath({
+        cwd: input.workDir,
+        rawPath: rest,
+        id: nextImageId,
+      });
+      nextImageId += 1;
+      pendingImages.push(pending);
+      // Insert the placeholder back into the (now-empty) input so the user
+      // can keep typing their prompt with the image already attached.
+      inputField.insertText(pending.label);
+      appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
+      refreshAttachmentHint();
+    } catch (error) {
+      appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
+    }
+  }
+
+  function formatBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   // ---- replay history on resume ---------------------------------------------

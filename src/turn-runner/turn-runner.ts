@@ -4,7 +4,7 @@ import {
   type AgentMessage,
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
-import { getEnvApiKey, type Usage } from "@earendil-works/pi-ai";
+import { getEnvApiKey, type ImageContent, type Usage } from "@earendil-works/pi-ai";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
@@ -31,6 +31,7 @@ import type {
   TurnInterruptCommand,
   TurnMode,
   TurnPromptCommand,
+  TurnPromptImage,
   TurnState,
   TurnTokenUsage,
   TurnStartCommand,
@@ -65,6 +66,12 @@ export type TurnEventHandler = (event: TurnEvent) => void;
 export interface AgentWorkerInput {
   state: TurnState;
   prompt: string;
+  /**
+   * Optional image attachments forwarded to `agent.prompt(text, images)`.
+   * Only the parent prompt path carries images; state-machine sub-agents and
+   * answer commands ignore them because their prompts are runner-synthesized.
+   */
+  images?: ImageContent[];
 }
 
 export interface AgentConfigInput {
@@ -258,7 +265,14 @@ export class TurnRunner {
 
   private sendCommandToAgent(agent: Agent, command: TurnPromptCommand | TurnAnswerCommand): void {
     const message = this.commandToUserMessage(command);
-    const agentMessage = { role: "user" as const, content: message, timestamp: Date.now() };
+    const images = command.type === "prompt" ? promptImagesToContent(command.images) : undefined;
+    // When images are attached, build a multimodal user-message body so the
+    // pi-agent receives them as proper image content blocks rather than text.
+    // The follow-up queue still records the text representation only — image
+    // bytes are not persisted across agent recreation by design.
+    const content =
+      images && images.length > 0 ? [{ type: "text" as const, text: message }, ...images] : message;
+    const agentMessage = { role: "user" as const, content, timestamp: Date.now() };
     if (command.behavior === "steer") {
       agent.steer(agentMessage);
     } else {
@@ -293,10 +307,12 @@ export class TurnRunner {
             ${message}
           `
         : message;
+    const promptImages = command.type === "prompt" ? command.images : undefined;
     const terminal = await this.prompt({
       type: "prompt",
       message: prompt,
       behavior: command.behavior,
+      ...(promptImages && promptImages.length > 0 ? { images: promptImages } : {}),
     });
     this.setState(terminal.state);
     return terminal;
@@ -470,13 +486,15 @@ export class TurnRunner {
     const originalState = this.requireRunnerState();
     const state: TurnState = { ...originalState, status: "running" };
     const prompt = this.skillContext.resolveSlashSkillPrompt(command.message);
+    const images = promptImagesToContent(command.images);
     let terminal: TurnTerminalEvent;
     if (state.mode === "agent") {
-      terminal = await this.runAgentMode(state, prompt);
+      terminal = await this.runAgentMode(state, prompt, images);
     } else {
       terminal = await this.runTurnRunnerAgentWithStateMachineTools({
         state,
         prompt,
+        images,
         mode: state.mode,
       });
     }
@@ -809,11 +827,13 @@ export class TurnRunner {
   protected async runTurnRunnerAgentWithStateMachineTools(input: {
     state: TurnState;
     prompt: string;
+    images?: ImageContent[];
     mode: Exclude<TurnMode, "agent">;
   }): Promise<TurnTerminalEvent> {
     const workerResult = await this.runAgentWorkerWithUsage({
       state: input.state,
       prompt: input.prompt,
+      ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
     });
 
     const result = await this.controllerResultFromWorkerResult(workerResult, input.state);
@@ -925,10 +945,15 @@ export class TurnRunner {
     }
   }
 
-  protected async runAgentMode(state: TurnState, prompt: string): Promise<TurnTerminalEvent> {
+  protected async runAgentMode(
+    state: TurnState,
+    prompt: string,
+    images?: ImageContent[],
+  ): Promise<TurnTerminalEvent> {
     const workerResult = await this.runAgentWorkerWithUsage({
       state,
       prompt,
+      ...(images && images.length > 0 ? { images } : {}),
     });
     if (workerResult.control.type === "ask_user_question") {
       return this.askUserQuestion(workerResult.terminal, workerResult.control);
@@ -949,7 +974,14 @@ export class TurnRunner {
     const unsubscribe = agent.subscribe((event) => this.emitParentAgentEvent(event));
     let interruptedDuringPrompt: TurnTerminalEvent | undefined;
     try {
-      await agent.prompt(input.prompt);
+      // Pass image attachments through pi-agent's vision-aware overload when
+      // present. Without images, the legacy single-string overload preserves
+      // exact prompt-cache identity vs prior versions.
+      if (input.images && input.images.length > 0) {
+        await agent.prompt(input.prompt, input.images);
+      } else {
+        await agent.prompt(input.prompt);
+      }
     } catch (error) {
       interruptedDuringPrompt = this.consumeInterruptedTerminal();
       if (!interruptedDuringPrompt) {
@@ -1175,4 +1207,20 @@ export class TurnRunner {
       contextWindow: this.requireParentAgent().state.model.contextWindow,
     });
   }
+}
+
+/**
+ * Convert protocol-level prompt images into pi-ai `ImageContent` blocks.
+ *
+ * Returns `undefined` when there are no images so callers can keep using the
+ * legacy single-string `agent.prompt(text)` overload — preserving the exact
+ * prompt-cache identity older clients relied on.
+ */
+function promptImagesToContent(images: TurnPromptImage[] | undefined): ImageContent[] | undefined {
+  if (!images || images.length === 0) return undefined;
+  return images.map((image) => ({
+    type: "image" as const,
+    data: image.data,
+    mimeType: image.mimeType,
+  }));
 }

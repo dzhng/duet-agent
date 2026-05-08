@@ -344,6 +344,19 @@ export interface TurnStartCommand {
  * inside the runner; it was bootstrapped at `start` and is updated from the
  * runner's own terminal events.
  */
+/**
+ * Image attachment carried alongside a prompt's text. The data is base64-encoded
+ * raw image bytes (no `data:` URL prefix) and `mimeType` is the standard
+ * `image/png`, `image/jpeg`, etc. label vision-capable models expect.
+ *
+ * Attachments are passed verbatim to the underlying agent as multimodal user
+ * content; the surrounding `message` text remains the prompt's primary body.
+ */
+export interface TurnPromptImage {
+  data: string;
+  mimeType: string;
+}
+
 export interface TurnPromptCommand {
   type: "prompt";
   message: string;
@@ -354,6 +367,11 @@ export interface TurnPromptCommand {
    * or waits for state-transition context.
    */
   behavior: TurnPromptBehavior;
+  /**
+   * Optional image attachments delivered as multimodal content to the parent
+   * pi-agent. Empty/undefined means a plain-text prompt; the previous behavior.
+   */
+  images?: TurnPromptImage[];
 }
 
 /**
