@@ -5,7 +5,7 @@ description: Increment the package version, commit the release, create a matchin
 
 # Release
 
-Use this workflow to publish a new `@dzhng/duet-agent` version through the GitHub release workflow.
+Use this workflow to publish a new `@duetso/agent` version through the GitHub release workflow.
 
 ## Steps
 

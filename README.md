@@ -130,15 +130,15 @@ curl -fsSL https://bun.sh/install | bash
 Install the CLI globally to make the `duet` command available on your PATH:
 
 ```bash
-bun add --global @dzhng/duet-agent
+bun add --global @duetso/agent
 ```
 
 You can also install it globally with another package manager:
 
 ```bash
-npm install --global @dzhng/duet-agent
-pnpm add --global @dzhng/duet-agent
-yarn global add @dzhng/duet-agent
+npm install --global @duetso/agent
+pnpm add --global @duetso/agent
+yarn global add @duetso/agent
 ```
 
 Upgrade an existing global installation:
@@ -152,7 +152,7 @@ duet upgrade
 Install the package as a dependency when you want to use the turn runner from TypeScript or JavaScript:
 
 ```bash
-npm install @dzhng/duet-agent
+npm install @duetso/agent
 ```
 
 ## Development
@@ -217,7 +217,7 @@ bun run cli -- "build a REST API with Express"
 ## SDK Quick Start
 
 ```typescript
-import { TurnRunner } from "@dzhng/duet-agent";
+import { TurnRunner } from "@duetso/agent";
 
 const turnRunner = new TurnRunner({
   model: "anthropic:claude-opus-4-7",
@@ -246,7 +246,7 @@ duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the ru
 `SessionManager` stores session snapshots under `~/.duet/sessions` by default and enables durable observational memory at `~/.duet/memory.db`. Pass `memoryDbPath: false` to keep observational memory in process only, or provide `memoryDbPath` for a custom database location.
 
 ```typescript
-import { SessionManager } from "@dzhng/duet-agent";
+import { SessionManager } from "@duetso/agent";
 
 const manager = new SessionManager({
   model: "anthropic:claude-opus-4-7",

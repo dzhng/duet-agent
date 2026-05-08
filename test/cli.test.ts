@@ -177,8 +177,8 @@ describe("CLI model inference", () => {
 
 describe("CLI version checks", () => {
   test("formats the update notice for stderr and TUI display", () => {
-    expect(formatNewVersionNotice("@dzhng/duet-agent", "0.1.2", "0.1.3")).toBe(
-      "Update available: @dzhng/duet-agent 0.1.2 -> 0.1.3. Run: duet upgrade",
+    expect(formatNewVersionNotice("@duetso/agent", "0.1.2", "0.1.3")).toBe(
+      "Update available: @duetso/agent 0.1.2 -> 0.1.3. Run: duet upgrade",
     );
   });
 
