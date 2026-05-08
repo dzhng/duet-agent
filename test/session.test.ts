@@ -552,6 +552,15 @@ describe("SessionManager", () => {
     expect(manager.config.memoryDbPath).toBe(join(homedir(), ".duet", "memory.db"));
   });
 
+  test("preserves disabled durable memory storage", () => {
+    const manager = new SessionManager({
+      model: "anthropic:claude-opus-4-7",
+      memoryDbPath: false,
+    });
+
+    expect(manager.config.memoryDbPath).toBe(false);
+  });
+
   testIfDocker("creates and stores multiple sessions with manager-wrapped events", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-session-manager-"));
     tempDirs.push(tempDir);

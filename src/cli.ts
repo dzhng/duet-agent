@@ -120,6 +120,7 @@ async function main() {
   let resumeHistoryLinesExplicit = false;
   let jsonOutput = false;
   let envFilePath: string | undefined;
+  let disableDurableMemory = false;
   const promptParts: string[] = [];
   const interactive = Boolean(process.stdin.isTTY ?? process.stdout.isTTY);
 
@@ -133,6 +134,9 @@ async function main() {
       case "--memory-model":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         memoryModelName = args[++i];
+        break;
+      case "--no-memory":
+        disableDurableMemory = true;
         break;
       case "--workdir":
       case "-w":
@@ -237,6 +241,7 @@ async function main() {
   const config: TurnRunnerConfig = {
     ...(modelName ? { model: modelName } : {}),
     ...(memoryModelName ? { memoryModel: memoryModelName } : {}),
+    ...(disableDurableMemory ? { memoryDbPath: false } : {}),
     cwd: workDir,
     ...(systemInstructions ? { systemInstructions } : {}),
     ...(systemPromptFiles ? { systemPromptFiles } : {}),
@@ -384,6 +389,7 @@ async function main() {
         modelName,
         memoryModelName,
         workDir,
+        disableDurableMemory,
         systemInstructions,
         systemPromptFiles,
         envFilePath,
@@ -935,12 +941,13 @@ async function readInteractivePrompt(): Promise<string> {
   }
 }
 
-function resumeCommand(
+export function resumeCommand(
   sessionId: string,
   input: {
     modelName?: string;
     memoryModelName?: string;
     workDir: string;
+    disableDurableMemory?: boolean;
     systemInstructions?: string;
     systemPromptFiles?: string[];
     envFilePath?: string;
@@ -959,6 +966,9 @@ function resumeCommand(
   }
   if (input.memoryModelName) {
     command.push("--memory-model", shellQuote(input.memoryModelName));
+  }
+  if (input.disableDurableMemory) {
+    command.push("--no-memory");
   }
   if (input.systemInstructions) {
     command.push("--system-prompt", shellQuote(input.systemInstructions));
@@ -1018,6 +1028,7 @@ COMMANDS
 OPTIONS
   -m, --model <name>       TurnRunner model override
   --memory-model <name>    Observational memory model (default inferred from provider env)
+  --no-memory              Keep memory in-process; do not read or write durable memory
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
   --resume-history-lines <n>

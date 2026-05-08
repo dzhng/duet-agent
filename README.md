@@ -2,8 +2,6 @@
 
 An opinionated, full-stack agent turn runner. Native multimodal memory. Native interrupts. Multi-agent by default. Serverless-friendly: every turn rehydrates from on-disk state, so a session can pause for minutes or months and resume in a fresh sandbox.
 
-**No MCP. Everything is files and CLI.**
-
 ## Why another agent framework?
 
 Existing agent turn runners treat tools and memories as pluggable modules. This makes them flexible but fundamentally disconnected — memory is an afterthought.
@@ -88,9 +86,9 @@ The turn runner can delegate durable process steps into agent states. Agent stat
 
 ### Serverless- And Sandbox-Friendly
 
-The turn runner is stateless across process boundaries. `TurnState` is the only thing that needs to survive: `SessionManager` writes it to `~/.duet/sessions/<id>/state.json` after every terminal event, and durable observations live in PGlite at `~/.duet/memory.db`. A new process — including a fresh serverless invocation, a new sandbox container, or a different machine — can resume a session by pointing at the same state directory and calling `runner.start({ state: savedState })`.
+`TurnRunner` is stateless across process boundaries. `TurnState` is the only runner state that needs to survive, and durable observations live in PGlite. A new process — including a fresh serverless invocation, a new sandbox container, or a different machine — can resume by passing the saved state to `runner.start({ state: savedState })`.
 
-This makes long-running sessions practical. A state machine can sit in `wait_for_reply` for weeks, woken by a cron-driven `wake` command, without keeping a process alive between polls. Sessions that span months — outbound outreach loops, slow build-and-review cycles, scheduled retries — work the same way as one-shot turns: load state, run a turn, persist state, exit.
+This makes long-running work practical without keeping a process alive. A state machine can sit in `wait_for_reply` for weeks, woken by a cron-driven `wake` command between runs. Work that spans months — outbound outreach loops, slow build-and-review cycles, scheduled retries — follows the same shape as a one-shot turn: load state, start the runner, run a turn, persist the terminal state, exit.
 
 ### Three Execution Modes
 
@@ -129,10 +127,10 @@ Pattern-based (fast, regex) and semantic (LLM-evaluated) guardrails compose into
 
 ### Remote MCP Tools
 
-Sessions can attach to remote [Model Context Protocol](https://modelcontextprotocol.io) servers over the streamable-HTTP transport. Pass `mcpServers` on `start` and the runner connects, lists each server's tools, and exposes them to the parent and state agents alongside the built-in coding tools. Tool names are namespaced as `{server}__{tool}` so multiple servers can coexist without collisions.
+`TurnRunner` can attach to remote [Model Context Protocol](https://modelcontextprotocol.io) servers over the streamable-HTTP transport. Pass `mcpServers` on `start` and the runner connects, lists each server's tools, and exposes them to the parent and state agents alongside the built-in coding tools. Tool names are namespaced as `{server}__{tool}` so multiple servers can coexist without collisions.
 
 ```ts
-await session.start({
+await turnRunner.start({
   mcpServers: {
     docs: {
       type: "http",
@@ -318,17 +316,18 @@ the parent agent rather than creating separate conversation branches.
 
 ## Memory And Persistence
 
-The turn runner holds its own `MemoryStore` in memory and emits observation events as work happens. Persistence is a separate layer: `SessionManager` writes session snapshots under `~/.duet/sessions` after every terminal event and mirrors observations into a PGlite database at `~/.duet/memory.db`. Pass `memoryDbPath: false` to keep observational memory in process only, or provide `memoryDbPath` for a custom database location.
+`TurnRunner` owns memory at runtime. It holds a `MemoryStore` in process, hydrates durable observations from PGlite before the first turn, and subscribes to memory-store events to write future observation changes. Raw conversation messages stay in `TurnState.agent.messages`; memory persistence stores only derived observations/reflections.
 
 ```typescript
-import { SessionManager } from "@duetso/agent";
+import { TurnRunner } from "@duetso/agent";
 
-const manager = new SessionManager({
+const turnRunner = new TurnRunner({
   model: "anthropic:claude-opus-4-7",
+  memoryDbPath: false, // Keep observational memory in process only.
 });
 ```
 
-The memory module hydrates durable observations from an embedded Postgres database powered by PGlite before the first turn and writes observation updates back as memory changes. Raw conversation messages stay in `TurnState.agent.messages`; memory persistence stores only derived observations/reflections.
+By default, the CLI stores durable observations in `~/.duet/memory.db`; run it with `--no-memory` to keep observational memory in process only. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, compaction, and observation persistence.
 
 You can also resume directly from saved state. The runner owns state
 internally after `start`, so resumed state is handed in through the start
@@ -388,8 +387,8 @@ const turnRunner = new TurnRunner({
 
 ## Design Principles
 
-1. **Files and CLI over protocols.** No MCP, no custom APIs. If you can't do it with bash, you can't do it.
-2. **State in memory, durability on disk.** The turn runner owns `TurnState` in memory and emits events. `SessionManager` writes state and observations to disk on every terminal event, so any process can resume by handing the saved state back to `runner.start`.
+1. **Files and CLI at the core.** Local tools stay simple: if you can do it with bash, scripts, or files, you can make it part of a turn. Remote MCP tools are supported as an integration boundary, not as the core execution model.
+2. **State in memory, durability on disk.** `TurnRunner` owns `TurnState` and memory in process, while persistence keeps snapshots and observations on disk. Any process can resume by handing the saved state back to `runner.start`.
 3. **Agent-routed state machines over workflow engines.** Long-running state machines describe available business states; a runner agent decides what to do next from prompt, state, and history. Task-level workflows belong inside agent or script states.
 4. **Dynamic over static.** Agent states are defined by state machines at runtime, not pre-built classes.
 5. **Simple over flexible.** Default pi coding tools. One default memory store. Constraints breed creativity.

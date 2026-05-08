@@ -12,6 +12,7 @@ import {
   globalUpgradeCommand,
   loadCliEnvFiles,
   parseResumeHistoryLines,
+  resumeCommand,
   runEnvCommand,
 } from "../src/cli.js";
 import { resolveCliMemoryModel, resolveCliModel } from "../src/model-resolution/index.js";
@@ -362,6 +363,19 @@ describe("CLI version checks", () => {
     expect(compareSemverVersions("1.0.0", "1.0.0")).toBe(0);
     expect(compareSemverVersions("1.0.0", "1.0.0-beta.1")).toBe(1);
     expect(compareSemverVersions("1.0.0-beta.1", "1.0.0")).toBe(-1);
+  });
+});
+
+describe("CLI resume command", () => {
+  test("preserves in-process-only memory mode", () => {
+    expect(
+      resumeCommand("session_123", {
+        modelName: "anthropic:claude-opus-4-7",
+        memoryModelName: "anthropic:claude-haiku-4-5",
+        workDir: "/repo",
+        disableDurableMemory: true,
+      }),
+    ).toContain("--no-memory");
   });
 });
 
