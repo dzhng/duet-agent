@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "bun:test";
 import { resolveDuetAppBaseUrl } from "../src/lib/duet-app-url.js";
-import { fetchDefaultSkills, hashSkills, syncDefaultSkills } from "../src/lib/sync-skills.js";
+import {
+  fetchDefaultSkills,
+  hashSkills,
+  maybeAutoSyncDefaultSkills,
+  syncDefaultSkills,
+} from "../src/lib/sync-skills.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let tempRoot: string | undefined;
@@ -267,5 +272,103 @@ describe("syncDefaultSkills", () => {
         runShell: async () => ({ exitCode: 0, stderr: "" }),
       }),
     ).rejects.toThrow(/Refusing to write skill outside/);
+  });
+});
+
+describe("maybeAutoSyncDefaultSkills", () => {
+  function makePayload(skills: { path: string; content: string }[]) {
+    return { hash: hashSkills(skills), skills };
+  }
+
+  testIfDocker("skips silently when no hash file exists", async () => {
+    const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
+    const skillsDir = join(root, "skills");
+    const hashFilePath = join(root, ".skills-hash");
+
+    const { fetchFn, calls } = makeFetch(() => {
+      throw new Error("fetch must not run when no hash file exists");
+    });
+
+    const result = await maybeAutoSyncDefaultSkills({
+      apiKey: "duet_gt_x",
+      appBaseUrl: "https://test",
+      skillsDir,
+      hashFilePath,
+      fetchFn,
+      runShell: async () => ({ exitCode: 0, stderr: "" }),
+    });
+
+    expect(result).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  testIfDocker("skips silently when no apiKey is provided", async () => {
+    const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
+    const hashFilePath = join(root, ".skills-hash");
+    await writeFile(hashFilePath, "deadbeef");
+
+    const { fetchFn, calls } = makeFetch(() => {
+      throw new Error("fetch must not run without an API key");
+    });
+
+    const result = await maybeAutoSyncDefaultSkills({
+      apiKey: "",
+      appBaseUrl: "https://test",
+      hashFilePath,
+      fetchFn,
+    });
+
+    expect(result).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
+  testIfDocker("refreshes via If-None-Match when the hash file exists", async () => {
+    const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
+    const skillsDir = join(root, "skills");
+    const hashFilePath = join(root, ".skills-hash");
+    const payload = makePayload([{ path: "a/SKILL.md", content: "alpha" }]);
+    await writeFile(hashFilePath, payload.hash);
+
+    const { fetchFn, calls } = makeFetch(() => new Response(null, { status: 304 }));
+
+    const result = await maybeAutoSyncDefaultSkills({
+      apiKey: "duet_gt_x",
+      appBaseUrl: "https://test",
+      skillsDir,
+      hashFilePath,
+      fetchFn,
+      runShell: async () => {
+        throw new Error("registration must not run on 304");
+      },
+    });
+
+    expect(result?.status).toBe("unchanged");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.headers["if-none-match"] ?? calls[0]!.headers["If-None-Match"]).toBe(
+      `"${payload.hash}"`,
+    );
+  });
+
+  testIfDocker("swallows network errors and logs a warning", async () => {
+    const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
+    const hashFilePath = join(root, ".skills-hash");
+    await writeFile(hashFilePath, "deadbeef");
+
+    const fetchFn = (async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+
+    const logged: string[] = [];
+    const result = await maybeAutoSyncDefaultSkills({
+      apiKey: "duet_gt_x",
+      appBaseUrl: "https://test",
+      hashFilePath,
+      fetchFn,
+      logger: (message: string) => logged.push(message),
+    });
+
+    expect(result).toBeNull();
+    expect(logged.some((line) => line.includes("Skill auto-sync failed"))).toBe(true);
+    expect(logged.some((line) => line.includes("network down"))).toBe(true);
   });
 });
