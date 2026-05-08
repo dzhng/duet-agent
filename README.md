@@ -1,6 +1,6 @@
 # duet-agent
 
-An opinionated, full-stack agent turn runner. Native memories. Native interrupts. Multi-agent by default.
+An opinionated, full-stack agent turn runner. Native multimodal memory. Native interrupts. Multi-agent by default. Serverless-friendly: every turn rehydrates from on-disk state, so a session can pause for minutes or months and resume in a fresh sandbox.
 
 **No MCP. Everything is files and CLI.**
 
@@ -8,7 +8,7 @@ An opinionated, full-stack agent turn runner. Native memories. Native interrupts
 
 Existing agent turn runners treat tools and memories as pluggable modules. This makes them flexible but fundamentally disconnected — memory is an afterthought.
 
-duet-agent takes the opposite approach: **memory is woven into the core architecture.** An agent without memory is stateless. Interrupts are handled by the underlying pi agent runtime, so the turn runner does not need its own interrupt bus.
+duet-agent takes the opposite approach: **memory is woven into the core architecture.** Observations are recorded as the agent works, persisted across processes, and reflected when context grows; the runner cannot run without them. Interrupts are handled by the underlying pi agent runtime, so the turn runner does not need its own interrupt bus.
 
 ## Architecture
 
@@ -66,11 +66,13 @@ are not states themselves.
 
 ## Key Differentiators
 
-### Native Memory
+### Native Multimodal Memory
 
 Memory is first-class. The default `MemoryStore` is in-memory and emits observation events; optional PGlite storage hydrates and persists durable observations outside the turn runner session.
 
 The memory model follows observational memory: turn runner session messages are observed into durable text observations, and a reflector condenses observations when they grow too large. Observations are scoped as `session` or `resource`.
+
+Observation is multimodal. When messages contain images, the observer inspects them directly and records visual details, user-visible text, UI state, diagrams, and errors as text observations. The agent keeps continuity over screenshots, scanned documents, and other image attachments without re-attaching the original bytes on every turn.
 
 ### Pi Coding Tools
 
@@ -83,6 +85,12 @@ Interrupt behavior comes from the underlying pi agent runtime. A user can send a
 ### Multi-Agent by Default
 
 The turn runner can delegate durable process steps into agent states. Agent states are not pre-built classes; they are state-machine states with prompts, optional system prompts, and optional skill allowlists.
+
+### Serverless- And Sandbox-Friendly
+
+The turn runner is stateless across process boundaries. `TurnState` is the only thing that needs to survive: `SessionManager` writes it to `~/.duet/sessions/<id>/state.json` after every terminal event, and durable observations live in PGlite at `~/.duet/memory.db`. A new process — including a fresh serverless invocation, a new sandbox container, or a different machine — can resume a session by pointing at the same state directory and calling `runner.start({ state: savedState })`.
+
+This makes long-running sessions practical. A state machine can sit in `wait_for_reply` for weeks, woken by a cron-driven `wake` command, without keeping a process alive between polls. Sessions that span months — outbound outreach loops, slow build-and-review cycles, scheduled retries — work the same way as one-shot turns: load state, run a turn, persist state, exit.
 
 ### Three Execution Modes
 
@@ -203,6 +211,9 @@ duet --no-system-prompt-files "review this repo"
 # Resume a saved session
 duet --resume session_abc123 --workdir ./my-project
 
+# List installed skills (project + user scope)
+duet skills
+
 # Through Vercel AI Gateway
 export AI_GATEWAY_API_KEY=...
 duet -m vercel-ai-gateway:anthropic/claude-opus-4.7 "review this repo"
@@ -225,9 +236,13 @@ const turnRunner = new TurnRunner({
   mode: "auto",
 });
 
+// `start` is setup-only: loads skills and memory, emits `turn_started`, runs no agent work.
+await turnRunner.start({ mode: "auto" });
+
 const terminal = await turnRunner.turn({
-  type: "start",
-  prompt: "Build a todo app with React and TypeScript",
+  type: "prompt",
+  message: "Build a todo app with React and TypeScript",
+  behavior: "follow_up",
 });
 ```
 
@@ -241,9 +256,7 @@ the parent agent rather than creating separate conversation branches.
 
 ## Memory And Persistence
 
-duet-agent owns a concrete event-emitting `MemoryStore` internally. It is the runtime state container, not a database adapter.
-
-`SessionManager` stores session snapshots under `~/.duet/sessions` by default and enables durable observational memory at `~/.duet/memory.db`. Pass `memoryDbPath: false` to keep observational memory in process only, or provide `memoryDbPath` for a custom database location.
+The turn runner holds its own `MemoryStore` in memory and emits observation events as work happens. Persistence is a separate layer: `SessionManager` writes session snapshots under `~/.duet/sessions` after every terminal event and mirrors observations into a PGlite database at `~/.duet/memory.db`. Pass `memoryDbPath: false` to keep observational memory in process only, or provide `memoryDbPath` for a custom database location.
 
 ```typescript
 import { SessionManager } from "@duetso/agent";
@@ -255,12 +268,15 @@ const manager = new SessionManager({
 
 The memory module hydrates durable observations from an embedded Postgres database powered by PGlite before the first turn and writes observation updates back as memory changes. Raw conversation messages stay in `TurnState.agent.messages`; memory persistence stores only derived observations/reflections.
 
-You can also resume directly from saved state:
+You can also resume directly from saved state. The runner owns state
+internally after `start`, so resumed state is handed in through the start
+command and later turns just send prompts:
 
 ```typescript
+await turnRunner.start({ state: savedState });
+
 const terminal = await turnRunner.turn({
   type: "prompt",
-  state: savedState,
   message: "Continue the previous goal",
   behavior: "follow_up",
 });
@@ -277,7 +293,13 @@ Observational memory is enabled by default with thresholds tuned for modern 200k
 
 ## Skills
 
-Skills are loaded from `<cwd>/.duet/skills`, `<cwd>/.agents/skills`, `~/.duet/skills`, and `~/.agents/skills` by default, using `@earendil-works/pi-coding-agent`'s skill loader. The turn runner injects every loaded skill's description and instructions into the agent system prompt. `getSkills()` returns the discovered skills, including YAML frontmatter descriptions such as block scalars.
+Skills are loaded from `<cwd>/.duet/skills`, `<cwd>/.agents/skills`, `~/.duet/skills`, and `~/.agents/skills` by default, using `@earendil-works/pi-coding-agent`'s skill loader. The turn runner injects every loaded skill's description and instructions into the agent system prompt.
+
+After `start`, the runner exposes what it discovered:
+
+- `getSkills()` returns the loaded skills, including YAML frontmatter descriptions such as block scalars.
+- `getResolvedAgentFiles()` returns the system-prompt files (e.g. `AGENTS.md`) found on disk for the session.
+- `getSkillCollisions()` returns name collisions across skill scopes so a CLI or UI can warn about ambiguous skills.
 
 ## Guardrails
 
@@ -305,7 +327,7 @@ const turnRunner = new TurnRunner({
 ## Design Principles
 
 1. **Files and CLI over protocols.** No MCP, no custom APIs. If you can't do it with bash, you can't do it.
-2. **Runtime state over persistence.** The turn runner owns in-memory state and emits events. Persistence lives in external modules or initial-state hydration.
+2. **State in memory, durability on disk.** The turn runner owns `TurnState` in memory and emits events. `SessionManager` writes state and observations to disk on every terminal event, so any process can resume by handing the saved state back to `runner.start`.
 3. **Agent-routed state machines over workflow engines.** Long-running state machines describe available business states; a runner agent decides what to do next from prompt, state, and history. Task-level workflows belong inside agent or script states.
 4. **Dynamic over static.** Agent states are defined by state machines at runtime, not pre-built classes.
 5. **Simple over flexible.** Default pi coding tools. One default memory store. Constraints breed creativity.
