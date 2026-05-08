@@ -2,6 +2,23 @@
 
 An opinionated, full-stack agent turn runner. Native multimodal memory. Native interrupts. Multi-agent by default. Serverless-friendly: every turn rehydrates from on-disk state, so a session can pause for minutes or months and resume in a fresh sandbox.
 
+## Get started with one login
+
+```bash
+bun add --global @duetso/agent
+duet login
+duet "build a REST API with Express"
+```
+
+`duet login` opens your browser, signs you in, and writes a single `DUET_API_KEY` to `~/.duet/.env`. That one key unlocks:
+
+- **Frontier language models** — Claude Opus / Sonnet / Haiku, GPT-5, Gemini, and friends routed through the Duet AI Gateway. No separate Anthropic, OpenAI, or Google billing to set up.
+- **Image and video generation** — GPT Image 2, Seedance, and the other media models the gateway exposes.
+- **Web scraping and research** — Firecrawl-powered scraping, search, and browser automation come bundled as default skills.
+- **The latest Duet skills** — auto-synced into `~/.duet/skills` on first login and refreshed in the background on every subsequent run.
+
+One login, every frontier model, every default skill, kept fresh. If you would rather wire your own provider keys, see [CLI Env Setup](#cli-env-setup).
+
 ## Why another agent framework?
 
 Existing agent turn runners treat tools and memories as pluggable modules. This makes them flexible but fundamentally disconnected — memory is an afterthought.
@@ -198,14 +215,14 @@ The pre-commit hook runs `format`, `check-types`, and `lint`.
 
 ## CLI Quick Start
 
-The quickest way to get started is `duet login`, which signs in via your browser, writes `DUET_API_KEY` to `~/.duet/.env`, and syncs the default skills:
+The recommended path is `duet login`. One sign-in writes `DUET_API_KEY` to `~/.duet/.env`, syncs the default skills, and gives you access to every frontier language, image, and video model on the Duet AI Gateway plus the bundled web-scraping skills — no other API keys required.
 
 ```bash
 duet login
 duet "build a REST API with Express"
 ```
 
-If you would rather manage provider API keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set a provider API key in the environment, `<workdir>/.env`, or `~/.duet/.env`. When `--model` is omitted, the CLI infers a default from the configured provider: Anthropic, AI Gateway, and OpenRouter use Opus 4.7; OpenAI uses GPT-5.5.
+If you would rather manage provider API keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set a provider API key in the environment, `<workdir>/.env`, or `~/.duet/.env`. When `--model` is omitted, the CLI infers a default from the configured provider: Duet, Anthropic, AI Gateway, and OpenRouter use Opus 4.7; OpenAI uses GPT-5.5.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...
@@ -250,6 +267,8 @@ specific provider.
 ### CLI Login
 
 `duet login` is the recommended setup path. It opens a browser to sign in, writes `DUET_API_KEY` for the selected org to `~/.duet/.env`, and syncs the latest default skills into `~/.duet/skills`.
+
+That single `DUET_API_KEY` is your access token to the Duet AI Gateway: frontier language models (Claude, GPT, Gemini), image generation (GPT Image 2), video generation (Seedance), and the Firecrawl-powered web scraping and search skills, all behind one key.
 
 Once you have synced default skills at least once, every subsequent `duet` invocation refreshes them in the background using a conditional GET against the saved hash. Logging in with `--skip-skill-sync` leaves no hash on disk, so this auto-refresh stays a no-op until you explicitly opt in by syncing once.
 
