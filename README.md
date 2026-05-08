@@ -230,6 +230,8 @@ duet -m vercel-ai-gateway:anthropic/claude-opus-4.7 "review this repo"
 
 `duet login` is the recommended setup path. It opens a browser to sign in, writes `DUET_API_KEY` for the selected org to `~/.duet/.env`, and syncs the latest default skills into `~/.duet/skills`.
 
+Once you have synced default skills at least once, every subsequent `duet` invocation refreshes them in the background using a conditional GET against the saved hash. Logging in with `--skip-skill-sync` leaves no hash on disk, so this auto-refresh stays a no-op until you explicitly opt in by syncing once.
+
 ```bash
 duet login
 

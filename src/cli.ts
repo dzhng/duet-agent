@@ -22,7 +22,7 @@ import { shimDuetApiKeyToAiGateway } from "./model-resolution/duet-gateway.js";
 import { formatCompactJson } from "./lib/compact-json.js";
 import { resolveDuetAppBaseUrl } from "./lib/duet-app-url.js";
 import { loginWithBrowser } from "./lib/login.js";
-import { syncDefaultSkills } from "./lib/sync-skills.js";
+import { maybeAutoSyncDefaultSkills, syncDefaultSkills } from "./lib/sync-skills.js";
 import {
   describeModelResolution,
   resolveCliMemoryModel,
@@ -211,6 +211,15 @@ async function main() {
 
   const dotenvKeys = loadCliEnvFiles(workDir, envFilePath);
   shimDuetApiKeyToAiGateway();
+
+  // Refresh the gateway-managed default skills when the user has previously
+  // opted in via `duet login` (i.e. `~/.duet/.skills-hash` exists). Logging
+  // in with --skip-skill-sync leaves no hash, so this stays a no-op until
+  // the user explicitly syncs at least once. The conditional GET hits 304
+  // in steady state, so the cost is one cheap round-trip.
+  if (process.env.DUET_API_KEY) {
+    await maybeAutoSyncDefaultSkills({ apiKey: process.env.DUET_API_KEY });
+  }
 
   const modelResolution = resolveCliModel(modelName, dotenvKeys);
   modelName = modelResolution.modelName;

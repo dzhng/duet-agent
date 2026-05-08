@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { resolveDuetAppBaseUrl } from "./duet-app-url.js";
@@ -106,6 +106,38 @@ export function hashSkills(skills: readonly RemoteSkill[]): string {
     hash.update("\0");
   }
   return hash.digest("hex");
+}
+
+/**
+ * Best-effort startup sync. Skips silently when there is no API key, when
+ * `~/.duet/.skills-hash` is absent (the user logged in without syncing), or
+ * when the network call fails — startup must never block on a sync error.
+ *
+ * Returns the sync result on success, `null` when skipped, or `null` after a
+ * caught error. Callers may inspect the return value to decide whether to
+ * surface anything to the user.
+ */
+export async function maybeAutoSyncDefaultSkills(
+  options: SyncSkillsOptions & { logger?: (message: string) => void },
+): Promise<SyncSkillsResult | null> {
+  if (!options.apiKey) return null;
+  const hashFilePath = options.hashFilePath ?? DEFAULT_SKILLS_HASH_FILE;
+  if (!(await fileExists(hashFilePath))) return null;
+  const log = options.logger ?? ((message: string) => process.stderr.write(`${message}\n`));
+  try {
+    return await syncDefaultSkills({ ...options, hashFilePath });
+  } catch (err) {
+    log(`Skill auto-sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 export async function syncDefaultSkills(options: SyncSkillsOptions): Promise<SyncSkillsResult> {
