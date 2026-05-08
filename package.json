@@ -1,6 +1,6 @@
 {
   "name": "@dzhng/duet-agent",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "An opinionated full-stack agent turn runner with native memories, interrupts, and multi-agent orchestration",
   "keywords": [
     "agent",
