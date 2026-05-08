@@ -40,10 +40,6 @@ interface ProviderInferenceEntry {
  */
 const MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
   {
-    provider: "anthropic",
-    model: "anthropic:claude-opus-4-7",
-  },
-  {
     provider: "duet-gateway",
     model: "duet-gateway:anthropic/claude-opus-4.7",
     customEnvVar: () => (process.env[DUET_GATEWAY_API_KEY_ENV] ? DUET_GATEWAY_API_KEY_ENV : null),
@@ -57,16 +53,16 @@ const MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
     model: "openrouter:anthropic/claude-opus-4.7",
   },
   {
+    provider: "anthropic",
+    model: "anthropic:claude-opus-4-7",
+  },
+  {
     provider: "openai",
     model: "openai:gpt-5.5",
   },
 ];
 
 const MEMORY_MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
-  {
-    provider: "anthropic",
-    model: "anthropic:claude-haiku-4-5",
-  },
   {
     provider: "duet-gateway",
     model: "duet-gateway:anthropic/claude-haiku-4.5",
@@ -81,13 +77,17 @@ const MEMORY_MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
     model: "openrouter:anthropic/claude-haiku-4.5",
   },
   {
+    provider: "anthropic",
+    model: "anthropic:claude-haiku-4-5",
+  },
+  {
     provider: "openai",
     model: "openai:gpt-5.4-mini",
   },
 ];
 
-export const DEFAULT_CLI_MODEL = MODEL_PROVIDER_INFERENCE[0].model;
-export const DEFAULT_CLI_MEMORY_MODEL = MEMORY_MODEL_PROVIDER_INFERENCE[0].model;
+export const DEFAULT_CLI_MODEL = "anthropic:claude-opus-4-7";
+export const DEFAULT_CLI_MEMORY_MODEL = "anthropic:claude-haiku-4-5";
 
 export function resolveModelName(model: string): Model<any> {
   const separator = model.indexOf(":");
@@ -123,7 +123,12 @@ export function resolveCliMemoryModel(
   memoryModelName: string | undefined,
   dotenvKeys: Set<string>,
 ): ModelResolution {
-  return resolveCliModelWith(memoryModelName, MEMORY_MODEL_PROVIDER_INFERENCE, dotenvKeys);
+  return resolveCliModelWith(
+    memoryModelName,
+    MEMORY_MODEL_PROVIDER_INFERENCE,
+    dotenvKeys,
+    DEFAULT_CLI_MEMORY_MODEL,
+  );
 }
 
 /**
@@ -134,13 +139,14 @@ export function resolveCliModel(
   modelName: string | undefined,
   dotenvKeys: Set<string>,
 ): ModelResolution {
-  return resolveCliModelWith(modelName, MODEL_PROVIDER_INFERENCE, dotenvKeys);
+  return resolveCliModelWith(modelName, MODEL_PROVIDER_INFERENCE, dotenvKeys, DEFAULT_CLI_MODEL);
 }
 
 function resolveCliModelWith(
   modelName: string | undefined,
   providerInference: ProviderInferenceEntry[],
   dotenvKeys: Set<string>,
+  defaultModel: string,
 ): ModelResolution {
   if (modelName) return { modelName, source: "explicit" };
   const inferred = findInferredProviderEntry(providerInference);
@@ -152,7 +158,7 @@ function resolveCliModelWith(
       fromDotenv: dotenvKeys.has(inferred.envVar),
     };
   }
-  return { modelName: providerInference[0].model, source: "default" };
+  return { modelName: defaultModel, source: "default" };
 }
 
 function findInferredProviderEntry(

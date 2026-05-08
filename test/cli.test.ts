@@ -71,7 +71,70 @@ function clearModelEnv(): void {
 }
 
 describe("CLI model inference", () => {
-  test("prefers Anthropic credentials for the default Opus model", () => {
+  test("prefers Duet credentials over other supported provider credentials", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "duet_gt_test";
+    process.env.AI_GATEWAY_API_KEY = "test-gateway";
+    process.env.OPENROUTER_API_KEY = "test-openrouter";
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+    process.env.OPENAI_API_KEY = "test-openai";
+
+    expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "duet-gateway:anthropic/claude-opus-4.7",
+      source: "inferred",
+      envVar: "DUET_API_KEY",
+      fromDotenv: false,
+    });
+    expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "duet-gateway:anthropic/claude-haiku-4.5",
+      source: "inferred",
+      envVar: "DUET_API_KEY",
+      fromDotenv: false,
+    });
+  });
+
+  test("uses AI Gateway credentials before OpenRouter, Anthropic, and OpenAI", () => {
+    clearModelEnv();
+    process.env.AI_GATEWAY_API_KEY = "test-gateway";
+    process.env.OPENROUTER_API_KEY = "test-openrouter";
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+    process.env.OPENAI_API_KEY = "test-openai";
+
+    expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "vercel-ai-gateway:anthropic/claude-opus-4.7",
+      source: "inferred",
+      envVar: "AI_GATEWAY_API_KEY",
+      fromDotenv: false,
+    });
+    expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "vercel-ai-gateway:anthropic/claude-haiku-4.5",
+      source: "inferred",
+      envVar: "AI_GATEWAY_API_KEY",
+      fromDotenv: false,
+    });
+  });
+
+  test("uses OpenRouter credentials before Anthropic and OpenAI", () => {
+    clearModelEnv();
+    process.env.OPENROUTER_API_KEY = "test-openrouter";
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+    process.env.OPENAI_API_KEY = "test-openai";
+
+    expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "openrouter:anthropic/claude-opus-4.7",
+      source: "inferred",
+      envVar: "OPENROUTER_API_KEY",
+      fromDotenv: false,
+    });
+    expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "openrouter:anthropic/claude-haiku-4.5",
+      source: "inferred",
+      envVar: "OPENROUTER_API_KEY",
+      fromDotenv: false,
+    });
+  });
+
+  test("uses Anthropic credentials before OpenAI", () => {
     clearModelEnv();
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
     process.env.OPENAI_API_KEY = "test-openai";
@@ -109,43 +172,6 @@ describe("CLI model inference", () => {
       modelName: "duet-gateway:anthropic/claude-haiku-4.5",
       source: "inferred",
       envVar: "DUET_API_KEY",
-      fromDotenv: false,
-    });
-  });
-
-  test("uses AI Gateway credentials for Opus when Anthropic and Duet are absent", () => {
-    clearModelEnv();
-    process.env.AI_GATEWAY_API_KEY = "test-gateway";
-
-    expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "vercel-ai-gateway:anthropic/claude-opus-4.7",
-      source: "inferred",
-      envVar: "AI_GATEWAY_API_KEY",
-      fromDotenv: false,
-    });
-    expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "vercel-ai-gateway:anthropic/claude-haiku-4.5",
-      source: "inferred",
-      envVar: "AI_GATEWAY_API_KEY",
-      fromDotenv: false,
-    });
-  });
-
-  test("uses OpenRouter credentials for Opus when Anthropic and AI Gateway are absent", () => {
-    clearModelEnv();
-    process.env.OPENROUTER_API_KEY = "test-openrouter";
-    process.env.OPENAI_API_KEY = "test-openai";
-
-    expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "openrouter:anthropic/claude-opus-4.7",
-      source: "inferred",
-      envVar: "OPENROUTER_API_KEY",
-      fromDotenv: false,
-    });
-    expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "openrouter:anthropic/claude-haiku-4.5",
-      source: "inferred",
-      envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
     });
   });
