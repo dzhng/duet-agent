@@ -1248,6 +1248,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       .catch(reportError);
     markRunning();
   } else {
+    // A resumed sleeping session emitted its `sleep` terminal during
+    // hydrate(), before this subscriber attached. Surface the banner now so
+    // the user can see when the next wake will fire.
+    const pending = input.session.getLastTerminal();
+    if (pending?.type === "sleep") {
+      lastTerminal = pending;
+      renderSleeping(pending.wakeAt);
+    }
     markIdle();
   }
 

@@ -569,6 +569,48 @@ describe("Session", () => {
   );
 
   testIfDocker(
+    "exposes the replayed sleep terminal to subscribers attached after hydrate",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
+      tempDirs.push(tempDir);
+      const sessionPath = join(tempDir, "resumed-sleeping-late");
+      await mkdir(sessionPath, { recursive: true });
+      const wakeAt = Date.now() + 60_000;
+      const sleepingState: TurnState = {
+        ...createStateMachineState("poll_email_reply"),
+        status: "sleeping",
+        stateMachine: {
+          ...createStateMachineState("poll_email_reply").stateMachine!,
+          progress: {
+            states: {
+              poll_email_reply: { kind: "poll", runs: 1, sleeps: 0, nextWakeAt: wakeAt },
+            },
+          },
+        },
+      };
+      await writeStoredState(sessionPath, sleepingState);
+      const runner = new FakeTurnRunner([]);
+      runner.state = sleepingState;
+      const session = new Session(
+        { model: "anthropic:claude-opus-4-7" },
+        { id: "resumed-sleeping-late", runner, sessionPath, resumeFromStorage: true },
+      );
+
+      await session.hydrate();
+
+      // Subscribers like the TUI attach after hydrate() runs. The replayed
+      // sleep terminal must still be reachable so they can render the
+      // "sleeping until …" banner on launch.
+      const lateEvents: TurnEvent[] = [];
+      session.subscribe((event) => lateEvents.push(event));
+
+      const pending = session.getLastTerminal();
+      expect(pending).toMatchObject({ type: "sleep", wakeAt });
+      expect(lateEvents).toHaveLength(0);
+    },
+  );
+
+  testIfDocker(
     "allows a complete turn to be followed by another prompt on the same session",
     async () => {
       const runner = new FakeTurnRunner([complete("first"), complete("second")]);
