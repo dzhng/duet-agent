@@ -1,5 +1,7 @@
 # duet-agent
 
+![duet-agent](assets/cover.png)
+
 An opinionated, full-stack agent turn runner. Native multimodal memory. Native interrupts. Multi-agent by default. Serverless-friendly: every turn rehydrates from on-disk state, so a session can pause for minutes or months and resume in a fresh sandbox.
 
 ## Get started with one login

@@ -52,6 +52,34 @@ describe("turn-runner shell execution utilities", () => {
     });
   });
 
+  test("inherits DUET_API_KEY from process.env into spawned bash scripts", async () => {
+    // The CLI loads DUET_API_KEY into process.env (from the shared duet env
+    // file or directly from the user's env) and the turn runner shells out
+    // through runShellCommand. Bash scripts driven by script-state machines
+    // must see that token so they can authenticate against duet.so just like
+    // the agent does — guarded here against an accidental `env: {}` regression
+    // in the spawn options.
+    const previous = process.env.DUET_API_KEY;
+    process.env.DUET_API_KEY = "duet_gt_inherit_marker";
+    try {
+      const result = await runShellCommand('printf "%s" "$DUET_API_KEY"', {
+        cwd: process.cwd(),
+        signal: new AbortController().signal,
+      });
+      expect(result).toEqual({
+        stdout: "duet_gt_inherit_marker",
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      if (previous === undefined) {
+        delete process.env.DUET_API_KEY;
+      } else {
+        process.env.DUET_API_KEY = previous;
+      }
+    }
+  });
+
   test("honors success codes and reports non-success output", async () => {
     await expect(
       runShellCommand("printf ok; exit 7", {

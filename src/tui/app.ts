@@ -445,17 +445,81 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     line: TextRenderable;
     toolName: string;
     inputBody: string;
+    // Wall-clock start so the running header can show a live elapsed counter
+    // and the finalized header can report total tool duration. Undefined when
+    // the first event we saw was already terminal (cached/replayed history),
+    // in which case we have no real duration to report.
+    startedAt: number | undefined;
+  }
+
+  // Tracks the wall-clock start of the current turn so the status line can
+  // surface a live "Ns" / "Nm Ns" elapsed counter while work is in flight.
+  let workingStartedAt: number | undefined;
+  let workingTicker: ReturnType<typeof setInterval> | undefined;
+  // Swapped out by memory events so the ticker can keep refreshing while the
+  // human-readable phase ("recalling memories…", etc.) stays accurate.
+  let workingMessage = "working…";
+
+  function formatElapsed(ms: number): string {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}m ${seconds}s`;
+  }
+
+  function refreshWorkingStatus(): void {
+    refreshActiveToolBlocks();
+    if (workingStartedAt === undefined) return;
+    const elapsed = formatElapsed(Date.now() - workingStartedAt);
+    setStatus(`● ${workingMessage} (${elapsed} · Esc to interrupt, Ctrl+C to force quit)`);
+  }
+
+  // Sub-second precision for short tool calls keeps fast operations honest;
+  // longer calls fall back to the coarser m/s formatter shared with the
+  // working-status counter.
+  function formatToolDuration(ms: number): string {
+    if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+    return formatElapsed(ms);
+  }
+
+  function refreshActiveToolBlocks(): void {
+    if (activeToolBlocks.size === 0) return;
+    for (const block of activeToolBlocks.values()) {
+      if (block.startedAt === undefined) continue;
+      const elapsed = formatToolDuration(Date.now() - block.startedAt);
+      const header = `[tool ${block.toolName}] ⏳ ${elapsed}`;
+      block.line.content = block.inputBody ? `${header}\n${block.inputBody}` : header;
+    }
+  }
+
+  function startWorkingTicker(): void {
+    if (workingTicker !== undefined) return;
+    workingTicker = setInterval(refreshWorkingStatus, 1000);
+  }
+
+  function stopWorkingTicker(): void {
+    if (workingTicker !== undefined) {
+      clearInterval(workingTicker);
+      workingTicker = undefined;
+    }
   }
 
   function markRunning(): void {
     running = true;
     setHint(true);
-    setStatus("● working… (Esc to interrupt, Ctrl+C to force quit)");
+    workingMessage = "working…";
+    workingStartedAt = Date.now();
+    refreshWorkingStatus();
+    startWorkingTicker();
   }
 
   function markIdle(): void {
     running = false;
     setHint(false);
+    stopWorkingTicker();
+    workingStartedAt = undefined;
+    workingMessage = "working…";
     setStatus("");
   }
 
@@ -636,7 +700,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderFollowUpQueue(prompts: string[]): void {
     if (prompts.length === 0) {
-      setStatus(running ? "● working… (Esc to interrupt, Ctrl+C to force quit)" : "");
+      if (running) refreshWorkingStatus();
+      else setStatus("");
       return;
     }
     setStatus(`queued follow-ups: ${prompts.length}`);
@@ -714,7 +779,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const existing = activeToolBlocks.get(step.toolCallId);
     if (!existing) {
       const inputBody = step.input === undefined ? "" : formatCompactJson(step.input);
-      const header = `[tool ${step.toolName}] ⏳`;
+      const isLive = step.status === "running" || step.status === "pending";
+      const startedAt = isLive ? Date.now() : undefined;
+      const header = isLive ? `[tool ${step.toolName}] ⏳ 0.0s` : `[tool ${step.toolName}] ⏳`;
       const fg = step.status === "error" ? COLORS.error : COLORS.tool;
       const line = new TextRenderable(renderer, {
         content: inputBody ? `${header}\n${inputBody}` : header,
@@ -722,7 +789,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       });
       beginBlock();
       transcript.add(line);
-      const block: ToolBlock = { line, toolName: step.toolName, inputBody };
+      const block: ToolBlock = { line, toolName: step.toolName, inputBody, startedAt };
       activeToolBlocks.set(step.toolCallId, block);
       scrollToBottomSoon();
       // The same event may already carry a terminal status (cached/replayed
@@ -741,7 +808,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   ): void {
     const isError = step.status === "error";
     const marker = isError ? "✗" : "✓";
-    const header = `[tool ${block.toolName}] ${marker}`;
+    const header =
+      block.startedAt === undefined
+        ? `[tool ${block.toolName}] ${marker}`
+        : `[tool ${block.toolName}] ${marker} ${formatToolDuration(Date.now() - block.startedAt)}`;
     const sections = [block.inputBody ? `${header}\n${block.inputBody}` : header];
     if (step.output && step.output.length > 0) {
       const text = textFromContent(step.output);
@@ -769,7 +839,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderMemoryStatus(event: Extract<TurnEvent, { type: "memory" }>): void {
     if (event.status === "running") {
-      setStatus(`● ${event.message} (Esc to interrupt, Ctrl+C to force quit)`);
+      workingMessage = event.message;
+      refreshWorkingStatus();
       return;
     }
     const body = formatMemoryEventBody(event);
@@ -777,7 +848,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       appendBlock(`[memory:${event.phase}]`, body, COLORS.memory);
     }
     if (running) {
-      setStatus("● working… (Esc to interrupt, Ctrl+C to force quit)");
+      workingMessage = "working…";
+      refreshWorkingStatus();
     }
   }
 
@@ -809,6 +881,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (running) {
       if (closingAfterInterrupt) return;
       closingAfterInterrupt = true;
+      stopWorkingTicker();
       setStatus("● interrupting…");
       try {
         await input.session.interrupt();
