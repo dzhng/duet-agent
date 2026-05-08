@@ -47,6 +47,7 @@
 ## Run File-Writing Tests And Evals In Docker
 
 - Use `bun run test` for the test suite and `bun run eval` for live evals. Do not use raw `bun test` as the source of truth.
+- Prefer CLI-backed evals when behavior can be exercised through `bun src/cli.ts`; the CLI path is closest to production and catches mode, event, env, persistence, and model-routing issues that lower-level runner calls can miss.
 - Tests that write files, create databases, touch `.duet`, or depend on the home directory must use `testIfDocker` so host-only focused runs skip them.
 - If a focused host run creates runtime artifacts, fix the test/eval boundary instead of committing or relying on cleanup.
 

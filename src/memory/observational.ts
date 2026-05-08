@@ -40,6 +40,9 @@ export const OBSERVATIONAL_MEMORY_DEFAULTS = {
     // Retain enough exact history for active tool work after older messages are
     // represented by observations.
     bufferActivation: 30_000,
+    // Existing observations help avoid semantic duplicates, but the observer
+    // should never receive the whole durable memory database.
+    previousObserverTokens: 4_000,
   },
   reflection: {
     // Reflect before observations become a second large prompt layer.
@@ -51,6 +54,8 @@ export const OBSERVATIONAL_MEMORY_DEFAULTS = {
 } as const;
 
 export interface ObserverResult {
+  /** Whether the observer found durable information worth writing to memory. */
+  hasMemory: boolean;
   /** New observation log text extracted from raw messages. */
   observations: string;
   /** Current task state distilled for continuity and optional thread metadata. */
@@ -73,9 +78,13 @@ export interface ReflectorResult {
 }
 
 const observerResultSchema = Type.Object({
+  hasMemory: Type.Boolean({
+    description:
+      "Set true when the message history contains durable information worth remembering. Set false when there is nothing useful to store.",
+  }),
   observations: Type.String({
     description:
-      "New observation log text extracted from the raw message history. Return an empty string if there are no useful new observations.",
+      "New observation log text extracted from the raw message history. When hasMemory is false, return an empty string.",
   }),
   currentTask: Type.Optional(
     Type.String({ description: "Current task state distilled for continuity." }),
@@ -154,12 +163,21 @@ export class ModelByInputTokens {
   }
 }
 
-export interface ObservationalMemoryTransformOptions {
+export interface ObservationalContextTransformOptions {
   memory: MemoryStore;
-  actorModel: string;
   settings?: ObservationalMemorySettingsInput;
+}
+
+export interface ObservationalMemoryUpdateOptions extends ObservationalContextTransformOptions {
+  actorModel: string;
+  messages: AgentMessage[];
   onUsage?: (usage: Usage) => void;
   onActivity?: (event: ObservationalMemoryActivityEvent) => void;
+}
+
+export interface ObservationalMemoryUpdateResult {
+  observations: Observation[];
+  reflections: Observation[];
 }
 
 export function resolveObservationalMemorySettings(
@@ -180,7 +198,9 @@ export function resolveObservationalMemorySettings(
         partial.observation?.bufferActivation ??
         OBSERVATIONAL_MEMORY_DEFAULTS.observation.bufferActivation,
       blockAfter: partial.observation?.blockAfter,
-      previousObserverTokens: partial.observation?.previousObserverTokens,
+      previousObserverTokens:
+        partial.observation?.previousObserverTokens ??
+        OBSERVATIONAL_MEMORY_DEFAULTS.observation.previousObserverTokens,
       instruction: partial.observation?.instruction,
       threadTitle: partial.observation?.threadTitle,
     },
@@ -228,77 +248,25 @@ export function validateObservationalMemorySettings(settings: ObservationalMemor
   }
 }
 
-export function createObservationalMemoryTransform(options: ObservationalMemoryTransformOptions) {
+export function createObservationalContextTransform(options: ObservationalContextTransformOptions) {
   const settings = resolveObservationalMemorySettings(options.settings);
   validateObservationalMemorySettings(settings);
 
-  return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
-    const rawMessages = agentMessagesToRaw(messages);
+  return async (messages: AgentMessage[]): Promise<AgentMessage[]> => {
+    const observableMessages = stripObservationalContextMessages(messages);
+    const rawMessages = agentMessagesToRaw(observableMessages);
     const rawTokens = estimateRawTokens(rawMessages);
-    let retainedMessages = messages;
+    let retainedMessages = observableMessages;
 
     if (rawTokens >= settings.observation.messageTokens) {
-      const snapshot = await options.memory.getSnapshot();
-      const unobservedMessages = getUnobservedMessageTail(rawMessages, snapshot.observations);
-
-      if (estimateRawTokens(unobservedMessages) >= settings.observation.messageTokens) {
-        emitMemoryActivity(options.onActivity, {
-          phase: "observation",
-          status: "running",
-          message: "Compacting conversation into memory...",
-        });
-        try {
-          await activateObservations(
-            options.memory,
-            unobservedMessages,
-            snapshot.observations,
-            settings,
-            options.actorModel,
-            options.onUsage,
-            signal,
-          );
-        } finally {
-          emitMemoryActivity(options.onActivity, {
-            phase: "observation",
-            status: "completed",
-            message: "Memory observation complete.",
-          });
-        }
-      }
-
       retainedMessages = retainAgentMessageTail(
-        messages,
+        observableMessages,
         retainRawTail(rawMessages, settings.observation.bufferActivation),
       );
     }
 
     const snapshot = await options.memory.getSnapshot();
-    const observationTokens = snapshot.estimatedTokens.observations;
-    if (observationTokens >= settings.reflection.observationTokens) {
-      emitMemoryActivity(options.onActivity, {
-        phase: "reflection",
-        status: "running",
-        message: "Reflecting memory observations...",
-      });
-      try {
-        await reflectObservations(
-          options.memory,
-          settings,
-          options.actorModel,
-          options.onUsage,
-          signal,
-        );
-      } finally {
-        emitMemoryActivity(options.onActivity, {
-          phase: "reflection",
-          status: "completed",
-          message: "Memory reflection complete.",
-        });
-      }
-    }
-
-    const refreshed = await options.memory.getSnapshot();
-    const observations = refreshed.observations
+    const observations = snapshot.observations
       .map((observation) => observation.content)
       .join("\n\n");
     if (!observations.trim()) {
@@ -313,6 +281,69 @@ export function createObservationalMemoryTransform(options: ObservationalMemoryT
   };
 }
 
+export async function updateObservationalMemory(
+  options: ObservationalMemoryUpdateOptions,
+): Promise<ObservationalMemoryUpdateResult> {
+  const settings = resolveObservationalMemorySettings(options.settings);
+  validateObservationalMemorySettings(settings);
+  const rawMessages = agentMessagesToRaw(stripObservationalContextMessages(options.messages));
+  const snapshot = await options.memory.getSnapshot();
+  const unobservedMessages = getUnobservedMessageTail(rawMessages, snapshot.observations);
+  const result: ObservationalMemoryUpdateResult = { observations: [], reflections: [] };
+
+  if (unobservedMessages.length > 0) {
+    emitMemoryActivity(options.onActivity, {
+      phase: "observation",
+      status: "running",
+      message: "Observing conversation into memory...",
+    });
+    const observation = await activateObservations(
+      options.memory,
+      unobservedMessages,
+      snapshot.observations,
+      settings,
+      options.actorModel,
+      options.onUsage,
+    );
+    if (observation) {
+      result.observations.push(observation);
+    }
+    emitMemoryActivity(options.onActivity, {
+      phase: "observation",
+      status: "completed",
+      message: observation ? "Memory observation recorded." : "Memory observation complete.",
+      ...(observation ? { observations: [observation] } : {}),
+    });
+  }
+
+  const refreshed = await options.memory.getSnapshot();
+  const observationTokens = refreshed.estimatedTokens.observations;
+  if (observationTokens >= settings.reflection.observationTokens) {
+    emitMemoryActivity(options.onActivity, {
+      phase: "reflection",
+      status: "running",
+      message: "Reflecting memory observations...",
+    });
+    const reflections = await reflectObservations(
+      options.memory,
+      settings,
+      options.actorModel,
+      options.onUsage,
+    );
+    if (reflections) {
+      result.reflections.push(...reflections);
+    }
+    emitMemoryActivity(options.onActivity, {
+      phase: "reflection",
+      status: "completed",
+      message: reflections ? "Memory reflection recorded." : "Memory reflection complete.",
+      ...(reflections ? { observations: reflections } : {}),
+    });
+  }
+
+  return result;
+}
+
 export function optimizeObservationsForContext(observations: string): string {
   let optimized = stripObservationGroups(observations);
   optimized = optimized.replace(/🟡\s*/g, "");
@@ -325,7 +356,7 @@ export function optimizeObservationsForContext(observations: string): string {
 }
 
 function emitMemoryActivity(
-  handler: ObservationalMemoryTransformOptions["onActivity"],
+  handler: ObservationalMemoryUpdateOptions["onActivity"],
   event: ObservationalMemoryActivityEvent,
 ): void {
   handler?.(event);
@@ -348,6 +379,23 @@ function buildContinuationMessage(): AgentMessage {
   };
 }
 
+function stripObservationalContextMessages(messages: AgentMessage[]): AgentMessage[] {
+  return messages.filter((message) => !isObservationalContextMessage(message));
+}
+
+function isObservationalContextMessage(message: AgentMessage): boolean {
+  if (message.role !== "user") return false;
+  const text = normalizeMessageContent(message).textPreview.trim();
+  // Context transforms inject durable memory as synthetic user reminders for the
+  // actor. Observers must ignore those reminders so a tiny new exchange does not
+  // re-observe the entire durable memory database or send it back to the memory
+  // model as raw message history.
+  return (
+    text.startsWith(`<system-reminder>${OBSERVATION_CONTEXT_PROMPT}`) ||
+    text === `<system-reminder>${OBSERVATION_CONTINUATION_HINT}</system-reminder>`
+  );
+}
+
 async function activateObservations(
   store: MemoryStore,
   messages: RawMemoryMessage[],
@@ -355,24 +403,23 @@ async function activateObservations(
   settings: ObservationalMemorySettings,
   model: string,
   onUsage?: (usage: Usage) => void,
-  _signal?: AbortSignal,
-): Promise<void> {
-  const observations = (
-    await observe(messages, previousObservations, settings, model, onUsage, _signal)
-  ).observations;
+): Promise<Observation | undefined> {
+  const observations = await observe(messages, previousObservations, settings, model, onUsage);
 
-  if (!observations.trim()) {
-    return;
+  if (!observations.hasMemory || !observations.observations.trim()) {
+    // Empty observer output intentionally does not create a checkpoint. The
+    // same low-signal messages may become useful context for a later suffix.
+    return undefined;
   }
 
   const range = `${messages[0]?.id ?? "unknown"}:${messages[messages.length - 1]?.id ?? "unknown"}`;
-  await store.appendObservation({
+  return store.appendObservation({
     observedDate: new Date().toISOString().slice(0, 10),
     timeOfDay: new Date().toISOString().slice(11, 16),
-    priority: inferPriority(observations),
+    priority: inferPriority(observations.observations),
     scope: settings.scope,
     source: { kind: "system" },
-    content: wrapInObservationGroup(observations, range),
+    content: wrapInObservationGroup(observations.observations, range),
     tags: ["observational-memory"],
   });
 }
@@ -382,8 +429,7 @@ async function reflectObservations(
   settings: ObservationalMemorySettings,
   model: string,
   onUsage?: (usage: Usage) => void,
-  _signal?: AbortSignal,
-): Promise<void> {
+): Promise<Observation[] | undefined> {
   const snapshot = await store.getSnapshot();
   const source = snapshot.observations.map((observation) => observation.content).join("\n\n");
   const rendered = renderObservationGroupsForReflection(source) ?? source;
@@ -410,7 +456,7 @@ async function reflectObservations(
     },
   });
   if (!text) {
-    return;
+    return undefined;
   }
 
   const reconciled = reconcileObservationGroupsFromReflection(text, source) ?? text;
@@ -426,6 +472,7 @@ async function reflectObservations(
     tags: ["observational-memory", "reflection"],
   };
   await store.replaceObservations([reflected]);
+  return [reflected];
 }
 
 async function observe(
@@ -434,23 +481,30 @@ async function observe(
   settings: ObservationalMemorySettings,
   model: string,
   onUsage?: (usage: Usage) => void,
-  _signal?: AbortSignal,
 ): Promise<ObserverResult> {
   const targetTokens = settings.observation.maxTokensPerBatch;
+  const systemPrompt = buildObserverSystemPrompt(
+    settings.observation.instruction,
+    settings.observation.threadTitle,
+  );
+  const previousObservationText = renderPreviousObservationsForObserver(
+    previousObservations,
+    settings.observation.previousObserverTokens,
+  );
+  const prompt = buildObserverPrompt(messages, previousObservationText, targetTokens);
   const result = await generateStructuredOutput({
     model,
     tool: observerResultTool,
-    systemPrompt: buildObserverSystemPrompt(
-      settings.observation.instruction,
-      settings.observation.threadTitle,
-    ),
-    prompt: buildObserverPrompt(
-      messages,
-      previousObservations.map((observation) => observation.content).join("\n\n"),
-      targetTokens,
-    ),
+    systemPrompt,
+    prompt,
     onUsage,
   });
+  if (!result.hasMemory) {
+    return {
+      ...result,
+      observations: "",
+    };
+  }
   const observations = await enforceObservationTokenBudget({
     text: result.observations,
     targetTokens,
@@ -458,16 +512,10 @@ async function observe(
       const retryResult = await generateStructuredOutput({
         model,
         tool: observerResultTool,
-        systemPrompt: buildObserverSystemPrompt(
-          settings.observation.instruction,
-          settings.observation.threadTitle,
-        ),
-        prompt: buildObserverPrompt(
-          messages,
-          previousObservations.map((observation) => observation.content).join("\n\n"),
-          targetTokens,
-          { actualTokens },
-        ),
+        systemPrompt,
+        prompt: buildObserverPrompt(messages, previousObservationText, targetTokens, {
+          actualTokens,
+        }),
         onUsage,
       });
       return retryResult.observations;
@@ -477,6 +525,24 @@ async function observe(
     ...result,
     observations,
   };
+}
+
+function renderPreviousObservationsForObserver(
+  observations: Observation[],
+  tokenBudget: number | false | undefined,
+): string {
+  if (tokenBudget === false || tokenBudget === 0) return "";
+  const budget = tokenBudget ?? OBSERVATIONAL_MEMORY_DEFAULTS.observation.previousObserverTokens;
+  const selected: string[] = [];
+  let tokens = 0;
+  for (let index = observations.length - 1; index >= 0; index--) {
+    const content = observations[index]!.content;
+    const nextTokens = estimateTokens(content);
+    if (tokens + nextTokens > budget) break;
+    selected.unshift(content);
+    tokens += nextTokens;
+  }
+  return selected.join("\n\n");
 }
 
 export async function enforceObservationTokenBudget(options: {
@@ -525,7 +591,7 @@ function retainRawTail(messages: RawMemoryMessage[], retainTokens: number): RawM
   return retained;
 }
 
-function getUnobservedMessageTail(
+export function getUnobservedMessageTail(
   messages: RawMemoryMessage[],
   observations: Observation[],
 ): RawMemoryMessage[] {
@@ -546,6 +612,9 @@ function getLastObservedMessageIndex(
   for (const observation of observations) {
     const groups = parseObservationGroups(observation.content);
     for (const group of groups) {
+      // Observation-group ranges are the only progress marker. No-op observer
+      // passes do not advance this index, preserving their messages as future
+      // context until an actual observation records a range.
       const endId = group.range.split(":").at(-1)?.trim();
       const endIndex = endId ? messageIndexById.get(endId) : undefined;
       if (endIndex !== undefined) {

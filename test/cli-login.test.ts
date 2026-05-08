@@ -136,6 +136,26 @@ describe("fetchDefaultSkills", () => {
     ).rejects.toThrow(/hash mismatch/i);
   });
 
+  testIfDocker("accepts weak ETags when they contain the payload hash", async () => {
+    const skills = [{ path: "a/SKILL.md", content: "alpha" }];
+    const hash = hashSkills(skills);
+    const { fetchFn } = makeFetch(
+      () =>
+        new Response(JSON.stringify({ skills }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ETag: `W/"${hash}"` },
+        }),
+    );
+
+    const result = await fetchDefaultSkills({
+      apiKey: "duet_gt_x",
+      appBaseUrl: "https://test",
+      fetchFn,
+    });
+
+    expect(result).toEqual({ status: "modified", hash, skills });
+  });
+
   testIfDocker("rejects responses missing an ETag header", async () => {
     const { fetchFn } = makeFetch(
       () =>

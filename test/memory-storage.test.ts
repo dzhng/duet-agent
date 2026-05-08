@@ -11,10 +11,10 @@ import { testIfDocker } from "./helpers/docker-only.js";
 describe("Memory storage", () => {
   test("is a no-op without a configured path", async () => {
     const store = new MemoryStore();
-    const dispose = await loadStoredMemory(undefined, process.cwd(), store);
+    const persistence = await loadStoredMemory(undefined, process.cwd(), store);
 
     await store.appendObservation(createObservation("Not persisted."));
-    await dispose();
+    await persistence.dispose();
 
     const snapshot = await store.getSnapshot();
     expect(snapshot.observations).toHaveLength(1);
@@ -22,10 +22,10 @@ describe("Memory storage", () => {
 
   test("is a no-op when storage is disabled", async () => {
     const store = new MemoryStore();
-    const dispose = await loadStoredMemory(false, process.cwd(), store);
+    const persistence = await loadStoredMemory(false, process.cwd(), store);
 
     await store.appendObservation(createObservation("Not persisted."));
-    await dispose();
+    await persistence.dispose();
 
     const snapshot = await store.getSnapshot();
     expect(snapshot.observations[0]?.content).toBe("Not persisted.");
@@ -37,9 +37,9 @@ describe("Memory storage", () => {
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadStoredMemory(memoryPath, tempDir, store);
+      const persistence = await loadStoredMemory(memoryPath, tempDir, store);
       await store.appendObservation(createObservation("Created database."));
-      await dispose();
+      await persistence.dispose();
 
       const observations = await readObservationContents(memoryPath);
       expect(observations).toEqual(["Created database."]);
@@ -56,9 +56,9 @@ describe("Memory storage", () => {
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadStoredMemory(memoryPath, tempDir, store);
+      const persistence = await loadStoredMemory(memoryPath, tempDir, store);
       const snapshot = await store.getSnapshot();
-      await dispose();
+      await persistence.dispose();
 
       expect(snapshot.observations).toEqual([
         {
@@ -88,14 +88,14 @@ describe("Memory storage", () => {
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadStoredMemory(memoryPath, tempDir, store);
+      const persistence = await loadStoredMemory(memoryPath, tempDir, store);
       await store.appendObservation(createObservation("Kept memory."));
 
       await store.replaceObservations([
         createPersistedObservation("mem_kept", "Kept memory.", 3),
         createPersistedObservation("replacement", "Replacement memory."),
       ]);
-      await dispose();
+      await persistence.dispose();
 
       expect(await readObservationContents(memoryPath)).toEqual([
         "Kept memory.",
@@ -112,9 +112,9 @@ describe("Memory storage", () => {
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadStoredMemory(memoryPath, tempDir, store);
+      const persistence = await loadStoredMemory(memoryPath, tempDir, store);
       await store.appendObservation(createObservation("Before dispose."));
-      await dispose();
+      await persistence.dispose();
 
       await store.appendObservation(createObservation("After dispose."));
       expect(await readObservationContents(memoryPath)).toEqual(["Before dispose."]);
@@ -129,13 +129,13 @@ describe("Memory storage", () => {
     const store = new MemoryStore();
 
     try {
-      const dispose = await loadStoredMemory(memoryPath, tempDir, store);
+      const persistence = await loadStoredMemory(memoryPath, tempDir, store);
       await Promise.all(
         Array.from({ length: 5 }, (_, index) =>
           store.appendObservation(createObservation(`Queued memory ${index}.`)),
         ),
       );
-      await dispose();
+      await persistence.dispose();
 
       expect(await readObservationContents(memoryPath)).toEqual([
         "Queued memory 0.",

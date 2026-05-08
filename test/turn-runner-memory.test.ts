@@ -9,17 +9,18 @@ import {
 import {
   agentMessageToRaw,
   enforceObservationTokenBudget,
+  getUnobservedMessageTail,
   includeToolPairMessages,
 } from "../src/memory/observational.js";
 import { buildObserverPrompt } from "../src/memory/observational-prompts.js";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
-import type { TurnOptions } from "../src/types/protocol.js";
+import type { TurnEvent, TurnOptions } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 
 class MemoryTransformTurnRunner extends TurnRunner {
-  createMemoryTransformForTest(model: string) {
-    return this.createMemoryTransform(model);
+  createMemoryTransformForTest() {
+    return this.createMemoryTransform();
   }
 
   getMemorySnapshotForTest() {
@@ -63,9 +64,11 @@ class ModelRoutingTurnRunner extends TurnRunner {
     };
   }
 
-  protected override createMemoryTransform(model: string) {
-    this.capturedMemoryModel = model;
-    return async (messages: AgentMessage[]) => messages;
+  protected override async updateMemoryAfterAgentRun(
+    _messages: AgentMessage[],
+    options: TurnOptions | undefined,
+  ): Promise<void> {
+    this.capturedMemoryModel = this.resolveMemoryActorModel(options);
   }
 
   protected override createAgent(
@@ -90,7 +93,7 @@ class ModelRoutingTurnRunner extends TurnRunner {
 }
 
 class UsageTrackingTurnRunner extends TurnRunner {
-  protected override createMemoryTransform(_model: string) {
+  protected override createMemoryTransform() {
     return async (messages: AgentMessage[]) => {
       this.recordUsage({
         input: 5,
@@ -132,13 +135,59 @@ class UsageTrackingTurnRunner extends TurnRunner {
   }
 }
 
+class MemoryEventTurnRunner extends TurnRunner {
+  readonly memoryRuns: AgentMessage[][] = [];
+
+  protected override async updateMemoryAfterAgentRun(messages: AgentMessage[]): Promise<void> {
+    this.memoryRuns.push([...messages]);
+    const raw = messages
+      .map(agentMessageToRaw)
+      .filter((message): message is NonNullable<typeof message> => Boolean(message));
+    const range = `${raw[0]?.id ?? "unknown"}:${raw[raw.length - 1]?.id ?? "unknown"}`;
+    const observation = await this.memory.appendObservation({
+      observedDate: "2026-05-08",
+      priority: "high",
+      scope: "session",
+      source: { kind: "system" },
+      content: `<observation-group id="test" range="${range}">\n* ✅ Remembered pi-run memory payload.\n</observation-group>`,
+      tags: ["observational-memory"],
+    });
+    this.emit({
+      type: "memory",
+      phase: "observation",
+      status: "completed",
+      message: "Memory observation recorded.",
+      observations: [observation],
+    });
+  }
+
+  protected override createAgent(
+    input: AgentConfigInput,
+    onControlResult?: (result: TurnRunnerControlResult) => void,
+  ): Agent {
+    const agent = super.createAgent(input, onControlResult);
+    agent.streamFn = () => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({
+          type: "done",
+          reason: "stop",
+          message: createAssistantMessage({ text: "ok" }),
+        });
+      });
+      return stream;
+    };
+    return agent;
+  }
+}
+
 describe("TurnRunner memory", () => {
   test("observational transform does not persist raw messages below observation threshold", async () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
     });
-    const transform = runner.createMemoryTransformForTest("anthropic:claude-opus-4-7");
+    const transform = runner.createMemoryTransformForTest();
     const messages: AgentMessage[] = [
       {
         role: "user",
@@ -156,7 +205,7 @@ describe("TurnRunner memory", () => {
     });
   });
 
-  test("observational transform emits memory activity events", async () => {
+  test("observational transform only shapes context at compaction threshold", async () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
@@ -170,32 +219,18 @@ describe("TurnRunner memory", () => {
     });
     const events: unknown[] = [];
     runner.subscribe((event) => events.push(event));
-    const transform = runner.createMemoryTransformForTest("anthropic:claude-opus-4-7");
+    const transform = runner.createMemoryTransformForTest();
 
-    await expect(
-      transform([
-        {
-          role: "user",
-          content: [{ type: "text", text: "x".repeat(100) }],
-          timestamp: 1,
-        },
-      ]),
-    ).rejects.toThrow();
-
-    expect(events.filter((event) => (event as { type?: string }).type === "memory")).toEqual([
+    const transformed = await transform([
       {
-        type: "memory",
-        phase: "observation",
-        status: "running",
-        message: "Compacting conversation into memory...",
-      },
-      {
-        type: "memory",
-        phase: "observation",
-        status: "completed",
-        message: "Memory observation complete.",
+        role: "user",
+        content: [{ type: "text", text: "x".repeat(100) }],
+        timestamp: 1,
       },
     ]);
+
+    expect(events.filter((event) => (event as { type?: string }).type === "memory")).toEqual([]);
+    expect(transformed.length).toBeLessThanOrEqual(1);
   });
 
   test("observational transform waits for a full new suffix after first observation", async () => {
@@ -218,7 +253,7 @@ describe("TurnRunner memory", () => {
     );
     const events: unknown[] = [];
     runner.subscribe((event) => events.push(event));
-    const transform = runner.createMemoryTransformForTest("anthropic:claude-opus-4-7");
+    const transform = runner.createMemoryTransformForTest();
     const messages: AgentMessage[] = [
       {
         ...createAssistantMessage({ text: "x".repeat(100), timestamp: 1 }),
@@ -306,50 +341,124 @@ describe("TurnRunner memory", () => {
     expect(text).not.toContain("opaque-image-bytes");
   });
 
-  test("observational transform emits reflection activity events", async () => {
-    const runner = new MemoryTransformTurnRunner({
+  test("observation ranges, not no-op passes, advance observed message progress", () => {
+    const observed = {
+      ...createAssistantMessage({ text: "Observed result", timestamp: 1 }),
+      responseId: "observed",
+    };
+    const later = {
+      role: "user" as const,
+      content: [{ type: "text" as const, text: "low-signal context for later" }],
+      timestamp: 2,
+    };
+    const raw = [observed, later]
+      .map(agentMessageToRaw)
+      .filter((message): message is NonNullable<typeof message> => Boolean(message));
+
+    expect(
+      getUnobservedMessageTail(raw, [
+        {
+          id: "mem_test",
+          createdAt: 1,
+          observedDate: "2026-05-08",
+          priority: "high",
+          scope: "session",
+          source: { kind: "system" },
+          content:
+            '<observation-group id="test" range="msg_assistant_observed:msg_assistant_observed">\n* ✅ Observed result.\n</observation-group>',
+          tags: ["observational-memory"],
+        },
+      ]).map((message) => message.textPreview),
+    ).toEqual(["low-signal context for later"]);
+
+    expect(getUnobservedMessageTail(raw, []).map((message) => message.textPreview)).toEqual([
+      "Observed result",
+      "low-signal context for later",
+    ]);
+  });
+
+  test("memory event payloads are emitted after a pi-agent run below compaction threshold", async () => {
+    const runner = new MemoryEventTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
-      memory: {
-        observation: {
-          messageTokens: 1_000,
-          bufferActivation: 100,
-        },
-        reflection: {
-          observationTokens: 10,
-          bufferActivation: 5,
-        },
-      },
     });
-    await runner.appendObservationForTest("x".repeat(100));
-    const events: unknown[] = [];
+    const events: TurnEvent[] = [];
     runner.subscribe((event) => events.push(event));
-    const transform = runner.createMemoryTransformForTest("anthropic:claude-opus-4-7");
 
-    await expect(
-      transform([
-        {
-          role: "user",
-          content: [{ type: "text", text: "below observation threshold" }],
-          timestamp: 1,
-        },
-      ]),
-    ).rejects.toThrow();
+    const terminal = await (
+      await startTurn(runner, { mode: "agent", prompt: "Remember beta_checkout." })
+    ).turn;
+    const memoryEvents = events.filter((event) => event.type === "memory");
+    const terminalIndex = events.indexOf(terminal);
+    let lastMemoryIndex = -1;
+    for (let index = events.length - 1; index >= 0; index--) {
+      if (events[index]?.type === "memory") {
+        lastMemoryIndex = index;
+        break;
+      }
+    }
 
-    expect(events.filter((event) => (event as { type?: string }).type === "memory")).toEqual([
-      {
-        type: "memory",
-        phase: "reflection",
-        status: "running",
-        message: "Reflecting memory observations...",
-      },
-      {
-        type: "memory",
-        phase: "reflection",
-        status: "completed",
-        message: "Memory reflection complete.",
-      },
-    ]);
+    expect(runner.memoryRuns).toHaveLength(1);
+    expect(memoryEvents).toHaveLength(1);
+    expect(memoryEvents[0]).toMatchObject({
+      type: "memory",
+      phase: "observation",
+      status: "completed",
+      message: "Memory observation recorded.",
+      observations: [
+        expect.objectContaining({
+          content: expect.stringContaining("Remembered pi-run memory payload."),
+        }),
+      ],
+    });
+    expect(lastMemoryIndex).toBeGreaterThanOrEqual(0);
+    expect(terminalIndex).toBeGreaterThan(lastMemoryIndex);
+    expect(terminal.state.agent.messages.length).toBeGreaterThan(0);
+  });
+
+  test("resolveTurnOptions falls back through turn → state base → config → default", () => {
+    const configured = new TurnRunner({
+      model: "anthropic:claude-sonnet-4-5",
+      thinkingLevel: "high",
+      skillDiscovery: { includeDefaults: false },
+    });
+    expect(configured.resolveTurnOptions()).toMatchObject({
+      model: "anthropic:claude-sonnet-4-5",
+      thinkingLevel: "high",
+    });
+    expect(
+      configured.resolveTurnOptions(undefined, { model: "anthropic:claude-3-haiku-20240307" }),
+    ).toMatchObject({ model: "anthropic:claude-3-haiku-20240307", thinkingLevel: "high" });
+    expect(
+      configured.resolveTurnOptions(
+        { model: "anthropic:claude-opus-4-7", thinkingLevel: "low" },
+        { model: "anthropic:claude-3-haiku-20240307" },
+      ),
+    ).toMatchObject({ model: "anthropic:claude-opus-4-7", thinkingLevel: "low" });
+
+    const unconfigured = new TurnRunner({ skillDiscovery: { includeDefaults: false } });
+    expect(unconfigured.resolveTurnOptions()).toMatchObject({
+      model: "opus-4.7",
+      thinkingLevel: undefined,
+    });
+  });
+
+  test("resolveMemoryActorModel falls back through turn → config → default", () => {
+    const configured = new TurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      memoryModel: "anthropic:claude-3-5-haiku-latest",
+      skillDiscovery: { includeDefaults: false },
+    });
+    expect(configured.resolveMemoryActorModel(undefined)).toBe("anthropic:claude-3-5-haiku-latest");
+    expect(
+      configured.resolveMemoryActorModel({ memoryModel: "anthropic:claude-3-haiku-20240307" }),
+    ).toBe("anthropic:claude-3-haiku-20240307");
+
+    const unconfigured = new TurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    expect(unconfigured.resolveMemoryActorModel(undefined)).toBe("haiku-4.5");
   });
 
   test("routes turn and memory model overrides independently", async () => {

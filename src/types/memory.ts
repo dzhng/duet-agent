@@ -55,14 +55,16 @@ export interface ObservationalMemorySnapshot {
   updatedAt: number;
 }
 
-/** Progress update emitted while observational memory is compacting context. */
+/** Progress/result update emitted while observational memory work runs during a turn. */
 export interface ObservationalMemoryActivityEvent {
-  /** Memory operation currently affecting the model context. */
+  /** Memory operation currently processing the latest pi-agent transcript boundary. */
   phase: "observation" | "reflection";
   /** Whether the operation is still running or has finished. */
   status: "running" | "completed";
   /** Human-readable status suitable for CLI/TUI surfaces. */
   message: string;
+  /** Durable observations produced or replaced by a completed memory operation. */
+  observations?: Observation[];
 }
 
 /** Runtime settings for converting turn-runner conversation context into observations. */
@@ -71,11 +73,11 @@ export interface ObservationalMemorySettings {
   scope: ObservationScope;
   /** Settings for extracting new observations from raw agent messages. */
   observation: {
-    /** Raw message token threshold that triggers observation extraction. */
+    /** Raw-message token threshold that triggers replacing old transcript context. */
     messageTokens: number;
     /** Maximum raw-message tokens to send to one observer call. */
     maxTokensPerBatch: number;
-    /** Raw-message token budget to retain after observation compacts older context. */
+    /** Raw-message token budget retained when context replacement is needed. */
     bufferActivation: number;
     /** Optional hard stop for observation work after a caller-defined threshold. */
     blockAfter?: number;

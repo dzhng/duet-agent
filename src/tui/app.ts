@@ -98,6 +98,7 @@ const COLORS = {
   system: "#FBBF24",
   error: "#F87171",
   hint: "#6B7280",
+  memory: "#6B7280",
   status: "#34D399",
   border: "#374151",
 } as const;
@@ -780,9 +781,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       setStatus(`● ${event.message} (Esc to interrupt, Ctrl+C to force quit)`);
       return;
     }
+    const body = formatMemoryEventBody(event);
+    if (body) {
+      appendBlock(`[memory:${event.phase}]`, body, COLORS.memory);
+    }
     if (running) {
       setStatus("● working… (Esc to interrupt, Ctrl+C to force quit)");
     }
+  }
+
+  function formatMemoryEventBody(event: Extract<TurnEvent, { type: "memory" }>): string {
+    if (!event.observations || event.observations.length === 0) {
+      return "";
+    }
+    const content = event.observations.map((observation) => observation.content).join("\n\n");
+    return truncateToolResult(`${event.message}\n${content}`);
   }
 
   // ---- input handling --------------------------------------------------------

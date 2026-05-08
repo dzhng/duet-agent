@@ -9,14 +9,19 @@ import type {
 import type { MemoryStore } from "./store.js";
 
 type MemoryDatabase = PGlite;
+export interface MemoryPersistenceHandle {
+  flush: () => Promise<void>;
+  dispose: () => Promise<void>;
+}
 
 export async function loadStoredMemory(
   memoryPath: string | false | undefined,
   cwd: string,
   store: MemoryStore,
-): Promise<() => Promise<void>> {
+): Promise<MemoryPersistenceHandle> {
   if (!memoryPath) {
-    return async () => {};
+    const noop = async () => {};
+    return { flush: noop, dispose: noop };
   }
 
   const database = await openMemoryDatabase(resolveMemoryPath(memoryPath, cwd));
@@ -30,11 +35,15 @@ export async function loadStoredMemory(
   };
   const unsubscribe = store.on(enqueueWrite);
 
-  return async () => {
-    unsubscribe();
+  const flush = async () => {
     await writeQueue;
+  };
+  const dispose = async () => {
+    unsubscribe();
+    await flush();
     await database.close();
   };
+  return { flush, dispose };
 }
 
 async function openMemoryDatabase(path: string): Promise<MemoryDatabase> {

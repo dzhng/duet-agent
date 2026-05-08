@@ -81,7 +81,7 @@ export async function fetchDefaultSkills(options: FetchSkillsOptions): Promise<F
       `Failed to fetch default skills: ${response.status} ${response.statusText}${detail ? ` — ${detail}` : ""}`,
     );
   }
-  const etag = response.headers.get("ETag")?.replace(/^"|"$/g, "");
+  const etag = parseSkillHashEtag(response.headers.get("ETag"));
   if (!etag) {
     throw new Error("Skills response missing ETag header");
   }
@@ -105,6 +105,12 @@ export function hashSkills(skills: readonly RemoteSkill[]): string {
     hash.update("\0");
   }
   return hash.digest("hex");
+}
+
+function parseSkillHashEtag(etag: string | null): string | null {
+  if (!etag) return null;
+  const match = etag.trim().match(/^(?:W\/)?"([^"]+)"$/);
+  return match?.[1] ?? null;
 }
 
 /**

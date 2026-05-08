@@ -121,10 +121,16 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
 
     Group observations by date, then list each with 24-hour time.
 
+    hasMemory:
+    - true when the message history contains durable information worth remembering
+    - false when the exchange is only transient chatter, a greeting, or otherwise has no useful future context
+    - Always call the structured output tool. Use hasMemory=false instead of skipping the tool call.
+
     observations:
     Date: Dec 4, 2025
     * 🔴 (14:30) User prefers direct answers
     * 🔴 (14:31) Working on feature X
+    - When hasMemory=false, observations must be an empty string.
 
     currentTask:
     State the current task(s) explicitly:

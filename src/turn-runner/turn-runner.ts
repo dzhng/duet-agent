@@ -1,4 +1,9 @@
-import { Agent, type AgentEvent, type AgentTool } from "@earendil-works/pi-agent-core";
+import {
+  Agent,
+  type AgentEvent,
+  type AgentMessage,
+  type AgentTool,
+} from "@earendil-works/pi-agent-core";
 import { getEnvApiKey, type Usage } from "@earendil-works/pi-ai";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
@@ -6,8 +11,11 @@ import dedent from "dedent";
 
 import { assistantText } from "../core/serializer.js";
 import { toXML } from "../lib/xml.js";
-import { createObservationalMemoryTransform } from "../memory/observational.js";
-import { loadStoredMemory } from "../memory/storage.js";
+import {
+  createObservationalContextTransform,
+  updateObservationalMemory,
+} from "../memory/observational.js";
+import { loadStoredMemory, type MemoryPersistenceHandle } from "../memory/storage.js";
 import { MemoryStore } from "../memory/store.js";
 import {
   DEFAULT_CLI_MEMORY_MODEL,
@@ -75,8 +83,8 @@ export class TurnRunner {
   private readonly eventHandlers = new Set<TurnEventHandler>();
   /** In-memory observation store used by context transforms during agent turns. */
   protected readonly memory = new MemoryStore();
-  /** Stops memory persistence subscriptions/databases when the runner is disposed. */
-  private memoryDispose?: () => Promise<void>;
+  /** Hydrates, flushes, and disposes durable observation storage. */
+  private memoryPersistence?: MemoryPersistenceHandle;
   /**
    * Session-scoped parent pi agent. It is created once during start() so model,
    * tools, and system prompt shape stay stable for prompt caching while the
@@ -125,8 +133,8 @@ export class TurnRunner {
     this.activeStateWorkPrompt = undefined;
     this.setQueuedCommands([]);
     this.clearFollowUpQueue();
-    await this.memoryDispose?.();
-    this.memoryDispose = undefined;
+    await this.memoryPersistence?.dispose();
+    this.memoryPersistence = undefined;
     await this.mcpRuntime?.dispose();
     this.mcpRuntime = undefined;
   }
@@ -969,6 +977,9 @@ export class TurnRunner {
         messages,
       },
     } satisfies TurnState;
+    if (status === "completed") {
+      await this.updateMemoryAfterAgentRun(messages, state.options);
+    }
 
     return {
       control: this.parentControlResult,
@@ -994,13 +1005,39 @@ export class TurnRunner {
     return result;
   }
 
+  protected async updateMemoryAfterAgentRun(
+    messages: AgentMessage[],
+    options: TurnOptions | undefined,
+  ): Promise<void> {
+    if (this.config.memoryDbPath === undefined) {
+      return;
+    }
+    await updateObservationalMemory({
+      memory: this.memory,
+      actorModel: this.resolveMemoryActorModel(options),
+      settings: this.config.memory,
+      messages,
+      onUsage: (usage) => this.recordUsage(usage),
+      onActivity: (event) => this.emit({ type: "memory", ...event }),
+    });
+    await this.memoryPersistence?.flush();
+  }
+
+  /**
+   * Memory model precedence: per-turn override → runner config → default.
+   * Exposed as a method so tests can verify the exact fallback chain that the
+   * memory observer ends up using.
+   */
+  resolveMemoryActorModel(options: TurnOptions | undefined): string {
+    return options?.memoryModel ?? this.config.memoryModel ?? DEFAULT_CLI_MEMORY_MODEL;
+  }
+
   protected createAgent(
     input: AgentConfigInput,
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
     const options = this.resolveTurnOptions(undefined, input.state.options);
     const model = resolveModelName(options.model ?? DEFAULT_CLI_MODEL);
-    const memoryModel = options.memoryModel ?? DEFAULT_CLI_MEMORY_MODEL;
     // Parent agent configuration is derived from start/session options, not
     // per-prompt command options. Keeping model and prompt shape stable protects
     // prompt caching across all pi-agent turns inside a duet-agent session.
@@ -1015,7 +1052,7 @@ export class TurnRunner {
         messages: input.state.agent.messages,
         tools: input.tools,
       },
-      transformContext: this.createMemoryTransform(memoryModel),
+      transformContext: this.createMemoryTransform(),
       toolExecution: "parallel",
       afterToolCall: async (context) => {
         const details = context.result.details;
@@ -1028,13 +1065,10 @@ export class TurnRunner {
     });
   }
 
-  protected createMemoryTransform(model: string) {
-    return createObservationalMemoryTransform({
+  protected createMemoryTransform() {
+    return createObservationalContextTransform({
       memory: this.memory,
-      actorModel: model,
       settings: this.config.memory,
-      onUsage: (usage) => this.recordUsage(usage),
-      onActivity: (event) => this.emit({ type: "memory", ...event }),
     });
   }
 
@@ -1077,7 +1111,7 @@ export class TurnRunner {
     if (this.memoryLoaded) return;
     this.memoryLoaded = true;
 
-    this.memoryDispose = await loadStoredMemory(
+    this.memoryPersistence = await loadStoredMemory(
       this.config.memoryDbPath,
       this.config.cwd ?? process.cwd(),
       this.memory,
@@ -1102,7 +1136,11 @@ export class TurnRunner {
     };
   }
 
-  private resolveTurnOptions(options?: TurnOptions, base?: TurnOptions): TurnOptions {
+  /**
+   * Single source of truth for per-turn option precedence:
+   * explicit turn options → carried-over state base → runner config → defaults.
+   */
+  resolveTurnOptions(options?: TurnOptions, base?: TurnOptions): TurnOptions {
     return {
       model: options?.model ?? base?.model ?? this.config.model ?? DEFAULT_CLI_MODEL,
       memoryModel:

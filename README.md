@@ -330,17 +330,53 @@ const terminal = await turnRunner.turn({
 });
 ```
 
-`TurnRunner.turn()` is the concurrency boundary. Callers may call it repeatedly
-while work is active; the runner folds active `prompt` and `answer` commands
-back into the active pi agent as `steer` or `follow_up`, queues wakes and other
-work it cannot absorb immediately, and emits one terminal event when the whole
-active work chain is done. The parent runner transcript stays linear: state
-machine continuations, script results, poll results, and user follow-ups rejoin
-the parent agent rather than creating separate conversation branches.
+## TurnRunner Lifecycle
+
+`start()` prepares a session, but it does not run agent work. It hydrates durable memory, loads skills and agent files, connects MCP servers, creates or resumes `TurnState`, initializes the parent pi agent, and emits `turn_started`. After that, every `turn()` call accepts one command: `prompt`, `answer`, or `wake`.
+
+```mermaid
+flowchart TD
+  Start["start(command)"] --> Setup["hydrate memory\nload skills + agent files\nconnect MCP servers"]
+  Setup --> State["create or resume TurnState"]
+  State --> Parent["initialize parent pi agent"]
+  Parent --> Started["emit turn_started"]
+
+  Started --> Command["turn(prompt | answer | wake)"]
+  Command --> Active{"active turn\nalready running?"}
+  Active -- yes --> Fold["fold prompt/answer into parent agent\nor queue work behind active chain"]
+  Fold --> ActiveTerminal["return activeTurnPromise"]
+
+  Active -- no --> Chain["run turn chain"]
+  Chain --> Dispatch{"command type"}
+  Dispatch -- prompt/answer --> Mode{"state.mode"}
+  Dispatch -- wake --> Wake["resume scheduled poll/timer state"]
+
+  Mode -- agent --> ParentRun["run parent pi agent"]
+  Mode -- auto or explicit state machine --> Router["parent agent selects next state"]
+  Router --> StateRun["run agent, script, poll, timer,\nor terminal state"]
+  StateRun --> StateResult{"state result"}
+  StateResult -- completed --> Router
+  StateResult -- ask --> Terminal
+  StateResult -- sleep --> Terminal
+  StateResult -- terminal/interrupted --> Terminal
+  Wake --> StateRun
+
+  ParentRun --> Observe["observe transcript suffix\nreflect large observation logs\nflush durable memory"]
+  Router --> Observe
+  Observe --> Queue{"queued commands?"}
+  Queue -- yes --> Dispatch
+  Queue -- no --> Terminal["emit one terminal event\ncomplete | ask | sleep | interrupted"]
+  Terminal --> Snapshot["store latest TurnState in runner"]
+  Snapshot --> Next["caller persists snapshot\nand may call turn() again later"]
+```
+
+`TurnRunner.turn()` is the concurrency boundary. Callers may invoke it repeatedly while work is active; the runner folds active `prompt` and `answer` commands back into the active pi agent as `steer` or `follow_up`, queues wakes and work it cannot absorb immediately, and emits one terminal event when the whole active work chain is done.
+
+The parent runner transcript stays linear across the lifecycle. State-machine continuations, script results, poll results, and user follow-ups all rejoin the parent agent instead of creating separate conversation branches. Terminal events carry the next `TurnState`; callers that need process-level durability persist that snapshot and pass it back to a later `start({ state })`.
 
 ## Memory And Persistence
 
-`TurnRunner` owns memory at runtime. It holds a `MemoryStore` in process, hydrates durable observations from PGlite before the first turn, and subscribes to memory-store events to write future observation changes. Raw conversation messages stay in `TurnState.agent.messages`; memory persistence stores only derived observations/reflections.
+`TurnRunner` owns memory at runtime. It holds a `MemoryStore` in process, hydrates durable observations from PGlite before the first turn, and subscribes to memory-store events to write future observation changes. After each pi-agent run, the runner observes the latest unobserved transcript suffix, reflects oversized observation logs, emits memory events with generated observation payloads, and waits for durable writes before continuing. Raw conversation messages stay in `TurnState.agent.messages`; memory persistence stores only derived observations/reflections.
 
 ```typescript
 import { TurnRunner } from "@duetso/agent";
@@ -351,7 +387,7 @@ const turnRunner = new TurnRunner({
 });
 ```
 
-By default, the CLI stores durable observations in `~/.duet/memory.db`; run it with `--no-memory` to keep observational memory in process only. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, compaction, and observation persistence.
+By default, the CLI stores durable observations in `~/.duet/memory.db`; run it with `--no-memory` to keep observational memory in process only. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, pi-turn observation/reflection, compaction, and observation persistence.
 
 You can also resume directly from saved state. The runner owns state
 internally after `start`, so resumed state is handed in through the start
@@ -371,9 +407,9 @@ Resume continues turn runner session state, not an in-flight model/tool call. An
 
 Observational memory is enabled by default with thresholds tuned for modern 200k-token model windows:
 
-- Raw messages are observed around `150_000` tokens so exact transcript context and prompt caching are used before compaction.
-- Observation logs are reflected around `90_000` tokens, targeting about `65_000` tokens after reflection.
-- Raw-tail retention keeps about `40_000` exact message tokens after observation activation.
+- Raw messages are observed after each pi-agent run; the `100_000` token threshold controls when old raw transcript context is replaced.
+- Observation logs are reflected around `60_000` tokens, targeting about `40_000` tokens after reflection.
+- Raw-tail retention keeps about `30_000` exact message tokens after context replacement activates.
 - Observation context is injected as reminder messages; replacing raw context with observations/reflections is the compaction path.
 
 ## Skills

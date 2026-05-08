@@ -15,11 +15,9 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { type TextContent } from "@earendil-works/pi-ai";
 import dotenv from "dotenv";
 import packageJson from "../package.json" with { type: "json" };
 import { shimDuetApiKeyToAiGateway } from "./model-resolution/duet-gateway.js";
-import { formatCompactJson } from "./lib/compact-json.js";
 import { resolveDuetAppBaseUrl } from "./lib/duet-app-url.js";
 import { loginWithBrowser } from "./lib/login.js";
 import { maybeAutoSyncDefaultSkills, syncDefaultSkills } from "./lib/sync-skills.js";
@@ -33,7 +31,6 @@ import { SessionManager } from "./session/session-manager.js";
 import { discoverInstalledSkills, resolveSkillScope } from "./turn-runner/skills.js";
 import { runTui } from "./tui/app.js";
 import type { TurnRunnerConfig } from "./types/config.js";
-import type { TurnStep, TurnTerminalEvent, TurnTokenUsage } from "./types/protocol.js";
 
 const VERSION_CHECK_TIMEOUT_MS = 1_500;
 const DEFAULT_RESUME_HISTORY_LINES = 40;
@@ -255,12 +252,14 @@ async function main() {
   modelName = modelResolution.modelName;
   memoryModelName = memoryModelResolution.modelName;
 
-  // The TUI owns rendering when active, so we suppress stdout step printing
-  // there to avoid corrupting the alternate-screen UI.
-  const useTui = interactive && !jsonOutput;
+  // The CLI has exactly two rendering modes: the interactive TUI, or JSONL
+  // events. Supplying a prompt selects JSONL so one-shot runs have a stable
+  // machine-readable contract by default.
+  const useTui = shouldUseTui({ interactive, jsonOutput, prompt });
+  const useJson = !useTui;
 
   const newVersionNotice = await getNewVersionNotice();
-  if (!useTui) {
+  if (useJson) {
     if (newVersionNotice) process.stderr.write(`${newVersionNotice}\n`);
     process.stderr.write(`Model: ${modelName}\n`);
     process.stderr.write(`Source: ${describeModelResolution(modelResolution)}\n`);
@@ -269,59 +268,9 @@ async function main() {
   }
 
   const manager = new SessionManager(config);
-  let streamedTextThisTurn = false;
-  let activeTextDelta = false;
-  let activeTextDeltaNeedsNewline = false;
-  let activeReasoningDelta = false;
-  let activeReasoningDeltaNeedsNewline = false;
-  const finishActiveDeltaStreams = () => {
-    if (activeTextDelta) {
-      if (activeTextDeltaNeedsNewline) process.stdout.write("\n");
-      activeTextDelta = false;
-      activeTextDeltaNeedsNewline = false;
-    }
-    if (activeReasoningDelta) {
-      if (activeReasoningDeltaNeedsNewline) process.stderr.write("\n");
-      process.stderr.write("[/reasoning]\n");
-      activeReasoningDelta = false;
-      activeReasoningDeltaNeedsNewline = false;
-    }
-  };
   manager.subscribe(({ event }) => {
-    if (jsonOutput) {
+    if (useJson) {
       process.stdout.write(`${JSON.stringify(event)}\n`);
-    } else if (event.type === "step" && !useTui) {
-      if (event.step.type === "text_delta") {
-        streamedTextThisTurn = true;
-        activeTextDelta = true;
-        activeTextDeltaNeedsNewline = !event.step.delta.endsWith("\n");
-        process.stdout.write(event.step.delta);
-      } else if (event.step.type === "reasoning_delta") {
-        if (!activeReasoningDelta) process.stderr.write("\n[reasoning]\n");
-        activeReasoningDelta = true;
-        activeReasoningDeltaNeedsNewline = !event.step.delta.endsWith("\n");
-        process.stderr.write(event.step.delta);
-      } else if (event.step.type === "text") {
-        streamedTextThisTurn = true;
-        if (activeTextDelta) {
-          finishActiveDeltaStreams();
-        } else {
-          handleStep(event.step);
-        }
-      } else if (event.step.type === "reasoning" && activeReasoningDelta) {
-        finishActiveDeltaStreams();
-      } else {
-        handleStep(event.step);
-      }
-    } else if (
-      event.type === "step" &&
-      (event.step.type === "text" || event.step.type === "text_delta")
-    ) {
-      // Track streaming even when the TUI is rendering, so post-TUI fallback
-      // result handling stays consistent.
-      streamedTextThisTurn = true;
-    } else if (!jsonOutput && !useTui && isTerminalEvent(event)) {
-      finishActiveDeltaStreams();
     }
   });
 
@@ -330,12 +279,8 @@ async function main() {
       ? manager.resume(resumeSessionId)
       : manager.create({
           ...(config.mode ? { mode: config.mode } : {}),
-          // Defer the prompt for TUI sessions so the user sees the prompt
-          // streamed inside the UI rather than during the pre-TUI phase.
           ...(useTui || !prompt ? {} : { prompt }),
         });
-    let terminal: TurnTerminalEvent | undefined;
-    let initialTuiPrompt: string | undefined;
     let resumedHistory: import("@earendil-works/pi-agent-core").AgentMessage[] | undefined;
 
     if (resumeSessionId) {
@@ -352,33 +297,15 @@ async function main() {
     }
 
     if (prompt && resumeSessionId) {
-      streamedTextThisTurn = false;
-      if (useTui) {
-        initialTuiPrompt = prompt;
-      } else {
-        await session.prompt({ message: prompt });
-        terminal = await session.waitForTerminal();
-        handleTerminal(terminal, {
-          suppressHumanOutput: jsonOutput,
-          suppressResult: streamedTextThisTurn,
-        });
-      }
+      await session.prompt({ message: prompt });
+      await session.waitForTerminal();
     } else if (prompt && !resumeSessionId) {
-      if (useTui) {
-        initialTuiPrompt = prompt;
-      } else {
-        terminal = await session.waitForTerminal();
-        handleTerminal(terminal, {
-          suppressHumanOutput: jsonOutput,
-          suppressResult: streamedTextThisTurn,
-        });
-      }
+      await session.waitForTerminal();
     }
 
     if (useTui) {
-      terminal = await runTui({
+      await runTui({
         session,
-        ...(initialTuiPrompt ? { initialPrompt: initialTuiPrompt } : {}),
         ...(resumedHistory ? { history: resumedHistory } : {}),
         resumeHistoryLines,
         modelName,
@@ -410,94 +337,6 @@ async function main() {
   } finally {
     await manager.dispose();
   }
-}
-
-function handleTerminal(
-  terminal: TurnTerminalEvent,
-  options: { suppressHumanOutput?: boolean; suppressResult?: boolean } = {},
-): void {
-  if (options.suppressHumanOutput) return;
-  if (terminal.type === "complete" && terminal.error) {
-    throw new Error(terminal.error);
-  }
-  if (terminal.type === "complete" && terminal.result && !options.suppressResult) {
-    process.stdout.write(`${terminal.result}\n`);
-  }
-  if (terminal.type === "ask") {
-    for (const question of terminal.questions) {
-      process.stdout.write(`${question.question}\n`);
-    }
-  }
-  if (terminal.type === "interrupted") {
-    process.stderr.write("Interrupted.\n");
-  }
-  if (terminal.type === "sleep") {
-    process.stderr.write(`Sleeping until ${new Date(terminal.wakeAt).toISOString()}.\n`);
-  }
-  if (terminal.usage) {
-    process.stderr.write(`${formatUsage(terminal.usage)}\n`);
-  }
-}
-
-function isTerminalEvent(event: { type: string }): event is TurnTerminalEvent {
-  return (
-    event.type === "complete" ||
-    event.type === "ask" ||
-    event.type === "interrupted" ||
-    event.type === "sleep"
-  );
-}
-
-function formatUsage(usage: TurnTokenUsage): string {
-  const parts = [`in=${usage.input}`, `out=${usage.output}`];
-  if (usage.cacheRead > 0) parts.push(`cached=${usage.cacheRead}`);
-  let line = `Tokens: ${parts.join(" ")}`;
-  if (usage.cost.total > 0) line += ` \u00b7 Cost: $${usage.cost.total.toFixed(4)}`;
-  return line;
-}
-
-function handleStep(step: TurnStep): void {
-  if (step.type === "text_delta") {
-    process.stdout.write(step.delta);
-  }
-  if (step.type === "reasoning_delta") {
-    process.stderr.write(step.delta);
-  }
-  if (step.type === "text") {
-    process.stdout.write(`${step.text}\n`);
-  }
-  if (step.type === "reasoning") {
-    process.stderr.write(formatReasoning(step.text));
-  }
-  if (step.type === "tool_call") {
-    process.stderr.write(formatToolCall(step));
-  }
-  if (step.type === "system") {
-    process.stderr.write(`${step.message}\n`);
-  }
-}
-
-function formatReasoning(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return "";
-  return `\n[reasoning]\n${trimmed}\n[/reasoning]\n`;
-}
-
-function formatToolCall(step: Extract<TurnStep, { type: "tool_call" }>): string {
-  const status = step.status ? ` ${step.status}` : "";
-  const input = step.input === undefined ? "" : `\n${formatCompactJson(step.input)}`;
-  let output = "";
-  if (step.output && step.output.length > 0) {
-    const text = step.output
-      .filter((b): b is TextContent => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-    if (text) {
-      const label = step.status === "error" ? "output error" : "output";
-      output = `\n[${label}]\n${text}\n[/output]\n`;
-    }
-  }
-  return `\n[tool ${step.toolName}${status}]${input}${output}\n[/tool]\n`;
 }
 
 function fail(message: string): never {
@@ -562,6 +401,14 @@ export function parseResumeHistoryLines(
     throw new Error(`${optionName} must be a non-negative integer`);
   }
   return Number(value);
+}
+
+export function shouldUseTui(input: {
+  interactive: boolean;
+  jsonOutput: boolean;
+  prompt?: string;
+}): boolean {
+  return input.interactive && !input.jsonOutput && !input.prompt;
 }
 
 async function getNewVersionNotice(): Promise<string | undefined> {
@@ -1067,7 +914,7 @@ OPTIONS
                             Load a file into the system prompt; repeatable
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
   --env-file <path>        Shared env file to load after <workdir>/.env (default: ${DEFAULT_DUET_ENV_FILE})
-  --json                    Print streamed events as JSON lines
+  --json                    Force JSONL event output instead of the TUI
   -v, --version            Print the installed duet version and exit
   -h, --help               Show this help
 

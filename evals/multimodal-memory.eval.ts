@@ -1,20 +1,21 @@
 import { describe, expect } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type ImageContent } from "@earendil-works/pi-ai";
-import { createObservationalMemoryTransform } from "../src/memory/observational.js";
+import { updateObservationalMemory } from "../src/memory/observational.js";
 import { MemoryStore } from "../src/memory/store.js";
+import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const memoryModel = DEFAULT_CLI_MEMORY_MODEL;
 
 describe("multimodal memory", () => {
   testIfDocker(
     "observes visual details from compacted image messages",
     async () => {
       const memory = new MemoryStore();
-      const transform = createObservationalMemoryTransform({
+      await updateObservationalMemory({
         memory,
-        actorModel: model,
+        actorModel: memoryModel,
         settings: {
           observation: {
             messageTokens: 5,
@@ -28,21 +29,20 @@ describe("multimodal memory", () => {
             bufferActivation: 500,
           },
         },
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Remember the visual details in the attached image under marker image-memory-472.",
+              },
+              redSquareImage,
+            ],
+            timestamp: Date.now(),
+          } satisfies AgentMessage,
+        ],
       });
-
-      await transform([
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Remember the visual details in the attached image under marker image-memory-472.",
-            },
-            redSquareImage,
-          ],
-          timestamp: Date.now(),
-        } satisfies AgentMessage,
-      ]);
 
       const snapshot = await memory.getSnapshot();
       const observations = snapshot.observations
