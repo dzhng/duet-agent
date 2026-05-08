@@ -779,10 +779,10 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
     return;
   }
 
-  console.error(`Syncing default skills from ${resolveDuetAppBaseUrl()}...`);
+  console.error(`Checking default skills against ${resolveDuetAppBaseUrl()}...`);
   const syncResult = await syncDefaultSkills({ apiKey: result.apiKey });
   if (syncResult.status === "unchanged") {
-    console.error(`Default skills already up to date (${syncResult.count} files).`);
+    console.error("Default skills already up to date.");
   } else {
     console.error(`Synced ${syncResult.count} default skills.`);
   }
@@ -1078,8 +1078,10 @@ SKILL SYNC
   skills with Claude Code / Codex / etc.
 
 OVERRIDES
-  Set DUET_APP_BASE_URL (or DUET_GATEWAY_BASE_URL with the standard
-  /api/v1/ai-gateway suffix) to point the CLI at a non-production deployment.
+  Set DUET_GATEWAY_BASE_URL (e.g. https://staging.duet.so/api/v1/ai-gateway)
+  to re-point both the AI gateway provider and the CLI auth/sync endpoints at
+  a non-production deployment. The /api/v1/ai-gateway suffix is stripped to
+  get the app origin used for /cli/login and /api/v1/cli/*.
 `);
 }
 

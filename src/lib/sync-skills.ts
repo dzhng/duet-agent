@@ -11,9 +11,12 @@ import { resolveDuetAppBaseUrl } from "./duet-app-url.js";
  * verifies the returned hash, dumps the files into ~/.duet/skills/, and
  * registers them with the local agent harness via `skills add`.
  *
+ * The hash is used as a conditional GET ETag: we send the on-disk hash via
+ * `If-None-Match` and the server returns `304 Not Modified` when it still
+ * matches, so a no-op `duet login` never transfers the payload at all.
+ *
  * On any kind of registration failure we leave the on-disk hash untouched
- * so the next `duet login` (or `duet login --sync-skills-only`) retries
- * the write.
+ * so the next login retries the write.
  */
 
 const DEFAULT_SKILLS_DIR = join(homedir(), ".duet", "skills");
@@ -29,11 +32,9 @@ export interface SkillsResponse {
   skills: RemoteSkill[];
 }
 
-export interface SyncSkillsResult {
-  status: "unchanged" | "synced";
-  hash: string;
-  count: number;
-}
+export type SyncSkillsResult =
+  | { status: "unchanged"; hash: string }
+  | { status: "synced"; hash: string; count: number };
 
 export interface SyncSkillsOptions {
   apiKey: string;
@@ -51,16 +52,34 @@ export interface SyncSkillsOptions {
   runShell?: (script: string) => Promise<{ exitCode: number; stderr: string }>;
 }
 
-export async function fetchDefaultSkills(options: {
+export interface FetchSkillsOptions {
   apiKey: string;
   appBaseUrl?: string;
   fetchFn?: typeof fetch;
-}): Promise<SkillsResponse> {
+  /** Sent as `If-None-Match`; server returns 304 when it still matches. */
+  knownHash?: string | null;
+}
+
+export type FetchSkillsResult =
+  | { status: "not-modified"; hash: string }
+  | { status: "modified"; payload: SkillsResponse };
+
+export async function fetchDefaultSkills(options: FetchSkillsOptions): Promise<FetchSkillsResult> {
   const baseUrl = options.appBaseUrl ?? resolveDuetAppBaseUrl();
   const fetchFn = options.fetchFn ?? fetch;
-  const response = await fetchFn(`${baseUrl}/api/v1/cli/skills`, {
-    headers: { Authorization: `Bearer ${options.apiKey}` },
-  });
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${options.apiKey}`,
+  };
+  if (options.knownHash) {
+    headers["If-None-Match"] = `"${options.knownHash}"`;
+  }
+  const response = await fetchFn(`${baseUrl}/api/v1/cli/skills`, { headers });
+  if (response.status === 304) {
+    if (!options.knownHash) {
+      throw new Error("Server returned 304 without a known hash to compare");
+    }
+    return { status: "not-modified", hash: options.knownHash };
+  }
   if (!response.ok) {
     const detail = (await safeReadText(response)).slice(0, 256);
     throw new Error(
@@ -71,12 +90,11 @@ export async function fetchDefaultSkills(options: {
   if (!body || typeof body.hash !== "string" || !Array.isArray(body.skills)) {
     throw new Error("Unexpected skills response shape");
   }
-
   const recomputed = hashSkills(body.skills);
   if (recomputed !== body.hash) {
     throw new Error("Skill payload hash mismatch — refusing to write");
   }
-  return body;
+  return { status: "modified", payload: body };
 }
 
 export function hashSkills(skills: readonly RemoteSkill[]): string {
@@ -95,16 +113,19 @@ export async function syncDefaultSkills(options: SyncSkillsOptions): Promise<Syn
   const hashFilePath = options.hashFilePath ?? DEFAULT_SKILLS_HASH_FILE;
   const register = options.registerSkills ?? true;
 
-  const payload = await fetchDefaultSkills({
+  const knownHash = await readExistingHash(hashFilePath);
+  const fetched = await fetchDefaultSkills({
     apiKey: options.apiKey,
     appBaseUrl: options.appBaseUrl,
     fetchFn: options.fetchFn,
+    knownHash,
   });
 
-  const existing = await readExistingHash(hashFilePath);
-  if (existing === payload.hash) {
-    return { status: "unchanged", hash: payload.hash, count: payload.skills.length };
+  if (fetched.status === "not-modified") {
+    return { status: "unchanged", hash: fetched.hash };
   }
+
+  const payload = fetched.payload;
 
   await rm(skillsDir, { recursive: true, force: true });
   await mkdir(skillsDir, { recursive: true });
