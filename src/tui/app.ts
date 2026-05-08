@@ -3,8 +3,10 @@ import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import {
   BoxRenderable,
   createCliRenderer,
+  fg,
   type KeyEvent,
   ScrollBoxRenderable,
+  t,
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
@@ -69,6 +71,23 @@ export interface StartupHeaderInput {
   newVersionNotice?: string;
 }
 
+export interface SkillAutocompleteItem {
+  name: string;
+  description?: string;
+  path?: string;
+}
+
+export interface SkillAutocompleteToken {
+  start: number;
+  end: number;
+  query: string;
+}
+
+export interface SkillAutocompleteReplacement {
+  text: string;
+  cursorOffset: number;
+}
+
 const COLORS = {
   user: "#7DD3FC",
   agent: "#FFFFFF",
@@ -84,6 +103,10 @@ const COLORS = {
 const HINT_IDLE = "Enter: send · Esc: quit · Ctrl+C: force quit";
 const HINT_RUNNING =
   "Enter: steer · Shift+Enter: queue follow-up · Esc: interrupt and quit · Ctrl+C: force quit";
+const SKILL_AUTOCOMPLETE_LIMIT = 8;
+const SKILL_AUTOCOMPLETE_TOKEN = /^\/([A-Za-z0-9_.-]*)$/;
+const SKILL_AUTOCOMPLETE_DESCRIPTION_WIDTH = 72;
+const SKILL_AUTOCOMPLETE_DESCRIPTION_LINES = 2;
 
 interface InternalKeyHandlerLike {
   onInternal(event: "keypress", handler: (key: KeyEvent) => void): void;
@@ -202,6 +225,37 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     flexShrink: 0,
   });
 
+  const skillAutocompletePanel = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    border: true,
+    borderColor: COLORS.border,
+    paddingLeft: 1,
+    paddingRight: 1,
+    flexShrink: 0,
+  });
+  skillAutocompletePanel.visible = false;
+
+  const skillAutocompleteTitle = new TextRenderable(renderer, {
+    content: "skills",
+    fg: COLORS.status,
+    height: 1,
+    flexShrink: 0,
+  });
+  const skillAutocompleteRows = Array.from({ length: SKILL_AUTOCOMPLETE_LIMIT }, () => {
+    const row = new TextRenderable(renderer, {
+      content: "",
+      fg: COLORS.hint,
+      height: 3,
+      flexShrink: 0,
+    });
+    row.visible = false;
+    return row;
+  });
+  skillAutocompletePanel.add(skillAutocompleteTitle);
+  for (const row of skillAutocompleteRows) {
+    skillAutocompletePanel.add(row);
+  }
+
   const inputBox = new BoxRenderable(renderer, {
     flexDirection: "row",
     border: true,
@@ -233,6 +287,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   layout.add(transcript);
   layout.add(status);
   layout.add(hint);
+  layout.add(skillAutocompletePanel);
   layout.add(inputBox);
   root.add(layout);
   root.add(sidebar);
@@ -628,6 +683,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // InputRenderable handles its own `enter` event after onKeyDown fires, so we
   // capture the modifier here and read it during the ENTER event below.
   let lastEnterShift = false;
+  let skillAutocompleteSkills: readonly SkillAutocompleteItem[] = [];
+  let skillAutocompleteToken: SkillAutocompleteToken | undefined;
+  let skillAutocompleteItems: SkillAutocompleteItem[] = [];
+  let skillAutocompleteSelectedIndex = 0;
+  let suppressNextEscapeExit = false;
 
   let closingAfterInterrupt = false;
 
@@ -649,9 +709,98 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   };
 
+  function skillAutocompleteIsOpen(): boolean {
+    return Boolean(skillAutocompleteToken && skillAutocompleteItems.length > 0);
+  }
+
+  function hideSkillAutocomplete(): void {
+    skillAutocompleteToken = undefined;
+    skillAutocompleteItems = [];
+    skillAutocompleteSelectedIndex = 0;
+    skillAutocompletePanel.visible = false;
+    for (const row of skillAutocompleteRows) {
+      row.visible = false;
+      row.content = "";
+    }
+  }
+
+  function refreshSkillAutocomplete(): void {
+    const token = activeSkillAutocompleteToken(inputField.plainText, inputField.cursorOffset);
+    if (!token) {
+      hideSkillAutocomplete();
+      return;
+    }
+
+    const items = skillAutocompleteMatches(skillAutocompleteSkills, token.query);
+    if (items.length === 0) {
+      hideSkillAutocomplete();
+      return;
+    }
+
+    const previousToken = skillAutocompleteToken;
+    skillAutocompleteToken = token;
+    skillAutocompleteItems = items;
+    const queryChanged =
+      !previousToken ||
+      previousToken.start !== token.start ||
+      previousToken.end !== token.end ||
+      previousToken.query !== token.query;
+    if (queryChanged || skillAutocompleteSelectedIndex >= items.length) {
+      skillAutocompleteSelectedIndex = 0;
+    }
+    renderSkillAutocomplete();
+  }
+
+  function renderSkillAutocomplete(): void {
+    skillAutocompletePanel.visible = skillAutocompleteItems.length > 0;
+    for (const [index, row] of skillAutocompleteRows.entries()) {
+      const item = skillAutocompleteItems[index];
+      if (!item) {
+        row.visible = false;
+        row.content = "";
+        continue;
+      }
+
+      const selected = index === skillAutocompleteSelectedIndex;
+      const nameColor = selected ? COLORS.status : COLORS.user;
+      const pathColor = selected ? COLORS.agent : COLORS.hint;
+      const description = formatSkillAutocompleteDescription(item.description);
+      row.content = item.path
+        ? t`${fg(nameColor)(`/${item.name}`)} ${fg(pathColor)(`(${item.path})`)}\n${description}\n`
+        : t`${fg(nameColor)(`/${item.name}`)}\n${description}\n`;
+      row.fg = selected ? COLORS.agent : COLORS.hint;
+      row.visible = true;
+    }
+  }
+
+  function completeSelectedSkillAutocomplete(): boolean {
+    const token = skillAutocompleteToken;
+    const item = skillAutocompleteItems[skillAutocompleteSelectedIndex];
+    if (!token || !item) return false;
+
+    const insertion = inputField.plainText[token.end]?.match(/\s/)
+      ? `/${item.name}`
+      : `/${item.name} `;
+    inputField.setSelection(token.start, token.end);
+    inputField.deleteSelection();
+    inputField.insertText(insertion);
+    hideSkillAutocomplete();
+    return true;
+  }
+
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
   keyHandler.onInternal("keypress", (key: KeyEvent) => {
     if (key.name !== "escape") return;
+    if (suppressNextEscapeExit) {
+      suppressNextEscapeExit = false;
+      key.preventDefault();
+      return;
+    }
+    if (skillAutocompleteIsOpen()) {
+      key.preventDefault();
+      hideSkillAutocomplete();
+      return;
+    }
     key.preventDefault();
     void requestExit();
   });
@@ -660,6 +809,40 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // consumes escape via its own keybindings before any global keypress handler
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
+    if (skillAutocompleteIsOpen()) {
+      if (key.name === "up") {
+        skillAutocompleteSelectedIndex = moveSkillAutocompleteSelection(
+          skillAutocompleteSelectedIndex,
+          skillAutocompleteItems.length,
+          -1,
+        );
+        renderSkillAutocomplete();
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "down") {
+        skillAutocompleteSelectedIndex = moveSkillAutocompleteSelection(
+          skillAutocompleteSelectedIndex,
+          skillAutocompleteItems.length,
+          1,
+        );
+        renderSkillAutocomplete();
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        key.preventDefault();
+        completeSelectedSkillAutocomplete();
+        return;
+      }
+      if (key.name === "escape") {
+        key.preventDefault();
+        suppressNextEscapeExit = true;
+        hideSkillAutocomplete();
+        return;
+      }
+    }
+
     if (key.name === "return" || key.name === "enter") {
       lastEnterShift = Boolean(key.shift);
       // Take over Enter so the textarea does not insert a newline. We submit
@@ -677,6 +860,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
   };
+
+  inputField.onContentChange = () => refreshSkillAutocomplete();
+  inputField.onCursorChange = () => refreshSkillAutocomplete();
 
   function submit(message: string, shiftEnter: boolean): void {
     appendBlock("you:", message, COLORS.user);
@@ -704,6 +890,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     input.session.getResolvedAgentFiles(),
     input.session.getSkillCollisions(),
   ]);
+  skillAutocompleteSkills = skills.map((skill) => ({
+    name: skill.name,
+    description: skill.description,
+    path: skill.baseDir,
+  }));
+  refreshSkillAutocomplete();
   renderSetupIntro(skills, agentFiles, skillCollisions);
   refreshSidebar();
 
@@ -865,6 +1057,95 @@ export function limitHistoryDisplayBlocks(
   }
 
   return { blocks: selected, omittedLines };
+}
+
+export function activeSkillAutocompleteToken(
+  text: string,
+  cursorOffset: number,
+): SkillAutocompleteToken | undefined {
+  const boundedOffset = Math.max(0, Math.min(cursorOffset, text.length));
+  const tokenStart = text.slice(0, boundedOffset).search(/(?:^|\s)\/[^\s]*$/);
+  if (tokenStart < 0) return undefined;
+
+  const start = text[tokenStart] === "/" ? tokenStart : tokenStart + 1;
+  const tokenEnd = text.slice(boundedOffset).search(/\s/);
+  const end = tokenEnd < 0 ? text.length : boundedOffset + tokenEnd;
+  const token = text.slice(start, end);
+  const match = token.match(SKILL_AUTOCOMPLETE_TOKEN);
+  if (!match) return undefined;
+
+  return { start, end, query: text.slice(start + 1, boundedOffset) };
+}
+
+export function skillAutocompleteMatches(
+  skills: readonly SkillAutocompleteItem[],
+  query: string,
+  limit = SKILL_AUTOCOMPLETE_LIMIT,
+): SkillAutocompleteItem[] {
+  const normalizedQuery = query.toLocaleLowerCase();
+  return [...skills]
+    .filter((skill) => skill.name.toLocaleLowerCase().startsWith(normalizedQuery))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, limit);
+}
+
+export function formatSkillAutocompleteItem(item: SkillAutocompleteItem): string {
+  const path = item.path ? ` (${item.path})` : "";
+  const lines = [`/${item.name}${path}`, formatSkillAutocompleteDescription(item.description)];
+  return lines.filter((line) => line.length > 0).join("\n");
+}
+
+export function formatSkillAutocompleteDescription(description: string | undefined): string {
+  if (!description) return "";
+
+  const wrapped = wrapText(description, SKILL_AUTOCOMPLETE_DESCRIPTION_WIDTH);
+  const visible = wrapped.slice(0, SKILL_AUTOCOMPLETE_DESCRIPTION_LINES);
+  if (wrapped.length > visible.length) {
+    const lastIndex = visible.length - 1;
+    visible[lastIndex] = `${visible[lastIndex]!.replace(/\s+$/, "")}...`;
+  }
+  return visible.join("\n");
+}
+
+function wrapText(text: string, width: number): string[] {
+  const words = text.trim().split(/\s+/);
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    if (!current) {
+      current = word;
+      continue;
+    }
+    if (current.length + 1 + word.length <= width) {
+      current = `${current} ${word}`;
+      continue;
+    }
+    lines.push(current);
+    current = word;
+  }
+
+  if (current) lines.push(current);
+  return lines;
+}
+
+export function moveSkillAutocompleteSelection(
+  selectedIndex: number,
+  itemCount: number,
+  direction: -1 | 1,
+): number {
+  if (itemCount <= 0) return 0;
+  return (selectedIndex + direction + itemCount) % itemCount;
+}
+
+export function replaceSkillAutocompleteToken(
+  text: string,
+  token: SkillAutocompleteToken,
+  skillName: string,
+): SkillAutocompleteReplacement {
+  const insertion = text[token.end]?.match(/\s/) ? `/${skillName}` : `/${skillName} `;
+  const nextText = `${text.slice(0, token.start)}${insertion}${text.slice(token.end)}`;
+  return { text: nextText, cursorOffset: token.start + insertion.length };
 }
 
 function countHistoryLines(blocks: readonly HistoryDisplayBlock[]): number {

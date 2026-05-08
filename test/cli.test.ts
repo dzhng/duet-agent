@@ -8,8 +8,14 @@ import {
 } from "../src/cli.js";
 import { resolveCliMemoryModel, resolveCliModel } from "../src/model-resolution/index.js";
 import {
+  activeSkillAutocompleteToken,
+  formatSkillAutocompleteDescription,
+  formatSkillAutocompleteItem,
   historyDisplayBlocks,
   limitHistoryDisplayBlocks,
+  moveSkillAutocompleteSelection,
+  replaceSkillAutocompleteToken,
+  skillAutocompleteMatches,
   startupHeaderLines,
 } from "../src/tui/app.js";
 import { createAssistantMessage } from "./helpers/messages.js";
@@ -291,6 +297,89 @@ describe("CLI resume history display", () => {
       "[memory model] anthropic:claude-haiku-4-5",
       "previous answer",
     ]);
+  });
+});
+
+describe("TUI skill autocomplete helpers", () => {
+  const skills = [
+    { name: "review", description: "Review changed code.", path: "/skills/review" },
+    { name: "release", description: "Bump version and tag.", path: "/skills/release" },
+    { name: "opentui", description: "Build terminal UIs.", path: "/skills/opentui" },
+    { name: "react-best-practices", path: "/skills/react-best-practices" },
+  ];
+
+  test("detects slash tokens at the cursor anywhere in the prompt", () => {
+    expect(activeSkillAutocompleteToken("/", 1)).toEqual({ start: 0, end: 1, query: "" });
+    expect(activeSkillAutocompleteToken("please /rev", "please /rev".length)).toEqual({
+      start: 7,
+      end: 11,
+      query: "rev",
+    });
+    expect(activeSkillAutocompleteToken("please /review now", "please /rev".length)).toEqual({
+      start: 7,
+      end: 14,
+      query: "rev",
+    });
+  });
+
+  test("ignores non-slash text and invalid slash tokens", () => {
+    expect(activeSkillAutocompleteToken("please review", "please review".length)).toBeUndefined();
+    expect(
+      activeSkillAutocompleteToken("please /bad:name", "please /bad:name".length),
+    ).toBeUndefined();
+  });
+
+  test("filters skill names by case-insensitive prefix and limit", () => {
+    expect(skillAutocompleteMatches(skills, "re").map((skill) => skill.name)).toEqual([
+      "react-best-practices",
+      "release",
+      "review",
+    ]);
+    expect(skillAutocompleteMatches(skills, "RE", 2).map((skill) => skill.name)).toEqual([
+      "react-best-practices",
+      "release",
+    ]);
+  });
+
+  test("preserves skill descriptions and paths in filtered matches", () => {
+    expect(skillAutocompleteMatches(skills, "rel", 1)).toEqual([
+      { name: "release", description: "Bump version and tag.", path: "/skills/release" },
+    ]);
+  });
+
+  test("formats autocomplete rows with visible path and description", () => {
+    expect(formatSkillAutocompleteItem(skills[0]!)).toBe(
+      "/review (/skills/review)\nReview changed code.",
+    );
+  });
+
+  test("wraps autocomplete descriptions without leading indentation", () => {
+    expect(
+      formatSkillAutocompleteDescription(
+        "Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch.",
+      ),
+    ).toBe(
+      "Create new skills, modify and improve existing skills, and measure skill\nperformance. Use when users want to create a skill from scratch.",
+    );
+  });
+
+  test("wraps autocomplete selection through available matches", () => {
+    expect(moveSkillAutocompleteSelection(0, 3, 1)).toBe(1);
+    expect(moveSkillAutocompleteSelection(2, 3, 1)).toBe(0);
+    expect(moveSkillAutocompleteSelection(0, 3, -1)).toBe(2);
+    expect(moveSkillAutocompleteSelection(0, 0, 1)).toBe(0);
+  });
+
+  test("replaces the active slash token while preserving surrounding text", () => {
+    const text = "please /rev now";
+    const token = activeSkillAutocompleteToken(text, "please /rev".length);
+    if (!token) throw new Error("Expected slash token");
+
+    expect(token).toEqual({ start: 7, end: 11, query: "rev" });
+    expect(replaceSkillAutocompleteToken(text, token, "review")).toEqual({
+      text: "please /review now",
+      cursorOffset: 14,
+    });
   });
 });
 
