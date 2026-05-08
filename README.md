@@ -182,7 +182,7 @@ The pre-commit hook runs `format`, `check-types`, and `lint`.
 
 ## CLI Quick Start
 
-Set a provider API key in the environment or in `<workdir>/.env`, then run `duet` from any project directory. When `--model` is omitted, the CLI infers a default from the configured provider: Anthropic, AI Gateway, and OpenRouter use Opus 4.7; OpenAI uses GPT-5.5.
+Set a provider API key in the environment, `<workdir>/.env`, or `~/.duet/.env`, then run `duet` from any project directory. When `--model` is omitted, the CLI infers a default from the configured provider: Anthropic, AI Gateway, and OpenRouter use Opus 4.7; OpenAI uses GPT-5.5.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...
@@ -218,6 +218,27 @@ duet skills
 export AI_GATEWAY_API_KEY=...
 duet -m vercel-ai-gateway:anthropic/claude-opus-4.7 "review this repo"
 ```
+
+### CLI Setup
+
+`duet setup` prints the setup help without writing files. Add an explicit action to create or update the shared env file at `~/.duet/.env`:
+
+```bash
+# Import .env from the current directory into ~/.duet/.env
+duet setup --import
+
+# Import a specific env file
+duet setup --import ./path/to/.env
+
+# Paste supported provider API keys interactively
+duet setup --keys
+
+# Use a custom shared env file instead of ~/.duet/.env
+duet setup --env-file ~/.config/duet/env --keys
+duet --env-file ~/.config/duet/env "review this repo"
+```
+
+The CLI loads `<workdir>/.env` first, then the shared env file, so project-specific values override shared defaults. Supported setup keys are `DUET_API_KEY`, `ANTHROPIC_API_KEY`, `AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`, and `OPENAI_API_KEY`.
 
 For local development from a checkout, use the package script:
 
