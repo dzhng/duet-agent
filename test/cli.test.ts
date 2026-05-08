@@ -580,13 +580,13 @@ describe("TUI question picker helpers", () => {
     expect(questionPickerAnswerPayload([], 0)).toBeUndefined();
   });
 
-  test("wraps question option descriptions without leading indentation", () => {
+  test("wraps full question option descriptions without truncating", () => {
     expect(
       formatQuestionOptionDescription(
-        "Deploy to staging first so the team can validate smoke tests before promoting the release to production.",
+        "Deploy to staging first so the team can validate smoke tests before promoting the release to production after the rollout checklist is complete.",
       ),
     ).toBe(
-      "Deploy to staging first so the team can validate smoke tests before\npromoting the release to production.",
+      "Deploy to staging first so the team can validate smoke tests before\npromoting the release to production after the rollout checklist is\ncomplete.",
     );
   });
 });

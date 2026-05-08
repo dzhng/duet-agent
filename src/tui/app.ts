@@ -111,7 +111,6 @@ const SKILL_AUTOCOMPLETE_DESCRIPTION_WIDTH = 72;
 const SKILL_AUTOCOMPLETE_DESCRIPTION_LINES = 2;
 const QUESTION_OPTION_LIMIT = 8;
 const QUESTION_OPTION_DESCRIPTION_WIDTH = 72;
-const QUESTION_OPTION_DESCRIPTION_LINES = 2;
 
 interface InternalKeyHandlerLike {
   onInternal(event: "keypress", handler: (key: KeyEvent) => void): void;
@@ -298,7 +297,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const questionTitle = new TextRenderable(renderer, {
     content: "question",
-    fg: COLORS.status,
+    fg: COLORS.agent,
+    wrapMode: "word",
+    flexShrink: 0,
+  });
+  const questionSpacer = new TextRenderable(renderer, {
+    content: "",
     height: 1,
     flexShrink: 0,
   });
@@ -306,13 +310,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const row = new TextRenderable(renderer, {
       content: "",
       fg: COLORS.hint,
-      height: 3,
+      wrapMode: "word",
       flexShrink: 0,
     });
     row.visible = false;
     return row;
   });
   questionPanel.add(questionTitle);
+  questionPanel.add(questionSpacer);
   for (const row of questionRows) {
     questionPanel.add(row);
   }
@@ -873,7 +878,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       const selected = index === questionOptionSelectedIndex;
       const labelColor = selected ? COLORS.status : COLORS.user;
       const description = formatQuestionOptionDescription(option.description);
-      row.content = t`${fg(labelColor)(option.label)}\n${description}\n`;
+      row.content = description
+        ? t`${fg(labelColor)(option.label)}\n${description}`
+        : t`${fg(labelColor)(option.label)}`;
       row.fg = selected ? COLORS.agent : COLORS.hint;
       row.visible = true;
     }
@@ -1368,13 +1375,7 @@ export function questionPickerAnswerPayload(
 export function formatQuestionOptionDescription(description: string | undefined): string {
   if (!description) return "";
 
-  const wrapped = wrapText(description, QUESTION_OPTION_DESCRIPTION_WIDTH);
-  const visible = wrapped.slice(0, QUESTION_OPTION_DESCRIPTION_LINES);
-  if (wrapped.length > visible.length) {
-    const lastIndex = visible.length - 1;
-    visible[lastIndex] = `${visible[lastIndex]!.replace(/\s+$/, "")}...`;
-  }
-  return visible.join("\n");
+  return wrapText(description, QUESTION_OPTION_DESCRIPTION_WIDTH).join("\n");
 }
 
 export function replaceSkillAutocompleteToken(
