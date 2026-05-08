@@ -1,6 +1,6 @@
 {
   "name": "@duetso/agent",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "description": "An opinionated full-stack agent turn runner with native memories, interrupts, and multi-agent orchestration",
   "keywords": [
     "agent",
@@ -59,6 +59,7 @@
     "@earendil-works/pi-ai": "^0.74.0",
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@electric-sql/pglite": "^0.4.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentui/core": "^0.2.2",
     "ajv": "^8.20.0",
     "dedent": "^1.7.2",
