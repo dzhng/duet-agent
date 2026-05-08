@@ -362,15 +362,15 @@ describe("TurnRunner memory", () => {
       model: "anthropic:claude-sonnet-4-5",
     });
     expect(withAgentOverride.agentModel.id).toBe("claude-sonnet-4-5");
-    expect(withAgentOverride.memoryModel).toBe("anthropic:claude-haiku-4-5");
+    expect(withAgentOverride.memoryModel).toBe("haiku-4.5");
 
     const withConfiguredMemoryOverride = await new ModelRoutingTurnRunner({
       model: "anthropic:claude-opus-4-7",
-      memoryModel: "anthropic:claude-haiku-4-5",
+      memoryModel: "haiku-4.5",
       skillDiscovery: { includeDefaults: false },
     }).captureModels();
     expect(withConfiguredMemoryOverride.agentModel.id).toBe("claude-opus-4-7");
-    expect(withConfiguredMemoryOverride.memoryModel).toBe("anthropic:claude-haiku-4-5");
+    expect(withConfiguredMemoryOverride.memoryModel).toBe("haiku-4.5");
 
     const withMemoryOverride = await runner.captureModels({
       model: "anthropic:claude-sonnet-4-5",

@@ -212,11 +212,11 @@ export interface TurnState {
 export type TurnPromptBehavior = "steer" | "follow_up";
 
 export interface TurnOptions {
-  /** Model override for the user-visible agent turn, in provider:modelId format. */
+  /** Model override for the user-visible agent turn, as shorthand or provider:modelId. */
   model?: string;
   /**
    * Model override for observational memory extraction and reflection, in
-   * provider:modelId format. When omitted, memory work uses the runner's
+   * shorthand or provider:modelId format. When omitted, memory work uses the runner's
    * configured `memoryModel`, then the default memory model.
    */
   memoryModel?: string;

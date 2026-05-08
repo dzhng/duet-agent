@@ -8,7 +8,7 @@ import { TurnRunner, type TurnRunnerConfig } from "../src/index.js";
 
 async function main() {
   const config: TurnRunnerConfig = {
-    model: "vercel-ai-gateway:anthropic/claude-opus-4.7",
+    model: "opus-4.7",
     cwd: process.cwd(),
   };
 

@@ -1,10 +1,21 @@
 import { findEnvKeys, getModel, type Model } from "@earendil-works/pi-ai";
 
+import { isDuetGatewayModelName, resolveDuetGatewayModel } from "./duet-gateway.js";
 import {
-  DUET_GATEWAY_API_KEY_ENV,
-  isDuetGatewayModelName,
-  resolveDuetGatewayModel,
-} from "./duet-gateway.js";
+  canonicalizeModelName,
+  DEFAULT_CLI_MEMORY_MODEL,
+  DEFAULT_CLI_MODEL,
+  getModelCandidates,
+  getProviderDefaultModel,
+  getProviderMemoryModel,
+  isKnownShorthand,
+  isProviderPinnedModelName,
+  PROVIDER_ORDER,
+  type ProviderModelCandidate,
+  type ProviderName,
+} from "./catalog.js";
+
+export { DEFAULT_CLI_MEMORY_MODEL, DEFAULT_CLI_MODEL } from "./catalog.js";
 
 /**
  * Resolves which provider:modelId the CLI talks to, plus the provenance for
@@ -14,6 +25,7 @@ import {
  */
 
 export interface ModelResolution {
+  /** Model name retained for config, display, and later runtime resolution. */
   modelName: string;
   /** explicit: CLI flag; inferred: provider env var present; default: built-in fallback. */
   source: "explicit" | "inferred" | "default";
@@ -23,73 +35,8 @@ export interface ModelResolution {
   fromDotenv?: boolean;
 }
 
-interface ProviderInferenceEntry {
-  provider: string;
-  model: string;
-  customEnvVar?: () => string | null;
-}
-
-/**
- * Provider inference order. Entries are tried top-to-bottom; the first one
- * with a present env var wins. `customEnvVar` covers providers pi-ai's
- * `findEnvKeys` doesn't know about (currently only `duet-gateway`).
- *
- * `duet-gateway` sits before `vercel-ai-gateway` because the CLI startup shim
- * copies `DUET_API_KEY` into `AI_GATEWAY_API_KEY`, which would otherwise route
- * through Vercel's gateway directly when the user only set `DUET_API_KEY`.
- */
-const MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
-  {
-    provider: "duet-gateway",
-    model: "duet-gateway:anthropic/claude-opus-4.7",
-    customEnvVar: () => (process.env[DUET_GATEWAY_API_KEY_ENV] ? DUET_GATEWAY_API_KEY_ENV : null),
-  },
-  {
-    provider: "vercel-ai-gateway",
-    model: "vercel-ai-gateway:anthropic/claude-opus-4.7",
-  },
-  {
-    provider: "openrouter",
-    model: "openrouter:anthropic/claude-opus-4.7",
-  },
-  {
-    provider: "anthropic",
-    model: "anthropic:claude-opus-4-7",
-  },
-  {
-    provider: "openai",
-    model: "openai:gpt-5.5",
-  },
-];
-
-const MEMORY_MODEL_PROVIDER_INFERENCE: ProviderInferenceEntry[] = [
-  {
-    provider: "duet-gateway",
-    model: "duet-gateway:anthropic/claude-haiku-4.5",
-    customEnvVar: () => (process.env[DUET_GATEWAY_API_KEY_ENV] ? DUET_GATEWAY_API_KEY_ENV : null),
-  },
-  {
-    provider: "vercel-ai-gateway",
-    model: "vercel-ai-gateway:anthropic/claude-haiku-4.5",
-  },
-  {
-    provider: "openrouter",
-    model: "openrouter:anthropic/claude-haiku-4.5",
-  },
-  {
-    provider: "anthropic",
-    model: "anthropic:claude-haiku-4-5",
-  },
-  {
-    provider: "openai",
-    model: "openai:gpt-5.4-mini",
-  },
-];
-
-export const DEFAULT_CLI_MODEL = "anthropic:claude-opus-4-7";
-export const DEFAULT_CLI_MEMORY_MODEL = "anthropic:claude-haiku-4-5";
-
 export function resolveModelName(model: string): Model<any> {
+  model = resolveModelReference(model);
   const separator = model.indexOf(":");
   if (separator === -1) {
     throw new Error("Models must use provider:modelId syntax");
@@ -107,7 +54,10 @@ export function resolveModelName(model: string): Model<any> {
   return getModel(provider, modelId);
 }
 
-function lookupProviderEnvVar(entry: ProviderInferenceEntry): string | undefined {
+function lookupProviderEnvVar(entry: {
+  provider: ProviderName;
+  customEnvVar?: () => string | null;
+}): string | undefined {
   if (entry.customEnvVar) {
     return entry.customEnvVar() ?? undefined;
   }
@@ -125,7 +75,7 @@ export function resolveCliMemoryModel(
 ): ModelResolution {
   return resolveCliModelWith(
     memoryModelName,
-    MEMORY_MODEL_PROVIDER_INFERENCE,
+    getMemoryModelCandidates(),
     dotenvKeys,
     DEFAULT_CLI_MEMORY_MODEL,
   );
@@ -139,20 +89,27 @@ export function resolveCliModel(
   modelName: string | undefined,
   dotenvKeys: Set<string>,
 ): ModelResolution {
-  return resolveCliModelWith(modelName, MODEL_PROVIDER_INFERENCE, dotenvKeys, DEFAULT_CLI_MODEL);
+  return resolveCliModelWith(modelName, getDefaultModelCandidates(), dotenvKeys, DEFAULT_CLI_MODEL);
 }
 
 function resolveCliModelWith(
   modelName: string | undefined,
-  providerInference: ProviderInferenceEntry[],
+  providerInference: ProviderModelCandidate[],
   dotenvKeys: Set<string>,
   defaultModel: string,
 ): ModelResolution {
-  if (modelName) return { modelName, source: "explicit" };
+  if (modelName) {
+    return {
+      modelName: isProviderPinnedModelName(modelName)
+        ? modelName
+        : canonicalizeModelName(modelName),
+      source: "explicit",
+    };
+  }
   const inferred = findInferredProviderEntry(providerInference);
   if (inferred) {
     return {
-      modelName: inferred.entry.model,
+      modelName: inferred.entry.modelName,
       source: "inferred",
       envVar: inferred.envVar,
       fromDotenv: dotenvKeys.has(inferred.envVar),
@@ -162,13 +119,43 @@ function resolveCliModelWith(
 }
 
 function findInferredProviderEntry(
-  providerInference: ProviderInferenceEntry[],
-): { entry: ProviderInferenceEntry; envVar: string } | undefined {
+  providerInference: readonly ProviderModelCandidate[],
+): { entry: ProviderModelCandidate; envVar: string } | undefined {
   for (const entry of providerInference) {
-    const envVar = lookupProviderEnvVar(entry);
+    const provider = PROVIDER_ORDER.find((candidate) => candidate.provider === entry.provider);
+    if (!provider) continue;
+
+    const envVar = lookupProviderEnvVar(provider);
     if (envVar) return { entry, envVar };
   }
   return undefined;
+}
+
+function getDefaultModelCandidates(): ProviderModelCandidate[] {
+  return PROVIDER_ORDER.map(({ provider }) => ({
+    provider,
+    modelName: getProviderDefaultModel(provider),
+  }));
+}
+
+function getMemoryModelCandidates(): ProviderModelCandidate[] {
+  return PROVIDER_ORDER.map(({ provider }) => ({
+    provider,
+    modelName: getProviderMemoryModel(provider),
+  }));
+}
+
+function resolveModelReference(modelName: string): string {
+  if (isProviderPinnedModelName(modelName)) return modelName;
+
+  const inferred = findInferredProviderEntry(getModelCandidates(modelName));
+  if (inferred) return inferred.entry.modelName;
+
+  if (isKnownShorthand(modelName)) {
+    throw new Error(`Model shorthand requires credentials for a supported provider: ${modelName}`);
+  }
+
+  throw new Error(`Unknown model shorthand: ${modelName}`);
 }
 
 export function describeModelResolution(resolution: ModelResolution): string {

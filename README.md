@@ -217,10 +217,10 @@ duet "build a REST API with Express"
 duet
 
 # With options
-duet -m anthropic:claude-opus-4-7 --workdir ./my-project "refactor the auth module"
+duet -m opus-4.7 --workdir ./my-project "refactor the auth module"
 
 # With a custom observational memory model
-duet --memory-model anthropic:claude-sonnet-4-6 "summarize this repo"
+duet --memory-model sonnet-4.6 "summarize this repo"
 
 # With additional system instructions
 duet --system-prompt "Prefer concise answers." "review this repo"
@@ -239,8 +239,13 @@ duet skills
 
 # Through Vercel AI Gateway
 export AI_GATEWAY_API_KEY=...
-duet -m vercel-ai-gateway:anthropic/claude-opus-4.7 "review this repo"
+duet -m opus-4.7 "review this repo"
 ```
+
+Model names can use full `provider:modelId` syntax or shorthand names such as
+`opus-4.7`, `sonnet-4.6`, `haiku-4.5`, and `gpt-5.5`. Shorthands resolve to the
+first configured supported provider; use full `provider:modelId` syntax to pin a
+specific provider.
 
 ### CLI Login
 
@@ -291,7 +296,7 @@ bun run cli -- "build a REST API with Express"
 import { TurnRunner } from "@duetso/agent";
 
 const turnRunner = new TurnRunner({
-  model: "anthropic:claude-opus-4-7",
+  model: "opus-4.7",
   cwd: process.cwd(),
   mode: "auto",
 });
@@ -322,7 +327,7 @@ the parent agent rather than creating separate conversation branches.
 import { TurnRunner } from "@duetso/agent";
 
 const turnRunner = new TurnRunner({
-  model: "anthropic:claude-opus-4-7",
+  model: "opus-4.7",
   memoryDbPath: false, // Keep observational memory in process only.
 });
 ```

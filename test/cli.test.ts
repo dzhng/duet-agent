@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
+  buildCliTurnConfig,
   cliEnvFilePaths,
   compareSemverVersions,
   detectPackageManagerFromContext,
@@ -15,7 +16,11 @@ import {
   resumeCommand,
   runEnvCommand,
 } from "../src/cli.js";
-import { resolveCliMemoryModel, resolveCliModel } from "../src/model-resolution/index.js";
+import {
+  resolveCliMemoryModel,
+  resolveCliModel,
+  resolveModelName,
+} from "../src/model-resolution/resolver.js";
 import {
   activeSkillAutocompleteToken,
   formatQuestionOptionDescription,
@@ -84,13 +89,13 @@ describe("CLI model inference", () => {
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "duet-gateway:anthropic/claude-opus-4.7",
+      modelName: "opus-4.7",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "duet-gateway:anthropic/claude-haiku-4.5",
+      modelName: "haiku-4.5",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
@@ -105,13 +110,13 @@ describe("CLI model inference", () => {
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "vercel-ai-gateway:anthropic/claude-opus-4.7",
+      modelName: "opus-4.7",
       source: "inferred",
       envVar: "AI_GATEWAY_API_KEY",
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "vercel-ai-gateway:anthropic/claude-haiku-4.5",
+      modelName: "haiku-4.5",
       source: "inferred",
       envVar: "AI_GATEWAY_API_KEY",
       fromDotenv: false,
@@ -125,13 +130,13 @@ describe("CLI model inference", () => {
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "openrouter:anthropic/claude-opus-4.7",
+      modelName: "opus-4.7",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "openrouter:anthropic/claude-haiku-4.5",
+      modelName: "haiku-4.5",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
@@ -144,13 +149,13 @@ describe("CLI model inference", () => {
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "anthropic:claude-opus-4-7",
+      modelName: "opus-4.7",
       source: "inferred",
       envVar: "ANTHROPIC_API_KEY",
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "anthropic:claude-haiku-4-5",
+      modelName: "haiku-4.5",
       source: "inferred",
       envVar: "ANTHROPIC_API_KEY",
       fromDotenv: false,
@@ -167,13 +172,13 @@ describe("CLI model inference", () => {
     process.env.DUET_API_KEY = "duet_gt_test";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "duet-gateway:anthropic/claude-opus-4.7",
+      modelName: "opus-4.7",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "duet-gateway:anthropic/claude-haiku-4.5",
+      modelName: "haiku-4.5",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
@@ -185,13 +190,13 @@ describe("CLI model inference", () => {
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "openai:gpt-5.5",
+      modelName: "gpt-5.5",
       source: "inferred",
       envVar: "OPENAI_API_KEY",
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "openai:gpt-5.4-mini",
+      modelName: "gpt-5.4-mini",
       source: "inferred",
       envVar: "OPENAI_API_KEY",
       fromDotenv: false,
@@ -202,11 +207,11 @@ describe("CLI model inference", () => {
     clearModelEnv();
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "anthropic:claude-opus-4-7",
+      modelName: "opus-4.7",
       source: "default",
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "anthropic:claude-haiku-4-5",
+      modelName: "haiku-4.5",
       source: "default",
     });
   });
@@ -220,10 +225,129 @@ describe("CLI model inference", () => {
     });
   });
 
+  test("keeps explicitly provided model shorthands as app-facing names", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "duet_gt_test";
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+
+    expect(resolveCliModel("opus-4.7", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "opus-4.7",
+      source: "explicit",
+    });
+    expect(resolveCliModel("gpt-5.5", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "gpt-5.5",
+      source: "explicit",
+    });
+  });
+
+  test("resolves model shorthand through the first configured provider", () => {
+    clearModelEnv();
+    process.env.AI_GATEWAY_API_KEY = "test-gateway";
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+
+    expect(resolveModelName("opus-4.7").id).toBe("anthropic/claude-opus-4.7");
+    expect(resolveModelName("gpt-5.5").id).toBe("openai/gpt-5.5");
+  });
+
+  test("rejects model shorthand when no supported provider credentials are configured", () => {
+    clearModelEnv();
+
+    expect(() => resolveModelName("opus-4.7")).toThrow(
+      "Model shorthand requires credentials for a supported provider: opus-4.7",
+    );
+    expect(() => resolveModelName("gpt-5.5")).toThrow(
+      "Model shorthand requires credentials for a supported provider: gpt-5.5",
+    );
+  });
+
+  test("provider:modelId syntax pins a specific provider", () => {
+    clearModelEnv();
+    process.env.AI_GATEWAY_API_KEY = "test-gateway";
+
+    expect(resolveModelName("anthropic:claude-opus-4-7").id).toBe("claude-opus-4-7");
+  });
+
+  test("keeps explicitly provided memory model shorthands as app-facing names", () => {
+    clearModelEnv();
+    process.env.AI_GATEWAY_API_KEY = "test-gateway";
+
+    expect(resolveCliMemoryModel("haiku-4.5", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "haiku-4.5",
+      source: "explicit",
+    });
+    expect(resolveCliMemoryModel("gpt-5.4-mini", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "gpt-5.4-mini",
+      source: "explicit",
+    });
+  });
+
   test("keeps an explicitly provided memory model", () => {
     expect(resolveCliMemoryModel("anthropic:claude-3-5-haiku-latest", EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "anthropic:claude-3-5-haiku-latest",
       source: "explicit",
+    });
+  });
+
+  test("builds CLI config from explicit shorthand model flags", () => {
+    clearModelEnv();
+
+    const { config, modelResolution, memoryModelResolution } = buildCliTurnConfig(
+      {
+        modelName: "opus-4.7",
+        memoryModelName: "haiku-4.5",
+        workDir: "/repo",
+      },
+      EMPTY_DOTENV_KEYS,
+    );
+
+    expect(config).toMatchObject({
+      model: "opus-4.7",
+      memoryModel: "haiku-4.5",
+      cwd: "/repo",
+    });
+    expect(modelResolution).toEqual({
+      modelName: "opus-4.7",
+      source: "explicit",
+    });
+    expect(memoryModelResolution).toEqual({
+      modelName: "haiku-4.5",
+      source: "explicit",
+    });
+  });
+
+  test("builds CLI config from inferred shorthand defaults", () => {
+    clearModelEnv();
+    process.env.OPENAI_API_KEY = "test-openai";
+
+    const { config, modelResolution, memoryModelResolution } = buildCliTurnConfig(
+      {
+        disableDurableMemory: true,
+        workDir: "/repo",
+        systemInstructions: "Prefer concise answers.",
+        systemPromptFiles: [],
+      },
+      EMPTY_DOTENV_KEYS,
+    );
+
+    expect(config).toEqual({
+      model: "gpt-5.5",
+      memoryModel: "gpt-5.4-mini",
+      memoryDbPath: false,
+      cwd: "/repo",
+      systemInstructions: "Prefer concise answers.",
+      systemPromptFiles: [],
+    });
+    expect(modelResolution).toEqual({
+      modelName: "gpt-5.5",
+      source: "inferred",
+      envVar: "OPENAI_API_KEY",
+      fromDotenv: false,
+    });
+    expect(memoryModelResolution).toEqual({
+      modelName: "gpt-5.4-mini",
+      source: "inferred",
+      envVar: "OPENAI_API_KEY",
+      fromDotenv: false,
     });
   });
 });
@@ -370,8 +494,8 @@ describe("CLI resume command", () => {
   test("preserves in-process-only memory mode", () => {
     expect(
       resumeCommand("session_123", {
-        modelName: "anthropic:claude-opus-4-7",
-        memoryModelName: "anthropic:claude-haiku-4-5",
+        modelName: "opus-4.7",
+        memoryModelName: "haiku-4.5",
         workDir: "/repo",
         disableDurableMemory: true,
       }),
@@ -465,9 +589,9 @@ describe("CLI resume history display", () => {
       packageVersion: "0.1.12",
       workDir: "/repo",
       sessionId: "session_123",
-      modelName: "anthropic:claude-opus-4-7",
+      modelName: "opus-4.7",
       modelSource: "default",
-      memoryModelName: "anthropic:claude-haiku-4-5",
+      memoryModelName: "haiku-4.5",
     });
     const history = limitHistoryDisplayBlocks([{ kind: "agent", content: "previous answer" }], 40);
 
@@ -475,8 +599,8 @@ describe("CLI resume history display", () => {
       "[duet] v0.1.12",
       "[cwd] /repo",
       "[session] session_123",
-      "[model] anthropic:claude-opus-4-7 — default",
-      "[memory model] anthropic:claude-haiku-4-5",
+      "[model] opus-4.7 — default",
+      "[memory model] haiku-4.5",
       "previous answer",
     ]);
   });

@@ -10,7 +10,7 @@ import {
   type Usage,
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
-import { resolveModelName } from "../model-resolution/index.js";
+import { resolveModelName } from "../model-resolution/resolver.js";
 
 export type StructuredOutputPrompt = string | Array<TextContent | ImageContent>;
 

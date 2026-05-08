@@ -13,7 +13,7 @@ import {
   DEFAULT_CLI_MEMORY_MODEL,
   DEFAULT_CLI_MODEL,
   resolveModelName,
-} from "../model-resolution/index.js";
+} from "../model-resolution/resolver.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type {
   TurnAgentFile,

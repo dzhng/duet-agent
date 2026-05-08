@@ -5,7 +5,7 @@ import { createObservationalMemoryTransform } from "../src/memory/observational.
 import { MemoryStore } from "../src/memory/store.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
 
 describe("multimodal memory", () => {
   testIfDocker(

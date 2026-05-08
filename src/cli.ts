@@ -5,7 +5,7 @@
  *
  * Usage:
  *   duet "build a todo app in React"
- *   duet --model claude-opus-4-7 "refactor auth system"
+ *   duet --model opus-4.7 "refactor auth system"
  *   echo "fix the bug in server.ts" | duet
  */
 
@@ -27,7 +27,8 @@ import {
   describeModelResolution,
   resolveCliMemoryModel,
   resolveCliModel,
-} from "./model-resolution/index.js";
+  type ModelResolution,
+} from "./model-resolution/resolver.js";
 import { SessionManager } from "./session/session-manager.js";
 import { discoverInstalledSkills, resolveSkillScope } from "./turn-runner/skills.js";
 import { runTui } from "./tui/app.js";
@@ -63,6 +64,21 @@ const PACKAGE_METADATA = {
 interface PackageMetadata {
   name: string;
   version: string;
+}
+
+export interface CliTurnConfigInput {
+  modelName?: string;
+  memoryModelName?: string;
+  disableDurableMemory?: boolean;
+  workDir: string;
+  systemInstructions?: string;
+  systemPromptFiles?: string[];
+}
+
+export interface CliTurnConfigResolution {
+  config: TurnRunnerConfig;
+  modelResolution: ModelResolution;
+  memoryModelResolution: ModelResolution;
 }
 
 async function main() {
@@ -225,27 +241,19 @@ async function main() {
     await maybeAutoSyncDefaultSkills({ apiKey: process.env.DUET_API_KEY });
   }
 
-  const modelResolution = resolveCliModel(modelName, dotenvKeys);
+  const { config, modelResolution, memoryModelResolution } = buildCliTurnConfig(
+    {
+      modelName,
+      memoryModelName,
+      disableDurableMemory,
+      workDir,
+      systemInstructions,
+      systemPromptFiles,
+    },
+    dotenvKeys,
+  );
   modelName = modelResolution.modelName;
-  const memoryModelResolution = resolveCliMemoryModel(memoryModelName, dotenvKeys);
   memoryModelName = memoryModelResolution.modelName;
-
-  if (modelName && modelName.indexOf(":") <= 0) {
-    throw new Error("Models must use provider:modelId syntax");
-  }
-  if (memoryModelName && memoryModelName.indexOf(":") <= 0) {
-    throw new Error("Memory model must use provider:modelId syntax");
-  }
-
-  // Build config
-  const config: TurnRunnerConfig = {
-    ...(modelName ? { model: modelName } : {}),
-    ...(memoryModelName ? { memoryModel: memoryModelName } : {}),
-    ...(disableDurableMemory ? { memoryDbPath: false } : {}),
-    cwd: workDir,
-    ...(systemInstructions ? { systemInstructions } : {}),
-    ...(systemPromptFiles ? { systemPromptFiles } : {}),
-  };
 
   // The TUI owns rendering when active, so we suppress stdout step printing
   // there to avoid corrupting the alternate-screen UI.
@@ -495,6 +503,27 @@ function formatToolCall(step: Extract<TurnStep, { type: "tool_call" }>): string 
 function fail(message: string): never {
   console.error(`Fatal: ${message}`);
   process.exit(1);
+}
+
+export function buildCliTurnConfig(
+  input: CliTurnConfigInput,
+  dotenvKeys: Set<string>,
+): CliTurnConfigResolution {
+  const modelResolution = resolveCliModel(input.modelName, dotenvKeys);
+  const memoryModelResolution = resolveCliMemoryModel(input.memoryModelName, dotenvKeys);
+
+  return {
+    config: {
+      model: modelResolution.modelName,
+      memoryModel: memoryModelResolution.modelName,
+      ...(input.disableDurableMemory ? { memoryDbPath: false } : {}),
+      cwd: input.workDir,
+      ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),
+      ...(input.systemPromptFiles ? { systemPromptFiles: input.systemPromptFiles } : {}),
+    },
+    modelResolution,
+    memoryModelResolution,
+  };
 }
 
 export function resolveUserPath(path: string, baseDir = process.cwd()): string {
@@ -1047,7 +1076,9 @@ INTERACTIVE
   Type /exit or /quit to end the conversation.
 
 MODELS
-  Use provider:modelId syntax, e.g. anthropic:claude-opus-4-7.
+  Prefer shorthands like opus-4.7, sonnet-4.6, haiku-4.5, and gpt-5.5.
+  They map to the first configured provider that supports that model.
+  Full provider:modelId syntax is also supported, e.g. anthropic:claude-opus-4-7.
   If omitted, duet infers a default from ANTHROPIC_API_KEY,
   DUET_API_KEY, AI_GATEWAY_API_KEY, OPENROUTER_API_KEY, or
   OPENAI_API_KEY after loading <workdir>/.env and the shared duet env file.
@@ -1059,10 +1090,9 @@ MODELS
 
 EXAMPLES
   duet "build a REST API with Express and TypeScript"
-  duet -m openai:gpt-5.5 "analyze the performance of our test suite"
-  duet --memory-model anthropic:claude-sonnet-4-6 "summarize this repo"
-  duet -m vercel-ai-gateway:anthropic/claude-opus-4.7 "refactor the auth module"
-  duet -m duet-gateway:anthropic/claude-opus-4.7 "review this repo"
+  duet -m gpt-5.5 "analyze the performance of our test suite"
+  duet --memory-model sonnet-4.6 "summarize this repo"
+  duet -m opus-4.7 "refactor the auth module"
   duet --system-prompt "Prefer concise answers." "review this repo"
   duet --system-prompt-file TEAM.md "review this repo"
   duet --env-file ~/.config/duet/env "review this repo"

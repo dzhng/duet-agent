@@ -5,7 +5,7 @@ import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnTodo } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
 
 describe("todo tool", () => {
   testIfDocker(

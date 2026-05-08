@@ -5,7 +5,7 @@ import { Type, type Static } from "typebox";
 import { generateStructuredOutput } from "../src/core/structured-output.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "vercel-ai-gateway:anthropic/claude-sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
 
 const evalSchema = Type.Object({
   allowed: Type.Boolean({ description: "Whether the requested action should be allowed" }),

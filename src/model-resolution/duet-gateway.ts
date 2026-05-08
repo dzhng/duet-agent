@@ -39,6 +39,7 @@ export function getDuetGatewayBaseUrl(): string {
  * doesn't exist, mirroring `getModel`'s contract.
  */
 export function resolveDuetGatewayModel(modelId: string): Model<any> | undefined {
+  shimDuetApiKeyToAiGateway();
   const upstream = getModel("vercel-ai-gateway" as any, modelId as any) as Model<any> | undefined;
   if (!upstream) return undefined;
 
@@ -52,8 +53,9 @@ export function resolveDuetGatewayModel(modelId: string): Model<any> | undefined
  * If `DUET_API_KEY` is set but `AI_GATEWAY_API_KEY` is not, copy it across so
  * the underlying vercel-ai-gateway provider auth path resolves. Idempotent.
  *
- * Called early in CLI startup. No-op when either var is missing or
- * `AI_GATEWAY_API_KEY` is already set (caller wins).
+ * Called early in CLI startup and before direct duet-gateway model resolution.
+ * No-op when either var is missing or `AI_GATEWAY_API_KEY` is already set
+ * (caller wins).
  */
 export function shimDuetApiKeyToAiGateway(): void {
   if (process.env.AI_GATEWAY_API_KEY) return;

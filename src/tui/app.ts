@@ -34,11 +34,11 @@ export interface RunTuiInput {
   sessionId: string;
   /** Installed package version shown in the startup header. */
   packageVersion: string;
-  /** Fully resolved provider:modelId string used for this CLI session. */
+  /** User-facing model name used for this CLI session. */
   modelName: string;
   /** Human-readable provenance for modelName, e.g. "inferred from ANTHROPIC_API_KEY in .env". */
   modelSource?: string;
-  /** Fully resolved provider:modelId string used for observational memory work. */
+  /** User-facing model name used for observational memory work. */
   memoryModelName: string;
   /** Human-readable provenance for memoryModelName. */
   memoryModelSource?: string;
