@@ -35,7 +35,8 @@ describe("outreach lifecycle state machine", () => {
       expect(first.type).toBe("sleep");
       expect(first.state.stateMachine?.currentState).toBe("wait_for_reply");
 
-      await delay(10_100);
+      const wakeAt = first.type === "sleep" ? first.wakeAt : Date.now();
+      await delay(Math.max(0, wakeAt - Date.now()) + 100);
 
       const terminal = await runner.turn({ type: "wake" });
 
@@ -53,7 +54,7 @@ describe("outreach lifecycle state machine", () => {
         "classify_reply",
       ]);
     },
-    120_000,
+    180_000,
   );
 });
 
@@ -93,7 +94,7 @@ const outreachDefinition: StateMachineDefinition = {
     {
       kind: "timer",
       name: "wait_for_reply",
-      wakeAt: Date.now() + 10_000,
+      wakeAt: Date.now() + 60_000,
     },
     {
       kind: "script",

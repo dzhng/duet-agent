@@ -54,7 +54,7 @@ describe("state machine interrupt and resume", () => {
         state: "done",
         status: "completed",
       });
-      expect(completedOutput(terminal.state, "script_step")).toContain('"rerun":true');
+      expect(completedOutput(terminal.state, "script_step")).toContain('\\"rerun\\":true');
       expect(selectedInput(terminal.state, "script_step")).toEqual({ value: "same-input" });
     },
     150_000,
@@ -86,7 +86,7 @@ describe("state machine interrupt and resume", () => {
         [
           "The state machine may be interrupted. When the user says continue, call get_current_state_machine_state.",
           'Then select poll_step again with input {"value":"poll-input"} and override its poll command to exactly: printf \'{"ready":true,"value":"poll-input"}\'.',
-          'Use override kind "poll" with state {"poll":{"kind":"script","command":"printf \'{\\"ready\\":true,\\"value\\":\\"poll-input\\"}\'"},"intervalMs":1000,"timeoutMs":30000}.',
+          'Use override kind "poll" with state {"command":"printf \'{\\"ready\\":true,\\"value\\":\\"poll-input\\"}\'","intervalMs":1000,"timeoutMs":30000}.',
           "After poll_step completes, select done.",
         ].join("\n"),
       );
