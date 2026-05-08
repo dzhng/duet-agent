@@ -17,6 +17,7 @@ import type {
   TurnAgentFile,
   TurnContextUsageEvent,
   TurnEvent,
+  TurnQuestion,
   TurnStep,
   TurnTerminalEvent,
   TurnTodo,
@@ -108,6 +109,9 @@ const SKILL_AUTOCOMPLETE_LIMIT = 8;
 const SKILL_AUTOCOMPLETE_TOKEN = /^\/([A-Za-z0-9_.-]*)$/;
 const SKILL_AUTOCOMPLETE_DESCRIPTION_WIDTH = 72;
 const SKILL_AUTOCOMPLETE_DESCRIPTION_LINES = 2;
+const QUESTION_OPTION_LIMIT = 8;
+const QUESTION_OPTION_DESCRIPTION_WIDTH = 72;
+const QUESTION_OPTION_DESCRIPTION_LINES = 2;
 
 interface InternalKeyHandlerLike {
   onInternal(event: "keypress", handler: (key: KeyEvent) => void): void;
@@ -204,8 +208,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     flexDirection: "column",
     border: true,
     borderColor: COLORS.border,
-    padding: 1,
-    height: 7,
+    paddingLeft: 1,
+    paddingRight: 1,
+    height: 5,
     flexShrink: 0,
   });
   const contextTitle = new TextRenderable(renderer, {
@@ -281,6 +286,37 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     skillAutocompletePanel.add(row);
   }
 
+  const questionPanel = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    border: true,
+    borderColor: COLORS.border,
+    paddingLeft: 1,
+    paddingRight: 1,
+    flexShrink: 0,
+  });
+  questionPanel.visible = false;
+
+  const questionTitle = new TextRenderable(renderer, {
+    content: "question",
+    fg: COLORS.status,
+    height: 1,
+    flexShrink: 0,
+  });
+  const questionRows = Array.from({ length: QUESTION_OPTION_LIMIT }, () => {
+    const row = new TextRenderable(renderer, {
+      content: "",
+      fg: COLORS.hint,
+      height: 3,
+      flexShrink: 0,
+    });
+    row.visible = false;
+    return row;
+  });
+  questionPanel.add(questionTitle);
+  for (const row of questionRows) {
+    questionPanel.add(row);
+  }
+
   const inputBox = new BoxRenderable(renderer, {
     flexDirection: "row",
     border: true,
@@ -313,6 +349,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   layout.add(status);
   layout.add(hint);
   layout.add(skillAutocompletePanel);
+  layout.add(questionPanel);
   layout.add(inputBox);
   root.add(layout);
   root.add(sidebar);
@@ -476,7 +513,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const usedTokens = usage.usage.totalTokens;
     const percent = Math.min(1, usedTokens / usage.contextWindow);
     contextBody.content = [
-      progressBar(percent, 18),
+      progressBar(percent, 25),
       `${formatTokenCount(usedTokens)} / ${formatTokenCount(usage.contextWindow)}`,
     ].join("\n");
     contextBody.fg = usedTokens >= usage.contextWindow ? COLORS.error : COLORS.agent;
@@ -486,7 +523,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const clamped = Math.max(0, Math.min(1, value));
     const filled = Math.round(clamped * width);
     const empty = width - filled;
-    return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${Math.round(clamped * 100)}%`;
+    return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${`${Math.round(clamped * 100)}%`.padStart(4)}`;
   }
 
   function formatTokenCount(tokens: number): string {
@@ -520,6 +557,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       if (event.level === "error") markIdle();
     } else if (event.type === "ask") {
       appendBlock("[question]", event.questions.map((q) => q.question).join("\n"), COLORS.system);
+      showQuestions(event.questions);
       renderUsage(event.usage);
       lastTerminal = event;
       markIdle();
@@ -613,6 +651,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function renderStep(step: TurnStep): void {
+    if (questionPickerIsOpen()) hideQuestions();
+
     if (step.type === "text_delta") {
       activeTextStream = renderDelta(activeTextStream, null, step.delta, COLORS.agent);
     } else if (step.type === "reasoning_delta") {
@@ -750,6 +790,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let skillAutocompleteToken: SkillAutocompleteToken | undefined;
   let skillAutocompleteItems: SkillAutocompleteItem[] = [];
   let skillAutocompleteSelectedIndex = 0;
+  let pendingQuestions: TurnQuestion[] = [];
+  let questionOptionSelectedIndex = 0;
   let suppressNextEscapeExit = false;
 
   let closingAfterInterrupt = false;
@@ -776,6 +818,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     return Boolean(skillAutocompleteToken && skillAutocompleteItems.length > 0);
   }
 
+  function questionPickerIsOpen(): boolean {
+    const question = pendingQuestions[0];
+    return Boolean(question && question.options.length > 0);
+  }
+
   function hideSkillAutocomplete(): void {
     skillAutocompleteToken = undefined;
     skillAutocompleteItems = [];
@@ -785,6 +832,62 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       row.visible = false;
       row.content = "";
     }
+  }
+
+  function hideQuestions(): void {
+    pendingQuestions = [];
+    questionOptionSelectedIndex = 0;
+    questionPanel.visible = false;
+    for (const row of questionRows) {
+      row.visible = false;
+      row.content = "";
+    }
+  }
+
+  function showQuestions(questions: TurnQuestion[]): void {
+    pendingQuestions = questions;
+    questionOptionSelectedIndex = 0;
+    renderQuestions();
+  }
+
+  function renderQuestions(): void {
+    const question = pendingQuestions[0];
+    if (!question || question.options.length === 0) {
+      hideQuestions();
+      return;
+    }
+
+    questionPanel.visible = true;
+    questionTitle.content = question.header
+      ? `${question.header}: ${question.question}`
+      : question.question;
+    const visibleOptions = question.options.slice(0, QUESTION_OPTION_LIMIT);
+    for (const [index, row] of questionRows.entries()) {
+      const option = visibleOptions[index];
+      if (!option) {
+        row.visible = false;
+        row.content = "";
+        continue;
+      }
+
+      const selected = index === questionOptionSelectedIndex;
+      const labelColor = selected ? COLORS.status : COLORS.user;
+      const description = formatQuestionOptionDescription(option.description);
+      row.content = t`${fg(labelColor)(option.label)}\n${description}\n`;
+      row.fg = selected ? COLORS.agent : COLORS.hint;
+      row.visible = true;
+    }
+  }
+
+  function submitSelectedQuestionOption(): boolean {
+    const answers = questionPickerAnswerPayload(pendingQuestions, questionOptionSelectedIndex);
+    if (!answers) return false;
+
+    appendBlock("you:", Object.values(answers).join("\n"), COLORS.user);
+    void input.session.answer({ questions: pendingQuestions, answers, behavior: "follow_up" }).catch(reportError);
+    hideQuestions();
+    markRunning();
+    return true;
   }
 
   function refreshSkillAutocomplete(): void {
@@ -864,6 +967,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       hideSkillAutocomplete();
       return;
     }
+    if (questionPickerIsOpen()) {
+      key.preventDefault();
+      hideQuestions();
+      return;
+    }
     key.preventDefault();
     void requestExit();
   });
@@ -906,6 +1014,35 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       }
     }
 
+    if (questionPickerIsOpen()) {
+      if (key.name === "up") {
+        questionOptionSelectedIndex = moveQuestionOptionSelection(
+          questionOptionSelectedIndex,
+          Math.min(pendingQuestions[0]?.options.length ?? 0, QUESTION_OPTION_LIMIT),
+          -1,
+        );
+        renderQuestions();
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "down") {
+        questionOptionSelectedIndex = moveQuestionOptionSelection(
+          questionOptionSelectedIndex,
+          Math.min(pendingQuestions[0]?.options.length ?? 0, QUESTION_OPTION_LIMIT),
+          1,
+        );
+        renderQuestions();
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "escape") {
+        key.preventDefault();
+        suppressNextEscapeExit = true;
+        hideQuestions();
+        return;
+      }
+    }
+
     if (key.name === "return" || key.name === "enter") {
       lastEnterShift = Boolean(key.shift);
       // Take over Enter so the textarea does not insert a newline. We submit
@@ -914,7 +1051,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       const value = inputField.plainText.trim();
       inputField.clear();
       key.preventDefault();
-      if (value) submit(value, lastEnterShift);
+      if (value) {
+        submit(value, lastEnterShift);
+      } else if (questionPickerIsOpen()) {
+        submitSelectedQuestionOption();
+      }
       lastEnterShift = false;
       return;
     }
@@ -929,6 +1070,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function submit(message: string, shiftEnter: boolean): void {
     appendBlock("you:", message, COLORS.user);
+    hideQuestions();
 
     if (running) {
       // Mid-turn: Enter → steer, Shift+Enter → queued follow-up.
@@ -1199,6 +1341,38 @@ export function moveSkillAutocompleteSelection(
 ): number {
   if (itemCount <= 0) return 0;
   return (selectedIndex + direction + itemCount) % itemCount;
+}
+
+export function moveQuestionOptionSelection(
+  selectedIndex: number,
+  itemCount: number,
+  direction: -1 | 1,
+): number {
+  if (itemCount <= 0) return 0;
+  return (selectedIndex + direction + itemCount) % itemCount;
+}
+
+export function questionPickerAnswerPayload(
+  questions: readonly TurnQuestion[],
+  selectedIndex: number,
+): Record<string, string> | undefined {
+  const firstQuestion = questions[0];
+  const selectedOption = firstQuestion?.options[selectedIndex];
+  if (!firstQuestion || !selectedOption) return undefined;
+
+  return { [firstQuestion.question]: selectedOption.label };
+}
+
+export function formatQuestionOptionDescription(description: string | undefined): string {
+  if (!description) return "";
+
+  const wrapped = wrapText(description, QUESTION_OPTION_DESCRIPTION_WIDTH);
+  const visible = wrapped.slice(0, QUESTION_OPTION_DESCRIPTION_LINES);
+  if (wrapped.length > visible.length) {
+    const lastIndex = visible.length - 1;
+    visible[lastIndex] = `${visible[lastIndex]!.replace(/\s+$/, "")}...`;
+  }
+  return visible.join("\n");
 }
 
 export function replaceSkillAutocompleteToken(

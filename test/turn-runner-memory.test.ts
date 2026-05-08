@@ -268,7 +268,8 @@ describe("TurnRunner memory", () => {
     expect(raw?.textPreview).toContain("source=data omitted");
     expect(raw?.textPreview).not.toContain(imageData);
     expect(raw?.id).not.toContain(imageData);
-    expect(raw?.estimatedTokens).toBeLessThan(20);
+    expect(raw?.estimatedTokens).toBeGreaterThanOrEqual(1_600);
+    expect(raw?.estimatedTokens).toBeLessThan(1_625);
   });
 
   test("observer prompt places image blocks next to their message boundary", () => {

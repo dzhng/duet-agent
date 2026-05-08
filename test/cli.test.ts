@@ -17,11 +17,14 @@ import {
 import { resolveCliMemoryModel, resolveCliModel } from "../src/model-resolution/index.js";
 import {
   activeSkillAutocompleteToken,
+  formatQuestionOptionDescription,
   formatSkillAutocompleteDescription,
   formatSkillAutocompleteItem,
   historyDisplayBlocks,
   limitHistoryDisplayBlocks,
+  moveQuestionOptionSelection,
   moveSkillAutocompleteSelection,
+  questionPickerAnswerPayload,
   replaceSkillAutocompleteToken,
   skillAutocompleteMatches,
   startupHeaderLines,
@@ -545,6 +548,46 @@ describe("TUI skill autocomplete helpers", () => {
       text: "please /review now",
       cursorOffset: 14,
     });
+  });
+});
+
+describe("TUI question picker helpers", () => {
+  const questions = [
+    {
+      question: "Which environment should I deploy to?",
+      options: [
+        { label: "staging", description: "Deploy to the staging environment first." },
+        { label: "production", description: "Deploy directly to production." },
+      ],
+    },
+  ];
+
+  test("wraps question option selection through available options", () => {
+    expect(moveQuestionOptionSelection(0, 2, 1)).toBe(1);
+    expect(moveQuestionOptionSelection(1, 2, 1)).toBe(0);
+    expect(moveQuestionOptionSelection(0, 2, -1)).toBe(1);
+    expect(moveQuestionOptionSelection(0, 0, 1)).toBe(0);
+  });
+
+  test("builds an answer payload from the selected option", () => {
+    expect(questionPickerAnswerPayload(questions, 1)).toEqual({
+      "Which environment should I deploy to?": "production",
+    });
+  });
+
+  test("returns no answer payload when selection is unavailable", () => {
+    expect(questionPickerAnswerPayload(questions, 3)).toBeUndefined();
+    expect(questionPickerAnswerPayload([], 0)).toBeUndefined();
+  });
+
+  test("wraps question option descriptions without leading indentation", () => {
+    expect(
+      formatQuestionOptionDescription(
+        "Deploy to staging first so the team can validate smoke tests before promoting the release to production.",
+      ),
+    ).toBe(
+      "Deploy to staging first so the team can validate smoke tests before\npromoting the release to production.",
+    );
   });
 });
 

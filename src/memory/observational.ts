@@ -644,7 +644,7 @@ export function agentMessageToRaw(message: AgentMessage): RawMemoryMessage | und
     role: normalizeRole(String(message.role)),
     content: normalized.content,
     textPreview: normalized.textPreview,
-    estimatedTokens: estimateTokens(normalized.textPreview),
+    estimatedTokens: estimateMessageTokens(normalized),
   };
 }
 
@@ -677,6 +677,12 @@ interface NormalizedMessageContent {
   content: Array<TextContent | ImageContent>;
   textPreview: string;
 }
+
+// Conservative cross-provider fallback when image dimensions are unavailable.
+// Claude's standard vision models cap near 1,568 tokens per image, while OpenAI
+// high-detail images can grow by 512px tiles; use a rounded budget so images
+// create context pressure even when the raw bytes are omitted from previews.
+const ESTIMATED_IMAGE_TOKENS = 1_600;
 
 function normalizeMessageContent(message: AgentMessage): NormalizedMessageContent {
   const maybeContent = (message as { content?: unknown }).content;
@@ -824,6 +830,12 @@ function estimateRawTokens(messages: RawMemoryMessage[]): number {
     (total, message) => total + (message.estimatedTokens ?? estimateTokens(message.textPreview)),
     0,
   );
+}
+
+function estimateMessageTokens(message: NormalizedMessageContent): number {
+  const imageTokens =
+    message.content.filter((part) => part.type === "image").length * ESTIMATED_IMAGE_TOKENS;
+  return estimateTokens(message.textPreview) + imageTokens;
 }
 
 function estimateTokens(text: string): number {
