@@ -13,7 +13,7 @@ afterEach(async () => {
     await rm(tempRoot, { recursive: true, force: true });
     tempRoot = undefined;
   }
-  delete process.env.DUET_GATEWAY_BASE_URL;
+  delete process.env.DUET_APP_BASE_URL;
 });
 
 interface FakeRequest {
@@ -64,14 +64,9 @@ describe("resolveDuetAppBaseUrl", () => {
     expect(resolveDuetAppBaseUrl()).toBe("https://duet.so");
   });
 
-  testIfDocker("derives from DUET_GATEWAY_BASE_URL by stripping the gateway suffix", () => {
-    process.env.DUET_GATEWAY_BASE_URL = "https://staging.duet.so/api/v1/ai-gateway";
+  testIfDocker("honors DUET_APP_BASE_URL, stripping the trailing slash", () => {
+    process.env.DUET_APP_BASE_URL = "https://staging.duet.so/";
     expect(resolveDuetAppBaseUrl()).toBe("https://staging.duet.so");
-  });
-
-  testIfDocker("falls back to default when DUET_GATEWAY_BASE_URL has no expected suffix", () => {
-    process.env.DUET_GATEWAY_BASE_URL = "https://example.com/something-else";
-    expect(resolveDuetAppBaseUrl()).toBe("https://duet.so");
   });
 });
 

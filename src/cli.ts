@@ -1033,9 +1033,9 @@ MODELS
   OPENAI_API_KEY after loading <workdir>/.env and the shared duet env file.
 
   duet-gateway: routes through the Duet gateway proxy
-  (https://duet.so/api/v1/ai-gateway by default; override via
-  DUET_GATEWAY_BASE_URL). It mirrors vercel-ai-gateway's model
-  catalog and authenticates with DUET_API_KEY.
+  (https://duet.so/api/v1/ai-gateway by default; override the app origin
+  via DUET_APP_BASE_URL). It mirrors vercel-ai-gateway's model catalog
+  and authenticates with DUET_API_KEY.
 
 EXAMPLES
   duet "build a REST API with Express and TypeScript"
@@ -1078,10 +1078,9 @@ SKILL SYNC
   skills with Claude Code / Codex / etc.
 
 OVERRIDES
-  Set DUET_GATEWAY_BASE_URL (e.g. https://staging.duet.so/api/v1/ai-gateway)
-  to re-point both the AI gateway provider and the CLI auth/sync endpoints at
-  a non-production deployment. The /api/v1/ai-gateway suffix is stripped to
-  get the app origin used for /cli/login and /api/v1/cli/*.
+  Set DUET_APP_BASE_URL (e.g. https://staging.duet.so) to re-point both the
+  AI gateway provider and the CLI auth/sync endpoints at a non-production
+  deployment.
 `);
 }
 
