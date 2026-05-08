@@ -9,6 +9,7 @@ import {
   detectPackageManagerFromContext,
   formatEnvEntries,
   formatNewVersionNotice,
+  globalUpgradeCommand,
   loadCliEnvFiles,
   parseResumeHistoryLines,
   runSetupCommand,
@@ -552,5 +553,20 @@ describe("CLI upgrade package manager detection", () => {
           "/Users/david/.nvm/versions/node/v24.14.0/lib/node_modules/@dzhng/duet-agent/dist/src/cli.js",
       }),
     ).toBe("pnpm");
+  });
+
+  test("installs an exact version instead of the latest dist-tag", () => {
+    expect(globalUpgradeCommand("npm", "@duetso/agent", "0.1.22")).toEqual([
+      "npm",
+      "install",
+      "--global",
+      "@duetso/agent@0.1.22",
+    ]);
+    expect(globalUpgradeCommand("bun", "@duetso/agent", "v0.1.22")).toEqual([
+      "bun",
+      "add",
+      "--global",
+      "@duetso/agent@0.1.22",
+    ]);
   });
 });

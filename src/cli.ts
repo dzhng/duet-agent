@@ -575,6 +575,7 @@ async function runUpgradeCommand(args: string[]): Promise<void> {
   let packageManager = detectPackageManager();
   let dryRun = false;
   const packageName = PACKAGE_METADATA.name;
+  let targetVersion: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -585,6 +586,10 @@ async function runUpgradeCommand(args: string[]): Promise<void> {
       case "--dry-run":
         dryRun = true;
         break;
+      case "--version":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        targetVersion = normalizePackageVersion(args[++i]!);
+        break;
       case "--help":
       case "-h":
         printUpgradeHelp(packageName);
@@ -594,14 +599,18 @@ async function runUpgradeCommand(args: string[]): Promise<void> {
     }
   }
 
-  const command = globalUpgradeCommand(packageManager, packageName);
+  targetVersion ??= await fetchLatestPackageVersion(packageName);
+  if (!targetVersion) {
+    fail(`Could not resolve latest ${packageName} version from npm`);
+  }
+  const command = globalUpgradeCommand(packageManager, packageName, targetVersion);
   const commandText = command.map(shellQuote).join(" ");
   if (dryRun) {
     console.log(commandText);
     return;
   }
 
-  console.error(`Upgrading ${packageName} with ${packageManager}...`);
+  console.error(`Upgrading ${packageName} to ${targetVersion} with ${packageManager}...`);
   await runCommand(command[0]!, command.slice(1));
 }
 
@@ -804,12 +813,20 @@ export function detectPackageManagerFromContext(
   return "npm";
 }
 
-function globalUpgradeCommand(packageManager: PackageManager, packageName: string): string[] {
-  const packageSpec = `${packageName}@latest`;
+export function globalUpgradeCommand(
+  packageManager: PackageManager,
+  packageName: string,
+  version: string,
+): string[] {
+  const packageSpec = `${packageName}@${normalizePackageVersion(version)}`;
   if (packageManager === "bun") return ["bun", "add", "--global", packageSpec];
   if (packageManager === "pnpm") return ["pnpm", "add", "--global", packageSpec];
   if (packageManager === "yarn") return ["yarn", "global", "add", packageSpec];
   return ["npm", "install", "--global", packageSpec];
+}
+
+function normalizePackageVersion(version: string): string {
+  return version.replace(/^v/, "");
 }
 
 async function runCommand(command: string, args: string[]): Promise<void> {
@@ -1010,10 +1027,11 @@ function printUpgradeHelp(packageName: string) {
 duet upgrade — Upgrade the global ${packageName} installation
 
 USAGE
-  duet upgrade [--manager npm|bun|pnpm|yarn]
+  duet upgrade [--manager npm|bun|pnpm|yarn] [--version <version>]
 
 OPTIONS
   --manager <name>         Package manager to use (default: detected, fallback: npm)
+  --version <version>      Install an exact version instead of npm's latest dist-tag
   --dry-run                Print the upgrade command without running it
   -h, --help               Show this help
 `);
