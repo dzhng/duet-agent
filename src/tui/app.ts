@@ -145,6 +145,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     flexGrow: 1,
     flexShrink: 1,
     scrollY: true,
+    // Pin to bottom as new lines arrive, but only while the user has not
+    // manually scrolled away. ScrollBoxRenderable flips `_hasManualScroll`
+    // the moment the user scrolls up, which pauses pinning until they
+    // return to the bottom — without this, new output yanks the viewport
+    // down while the user is reading history.
+    stickyScroll: true,
+    stickyStart: "bottom",
     border: true,
     borderColor: COLORS.border,
     padding: 1,
@@ -306,25 +313,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- transcript helpers ----------------------------------------------------
 
-  // ScrollBox.scrollHeight is only refreshed after the next layout pass, so
-  // setting scrollTop synchronously right after adding a child reads stale
-  // dimensions and leaves the view a few lines short of the bottom. Coalesce
-  // scroll-to-bottom requests onto a single deferred tick instead.
-  let scrollPending = false;
-  function scrollToBottomSoon(): void {
-    if (scrollPending) return;
-    scrollPending = true;
-    setTimeout(() => {
-      scrollPending = false;
-      transcript.scrollTop = transcript.scrollHeight;
-    }, 0);
-  }
-
   function appendLine(content: string, fg: string): void {
     if (!content) return;
     const line = new TextRenderable(renderer, { content, fg });
     transcript.add(line);
-    scrollToBottomSoon();
   }
 
   // Tool results can be huge (file dumps, search output). Show only the head
@@ -524,9 +516,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       lastTerminal = event;
       markIdle();
     } else if (event.type === "sleep") {
-      appendLine(`[sleeping until ${new Date(event.wakeAt).toLocaleTimeString()}]`, COLORS.system);
       renderUsage(event.usage);
-      renderTurnElapsed();
+      renderSleeping(event.wakeAt);
       lastTerminal = event;
       markIdle();
     }
@@ -567,6 +558,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function renderTurnElapsed(): void {
     if (workingStartedAt === undefined) return;
     appendLine(`● turn finished in ${formatElapsed(Date.now() - workingStartedAt)}`, COLORS.status);
+  }
+
+  // Sleep terminals replace the usual "turn finished" line because the session
+  // is going back to sleep, not wrapping up. When a turn ran before the sleep
+  // (e.g. an injected prompt while waiting on a state machine), include its
+  // duration so the user can still see how long the work took.
+  function renderSleeping(wakeAt: number): void {
+    const wakeLabel = new Date(wakeAt).toLocaleTimeString();
+    const turnDuration =
+      workingStartedAt !== undefined
+        ? ` · turn took ${formatElapsed(Date.now() - workingStartedAt)}`
+        : "";
+    appendLine(`● sleeping until ${wakeLabel}${turnDuration}`, COLORS.status);
   }
 
   function renderTodos(todos: readonly { id: string; status: string; content: string }[]): void {
@@ -671,7 +675,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       transcript.add(line);
       const block: ToolBlock = { line, toolName: step.toolName, inputBody, startedAt };
       activeToolBlocks.set(step.toolCallId, block);
-      scrollToBottomSoon();
       // The same event may already carry a terminal status (cached/replayed
       // history). Fall through to finalize against the just-created block.
       if (step.status !== "running" && step.status !== "pending") {
@@ -703,7 +706,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     block.line.content = sections.join("\n");
     block.line.fg = isError ? COLORS.error : COLORS.tool;
     activeToolBlocks.delete(step.toolCallId);
-    scrollToBottomSoon();
   }
 
   function finalizeDelta(block: StreamingBlock, body: string): void {
@@ -714,7 +716,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function updateStreamingBlock(block: StreamingBlock): void {
     const body = block.truncate ? truncateToolResult(block.body) : block.body;
     block.line.content = block.label ? `${block.label}\n${body}` : body;
-    scrollToBottomSoon();
   }
 
   function renderMemoryStatus(event: Extract<TurnEvent, { type: "memory" }>): void {
@@ -1236,7 +1237,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     for (const block of limited.blocks) {
       appendDisplayBlock(block);
     }
-    scrollToBottomSoon();
   }
 
   // ---- bootstrap initial prompt ----------------------------------------------
