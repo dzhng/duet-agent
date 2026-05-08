@@ -608,6 +608,8 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
 
       Reach for this tool — not todo_write — whenever a step can be described as "do X with these inputs and return the result." Each agent state runs in a fresh sub-agent context, and each script/poll/timer state runs without an agent at all. Only a compact result returns to you, so the sub-agent's tool calls, file reads, and script output never pollute this transcript. That makes a state machine the primary way to keep the parent context clean on multi-step work. The definition, current state, and progress are also rendered to the user in real time, so it doubles as a visible plan — they can see which state is running, what came before, and what is waiting.
 
+      You stay the orchestrator: when each state finishes, the runner wakes you with its result so you can inspect the output and decide the next transition (select the next state, finalize with a terminal state, or hand back to the user). Sub-agents and scripts only do the per-state work; they do not pick what comes next.
+
       State-machine work also keeps the user unblocked. While states execute in the background the user can keep sending messages and you (the parent) will respond without waiting for the state machine to finish. State-machine progress continues regardless of what you do in that side reply — by default just answer the user. Only call select_state_machine_state if the user actually wants to redirect or change the running work; questions, status checks, and side conversations should be answered with plain replies. A "steer" message arrives immediately as an interruption (right shape for redirects or anything time-sensitive); a "follow_up" message is queued and delivered when your current turn settles (right shape for context that does not need to interrupt). Doing the same multi-step work via todo_write would block the user behind your own tool calls instead.
 
       Use todo_write instead only when you need to do the steps yourself in this conversation because you will keep reasoning over the intermediate output.
@@ -616,11 +618,15 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
 
       Poll states always run script attempts on a recurring intervalMs and fail the state machine when timeoutMs is exceeded. Timer states are separate: set kind "timer" with wakeAt as an absolute Unix epoch millisecond timestamp, and the state completes at that time so the parent can choose the next state.
 
+      Poll intervalMs must be at least 15 minutes (900000 ms), and timer wakeAt must be at least 15 minutes in the future. State machines are for long-running lifecycle work that benefits from sleep/wake/background execution. Anything shorter-term should run directly in your turn rather than through a state machine — the orchestration overhead is not worth it for sub-15-minute waits.
+
+      Every definition must include at least one terminal state with status "completed" representing the happy-path exit (success). The runner automatically adds terminal states named "failed" (status "failed") and "cancelled" (status "cancelled") if you do not define them, so you always have escape hatches for unrecoverable failure and user cancellation without specifying boilerplate terminals. You may still define your own "failed" or "cancelled" states (with reasons or different names) to override or supplement the auto-injected ones.
+
       Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.
     `,
     parameters: createDefinitionSchema,
     async execute(_toolCallId, params) {
-      assertValidDefinitionInputSchemas(params.definition);
+      assertValidDefinition(params.definition);
       const result: TurnRunnerControlResult = {
         type: "create_state_machine_definition",
         definition: params.definition,
@@ -751,13 +757,46 @@ function assertValidStateInput(state: StateMachineState, input: unknown): void {
   throw new Error(`Invalid input for state "${state.name}" at ${path}: ${message}`);
 }
 
-function assertValidDefinitionInputSchemas(definition: StateMachineDefinition): void {
+// Minimum poll/timer cadence. State machines are for long-running lifecycle
+// work that survives sleeps, wakes, and background execution; anything shorter
+// than this should be performed directly in the parent turn rather than paid
+// for with the orchestration overhead of a state machine.
+const MINIMUM_STATE_MACHINE_DELAY_MS = 15 * 60 * 1000;
+
+function assertValidDefinition(definition: StateMachineDefinition): void {
   for (const state of definition.states) {
     if (state.name === INTERRUPTED_STATE_MACHINE_STATE) {
       throw new Error(`State name "${INTERRUPTED_STATE_MACHINE_STATE}" is reserved.`);
     }
     assertValidStateInputSchema(state);
     assertValidStateSchedule(state);
+    assertValidStateScheduleMinimum(state);
+  }
+  injectMissingTerminalEscapeHatches(definition);
+  assertHasCompletedTerminal(definition);
+}
+
+// The author defines the happy-path exit; failed/cancelled escape hatches are
+// added automatically so every definition can always be aborted or finalized
+// without forcing the caller to remember boilerplate terminal states.
+function injectMissingTerminalEscapeHatches(definition: StateMachineDefinition): void {
+  const existingNames = new Set(definition.states.map((state) => state.name));
+  if (!existingNames.has("failed")) {
+    definition.states.push({ kind: "terminal", name: "failed", status: "failed" });
+  }
+  if (!existingNames.has("cancelled")) {
+    definition.states.push({ kind: "terminal", name: "cancelled", status: "cancelled" });
+  }
+}
+
+function assertHasCompletedTerminal(definition: StateMachineDefinition): void {
+  const hasCompletedTerminal = definition.states.some(
+    (state) => state.kind === "terminal" && state.status === "completed",
+  );
+  if (!hasCompletedTerminal) {
+    throw new Error(
+      'State-machine definition must include at least one terminal state with status "completed" representing successful completion of the lifecycle.',
+    );
   }
 }
 
@@ -772,6 +811,9 @@ function assertValidStateInputSchema(state: StateMachineState): void {
   throw new Error(`Invalid inputSchema for state "${state.name}": ${message}`);
 }
 
+// Shape validation: intervalMs / wakeAt must be present and finite. Runs at
+// both definition creation and state selection so malformed overrides are
+// rejected too.
 function assertValidStateSchedule(state: StateMachineState): void {
   if (
     state.kind === "poll" &&
@@ -788,5 +830,27 @@ function assertValidStateSchedule(state: StateMachineState): void {
     (typeof state.wakeAt !== "number" || !Number.isFinite(state.wakeAt))
   ) {
     throw new Error(`Invalid timer schedule for state "${state.name}": wakeAt must be finite.`);
+  }
+}
+
+// Minimum-cadence guidance: enforced only when a new definition is being
+// created. Existing definitions handed to the runner via `mode:` may legitimately
+// have shorter cadences from configuration the agent did not author, and the
+// runtime should run them as-is rather than re-litigating the boundary.
+function assertValidStateScheduleMinimum(state: StateMachineState): void {
+  if (state.kind === "poll" && typeof state.intervalMs === "number") {
+    if (state.intervalMs < MINIMUM_STATE_MACHINE_DELAY_MS) {
+      throw new Error(
+        `Invalid poll schedule for state "${state.name}": intervalMs must be at least 15 minutes (${MINIMUM_STATE_MACHINE_DELAY_MS} ms). Anything shorter should run directly in the parent turn instead of through a state machine.`,
+      );
+    }
+  }
+  if (state.kind === "timer" && typeof state.wakeAt === "number") {
+    const minWakeAt = Date.now() + MINIMUM_STATE_MACHINE_DELAY_MS;
+    if (state.wakeAt < minWakeAt) {
+      throw new Error(
+        `Invalid timer schedule for state "${state.name}": wakeAt must be at least 15 minutes in the future. Anything shorter should run directly in the parent turn instead of through a state machine.`,
+      );
+    }
   }
 }

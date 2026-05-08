@@ -2,7 +2,9 @@
  * Explicit state-machine example.
  *
  * This gives the runner a concrete state-machine definition with one agent
- * state and one terminal state, then asks the runner to run that process.
+ * state and one happy-path terminal state, then asks the runner to run that
+ * process. The runner auto-injects "failed" and "cancelled" terminal escape
+ * hatches, so the definition does not need to spell those out.
  */
 
 import { TurnRunner, type TurnRunnerConfig, type StateMachineDefinition } from "../src/index.js";

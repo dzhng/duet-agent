@@ -148,7 +148,11 @@ describe("TurnRunner tools", () => {
       definition: {
         name: "outreach",
         prompt: "Use for outreach work.",
-        states: [{ kind: "terminal", name: "done", status: "completed" }],
+        states: [
+          { kind: "terminal", name: "done", status: "completed" },
+          { kind: "terminal", name: "failed", status: "failed" },
+          { kind: "terminal", name: "cancelled", status: "cancelled" },
+        ],
       },
       firstState: "done",
     });
@@ -184,6 +188,7 @@ describe("TurnRunner tools", () => {
             },
             command: "send email",
           },
+          { kind: "terminal", name: "done", status: "completed" },
         ],
       },
     });
@@ -202,6 +207,9 @@ describe("TurnRunner tools", () => {
               },
             },
           },
+          { kind: "terminal", name: "done", status: "completed" },
+          { kind: "terminal", name: "failed", status: "failed" },
+          { kind: "terminal", name: "cancelled", status: "cancelled" },
         ],
       },
     });
@@ -291,6 +299,142 @@ describe("TurnRunner tools", () => {
     await expect(result).rejects.toThrow(
       'Invalid poll schedule for state "wait_for_reply": intervalMs must be positive.',
     );
+  });
+
+  test("auto-injects missing failed and cancelled terminal escape hatches", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = await createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          { kind: "agent", name: "research", prompt: "Research the prospect." },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+    });
+
+    const details = result.details as Extract<
+      TurnRunnerControlResult,
+      { type: "create_state_machine_definition" }
+    >;
+    expect(details.definition.states).toEqual([
+      { kind: "agent", name: "research", prompt: "Research the prospect." },
+      { kind: "terminal", name: "done", status: "completed" },
+      { kind: "terminal", name: "failed", status: "failed" },
+      { kind: "terminal", name: "cancelled", status: "cancelled" },
+    ]);
+  });
+
+  test("preserves user-defined failed and cancelled states without overwriting", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = await createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          { kind: "terminal", name: "done", status: "completed" },
+          { kind: "terminal", name: "failed", status: "failed", reason: "Custom failure note." },
+        ],
+      },
+    });
+
+    const details = result.details as Extract<
+      TurnRunnerControlResult,
+      { type: "create_state_machine_definition" }
+    >;
+    expect(details.definition.states).toEqual([
+      { kind: "terminal", name: "done", status: "completed" },
+      { kind: "terminal", name: "failed", status: "failed", reason: "Custom failure note." },
+      { kind: "terminal", name: "cancelled", status: "cancelled" },
+    ]);
+  });
+
+  test("rejects dynamically created definitions without a completed terminal", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [{ kind: "agent", name: "research", prompt: "Research the prospect." }],
+      },
+    });
+
+    await expect(result).rejects.toThrow(
+      'must include at least one terminal state with status "completed"',
+    );
+  });
+
+  test("rejects poll states with intervalMs shorter than 15 minutes", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "poll",
+            name: "wait_for_reply",
+            command: "check reply",
+            intervalMs: 60_000,
+          },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+    });
+
+    await expect(result).rejects.toThrow("intervalMs must be at least 15 minutes");
+  });
+
+  test("rejects timer states with wakeAt sooner than 15 minutes from now", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          { kind: "timer", name: "wait_briefly", wakeAt: Date.now() + 60_000 },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+    });
+
+    await expect(result).rejects.toThrow("wakeAt must be at least 15 minutes in the future");
   });
 
   test("rejects timer states without a finite wakeAt", async () => {
