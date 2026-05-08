@@ -1,4 +1,4 @@
-import { findEnvKeys, getModel, type Model } from "@mariozechner/pi-ai";
+import { findEnvKeys, getModel, type Model } from "@earendil-works/pi-ai";
 
 import {
   DUET_GATEWAY_API_KEY_ENV,

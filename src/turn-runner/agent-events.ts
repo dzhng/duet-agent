@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TurnEvent } from "../types/protocol.js";
 
 export function agentEventToTurnEvents(event: AgentEvent): TurnEvent[] {

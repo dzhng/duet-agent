@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { startTurn } from "./helpers/turn-runner-protocol.js";
 import assert from "node:assert";
-import { Agent, type StreamFn } from "@mariozechner/pi-agent-core";
-import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { Agent, type StreamFn } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnState } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";

@@ -1,5 +1,5 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { createCodingTools, type Skill } from "@mariozechner/pi-coding-agent";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { createCodingTools, type Skill } from "@earendil-works/pi-coding-agent";
 import { Ajv } from "ajv";
 import dedent from "dedent";
 import { Type, type Static } from "typebox";

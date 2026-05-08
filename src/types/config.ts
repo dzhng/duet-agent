@@ -1,4 +1,4 @@
-import type { Skill, loadSkills } from "@mariozechner/pi-coding-agent";
+import type { Skill, loadSkills } from "@earendil-works/pi-coding-agent";
 import type { GuardrailConfig } from "./guardrails.js";
 import type { ObservationalMemorySettingsInput } from "./memory.js";
 import type { TurnMode, TurnOptions } from "./protocol.js";

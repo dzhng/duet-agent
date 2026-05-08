@@ -3,7 +3,7 @@ import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect } from "bun:test";
-import type { Skill } from "@mariozechner/pi-coding-agent";
+import type { Skill } from "@earendil-works/pi-coding-agent";
 import dedent from "dedent";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";

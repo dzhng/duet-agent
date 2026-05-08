@@ -1,4 +1,4 @@
-import { getModel, type Model } from "@mariozechner/pi-ai";
+import { getModel, type Model } from "@earendil-works/pi-ai";
 
 const PROVIDER_PREFIX = "duet-gateway";
 const DEFAULT_BASE_URL = "https://duet.so/api/v1/ai-gateway";

@@ -8,7 +8,7 @@ import {
   type Tool,
   type ToolCall,
   type Usage,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
 import { resolveModelName } from "../model-resolution/index.js";
 

@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { startTurn } from "./helpers/turn-runner-protocol.js";
-import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
+import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   createAssistantMessageEventStream,
   type ImageContent,
   type Model,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import {
   agentMessageToRaw,
   enforceObservationTokenBudget,

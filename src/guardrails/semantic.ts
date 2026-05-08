@@ -1,4 +1,4 @@
-import type { Tool } from "@mariozechner/pi-ai";
+import type { Tool } from "@earendil-works/pi-ai";
 import dedent from "dedent";
 import { Type } from "typebox";
 import { generateStructuredOutput } from "../core/structured-output.js";

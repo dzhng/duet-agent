@@ -8,7 +8,7 @@ import {
   DEFAULT_SESSION_STORAGE_DIR,
   SessionManager,
 } from "../src/session/session-manager.js";
-import type { Skill } from "@mariozechner/pi-coding-agent";
+import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "../src/turn-runner/skills.js";
 import type {
   TurnAgentFile,

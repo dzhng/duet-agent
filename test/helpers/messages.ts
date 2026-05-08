@@ -1,4 +1,4 @@
-import type { AssistantMessage, Usage } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 
 export function createAssistantMessage(input: {
   text?: string;

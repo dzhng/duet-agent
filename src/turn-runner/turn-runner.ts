@@ -1,6 +1,6 @@
-import { Agent, type AgentEvent, type AgentTool } from "@mariozechner/pi-agent-core";
-import { getEnvApiKey, type Usage } from "@mariozechner/pi-ai";
-import type { Skill } from "@mariozechner/pi-coding-agent";
+import { Agent, type AgentEvent, type AgentTool } from "@earendil-works/pi-agent-core";
+import { getEnvApiKey, type Usage } from "@earendil-works/pi-ai";
+import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
 

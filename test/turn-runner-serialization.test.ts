@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createAssistantMessageEventStream, type Context } from "@mariozechner/pi-ai";
+import { createAssistantMessageEventStream, type Context } from "@earendil-works/pi-ai";
 import { TurnRunner, type AgentWorkerInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerConfig } from "../src/types/config.js";
 import type { TurnState } from "../src/types/protocol.js";

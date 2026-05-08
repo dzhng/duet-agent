@@ -1,5 +1,5 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import {
   BoxRenderable,
   createCliRenderer,
@@ -19,6 +19,7 @@ import type {
   TurnTodo,
   TurnTokenUsage,
 } from "../types/protocol.js";
+import type { StateMachineSession } from "../types/state-machine.js";
 
 export interface RunTuiInput {
   session: Session;
@@ -105,11 +106,78 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   });
   restoreWindowGlobal(previousWindow);
 
-  const layout = new BoxRenderable(renderer, {
-    flexDirection: "column",
+  // Outer row wraps the main column and a right-side sidebar that surfaces
+  // the runner's current todo list and state-machine progress.
+  const root = new BoxRenderable(renderer, {
+    flexDirection: "row",
     width: "100%",
     height: "100%",
   });
+
+  const layout = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    flexGrow: 1,
+    flexShrink: 1,
+    height: "100%",
+  });
+
+  // Fixed width keeps the sidebar legible on narrow terminals without
+  // squashing the transcript. The two panels stack vertically inside.
+  const sidebar = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    width: 36,
+    height: "100%",
+    flexShrink: 0,
+  });
+
+  const todoPanel = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    border: true,
+    borderColor: COLORS.border,
+    padding: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+  });
+  const todoTitle = new TextRenderable(renderer, {
+    content: "todos",
+    fg: COLORS.status,
+    height: 1,
+    flexShrink: 0,
+  });
+  const todoBody = new TextRenderable(renderer, {
+    content: "(none)",
+    fg: COLORS.hint,
+    flexGrow: 1,
+    flexShrink: 1,
+  });
+  todoPanel.add(todoTitle);
+  todoPanel.add(todoBody);
+
+  const smPanel = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    border: true,
+    borderColor: COLORS.border,
+    padding: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+  });
+  const smTitle = new TextRenderable(renderer, {
+    content: "state machine",
+    fg: COLORS.status,
+    height: 1,
+    flexShrink: 0,
+  });
+  const smBody = new TextRenderable(renderer, {
+    content: "(inactive)",
+    fg: COLORS.hint,
+    flexGrow: 1,
+    flexShrink: 1,
+  });
+  smPanel.add(smTitle);
+  smPanel.add(smBody);
+
+  sidebar.add(todoPanel);
+  sidebar.add(smPanel);
 
   const transcript = new ScrollBoxRenderable(renderer, {
     flexGrow: 1,
@@ -166,7 +234,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   layout.add(status);
   layout.add(hint);
   layout.add(inputBox);
-  renderer.root.add(layout);
+  root.add(layout);
+  root.add(sidebar);
+  renderer.root.add(root);
   inputField.focus();
 
   // ---- transcript helpers ----------------------------------------------------
@@ -273,7 +343,52 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- session subscription --------------------------------------------------
 
+  function refreshSidebar(): void {
+    const state = input.session.getState();
+    renderTodoSidebar(state?.todos ?? []);
+    renderStateMachineSidebar(state?.stateMachine);
+  }
+
+  function renderTodoSidebar(todos: readonly TurnTodo[]): void {
+    if (todos.length === 0) {
+      todoBody.content = "(none)";
+      todoBody.fg = COLORS.hint;
+      return;
+    }
+    const lines = todos.map((todo) => `${todoStatusGlyph(todo.status)} ${todo.content}`);
+    todoBody.content = lines.join("\n");
+    todoBody.fg = COLORS.agent;
+  }
+
+  function todoStatusGlyph(status: TurnTodo["status"]): string {
+    if (status === "completed") return "✓";
+    if (status === "in_progress") return "●";
+    if (status === "failed") return "✗";
+    return "○";
+  }
+
+  function renderStateMachineSidebar(session: StateMachineSession | undefined): void {
+    if (!session) {
+      smBody.content = "(inactive)";
+      smBody.fg = COLORS.hint;
+      return;
+    }
+    const current = session.currentState;
+    const lines = session.definition.states.map((state) => {
+      const marker = state.name === current ? "▶" : " ";
+      return `${marker} ${state.name}`;
+    });
+    if (session.terminal) {
+      lines.push("", `terminal: ${session.terminal.status}`);
+    }
+    smBody.content = lines.join("\n");
+    smBody.fg = COLORS.agent;
+  }
+
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
+    // Sidebar mirrors the runner's authoritative state, so refresh it on
+    // every event rather than threading specific updates through each branch.
+    refreshSidebar();
     if (event.type === "step") {
       renderStep(event.step);
     } else if (event.type === "todos") {
@@ -590,6 +705,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     input.session.getSkillCollisions(),
   ]);
   renderSetupIntro(skills, agentFiles, skillCollisions);
+  refreshSidebar();
 
   const resumeHistoryLines = input.resumeHistoryLines ?? Number.POSITIVE_INFINITY;
   if (resumeHistoryLines > 0 && input.history && input.history.length > 0) {

@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { type ImageContent, type Tool } from "@mariozechner/pi-ai";
+import { type ImageContent, type Tool } from "@earendil-works/pi-ai";
 import dedent from "dedent";
 import { Type, type Static } from "typebox";
 import { generateStructuredOutput } from "../src/core/structured-output.js";

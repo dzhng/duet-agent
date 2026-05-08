@@ -1,4 +1,4 @@
-import type { ImageContent, TextContent, ThinkingLevel } from "@mariozechner/pi-ai";
+import type { ImageContent, TextContent, ThinkingLevel } from "@earendil-works/pi-ai";
 import type { AgentSession } from "./agent.js";
 import type { ObservationalMemoryActivityEvent } from "./memory.js";
 import type { StateMachineDefinition, StateMachineSession } from "./state-machine.js";

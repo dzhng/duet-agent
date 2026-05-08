@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Skill } from "@mariozechner/pi-coding-agent";
+import type { Skill } from "@earendil-works/pi-coding-agent";
 import assert from "node:assert";
 import {
   createTurnRunner,

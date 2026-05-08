@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Agent } from "@mariozechner/pi-agent-core";
-import { createAssistantMessageEventStream, type Context } from "@mariozechner/pi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream, type Context } from "@earendil-works/pi-ai";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnState, TurnTerminalEvent } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";

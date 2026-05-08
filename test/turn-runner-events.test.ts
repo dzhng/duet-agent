@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
-import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { Agent, type AgentEvent } from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { waitFor } from "./helpers/async.js";

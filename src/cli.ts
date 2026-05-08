@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import { basename, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { type TextContent } from "@mariozechner/pi-ai";
+import { type TextContent } from "@earendil-works/pi-ai";
 import dotenv from "dotenv";
 import packageJson from "../package.json" with { type: "json" };
 import { shimDuetApiKeyToAiGateway } from "./model-resolution/duet-gateway.js";
@@ -278,7 +278,7 @@ async function main() {
         });
     let terminal: TurnTerminalEvent | undefined;
     let initialTuiPrompt: string | undefined;
-    let resumedHistory: import("@mariozechner/pi-agent-core").AgentMessage[] | undefined;
+    let resumedHistory: import("@earendil-works/pi-agent-core").AgentMessage[] | undefined;
 
     if (resumeSessionId) {
       // Force-load the persisted state.json so setup hands the resumed

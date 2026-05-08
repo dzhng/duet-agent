@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import type { ResourceDiagnostic, Skill } from "@mariozechner/pi-coding-agent";
-import { loadSkills } from "@mariozechner/pi-coding-agent";
+import type { ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
+import { loadSkills } from "@earendil-works/pi-coding-agent";
 import type { SkillDiscoveryOptions } from "../types/config.js";
 
 export interface SkillCollision {

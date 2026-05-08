@@ -74,7 +74,7 @@ The memory model follows observational memory: turn runner session messages are 
 
 ### Pi Coding Tools
 
-Sub-agents use the default tools from `@mariozechner/pi-coding-agent`: read, bash, edit, and write. The turn runner supplies a working directory and can restrict which skills are injected into a state-machine agent state; it does not wrap those tools in a second sandbox abstraction.
+Sub-agents use the default tools from `@earendil-works/pi-coding-agent`: read, bash, edit, and write. The turn runner supplies a working directory and can restrict which skills are injected into a state-machine agent state; it does not wrap those tools in a second sandbox abstraction.
 
 ### Native Interrupts
 
@@ -277,7 +277,7 @@ Observational memory is enabled by default with thresholds tuned for modern 200k
 
 ## Skills
 
-Skills are loaded from `<cwd>/.duet/skills`, `<cwd>/.agents/skills`, `~/.duet/skills`, and `~/.agents/skills` by default, using `@mariozechner/pi-coding-agent`'s skill loader. The turn runner injects every loaded skill's description and instructions into the agent system prompt. `getSkills()` returns the discovered skills, including YAML frontmatter descriptions such as block scalars.
+Skills are loaded from `<cwd>/.duet/skills`, `<cwd>/.agents/skills`, `~/.duet/skills`, and `~/.agents/skills` by default, using `@earendil-works/pi-coding-agent`'s skill loader. The turn runner injects every loaded skill's description and instructions into the agent system prompt. `getSkills()` returns the discovered skills, including YAML frontmatter descriptions such as block scalars.
 
 ## Guardrails
 
