@@ -19,7 +19,7 @@ export interface ModelResolution {
   source: "explicit" | "inferred" | "default";
   /** Provider env var that triggered inference, e.g. "ANTHROPIC_API_KEY". */
   envVar?: string;
-  /** True when the env var was loaded from <workdir>/.env rather than the shell. */
+  /** True when the env var was loaded from a CLI env file rather than the shell. */
   fromDotenv?: boolean;
 }
 
@@ -128,7 +128,7 @@ export function resolveCliMemoryModel(
 
 /**
  * Resolve the user-visible model and report provenance so callers can show
- * "inferred from ANTHROPIC_API_KEY in .env" etc.
+ * "inferred from ANTHROPIC_API_KEY in an env file" etc.
  */
 export function resolveCliModel(
   modelName: string | undefined,
@@ -168,7 +168,7 @@ function findInferredProviderEntry(
 export function describeModelResolution(resolution: ModelResolution): string {
   if (resolution.source === "explicit") return "explicit CLI flag";
   if (resolution.source === "inferred") {
-    const where = resolution.fromDotenv ? "<workdir>/.env" : "shell environment";
+    const where = resolution.fromDotenv ? "an env file" : "shell environment";
     return `inferred from ${resolution.envVar} in ${where}`;
   }
   return "built-in default (no provider env vars set)";

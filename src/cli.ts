@@ -10,7 +10,9 @@
  */
 
 import { spawn } from "node:child_process";
-import { basename, join } from "node:path";
+import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { type TextContent } from "@earendil-works/pi-ai";
@@ -32,6 +34,14 @@ import type { TurnStep, TurnTerminalEvent, TurnTokenUsage } from "./types/protoc
 const VERSION_CHECK_TIMEOUT_MS = 1_500;
 const DEFAULT_RESUME_HISTORY_LINES = 40;
 const PACKAGE_MANAGERS = ["npm", "bun", "pnpm", "yarn"] as const;
+const DEFAULT_DUET_ENV_FILE = "~/.duet/.env";
+const SUPPORTED_API_KEYS = [
+  "DUET_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "AI_GATEWAY_API_KEY",
+  "OPENROUTER_API_KEY",
+  "OPENAI_API_KEY",
+] as const;
 
 type PackageManager = (typeof PACKAGE_MANAGERS)[number];
 
@@ -77,6 +87,15 @@ async function main() {
     }
     return;
   }
+  if (args[0] === "setup") {
+    try {
+      await runSetupCommand(args.slice(1));
+    } catch (err: any) {
+      console.error(`Fatal: ${err.message}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
 
   // Parse flags
   let modelName: string | undefined;
@@ -88,6 +107,7 @@ async function main() {
   let resumeHistoryLines = DEFAULT_RESUME_HISTORY_LINES;
   let resumeHistoryLinesExplicit = false;
   let jsonOutput = false;
+  let envFilePath: string | undefined;
   const promptParts: string[] = [];
   const interactive = Boolean(process.stdin.isTTY ?? process.stdout.isTTY);
 
@@ -135,6 +155,10 @@ async function main() {
       case "--json":
         jsonOutput = true;
         break;
+      case "--env-file":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        envFilePath = args[++i];
+        break;
       case "--version":
       case "-v": {
         console.log(PACKAGE_METADATA.version);
@@ -173,8 +197,8 @@ async function main() {
     process.exit(1);
   }
 
-  const dotenvResult = dotenv.config({ path: join(workDir, ".env"), quiet: true });
-  const dotenvKeys = new Set<string>(Object.keys(dotenvResult.parsed ?? {}));
+  const dotenvKeys = loadCliEnvFiles(workDir, envFilePath);
+  shimDuetApiKeyToAiGateway();
 
   const modelResolution = resolveCliModel(modelName, dotenvKeys);
   modelName = modelResolution.modelName;
@@ -341,6 +365,7 @@ async function main() {
         workDir,
         systemInstructions,
         systemPromptFiles,
+        envFilePath,
         ...(resumeHistoryLinesExplicit ? { resumeHistoryLines } : {}),
       })}\n`,
     );
@@ -443,6 +468,34 @@ function formatToolCall(step: Extract<TurnStep, { type: "tool_call" }>): string 
 function fail(message: string): never {
   console.error(`Fatal: ${message}`);
   process.exit(1);
+}
+
+export function resolveUserPath(path: string, baseDir = process.cwd()): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+  return isAbsolute(path) ? path : resolve(baseDir, path);
+}
+
+export function defaultDuetEnvFilePath(): string {
+  return resolveUserPath(DEFAULT_DUET_ENV_FILE);
+}
+
+export function cliEnvFilePaths(workDir: string, envFilePath?: string): string[] {
+  return [
+    join(workDir, ".env"),
+    envFilePath ? resolveUserPath(envFilePath, workDir) : defaultDuetEnvFilePath(),
+  ];
+}
+
+export function loadCliEnvFiles(workDir: string, envFilePath?: string): Set<string> {
+  const dotenvKeys = new Set<string>();
+  for (const path of cliEnvFilePaths(workDir, envFilePath)) {
+    const result = dotenv.config({ path, quiet: true });
+    for (const key of Object.keys(result.parsed ?? {})) {
+      dotenvKeys.add(key);
+    }
+  }
+  return dotenvKeys;
 }
 
 export function parseResumeHistoryLines(
@@ -585,6 +638,137 @@ function runSkillsCommand(args: string[]): void {
   }
 }
 
+interface SetupCommandIO {
+  interactive?: boolean;
+  promptForApiKeys?: () => Promise<Map<string, string>>;
+  printHelp?: () => void;
+}
+
+export async function runSetupCommand(args: string[], io: SetupCommandIO = {}): Promise<void> {
+  let workDir = process.cwd();
+  let envFilePath: string | undefined;
+  let importCwdEnv = false;
+  let pasteKeys = false;
+
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--workdir":
+      case "-w":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        workDir = args[++i]!;
+        break;
+      case "--env-file":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        envFilePath = args[++i]!;
+        break;
+      case "--import":
+        importCwdEnv = true;
+        break;
+      case "--keys":
+        pasteKeys = true;
+        break;
+      case "--help":
+      case "-h":
+        printSetupHelp();
+        return;
+      default:
+        fail(`Unknown setup option: ${args[i]}`);
+    }
+  }
+
+  const targetEnvFile = envFilePath
+    ? resolveUserPath(envFilePath, workDir)
+    : defaultDuetEnvFilePath();
+  const cwdEnvFile = join(workDir, ".env");
+  const interactive = io.interactive ?? Boolean(process.stdin.isTTY && process.stderr.isTTY);
+
+  if (!importCwdEnv && !pasteKeys) {
+    (io.printHelp ?? printSetupHelp)();
+    return;
+  }
+
+  if (importCwdEnv) {
+    if (!(await fileExists(cwdEnvFile))) {
+      fail(`No .env file found at ${cwdEnvFile}`);
+    }
+    await importEnvFile(cwdEnvFile, targetEnvFile);
+    console.error(`Imported ${cwdEnvFile} into ${targetEnvFile}`);
+  }
+
+  if (pasteKeys) {
+    if (!interactive) {
+      fail("duet setup --keys requires an interactive terminal");
+    }
+    const entries = await (io.promptForApiKeys ?? promptForApiKeys)();
+    if (entries.size === 0) {
+      console.error("No API keys entered.");
+      return;
+    }
+    await mergeEnvEntries(targetEnvFile, entries);
+    console.error(`Saved API keys to ${targetEnvFile}`);
+  }
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function importEnvFile(source: string, target: string): Promise<void> {
+  if (resolve(source) === resolve(target)) {
+    console.error(`${target} is already the setup env file.`);
+    return;
+  }
+  await mkdir(dirname(target), { recursive: true });
+  if (!(await fileExists(target))) {
+    await copyFile(source, target);
+    return;
+  }
+  const parsed = dotenv.parse(await readFile(source));
+  await mergeEnvEntries(target, new Map(Object.entries(parsed)));
+}
+
+async function promptForApiKeys(): Promise<Map<string, string>> {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+  try {
+    const entries = new Map<string, string>();
+    console.error("Paste API keys for any providers you want to use. Leave blank to skip.");
+    for (const key of SUPPORTED_API_KEYS) {
+      const value = (await rl.question(`${key}: `)).trim();
+      if (value) entries.set(key, value);
+    }
+    return entries;
+  } finally {
+    rl.close();
+  }
+}
+
+async function mergeEnvEntries(target: string, entries: Map<string, string>): Promise<void> {
+  await mkdir(dirname(target), { recursive: true });
+  const existingText = (await fileExists(target)) ? await readFile(target, "utf8") : "";
+  const merged = new Map(Object.entries(existingText ? dotenv.parse(existingText) : {}));
+  for (const [key, value] of entries) {
+    merged.set(key, value);
+  }
+  const text = formatEnvEntries(merged);
+  await writeFile(target, text);
+}
+
+export function formatEnvEntries(entries: Map<string, string>): string {
+  return Array.from(entries, ([key, value]) => `${key}=${dotenvQuote(value)}`).join("\n") + "\n";
+}
+
+function dotenvQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:@+-]+$/.test(value)) return value;
+  return JSON.stringify(value);
+}
+
 function parsePackageManager(value: string): PackageManager {
   if (PACKAGE_MANAGERS.includes(value as PackageManager)) return value as PackageManager;
   fail(`Unsupported package manager: ${value}`);
@@ -663,6 +847,7 @@ function resumeCommand(
     workDir: string;
     systemInstructions?: string;
     systemPromptFiles?: string[];
+    envFilePath?: string;
     resumeHistoryLines?: number;
   },
 ): string {
@@ -690,6 +875,9 @@ function resumeCommand(
         command.push("--system-prompt-file", shellQuote(fileName));
       }
     }
+  }
+  if (input.envFilePath) {
+    command.push("--env-file", shellQuote(input.envFilePath));
   }
   if (input.resumeHistoryLines !== undefined) {
     command.push("--resume-history-lines", String(input.resumeHistoryLines));
@@ -719,11 +907,13 @@ duet — An opinionated full-stack agent runner
 
 USAGE
   duet [options] [prompt]
+  duet setup [--env-file <path>] [--import|--keys]
   duet skills [--workdir <path>]
   duet upgrade [--manager npm|bun|pnpm|yarn]
   echo "prompt" | duet
 
 COMMANDS
+  setup                    Create or update the shared duet env file
   skills                   List installed skills as JSON (name, description, path, scope)
   upgrade                  Upgrade the global ${packageName} installation
 
@@ -738,6 +928,7 @@ OPTIONS
   --system-prompt-file <path>
                             Load a file into the system prompt; repeatable
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
+  --env-file <path>        Shared env file to load after <workdir>/.env (default: ${DEFAULT_DUET_ENV_FILE})
   --json                    Print streamed events as JSON lines
   -v, --version            Print the installed duet version and exit
   -h, --help               Show this help
@@ -750,7 +941,7 @@ MODELS
   Use provider:modelId syntax, e.g. anthropic:claude-opus-4-7.
   If omitted, duet infers a default from ANTHROPIC_API_KEY,
   DUET_API_KEY, AI_GATEWAY_API_KEY, OPENROUTER_API_KEY, or
-  OPENAI_API_KEY after loading <workdir>/.env.
+  OPENAI_API_KEY after loading <workdir>/.env and the shared duet env file.
 
   duet-gateway: routes through the Duet gateway proxy
   (https://duet.so/api/v1/ai-gateway by default; override via
@@ -765,9 +956,33 @@ EXAMPLES
   duet -m duet-gateway:anthropic/claude-opus-4.7 "review this repo"
   duet --system-prompt "Prefer concise answers." "review this repo"
   duet --system-prompt-file TEAM.md "review this repo"
+  duet --env-file ~/.config/duet/env "review this repo"
   duet --workdir ./my-project "refactor the auth module"
   duet --resume session_abc123 --workdir ./my-project
+  duet setup
   duet upgrade
+`);
+}
+
+function printSetupHelp() {
+  console.log(`
+duet setup — Create or update a shared duet env file
+
+USAGE
+  duet setup [--env-file <path>] [--import|--keys]
+
+By default, setup only prints this help. Choose --import to copy
+provider keys from <workdir>/.env, or --keys to paste keys interactively.
+
+OPTIONS
+  --env-file <path>        Env file to write (default: ${DEFAULT_DUET_ENV_FILE})
+  -w, --workdir <path>     Working directory to import .env from (default: cwd)
+  --import                 Import <workdir>/.env into the shared env file
+  --keys                   Prompt for supported provider API keys
+  -h, --help               Show this help
+
+SUPPORTED KEYS
+  ${SUPPORTED_API_KEYS.join(", ")}
 `);
 }
 

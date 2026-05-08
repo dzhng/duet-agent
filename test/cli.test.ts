@@ -1,10 +1,17 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
+  cliEnvFilePaths,
   compareSemverVersions,
   detectPackageManagerFromContext,
+  formatEnvEntries,
   formatNewVersionNotice,
+  loadCliEnvFiles,
   parseResumeHistoryLines,
+  runSetupCommand,
 } from "../src/cli.js";
 import { resolveCliMemoryModel, resolveCliModel } from "../src/model-resolution/index.js";
 import {
@@ -19,6 +26,7 @@ import {
   startupHeaderLines,
 } from "../src/tui/app.js";
 import { createAssistantMessage } from "./helpers/messages.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 
 const MODEL_ENV_KEYS = [
   "ANTHROPIC_API_KEY",
@@ -31,6 +39,7 @@ const MODEL_ENV_KEYS = [
 
 const originalEnv = new Map<string, string | undefined>();
 const EMPTY_DOTENV_KEYS = new Set<string>();
+let tempRoot: string | undefined;
 
 for (const key of MODEL_ENV_KEYS) {
   originalEnv.set(key, process.env[key]);
@@ -44,6 +53,13 @@ afterEach(() => {
     } else {
       process.env[key] = value;
     }
+  }
+});
+
+afterEach(async () => {
+  if (tempRoot) {
+    await rm(tempRoot, { recursive: true, force: true });
+    tempRoot = undefined;
   }
 });
 
@@ -178,6 +194,126 @@ describe("CLI model inference", () => {
       modelName: "anthropic:claude-3-5-haiku-latest",
       source: "explicit",
     });
+  });
+});
+
+describe("CLI env files", () => {
+  testIfDocker("loads workdir .env before the shared env file", async () => {
+    clearModelEnv();
+    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-env-"));
+    const workDir = join(tempRoot, "project");
+    const sharedEnv = join(tempRoot, "shared.env");
+    await mkdir(workDir);
+    await writeFile(join(workDir, ".env"), "ANTHROPIC_API_KEY=from-workdir\n");
+    await writeFile(sharedEnv, "ANTHROPIC_API_KEY=from-shared\nOPENAI_API_KEY=from-shared\n");
+
+    const dotenvKeys = loadCliEnvFiles(workDir, sharedEnv);
+
+    expect(process.env.ANTHROPIC_API_KEY).toBe("from-workdir");
+    expect(process.env.OPENAI_API_KEY).toBe("from-shared");
+    expect(dotenvKeys).toEqual(new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]));
+  });
+
+  test("resolves relative custom env files from the workdir", () => {
+    expect(cliEnvFilePaths("/repo", ".duet-env")).toEqual(["/repo/.env", "/repo/.duet-env"]);
+  });
+
+  testIfDocker("formats setup env entries with shell-safe quoting", () => {
+    expect(
+      formatEnvEntries(
+        new Map([
+          ["DUET_API_KEY", "duet_gt_test"],
+          ["OPENAI_API_KEY", "value with spaces"],
+        ]),
+      ),
+    ).toBe('DUET_API_KEY=duet_gt_test\nOPENAI_API_KEY="value with spaces"\n');
+  });
+
+  testIfDocker("setup imports a cwd .env into a custom env file", async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-setup-"));
+    const workDir = join(tempRoot, "project");
+    const targetEnv = join(tempRoot, "duet.env");
+    await mkdir(workDir);
+    await writeFile(join(workDir, ".env"), "DUET_API_KEY=duet_gt_test\n");
+
+    const stderr = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await runSetupCommand(["--workdir", workDir, "--env-file", targetEnv, "--import"]);
+    } finally {
+      stderr.mockRestore();
+    }
+
+    expect(await readFile(targetEnv, "utf8")).toBe("DUET_API_KEY=duet_gt_test\n");
+  });
+
+  testIfDocker(
+    "setup merges imported cwd .env values into an existing custom env file",
+    async () => {
+      tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-setup-"));
+      const workDir = join(tempRoot, "project");
+      const targetEnv = join(tempRoot, "duet.env");
+      await mkdir(workDir);
+      await writeFile(
+        join(workDir, ".env"),
+        "DUET_API_KEY=duet_gt_new\nANTHROPIC_API_KEY=anthropic_new\n",
+      );
+      await writeFile(targetEnv, "DUET_API_KEY=duet_gt_old\nOPENAI_API_KEY=openai_existing\n");
+
+      const stderr = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await runSetupCommand(["--workdir", workDir, "--env-file", targetEnv, "--import"]);
+      } finally {
+        stderr.mockRestore();
+      }
+
+      expect(await readFile(targetEnv, "utf8")).toBe(
+        "DUET_API_KEY=duet_gt_new\nOPENAI_API_KEY=openai_existing\nANTHROPIC_API_KEY=anthropic_new\n",
+      );
+    },
+  );
+
+  testIfDocker("setup keys writes prompted provider API keys to a custom env file", async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-setup-"));
+    const workDir = join(tempRoot, "project");
+    const targetEnv = join(tempRoot, "duet.env");
+    await mkdir(workDir);
+
+    const stderr = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await runSetupCommand(["--workdir", workDir, "--env-file", targetEnv, "--keys"], {
+        interactive: true,
+        promptForApiKeys: async () =>
+          new Map([
+            ["DUET_API_KEY", "duet_gt_test"],
+            ["OPENAI_API_KEY", "openai_test"],
+          ]),
+      });
+    } finally {
+      stderr.mockRestore();
+    }
+
+    expect(await readFile(targetEnv, "utf8")).toBe(
+      "DUET_API_KEY=duet_gt_test\nOPENAI_API_KEY=openai_test\n",
+    );
+  });
+
+  testIfDocker("setup without an action prints help and does not write an env file", async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-setup-"));
+    const workDir = join(tempRoot, "project");
+    const targetEnv = join(tempRoot, "duet.env");
+    await mkdir(workDir);
+    await writeFile(join(workDir, ".env"), "DUET_API_KEY=duet_gt_test\n");
+
+    let printedHelp = false;
+    await runSetupCommand(["--workdir", workDir, "--env-file", targetEnv], {
+      interactive: true,
+      printHelp: () => {
+        printedHelp = true;
+      },
+    });
+
+    await expect(readFile(targetEnv, "utf8")).rejects.toThrow();
+    expect(printedHelp).toBe(true);
   });
 });
 
