@@ -884,6 +884,7 @@ export class TurnRunner {
         mode,
         getDefinition: () => this.stateMachineController.getSession()?.definition,
         getStateMachine: () => this.stateMachineController.getSession(),
+        getActiveStateOutput: () => this.stateMachineController.getActiveOutput(),
         todoStorage,
         skills,
       }),

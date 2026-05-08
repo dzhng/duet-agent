@@ -17,6 +17,7 @@ import type {
   StateMachineTerminalResult,
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE } from "../types/state-machine.js";
+import type { ActiveStateOutput } from "./state-machine-controller.js";
 import { readSkillInstructions } from "./skills.js";
 
 const jsonSchemaValidator = new Ajv({ strictSchema: false });
@@ -320,6 +321,8 @@ export interface CurrentStateMachineStateResult {
   progress?: StateMachineProgress;
   /** Total state-machine history records; `history` below is only the recent tail. */
   historyCount: number;
+  /** Transient output from the currently running state, if one is active. */
+  activeOutput?: ActiveStateOutput;
   history: StateMachineSessionEvent[];
 }
 
@@ -362,6 +365,7 @@ interface TurnRunnerToolsInput {
   todoStorage: TodoWriteToolStorage;
   getDefinition?: () => StateMachineDefinition | undefined;
   getStateMachine?: () => StateMachineSession | undefined;
+  getActiveStateOutput?: () => ActiveStateOutput | undefined;
   skills?: readonly Skill[];
 }
 
@@ -393,7 +397,7 @@ export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] 
       ? () => input.mode as StateMachineDefinition
       : input.getDefinition;
   tools.push(createSelectStateTool(getDefinition));
-  tools.push(createCurrentStateMachineStateTool(input.getStateMachine));
+  tools.push(createCurrentStateMachineStateTool(input.getStateMachine, input.getActiveStateOutput));
   return tools;
 }
 
@@ -577,6 +581,7 @@ function createSelectStateTool(
 
 function createCurrentStateMachineStateTool(
   getStateMachine: (() => StateMachineSession | undefined) | undefined,
+  getActiveStateOutput: (() => ActiveStateOutput | undefined) | undefined,
 ): AgentTool {
   return {
     name: "get_current_state_machine_state",
@@ -586,6 +591,7 @@ function createCurrentStateMachineStateTool(
     parameters: Type.Object({}),
     async execute() {
       const stateMachine = getStateMachine?.();
+      const activeOutput = getActiveStateOutput?.();
       const result: CurrentStateMachineStateResult = {
         currentState: stateMachine?.currentState,
         currentInput: stateMachine?.currentInput,
@@ -594,6 +600,9 @@ function createCurrentStateMachineStateTool(
         historyCount: stateMachine?.history.length ?? 0,
         history: stateMachine?.history.slice(-10) ?? [],
       };
+      if (activeOutput) {
+        result.activeOutput = activeOutput;
+      }
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         details: result,

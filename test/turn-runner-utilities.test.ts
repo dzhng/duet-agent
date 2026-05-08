@@ -5,7 +5,7 @@ import {
   renderTemplate,
   runShellCommand,
   ShellCommandError,
-} from "../src/turn-runner/shell-exec.js";
+} from "../src/turn-runner/shell-state-handle.js";
 import { addUsage, usageFromMessages } from "../src/turn-runner/usage-accounting.js";
 import { createAssistantMessage, createUsage } from "./helpers/messages.js";
 

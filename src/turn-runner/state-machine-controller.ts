@@ -23,13 +23,15 @@ import {
   createStateMachineSession,
 } from "./state-machine-session.js";
 import {
+  createShellStateHandle,
   parseJsonObject,
   parseStructuredOutput,
   renderTemplate,
-  runShellCommand,
   ShellCommandError,
   type ShellCommandOutput,
-} from "./shell-exec.js";
+  type ShellPartialOutput,
+  type ShellStateHandle,
+} from "./shell-state-handle.js";
 import { applyStateOverride, type StateMachineRunnerDecision } from "./tools.js";
 
 export type StateMachineExecutionResult =
@@ -54,6 +56,10 @@ export interface StateAgentHandle {
   partialAssistantText(): string | undefined;
 }
 
+export type ActiveStateOutput =
+  | { state?: string; kind: "agent"; output?: { assistantText?: string } }
+  | { state: string; kind: "script" | "poll"; output?: ShellPartialOutput };
+
 type ActiveStateRun =
   | {
       kind: "agent";
@@ -64,13 +70,13 @@ type ActiveStateRun =
   | {
       kind: "script";
       state: string;
-      abortController: AbortController;
+      shell: ShellStateHandle;
       interruptedReason?: string;
     }
   | {
       kind: "poll";
       state: StateMachinePollState;
-      abortController: AbortController;
+      shell: ShellStateHandle;
       interruptedReason?: string;
     };
 
@@ -99,6 +105,27 @@ export class StateMachineController {
     return Boolean(this.activeRun);
   }
 
+  getActiveOutput(): ActiveStateOutput | undefined {
+    const run = this.activeRun;
+    if (!run) return undefined;
+    if (run.kind === "agent") {
+      const assistantText = run.agent.partialAssistantText();
+      return assistantText
+        ? { state: run.state, kind: "agent", output: { assistantText } }
+        : { state: run.state, kind: "agent" };
+    }
+    if (run.kind === "script") {
+      const output = run.shell.partialOutput();
+      return output
+        ? { state: run.state, kind: "script", output }
+        : { state: run.state, kind: "script" };
+    }
+    const output = run.shell.partialOutput();
+    return output
+      ? { state: run.state.name, kind: "poll", output }
+      : { state: run.state.name, kind: "poll" };
+  }
+
   startSession(input: {
     prompt: string;
     definition: StateMachineDefinition;
@@ -123,7 +150,7 @@ export class StateMachineController {
     if (run.kind === "agent") {
       run.agent.interrupt();
     } else {
-      run.abortController.abort();
+      run.shell.interrupt();
     }
   }
 
@@ -214,17 +241,17 @@ export class StateMachineController {
   private async runScriptState(
     state: StateMachineScriptState,
   ): Promise<StateMachineExecutionResult> {
-    const abortController = new AbortController();
-    const run: ActiveStateRun = { kind: "script", state: state.name, abortController };
+    const command = renderTemplate(state.command, this.session?.currentInput ?? {});
+    const shell = createShellStateHandle({
+      command,
+      cwd: state.cwd ?? this.config.cwd,
+      timeoutMs: state.timeoutMs,
+      successCodes: state.successCodes,
+    });
+    const run: ActiveStateRun = { kind: "script", state: state.name, shell };
     this.activeRun = run;
     try {
-      const command = renderTemplate(state.command, this.session?.currentInput ?? {});
-      const shellOutput = await runShellCommand(command, {
-        cwd: state.cwd ?? this.config.cwd,
-        timeoutMs: state.timeoutMs,
-        signal: abortController.signal,
-        successCodes: state.successCodes,
-      });
+      const shellOutput = await shell.run();
       const rawOutput = normalizeStructuredShellOutput(shellOutput);
       this.session = recordStateCompleted(this.requireSession(), state.name, rawOutput);
       return { type: "state_completed", stateName: state.name, output: rawOutput };
@@ -264,16 +291,16 @@ export class StateMachineController {
       return { type: "state_completed", stateName: state.name, output };
     }
 
-    const abortController = new AbortController();
-    const run: ActiveStateRun = { kind: "poll", state, abortController };
+    const command = renderTemplate(state.poll.command, this.session?.currentInput ?? {});
+    const shell = createShellStateHandle({
+      command,
+      cwd: state.poll.cwd ?? this.config.cwd,
+      successCodes: state.poll.successCodes,
+    });
+    const run: ActiveStateRun = { kind: "poll", state, shell };
     this.activeRun = run;
     try {
-      const command = renderTemplate(state.poll.command, this.session?.currentInput ?? {});
-      const shellOutput = await runShellCommand(command, {
-        cwd: state.poll.cwd ?? this.config.cwd,
-        signal: abortController.signal,
-        successCodes: state.poll.successCodes,
-      });
+      const shellOutput = await shell.run();
       const output = parseJsonObject(shellOutput.stdout);
       if (Object.keys(output).length === 0) {
         const wakeAt = Date.now() + state.intervalMs;
@@ -308,7 +335,7 @@ export class StateMachineController {
   private recordInterruptedState(
     run: ActiveStateRun,
     stateName: string,
-    output?: { assistantText?: string } | { stdout: string; stderr: string },
+    output?: { assistantText?: string } | ShellPartialOutput,
   ): void {
     const session = this.requireSession();
     const last = session.history.at(-1);
@@ -341,12 +368,12 @@ export class StateMachineController {
 
   private interruptedOutput(
     run: ActiveStateRun,
-  ): { assistantText?: string } | { stdout: string; stderr: string } | undefined {
+  ): { assistantText?: string } | ShellPartialOutput | undefined {
     if (run.kind === "agent") {
       const assistantText = run.agent.partialAssistantText();
       return assistantText ? { assistantText } : undefined;
     }
-    return undefined;
+    return run.shell.partialOutput();
   }
 
   private interruptibleStateName(run: ActiveStateRun): string | undefined {
