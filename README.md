@@ -127,6 +127,24 @@ The turn runner should provide enough structure for an agent to make good proces
 
 Pattern-based (fast, regex) and semantic (LLM-evaluated) guardrails compose into a firewall. Every bash command and file write can be checked before execution.
 
+### Remote MCP Tools
+
+Sessions can attach to remote [Model Context Protocol](https://modelcontextprotocol.io) servers over the streamable-HTTP transport. Pass `mcpServers` on `start` and the runner connects, lists each server's tools, and exposes them to the parent and state agents alongside the built-in coding tools. Tool names are namespaced as `{server}__{tool}` so multiple servers can coexist without collisions.
+
+```ts
+await session.start({
+  mcpServers: {
+    docs: {
+      type: "http",
+      url: "https://mcp.example.com/docs",
+      headers: { "x-api-key": process.env.DOCS_KEY! },
+    },
+  },
+});
+```
+
+Only HTTP MCP is supported today; authentication is intentionally out of scope, so any credentials a server expects must travel in `headers`. Connection failures are logged and skipped so a single broken server cannot block session setup.
+
 ## CLI Install
 
 The CLI runs on Bun because OpenTUI is Bun-native. Install Bun first if it is not already available:

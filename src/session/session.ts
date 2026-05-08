@@ -25,6 +25,8 @@ export interface SessionStartInput {
   /** Routing mode for subsequent prompts. Omit to use the session's configured default. */
   mode?: TurnMode;
   options?: TurnOptions;
+  /** Remote MCP servers connected once before the first turn runs. */
+  mcpServers?: TurnStartCommand["mcpServers"];
 }
 
 export interface SessionPromptInput {
@@ -125,6 +127,7 @@ export class Session {
       ...((input.mode ?? this.config.mode) ? { mode: input.mode ?? this.config.mode } : {}),
       ...(state ? { state } : {}),
       ...this.startOptions(input.options),
+      ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
     };
     this.startPromise = this.runner.start(command).then(() => undefined);
     await this.startPromise;

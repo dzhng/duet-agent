@@ -40,6 +40,7 @@ import {
   isTurnRunnerControlResult,
   type TurnRunnerControlResult,
 } from "./tools.js";
+import { connectMcpServers, type McpRuntime } from "./mcp.js";
 import { SkillContext } from "./skill-context.js";
 import { currentScheduledState, isWaitingOnScheduledState } from "./state-machine-session.js";
 import {
@@ -107,6 +108,8 @@ export class TurnRunner {
   private turnUsage?: TurnTokenUsage;
   /** Ensures persisted memory hydrates once before the first turn that needs it. */
   private memoryLoaded = false;
+  /** MCP servers connected during start(). Disposed on runner.dispose(). */
+  private mcpRuntime?: McpRuntime;
   protected readonly skillContext: SkillContext;
 
   constructor(readonly config: TurnRunnerConfig) {
@@ -124,6 +127,8 @@ export class TurnRunner {
     this.clearFollowUpQueue();
     await this.memoryDispose?.();
     this.memoryDispose = undefined;
+    await this.mcpRuntime?.dispose();
+    this.mcpRuntime = undefined;
   }
 
   subscribe(handler: TurnEventHandler): () => void {
@@ -149,6 +154,7 @@ export class TurnRunner {
   async start(command: TurnStartCommand): Promise<TurnState> {
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
+    await this.ensureMcpServersConnected(command.mcpServers);
     const mode = command.mode ?? this.config.mode ?? "auto";
     const startOptions = command.options;
     const state = command.state
@@ -878,20 +884,26 @@ export class TurnRunner {
       },
     };
     const skills = this.skillContext.getSkills();
+    const mcpTools = this.mcpRuntime?.tools ?? [];
     if (mode === "agent") {
-      return { tools: createDefaultTurnRunnerTools(cwd, todoStorage, skills) };
+      return {
+        tools: [...createDefaultTurnRunnerTools(cwd, todoStorage, skills), ...mcpTools],
+      };
     }
 
     return {
-      tools: createTurnRunnerTools({
-        cwd,
-        mode,
-        getDefinition: () => this.stateMachineController.getSession()?.definition,
-        getStateMachine: () => this.stateMachineController.getSession(),
-        getActiveStateOutput: () => this.stateMachineController.getActiveOutput(),
-        todoStorage,
-        skills,
-      }),
+      tools: [
+        ...createTurnRunnerTools({
+          cwd,
+          mode,
+          getDefinition: () => this.stateMachineController.getSession()?.definition,
+          getStateMachine: () => this.stateMachineController.getSession(),
+          getActiveStateOutput: () => this.stateMachineController.getActiveOutput(),
+          todoStorage,
+          skills,
+        }),
+        ...mcpTools,
+      ],
     };
   }
 
@@ -1049,6 +1061,16 @@ export class TurnRunner {
 
   private async ensureSkillsLoaded(): Promise<void> {
     await this.skillContext.ensureLoaded();
+  }
+
+  /**
+   * Connect to remote MCP servers exactly once per session. Subsequent starts
+   * (e.g. resumed sessions) reuse the existing runtime so tool identity stays
+   * stable. The runtime is disposed in dispose().
+   */
+  private async ensureMcpServersConnected(servers: TurnStartCommand["mcpServers"]): Promise<void> {
+    if (this.mcpRuntime || !servers || Object.keys(servers).length === 0) return;
+    this.mcpRuntime = await connectMcpServers(servers);
   }
 
   private async ensureMemoryLoaded(): Promise<void> {

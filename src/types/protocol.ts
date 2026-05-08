@@ -285,6 +285,23 @@ export type TurnStep =
   | { type: "system"; message: string };
 
 /**
+ * HTTP MCP server configuration.
+ *
+ * The runner connects via the streamable-HTTP transport, lists the server's
+ * tools at start, and exposes them to the agent under names of the form
+ * `{server}__{tool}`. Authentication is intentionally out of scope: pass any
+ * credentials the server expects through `headers`.
+ */
+export interface McpHttpServerConfig {
+  /** Transport tag. Only `"http"` is supported today. */
+  type: "http";
+  /** Absolute http or https URL of the remote MCP endpoint. */
+  url: string;
+  /** Extra HTTP headers sent on every request to this server. */
+  headers?: Record<string, string>;
+}
+
+/**
  * Set up a new turn-runner session.
  *
  * `start` is a setup command, not a turn. The runner loads memory and skills,
@@ -313,6 +330,13 @@ export interface TurnStartCommand {
    * shape across every pi-agent turn inside later duet-agent turns.
    */
   options?: TurnOptions;
+  /**
+   * Remote MCP servers to connect to before the first turn runs. Each entry's
+   * tools are exposed to the parent and state agents under namespaced names.
+   * Connection failures are logged and skipped so a single broken server
+   * cannot block session setup.
+   */
+  mcpServers?: Record<string, McpHttpServerConfig>;
 }
 
 /**

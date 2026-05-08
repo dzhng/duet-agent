@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 import type { TurnRunnerConfig } from "../types/config.js";
-import type { TurnEvent, TurnMode, TurnOptions } from "../types/protocol.js";
+import type { McpHttpServerConfig, TurnEvent, TurnMode, TurnOptions } from "../types/protocol.js";
 import { Session, type SessionTurnRunner } from "./session.js";
 
 export const DEFAULT_DUET_DIR = ".duet";
@@ -23,6 +23,8 @@ export interface SessionManagerCreateInput {
    */
   prompt?: string;
   options?: TurnOptions;
+  /** Remote MCP servers to connect for the new session. */
+  mcpServers?: Record<string, McpHttpServerConfig>;
 }
 
 export interface SessionManagerOptions {
@@ -64,6 +66,7 @@ export class SessionManager {
     const setup = session.start({
       ...(input.mode ? { mode: input.mode } : {}),
       ...(input.options ? { options: input.options } : {}),
+      ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
     });
     if (input.prompt) {
       const prompt = input.prompt;
