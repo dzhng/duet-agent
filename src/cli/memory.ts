@@ -1,17 +1,17 @@
 import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
-import { printMemoriesHelp } from "./help.js";
-import { MemoryDb } from "./memories-db.js";
-import { runMemoriesTui } from "./memories-tui.js";
+import { printMemoryHelp } from "./help.js";
+import { MemoryDb } from "./memory-db.js";
+import { runMemoryTui } from "./memory-tui.js";
 import { fail, resolveUserPath } from "./shared.js";
 
 /**
- * Run `duet memories` — open the memory database in a TUI for browsing,
+ * Run `duet memory` (alias: `duet memories`) — open the memory database in a TUI for browsing,
  * editing, and deleting durable observations.
  *
  * Defaults to the same `~/.duet/memory.db` the runner writes to so changes
  * propagate to the next session immediately.
  */
-export async function runMemoriesCommand(args: string[]): Promise<void> {
+export async function runMemoryCommand(args: string[]): Promise<void> {
   let dbPath = DEFAULT_MEMORY_DB_PATH;
 
   for (let i = 0; i < args.length; i++) {
@@ -22,16 +22,16 @@ export async function runMemoriesCommand(args: string[]): Promise<void> {
         break;
       case "--help":
       case "-h":
-        printMemoriesHelp();
+        printMemoryHelp();
         return;
       default:
-        fail(`Unknown memories option: ${args[i]}`);
+        fail(`Unknown memory option: ${args[i]}`);
     }
   }
 
   const db = await MemoryDb.open(dbPath);
   try {
-    await runMemoriesTui(db, dbPath);
+    await runMemoryTui(db, dbPath);
   } finally {
     await db.close();
   }

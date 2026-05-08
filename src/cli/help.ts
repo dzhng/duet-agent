@@ -11,7 +11,7 @@ USAGE
   duet login [--no-browser] [--skip-skill-sync]
   duet env [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
-  duet memories [--db <path>]
+  duet memory [--db <path>]
   duet upgrade [--manager npm|bun|pnpm|yarn]
   echo "prompt" | duet
 
@@ -19,7 +19,7 @@ COMMANDS
   login                    Sign in via browser; saves DUET_API_KEY and syncs default skills (recommended)
   env                      Manually create or update the shared duet env file with provider API keys
   skills                   List installed skills as JSON (name, description, path, scope)
-  memories                 Open a TUI to view, edit, and delete observational memories
+  memory                   Open a TUI to view, edit, and delete observational memories (alias: memories)
   upgrade                  Upgrade the global ${packageName} installation
 
 OPTIONS
@@ -69,7 +69,7 @@ EXAMPLES
   duet --resume session_abc123 --workdir ./my-project
   duet login
   duet env
-  duet memories
+  duet memory
   duet upgrade
 `);
 }
@@ -146,12 +146,15 @@ OUTPUT
 `);
 }
 
-export function printMemoriesHelp(): void {
+export function printMemoryHelp(): void {
   console.log(`
-duet memories — Browse, edit, and delete observational memories
+duet memory — Browse, edit, and delete observational memories
 
 USAGE
-  duet memories [--db <path>]
+  duet memory [--db <path>]
+
+ALIASES
+  duet memories
 
 OPTIONS
   --db <path>              Memory database path (default: ~/.duet/memory.db)

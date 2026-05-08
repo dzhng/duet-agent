@@ -17,7 +17,7 @@ import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { runEnvCommand } from "./cli/env.js";
 import { runLoginCommand } from "./cli/login.js";
-import { runMemoriesCommand } from "./cli/memories.js";
+import { runMemoryCommand } from "./cli/memory.js";
 import { runRunCommand } from "./cli/run.js";
 import { runSkillsCommand } from "./cli/skills.js";
 import { runUpgradeCommand } from "./cli/upgrade.js";
@@ -35,7 +35,7 @@ export { runLoginCommand } from "./cli/login.js";
 export type { LoginCommandIO } from "./cli/login.js";
 export { runSkillsCommand } from "./cli/skills.js";
 export { runUpgradeCommand } from "./cli/upgrade.js";
-export { runMemoriesCommand } from "./cli/memories.js";
+export { runMemoryCommand } from "./cli/memory.js";
 export {
   cliEnvFilePaths,
   defaultDuetEnvFilePath,
@@ -88,8 +88,8 @@ async function main(): Promise<void> {
       await runLoginCommand(args.slice(1));
       return;
     }
-    if (subcommand === "memories") {
-      await runMemoriesCommand(args.slice(1));
+    if (subcommand === "memory" || subcommand === "memories") {
+      await runMemoryCommand(args.slice(1));
       return;
     }
 

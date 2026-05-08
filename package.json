@@ -60,7 +60,7 @@
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@electric-sql/pglite": "^0.4.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@opentui/core": "^0.2.2",
+    "@opentui/core": "^0.2.5",
     "ajv": "^8.20.0",
     "dedent": "^1.7.2",
     "dotenv": "^17.4.2",

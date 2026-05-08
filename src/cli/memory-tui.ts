@@ -13,7 +13,7 @@ import {
 } from "@opentui/core";
 import { COLORS } from "../tui/theme.js";
 import type { Observation } from "../types/memory.js";
-import type { MemoryDb } from "./memories-db.js";
+import type { MemoryDb } from "./memory-db.js";
 
 const HINT = "↑/↓ navigate · e edit · d delete · q quit";
 
@@ -25,7 +25,7 @@ const HINT = "↑/↓ navigate · e edit · d delete · q quit";
  * `$EDITOR` (or vi as a fallback), or delete it outright. All edits and
  * deletes hit `db` directly so the runner sees them on its next session.
  */
-export async function runMemoriesTui(db: MemoryDb, dbPath: string): Promise<void> {
+export async function runMemoryTui(db: MemoryDb, dbPath: string): Promise<void> {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
@@ -41,7 +41,7 @@ export async function runMemoriesTui(db: MemoryDb, dbPath: string): Promise<void
   });
 
   const header = new TextRenderable(renderer, {
-    content: `[duet memories] ${dbPath}`,
+    content: `[duet memory] ${dbPath}`,
     fg: COLORS.status,
     height: 1,
     flexShrink: 0,

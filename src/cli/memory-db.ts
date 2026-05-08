@@ -5,7 +5,7 @@ import type { Observation } from "../types/memory.js";
 
 /**
  * Thin read/edit/delete wrapper over the PGlite database `MemoryStore` writes
- * to. The `duet memories` command opens the same on-disk file, so changes
+ * to. The `duet memory` command opens the same on-disk file, so changes
  * made here are visible to subsequent runner sessions.
  */
 export class MemoryDb {
