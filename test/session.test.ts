@@ -524,6 +524,51 @@ describe("Session", () => {
   );
 
   testIfDocker(
+    "resumes sleeping sessions by replaying a sleep event and arming the wake timer",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
+      tempDirs.push(tempDir);
+      const sessionPath = join(tempDir, "resumed-sleeping");
+      await mkdir(sessionPath, { recursive: true });
+      const wakeAt = Date.now() - 1_000;
+      const sleepingState: TurnState = {
+        ...createStateMachineState("poll_email_reply"),
+        status: "sleeping",
+        stateMachine: {
+          ...createStateMachineState("poll_email_reply").stateMachine!,
+          progress: {
+            states: {
+              poll_email_reply: { kind: "poll", runs: 1, sleeps: 1, nextWakeAt: wakeAt },
+            },
+          },
+        },
+      };
+      await writeStoredState(sessionPath, sleepingState);
+      const runner = new FakeTurnRunner([]);
+      runner.state = sleepingState;
+      const session = new Session(
+        { model: "anthropic:claude-opus-4-7" },
+        { id: "resumed-sleeping", runner, sessionPath, resumeFromStorage: true },
+      );
+      const events: TurnEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      await session.hydrate();
+      await session.start();
+      await waitFor(() => runner.commands.some((command) => command.type === "wake"));
+
+      const sleepEvents = events.filter((event) => event.type === "sleep");
+      expect(sleepEvents).toHaveLength(1);
+      expect(sleepEvents[0]).toMatchObject({
+        type: "sleep",
+        wakeAt,
+        state: { status: "sleeping" },
+      });
+      expect(runner.commands).toEqual([{ type: "wake" }]);
+    },
+  );
+
+  testIfDocker(
     "allows a complete turn to be followed by another prompt on the same session",
     async () => {
       const runner = new FakeTurnRunner([complete("first"), complete("second")]);

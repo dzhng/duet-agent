@@ -146,6 +146,27 @@ export class Session {
     };
     this.startPromise = this.runner.start(command).then(() => undefined);
     await this.startPromise;
+    if (state?.status === "sleeping") {
+      await this.replaySleepFromResumedState(state);
+    }
+  }
+
+  /**
+   * Resumed sleeping sessions never re-run the original `sleep` terminal event,
+   * so the polling wake timer and the TUI sleeping banner would stay dormant.
+   * Synthesize a `sleep` event from the persisted state and feed it through the
+   * normal terminal-event path so `scheduleWake` arms the timer and subscribers
+   * receive the banner.
+   */
+  private async replaySleepFromResumedState(state: TurnState): Promise<void> {
+    const scheduled = this.currentScheduledState(state);
+    const progress = scheduled ? state.stateMachine?.progress?.states[scheduled.name] : undefined;
+    const wakeAt =
+      progress?.nextWakeAt ??
+      (scheduled?.kind === "poll"
+        ? Date.now() + scheduled.intervalMs
+        : (scheduled?.wakeAt ?? Date.now()));
+    await this.handleTurnEvent({ type: "sleep", wakeAt, state });
   }
 
   async prompt(input: SessionPromptInput): Promise<void> {
@@ -247,6 +268,9 @@ export class Session {
       .start({ type: "start", state, ...this.startOptions() })
       .then(() => undefined);
     await this.startPromise;
+    if (state.status === "sleeping") {
+      await this.replaySleepFromResumedState(state);
+    }
   }
 
   async dispose(): Promise<void> {
