@@ -28,7 +28,6 @@ export interface LoginResult {
   apiKey: string;
   orgSlug: string;
   orgName: string;
-  appUrl: string;
 }
 
 export interface LoginOptions {
@@ -89,8 +88,7 @@ export async function loginWithBrowser(options: LoginOptions = {}): Promise<Logi
     !body ||
     typeof body.apiKey !== "string" ||
     typeof body.orgSlug !== "string" ||
-    typeof body.orgName !== "string" ||
-    typeof body.appUrl !== "string"
+    typeof body.orgName !== "string"
   ) {
     throw new Error("Unexpected exchange response shape");
   }
@@ -98,7 +96,6 @@ export async function loginWithBrowser(options: LoginOptions = {}): Promise<Logi
     apiKey: body.apiKey,
     orgSlug: body.orgSlug,
     orgName: body.orgName,
-    appUrl: body.appUrl,
   };
 }
 
