@@ -182,7 +182,14 @@ The pre-commit hook runs `format`, `check-types`, and `lint`.
 
 ## CLI Quick Start
 
-Set a provider API key in the environment, `<workdir>/.env`, or `~/.duet/.env`, then run `duet` from any project directory. When `--model` is omitted, the CLI infers a default from the configured provider: Anthropic, AI Gateway, and OpenRouter use Opus 4.7; OpenAI uses GPT-5.5.
+The quickest way to get started is `duet login`, which signs in via your browser, writes `DUET_API_KEY` to `~/.duet/.env`, and syncs the default skills:
+
+```bash
+duet login
+duet "build a REST API with Express"
+```
+
+If you would rather manage provider API keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set a provider API key in the environment, `<workdir>/.env`, or `~/.duet/.env`. When `--model` is omitted, the CLI infers a default from the configured provider: Anthropic, AI Gateway, and OpenRouter use Opus 4.7; OpenAI uses GPT-5.5.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...
@@ -219,26 +226,40 @@ export AI_GATEWAY_API_KEY=...
 duet -m vercel-ai-gateway:anthropic/claude-opus-4.7 "review this repo"
 ```
 
-### CLI Setup
+### CLI Login
 
-`duet setup` prints the setup help without writing files. Add an explicit action to create or update the shared env file at `~/.duet/.env`:
+`duet login` is the recommended setup path. It opens a browser to sign in, writes `DUET_API_KEY` for the selected org to `~/.duet/.env`, and syncs the latest default skills into `~/.duet/skills`.
+
+```bash
+duet login
+
+# Print the auth URL instead of opening a browser
+duet login --no-browser
+
+# Skip the post-login default skill sync
+duet login --skip-skill-sync
+```
+
+### CLI Env Setup
+
+`duet env` is the manual alternative for users who want direct control over which provider API keys land in the shared env file. Without an action it just prints help. Add an explicit action to create or update the shared env file at `~/.duet/.env`:
 
 ```bash
 # Import .env from the current directory into ~/.duet/.env
-duet setup --import
+duet env --import
 
 # Import a specific env file
-duet setup --import ./path/to/.env
+duet env --import ./path/to/.env
 
 # Paste supported provider API keys interactively
-duet setup --keys
+duet env --keys
 
 # Use a custom shared env file instead of ~/.duet/.env
-duet setup --env-file ~/.config/duet/env --keys
+duet env --env-file ~/.config/duet/env --keys
 duet --env-file ~/.config/duet/env "review this repo"
 ```
 
-The CLI loads `<workdir>/.env` first, then the shared env file, so project-specific values override shared defaults. Supported setup keys are `DUET_API_KEY`, `ANTHROPIC_API_KEY`, `AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`, and `OPENAI_API_KEY`.
+The CLI loads `<workdir>/.env` first, then the shared env file, so project-specific values override shared defaults. Supported keys are `DUET_API_KEY`, `ANTHROPIC_API_KEY`, `AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`, and `OPENAI_API_KEY`.
 
 For local development from a checkout, use the package script:
 

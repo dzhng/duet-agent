@@ -90,9 +90,9 @@ async function main() {
     }
     return;
   }
-  if (args[0] === "setup") {
+  if (args[0] === "env") {
     try {
-      await runSetupCommand(args.slice(1));
+      await runEnvCommand(args.slice(1));
     } catch (err: any) {
       console.error(`Fatal: ${err.message}`);
       process.exitCode = 1;
@@ -659,14 +659,14 @@ function runSkillsCommand(args: string[]): void {
   }
 }
 
-interface SetupCommandIO {
+interface EnvCommandIO {
   cwd?: string;
   interactive?: boolean;
   promptForApiKeys?: () => Promise<Map<string, string>>;
   printHelp?: () => void;
 }
 
-export async function runSetupCommand(args: string[], io: SetupCommandIO = {}): Promise<void> {
+export async function runEnvCommand(args: string[], io: EnvCommandIO = {}): Promise<void> {
   const cwd = io.cwd ?? process.cwd();
   let envFilePath: string | undefined;
   let importEnvFilePath: string | undefined;
@@ -687,10 +687,10 @@ export async function runSetupCommand(args: string[], io: SetupCommandIO = {}): 
         break;
       case "--help":
       case "-h":
-        printSetupHelp();
+        printEnvHelp();
         return;
       default:
-        fail(`Unknown setup option: ${args[i]}`);
+        fail(`Unknown env option: ${args[i]}`);
     }
   }
 
@@ -704,7 +704,7 @@ export async function runSetupCommand(args: string[], io: SetupCommandIO = {}): 
   const interactive = io.interactive ?? Boolean(process.stdin.isTTY && process.stderr.isTTY);
 
   if (sourceEnvFile === undefined && !pasteKeys) {
-    (io.printHelp ?? printSetupHelp)();
+    (io.printHelp ?? printEnvHelp)();
     return;
   }
 
@@ -718,7 +718,7 @@ export async function runSetupCommand(args: string[], io: SetupCommandIO = {}): 
 
   if (pasteKeys) {
     if (!interactive) {
-      fail("duet setup --keys requires an interactive terminal");
+      fail("duet env --keys requires an interactive terminal");
     }
     const entries = await (io.promptForApiKeys ?? promptForApiKeys)();
     if (entries.size === 0) {
@@ -798,7 +798,7 @@ async function fileExists(path: string): Promise<boolean> {
 
 async function importEnvFile(source: string, target: string): Promise<void> {
   if (resolve(source) === resolve(target)) {
-    console.error(`${target} is already the setup env file.`);
+    console.error(`${target} is already the shared env file.`);
     return;
   }
   await mkdir(dirname(target), { recursive: true });
@@ -994,15 +994,15 @@ duet — An opinionated full-stack agent runner
 
 USAGE
   duet [options] [prompt]
-  duet setup [--env-file <path>] [--import [path]|--keys]
   duet login [--no-browser] [--skip-skill-sync]
+  duet env [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
   duet upgrade [--manager npm|bun|pnpm|yarn]
   echo "prompt" | duet
 
 COMMANDS
-  setup                    Create or update the shared duet env file
-  login                    Sign in via browser; saves DUET_API_KEY and syncs default skills
+  login                    Sign in via browser; saves DUET_API_KEY and syncs default skills (recommended)
+  env                      Manually create or update the shared duet env file with provider API keys
   skills                   List installed skills as JSON (name, description, path, scope)
   upgrade                  Upgrade the global ${packageName} installation
 
@@ -1048,8 +1048,8 @@ EXAMPLES
   duet --env-file ~/.config/duet/env "review this repo"
   duet --workdir ./my-project "refactor the auth module"
   duet --resume session_abc123 --workdir ./my-project
-  duet setup
   duet login
+  duet env
   duet upgrade
 `);
 }
@@ -1084,14 +1084,17 @@ OVERRIDES
 `);
 }
 
-function printSetupHelp() {
+function printEnvHelp() {
   console.log(`
-duet setup — Create or update a shared duet env file
+duet env — Create or update a shared duet env file
 
 USAGE
-  duet setup [--env-file <path>] [--import [path]|--keys]
+  duet env [--env-file <path>] [--import [path]|--keys]
 
-By default, setup only prints this help. Choose --import to copy
+Prefer \`duet login\` for the standard setup flow. Use \`duet env\` when you
+want manual control over which provider API keys land in the shared env file.
+
+By default, env only prints this help. Choose --import to copy
 provider keys from cwd .env or a provided env file, or --keys to paste keys interactively.
 
 OPTIONS

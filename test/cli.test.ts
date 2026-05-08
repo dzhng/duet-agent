@@ -12,7 +12,7 @@ import {
   globalUpgradeCommand,
   loadCliEnvFiles,
   parseResumeHistoryLines,
-  runSetupCommand,
+  runEnvCommand,
 } from "../src/cli.js";
 import { resolveCliMemoryModel, resolveCliModel } from "../src/model-resolution/index.js";
 import {
@@ -245,7 +245,7 @@ describe("CLI env files", () => {
     expect(cliEnvFilePaths("/repo", ".duet-env")).toEqual(["/repo/.env", "/repo/.duet-env"]);
   });
 
-  testIfDocker("formats setup env entries with shell-safe quoting", () => {
+  testIfDocker("formats env entries with shell-safe quoting", () => {
     expect(
       formatEnvEntries(
         new Map([
@@ -256,8 +256,8 @@ describe("CLI env files", () => {
     ).toBe('DUET_API_KEY=duet_gt_test\nOPENAI_API_KEY="value with spaces"\n');
   });
 
-  testIfDocker("setup import without a path imports cwd .env into a custom env file", async () => {
-    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-setup-"));
+  testIfDocker("env import without a path imports cwd .env into a custom env file", async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-env-"));
     const workDir = join(tempRoot, "project");
     const targetEnv = join(tempRoot, "duet.env");
     await mkdir(workDir);
@@ -265,7 +265,7 @@ describe("CLI env files", () => {
 
     const stderr = spyOn(console, "error").mockImplementation(() => {});
     try {
-      await runSetupCommand(["--env-file", targetEnv, "--import"], { cwd: workDir });
+      await runEnvCommand(["--env-file", targetEnv, "--import"], { cwd: workDir });
     } finally {
       stderr.mockRestore();
     }
@@ -274,9 +274,9 @@ describe("CLI env files", () => {
   });
 
   testIfDocker(
-    "setup import with a path merges that env file into an existing custom env file",
+    "env import with a path merges that env file into an existing custom env file",
     async () => {
-      tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-setup-"));
+      tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-env-"));
       const workDir = join(tempRoot, "project");
       const targetEnv = join(tempRoot, "duet.env");
       await mkdir(workDir);
@@ -288,7 +288,7 @@ describe("CLI env files", () => {
 
       const stderr = spyOn(console, "error").mockImplementation(() => {});
       try {
-        await runSetupCommand(["--env-file", targetEnv, "--import", join(workDir, ".env")]);
+        await runEnvCommand(["--env-file", targetEnv, "--import", join(workDir, ".env")]);
       } finally {
         stderr.mockRestore();
       }
@@ -299,15 +299,15 @@ describe("CLI env files", () => {
     },
   );
 
-  testIfDocker("setup keys writes prompted provider API keys to a custom env file", async () => {
-    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-setup-"));
+  testIfDocker("env keys writes prompted provider API keys to a custom env file", async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-env-"));
     const workDir = join(tempRoot, "project");
     const targetEnv = join(tempRoot, "duet.env");
     await mkdir(workDir);
 
     const stderr = spyOn(console, "error").mockImplementation(() => {});
     try {
-      await runSetupCommand(["--env-file", targetEnv, "--keys"], {
+      await runEnvCommand(["--env-file", targetEnv, "--keys"], {
         cwd: workDir,
         interactive: true,
         promptForApiKeys: async () =>
@@ -325,15 +325,15 @@ describe("CLI env files", () => {
     );
   });
 
-  testIfDocker("setup without an action prints help and does not write an env file", async () => {
-    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-setup-"));
+  testIfDocker("env without an action prints help and does not write an env file", async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-env-"));
     const workDir = join(tempRoot, "project");
     const targetEnv = join(tempRoot, "duet.env");
     await mkdir(workDir);
     await writeFile(join(workDir, ".env"), "DUET_API_KEY=duet_gt_test\n");
 
     let printedHelp = false;
-    await runSetupCommand(["--env-file", targetEnv], {
+    await runEnvCommand(["--env-file", targetEnv], {
       cwd: workDir,
       interactive: true,
       printHelp: () => {
