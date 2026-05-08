@@ -56,11 +56,14 @@ function makeFetch(handler: FakeFetchHandler): {
   return { fetchFn, calls };
 }
 
-function jsonResponse(body: unknown, init?: ResponseInit): Response {
-  return new Response(JSON.stringify(body), {
+function skillsResponse(
+  skills: { path: string; content: string }[],
+  etagOverride?: string,
+): Response {
+  const hash = etagOverride ?? hashSkills(skills);
+  return new Response(JSON.stringify({ skills }), {
     status: 200,
-    headers: { "Content-Type": "application/json" },
-    ...init,
+    headers: { "Content-Type": "application/json", ETag: `"${hash}"` },
   });
 }
 
@@ -97,7 +100,7 @@ describe("hashSkills", () => {
 
 describe("fetchDefaultSkills", () => {
   testIfDocker("sends If-None-Match when a known hash is provided", async () => {
-    const { fetchFn, calls } = makeFetch(() => jsonResponse({ hash: hashSkills([]), skills: [] }));
+    const { fetchFn, calls } = makeFetch(() => skillsResponse([]));
     await fetchDefaultSkills({
       apiKey: "duet_gt_x",
       appBaseUrl: "https://test",
@@ -124,13 +127,26 @@ describe("fetchDefaultSkills", () => {
     expect(result).toEqual({ status: "not-modified", hash: "abc123" });
   });
 
-  testIfDocker("rejects payloads whose hash doesn't match the body", async () => {
+  testIfDocker("rejects responses whose ETag doesn't match the body", async () => {
     const { fetchFn } = makeFetch(() =>
-      jsonResponse({ hash: "deadbeef", skills: [{ path: "a/SKILL.md", content: "alpha" }] }),
+      skillsResponse([{ path: "a/SKILL.md", content: "alpha" }], "deadbeef"),
     );
     await expect(
       fetchDefaultSkills({ apiKey: "duet_gt_x", appBaseUrl: "https://test", fetchFn }),
     ).rejects.toThrow(/hash mismatch/i);
+  });
+
+  testIfDocker("rejects responses missing an ETag header", async () => {
+    const { fetchFn } = makeFetch(
+      () =>
+        new Response(JSON.stringify({ skills: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    await expect(
+      fetchDefaultSkills({ apiKey: "duet_gt_x", appBaseUrl: "https://test", fetchFn }),
+    ).rejects.toThrow(/missing ETag/i);
   });
 
   testIfDocker("surfaces error bodies on non-2xx responses", async () => {
@@ -144,20 +160,17 @@ describe("fetchDefaultSkills", () => {
 });
 
 describe("syncDefaultSkills", () => {
-  function makePayload(skills: { path: string; content: string }[]) {
-    return { hash: hashSkills(skills), skills };
-  }
-
   testIfDocker("writes new skills, updates the hash, and invokes skills add", async () => {
     const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
     const skillsDir = join(root, "skills");
     const hashFilePath = join(root, ".skills-hash");
 
-    const payload = makePayload([
+    const skills = [
       { path: "alpha/SKILL.md", content: "---\nname: alpha\n---\nalpha body" },
       { path: "alpha/reference/notes.md", content: "more notes" },
-    ]);
-    const { fetchFn } = makeFetch(() => jsonResponse(payload));
+    ];
+    const expectedHash = hashSkills(skills);
+    const { fetchFn } = makeFetch(() => skillsResponse(skills));
 
     let registeredScript: string | null = null;
     const result = await syncDefaultSkills({
@@ -179,15 +192,15 @@ describe("syncDefaultSkills", () => {
     expect(registeredScript!).toContain("-g -y");
     expect(await readFile(join(skillsDir, "alpha/SKILL.md"), "utf8")).toContain("alpha body");
     expect(await readFile(join(skillsDir, "alpha/reference/notes.md"), "utf8")).toBe("more notes");
-    expect(await readFile(hashFilePath, "utf8")).toBe(payload.hash);
+    expect(await readFile(hashFilePath, "utf8")).toBe(expectedHash);
   });
 
   testIfDocker("sends If-None-Match when ~/.duet/.skills-hash exists", async () => {
     const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
     const skillsDir = join(root, "skills");
     const hashFilePath = join(root, ".skills-hash");
-    const payload = makePayload([{ path: "a/SKILL.md", content: "alpha" }]);
-    await writeFile(hashFilePath, payload.hash);
+    const knownHash = hashSkills([{ path: "a/SKILL.md", content: "alpha" }]);
+    await writeFile(hashFilePath, knownHash);
 
     const { fetchFn, calls } = makeFetch(() => new Response(null, { status: 304 }));
 
@@ -203,10 +216,10 @@ describe("syncDefaultSkills", () => {
     });
 
     expect(result.status).toBe("unchanged");
-    if (result.status === "unchanged") expect(result.hash).toBe(payload.hash);
+    if (result.status === "unchanged") expect(result.hash).toBe(knownHash);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.headers["if-none-match"] ?? calls[0]!.headers["If-None-Match"]).toBe(
-      `"${payload.hash}"`,
+      `"${knownHash}"`,
     );
     await expect(stat(skillsDir)).rejects.toThrow();
   });
@@ -215,9 +228,10 @@ describe("syncDefaultSkills", () => {
     const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
     const skillsDir = join(root, "skills");
     const hashFilePath = join(root, ".skills-hash");
-    const payload = makePayload([{ path: "a/SKILL.md", content: "alpha" }]);
 
-    const { fetchFn, calls } = makeFetch(() => jsonResponse(payload));
+    const { fetchFn, calls } = makeFetch(() =>
+      skillsResponse([{ path: "a/SKILL.md", content: "alpha" }]),
+    );
     await syncDefaultSkills({
       apiKey: "duet_gt_x",
       appBaseUrl: "https://test",
@@ -237,8 +251,7 @@ describe("syncDefaultSkills", () => {
     const skillsDir = join(root, "skills");
     const hashFilePath = join(root, ".skills-hash");
 
-    const payload = makePayload([{ path: "a/SKILL.md", content: "alpha" }]);
-    const { fetchFn } = makeFetch(() => jsonResponse(payload));
+    const { fetchFn } = makeFetch(() => skillsResponse([{ path: "a/SKILL.md", content: "alpha" }]));
 
     await expect(
       syncDefaultSkills({
@@ -259,8 +272,9 @@ describe("syncDefaultSkills", () => {
     const skillsDir = join(root, "skills");
     const hashFilePath = join(root, ".skills-hash");
 
-    const payload = makePayload([{ path: "../escape.md", content: "should not be written" }]);
-    const { fetchFn } = makeFetch(() => jsonResponse(payload));
+    const { fetchFn } = makeFetch(() =>
+      skillsResponse([{ path: "../escape.md", content: "should not be written" }]),
+    );
 
     await expect(
       syncDefaultSkills({

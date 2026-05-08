@@ -27,11 +27,6 @@ export interface RemoteSkill {
   content: string;
 }
 
-export interface SkillsResponse {
-  hash: string;
-  skills: RemoteSkill[];
-}
-
 export type SyncSkillsResult =
   | { status: "unchanged"; hash: string }
   | { status: "synced"; hash: string; count: number };
@@ -62,7 +57,7 @@ export interface FetchSkillsOptions {
 
 export type FetchSkillsResult =
   | { status: "not-modified"; hash: string }
-  | { status: "modified"; payload: SkillsResponse };
+  | { status: "modified"; hash: string; skills: RemoteSkill[] };
 
 export async function fetchDefaultSkills(options: FetchSkillsOptions): Promise<FetchSkillsResult> {
   const baseUrl = options.appBaseUrl ?? resolveDuetAppBaseUrl();
@@ -86,15 +81,19 @@ export async function fetchDefaultSkills(options: FetchSkillsOptions): Promise<F
       `Failed to fetch default skills: ${response.status} ${response.statusText}${detail ? ` — ${detail}` : ""}`,
     );
   }
-  const body = (await response.json()) as SkillsResponse;
-  if (!body || typeof body.hash !== "string" || !Array.isArray(body.skills)) {
+  const etag = response.headers.get("ETag")?.replace(/^"|"$/g, "");
+  if (!etag) {
+    throw new Error("Skills response missing ETag header");
+  }
+  const body = (await response.json()) as { skills: unknown };
+  if (!Array.isArray(body?.skills)) {
     throw new Error("Unexpected skills response shape");
   }
-  const recomputed = hashSkills(body.skills);
-  if (recomputed !== body.hash) {
+  const skills = body.skills as RemoteSkill[];
+  if (hashSkills(skills) !== etag) {
     throw new Error("Skill payload hash mismatch — refusing to write");
   }
-  return { status: "modified", payload: body };
+  return { status: "modified", hash: etag, skills };
 }
 
 export function hashSkills(skills: readonly RemoteSkill[]): string {
@@ -157,12 +156,10 @@ export async function syncDefaultSkills(options: SyncSkillsOptions): Promise<Syn
     return { status: "unchanged", hash: fetched.hash };
   }
 
-  const payload = fetched.payload;
-
   await rm(skillsDir, { recursive: true, force: true });
   await mkdir(skillsDir, { recursive: true });
 
-  for (const skill of payload.skills) {
+  for (const skill of fetched.skills) {
     const target = resolve(skillsDir, skill.path);
     if (!isInsideDirectory(skillsDir, target)) {
       throw new Error(`Refusing to write skill outside ${skillsDir}: ${skill.path}`);
@@ -182,9 +179,9 @@ export async function syncDefaultSkills(options: SyncSkillsOptions): Promise<Syn
   }
 
   await mkdir(dirname(hashFilePath), { recursive: true });
-  await writeFile(hashFilePath, payload.hash);
+  await writeFile(hashFilePath, fetched.hash);
 
-  return { status: "synced", hash: payload.hash, count: payload.skills.length };
+  return { status: "synced", hash: fetched.hash, count: fetched.skills.length };
 }
 
 async function readExistingHash(path: string): Promise<string | null> {
