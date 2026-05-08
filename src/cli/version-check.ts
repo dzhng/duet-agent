@@ -2,7 +2,11 @@
 // Failures (offline, slow, registry hiccup) intentionally turn into noop:
 // the CLI must remain usable when the registry is unreachable.
 
-const VERSION_CHECK_TIMEOUT_MS = 1_500;
+// Background startup notice runs on every CLI invocation, so we keep its
+// timeout tight to avoid noticeable lag on slow networks. Foreground commands
+// (`duet upgrade`) pass their own, longer timeout because the user is actively
+// waiting for a result and a clear failure beats a fast silent abort.
+const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 1_500;
 
 /**
  * Compare two semver-ish strings. Returns -1, 0, or 1 like Array.sort.
@@ -40,9 +44,12 @@ function parseSemverVersion(version: string): {
  * Fetch the `latest` dist-tag for a package from the npm registry.
  * Returns undefined on any failure so callers can no-op silently.
  */
-export async function fetchLatestPackageVersion(packageName: string): Promise<string | undefined> {
+export async function fetchLatestPackageVersion(
+  packageName: string,
+  timeoutMs: number = DEFAULT_VERSION_CHECK_TIMEOUT_MS,
+): Promise<string | undefined> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), VERSION_CHECK_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const metadataUrl = `https://registry.npmjs.org/${packageName.replace("/", "%2F")}`;
     const response = await fetch(metadataUrl, { signal: controller.signal });

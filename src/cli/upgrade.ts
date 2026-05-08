@@ -43,9 +43,8 @@ export async function runUpgradeCommand(args: string[], packageName: string): Pr
     }
   }
 
-  targetVersion ??= await fetchLatestPackageVersion(packageName);
   if (!targetVersion) {
-    fail(`Could not resolve latest ${packageName} version from npm`);
+    targetVersion = await resolveLatestVersionForUpgrade(packageName);
   }
   const command = globalUpgradeCommand(packageManager, packageName, targetVersion);
   const commandText = command.map(shellQuote).join(" ");
@@ -56,4 +55,29 @@ export async function runUpgradeCommand(args: string[], packageName: string): Pr
 
   console.error(`Upgrading ${packageName} to ${targetVersion} with ${packageManager}...`);
   await runCommand(command[0]!, command.slice(1));
+}
+
+// Foreground npm registry lookup for `duet upgrade`. Uses a generous timeout
+// (the user is actively waiting) and translates aborts/network failures into
+// an actionable message that points at the `--version` escape hatch.
+const UPGRADE_REGISTRY_TIMEOUT_MS = 10_000;
+
+async function resolveLatestVersionForUpgrade(packageName: string): Promise<string> {
+  let latest: string | undefined;
+  try {
+    latest = await fetchLatestPackageVersion(packageName, UPGRADE_REGISTRY_TIMEOUT_MS);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    fail(
+      `Could not reach npm registry to resolve latest ${packageName} version (${reason}). ` +
+        `Retry, or pass --version <version> to upgrade to a specific version.`,
+    );
+  }
+  if (!latest) {
+    fail(
+      `Could not resolve latest ${packageName} version from npm. ` +
+        `Retry, or pass --version <version> to upgrade to a specific version.`,
+    );
+  }
+  return latest;
 }
