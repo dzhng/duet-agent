@@ -50,3 +50,6 @@ mocks/
 .wip/
 
 .env*.local
+
+# Firecrawl scrape output
+.firecrawl/

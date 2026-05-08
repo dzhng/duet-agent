@@ -21,6 +21,13 @@ import type {
 } from "../types/protocol.js";
 import type { StateMachinePollState, StateMachineTimerState } from "../types/state-machine.js";
 
+/**
+ * How often `scheduleWake` checks the wall clock against `wakeAt`. Polling — instead of relying
+ * on a single long `setTimeout` — keeps wakes correct after macOS / Windows / container sleep,
+ * because Node and Bun timers run off a monotonic clock that pauses with the process.
+ */
+const WAKE_POLL_INTERVAL_MS = 30_000;
+
 export interface SessionStartInput {
   /** Routing mode for subsequent prompts. Omit to use the session's configured default. */
   mode?: TurnMode;
@@ -82,8 +89,16 @@ export class Session {
   private startPromise?: Promise<void>;
   /** Most recent terminal event, returned immediately when callers wait after a turn has settled. */
   private lastTerminal?: TurnTerminalEvent;
-  /** Scheduled wake for sleeping state-machine states; cancelled when user input or interrupt arrives. */
-  private wakeTimer?: ReturnType<typeof setTimeout>;
+  /**
+   * Polling interval that fires the wake when wall-clock `Date.now()` reaches `wakeAt`. Cleared
+   * when user input or an interrupt arrives. We poll instead of using a single `setTimeout` so a
+   * laptop that sleeps through the deadline still fires shortly after wake: Node/Bun timers are
+   * driven by a monotonic clock that pauses on macOS sleep, so a long `setTimeout` would drift by
+   * the duration of the sleep. Polling against `Date.now()` is sleep-proof.
+   */
+  private wakeTimer?: ReturnType<typeof setInterval>;
+  /** Optional fast-path timer used when the deadline is closer than the poll interval. */
+  private wakeFastPath?: ReturnType<typeof setTimeout>;
   /** Restores a prompt/answer turn back to sleep when the state machine is still waiting. */
   private restoreSleepAfterTurn?: boolean;
   /** Whether this session should hydrate `state.json` on first use. New sessions start empty. */
@@ -314,21 +329,32 @@ export class Session {
 
   private scheduleWake(terminal: Extract<TurnTerminalEvent, { type: "sleep" }>): void {
     this.cancelWake();
-    this.wakeTimer = setTimeout(
-      () => {
-        this.wakeTimer = undefined;
-        const state = this.runner.getState();
-        if (!state || state.status !== "sleeping") return;
-        this.dispatchTurn({ type: "wake" });
-      },
-      Math.max(0, terminal.wakeAt - Date.now()),
-    );
+    const fire = (): void => {
+      if (Date.now() < terminal.wakeAt) return;
+      this.cancelWake();
+      const state = this.runner.getState();
+      if (!state || state.status !== "sleeping") return;
+      this.dispatchTurn({ type: "wake" });
+    };
+    // Poll every 30s so a sleeping laptop still wakes the turn shortly after the lid reopens.
+    // Jitter is bounded by the poll interval and is acceptable given the 15-minute minimum
+    // wakeAt enforced upstream.
+    this.wakeTimer = setInterval(fire, WAKE_POLL_INTERVAL_MS);
+    // Fast-path for deadlines closer than the poll interval so short waits stay tight.
+    const remaining = terminal.wakeAt - Date.now();
+    if (remaining < WAKE_POLL_INTERVAL_MS) {
+      this.wakeFastPath = setTimeout(fire, Math.max(0, remaining));
+    }
   }
 
   private cancelWake(): void {
     if (this.wakeTimer) {
-      clearTimeout(this.wakeTimer);
+      clearInterval(this.wakeTimer);
       this.wakeTimer = undefined;
+    }
+    if (this.wakeFastPath) {
+      clearTimeout(this.wakeFastPath);
+      this.wakeFastPath = undefined;
     }
   }
 

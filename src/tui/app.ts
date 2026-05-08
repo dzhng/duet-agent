@@ -401,6 +401,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // Swapped out by memory events so the ticker can keep refreshing while the
   // human-readable phase ("recalling memories…", etc.) stays accurate.
   let workingMessage = "working…";
+  // Queued follow-up count surfaced inline on the status line so the user can
+  // see at a glance how many prompts will run after the current turn settles.
+  let queuedFollowUps = 0;
 
   function formatElapsed(ms: number): string {
     const totalSeconds = Math.max(0, Math.floor(ms / 1000));
@@ -412,9 +415,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function refreshWorkingStatus(): void {
     refreshActiveToolBlocks();
-    if (workingStartedAt === undefined) return;
+    if (workingStartedAt === undefined) {
+      setStatus(queuedFollowUps > 0 ? `queued follow-ups: ${queuedFollowUps}` : "");
+      return;
+    }
     const elapsed = formatElapsed(Date.now() - workingStartedAt);
-    setStatus(`● ${workingMessage} (${elapsed})`);
+    const queued = queuedFollowUps > 0 ? ` · queued follow-ups: ${queuedFollowUps}` : "";
+    setStatus(`● ${workingMessage} (${elapsed})${queued}`);
   }
 
   // Sub-second precision for short tool calls keeps fast operations honest;
@@ -462,7 +469,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     stopWorkingTicker();
     workingStartedAt = undefined;
     workingMessage = "working…";
-    setStatus("");
+    refreshWorkingStatus();
   }
 
   function reportError(error: unknown): void {
@@ -575,12 +582,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function renderFollowUpQueue(prompts: readonly string[]): void {
-    if (prompts.length === 0) {
-      if (running) refreshWorkingStatus();
-      else setStatus("");
-      return;
-    }
-    setStatus(`queued follow-ups: ${prompts.length}`);
+    queuedFollowUps = prompts.length;
+    refreshWorkingStatus();
+    if (prompts.length === 0) return;
     appendBlock(
       "[follow-up queue]",
       prompts.map((prompt, index) => `${index + 1}. ${prompt}`).join("\n"),
