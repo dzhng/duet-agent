@@ -12,7 +12,6 @@ import {
 } from "@opentui/core";
 import { formatCompactJson } from "../lib/compact-json.js";
 import type { Session } from "../session/session.js";
-import type { SkillCollision } from "../turn-runner/skills.js";
 import type {
   TurnAgentFile,
   TurnContextUsageEvent,
@@ -594,7 +593,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function renderSetupIntro(
     skills: ReadonlyArray<{ name: string }>,
     agentFiles: readonly TurnAgentFile[],
-    skillCollisions: readonly SkillCollision[],
   ): void {
     const [title, ...details] = startupHeaderLines(input);
     appendLine(title ?? "[duet]", COLORS.status);
@@ -613,13 +611,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     } else {
       const names = skills.map((skill) => skill.name).join(", ");
       appendLine(`[skills] ${skills.length} loaded: ${names}`, COLORS.hint);
-    }
-
-    for (const collision of skillCollisions) {
-      appendLine(
-        `[skill collision] "${collision.name}": kept ${collision.winnerPath}, ignored ${collision.loserPath}`,
-        COLORS.system,
-      );
     }
   }
 
@@ -1112,10 +1103,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // Setup already ran before the TUI launched, so we can read the resolved
   // skills/agent-files synchronously through the session getters.
-  const [skills, agentFiles, skillCollisions] = await Promise.all([
+  const [skills, agentFiles] = await Promise.all([
     input.session.getSkills(),
     input.session.getResolvedAgentFiles(),
-    input.session.getSkillCollisions(),
   ]);
   skillAutocompleteSkills = skills.map((skill) => ({
     name: skill.name,
@@ -1123,7 +1113,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     path: skill.baseDir,
   }));
   refreshSkillAutocomplete();
-  renderSetupIntro(skills, agentFiles, skillCollisions);
+  renderSetupIntro(skills, agentFiles);
   refreshSidebar();
 
   const resumeHistoryLines = input.resumeHistoryLines ?? Number.POSITIVE_INFINITY;
