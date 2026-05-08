@@ -19,10 +19,60 @@ import type {
   TurnQuestion,
   TurnStep,
   TurnTerminalEvent,
-  TurnTodo,
   TurnTokenUsage,
 } from "../types/protocol.js";
-import type { StateMachineSession } from "../types/state-machine.js";
+import {
+  type AutocompleteToken,
+  activeFileAutocompleteToken,
+  activeSkillAutocompleteToken,
+  AUTOCOMPLETE_LIMITS,
+  type FileAutocompleteItem,
+  fileAutocompleteMatches,
+  formatQuestionOptionDescription,
+  formatSkillAutocompleteDescription,
+  moveQuestionOptionSelection,
+  moveSkillAutocompleteSelection,
+  questionPickerAnswerPayload,
+  type SkillAutocompleteItem,
+  skillAutocompleteMatches,
+} from "./autocomplete.js";
+import { buildFileIndex } from "./file-index.js";
+import {
+  type HistoryBlockKind,
+  type HistoryDisplayBlock,
+  historyDisplayBlocks,
+  limitHistoryDisplayBlocks,
+  startupHeaderLines,
+} from "./history.js";
+import { createSidebar } from "./sidebar.js";
+import { COLORS, HINT_IDLE, HINT_RUNNING } from "./theme.js";
+
+export type { HistoryBlockKind, HistoryDisplayBlock, LimitedHistory } from "./history.js";
+export type { StartupHeaderInput } from "./history.js";
+export type {
+  AutocompleteToken,
+  AutocompleteToken as SkillAutocompleteToken,
+  FileAutocompleteItem,
+  SkillAutocompleteItem,
+  SkillAutocompleteReplacement,
+} from "./autocomplete.js";
+// Re-exports preserve the historical `tui/app.js` entry point used by tests
+// and external callers; the implementations live in focused leaf modules.
+export {
+  activeFileAutocompleteToken,
+  activeSkillAutocompleteToken,
+  fileAutocompleteMatches,
+  formatQuestionOptionDescription,
+  formatSkillAutocompleteDescription,
+  moveQuestionOptionSelection,
+  moveSkillAutocompleteSelection,
+  questionPickerAnswerPayload,
+  replaceFileAutocompleteToken,
+  replaceSkillAutocompleteToken,
+  skillAutocompleteMatches,
+} from "./autocomplete.js";
+export { formatSkillAutocompleteItem } from "./autocomplete.js";
+export { historyDisplayBlocks, limitHistoryDisplayBlocks, startupHeaderLines } from "./history.js";
 
 export interface RunTuiInput {
   session: Session;
@@ -49,68 +99,9 @@ export interface RunTuiInput {
   resumeHistoryLines?: number;
 }
 
-type HistoryBlockKind = "user" | "agent" | "reasoning" | "tool" | "error";
-
-export interface HistoryDisplayBlock {
-  kind: HistoryBlockKind;
-  content: string;
-}
-
-export interface LimitedHistory {
-  blocks: HistoryDisplayBlock[];
-  omittedLines: number;
-}
-
-export interface StartupHeaderInput {
-  packageVersion: string;
-  workDir: string;
-  sessionId: string;
-  modelName: string;
-  modelSource?: string;
-  memoryModelName: string;
-  memoryModelSource?: string;
-  newVersionNotice?: string;
-}
-
-export interface SkillAutocompleteItem {
-  name: string;
-  description?: string;
-  path?: string;
-}
-
-export interface SkillAutocompleteToken {
-  start: number;
-  end: number;
-  query: string;
-}
-
-export interface SkillAutocompleteReplacement {
-  text: string;
-  cursorOffset: number;
-}
-
-const COLORS = {
-  user: "#7DD3FC",
-  agent: "#FFFFFF",
-  reasoning: "#9CA3AF",
-  tool: "#A78BFA",
-  system: "#FBBF24",
-  error: "#F87171",
-  hint: "#6B7280",
-  memory: "#6B7280",
-  status: "#34D399",
-  border: "#374151",
-} as const;
-
-const HINT_IDLE = "Enter: send · Esc: quit · Ctrl+C: force quit";
-const HINT_RUNNING =
-  "Enter: steer · Shift+Enter: queue follow-up · Esc: interrupt and quit · Ctrl+C: force quit";
-const SKILL_AUTOCOMPLETE_LIMIT = 8;
-const SKILL_AUTOCOMPLETE_TOKEN = /^\/([A-Za-z0-9_.-]*)$/;
-const SKILL_AUTOCOMPLETE_DESCRIPTION_WIDTH = 72;
-const SKILL_AUTOCOMPLETE_DESCRIPTION_LINES = 2;
-const QUESTION_OPTION_LIMIT = 8;
-const QUESTION_OPTION_DESCRIPTION_WIDTH = 72;
+const SKILL_AUTOCOMPLETE_LIMIT = AUTOCOMPLETE_LIMITS.skill;
+const FILE_AUTOCOMPLETE_LIMIT = AUTOCOMPLETE_LIMITS.file;
+const QUESTION_OPTION_LIMIT = AUTOCOMPLETE_LIMITS.questionOption;
 
 interface InternalKeyHandlerLike {
   onInternal(event: "keypress", handler: (key: KeyEvent) => void): void;
@@ -148,88 +139,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     height: "100%",
   });
 
-  // Fixed width keeps the sidebar legible on narrow terminals without
-  // squashing the transcript. The two panels stack vertically inside.
-  const sidebar = new BoxRenderable(renderer, {
-    flexDirection: "column",
-    width: 36,
-    height: "100%",
-    flexShrink: 0,
-  });
-
-  const todoPanel = new BoxRenderable(renderer, {
-    flexDirection: "column",
-    border: true,
-    borderColor: COLORS.border,
-    padding: 1,
-    flexGrow: 1,
-    flexShrink: 1,
-  });
-  const todoTitle = new TextRenderable(renderer, {
-    content: "todos",
-    fg: COLORS.status,
-    height: 1,
-    flexShrink: 0,
-  });
-  const todoBody = new TextRenderable(renderer, {
-    content: "(none)",
-    fg: COLORS.hint,
-    flexGrow: 1,
-    flexShrink: 1,
-  });
-  todoPanel.add(todoTitle);
-  todoPanel.add(todoBody);
-
-  const smPanel = new BoxRenderable(renderer, {
-    flexDirection: "column",
-    border: true,
-    borderColor: COLORS.border,
-    padding: 1,
-    flexGrow: 1,
-    flexShrink: 1,
-  });
-  const smTitle = new TextRenderable(renderer, {
-    content: "state machine",
-    fg: COLORS.status,
-    height: 1,
-    flexShrink: 0,
-  });
-  const smBody = new TextRenderable(renderer, {
-    content: "(inactive)",
-    fg: COLORS.hint,
-    flexGrow: 1,
-    flexShrink: 1,
-  });
-  smPanel.add(smTitle);
-  smPanel.add(smBody);
-
-  const contextPanel = new BoxRenderable(renderer, {
-    flexDirection: "column",
-    border: true,
-    borderColor: COLORS.border,
-    paddingLeft: 1,
-    paddingRight: 1,
-    height: 5,
-    flexShrink: 0,
-  });
-  const contextTitle = new TextRenderable(renderer, {
-    content: "context",
-    fg: COLORS.status,
-    height: 1,
-    flexShrink: 0,
-  });
-  const contextBody = new TextRenderable(renderer, {
-    content: "(waiting for usage)",
-    fg: COLORS.hint,
-    flexGrow: 1,
-    flexShrink: 1,
-  });
-  contextPanel.add(contextTitle);
-  contextPanel.add(contextBody);
-
-  sidebar.add(todoPanel);
-  sidebar.add(smPanel);
-  sidebar.add(contextPanel);
+  const sidebar = createSidebar(renderer);
 
   const transcript = new ScrollBoxRenderable(renderer, {
     flexGrow: 1,
@@ -283,6 +193,38 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   skillAutocompletePanel.add(skillAutocompleteTitle);
   for (const row of skillAutocompleteRows) {
     skillAutocompletePanel.add(row);
+  }
+
+  // The @-file picker mirrors the slash picker's structure so the renderer
+  // logic and key handling can stay parallel between the two pickers.
+  const fileAutocompletePanel = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    border: true,
+    borderColor: COLORS.border,
+    paddingLeft: 1,
+    paddingRight: 1,
+    flexShrink: 0,
+  });
+  fileAutocompletePanel.visible = false;
+  const fileAutocompleteTitle = new TextRenderable(renderer, {
+    content: "files",
+    fg: COLORS.status,
+    height: 1,
+    flexShrink: 0,
+  });
+  const fileAutocompleteRows = Array.from({ length: FILE_AUTOCOMPLETE_LIMIT }, () => {
+    const row = new TextRenderable(renderer, {
+      content: "",
+      fg: COLORS.hint,
+      height: 1,
+      flexShrink: 0,
+    });
+    row.visible = false;
+    return row;
+  });
+  fileAutocompletePanel.add(fileAutocompleteTitle);
+  for (const row of fileAutocompleteRows) {
+    fileAutocompletePanel.add(row);
   }
 
   const questionPanel = new BoxRenderable(renderer, {
@@ -354,10 +296,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   layout.add(status);
   layout.add(hint);
   layout.add(skillAutocompletePanel);
+  layout.add(fileAutocompletePanel);
   layout.add(questionPanel);
   layout.add(inputBox);
   root.add(layout);
-  root.add(sidebar);
+  root.add(sidebar.view);
   renderer.root.add(root);
   inputField.focus();
 
@@ -379,7 +322,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function appendLine(content: string, fg: string): void {
     if (!content) return;
-    // ScrollBox children stack vertically; one Text per logical line keeps wrapping simple.
     const line = new TextRenderable(renderer, { content, fg });
     transcript.add(line);
     scrollToBottomSoon();
@@ -532,83 +474,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function refreshSidebar(): void {
     const state = input.session.getState();
-    renderTodoSidebar(state?.todos ?? []);
-    renderStateMachineSidebar(state?.stateMachine);
-    renderContextUsageSidebar(latestContextUsage);
-  }
-
-  function renderTodoSidebar(todos: readonly TurnTodo[]): void {
-    if (todos.length === 0) {
-      todoBody.content = "(none)";
-      todoBody.fg = COLORS.hint;
-      return;
-    }
-    const lines = todos.map((todo) => `${todoStatusGlyph(todo.status)} ${todo.content}`);
-    todoBody.content = lines.join("\n");
-    todoBody.fg = COLORS.agent;
-  }
-
-  function todoStatusGlyph(status: TurnTodo["status"]): string {
-    if (status === "completed") return "✓";
-    if (status === "in_progress") return "●";
-    if (status === "failed") return "✗";
-    return "○";
-  }
-
-  function renderStateMachineSidebar(session: StateMachineSession | undefined): void {
-    if (!session) {
-      smBody.content = "(inactive)";
-      smBody.fg = COLORS.hint;
-      return;
-    }
-    const current = session.currentState;
-    const lines = session.definition.states.map((state) => {
-      const marker = state.name === current ? "▶" : " ";
-      return `${marker} ${state.name}`;
-    });
-    if (session.terminal) {
-      lines.push("", `terminal: ${session.terminal.status}`);
-    }
-    smBody.content = lines.join("\n");
-    smBody.fg = COLORS.agent;
-  }
-
-  function renderContextUsageSidebar(usage: TurnContextUsageEvent | undefined): void {
-    if (!usage) {
-      contextBody.content = "(waiting for usage)";
-      contextBody.fg = COLORS.hint;
-      return;
-    }
-    const usedTokens = usage.usage.totalTokens;
-    const percent = Math.min(1, usedTokens / usage.contextWindow);
-    contextBody.content = [
-      progressBar(percent, 25),
-      `${formatTokenCount(usedTokens)} / ${formatTokenCount(usage.contextWindow)}`,
-    ].join("\n");
-    contextBody.fg = usedTokens >= usage.contextWindow ? COLORS.error : COLORS.agent;
-  }
-
-  function progressBar(value: number, width: number): string {
-    const clamped = Math.max(0, Math.min(1, value));
-    const filled = Math.round(clamped * width);
-    const empty = width - filled;
-    return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${`${Math.round(clamped * 100)}%`.padStart(4)}`;
-  }
-
-  function formatTokenCount(tokens: number): string {
-    if (tokens >= 1_000_000) return `${formatCompactNumber(tokens / 1_000_000)}m`;
-    if (tokens >= 1_000) return `${formatCompactNumber(tokens / 1_000)}k`;
-    return String(tokens);
-  }
-
-  function formatCompactNumber(value: number): string {
-    const rounded = value >= 10 ? Math.round(value) : Math.round(value * 10) / 10;
-    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+    sidebar.setTodos(state?.todos ?? []);
+    sidebar.setStateMachine(state?.stateMachine);
+    sidebar.setContextUsage(latestContextUsage);
   }
 
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
-    // Sidebar mirrors the runner's authoritative state, so refresh it on
-    // every event rather than threading specific updates through each branch.
     refreshSidebar();
     if (event.type === "step") {
       renderStep(event.step);
@@ -620,7 +491,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       renderMemoryStatus(event);
     } else if (event.type === "context_usage") {
       latestContextUsage = event;
-      renderContextUsageSidebar(event);
+      sidebar.setContextUsage(event);
     } else if (event.type === "system") {
       appendBlock("[system]", event.message, COLORS.system);
       if (event.level === "error") markIdle();
@@ -633,10 +504,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     } else if (event.type === "complete") {
       if (event.error) {
         appendBlock("[error]", event.error, COLORS.error);
-      } else if (event.result) {
-        // Result is also normally streamed via text steps; only show if no streaming happened
-        // for this turn (cheap heuristic: empty transcript-since-last-prompt).
-        // Always-append is fine too — duplicate text is harmless and clearer for short turns.
       }
       renderUsage(event.usage);
       lastTerminal = event;
@@ -686,7 +553,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     appendLine(`[usage] Tokens: ${parts.join(" ")}${cost}`, COLORS.hint);
   }
 
-  function renderTodos(todos: TurnTodo[]): void {
+  function renderTodos(todos: readonly { id: string; status: string; content: string }[]): void {
     if (todos.length === 0) {
       appendBlock("[todos]", "No todos", COLORS.hint);
       return;
@@ -698,7 +565,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     );
   }
 
-  function renderFollowUpQueue(prompts: string[]): void {
+  function renderFollowUpQueue(prompts: readonly string[]): void {
     if (prompts.length === 0) {
       if (running) refreshWorkingStatus();
       else setStatus("");
@@ -868,9 +735,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // capture the modifier here and read it during the ENTER event below.
   let lastEnterShift = false;
   let skillAutocompleteSkills: readonly SkillAutocompleteItem[] = [];
-  let skillAutocompleteToken: SkillAutocompleteToken | undefined;
+  let skillAutocompleteToken: AutocompleteToken | undefined;
   let skillAutocompleteItems: SkillAutocompleteItem[] = [];
   let skillAutocompleteSelectedIndex = 0;
+
+  // File index loads lazily after the first @ trigger and never re-runs.
+  // Repos large enough to matter would block the first keystroke otherwise;
+  // a stale-by-a-few-files index is a fair trade for a snappy first paint.
+  let fileAutocompleteAllFiles: readonly FileAutocompleteItem[] = [];
+  let fileAutocompleteIndexPromise: Promise<readonly FileAutocompleteItem[]> | undefined;
+  let fileAutocompleteToken: AutocompleteToken | undefined;
+  let fileAutocompleteItems: FileAutocompleteItem[] = [];
+  let fileAutocompleteSelectedIndex = 0;
+
   let pendingQuestions: TurnQuestion[] = [];
   let questionOptionSelectedIndex = 0;
   let suppressNextEscapeExit = false;
@@ -900,6 +777,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     return Boolean(skillAutocompleteToken && skillAutocompleteItems.length > 0);
   }
 
+  function fileAutocompleteIsOpen(): boolean {
+    return Boolean(fileAutocompleteToken && fileAutocompleteItems.length > 0);
+  }
+
   function questionPickerIsOpen(): boolean {
     const question = pendingQuestions[0];
     return Boolean(question && question.options.length > 0);
@@ -911,6 +792,17 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     skillAutocompleteSelectedIndex = 0;
     skillAutocompletePanel.visible = false;
     for (const row of skillAutocompleteRows) {
+      row.visible = false;
+      row.content = "";
+    }
+  }
+
+  function hideFileAutocomplete(): void {
+    fileAutocompleteToken = undefined;
+    fileAutocompleteItems = [];
+    fileAutocompleteSelectedIndex = 0;
+    fileAutocompletePanel.visible = false;
+    for (const row of fileAutocompleteRows) {
       row.visible = false;
       row.content = "";
     }
@@ -976,6 +868,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     return true;
   }
 
+  async function ensureFileIndex(): Promise<readonly FileAutocompleteItem[]> {
+    if (fileAutocompleteAllFiles.length > 0) return fileAutocompleteAllFiles;
+    if (!fileAutocompleteIndexPromise) {
+      fileAutocompleteIndexPromise = buildFileIndex(input.workDir).catch(() => []);
+    }
+    fileAutocompleteAllFiles = await fileAutocompleteIndexPromise;
+    return fileAutocompleteAllFiles;
+  }
+
+  function refreshAutocomplete(): void {
+    refreshSkillAutocomplete();
+    refreshFileAutocomplete();
+  }
+
   function refreshSkillAutocomplete(): void {
     const token = activeSkillAutocompleteToken(inputField.plainText, inputField.cursorOffset);
     if (!token) {
@@ -1003,6 +909,47 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     renderSkillAutocomplete();
   }
 
+  function refreshFileAutocomplete(): void {
+    const token = activeFileAutocompleteToken(inputField.plainText, inputField.cursorOffset);
+    if (!token) {
+      hideFileAutocomplete();
+      return;
+    }
+
+    // Capture the token id we're looking up so a slow index resolution can
+    // tell whether the user has typed past the original query and bail out.
+    const targetStart = token.start;
+    const targetEnd = token.end;
+    const targetQuery = token.query;
+    void ensureFileIndex().then((files) => {
+      const stillCurrent =
+        fileAutocompleteToken !== undefined
+          ? fileAutocompleteToken.start === targetStart &&
+            fileAutocompleteToken.end === targetEnd &&
+            fileAutocompleteToken.query === targetQuery
+          : activeFileAutocompleteToken(inputField.plainText, inputField.cursorOffset)?.query ===
+            targetQuery;
+      if (!stillCurrent && fileAutocompleteToken === undefined) return;
+      const items = fileAutocompleteMatches(files, targetQuery);
+      if (items.length === 0) {
+        hideFileAutocomplete();
+        return;
+      }
+      const previousToken = fileAutocompleteToken;
+      fileAutocompleteToken = { start: targetStart, end: targetEnd, query: targetQuery };
+      fileAutocompleteItems = items;
+      const queryChanged =
+        !previousToken ||
+        previousToken.start !== targetStart ||
+        previousToken.end !== targetEnd ||
+        previousToken.query !== targetQuery;
+      if (queryChanged || fileAutocompleteSelectedIndex >= items.length) {
+        fileAutocompleteSelectedIndex = 0;
+      }
+      renderFileAutocomplete();
+    });
+  }
+
   function renderSkillAutocomplete(): void {
     skillAutocompletePanel.visible = skillAutocompleteItems.length > 0;
     for (const [index, row] of skillAutocompleteRows.entries()) {
@@ -1025,6 +972,31 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   }
 
+  function renderFileAutocomplete(): void {
+    fileAutocompletePanel.visible = fileAutocompleteItems.length > 0;
+    for (const [index, row] of fileAutocompleteRows.entries()) {
+      const item = fileAutocompleteItems[index];
+      if (!item) {
+        row.visible = false;
+        row.content = "";
+        continue;
+      }
+      const selected = index === fileAutocompleteSelectedIndex;
+      const nameColor = selected ? COLORS.status : COLORS.user;
+      const pathColor = selected ? COLORS.agent : COLORS.hint;
+      // Show basename + relative directory side-by-side. The directory
+      // portion is the path with the trailing basename removed; for files at
+      // the repo root this collapses to "./" so each row has a consistent
+      // shape.
+      const directory = item.relativePath.includes("/")
+        ? item.relativePath.slice(0, item.relativePath.lastIndexOf("/") + 1)
+        : "./";
+      row.content = t`${fg(nameColor)(item.name)} ${fg(pathColor)(directory)}`;
+      row.fg = selected ? COLORS.agent : COLORS.hint;
+      row.visible = true;
+    }
+  }
+
   function completeSelectedSkillAutocomplete(): boolean {
     const token = skillAutocompleteToken;
     const item = skillAutocompleteItems[skillAutocompleteSelectedIndex];
@@ -1040,6 +1012,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     return true;
   }
 
+  function completeSelectedFileAutocomplete(): boolean {
+    const token = fileAutocompleteToken;
+    const item = fileAutocompleteItems[fileAutocompleteSelectedIndex];
+    if (!token || !item) return false;
+
+    const insertion = inputField.plainText[token.end]?.match(/\s/)
+      ? `@${item.relativePath}`
+      : `@${item.relativePath} `;
+    inputField.setSelection(token.start, token.end);
+    inputField.deleteSelection();
+    inputField.insertText(insertion);
+    hideFileAutocomplete();
+    return true;
+  }
+
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
   keyHandler.onInternal("keypress", (key: KeyEvent) => {
     if (key.name !== "escape") return;
@@ -1051,6 +1038,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (skillAutocompleteIsOpen()) {
       key.preventDefault();
       hideSkillAutocomplete();
+      return;
+    }
+    if (fileAutocompleteIsOpen()) {
+      key.preventDefault();
+      hideFileAutocomplete();
       return;
     }
     if (questionPickerIsOpen()) {
@@ -1087,7 +1079,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         key.preventDefault();
         return;
       }
-      if (key.name === "return" || key.name === "enter") {
+      if (key.name === "return" || key.name === "enter" || key.name === "tab") {
         key.preventDefault();
         completeSelectedSkillAutocomplete();
         return;
@@ -1096,6 +1088,40 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         key.preventDefault();
         suppressNextEscapeExit = true;
         hideSkillAutocomplete();
+        return;
+      }
+    }
+
+    if (fileAutocompleteIsOpen()) {
+      if (key.name === "up") {
+        fileAutocompleteSelectedIndex = moveSkillAutocompleteSelection(
+          fileAutocompleteSelectedIndex,
+          fileAutocompleteItems.length,
+          -1,
+        );
+        renderFileAutocomplete();
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "down") {
+        fileAutocompleteSelectedIndex = moveSkillAutocompleteSelection(
+          fileAutocompleteSelectedIndex,
+          fileAutocompleteItems.length,
+          1,
+        );
+        renderFileAutocomplete();
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "return" || key.name === "enter" || key.name === "tab") {
+        key.preventDefault();
+        completeSelectedFileAutocomplete();
+        return;
+      }
+      if (key.name === "escape") {
+        key.preventDefault();
+        suppressNextEscapeExit = true;
+        hideFileAutocomplete();
         return;
       }
     }
@@ -1131,9 +1157,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
     if (key.name === "return" || key.name === "enter") {
       lastEnterShift = Boolean(key.shift);
-      // Take over Enter so the textarea does not insert a newline. We submit
-      // the current buffer contents and reset, regardless of shift state —
-      // shift only differentiates steer vs. queued follow-up.
       const value = inputField.plainText.trim();
       inputField.clear();
       key.preventDefault();
@@ -1151,23 +1174,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   };
 
-  inputField.onContentChange = () => refreshSkillAutocomplete();
-  inputField.onCursorChange = () => refreshSkillAutocomplete();
+  inputField.onContentChange = () => refreshAutocomplete();
+  inputField.onCursorChange = () => refreshAutocomplete();
 
   function submit(message: string, shiftEnter: boolean): void {
     appendBlock("you:", message, COLORS.user);
     hideQuestions();
 
     if (running) {
-      // Mid-turn: Enter → steer, Shift+Enter → queued follow-up.
       const behavior = shiftEnter ? "follow_up" : "steer";
       void input.session.prompt({ message, behavior }).catch(reportError);
-      // Keep status as "working"; the existing turn continues.
       return;
     }
 
-    // Idle: dispatch a prompt against the already-set-up session. Setup
-    // happens before the TUI starts so skills are visible right away.
     void input.session.prompt({ message, behavior: "follow_up" }).catch(reportError);
     markRunning();
   }
@@ -1185,7 +1204,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     description: skill.description,
     path: skill.baseDir,
   }));
-  refreshSkillAutocomplete();
+  refreshAutocomplete();
   renderSetupIntro(skills, agentFiles);
   refreshSidebar();
 
@@ -1216,8 +1235,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       .catch(reportError);
     markRunning();
   } else {
-    // No initial prompt — wait for the user. Setup already ran above, so
-    // the skill summary is rendered before the user types.
     markIdle();
   }
 
@@ -1251,241 +1268,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (kind === "error") return COLORS.error;
     return COLORS.agent;
   }
-}
-
-export function historyDisplayBlocks(history: readonly AgentMessage[]): HistoryDisplayBlock[] {
-  const blocks: HistoryDisplayBlock[] = [];
-  const activeToolBlockIndexes = new Map<string, number>();
-  for (const message of history) {
-    if (!("role" in message)) continue;
-    if (message.role === "user") {
-      const text = userMessageText(message.content);
-      if (text) blocks.push({ kind: "user", content: `you:\n${text}` });
-    } else if (message.role === "assistant") {
-      for (const block of message.content) {
-        if (block.type === "text") {
-          blocks.push({ kind: "agent", content: block.text });
-        } else if (block.type === "thinking") {
-          const trimmed = block.thinking.trim();
-          if (trimmed) blocks.push({ kind: "reasoning", content: `[reasoning]\n${trimmed}` });
-        } else if (block.type === "toolCall") {
-          const input =
-            block.arguments === undefined ? "" : `\n${formatCompactJson(block.arguments)}`;
-          activeToolBlockIndexes.set(block.id, blocks.length);
-          blocks.push({ kind: "tool", content: `[tool ${block.name}] ⏳${input}` });
-        }
-      }
-      if (message.errorMessage) {
-        blocks.push({ kind: "error", content: `[error]\n${message.errorMessage}` });
-      }
-    } else if (message.role === "toolResult") {
-      const text = textFromHistoryContent(message.content);
-      const existingIndex = activeToolBlockIndexes.get(message.toolCallId);
-      const marker = message.isError ? "✗" : "✓";
-      const label = message.isError ? "[error]" : "[result]";
-      if (existingIndex !== undefined) {
-        const existing = blocks[existingIndex]!;
-        const [, ...inputLines] = existing.content.split("\n");
-        const input = inputLines.length > 0 ? `\n${inputLines.join("\n")}` : "";
-        existing.kind = message.isError ? "error" : "tool";
-        existing.content = text
-          ? `[tool ${message.toolName}] ${marker}${input}\n${label}\n${text}`
-          : `[tool ${message.toolName}] ${marker}${input}`;
-        activeToolBlockIndexes.delete(message.toolCallId);
-      } else {
-        const content = text
-          ? `[tool ${message.toolName}] ${marker}\n${label}\n${text}`
-          : `[tool ${message.toolName}] ${marker}`;
-        blocks.push({ kind: message.isError ? "error" : "tool", content });
-      }
-    }
-  }
-  return blocks;
-}
-
-export function startupHeaderLines(input: StartupHeaderInput): string[] {
-  const lines = [
-    `[duet] v${input.packageVersion}`,
-    `[cwd] ${input.workDir}`,
-    `[session] ${input.sessionId}`,
-    input.modelSource
-      ? `[model] ${input.modelName} — ${input.modelSource}`
-      : `[model] ${input.modelName}`,
-    input.memoryModelSource
-      ? `[memory model] ${input.memoryModelName} — ${input.memoryModelSource}`
-      : `[memory model] ${input.memoryModelName}`,
-  ];
-  if (input.newVersionNotice) lines.push(input.newVersionNotice);
-  return lines;
-}
-
-export function limitHistoryDisplayBlocks(
-  blocks: readonly HistoryDisplayBlock[],
-  maxLines: number,
-): LimitedHistory {
-  if (maxLines <= 0) return { blocks: [], omittedLines: countHistoryLines(blocks) };
-
-  const selected: HistoryDisplayBlock[] = [];
-  let remaining = maxLines;
-  let omittedLines = 0;
-
-  for (let index = blocks.length - 1; index >= 0; index--) {
-    const block = blocks[index]!;
-    const lines = block.content.split("\n");
-    if (lines.length <= remaining) {
-      selected.unshift(block);
-      remaining -= lines.length;
-      continue;
-    }
-    if (remaining > 0) {
-      selected.unshift({ ...block, content: lines.slice(-remaining).join("\n") });
-      omittedLines += lines.length - remaining;
-      remaining = 0;
-    } else {
-      omittedLines += lines.length;
-    }
-  }
-
-  return { blocks: selected, omittedLines };
-}
-
-export function activeSkillAutocompleteToken(
-  text: string,
-  cursorOffset: number,
-): SkillAutocompleteToken | undefined {
-  const boundedOffset = Math.max(0, Math.min(cursorOffset, text.length));
-  const tokenStart = text.slice(0, boundedOffset).search(/(?:^|\s)\/[^\s]*$/);
-  if (tokenStart < 0) return undefined;
-
-  const start = text[tokenStart] === "/" ? tokenStart : tokenStart + 1;
-  const tokenEnd = text.slice(boundedOffset).search(/\s/);
-  const end = tokenEnd < 0 ? text.length : boundedOffset + tokenEnd;
-  const token = text.slice(start, end);
-  const match = token.match(SKILL_AUTOCOMPLETE_TOKEN);
-  if (!match) return undefined;
-
-  return { start, end, query: text.slice(start + 1, boundedOffset) };
-}
-
-export function skillAutocompleteMatches(
-  skills: readonly SkillAutocompleteItem[],
-  query: string,
-  limit = SKILL_AUTOCOMPLETE_LIMIT,
-): SkillAutocompleteItem[] {
-  const normalizedQuery = query.toLocaleLowerCase();
-  return [...skills]
-    .filter((skill) => skill.name.toLocaleLowerCase().startsWith(normalizedQuery))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, limit);
-}
-
-export function formatSkillAutocompleteItem(item: SkillAutocompleteItem): string {
-  const path = item.path ? ` (${item.path})` : "";
-  const lines = [`/${item.name}${path}`, formatSkillAutocompleteDescription(item.description)];
-  return lines.filter((line) => line.length > 0).join("\n");
-}
-
-export function formatSkillAutocompleteDescription(description: string | undefined): string {
-  if (!description) return "";
-
-  const wrapped = wrapText(description, SKILL_AUTOCOMPLETE_DESCRIPTION_WIDTH);
-  const visible = wrapped.slice(0, SKILL_AUTOCOMPLETE_DESCRIPTION_LINES);
-  if (wrapped.length > visible.length) {
-    const lastIndex = visible.length - 1;
-    visible[lastIndex] = `${visible[lastIndex]!.replace(/\s+$/, "")}...`;
-  }
-  return visible.join("\n");
-}
-
-function wrapText(text: string, width: number): string[] {
-  const words = text.trim().split(/\s+/);
-  const lines: string[] = [];
-  let current = "";
-
-  for (const word of words) {
-    if (!current) {
-      current = word;
-      continue;
-    }
-    if (current.length + 1 + word.length <= width) {
-      current = `${current} ${word}`;
-      continue;
-    }
-    lines.push(current);
-    current = word;
-  }
-
-  if (current) lines.push(current);
-  return lines;
-}
-
-export function moveSkillAutocompleteSelection(
-  selectedIndex: number,
-  itemCount: number,
-  direction: -1 | 1,
-): number {
-  if (itemCount <= 0) return 0;
-  return (selectedIndex + direction + itemCount) % itemCount;
-}
-
-export function moveQuestionOptionSelection(
-  selectedIndex: number,
-  itemCount: number,
-  direction: -1 | 1,
-): number {
-  if (itemCount <= 0) return 0;
-  return (selectedIndex + direction + itemCount) % itemCount;
-}
-
-export function questionPickerAnswerPayload(
-  questions: readonly TurnQuestion[],
-  selectedIndex: number,
-): Record<string, string> | undefined {
-  const firstQuestion = questions[0];
-  const selectedOption = firstQuestion?.options[selectedIndex];
-  if (!firstQuestion || !selectedOption) return undefined;
-
-  return { [firstQuestion.question]: selectedOption.label };
-}
-
-export function formatQuestionOptionDescription(description: string | undefined): string {
-  if (!description) return "";
-
-  return wrapText(description, QUESTION_OPTION_DESCRIPTION_WIDTH).join("\n");
-}
-
-export function replaceSkillAutocompleteToken(
-  text: string,
-  token: SkillAutocompleteToken,
-  skillName: string,
-): SkillAutocompleteReplacement {
-  const insertion = text[token.end]?.match(/\s/) ? `/${skillName}` : `/${skillName} `;
-  const nextText = `${text.slice(0, token.start)}${insertion}${text.slice(token.end)}`;
-  return { text: nextText, cursorOffset: token.start + insertion.length };
-}
-
-function countHistoryLines(blocks: readonly HistoryDisplayBlock[]): number {
-  return blocks.reduce((count, block) => count + block.content.split("\n").length, 0);
-}
-
-type UserHistoryContent = string | ReadonlyArray<{ type: string; text?: unknown }>;
-
-function userMessageText(content: UserHistoryContent): string {
-  if (typeof content === "string") return content;
-  return content
-    .filter(
-      (block): block is { type: "text"; text: string } =>
-        block.type === "text" && typeof block.text === "string",
-    )
-    .map((block) => block.text)
-    .join("");
-}
-
-function textFromHistoryContent(content: ReadonlyArray<TextContent | ImageContent>): string {
-  return content
-    .filter((block): block is TextContent => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
 }
 
 function restoreWindowGlobal(previousWindow: PropertyDescriptor | undefined): void {
