@@ -2,10 +2,12 @@ import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import type { Skill } from "@earendil-works/pi-coding-agent";
+import type { BashOperations, Skill } from "@earendil-works/pi-coding-agent";
 import dedent from "dedent";
 import {
   createTurnRunnerTools as createTurnRunnerToolsWithStorage,
+  DEFAULT_BASH_TIMEOUT_SECONDS,
+  withDefaultBashTimeout,
   type TurnRunnerControlResult,
 } from "../src/turn-runner/tools.js";
 import type { TurnTodo } from "../src/types/protocol.js";
@@ -839,6 +841,54 @@ describe("TurnRunner tools", () => {
     expect(propertyDescription(selectStateTool.parameters, "decision")).toContain(
       "State transition",
     );
+  });
+
+  describe("withDefaultBashTimeout", () => {
+    function createRecordingOps(): {
+      ops: BashOperations;
+      calls: Array<{ command: string; timeout: number | undefined }>;
+    } {
+      const calls: Array<{ command: string; timeout: number | undefined }> = [];
+      const ops: BashOperations = {
+        exec: async (command, _cwd, options) => {
+          calls.push({ command, timeout: options.timeout });
+          return { exitCode: 0 };
+        },
+      };
+      return { ops, calls };
+    }
+
+    test("fills in default timeout when caller did not specify one", async () => {
+      const { ops, calls } = createRecordingOps();
+      const wrapped = withDefaultBashTimeout(ops, 42);
+
+      await wrapped.exec("echo hi", "/tmp", { onData: () => {} });
+
+      expect(calls).toEqual([{ command: "echo hi", timeout: 42 }]);
+    });
+
+    test("respects an explicit timeout passed by the caller", async () => {
+      const { ops, calls } = createRecordingOps();
+      const wrapped = withDefaultBashTimeout(ops, 42);
+
+      await wrapped.exec("sleep 1", "/tmp", { onData: () => {}, timeout: 7 });
+
+      expect(calls).toEqual([{ command: "sleep 1", timeout: 7 }]);
+    });
+
+    test("treats timeout=0 as explicit (no override)", async () => {
+      const { ops, calls } = createRecordingOps();
+      const wrapped = withDefaultBashTimeout(ops, 42);
+
+      await wrapped.exec("noop", "/tmp", { onData: () => {}, timeout: 0 });
+
+      expect(calls).toEqual([{ command: "noop", timeout: 0 }]);
+    });
+
+    test("DEFAULT_BASH_TIMEOUT_SECONDS is a finite, positive duration", () => {
+      expect(DEFAULT_BASH_TIMEOUT_SECONDS).toBeGreaterThan(0);
+      expect(Number.isFinite(DEFAULT_BASH_TIMEOUT_SECONDS)).toBe(true);
+    });
   });
 });
 

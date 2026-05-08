@@ -3,6 +3,7 @@ import dedent from "dedent";
 import { toXML } from "../lib/xml.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
+import { DEFAULT_BASH_TIMEOUT_SECONDS } from "./tools.js";
 
 function currentDateSystemPrompt(): string {
   // Day-level resolution keeps the prompt stable for the whole UTC day so prompt
@@ -20,6 +21,10 @@ const TOOL_EXECUTION_SYSTEM_PROMPT = dedent`
   <use_parallel_tool_calls>
   For maximum efficiency, whenever you perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially. Prioritize calling tools in parallel whenever possible. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. When running multiple read-only commands like \`ls\` or \`list_dir\`, always run all of the commands in parallel. Err on the side of maximizing parallel tool calls rather than running too many tools sequentially.
   </use_parallel_tool_calls>
+
+  <bash_timeout>
+  Bash commands run with a default timeout of ${DEFAULT_BASH_TIMEOUT_SECONDS} seconds (${Math.round(DEFAULT_BASH_TIMEOUT_SECONDS / 60)} minutes); commands that exceed it are killed and reported as timed out. Scope commands so they finish well under that — prefer narrow searches (e.g. \`rg\` inside the repo) over filesystem-wide walks like \`find /\`. When a command genuinely needs longer (long builds, test suites, package installs), pass an explicit \`timeout\` argument in seconds sized to the expected runtime.
+  </bash_timeout>
 `;
 
 export function createSystemPromptWithAppendedLayers(input: {
@@ -57,6 +62,8 @@ export function createStateMachineSystemPromptLayer(input: {
   // state instead of relying on the parent transcript.
   return [
     "Route durable business-process work through state-machine tools whenever possible.",
+    'Also reach for a state machine whenever the work breaks down into well-scoped steps that a sub-agent or script can complete on its own ("do X with these inputs and return the result"). Each state runs outside this conversation: agent states get a fresh sub-agent context, and only a compact result returns to you. Their tool calls, file reads, and script output never enter this transcript, so using a state machine is the main way to keep the parent context clean on multi-step work. The definition and current progress are rendered to the user in real time, so it also serves as a visible plan. Prefer this over doing the steps yourself with todo_write whenever you do not need to keep reasoning over the intermediate output.',
+    'State-machine work also keeps the user unblocked. While states run in the background the user can still send messages and you (the parent) respond without waiting for the state machine to finish. State-machine progress continues regardless of what you do here — by default just answer the user. Only call select_state_machine_state if the user explicitly wants to redirect or change the running work; questions, status checks, and side conversations should be answered with plain replies. A "steer" message reaches you immediately as an interruption (right shape for redirects or anything time-sensitive); a "follow_up" message is queued and delivered when your current turn settles (right shape for context that does not need to interrupt). Doing the same multi-step work via todo_write would block the user behind your own tool calls instead.',
     "If the request is simple or unrelated, answer normally without calling a turn-runner control tool.",
     "After you select a state-machine state, the runner executes that state outside your current assistant message and may later sleep, wake, or continue in the background.",
     "State prompts and script commands may use template strings like {{ input.email }}. Add inputSchema to states that need template input, and pass matching input when selecting that state.",

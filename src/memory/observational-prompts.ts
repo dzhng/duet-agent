@@ -90,7 +90,10 @@ export const OBSERVER_GUIDELINES = dedent`
   - If the agent provides a detailed response, observe the contents so it could be repeated
   - Make sure each observation starts with a priority emoji (🔴, 🟡, 🟢) or a completion marker (✅)
   - Capture short and medium user messages nearly verbatim; summarize long messages but keep key quotes that carry intent
-  - User confirmations or explicit resolved outcomes should be ✅ when they clearly signal something is done; unresolved or critical user facts remain 🔴
+  - Default a user task request to 🟡. Only escalate to 🔴 when the request itself reveals a durable user fact, preference, or critical cross-session goal that goes beyond the immediate task
+  - Reserve ✅ for state-changing concrete completions: code shipped, file edited, command that mutated state, verified bug fix. Do NOT mark ✅ for read-only file inspections, lookups, or routine Q&A — those stay 🟡
+  - Do not use ✅ when the user defers, postpones, abandons, or changes their mind. Tag deferrals as 🟢. Tag content surfaced along the way as 🟡 only when it is grounded in measured/observed facts; otherwise 🟢
+  - When the conversation is dominated by uncertainty, speculation, "maybe / might / not sure / no data yet" framing, or explicit deferral, the whole observation should stay at 🟢. Do not sneak in 🟡 lines just to elevate the priority
   - Treat ✅ as a memory signal that tells the assistant something is finished and should not be repeated unless new information changes it
   - Make completion observations answer "What exactly is now done?"
   - Prefer concrete resolved outcomes over meta-level workflow or bookkeeping updates
@@ -108,13 +111,13 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
 
   return dedent`
     Use priority levels:
-    - 🔴 High: explicit user assertions, facts, preferences, requests, unresolved goals, critical context
-    - 🟡 Medium: project details, learned information, tool results
-    - 🟢 Low: minor details, uncertain observations
-    - ✅ Completed: concrete task finished, question answered, issue resolved, goal achieved, or subtask completed
+    - 🔴 High: durable user-identity facts (job, environment, relationships, identifiers), explicit user preferences, and unresolved critical decisions or blockers the user cares about across sessions. Do NOT use 🔴 for ordinary task requests.
+    - 🟡 Medium: routine work executed this session — tool results, file contents, code structure, agent hypotheses or reasoning, and ordinary task requests being performed without durable user-identity content. This is the default for in-session work.
+    - 🟢 Low: tentative, speculative, or uncertain observations ("maybe", "might be", unmeasured guesses), explicit deferrals or "no data yet" states, and incidental details whose future relevance is unclear. Use 🟢 freely and do not promote tentative or unresolved content to 🟡 to look helpful.
+    - ✅ Completed: a state-changing artifact was produced — code shipped, file edited, command run that mutated state, or a verified bug fix. Do NOT use ✅ for read-only lookups, file inspections, or simple Q&A. Do NOT use ✅ when the user defers, postpones, or changes their mind.
 
     Group related observations by indenting:
-    * 🔴 (14:33) Agent debugging auth issue
+    * 🟡 (14:33) Agent debugging auth issue
       * -> ran git status, found 3 modified files
       * -> viewed auth.ts:45-60, found missing null check
       * ✅ Tests passing, auth issue resolved
@@ -124,12 +127,13 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
     hasMemory:
     - true when the message history contains durable information worth remembering
     - false when the exchange is only transient chatter, a greeting, or otherwise has no useful future context
+    - Tentative or low-priority detail still counts as durable memory. Prefer recording it as 🟢 over returning hasMemory=false.
     - Always call the structured output tool. Use hasMemory=false instead of skipping the tool call.
 
     observations:
     Date: Dec 4, 2025
     * 🔴 (14:30) User prefers direct answers
-    * 🔴 (14:31) Working on feature X
+    * 🟡 (14:31) Working on feature X this session
     - When hasMemory=false, observations must be an empty string.
 
     currentTask:

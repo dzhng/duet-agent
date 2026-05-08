@@ -499,6 +499,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       appendBlock("[question]", event.questions.map((q) => q.question).join("\n"), COLORS.system);
       showQuestions(event.questions);
       renderUsage(event.usage);
+      renderTurnElapsed();
       lastTerminal = event;
       markIdle();
     } else if (event.type === "complete") {
@@ -506,16 +507,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         appendBlock("[error]", event.error, COLORS.error);
       }
       renderUsage(event.usage);
+      renderTurnElapsed();
       lastTerminal = event;
       markIdle();
     } else if (event.type === "interrupted") {
       appendLine("[interrupted]", COLORS.system);
       renderUsage(event.usage);
+      renderTurnElapsed();
       lastTerminal = event;
       markIdle();
     } else if (event.type === "sleep") {
       appendLine(`[sleeping until ${new Date(event.wakeAt).toLocaleTimeString()}]`, COLORS.system);
       renderUsage(event.usage);
+      renderTurnElapsed();
       lastTerminal = event;
       markIdle();
     }
@@ -551,6 +555,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (usage.cacheRead > 0) parts.push(`cached=${usage.cacheRead}`);
     const cost = usage.cost.total === 0 ? "" : ` · Cost: $${usage.cost.total.toFixed(4)}`;
     appendLine(`[usage] Tokens: ${parts.join(" ")}${cost}`, COLORS.hint);
+  }
+
+  function renderTurnElapsed(): void {
+    if (workingStartedAt === undefined) return;
+    appendLine(`● turn finished in ${formatElapsed(Date.now() - workingStartedAt)}`, COLORS.status);
   }
 
   function renderTodos(todos: readonly { id: string; status: string; content: string }[]): void {

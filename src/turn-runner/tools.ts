@@ -1,5 +1,10 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { createCodingTools, type Skill } from "@earendil-works/pi-coding-agent";
+import {
+  type BashOperations,
+  createCodingTools,
+  createLocalBashOperations,
+  type Skill,
+} from "@earendil-works/pi-coding-agent";
 import { Ajv } from "ajv";
 import dedent from "dedent";
 import { Type, type Static } from "typebox";
@@ -22,6 +27,33 @@ import type { ActiveStateOutput } from "./state-machine-controller.js";
 import { readSkillInstructions } from "./skills.js";
 
 const jsonSchemaValidator = new Ajv({ strictSchema: false });
+
+/**
+ * Default cap (in seconds) applied to bash tool invocations that omit an
+ * explicit timeout. Upstream's bash tool ships with no default timeout, so
+ * stray commands like `find /` could otherwise run for many minutes before
+ * anything intervenes. The model can still pass a larger `timeout` argument
+ * for legitimate long-running work.
+ */
+export const DEFAULT_BASH_TIMEOUT_SECONDS = 300;
+
+/**
+ * Wrap a `BashOperations` implementation so any `exec` call without an
+ * explicit `timeout` uses `defaultTimeoutSeconds`. Calls that already specify
+ * a timeout (the model passed one) are forwarded unchanged.
+ */
+export function withDefaultBashTimeout(
+  base: BashOperations,
+  defaultTimeoutSeconds: number = DEFAULT_BASH_TIMEOUT_SECONDS,
+): BashOperations {
+  return {
+    exec: (command, cwd, options) =>
+      base.exec(command, cwd, {
+        ...options,
+        timeout: options.timeout ?? defaultTimeoutSeconds,
+      }),
+  };
+}
 
 const questionOptionSchema = Type.Object({
   label: Type.String({ description: "Answer text shown to the user." }),
@@ -406,7 +438,9 @@ export function createDefaultTurnRunnerTools(
   skills: readonly Skill[] = [],
 ): AgentTool[] {
   return [
-    ...createCodingTools(cwd),
+    ...createCodingTools(cwd, {
+      bash: { operations: withDefaultBashTimeout(createLocalBashOperations()) },
+    }),
     createTodoWriteTool(todoStorage),
     createAskUserQuestionTool(),
     createReadSkillTool(skills),
@@ -505,21 +539,23 @@ export function createTodoWriteTool(
     name: "todo_write",
     label: "Write todos",
     description: dedent`
-      Track multi-step work as a structured, visible todo list. The list is shown to the user in real time — it is your shared scratchpad of "what we agreed to do" and "where we are."
+      Track multi-step work that you are doing yourself in this conversation, as a structured, visible todo list. The list is shown to the user in real time — it is your shared scratchpad of "what we agreed to do" and "where we are."
 
-      Reach for this tool whenever any of these are true:
-      - The user's message contains more than one independent task ("do X, also Y, and don't forget Z").
-      - The work needs three or more non-trivial steps to finish (research, edit, test, commit, etc.).
+      Reach for this tool when the steps require *your* ongoing reasoning and tool use in this transcript: edits you need to review, search results you need to keep referencing, or work where the user wants to see your moves as you make them. Use it whenever any of these are true:
+      - The user's message contains more than one independent task ("do X, also Y, and don't forget Z") and you will handle them yourself.
+      - The work needs three or more non-trivial steps to finish (research, edit, test, commit, etc.) that you will execute in this conversation.
       - You are about to spend several tool calls on something — write the plan first so the user can see and correct it.
       - You are resuming or interrupting work and want to make state explicit.
+
+      Prefer a state machine over this tool when the steps are well-scoped enough that a sub-agent or script could complete each one on its own ("do X with these inputs and return the result"). State-machine states run outside this transcript, so their intermediate output does not consume your context — using todo_write for that kind of work pollutes the parent context with tool output you do not actually need to keep.
 
       How to use it well:
       - Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.
       - As you finish each item, call again with merge=true and just that item flipped to completed; advance the next one to in_progress in the same call.
       - If the plan changes (user redirects, you discover new work), update the list immediately so it stays honest.
-      - Skip the tool only for genuinely single-step requests — a one-shot answer or a single file edit doesn't need a list.
+      - Skip the tool for genuinely single-step requests — a one-shot answer or a single file edit doesn't need a list.
 
-      Treat "the user gave me a list of asks" as an automatic cue to call this tool before doing anything else.
+      Treat "the user gave me a list of asks I will handle myself" as an automatic cue to call this tool before doing anything else.
     `,
     parameters: todoWriteSchema,
     async execute(_toolCallId, params) {
@@ -568,7 +604,15 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
     name: "create_state_machine_definition",
     label: "Create state machine definition",
     description: dedent`
-      Create a state-machine definition for durable business-process work. State prompts and script commands may use template strings such as {{ input.email }}; define inputSchema on those states and pass matching input when selecting them. Agent states may set allowedSkills to restrict which skills are injected into that sub-agent.
+      Create a state-machine definition for durable business-process work, or for any multi-step task whose steps are well-scoped enough that a sub-agent or script can complete each one on its own.
+
+      Reach for this tool — not todo_write — whenever a step can be described as "do X with these inputs and return the result." Each agent state runs in a fresh sub-agent context, and each script/poll/timer state runs without an agent at all. Only a compact result returns to you, so the sub-agent's tool calls, file reads, and script output never pollute this transcript. That makes a state machine the primary way to keep the parent context clean on multi-step work. The definition, current state, and progress are also rendered to the user in real time, so it doubles as a visible plan — they can see which state is running, what came before, and what is waiting.
+
+      State-machine work also keeps the user unblocked. While states execute in the background the user can keep sending messages and you (the parent) will respond without waiting for the state machine to finish. State-machine progress continues regardless of what you do in that side reply — by default just answer the user. Only call select_state_machine_state if the user actually wants to redirect or change the running work; questions, status checks, and side conversations should be answered with plain replies. A "steer" message arrives immediately as an interruption (right shape for redirects or anything time-sensitive); a "follow_up" message is queued and delivered when your current turn settles (right shape for context that does not need to interrupt). Doing the same multi-step work via todo_write would block the user behind your own tool calls instead.
+
+      Use todo_write instead only when you need to do the steps yourself in this conversation because you will keep reasoning over the intermediate output.
+
+      State prompts and script commands may use template strings such as {{ input.email }}; define inputSchema on those states and pass matching input when selecting them. Agent states may set allowedSkills to restrict which skills are injected into that sub-agent.
 
       Poll states always run script attempts on a recurring intervalMs and fail the state machine when timeoutMs is exceeded. Timer states are separate: set kind "timer" with wakeAt as an absolute Unix epoch millisecond timestamp, and the state completes at that time so the parent can choose the next state.
 
