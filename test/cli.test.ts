@@ -229,7 +229,7 @@ describe("CLI env files", () => {
     ).toBe('DUET_API_KEY=duet_gt_test\nOPENAI_API_KEY="value with spaces"\n');
   });
 
-  testIfDocker("setup imports a cwd .env into a custom env file", async () => {
+  testIfDocker("setup import without a path imports cwd .env into a custom env file", async () => {
     tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-setup-"));
     const workDir = join(tempRoot, "project");
     const targetEnv = join(tempRoot, "duet.env");
@@ -238,7 +238,7 @@ describe("CLI env files", () => {
 
     const stderr = spyOn(console, "error").mockImplementation(() => {});
     try {
-      await runSetupCommand(["--workdir", workDir, "--env-file", targetEnv, "--import"]);
+      await runSetupCommand(["--env-file", targetEnv, "--import"], { cwd: workDir });
     } finally {
       stderr.mockRestore();
     }
@@ -247,7 +247,7 @@ describe("CLI env files", () => {
   });
 
   testIfDocker(
-    "setup merges imported cwd .env values into an existing custom env file",
+    "setup import with a path merges that env file into an existing custom env file",
     async () => {
       tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-setup-"));
       const workDir = join(tempRoot, "project");
@@ -261,7 +261,7 @@ describe("CLI env files", () => {
 
       const stderr = spyOn(console, "error").mockImplementation(() => {});
       try {
-        await runSetupCommand(["--workdir", workDir, "--env-file", targetEnv, "--import"]);
+        await runSetupCommand(["--env-file", targetEnv, "--import", join(workDir, ".env")]);
       } finally {
         stderr.mockRestore();
       }
@@ -280,7 +280,8 @@ describe("CLI env files", () => {
 
     const stderr = spyOn(console, "error").mockImplementation(() => {});
     try {
-      await runSetupCommand(["--workdir", workDir, "--env-file", targetEnv, "--keys"], {
+      await runSetupCommand(["--env-file", targetEnv, "--keys"], {
+        cwd: workDir,
         interactive: true,
         promptForApiKeys: async () =>
           new Map([
@@ -305,7 +306,8 @@ describe("CLI env files", () => {
     await writeFile(join(workDir, ".env"), "DUET_API_KEY=duet_gt_test\n");
 
     let printedHelp = false;
-    await runSetupCommand(["--workdir", workDir, "--env-file", targetEnv], {
+    await runSetupCommand(["--env-file", targetEnv], {
+      cwd: workDir,
       interactive: true,
       printHelp: () => {
         printedHelp = true;

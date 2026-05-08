@@ -639,30 +639,27 @@ function runSkillsCommand(args: string[]): void {
 }
 
 interface SetupCommandIO {
+  cwd?: string;
   interactive?: boolean;
   promptForApiKeys?: () => Promise<Map<string, string>>;
   printHelp?: () => void;
 }
 
 export async function runSetupCommand(args: string[], io: SetupCommandIO = {}): Promise<void> {
-  let workDir = process.cwd();
+  const cwd = io.cwd ?? process.cwd();
   let envFilePath: string | undefined;
-  let importCwdEnv = false;
+  let importEnvFilePath: string | undefined;
   let pasteKeys = false;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
-      case "--workdir":
-      case "-w":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
-        workDir = args[++i]!;
-        break;
       case "--env-file":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         envFilePath = args[++i]!;
         break;
       case "--import":
-        importCwdEnv = true;
+      case "-i":
+        importEnvFilePath = args[i + 1]?.startsWith("-") ? "" : (args[++i] ?? "");
         break;
       case "--keys":
         pasteKeys = true;
@@ -676,23 +673,26 @@ export async function runSetupCommand(args: string[], io: SetupCommandIO = {}): 
     }
   }
 
-  const targetEnvFile = envFilePath
-    ? resolveUserPath(envFilePath, workDir)
-    : defaultDuetEnvFilePath();
-  const cwdEnvFile = join(workDir, ".env");
+  const targetEnvFile = envFilePath ? resolveUserPath(envFilePath, cwd) : defaultDuetEnvFilePath();
+  const sourceEnvFile =
+    importEnvFilePath === undefined
+      ? undefined
+      : importEnvFilePath
+        ? resolveUserPath(importEnvFilePath, cwd)
+        : join(cwd, ".env");
   const interactive = io.interactive ?? Boolean(process.stdin.isTTY && process.stderr.isTTY);
 
-  if (!importCwdEnv && !pasteKeys) {
+  if (sourceEnvFile === undefined && !pasteKeys) {
     (io.printHelp ?? printSetupHelp)();
     return;
   }
 
-  if (importCwdEnv) {
-    if (!(await fileExists(cwdEnvFile))) {
-      fail(`No .env file found at ${cwdEnvFile}`);
+  if (sourceEnvFile !== undefined) {
+    if (!(await fileExists(sourceEnvFile))) {
+      fail(`No .env file found at ${sourceEnvFile}`);
     }
-    await importEnvFile(cwdEnvFile, targetEnvFile);
-    console.error(`Imported ${cwdEnvFile} into ${targetEnvFile}`);
+    await importEnvFile(sourceEnvFile, targetEnvFile);
+    console.error(`Imported ${sourceEnvFile} into ${targetEnvFile}`);
   }
 
   if (pasteKeys) {
@@ -907,7 +907,7 @@ duet — An opinionated full-stack agent runner
 
 USAGE
   duet [options] [prompt]
-  duet setup [--env-file <path>] [--import|--keys]
+  duet setup [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
   duet upgrade [--manager npm|bun|pnpm|yarn]
   echo "prompt" | duet
@@ -969,15 +969,14 @@ function printSetupHelp() {
 duet setup — Create or update a shared duet env file
 
 USAGE
-  duet setup [--env-file <path>] [--import|--keys]
+  duet setup [--env-file <path>] [--import [path]|--keys]
 
 By default, setup only prints this help. Choose --import to copy
-provider keys from <workdir>/.env, or --keys to paste keys interactively.
+provider keys from cwd .env or a provided env file, or --keys to paste keys interactively.
 
 OPTIONS
   --env-file <path>        Env file to write (default: ${DEFAULT_DUET_ENV_FILE})
-  -w, --workdir <path>     Working directory to import .env from (default: cwd)
-  --import                 Import <workdir>/.env into the shared env file
+  -i, --import [path]      Import cwd .env, or import the provided env file
   --keys                   Prompt for supported provider API keys
   -h, --help               Show this help
 
