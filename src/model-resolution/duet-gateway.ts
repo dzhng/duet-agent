@@ -1,15 +1,19 @@
 import { getModel, type Model } from "@earendil-works/pi-ai";
+import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
 
 const PROVIDER_PREFIX = "duet-gateway";
-const DEFAULT_BASE_URL = "https://duet.so/api/v1/ai-gateway";
+const GATEWAY_PATH = "/api/v1/ai-gateway";
 
 /**
  * The Duet gateway proxies Vercel's AI Gateway 1:1 — same path layout, same
  * request/response contract — and authenticates with a `DUET_API_KEY` token
  * scoped to a single org. Rather than ship a parallel model registry, the
  * `duet-gateway` provider piggybacks on the underlying `vercel-ai-gateway`
- * model definitions and only swaps `baseUrl` to point at Duet (or a custom
- * URL via `DUET_GATEWAY_BASE_URL`).
+ * model definitions and only swaps `baseUrl` to point at Duet.
+ *
+ * The base URL is `${DUET_APP_BASE_URL}${GATEWAY_PATH}`; users only need to
+ * override the app origin via `DUET_APP_BASE_URL` (also used by `duet login`
+ * and the CLI skill sync).
  *
  * Auth flows through pi-ai's existing vercel-ai-gateway path, which reads
  * `AI_GATEWAY_API_KEY` — the CLI shims that env var from `DUET_API_KEY` at
@@ -18,14 +22,13 @@ const DEFAULT_BASE_URL = "https://duet.so/api/v1/ai-gateway";
 
 export const DUET_GATEWAY_PROVIDER = PROVIDER_PREFIX;
 export const DUET_GATEWAY_API_KEY_ENV = "DUET_API_KEY";
-export const DUET_GATEWAY_BASE_URL_ENV = "DUET_GATEWAY_BASE_URL";
 
 export function isDuetGatewayModelName(modelName: string): boolean {
   return modelName.startsWith(`${PROVIDER_PREFIX}:`);
 }
 
 export function getDuetGatewayBaseUrl(): string {
-  return process.env[DUET_GATEWAY_BASE_URL_ENV] ?? DEFAULT_BASE_URL;
+  return `${resolveDuetAppBaseUrl()}${GATEWAY_PATH}`;
 }
 
 /**

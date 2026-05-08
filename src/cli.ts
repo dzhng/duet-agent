@@ -20,6 +20,9 @@ import dotenv from "dotenv";
 import packageJson from "../package.json" with { type: "json" };
 import { shimDuetApiKeyToAiGateway } from "./model-resolution/duet-gateway.js";
 import { formatCompactJson } from "./lib/compact-json.js";
+import { resolveDuetAppBaseUrl } from "./lib/duet-app-url.js";
+import { loginWithBrowser } from "./lib/login.js";
+import { syncDefaultSkills } from "./lib/sync-skills.js";
 import {
   describeModelResolution,
   resolveCliMemoryModel,
@@ -90,6 +93,15 @@ async function main() {
   if (args[0] === "setup") {
     try {
       await runSetupCommand(args.slice(1));
+    } catch (err: any) {
+      console.error(`Fatal: ${err.message}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+  if (args[0] === "login") {
+    try {
+      await runLoginCommand(args.slice(1));
     } catch (err: any) {
       console.error(`Fatal: ${err.message}`);
       process.exitCode = 1;
@@ -718,6 +730,64 @@ export async function runSetupCommand(args: string[], io: SetupCommandIO = {}): 
   }
 }
 
+interface LoginCommandIO {
+  cwd?: string;
+  envFilePath?: string;
+}
+
+export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): Promise<void> {
+  const cwd = io.cwd ?? process.cwd();
+  let envFilePathOverride: string | undefined = io.envFilePath;
+  let noBrowser = false;
+  let skipSkillSync = false;
+
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--env-file":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        envFilePathOverride = args[++i]!;
+        break;
+      case "--no-browser":
+        noBrowser = true;
+        break;
+      case "--skip-skill-sync":
+        skipSkillSync = true;
+        break;
+      case "--help":
+      case "-h":
+        printLoginHelp();
+        return;
+      default:
+        fail(`Unknown login option: ${args[i]}`);
+    }
+  }
+
+  const targetEnvFile = envFilePathOverride
+    ? resolveUserPath(envFilePathOverride, cwd)
+    : defaultDuetEnvFilePath();
+
+  const result = await loginWithBrowser({ noBrowser });
+
+  await mergeEnvEntries(targetEnvFile, new Map([["DUET_API_KEY", result.apiKey]]));
+  console.error(`Saved DUET_API_KEY for ${result.orgName} (${result.orgSlug}) to ${targetEnvFile}`);
+
+  process.env.DUET_API_KEY = result.apiKey;
+  shimDuetApiKeyToAiGateway();
+
+  if (skipSkillSync) {
+    console.error("Skipping default skill sync (--skip-skill-sync).");
+    return;
+  }
+
+  console.error(`Checking default skills against ${resolveDuetAppBaseUrl()}...`);
+  const syncResult = await syncDefaultSkills({ apiKey: result.apiKey });
+  if (syncResult.status === "unchanged") {
+    console.error("Default skills already up to date.");
+  } else {
+    console.error(`Synced ${syncResult.count} default skills.`);
+  }
+}
+
 async function fileExists(path: string): Promise<boolean> {
   try {
     return (await stat(path)).isFile();
@@ -925,12 +995,14 @@ duet — An opinionated full-stack agent runner
 USAGE
   duet [options] [prompt]
   duet setup [--env-file <path>] [--import [path]|--keys]
+  duet login [--no-browser] [--skip-skill-sync]
   duet skills [--workdir <path>]
   duet upgrade [--manager npm|bun|pnpm|yarn]
   echo "prompt" | duet
 
 COMMANDS
   setup                    Create or update the shared duet env file
+  login                    Sign in via browser; saves DUET_API_KEY and syncs default skills
   skills                   List installed skills as JSON (name, description, path, scope)
   upgrade                  Upgrade the global ${packageName} installation
 
@@ -961,9 +1033,9 @@ MODELS
   OPENAI_API_KEY after loading <workdir>/.env and the shared duet env file.
 
   duet-gateway: routes through the Duet gateway proxy
-  (https://duet.so/api/v1/ai-gateway by default; override via
-  DUET_GATEWAY_BASE_URL). It mirrors vercel-ai-gateway's model
-  catalog and authenticates with DUET_API_KEY.
+  (https://duet.so/api/v1/ai-gateway by default; override the app origin
+  via DUET_APP_BASE_URL). It mirrors vercel-ai-gateway's model catalog
+  and authenticates with DUET_API_KEY.
 
 EXAMPLES
   duet "build a REST API with Express and TypeScript"
@@ -977,7 +1049,38 @@ EXAMPLES
   duet --workdir ./my-project "refactor the auth module"
   duet --resume session_abc123 --workdir ./my-project
   duet setup
+  duet login
   duet upgrade
+`);
+}
+
+function printLoginHelp() {
+  console.log(`
+duet login — Sign in via browser and sync default skills
+
+USAGE
+  duet login [--env-file <path>] [--no-browser] [--skip-skill-sync]
+
+Opens a browser window pointed at the Duet web app, waits for the user to
+confirm, then writes the org's DUET_API_KEY to the shared env file. After
+auth, fetches and writes the latest default skills to ~/.duet/skills.
+
+OPTIONS
+  --env-file <path>        Env file to write the API key to (default: ${DEFAULT_DUET_ENV_FILE})
+  --no-browser             Print the auth URL instead of opening a browser
+  --skip-skill-sync        Skip the post-login default skills sync
+  -h, --help               Show this help
+
+SKILL SYNC
+  Mirrors the sandbox protocol: hashes the rendered skill payload and only
+  rewrites ~/.duet/skills when the hash differs from ~/.duet/.skills-hash.
+  After writing, runs \`skills add ~/.duet/skills -g -y\` to register the
+  skills with Claude Code / Codex / etc.
+
+OVERRIDES
+  Set DUET_APP_BASE_URL (e.g. https://staging.duet.so) to re-point both the
+  AI gateway provider and the CLI auth/sync endpoints at a non-production
+  deployment.
 `);
 }
 
