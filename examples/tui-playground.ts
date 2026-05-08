@@ -170,9 +170,13 @@ class FakePlaygroundRunner implements SessionTurnRunner {
 
     if (message.startsWith("/queue")) {
       const arg = message.slice("/queue".length).trim();
-      const prompts = arg.length > 0
-        ? arg.split(",").map((entry) => entry.trim()).filter(Boolean)
-        : ["follow-up one", "follow-up two", "follow-up three"];
+      const prompts =
+        arg.length > 0
+          ? arg
+              .split(",")
+              .map((entry) => entry.trim())
+              .filter(Boolean)
+          : ["follow-up one", "follow-up two", "follow-up three"];
       this.emit({ type: "follow_up_queue", prompts });
       await this.sleep(2000);
       if (this.interrupted) return this.interruptedTerminal();
@@ -236,9 +240,10 @@ class FakePlaygroundRunner implements SessionTurnRunner {
       type: "memory",
       phase,
       status: "running",
-      message: phase === "observation"
-        ? "Observing conversation into memory…"
-        : "Reflecting on observations…",
+      message:
+        phase === "observation"
+          ? "Observing conversation into memory…"
+          : "Reflecting on observations…",
     });
     await this.sleep(seconds * 1000);
     if (this.interrupted) return this.interruptedTerminal();
