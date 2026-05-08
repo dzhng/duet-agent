@@ -1250,7 +1250,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // ---- run renderer until the user quits -------------------------------------
 
   await new Promise<void>((resolve) => {
-    const onDestroy = () => resolve();
+    const onDestroy = () => {
+      // Ctrl+C (exitOnCtrlC) destroys text buffers synchronously. Any
+      // setInterval that survives into the next tick will call setStatus on
+      // a destroyed TextBuffer and throw, so tear down timers here before
+      // resolving.
+      stopWorkingTicker();
+      resolve();
+    };
     renderer.once("destroy", onDestroy);
   });
 
