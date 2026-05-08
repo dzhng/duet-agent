@@ -884,7 +884,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (!answers) return false;
 
     appendBlock("you:", Object.values(answers).join("\n"), COLORS.user);
-    void input.session.answer({ questions: pendingQuestions, answers, behavior: "follow_up" }).catch(reportError);
+    void input.session
+      .answer({ questions: pendingQuestions, answers, behavior: "follow_up" })
+      .catch(reportError);
     hideQuestions();
     markRunning();
     return true;
