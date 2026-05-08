@@ -209,18 +209,12 @@ export function createOutreachStateMachine(): StateMachineDefinition {
         kind: "poll",
         name: "poll_email_reply",
         intervalMs: 300_000,
-        poll: {
-          kind: "script",
-          command: "scripts/check-email-reply.sh '{{ input.email }}'",
-        },
+        command: "scripts/check-email-reply.sh '{{ input.email }}'",
       },
       {
-        kind: "poll",
+        kind: "timer",
         name: "wait_before_retry",
-        intervalMs: 300_000,
-        poll: {
-          kind: "timer",
-        },
+        wakeAt: Date.now() + 300_000,
       },
       {
         kind: "agent",

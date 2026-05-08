@@ -91,11 +91,9 @@ const outreachDefinition: StateMachineDefinition = {
         'printf \'{"sent":true,"email":"{{ input.email }}","messageId":"eval-message-1","prospectName":"{{ input.prospectName }}"}\'',
     },
     {
-      kind: "poll",
+      kind: "timer",
       name: "wait_for_reply",
-      intervalMs: 10_000,
-      timeoutMs: 30_000,
-      poll: { kind: "timer" },
+      wakeAt: Date.now() + 10_000,
     },
     {
       kind: "script",

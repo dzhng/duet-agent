@@ -14,6 +14,7 @@ import type {
   StateMachineProgress,
   StateMachineScriptState,
   StateMachineState,
+  StateMachineTimerState,
   StateMachineTerminalResult,
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE } from "../types/state-machine.js";
@@ -132,35 +133,34 @@ const scriptOverrideSchema = Type.Partial(
   }),
 );
 
-const pollAttemptSchema = Type.Union([
-  Type.Object({
-    kind: Type.Literal("script", { description: "Run one shell command per poll attempt." }),
-    command: Type.String({
-      description:
-        "Shell command for one poll attempt. Return non-empty JSON only when polling found a result.",
-    }),
-    cwd: Type.Optional(Type.String({ description: "Working directory for the poll command." })),
-    successCodes: Type.Optional(
-      Type.Array(Type.Number(), {
-        description: "Exit codes that mean this poll attempt found a result.",
-      }),
-    ),
-  }),
-  Type.Object({
-    kind: Type.Literal("timer", {
-      description: "Sleep once for intervalMs, then resume with elapsedMs output.",
-    }),
-  }),
-]);
-
 const pollOverrideSchema = Type.Partial(
   Type.Object({
-    intervalMs: Type.Number({ description: "Replacement delay between poll wake attempts." }),
+    intervalMs: Type.Number({
+      description: "Replacement recurring delay between poll wake attempts.",
+    }),
     timeoutMs: Type.Number({ description: "Replacement maximum poll-state runtime." }),
-    poll: pollAttemptSchema,
+    command: Type.String({
+      description: "Replacement shell command for one poll attempt.",
+    }),
+    cwd: Type.String({ description: "Replacement working directory for the poll command." }),
+    successCodes: Type.Array(Type.Number(), {
+      description: "Replacement exit codes that mean this poll attempt found a result.",
+    }),
     inputSchema: Type.Record(Type.String(), Type.Any(), {
       description:
         'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "messageId": { "type": "string" } }, "required": ["messageId"] }. Fields omitted from required are optional.',
+    }),
+  }),
+);
+
+const timerOverrideSchema = Type.Partial(
+  Type.Object({
+    wakeAt: Type.Number({
+      description: "Replacement absolute Unix epoch millisecond time for this timer state.",
+    }),
+    inputSchema: Type.Record(Type.String(), Type.Any(), {
+      description:
+        'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "scheduledAt": { "type": "number" } }, "required": ["scheduledAt"] }. Fields omitted from required are optional.',
     }),
   }),
 );
@@ -169,6 +169,7 @@ const stateOverrideSchema = Type.Union([
   Type.Object({ kind: Type.Literal("agent"), state: agentOverrideSchema }),
   Type.Object({ kind: Type.Literal("script"), state: scriptOverrideSchema }),
   Type.Object({ kind: Type.Literal("poll"), state: pollOverrideSchema }),
+  Type.Object({ kind: Type.Literal("timer"), state: timerOverrideSchema }),
 ]);
 
 const baseStateSchema = {
@@ -219,11 +220,33 @@ const scriptStateSchema = Type.Object({
 const pollStateSchema = Type.Object({
   ...baseStateSchema,
   kind: Type.Literal("poll", { description: "Perform one external wait/check attempt." }),
-  intervalMs: Type.Number({ description: "Delay before the next scheduled wake attempt." }),
+  intervalMs: Type.Number({
+    description: "Recurring delay before the next scheduled poll attempt.",
+  }),
   timeoutMs: Type.Optional(
     Type.Number({ description: "Maximum time this state may remain polling." }),
   ),
-  poll: pollAttemptSchema,
+  command: Type.String({
+    description:
+      "Shell command for one poll attempt. Return non-empty JSON only when polling found a result.",
+  }),
+  cwd: Type.Optional(Type.String({ description: "Working directory for the poll command." })),
+  successCodes: Type.Optional(
+    Type.Array(Type.Number(), {
+      description: "Exit codes that mean this poll attempt found a result.",
+    }),
+  ),
+});
+
+const timerStateSchema = Type.Object({
+  ...baseStateSchema,
+  kind: Type.Literal("timer", {
+    description:
+      "Sleep until one absolute Unix epoch millisecond time, then resume with elapsedMs and timestamp output.",
+  }),
+  wakeAt: Type.Number({
+    description: "Absolute Unix epoch millisecond time when this timer state should complete.",
+  }),
 });
 
 const terminalStateSchema = Type.Object({
@@ -241,6 +264,7 @@ const stateMachineStateSchema = Type.Union([
   agentStateSchema,
   scriptStateSchema,
   pollStateSchema,
+  timerStateSchema,
   terminalStateSchema,
 ]);
 
@@ -253,13 +277,20 @@ export type StateMachineScriptStateOverride = Partial<
 >;
 
 export type StateMachinePollStateOverride = Partial<
-  Pick<StateMachinePollState, "intervalMs" | "timeoutMs" | "poll" | "inputSchema">
+  Pick<
+    StateMachinePollState,
+    "intervalMs" | "timeoutMs" | "command" | "cwd" | "successCodes" | "inputSchema"
+  >
+>;
+export type StateMachineTimerStateOverride = Partial<
+  Pick<StateMachineTimerState, "wakeAt" | "inputSchema">
 >;
 
 export type StateMachineStateOverride =
   | { kind: "agent"; state: StateMachineAgentStateOverride }
   | { kind: "script"; state: StateMachineScriptStateOverride }
-  | { kind: "poll"; state: StateMachinePollStateOverride };
+  | { kind: "poll"; state: StateMachinePollStateOverride }
+  | { kind: "timer"; state: StateMachineTimerStateOverride };
 
 const stateMachineDefinitionSchema = Type.Object(
   {
@@ -536,8 +567,13 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
   return {
     name: "create_state_machine_definition",
     label: "Create state machine definition",
-    description:
-      "Create a state-machine definition for durable business-process work. State prompts and script commands may use template strings such as {{ input.email }}; define inputSchema on those states and pass matching input when selecting them. Agent states may set allowedSkills to restrict which skills are injected into that sub-agent. Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.",
+    description: dedent`
+      Create a state-machine definition for durable business-process work. State prompts and script commands may use template strings such as {{ input.email }}; define inputSchema on those states and pass matching input when selecting them. Agent states may set allowedSkills to restrict which skills are injected into that sub-agent.
+
+      Poll states always run script attempts on a recurring intervalMs and fail the state machine when timeoutMs is exceeded. Timer states are separate: set kind "timer" with wakeAt as an absolute Unix epoch millisecond timestamp, and the state completes at that time so the parent can choose the next state.
+
+      Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.
+    `,
     parameters: createDefinitionSchema,
     async execute(_toolCallId, params) {
       assertValidDefinitionInputSchemas(params.definition);
@@ -562,7 +598,7 @@ function createSelectStateTool(
     name: "select_state_machine_state",
     label: "Select state machine state",
     description:
-      "Select the next state-machine state, terminal state, or failure outcome. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here.",
+      "Select the next state-machine state, terminal state, or failure outcome. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt.",
     parameters: selectStateSchema,
     async execute(_toolCallId, params) {
       const decision = normalizeRunnerDecision(params.decision);
@@ -629,6 +665,7 @@ function assertValidSelectedState(
 
   const effectiveState = applyStateOverride(selectedState, decision.override);
   assertValidStateInputSchema(effectiveState);
+  assertValidStateSchedule(effectiveState);
   assertValidStateInput(effectiveState, decision.input);
 }
 
@@ -676,6 +713,7 @@ function assertValidDefinitionInputSchemas(definition: StateMachineDefinition): 
       throw new Error(`State name "${INTERRUPTED_STATE_MACHINE_STATE}" is reserved.`);
     }
     assertValidStateInputSchema(state);
+    assertValidStateSchedule(state);
   }
 }
 
@@ -688,4 +726,23 @@ function assertValidStateInputSchema(state: StateMachineState): void {
     dataVar: `inputSchema for state "${state.name}"`,
   });
   throw new Error(`Invalid inputSchema for state "${state.name}": ${message}`);
+}
+
+function assertValidStateSchedule(state: StateMachineState): void {
+  if (
+    state.kind === "poll" &&
+    (typeof state.intervalMs !== "number" ||
+      !Number.isFinite(state.intervalMs) ||
+      state.intervalMs <= 0)
+  ) {
+    throw new Error(
+      `Invalid poll schedule for state "${state.name}": intervalMs must be positive.`,
+    );
+  }
+  if (
+    state.kind === "timer" &&
+    (typeof state.wakeAt !== "number" || !Number.isFinite(state.wakeAt))
+  ) {
+    throw new Error(`Invalid timer schedule for state "${state.name}": wakeAt must be finite.`);
+  }
 }

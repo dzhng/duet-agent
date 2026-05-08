@@ -5,7 +5,6 @@ import type {
   TurnState,
   TurnTerminalEvent,
 } from "../types/protocol.js";
-import type { StateMachinePollState } from "../types/state-machine.js";
 
 export function createInitialTurnState(mode: TurnMode, options?: TurnOptions): TurnState {
   return {
@@ -25,17 +24,6 @@ export function withStateMachine(
 ): TurnState {
   if (!turnState.stateMachine) return turnState;
   return { ...turnState, stateMachine: update(turnState.stateMachine) };
-}
-
-export function sleepPollState(
-  turnState: TurnState,
-  state: StateMachinePollState,
-): TurnTerminalEvent {
-  return {
-    type: "sleep",
-    wakeAt: Date.now() + state.intervalMs,
-    state: { ...turnState, status: "sleeping" },
-  };
 }
 
 export function completeTurn(

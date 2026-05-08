@@ -144,10 +144,7 @@ export const INTERRUPTED_STATE_MACHINE_STATE = "interrupted";
  *
  *   {
  *     kind: "poll",
- *     poll: {
- *       kind: "script",
- *       command: "scripts/check-pr-finished.sh '{{ input.prUrl }}'"
- *     },
+ *     command: "scripts/check-pr-finished.sh '{{ input.prUrl }}'",
  *     intervalMs: 300000
  *   }
  */
@@ -185,7 +182,7 @@ export interface StateMachineSession {
   currentState?: string;
   /**
    * Input supplied by the parent runner when it selected the current state.
-   * Persisted so sleeping poll states can resume with the same template values.
+   * Persisted so sleeping scheduled states can resume with the same template values.
    */
   currentInput?: Record<string, unknown>;
   /**
@@ -205,6 +202,7 @@ export type StateMachineState =
   | StateMachineAgentState
   | StateMachineScriptState
   | StateMachinePollState
+  | StateMachineTimerState
   | StateMachineTerminalState;
 
 export interface StateMachineProgress {
@@ -280,33 +278,27 @@ export interface StateMachineScriptState extends StateMachineBaseState {
 /** Performs one external check, then either records data or sleeps until the next attempt. */
 export interface StateMachinePollState extends StateMachineBaseState {
   kind: "poll";
-  /** How often the protocol layer should wake the runner for another attempt. */
+  /** Recurring delay between external check attempts. */
   intervalMs: number;
   /** Maximum time the state machine can remain in this poll state before failing the session. */
   timeoutMs?: number;
-  /** One polling attempt. The runner owns the polling loop and emits sleep between attempts. */
-  poll: StateMachinePoll;
+  /**
+   * Runs once per poll attempt. The command should return structured output
+   * only when something changed; otherwise the runner sleeps and tries again.
+   */
+  command: string;
+  /** Working directory for the command. Defaults to the state-machine session cwd. */
+  cwd?: string;
+  /** Exit codes that mean this poll found a result. Defaults to [0]. */
+  successCodes?: number[];
 }
 
-export type StateMachinePoll =
-  | {
-      kind: "script";
-      /**
-       * Runs once per poll attempt. The command should return structured output
-       * only when something changed; otherwise the runner sleeps and tries again.
-       */
-      command: string;
-      cwd?: string;
-      /** Exit codes that mean this poll found a result. Defaults to [0]. */
-      successCodes?: number[];
-    }
-  | {
-      kind: "timer";
-      /**
-       * Pure delay poll. The first visit sleeps; the scheduled wake lets the
-       * parent runner choose the next state without invoking a script or agent.
-       */
-    };
+/** Sleeps until one absolute time, then lets the parent choose the next state. */
+export interface StateMachineTimerState extends StateMachineBaseState {
+  kind: "timer";
+  /** Absolute Unix epoch millisecond time when this timer state should complete. */
+  wakeAt: number;
+}
 
 /** Finalizes the session when reached. Terminal outcomes are just state machine states. */
 export interface StateMachineTerminalState extends StateMachineBaseState {

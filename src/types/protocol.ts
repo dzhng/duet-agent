@@ -36,7 +36,7 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  *
  * - `prompt`: send a user prompt against the current state
  * - `answer`: answer questions from the previous terminal `ask` event
- * - `wake`: resume a sleeping session for one scheduled polling attempt
+ * - `wake`: resume a sleeping session for one scheduled state-machine step
  *
  * Each turn emits any number of during-turn events (`step`, `todos`,
  * `follow_up_queue`, `state_machine`, `log`). The turn ends with exactly one
@@ -100,20 +100,22 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  * 3. a terminal event (`complete`, `ask`, `sleep`, or `interrupted`) carrying
  *    the updated `state`
  *
- * ### Scenario 2b: Polling Uses Sleep
+ * ### Scenario 2b: Scheduled States Use Sleep
  *
- * A state machine might send an email and then wait for a reply. This should be
- * modeled as a poll state, not as a user-owned infinite polling script. The
- * runner performs one poll attempt. If no reply exists yet, it emits a terminal
- * `sleep` event with `wakeAt`.
+ * A state machine might send an email and then wait for a reply, or pause until
+ * a specific timestamp. Recurring external checks should be modeled as poll
+ * states, not as user-owned infinite polling scripts. Absolute waits should be
+ * modeled as timer states. When scheduled work needs to wait, the runner emits
+ * a terminal `sleep` event with `wakeAt`.
  *
  * The layer above the runner persists the state, schedules a wakeup for `wakeAt`,
  * and starts the runner again at that time. On each wake, the runner performs
- * one more poll attempt. Once a reply is found, the runner records it in the
- * state-machine session and continues to the next state.
+ * the scheduled poll attempt or completes the timer state. Once scheduled work
+ * finishes, the runner records it in the state-machine session and continues to
+ * the next state.
  *
  * If the user sends a prompt while the session is sleeping on a
- * poll/external wait, the session cancels the pending wake, runs that prompt
+ * scheduled state, the session cancels the pending wake, runs that prompt
  * as a normal turn-runner turn, and returns the session to `sleep` if the state
  * machine is still waiting. The user should not see a stable `complete` state
  * while the business process is actually waiting on something external.
@@ -122,10 +124,9 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  *
  * An interrupt stops active turn-runner work for the current turn. If a state-machine
  * session is active, interruption also records an interrupted state-machine
- * terminal marker. Scheduled poll wakeups are owned by the session and are
- * cancelled there. A later user prompt starts a new turn from the interrupted
- * state; the parent agent can choose the right continuation, including resuming
- * polling.
+ * terminal marker. Scheduled wakeups are owned by the session and are cancelled
+ * there. A later user prompt starts a new turn from the interrupted state; the
+ * parent agent can choose the right continuation.
  *
  * ## Scenario 3: Explicit State Machine Definition
  *
@@ -350,7 +351,7 @@ export interface TurnAnswerCommand {
   behavior: TurnPromptBehavior;
 }
 
-/** Wake the runner's sleeping state. If the state is not sleeping on a poll state, this is a no-op. */
+/** Wake the runner's sleeping state. If the state is not waiting on scheduled work, this is a no-op. */
 export interface TurnWakeCommand {
   type: "wake";
 }

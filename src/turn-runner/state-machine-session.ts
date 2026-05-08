@@ -5,6 +5,7 @@ import type {
   StateMachineSession,
   StateMachineStateProgress,
   StateMachineState,
+  StateMachineTimerState,
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE as INTERRUPTED_STATE } from "../types/state-machine.js";
 import type { TurnQuestion } from "../types/protocol.js";
@@ -33,17 +34,21 @@ export function findState(
   return stateMachine.definition.states.find((state) => state.name === name);
 }
 
-export function currentPollState(
+export type StateMachineScheduledState = StateMachinePollState | StateMachineTimerState;
+
+export function currentScheduledState(
   stateMachine: StateMachineSession | undefined,
-): StateMachinePollState | undefined {
+): StateMachineScheduledState | undefined {
   const currentState = stateMachine?.currentState;
   if (!stateMachine || !currentState) return undefined;
   const definitionState = findState(stateMachine, currentState);
-  return definitionState?.kind === "poll" ? definitionState : undefined;
+  return definitionState?.kind === "poll" || definitionState?.kind === "timer"
+    ? definitionState
+    : undefined;
 }
 
-export function isWaitingOnPoll(stateMachine: StateMachineSession | undefined): boolean {
-  return Boolean(currentPollState(stateMachine) && !stateMachine?.terminal);
+export function isWaitingOnScheduledState(stateMachine: StateMachineSession | undefined): boolean {
+  return Boolean(currentScheduledState(stateMachine) && !stateMachine?.terminal);
 }
 
 export function recordRunnerDecision(
@@ -111,9 +116,9 @@ export function recordStateCompleted(
   };
 }
 
-export function recordPollSleep(
+export function recordStateSleep(
   stateMachine: StateMachineSession,
-  state: StateMachinePollState,
+  state: StateMachineScheduledState,
   wakeAt: number,
 ): StateMachineSession {
   const now = Date.now();

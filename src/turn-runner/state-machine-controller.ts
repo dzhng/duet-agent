@@ -6,10 +6,11 @@ import type {
   StateMachineScriptState,
   StateMachineSession,
   StateMachineTerminalState,
+  StateMachineTimerState,
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE } from "../types/state-machine.js";
 import {
-  currentPollState,
+  currentScheduledState,
   elapsedSinceStateStarted,
   findState,
   recordRunnerDecision,
@@ -19,7 +20,7 @@ import {
   recordStateInterrupted,
   recordStateMachineCompleted,
   recordStateStarted,
-  recordPollSleep,
+  recordStateSleep,
   createStateMachineSession,
 } from "./state-machine-session.js";
 import {
@@ -199,15 +200,17 @@ export class StateMachineController {
         return this.runScriptState(effectiveState);
       case "poll":
         return this.runPollState(effectiveState);
+      case "timer":
+        return this.runTimerState(effectiveState);
       case "terminal":
         return this.runTerminalState(effectiveState);
     }
   }
 
   async wake(): Promise<StateMachineExecutionResult | undefined> {
-    const state = currentPollState(this.session);
+    const state = currentScheduledState(this.session);
     if (!state) return undefined;
-    return this.runPollState(state, { woke: true });
+    return state.kind === "poll" ? this.runPollState(state) : this.runTimerState(state, true);
   }
 
   private async runAgentState(state: StateMachineAgentState): Promise<StateMachineExecutionResult> {
@@ -269,10 +272,7 @@ export class StateMachineController {
     }
   }
 
-  private async runPollState(
-    state: StateMachinePollState,
-    options?: { woke?: boolean },
-  ): Promise<StateMachineExecutionResult> {
+  private async runPollState(state: StateMachinePollState): Promise<StateMachineExecutionResult> {
     const elapsedMs = elapsedSinceStateStarted(this.session, state.name);
     if (state.timeoutMs !== undefined && elapsedMs >= state.timeoutMs) {
       const message = `Poll state "${state.name}" timed out after ${elapsedMs}ms.`;
@@ -280,22 +280,11 @@ export class StateMachineController {
       return { type: "terminal", status: "failed", error: message };
     }
 
-    if (state.poll.kind === "timer") {
-      if (!options?.woke) {
-        const wakeAt = Date.now() + state.intervalMs;
-        this.session = recordPollSleep(this.requireSession(), state, wakeAt);
-        return { type: "sleep", wakeAt };
-      }
-      const output = { elapsedMs };
-      this.session = recordStateCompleted(this.requireSession(), state.name, output);
-      return { type: "state_completed", stateName: state.name, output };
-    }
-
-    const command = renderTemplate(state.poll.command, this.session?.currentInput ?? {});
+    const command = renderTemplate(state.command, this.session?.currentInput ?? {});
     const shell = createShellStateHandle({
       command,
-      cwd: state.poll.cwd ?? this.config.cwd,
-      successCodes: state.poll.successCodes,
+      cwd: state.cwd ?? this.config.cwd,
+      successCodes: state.successCodes,
     });
     const run: ActiveStateRun = { kind: "poll", state, shell };
     this.activeRun = run;
@@ -304,7 +293,7 @@ export class StateMachineController {
       const output = parseJsonObject(shellOutput.stdout);
       if (Object.keys(output).length === 0) {
         const wakeAt = Date.now() + state.intervalMs;
-        this.session = recordPollSleep(this.requireSession(), state, wakeAt);
+        this.session = recordStateSleep(this.requireSession(), state, wakeAt);
         return { type: "sleep", wakeAt };
       }
       const rawOutput = normalizePollShellOutput(shellOutput, output);
@@ -317,11 +306,25 @@ export class StateMachineController {
         return { type: "interrupted" };
       }
       const wakeAt = Date.now() + state.intervalMs;
-      this.session = recordPollSleep(this.requireSession(), state, wakeAt);
+      this.session = recordStateSleep(this.requireSession(), state, wakeAt);
       return { type: "sleep", wakeAt };
     } finally {
       if (this.activeRun === run) this.activeRun = undefined;
     }
+  }
+
+  private runTimerState(state: StateMachineTimerState, woke = false): StateMachineExecutionResult {
+    if (!woke && state.wakeAt > Date.now()) {
+      this.session = recordStateSleep(this.requireSession(), state, state.wakeAt);
+      return { type: "sleep", wakeAt: state.wakeAt };
+    }
+
+    const output = {
+      elapsedMs: elapsedSinceStateStarted(this.session, state.name),
+      timestamp: Date.now(),
+    };
+    this.session = recordStateCompleted(this.requireSession(), state.name, output);
+    return { type: "state_completed", stateName: state.name, output };
   }
 
   private async runTerminalState(

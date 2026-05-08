@@ -268,11 +268,8 @@ const pollDefinition: StateMachineDefinition = {
       },
       intervalMs: 60_000,
       timeoutMs: 120_000,
-      poll: {
-        kind: "script",
-        command:
-          'printf \'poll-start {{ input.value }}\\n\'; sleep 60; printf \'{"ready":true,"value":"{{ input.value }}"}\'',
-      },
+      command:
+        'printf \'poll-start {{ input.value }}\\n\'; sleep 60; printf \'{"ready":true,"value":"{{ input.value }}"}\'',
     },
     {
       kind: "terminal",

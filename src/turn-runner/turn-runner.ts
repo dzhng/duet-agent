@@ -41,7 +41,7 @@ import {
   type TurnRunnerControlResult,
 } from "./tools.js";
 import { SkillContext } from "./skill-context.js";
-import { currentPollState, isWaitingOnPoll } from "./state-machine-session.js";
+import { currentScheduledState, isWaitingOnScheduledState } from "./state-machine-session.js";
 import {
   StateMachineController,
   type StateAgentHandle,
@@ -484,9 +484,9 @@ export class TurnRunner {
     const state: TurnState = { ...originalState, status: "running" };
 
     if (originalState.status === "sleeping") {
-      // A sleeping poll already ended the previous duet-agent turn. Wake starts
-      // a new state-machine-driven turn for one poll attempt; normal prompts
-      // while sleeping instead start parent-driven turns.
+      // Sleeping scheduled states already ended the previous duet-agent turn.
+      // Wake starts a new state-machine-driven turn; normal prompts while
+      // sleeping instead start parent-driven turns.
       const result = await this.stateMachineController.wake();
       if (result) return this.driveStateMachineResult(result, state);
     }
@@ -506,7 +506,7 @@ export class TurnRunner {
     if (
       originalState.status !== "sleeping" ||
       terminal.type !== "complete" ||
-      !isWaitingOnPoll(terminal.state.stateMachine)
+      !isWaitingOnScheduledState(terminal.state.stateMachine)
     ) {
       return terminal;
     }
@@ -515,14 +515,18 @@ export class TurnRunner {
       this.emit({
         type: "system",
         level: "error",
-        message: terminal.error ?? terminal.result ?? "Prompt failed while waiting on poll.",
+        message: terminal.error ?? terminal.result ?? "Prompt failed while waiting.",
       });
     }
 
-    const state = currentPollState(terminal.state.stateMachine);
+    const state = currentScheduledState(terminal.state.stateMachine);
+    const progress = state ? terminal.state.stateMachine?.progress?.states[state.name] : undefined;
+    const wakeAt =
+      progress?.nextWakeAt ??
+      (state?.kind === "poll" ? Date.now() + state.intervalMs : (state?.wakeAt ?? Date.now()));
     return {
       type: "sleep",
-      wakeAt: Date.now() + (state?.intervalMs ?? 0),
+      wakeAt,
       state: { ...terminal.state, status: "sleeping" },
     };
   }

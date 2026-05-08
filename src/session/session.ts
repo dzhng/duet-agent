@@ -19,7 +19,7 @@ import type {
   TurnCommand,
   TurnOptions,
 } from "../types/protocol.js";
-import type { StateMachinePollState } from "../types/state-machine.js";
+import type { StateMachinePollState, StateMachineTimerState } from "../types/state-machine.js";
 
 export interface SessionStartInput {
   /** Routing mode for subsequent prompts. Omit to use the session's configured default. */
@@ -80,9 +80,9 @@ export class Session {
   private startPromise?: Promise<void>;
   /** Most recent terminal event, returned immediately when callers wait after a turn has settled. */
   private lastTerminal?: TurnTerminalEvent;
-  /** Scheduled wake for sleeping poll states; cancelled when user input or interrupt arrives. */
+  /** Scheduled wake for sleeping state-machine states; cancelled when user input or interrupt arrives. */
   private wakeTimer?: ReturnType<typeof setTimeout>;
-  /** Restores a prompt/answer turn back to sleep when the underlying state machine is still polling. */
+  /** Restores a prompt/answer turn back to sleep when the state machine is still waiting. */
   private restoreSleepAfterTurn?: boolean;
   /** Whether this session should hydrate `state.json` on first use. New sessions start empty. */
   private readonly resumeFromStorage: boolean;
@@ -135,7 +135,7 @@ export class Session {
     const state = await this.requireState();
     this.cancelWake();
     const wasSleeping = state.status === "sleeping";
-    this.restoreSleepAfterTurn = wasSleeping && this.isWaitingOnPoll(state);
+    this.restoreSleepAfterTurn = wasSleeping && this.isWaitingOnScheduledState(state);
     const command: TurnCommand = {
       type: "prompt",
       message: input.message,
@@ -149,7 +149,7 @@ export class Session {
     const state = await this.requireState();
     this.cancelWake();
     const wasSleeping = state.status === "sleeping";
-    this.restoreSleepAfterTurn = wasSleeping && this.isWaitingOnPoll(state);
+    this.restoreSleepAfterTurn = wasSleeping && this.isWaitingOnScheduledState(state);
     const command: TurnAnswerCommand = {
       type: "answer",
       questions: input.questions,
@@ -278,20 +278,24 @@ export class Session {
     if (
       this.restoreSleepAfterTurn &&
       event.type === "complete" &&
-      this.isWaitingOnPoll(event.state)
+      this.isWaitingOnScheduledState(event.state)
     ) {
       this.restoreSleepAfterTurn = false;
       if (event.status === "failed") {
         this.emit({
           type: "system",
           level: "error",
-          message: event.error ?? event.result ?? "Prompt failed while waiting on poll.",
+          message: event.error ?? event.result ?? "Prompt failed while waiting.",
         });
       }
-      const state = this.currentPollState(event.state);
+      const state = this.currentScheduledState(event.state);
+      const progress = state ? event.state.stateMachine?.progress?.states[state.name] : undefined;
+      const wakeAt =
+        progress?.nextWakeAt ??
+        (state?.kind === "poll" ? Date.now() + state.intervalMs : (state?.wakeAt ?? Date.now()));
       return {
         type: "sleep",
-        wakeAt: Date.now() + (state?.intervalMs ?? 0),
+        wakeAt,
         state: { ...event.state, status: "sleeping" },
       };
     }
@@ -352,18 +356,22 @@ export class Session {
     return Object.keys(effective).length > 0 ? { options: effective } : {};
   }
 
-  private isWaitingOnPoll(state: TurnState | undefined): boolean {
-    return Boolean(this.currentPollState(state) && !state?.stateMachine?.terminal);
+  private isWaitingOnScheduledState(state: TurnState | undefined): boolean {
+    return Boolean(this.currentScheduledState(state) && !state?.stateMachine?.terminal);
   }
 
-  private currentPollState(state: TurnState | undefined): StateMachinePollState | undefined {
+  private currentScheduledState(
+    state: TurnState | undefined,
+  ): StateMachinePollState | StateMachineTimerState | undefined {
     const stateMachine = state?.stateMachine;
     const currentState = stateMachine?.currentState;
     if (!stateMachine || !currentState) return undefined;
     const definitionState = stateMachine.definition.states.find(
       (item) => item.name === currentState,
     );
-    return definitionState?.kind === "poll" ? definitionState : undefined;
+    return definitionState?.kind === "poll" || definitionState?.kind === "timer"
+      ? definitionState
+      : undefined;
   }
 
   private async readStoredState(): Promise<TurnState | undefined> {

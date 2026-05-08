@@ -668,7 +668,7 @@ describe("TurnRunner protocol scenarios", () => {
     expect(parentPrompt).toContain("Research complete.");
   });
 
-  test("timer poll continues without script and forwards elapsed output", async () => {
+  test("timer state forwards elapsed output on wake", async () => {
     const { runner } = createTurnRunner();
     const turnState = {
       ...createStateMachineState("wait_before_retry"),
@@ -706,7 +706,7 @@ describe("TurnRunner protocol scenarios", () => {
     expect((output as { elapsedMs: number }).elapsedMs).toBeGreaterThanOrEqual(12_000);
   });
 
-  test("timer poll sleeps when first selected before producing output on wake", async () => {
+  test("timer state sleeps when first selected before producing output on wake", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("wait_before_retry");
     await runner.start({ type: "start", state: turnState });
@@ -732,10 +732,63 @@ describe("TurnRunner protocol scenarios", () => {
     expect(runner.workerInputs).toHaveLength(1);
   });
 
+  test("timer state can sleep until an absolute wakeAt before continuing transitions", async () => {
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("wait_before_retry");
+    const wakeAt = Date.now() + 60_000;
+    if (!turnState.stateMachine) throw new Error("Expected state machine session");
+    turnState.stateMachine.definition = {
+      ...turnState.stateMachine.definition,
+      states: turnState.stateMachine.definition.states.map((state) =>
+        state.name === "wait_before_retry" && state.kind === "timer" ? { ...state, wakeAt } : state,
+      ),
+    };
+    await runner.start({ type: "start", state: turnState });
+    runner.controlResults.push({
+      type: "select_state_machine_state",
+      decision: { kind: "run_state", state: "wait_before_retry" },
+    });
+
+    const sleeping = await runner.turn({
+      type: "prompt",
+      message: "Wait until the absolute time.",
+      behavior: "follow_up",
+    });
+
+    expect(sleeping).toMatchObject({
+      type: "sleep",
+      wakeAt,
+      state: {
+        status: "sleeping",
+        stateMachine: { currentState: "wait_before_retry" },
+      },
+    });
+    runner.controlResults.push({
+      type: "select_state_machine_state",
+      decision: { kind: "terminal", state: "meeting_scheduled" },
+    });
+
+    const terminal = await runner.turn({ type: "wake" });
+
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      state: { stateMachine: { terminal: { state: "meeting_scheduled" } } },
+    });
+    const completed = terminal.state.stateMachine?.history.find(
+      (event) => event.type === "state_completed" && event.state === "wait_before_retry",
+    );
+    const output = completed?.type === "state_completed" ? completed.output : undefined;
+    expect(output).toMatchObject({
+      elapsedMs: expect.any(Number),
+      timestamp: expect.any(Number),
+    });
+  });
+
   test("poll timeout fails after the maximum time in the poll state", async () => {
     const { runner } = createTurnRunner();
     const turnState = {
-      ...createStateMachineState("wait_before_retry"),
+      ...createStateMachineState("poll_email_reply"),
       status: "sleeping" as const,
     };
     const startedAt = Date.now() - 10_000;
@@ -743,7 +796,7 @@ describe("TurnRunner protocol scenarios", () => {
     turnState.stateMachine.definition = {
       ...turnState.stateMachine.definition,
       states: turnState.stateMachine.definition.states.map((state) =>
-        state.name === "wait_before_retry" && state.kind === "poll"
+        state.name === "poll_email_reply" && state.kind === "poll"
           ? { ...state, timeoutMs: 5_000 }
           : state,
       ),
@@ -751,7 +804,7 @@ describe("TurnRunner protocol scenarios", () => {
     turnState.stateMachine.history.push({
       type: "state_started",
       timestamp: startedAt,
-      state: "wait_before_retry",
+      state: "poll_email_reply",
     });
     await runner.start({ type: "start", state: turnState });
 
@@ -762,18 +815,18 @@ describe("TurnRunner protocol scenarios", () => {
     expect(terminal).toMatchObject({
       type: "complete",
       status: "failed",
-      error: expect.stringContaining('Poll state "wait_before_retry" timed out'),
+      error: expect.stringContaining('Poll state "poll_email_reply" timed out'),
     });
     expect(terminal.state.stateMachine?.history).toContainEqual(
       expect.objectContaining({
         type: "state_failed",
-        state: "wait_before_retry",
+        state: "poll_email_reply",
       }),
     );
     expect(terminal.state.stateMachine?.history.at(-1)).toMatchObject({
       type: "state_machine_completed",
       terminal: {
-        state: "wait_before_retry",
+        state: "poll_email_reply",
         status: "failed",
       },
     });

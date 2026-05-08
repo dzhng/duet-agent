@@ -263,6 +263,65 @@ describe("TurnRunner tools", () => {
     await expect(result).rejects.toThrow('Invalid inputSchema for state "send_email"');
   });
 
+  test("rejects poll states without a positive intervalMs", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "poll",
+            name: "wait_for_reply",
+            command: "check reply",
+          },
+        ],
+      },
+    });
+
+    await expect(result).rejects.toThrow(
+      'Invalid poll schedule for state "wait_for_reply": intervalMs must be positive.',
+    );
+  });
+
+  test("rejects timer states without a finite wakeAt", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: "auto",
+    });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "timer",
+            name: "wait_for_reply",
+            wakeAt: Number.NaN,
+          },
+        ],
+      },
+    });
+
+    await expect(result).rejects.toThrow(
+      'Invalid timer schedule for state "wait_for_reply": wakeAt must be finite.',
+    );
+  });
+
   test("returns selected state decisions in tool details and model-visible content", async () => {
     const tools = createTurnRunnerTools({
       cwd: process.cwd(),
@@ -579,10 +638,9 @@ describe("TurnRunner tools", () => {
         prompt: "Use for outreach work.",
         states: [
           {
-            kind: "poll" as const,
+            kind: "timer" as const,
             name: "waiting",
-            intervalMs: 60_000,
-            poll: { kind: "timer" as const },
+            wakeAt: 123,
           },
           { kind: "terminal" as const, name: "done", status: "completed" as const },
         ],
@@ -771,7 +829,10 @@ describe("TurnRunner tools", () => {
     if (!createDefinitionTool || !selectStateTool) throw new Error("Expected state-machine tools");
 
     expect(createDefinitionTool.description).toContain("{{ input.email }}");
+    expect(createDefinitionTool.description).toContain('kind "timer"');
+    expect(createDefinitionTool.description).toContain("timeoutMs is exceeded");
     expect(selectStateTool.description).toContain("input object");
+    expect(selectStateTool.description).toContain("timer overrides");
     expect(propertyDescription(createDefinitionTool.parameters, "definition")).toContain(
       "State-machine",
     );

@@ -91,10 +91,7 @@ describe("state-machine active output", () => {
           kind: "poll",
           name: "wait",
           intervalMs: 60_000,
-          poll: {
-            kind: "script",
-            command: "printf poll-out; printf poll-err >&2; sleep 30",
-          },
+          command: "printf poll-out; printf poll-err >&2; sleep 30",
         },
       ],
     };
