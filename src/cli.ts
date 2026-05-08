@@ -335,7 +335,7 @@ async function main() {
     }
 
     process.stderr.write(
-      `Resume: ${resumeCommand(session.id, {
+      `Resume:\n${resumeCommand(session.id, {
         modelName,
         memoryModelName,
         workDir,
