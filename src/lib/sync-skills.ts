@@ -8,15 +8,12 @@ import { resolveDuetAppBaseUrl } from "./duet-app-url.js";
  * Mirror of the chat-app default-skill sync, kept byte-identical so the
  * server's hash and the CLI's local hash match. The chat-app endpoint
  * already renders placeholders against the caller's org; the CLI just
- * verifies the returned hash, dumps the files into ~/.duet/skills/, and
- * registers them with the local agent harness via `skills add`.
+ * verifies the returned hash and dumps the files into ~/.duet/skills/,
+ * which the turn runner reads directly.
  *
  * The hash is used as a conditional GET ETag: we send the on-disk hash via
  * `If-None-Match` and the server returns `304 Not Modified` when it still
  * matches, so a no-op `duet login` never transfers the payload at all.
- *
- * On any kind of registration failure we leave the on-disk hash untouched
- * so the next login retries the write.
  */
 
 const DEFAULT_SKILLS_DIR = join(homedir(), ".duet", "skills");
@@ -41,10 +38,6 @@ export interface SyncSkillsOptions {
   hashFilePath?: string;
   /** Inject HTTP for tests. Defaults to global `fetch`. */
   fetchFn?: typeof fetch;
-  /** Skip running `skills add`; tests pass false. */
-  registerSkills?: boolean;
-  /** Override the registration step; tests inject a no-op. */
-  runShell?: (script: string) => Promise<{ exitCode: number; stderr: string }>;
 }
 
 export interface FetchSkillsOptions {
@@ -148,7 +141,6 @@ async function fileExists(path: string): Promise<boolean> {
 export async function syncDefaultSkills(options: SyncSkillsOptions): Promise<SyncSkillsResult> {
   const skillsDir = options.skillsDir ?? DEFAULT_SKILLS_DIR;
   const hashFilePath = options.hashFilePath ?? DEFAULT_SKILLS_HASH_FILE;
-  const register = options.registerSkills ?? true;
 
   const knownHash = await readExistingHash(hashFilePath);
   const fetched = await fetchDefaultSkills({
@@ -172,16 +164,6 @@ export async function syncDefaultSkills(options: SyncSkillsOptions): Promise<Syn
     }
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, skill.content);
-  }
-
-  if (register) {
-    const runShell = options.runShell ?? defaultRunShell;
-    const result = await runShell(`skills add ${shellQuote(skillsDir)} -g -y`);
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `\`skills add\` failed (exit ${result.exitCode}): ${result.stderr.trim() || "no stderr"}`,
-      );
-    }
   }
 
   await mkdir(dirname(hashFilePath), { recursive: true });
@@ -210,25 +192,4 @@ async function safeReadText(response: Response): Promise<string> {
   } catch {
     return "";
   }
-}
-
-function shellQuote(value: string): string {
-  if (/^[A-Za-z0-9_./:=+-]+$/.test(value)) return value;
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
-async function defaultRunShell(script: string): Promise<{ exitCode: number; stderr: string }> {
-  const { spawn } = await import("node:child_process");
-  return await new Promise((resolve, reject) => {
-    const child = spawn("bash", ["-lc", script], { stdio: ["ignore", "inherit", "pipe"] });
-    let stderr = "";
-    child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString();
-      process.stderr.write(chunk);
-    });
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      resolve({ exitCode: code ?? 1, stderr });
-    });
-  });
 }

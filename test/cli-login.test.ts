@@ -180,7 +180,7 @@ describe("fetchDefaultSkills", () => {
 });
 
 describe("syncDefaultSkills", () => {
-  testIfDocker("writes new skills, updates the hash, and invokes skills add", async () => {
+  testIfDocker("writes new skills and updates the hash", async () => {
     const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
     const skillsDir = join(root, "skills");
     const hashFilePath = join(root, ".skills-hash");
@@ -192,24 +192,16 @@ describe("syncDefaultSkills", () => {
     const expectedHash = hashSkills(skills);
     const { fetchFn } = makeFetch(() => skillsResponse(skills));
 
-    let registeredScript: string | null = null;
     const result = await syncDefaultSkills({
       apiKey: "duet_gt_x",
       appBaseUrl: "https://test",
       skillsDir,
       hashFilePath,
       fetchFn,
-      runShell: async (script: string) => {
-        registeredScript = script;
-        return { exitCode: 0, stderr: "" };
-      },
     });
 
     if (result.status !== "synced") throw new Error("expected synced");
     expect(result.count).toBe(2);
-    expect(registeredScript).not.toBeNull();
-    expect(registeredScript!).toContain(`skills add ${skillsDir}`);
-    expect(registeredScript!).toContain("-g -y");
     expect(await readFile(join(skillsDir, "alpha/SKILL.md"), "utf8")).toContain("alpha body");
     expect(await readFile(join(skillsDir, "alpha/reference/notes.md"), "utf8")).toBe("more notes");
     expect(await readFile(hashFilePath, "utf8")).toBe(expectedHash);
@@ -230,9 +222,6 @@ describe("syncDefaultSkills", () => {
       skillsDir,
       hashFilePath,
       fetchFn,
-      runShell: async () => {
-        throw new Error("registration must not run on 304");
-      },
     });
 
     expect(result.status).toBe("unchanged");
@@ -258,33 +247,11 @@ describe("syncDefaultSkills", () => {
       skillsDir,
       hashFilePath,
       fetchFn,
-      runShell: async () => ({ exitCode: 0, stderr: "" }),
     });
 
     expect(
       calls[0]!.headers["if-none-match"] ?? calls[0]!.headers["If-None-Match"],
     ).toBeUndefined();
-  });
-
-  testIfDocker("does not update the hash when skills add fails", async () => {
-    const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
-    const skillsDir = join(root, "skills");
-    const hashFilePath = join(root, ".skills-hash");
-
-    const { fetchFn } = makeFetch(() => skillsResponse([{ path: "a/SKILL.md", content: "alpha" }]));
-
-    await expect(
-      syncDefaultSkills({
-        apiKey: "duet_gt_x",
-        appBaseUrl: "https://test",
-        skillsDir,
-        hashFilePath,
-        fetchFn,
-        runShell: async () => ({ exitCode: 1, stderr: "boom" }),
-      }),
-    ).rejects.toThrow(/skills add.*failed/i);
-
-    await expect(stat(hashFilePath)).rejects.toThrow();
   });
 
   testIfDocker("rejects skill paths that escape the skills directory", async () => {
@@ -303,7 +270,6 @@ describe("syncDefaultSkills", () => {
         skillsDir,
         hashFilePath,
         fetchFn,
-        runShell: async () => ({ exitCode: 0, stderr: "" }),
       }),
     ).rejects.toThrow(/Refusing to write skill outside/);
   });
@@ -329,7 +295,6 @@ describe("maybeAutoSyncDefaultSkills", () => {
       skillsDir,
       hashFilePath,
       fetchFn,
-      runShell: async () => ({ exitCode: 0, stderr: "" }),
     });
 
     expect(result).toBeNull();
@@ -371,9 +336,6 @@ describe("maybeAutoSyncDefaultSkills", () => {
       skillsDir,
       hashFilePath,
       fetchFn,
-      runShell: async () => {
-        throw new Error("registration must not run on 304");
-      },
     });
 
     expect(result?.status).toBe("unchanged");

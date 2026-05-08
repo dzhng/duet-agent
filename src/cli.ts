@@ -971,8 +971,6 @@ OPTIONS
 SKILL SYNC
   Mirrors the sandbox protocol: hashes the rendered skill payload and only
   rewrites ~/.duet/skills when the hash differs from ~/.duet/.skills-hash.
-  After writing, runs \`skills add ~/.duet/skills -g -y\` to register the
-  skills with Claude Code / Codex / etc.
 
 OVERRIDES
   Set DUET_APP_BASE_URL (e.g. https://staging.duet.so) to re-point both the
