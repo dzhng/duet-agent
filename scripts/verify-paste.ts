@@ -11,11 +11,7 @@
 
 import { readFileSync } from "node:fs";
 
-import {
-  loadImageFromPath,
-  persistPastedImage,
-  sniffImageMimeType,
-} from "../src/tui/paste.js";
+import { loadImageFromPath, persistPastedImage, sniffImageMimeType } from "../src/tui/paste.js";
 import { createTurnRunner, startTurn } from "../test/helpers/turn-runner-protocol.js";
 
 const argPath = process.argv[2];
@@ -26,9 +22,7 @@ async function main(): Promise<void> {
     "image/png": Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     "image/jpeg": Uint8Array.from([0xff, 0xd8, 0xff, 0xe0]),
     "image/gif": Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]),
-    "image/webp": Uint8Array.from([
-      0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
-    ]),
+    "image/webp": Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]),
   };
   for (const [expected, header] of Object.entries(headers)) {
     const got = sniffImageMimeType(header);
@@ -51,7 +45,9 @@ async function main(): Promise<void> {
   });
   console.log(`  cached at ${pending.path}`);
   console.log(`  label    ${pending.label}`);
-  console.log(`  base64   ${pending.attachment.data.slice(0, 32)}\u2026 (${pending.attachment.data.length} chars)`);
+  console.log(
+    `  base64   ${pending.attachment.data.slice(0, 32)}\u2026 (${pending.attachment.data.length} chars)`,
+  );
   const onDisk = readFileSync(pending.path);
   if (!onDisk.equals(Buffer.from(synthetic))) {
     throw new Error("disk bytes do not match input");

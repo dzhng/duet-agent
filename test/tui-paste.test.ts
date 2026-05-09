@@ -68,9 +68,9 @@ describe("tui/paste", () => {
     expect(looksLikeImageFilePath("/Users/me/Desktop/Frame\\ 2147228872.png")).toBe(
       "/Users/me/Desktop/Frame 2147228872.png",
     );
-    expect(
-      looksLikeImageFilePath("/Users/me/Photos/Screenshot\\ \\(2026-05-09\\).jpg"),
-    ).toBe("/Users/me/Photos/Screenshot (2026-05-09).jpg");
+    expect(looksLikeImageFilePath("/Users/me/Photos/Screenshot\\ \\(2026-05-09\\).jpg")).toBe(
+      "/Users/me/Photos/Screenshot (2026-05-09).jpg",
+    );
   });
 
   test("looksLikeImageFilePath decodes file:// URLs", () => {

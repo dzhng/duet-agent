@@ -18,6 +18,7 @@ import {
   persistPastedImage,
   sniffImageMimeType,
   tryReadClipboardImage,
+  tryReadClipboardText,
 } from "./paste.js";
 import type { Session } from "../session/session.js";
 import type {
@@ -1128,6 +1129,23 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // consumes escape via its own keybindings before any global keypress handler
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
+    // Cmd+V / Ctrl+V keystroke trigger. Many terminals (Warp in particular,
+    // and macOS Terminal.app for binary clipboards) do not forward a paste
+    // event to TUI programs on Cmd+V — they handle the clipboard at the app
+    // level and only deliver the resulting text. We catch the keystroke here
+    // and probe the OS clipboard directly so image attach works regardless of
+    // whether the terminal cooperates with bracketed paste for binary data.
+    //
+    // The keystroke handler only fires on terminals that actually deliver
+    // Cmd+V as a keypress (kitty-keyboard-aware terminals: kitty, Ghostty,
+    // recent iTerm2, WezTerm). For terminals that swallow Cmd+V entirely,
+    // the `/paste` slash command below provides a guaranteed fallback.
+    if (key.name === "v" && (key.super || key.meta || key.ctrl) && !key.shift) {
+      key.preventDefault();
+      void triggerClipboardProbe("keystroke");
+      return;
+    }
+
     if (skillAutocompleteIsOpen()) {
       if (key.name === "up") {
         skillAutocompleteSelectedIndex = moveSkillAutocompleteSelection(
@@ -1363,12 +1381,46 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     refreshAttachmentHint();
   }
 
+  // Manual clipboard probe. Read the OS clipboard for an image right now and
+  // attach it if found; otherwise emit a useful diagnostic line. Used both by
+  // the Cmd+V/Ctrl+V keystroke handler above and the `/paste` slash command.
+  async function triggerClipboardProbe(source: "keystroke" | "slash"): Promise<void> {
+    try {
+      const clipboardImage = await tryReadClipboardImage();
+      if (clipboardImage) {
+        await attachPastedImageBytes(clipboardImage.bytes, clipboardImage.mimeType);
+        return;
+      }
+      // No image on the clipboard. The keystroke path may have eaten a
+      // legitimate text paste, so fall back to a text probe so users do not
+      // lose what they were trying to paste.
+      const text = await tryReadClipboardText();
+      if (text) {
+        inputField.insertText(text);
+        return;
+      }
+      if (source === "slash") {
+        appendBlock("[paste]", "clipboard is empty (or contains an unsupported type)", COLORS.system);
+      }
+    } catch (error) {
+      appendBlock(
+        "[paste]",
+        `clipboard probe failed: ${error instanceof Error ? error.message : String(error)}`,
+        COLORS.error,
+      );
+    }
+  }
+
   function submit(message: string, shiftEnter: boolean): void {
     // Slash-style attach commands run locally and never reach the runner so
     // users on terminals that do not forward image bytes still have a way to
     // attach images by path.
     if (message.startsWith("/image ") || message === "/image") {
       void handleImageSlashCommand(message);
+      return;
+    }
+    if (message === "/paste") {
+      void triggerClipboardProbe("slash");
       return;
     }
     if (message === "/clear-images") {

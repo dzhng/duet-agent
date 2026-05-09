@@ -278,6 +278,60 @@ function expandUserPath(input: string): string {
 }
 
 /**
+ * Read the operating system clipboard as plain text. Used as a fallback when
+ * the keystroke trigger (Cmd+V / Ctrl+V) intercepts a paste but no image is
+ * present on the clipboard — we should still let the user's text paste land
+ * in the prompt rather than silently swallowing it.
+ *
+ * Returns `undefined` when no probe succeeds or the clipboard is empty.
+ */
+export async function tryReadClipboardText(): Promise<string | undefined> {
+  const probes = textClipboardProbesForPlatform();
+  for (const probe of probes) {
+    try {
+      const text = await probe();
+      if (text && text.length > 0) return text;
+    } catch {
+      // try next probe
+    }
+  }
+  return undefined;
+}
+
+function textClipboardProbesForPlatform(): Array<() => Promise<string | undefined>> {
+  const os = platform();
+  if (os === "darwin") {
+    return [
+      async () => {
+        const r = await runCommand("pbpaste", []);
+        return r.code === 0 ? r.stdout : undefined;
+      },
+    ];
+  }
+  if (os === "linux") {
+    return [
+      async () => {
+        const r = await runCommand("wl-paste", ["--no-newline"]);
+        return r.code === 0 ? r.stdout : undefined;
+      },
+      async () => {
+        const r = await runCommand("xclip", ["-selection", "clipboard", "-o"]);
+        return r.code === 0 ? r.stdout : undefined;
+      },
+    ];
+  }
+  if (os === "win32") {
+    return [
+      async () => {
+        const r = await runCommand("powershell", ["-NoProfile", "-Command", "Get-Clipboard"]);
+        return r.code === 0 ? r.stdout : undefined;
+      },
+    ];
+  }
+  return [];
+}
+
+/**
  * Probe the operating system clipboard for an image and return its raw bytes.
  *
  * Most terminals do not forward binary clipboard contents on Cmd+V — even when
@@ -343,12 +397,12 @@ async function readMacClipboardViaOsascript(): Promise<Uint8Array | undefined> {
     "  set eof of fd to 0",
     "  write (the clipboard as \u00abclass PNGf\u00bb) to fd",
     "  close access fd",
-    "  return \"ok\"",
+    '  return "ok"',
     "on error errMsg",
     "  try",
     "    close access fd",
     "  end try",
-    "  return \"err:\" & errMsg",
+    '  return "err:" & errMsg',
     "end try",
   ].join("\n");
 
@@ -405,18 +459,12 @@ async function readWindowsClipboardViaPowerShell(): Promise<Uint8Array | undefin
   }
 }
 
-async function runCommand(
-  cmd: string,
-  args: string[],
-): Promise<{ stdout: string; code: number }> {
+async function runCommand(cmd: string, args: string[]): Promise<{ stdout: string; code: number }> {
   const result = await runCommandRaw(cmd, args);
   return { stdout: Buffer.from(result.stdout).toString("utf8").trim(), code: result.code };
 }
 
-function runCommandRaw(
-  cmd: string,
-  args: string[],
-): Promise<{ stdout: Uint8Array; code: number }> {
+function runCommandRaw(cmd: string, args: string[]): Promise<{ stdout: Uint8Array; code: number }> {
   return new Promise((resolveResult, rejectResult) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
