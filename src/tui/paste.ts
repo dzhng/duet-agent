@@ -370,10 +370,18 @@ function clipboardProbesForPlatform(): ClipboardProbe[] {
   const os = platform();
   if (os === "darwin") {
     return [
-      // First: NSPasteboard via the ObjC bridge (JXA). This is the only
-      // reader that materializes "promise items" — the lazy clipboard slots
-      // Chromium-based apps (Figma, Slack desktop, browsers) use for
-      // images. AppleScript class-code reads do not trigger the promise.
+      // First: native Swift one-liner. Runs inside a real Cocoa process
+      // (NSApplication context, real run loop), which is the only env in
+      // which Chromium-based apps (Figma, Slack desktop, browsers) will
+      // actually fulfill their NSPasteboard promise items. JXA via
+      // osascript and AppleScript class-code reads both run without an
+      // NSApplication and silently get nil for promise-backed UTIs.
+      // Requires Xcode Command Line Tools (`xcode-select --install`),
+      // which is a near-universal prerequisite on dev machines.
+      readMacClipboardViaSwift,
+      // Second: NSPasteboard via the ObjC bridge (JXA). Catches non-promise
+      // clipboards Swift may have skipped, and works on machines without
+      // Xcode CLT.
       readMacClipboardViaJxa,
       // Cheap path when installed: pngpaste handles every NSImage
       // representation natively.
@@ -415,6 +423,49 @@ function clipboardProbesForPlatform(): ClipboardProbe[] {
  * `sips` so the rest of the pipeline only ever sees one of the four MIME
  * types we accept.
  */
+/**
+ * macOS clipboard → PNG via a tiny Swift program executed in-process by
+ * `swift -e`. Unlike `osascript -l JavaScript`, the swift binary launches
+ * a real NSApplication-backed process, so NSPasteboard promise providers
+ * (Figma, Slack desktop, browser image copies) actually deliver bytes.
+ *
+ * Strategy:
+ *   1. NSImage(pasteboard:) — fulfills any image promise on the pasteboard.
+ *   2. Re-encode via NSBitmapImageRep PNG output so we always hand back PNG.
+ *
+ * Returns undefined when `swift` is not installed (Xcode CLT missing) or
+ * when the clipboard has no image at all. The caller then falls through
+ * to the JXA / AppleScript probes.
+ */
+async function readMacClipboardViaSwift(): Promise<Uint8Array | undefined> {
+  const stamp = `${Date.now()}-${process.pid}`;
+  const outPath = join(tmpdir(), `duet-swift-${stamp}.png`);
+  const program = [
+    "import AppKit",
+    "let pb = NSPasteboard.general",
+    "guard let img = NSImage(pasteboard: pb),",
+    "      let tiff = img.tiffRepresentation,",
+    "      let rep = NSBitmapImageRep(data: tiff),",
+    `      let png = rep.representation(using: .png, properties: [:]) else { exit(2) }`,
+    `try png.write(to: URL(fileURLWithPath: ${JSON.stringify(outPath)}))`,
+    'print("ok")',
+  ].join("\n");
+  try {
+    const result = await runCommand("swift", ["-e", program]);
+    if (result.code !== 0) return undefined;
+    if (!result.stdout.includes("ok")) return undefined;
+    return new Uint8Array(await readFile(outPath));
+  } catch {
+    return undefined;
+  } finally {
+    try {
+      await unlink(outPath);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 async function readMacClipboardViaJxa(): Promise<Uint8Array | undefined> {
   const stamp = `${Date.now()}-${process.pid}`;
   const rawPath = join(tmpdir(), `duet-jxa-${stamp}.bin`);
@@ -517,8 +568,13 @@ async function readMacClipboardViaJxa(): Promise<Uint8Array | undefined> {
     for (const line of lines) {
       try {
         const obj = JSON.parse(line) as { ok?: boolean; kind?: string; method?: string };
-        if (obj.ok) { parsed = obj; break; }
-      } catch { /* ignore non-JSON noise */ }
+        if (obj.ok) {
+          parsed = obj;
+          break;
+        }
+      } catch {
+        /* ignore non-JSON noise */
+      }
     }
     if (!parsed?.ok || !parsed.kind) return undefined;
 
