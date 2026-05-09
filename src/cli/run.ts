@@ -109,9 +109,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   // loading, model resolution, skill discovery, and session bootstrap. JSON
   // callers await the result; the TUI path only consumes it if it has already
   // settled by the time we render, so a slow registry never delays first paint.
-  const versionNoticePromise = getNewVersionNotice(pkg.name, pkg.version).catch(
-    () => undefined,
-  );
+  const versionNoticePromise = getNewVersionNotice(pkg.name, pkg.version).catch(() => undefined);
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
