@@ -135,6 +135,20 @@ export async function runMemoryTui(db: MemoryDb, dbPath: string): Promise<void> 
       row.content = t`${fg(headerColor)(`${marker} [${observation.priority}] ${observation.observedDate}`)} ${fg(metaColor)(meta)}\n  ${fg(metaColor)(observation.content)}`;
       row.fg = selected ? COLORS.agent : COLORS.hint;
     }
+
+    // Keep the selected row centered in the viewport. Row heights vary with
+    // wrapped content, so we read the row's laid-out `y` and `height` on the
+    // next frame, then clamp to the scrollable range. Without the frame
+    // delay, freshly-mounted rows still report y=0.
+    const selected = observations[selectedIndex];
+    const row = selected ? rowsById.get(selected.id) : undefined;
+    if (!row) return;
+    setTimeout(() => {
+      const viewportH = list.viewport.height;
+      const target = row.y + row.height / 2 - viewportH / 2;
+      const max = Math.max(0, list.scrollHeight - viewportH);
+      list.scrollTop = Math.max(0, Math.min(max, target));
+    }, 0);
   }
 
   rebuildList();
