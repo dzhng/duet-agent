@@ -54,15 +54,30 @@ function uniquePaths(paths: string[]): string[] {
   return Array.from(new Set(paths));
 }
 
+const SKILL_SHELL_EXPANSION_TIMEOUT_MS = 30_000;
+
 function expandSkillShellCommands(content: string, cwd: string): string {
-  return content.replace(SKILL_SHELL_EXPANSION_PATTERN, (_match, command: string) => {
-    const output = execFileSync("bash", ["-lc", command], {
-      cwd,
-      encoding: "utf-8",
-      maxBuffer: 1024 * 1024,
-      timeout: 30_000,
-    });
-    return output.trimEnd();
+  return content.replace(SKILL_SHELL_EXPANSION_PATTERN, (match, command: string) => {
+    try {
+      const output = execFileSync("bash", ["-lc", command], {
+        cwd,
+        encoding: "utf-8",
+        maxBuffer: 1024 * 1024,
+        timeout: SKILL_SHELL_EXPANSION_TIMEOUT_MS,
+      });
+      return output.trimEnd();
+    } catch (error) {
+      // On timeout or non-zero exit, fall back to the literal token plus a
+      // brief note so the model sees what was attempted instead of failing
+      // the entire prompt. Node sets `signal` to "SIGTERM" when the
+      // timeout fires; everything else is treated as a generic failure.
+      const signal = (error as { signal?: string } | null)?.signal;
+      const note =
+        signal === "SIGTERM"
+          ? `timed out after ${SKILL_SHELL_EXPANSION_TIMEOUT_MS / 1000}s`
+          : `failed: ${(error as Error).message}`;
+      return `${match} (${note})`;
+    }
   });
 }
 
