@@ -14,6 +14,7 @@ import {
   OBSERVATION_CONTINUATION_HINT,
 } from "../src/memory/observational-prompts.js";
 import { MemoryStore } from "../src/memory/store.js";
+import { createInitialHorizon } from "../src/turn-runner/wire-shaping.js";
 import { SessionManager } from "../src/session/session-manager.js";
 import type { ObservationalMemoryActivityEvent } from "../src/types/memory.js";
 import type { TurnEvent, TurnTerminalEvent } from "../src/types/protocol.js";
@@ -247,6 +248,7 @@ describe("continuous memory", () => {
       const transform = createObservationalContextTransform({
         memory,
         settings,
+        horizon: createInitialHorizon(),
       });
       const transformed = await transform(messages);
       expect(transformed.at(-1)).toMatchObject({

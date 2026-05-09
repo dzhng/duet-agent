@@ -3,6 +3,14 @@ import type { ImageContent, Model, TextContent, Usage } from "@earendil-works/pi
 import { nanoid } from "nanoid";
 import { Type } from "typebox";
 import { generateStructuredOutput } from "../core/structured-output.js";
+import {
+  applyEvictionHorizon,
+  calculateWireBytes,
+  findEvictionHorizon,
+  WIRE_BYTE_TARGET,
+  WIRE_BYTE_TRIGGER,
+  type WireGuardHorizon,
+} from "../turn-runner/wire-shaping.js";
 import type { MemoryStore } from "./store.js";
 import type {
   Observation,
@@ -166,9 +174,22 @@ export class ModelByInputTokens {
 export interface ObservationalContextTransformOptions {
   memory: MemoryStore;
   settings?: ObservationalMemorySettingsInput;
+  /**
+   * Sticky eviction point. The transform applies this horizon to the
+   * message list before checking either budget, then advances it in place
+   * when a budget is exceeded. Pi-agent re-runs `transformContext` on
+   * every turn against the full untransformed history; the sticky horizon
+   * keeps the dropped prefix content-deterministic across turns so the
+   * provider's prompt cache stays valid between eviction events. Callers
+   * (the runner) own the lifetime of this object — typically a single
+   * instance per `Agent`, reset on session resume.
+   */
+  horizon: WireGuardHorizon;
 }
 
-export interface ObservationalMemoryUpdateOptions extends ObservationalContextTransformOptions {
+export interface ObservationalMemoryUpdateOptions {
+  memory: MemoryStore;
+  settings?: ObservationalMemorySettingsInput;
   actorModel: string;
   messages: AgentMessage[];
   onUsage?: (usage: Usage) => void;
@@ -254,15 +275,32 @@ export function createObservationalContextTransform(options: ObservationalContex
 
   return async (messages: AgentMessage[]): Promise<AgentMessage[]> => {
     const observableMessages = stripObservationalContextMessages(messages);
-    const rawMessages = agentMessagesToRaw(observableMessages);
-    const rawTokens = estimateRawTokens(rawMessages);
-    let retainedMessages = observableMessages;
+    let retainedMessages = applyEvictionHorizon(
+      observableMessages,
+      options.horizon.evictionHorizon,
+    );
 
-    if (rawTokens >= settings.observation.messageTokens) {
-      retainedMessages = retainAgentMessageTail(
+    // Trigger condition: either budget exceeded under the current sticky
+    // horizon. Token budget protects context window cost on smaller models;
+    // byte budget protects gateway request-body caps. Eviction advances the
+    // horizon enough to satisfy both targets in one block so the next
+    // several turns grow back without retriggering.
+    const candidateTokens = estimateRawTokens(agentMessagesToRaw(retainedMessages));
+    const candidateBytes = calculateWireBytes(retainedMessages);
+    const tokenTrigger = settings.observation.messageTokens;
+    const tokenTarget = settings.observation.bufferActivation;
+
+    if (candidateTokens >= tokenTrigger || candidateBytes >= WIRE_BYTE_TRIGGER) {
+      options.horizon.evictionHorizon = findEvictionHorizon(
         observableMessages,
-        retainRawTail(rawMessages, settings.observation.bufferActivation),
+        options.horizon.evictionHorizon,
+        (candidate) => {
+          const tokens = estimateRawTokens(agentMessagesToRaw(candidate));
+          const bytes = calculateWireBytes(candidate);
+          return tokens <= tokenTarget && bytes <= WIRE_BYTE_TARGET;
+        },
       );
+      retainedMessages = applyEvictionHorizon(observableMessages, options.horizon.evictionHorizon);
     }
 
     const snapshot = await options.memory.getSnapshot();
@@ -579,18 +617,6 @@ export function trimObservationTextToTokenBudget(text: string, targetTokens: num
   return `${trimmed}${marker}`;
 }
 
-function retainRawTail(messages: RawMemoryMessage[], retainTokens: number): RawMemoryMessage[] {
-  let tokens = 0;
-  const retained: RawMemoryMessage[] = [];
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]!;
-    tokens += message.estimatedTokens ?? estimateTokens(message.textPreview);
-    if (tokens > retainTokens) break;
-    retained.unshift(message);
-  }
-  return retained;
-}
-
 export function getUnobservedMessageTail(
   messages: RawMemoryMessage[],
   observations: Observation[],
@@ -624,73 +650,6 @@ function getLastObservedMessageIndex(
   }
 
   return lastObservedIndex;
-}
-
-function retainAgentMessageTail(
-  messages: AgentMessage[],
-  retainedRawMessages: RawMemoryMessage[],
-): AgentMessage[] {
-  if (retainedRawMessages.length === 0) {
-    return [];
-  }
-  const retainedIds = new Set(retainedRawMessages.map((message) => message.id));
-  includeToolPairMessages(messages, retainedIds);
-  return messages.filter((message) => {
-    const raw = agentMessageToRaw(message);
-    return raw ? retainedIds.has(raw.id) : false;
-  });
-}
-
-export function includeToolPairMessages(
-  messages: AgentMessage[],
-  retainedIds: Set<RawMemoryMessage["id"]>,
-): void {
-  // Provider APIs generally require every tool result to remain paired with the
-  // assistant message that emitted its tool call, so compaction retains both.
-  const toolCallAssistantIds = new Map<string, RawMemoryMessage["id"]>();
-  const toolResultIds = new Map<string, RawMemoryMessage["id"]>();
-
-  for (const message of messages) {
-    const raw = agentMessageToRaw(message);
-    if (!raw) continue;
-
-    for (const toolCallId of messageToolCallIds(message)) {
-      toolCallAssistantIds.set(toolCallId, raw.id);
-    }
-
-    if (message.role === "toolResult" && "toolCallId" in message) {
-      toolResultIds.set(String(message.toolCallId), raw.id);
-    }
-  }
-
-  for (const [toolCallId, assistantId] of toolCallAssistantIds) {
-    const resultId = toolResultIds.get(toolCallId);
-    if (resultId && retainedIds.has(assistantId)) {
-      retainedIds.add(resultId);
-    }
-    if (resultId && retainedIds.has(resultId)) {
-      retainedIds.add(assistantId);
-    }
-  }
-}
-
-function messageToolCallIds(message: AgentMessage): string[] {
-  if (message.role !== "assistant") return [];
-
-  const content = (message as { content?: unknown }).content;
-  if (!Array.isArray(content)) return [];
-
-  return content
-    .filter(
-      (part): part is { type: string; id: string } =>
-        Boolean(part) &&
-        typeof part === "object" &&
-        "type" in part &&
-        part.type === "toolCall" &&
-        "id" in part &&
-        typeof part.id === "string",
-    )
-    .map((part) => part.id);
 }
 
 export function agentMessagesToRaw(messages: AgentMessage[]): RawMemoryMessage[] {

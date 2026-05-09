@@ -10,7 +10,6 @@ import {
   agentMessageToRaw,
   enforceObservationTokenBudget,
   getUnobservedMessageTail,
-  includeToolPairMessages,
 } from "../src/memory/observational.js";
 import { buildObserverPrompt } from "../src/memory/observational-prompts.js";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
@@ -512,55 +511,6 @@ describe("TurnRunner memory", () => {
     expect(events.at(-1)).toMatchObject({ usage: terminal.usage });
   });
 
-  test("retained tool results keep their matching assistant tool calls", () => {
-    const messages: AgentMessage[] = [
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            id: "toolu_123",
-            name: "bash",
-            arguments: { command: "pwd" },
-          },
-        ],
-        api: "anthropic-messages",
-        provider: "vercel-ai-gateway",
-        model: "anthropic/claude-opus-4.7",
-        usage: {
-          input: 1,
-          output: 1,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 2,
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            total: 0,
-          },
-        },
-        stopReason: "toolUse",
-        responseId: "response_123",
-        timestamp: 1,
-      },
-      {
-        role: "toolResult",
-        toolCallId: "toolu_123",
-        toolName: "bash",
-        content: [{ type: "text", text: "/repo" }],
-        isError: false,
-        timestamp: 2,
-      },
-    ];
-    const retainedIds = new Set(["msg_tool_toolu_123"]);
-
-    includeToolPairMessages(messages, retainedIds);
-
-    expect([...retainedIds].sort()).toEqual(["msg_assistant_response_123", "msg_tool_toolu_123"]);
-  });
-
   test("memory output budget retries once when over budget", async () => {
     let retryTokens: number | undefined;
 
@@ -586,5 +536,40 @@ describe("TurnRunner memory", () => {
 
     expect(result.length).toBeLessThanOrEqual(40);
     expect(result).toContain("y");
+  });
+
+  test("sticky horizon reuses the same eviction across consecutive transform calls", async () => {
+    // Tiny token budget so the trigger fires immediately; the test then
+    // confirms the second call does not advance the horizon further when
+    // the input has not grown past the existing cut.
+    const runner = new MemoryTransformTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+      memory: {
+        observation: { messageTokens: 20, bufferActivation: 5 },
+      },
+    });
+    const transform = runner.createMemoryTransformForTest();
+    const messages: AgentMessage[] = [
+      { role: "user", content: [{ type: "text", text: "x".repeat(80) }], timestamp: 1 },
+      { role: "user", content: [{ type: "text", text: "latest prompt" }], timestamp: 2 },
+    ];
+
+    const firstPass = await transform(messages);
+    const secondPass = await transform(messages);
+
+    // The dispatched lists must be content-equivalent across turns when the
+    // input does not change — that is the whole point of the sticky horizon.
+    expect(secondPass.length).toBe(firstPass.length);
+    for (let i = 0; i < firstPass.length; i++) {
+      expect((secondPass[i] as { content: unknown }).content).toEqual(
+        (firstPass[i] as { content: unknown }).content,
+      );
+    }
+    // Latest prompt always survives.
+    expect(firstPass.at(-1)).toMatchObject({
+      role: "user",
+      content: [{ type: "text", text: "latest prompt" }],
+    });
   });
 });

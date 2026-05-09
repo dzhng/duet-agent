@@ -1,0 +1,153 @@
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+
+/**
+ * Trigger threshold for the dispatched message list. The Vercel AI Gateway
+ * (and the Duet edge that proxies it) caps request bodies at roughly
+ * 4.5 MiB; we hold the trigger at 4.3 MiB to leave ~100 KiB of headroom
+ * for the system prompt, tool definitions, and request envelope that
+ * pi-agent layers on top of `messages` before serializing the body.
+ */
+export const WIRE_BYTE_TRIGGER = Math.floor(4.3 * 1024 * 1024);
+
+/**
+ * When eviction fires, drop oldest messages until the wire payload reaches
+ * this target — well below the trigger — so the next several turns can
+ * grow back up before tripping eviction again. One large block-evict per
+ * crossing is far cheaper for prompt caching than incrementally trimming
+ * on every turn (each advance invalidates the cached prefix once, so
+ * fewer advances = fewer invalidations).
+ */
+export const WIRE_BYTE_TARGET = Math.floor(WIRE_BYTE_TRIGGER * 0.8);
+
+/**
+ * Eviction will not trim below this many recent messages. The latest user
+ * message is the actor's current prompt and must always survive; any
+ * deeper budget shortfall is absorbed by the durable observation memory
+ * that the memory transform prepends to the dispatched message list.
+ */
+const MIN_HISTORY_TAIL = 1;
+
+/**
+ * Sticky eviction point. Pi-agent re-runs `transformContext` on every turn
+ * against the full untransformed history; if the projection's cut moved
+ * every turn, the prompt-cache prefix would be invalidated each time. By
+ * pinning the cut to a timestamp that only advances, the dropped prefix
+ * stays content-deterministic across turns: subsequent turns produce the
+ * same shape and re-hit the provider's prompt cache.
+ *
+ * Tracked in-memory on the runner instance; resets on session resume.
+ * That costs at most one cold cache miss per resume — the provider-side
+ * prompt cache typically does not survive resume gaps anyway, so
+ * persisting the horizon would buy little.
+ */
+export interface WireGuardHorizon {
+  /** Messages with `timestamp <= evictionHorizon` are dropped from the wire. */
+  evictionHorizon: number;
+}
+
+export function createInitialHorizon(): WireGuardHorizon {
+  return { evictionHorizon: 0 };
+}
+
+interface ImageBlock {
+  type: "image";
+  data: string;
+}
+
+interface TextBlock {
+  type: "text";
+  text: string;
+}
+
+function isImageBlock(value: unknown): value is ImageBlock {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { type?: unknown }).type === "image" &&
+    typeof (value as { data?: unknown }).data === "string"
+  );
+}
+
+function isTextBlock(value: unknown): value is TextBlock {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { type?: unknown }).type === "text" &&
+    typeof (value as { text?: unknown }).text === "string"
+  );
+}
+
+function messageTimestamp(msg: AgentMessage): number {
+  return (msg as { timestamp?: number }).timestamp ?? 0;
+}
+
+/**
+ * Bytes contributed by one message to the serialized wire payload. Image
+ * blocks count base64 length, text blocks count UTF-16 length, and other
+ * structured blocks (thinking, toolCall, toolResult details) fall back to
+ * a JSON serialization estimate. Approximate but tracks request body size
+ * closely enough for budget gating.
+ */
+function calculateMessageBytes(msg: AgentMessage): number {
+  const content = (msg as { content?: unknown }).content;
+  if (typeof content === "string") return content.length;
+  if (!Array.isArray(content)) return 0;
+  let total = 0;
+  for (const block of content) {
+    if (isImageBlock(block)) total += block.data.length;
+    else if (isTextBlock(block)) total += block.text.length;
+    else if (block && typeof block === "object") {
+      try {
+        total += JSON.stringify(block).length;
+      } catch {
+        total += 256;
+      }
+    }
+  }
+  return total;
+}
+
+export function calculateWireBytes(messages: AgentMessage[]): number {
+  let total = 0;
+  for (const msg of messages) total += calculateMessageBytes(msg);
+  return total;
+}
+
+/**
+ * Drop messages whose timestamp is at or before the eviction horizon, then
+ * skip any orphan tool results or assistant messages at the new head so
+ * the provider API receives a list that starts with a `user` turn.
+ */
+export function applyEvictionHorizon(messages: AgentMessage[], horizon: number): AgentMessage[] {
+  if (horizon <= 0) return messages;
+  let firstKept = 0;
+  while (firstKept < messages.length && messageTimestamp(messages[firstKept]!) <= horizon) {
+    firstKept += 1;
+  }
+  while (firstKept < messages.length && messages[firstKept]!.role !== "user") {
+    firstKept += 1;
+  }
+  if (firstKept === 0) return messages;
+  return messages.slice(firstKept);
+}
+
+/**
+ * Walk oldest-first, advance the horizon past each message in turn, and
+ * stop when the caller-supplied predicate reports both budgets satisfied.
+ * Will not trim below {@link MIN_HISTORY_TAIL} recent messages. Returns a
+ * horizon at least as advanced as `current` (advance-only).
+ */
+export function findEvictionHorizon(
+  messages: AgentMessage[],
+  current: number,
+  satisfiesBudget: (candidate: AgentMessage[]) => boolean,
+): number {
+  if (messages.length <= MIN_HISTORY_TAIL) return current;
+  const evictable = messages.slice(0, messages.length - MIN_HISTORY_TAIL);
+  let horizon = current;
+  for (const msg of evictable) {
+    horizon = Math.max(horizon, messageTimestamp(msg));
+    if (satisfiesBudget(applyEvictionHorizon(messages, horizon))) break;
+  }
+  return horizon;
+}
