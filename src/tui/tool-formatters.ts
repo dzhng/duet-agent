@@ -107,7 +107,9 @@ export function assembleToolBlock(
     formatted.body && clamp ? clampBodyLines(formatted.body, options.columns) : formatted.body;
   const sections: string[] = [inputBody ? `${headerLine}\n${inputBody}` : headerLine];
   if (formatted.result && formatted.result.body) {
-    const body = clamp ? clampBodyLines(formatted.result.body, options.columns) : formatted.result.body;
+    const body = clamp
+      ? clampBodyLines(formatted.result.body, options.columns)
+      : formatted.result.body;
     sections.push(`${formatted.result.label}\n${body}`);
   }
   return sections.join("\n");
