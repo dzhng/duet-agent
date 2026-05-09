@@ -25,6 +25,9 @@ COMMANDS
 OPTIONS
   -m, --model <name>       TurnRunner model override
   --memory-model <name>    Observational memory model (default inferred from provider env)
+  --provider <name>        Pin the provider and use its catalog default model.
+                            Accepts: duet, vercel, openrouter, anthropic, openai.
+                            Mutually exclusive with --model / --memory-model.
   --no-memory              Keep memory in-process; do not read or write durable memory
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
@@ -61,6 +64,8 @@ EXAMPLES
   duet "build a REST API with Express and TypeScript"
   duet -m gpt-5.5 "analyze the performance of our test suite"
   duet --memory-model sonnet-4.6 "summarize this repo"
+  duet --provider openai "explain this codebase"
+  duet --provider duet "refactor the auth module"
   duet -m opus-4.7 "refactor the auth module"
   duet --system-prompt "Prefer concise answers." "review this repo"
   duet --system-prompt-file TEAM.md "review this repo"

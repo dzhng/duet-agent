@@ -91,3 +91,5 @@ Review: $ARGUMENTS
 If no arguments given, review `git diff --staged` or `git diff` (unstaged changes).
 
 For each issue found, cite the file and line number. Group by category. End with a clean/not-clean verdict.
+
+When the review surfaces simplifications, apply them in the same turn instead of asking for confirmation. After applying, re-run the relevant `tsc`, lint, and tests to confirm everything still passes, then summarize what changed. Only stop to ask when a fix is genuinely ambiguous (e.g. two valid interpretations with different downstream impact).

@@ -112,7 +112,7 @@ export function historyDisplayBlocks(history: readonly AgentMessage[]): HistoryD
         toolName,
         status: message.isError ? "error" : "completed",
         input,
-        output: toFormatterContent(text, message.isError),
+        output: text ? [{ type: "text", text }] : [],
         mode: "history",
       });
       const marker = message.isError ? "✗" : "✓";
@@ -224,7 +224,3 @@ function textFromHistoryContent(content: ReadonlyArray<TextContent | ImageConten
     .join("\n");
 }
 
-function toFormatterContent(text: string, _isError: boolean): ReadonlyArray<TextContent> {
-  if (!text) return [];
-  return [{ type: "text", text }];
-}

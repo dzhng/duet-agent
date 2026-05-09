@@ -224,7 +224,18 @@ duet login
 duet "build a REST API with Express"
 ```
 
-If you would rather manage provider API keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set a provider API key in the environment, `<workdir>/.env`, or `~/.duet/.env`. When `--model` is omitted, the CLI infers a default from the configured provider: Duet, Anthropic, AI Gateway, and OpenRouter use Opus 4.7; OpenAI uses GPT-5.5.
+If you would rather manage provider API keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set a provider API key in the environment, `<workdir>/.env`, or `~/.duet/.env`. When `--model` is omitted, the CLI infers a default from the configured provider: Duet, Anthropic, AI Gateway, and OpenRouter use Opus 4.7 (memory: Haiku 4.5); OpenAI uses GPT-5.5 (memory: GPT-5.4-mini).
+
+Use `--provider <name>` to pin a provider without picking a model — duet will choose the catalog default for chat and memory:
+
+```bash
+duet --provider duet "build a todo app"        # duet-gateway: Opus 4.7 + Haiku 4.5
+duet --provider openai "explain this codebase" # openai: GPT-5.5 + GPT-5.4-mini
+duet --provider anthropic "refactor auth"      # anthropic: Opus 4.7 + Haiku 4.5
+duet --provider vercel "summarize"             # vercel-ai-gateway equivalents
+```
+
+`--provider` is mutually exclusive with `--model` / `--memory-model`. Accepted shorthands: `duet`, `vercel` (alias `ai-gateway`), `openrouter`, `anthropic` (alias `claude`), `openai` (alias `gpt`).
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...
@@ -256,6 +267,9 @@ duet --resume session_abc123 --workdir ./my-project
 # List installed skills (project + user scope)
 duet skills
 
+# Browse, edit, and delete observational memories (alias: duet memories)
+duet memory
+
 # Through Vercel AI Gateway
 export AI_GATEWAY_API_KEY=...
 duet -m opus-4.7 "review this repo"
@@ -263,8 +277,36 @@ duet -m opus-4.7 "review this repo"
 
 Model names can use full `provider:modelId` syntax or shorthand names such as
 `opus-4.7`, `sonnet-4.6`, `haiku-4.5`, and `gpt-5.5`. Shorthands resolve to the
-first configured supported provider; use full `provider:modelId` syntax to pin a
-specific provider.
+first configured supported provider; use full `provider:modelId` syntax — or
+`--provider <name>` — to pin a specific provider.
+
+### CLI TUI
+
+In a TTY, `duet` opens an interactive TUI: live transcript on the left, a
+right-hand sidebar with four panels, and a textarea at the bottom.
+
+- **todos** — the runner's current todo list.
+- **follow-ups** — prompts queued behind the active turn (the working-status
+  line also shows the count).
+- **state machine** — when a state machine is active, lists every state with
+  `▶` marking the current one and the terminal status if reached.
+- **context** — token-usage progress bar against the active model's window.
+
+In the input box:
+
+- `@<query>` opens a file picker; ↑/↓ navigate, Enter / Tab inserts a
+  markdown link like `[app.ts](./src/tui/app.ts)` (basename label, repo-relative
+  target). The model can then read the file via the `read` tool.
+- `/<query>` opens a skill picker that inserts `/skill-name` so the model is
+  primed to call `read_skill`.
+- Enter sends; **Shift+Enter** queues the message as a follow-up while the
+  agent is running, instead of steering the active turn.
+- `Esc` cancels the current pickers; pressed on its own it interrupts the
+  active turn (or quits when idle).
+
+Tool calls render with custom per-tool headers (e.g. `$ <command>`,
+`read <path> (lines a–b)`, `edit <path> (N edits)`, `[question]`). Resumed
+sessions render history through the same formatters so live and replay match.
 
 ### CLI Login
 
@@ -323,7 +365,8 @@ const turnRunner = new TurnRunner({
 });
 
 // `start` is setup-only: loads skills and memory, emits `turn_started`, runs no agent work.
-await turnRunner.start({ mode: "auto" });
+// `mode` defaults to the TurnRunner config above; pass it explicitly only when overriding.
+await turnRunner.start();
 
 const terminal = await turnRunner.turn({
   type: "prompt",
