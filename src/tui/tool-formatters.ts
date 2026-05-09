@@ -48,52 +48,53 @@ export interface FormattedTool {
    *  that mirrors this tool (e.g. `ask`) is expected to handle display. */
   hidden?: boolean;
   /**
-   * Whether the renderer should clamp `result.body` to a small visual height
-   * (header, input body, and result label always render in full). Defaults to
-   * true. Tools that produce structured, scannable output the user is meant
-   * to read in full — todos, state machine status, question/answer replays —
-   * set this to false.
+   * Whether the renderer should clamp `body` (input view) and `result.body`
+   * (output) to a small visual height. Header and result label always render
+   * in full. Defaults to `true`. Tools that produce structured, scannable
+   * content the user is meant to read in full — todos, state machine status,
+   * question/answer replays — set this to `false`.
    */
-  clampOutput?: boolean;
+  clamp?: boolean;
 }
 
 /**
- * Cap noisy tool output (file dumps, search hits) before it enters the
- * assembled block. Bounds raw result text to a sensible number of source
- * lines; the visual clamp below still re-trims the assembled block to fit
- * the terminal.
+ * Generic source-line cap used outside the tool-block pipeline — reasoning
+ * blocks, streaming snippets, and memory traces — to keep noisy text from
+ * dominating the transcript. Tool inputs and outputs go through
+ * `assembleToolBlock`, which applies a width-aware visual clamp instead.
  */
-const TOOL_RESULT_MAX_LINES = 3;
+const TEXT_TRUNCATE_MAX_LINES = 3;
 
 export function truncateToolText(text: string): string {
   const lines = text.split("\n");
-  if (lines.length <= TOOL_RESULT_MAX_LINES) return text;
-  const head = lines.slice(0, TOOL_RESULT_MAX_LINES).join("\n");
-  const remaining = lines.length - TOOL_RESULT_MAX_LINES;
+  if (lines.length <= TEXT_TRUNCATE_MAX_LINES) return text;
+  const head = lines.slice(0, TEXT_TRUNCATE_MAX_LINES).join("\n");
+  const remaining = lines.length - TEXT_TRUNCATE_MAX_LINES;
   return `${head}\n… (+${remaining} more line${remaining === 1 ? "" : "s"})`;
 }
 
 /**
- * Maximum visual rows the result body of a clampable tool may occupy. Header,
- * input body, and the `[result]` / `[error]` label always render in full;
- * only the result *content* is trimmed.
+ * Maximum visual rows the input or output body of a clampable tool may
+ * occupy. Header and the `[result]` / `[error]` label always render in full;
+ * only the body *content* is trimmed.
  */
-export const TOOL_OUTPUT_MAX_LINES = 3;
+export const TOOL_BODY_MAX_LINES = 3;
 
 export interface AssembleToolBlockOptions {
   /**
-   * Width in terminal columns available to the block. When provided, the
-   * result body is soft-wrapped to this width before the row clamp so a
-   * single very long line (e.g. minified JSON) collapses to a few visual
-   * rows plus a "+N more" tail rather than spilling the whole transcript.
+   * Width in terminal columns available to the block. When provided, body
+   * sections are soft-wrapped to this width before the row clamp so a single
+   * very long line (e.g. minified JSON) collapses to a few visual rows plus
+   * a "+N more" tail rather than spilling the whole transcript.
    */
   columns?: number;
 }
 
 /**
- * Assemble a formatted tool block into transcript text. Header and input body
- * always render in full; the result body is clamped to `TOOL_OUTPUT_MAX_LINES`
- * visual rows when `formatted.clampOutput` is left at its default (`true`).
+ * Assemble a formatted tool block into transcript text. Header and result
+ * label always render in full; the input body and result body are clamped to
+ * `TOOL_BODY_MAX_LINES` visual rows when `formatted.clamp` is left at its
+ * default (`true`).
  */
 export function assembleToolBlock(
   formatted: FormattedTool,
@@ -101,29 +102,29 @@ export function assembleToolBlock(
   options: AssembleToolBlockOptions = {},
 ): string {
   const headerLine = `${formatted.header} ${marker}`.trimEnd();
-  const sections: string[] = [formatted.body ? `${headerLine}\n${formatted.body}` : headerLine];
+  const clamp = formatted.clamp !== false;
+  const inputBody =
+    formatted.body && clamp ? clampBodyLines(formatted.body, options.columns) : formatted.body;
+  const sections: string[] = [inputBody ? `${headerLine}\n${inputBody}` : headerLine];
   if (formatted.result && formatted.result.body) {
-    const body =
-      formatted.clampOutput === false
-        ? formatted.result.body
-        : clampResultLines(formatted.result.body, options.columns);
+    const body = clamp ? clampBodyLines(formatted.result.body, options.columns) : formatted.result.body;
     sections.push(`${formatted.result.label}\n${body}`);
   }
   return sections.join("\n");
 }
 
 /**
- * Clamp a tool result body to `TOOL_OUTPUT_MAX_LINES` visual rows. With a
- * `columns` width, each source line is char-wrapped first so wrap rows count
- * toward the cap. The remainder collapses into a `… (+N more line(s))` tail.
+ * Clamp a body section to `TOOL_BODY_MAX_LINES` visual rows. With a `columns`
+ * width, each source line is char-wrapped first so wrap rows count toward
+ * the cap. The remainder collapses into a `… (+N more line(s))` tail.
  */
-function clampResultLines(text: string, columns: number | undefined): string {
+function clampBodyLines(text: string, columns: number | undefined): string {
   const sourceLines = text.split("\n");
   const visualLines =
     columns && columns > 0 ? sourceLines.flatMap((line) => softWrap(line, columns)) : sourceLines;
-  if (visualLines.length <= TOOL_OUTPUT_MAX_LINES) return visualLines.join("\n");
-  const head = visualLines.slice(0, TOOL_OUTPUT_MAX_LINES).join("\n");
-  const remaining = visualLines.length - TOOL_OUTPUT_MAX_LINES;
+  if (visualLines.length <= TOOL_BODY_MAX_LINES) return visualLines.join("\n");
+  const head = visualLines.slice(0, TOOL_BODY_MAX_LINES).join("\n");
+  const remaining = visualLines.length - TOOL_BODY_MAX_LINES;
   return `${head}\n… (+${remaining} more line${remaining === 1 ? "" : "s"})`;
 }
 
@@ -171,7 +172,7 @@ function buildDefaultResult(spec: ToolCallSpec): FormattedTool["result"] {
   if (!text) return undefined;
   const label = spec.status === "error" ? "[error]" : "[result]";
   // Pass the raw text through; `assembleToolBlock` decides whether to clamp
-  // based on the tool's `clampOutput` flag.
+  // based on the tool's `clamp` flag.
   return { label, body: text };
 }
 
@@ -300,7 +301,7 @@ const formatAskUserQuestion: Formatter = (spec) => {
   const answerText = textFromToolContent(spec.output).trim();
   const result = answerText ? { label: "→", body: extractAnswerSummary(answerText) } : undefined;
   // Question/answer replays read better in full; the answer is small.
-  return { header: "[question]", body, result, clampOutput: false };
+  return { header: "[question]", body, result, clamp: false };
 };
 
 function extractAnswerSummary(rawAnswer: string): string {
@@ -343,7 +344,7 @@ const formatTodoWrite: Formatter = (spec) => {
     // todos back, which the body already shows.
     result: undefined,
     // Todo lists are meant to be read in full; never trim them.
-    clampOutput: false,
+    clamp: false,
   };
 };
 
@@ -382,7 +383,7 @@ const formatCreateStateMachine: Formatter = (spec) => {
     body,
     result: buildDefaultResult(spec),
     // State-machine status is structured and short; show it in full.
-    clampOutput: false,
+    clamp: false,
   };
 };
 
@@ -398,14 +399,14 @@ const formatSelectStateMachineState: Formatter = (spec) => {
     header: `→ ${kind}${tail}`,
     body: reasonNote,
     result: buildDefaultResult(spec),
-    clampOutput: false,
+    clamp: false,
   };
 };
 
 const formatGetCurrentStateMachineState: Formatter = (spec) => ({
   header: "state machine status",
   result: buildDefaultResult(spec),
-  clampOutput: false,
+  clamp: false,
 });
 
 const TOOL_FORMATTERS: Record<string, Formatter> = {

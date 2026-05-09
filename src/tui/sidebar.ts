@@ -52,17 +52,30 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     renderer,
     "context",
     "(waiting for usage)",
-    { fixedHeight: 6, grow: false },
+    { fixedHeight: 5, grow: false },
   );
-  // Cumulative session cost rendered as a separate node so it can stay grey
-  // even when the context bar above flips to red on overflow.
-  const costLine = new TextRenderable(renderer, {
-    content: "",
-    fg: COLORS.hint,
+  // Tokens and cost share a single row: tokens left-aligned (matching the
+  // panel's primary color), cost right-aligned in grey so it stays muted
+  // even when the bar above flips to red on overflow.
+  const usageRow = new BoxRenderable(renderer, {
+    flexDirection: "row",
     height: 1,
     flexShrink: 0,
   });
-  contextPanel.add(costLine);
+  const tokensLabel = new TextRenderable(renderer, {
+    content: "",
+    fg: COLORS.hint,
+    flexGrow: 1,
+    flexShrink: 1,
+  });
+  const costLabel = new TextRenderable(renderer, {
+    content: "",
+    fg: COLORS.hint,
+    flexShrink: 0,
+  });
+  usageRow.add(tokensLabel);
+  usageRow.add(costLabel);
+  contextPanel.add(usageRow);
 
   view.add(todoPanel);
   view.add(followUpPanel);
@@ -117,18 +130,19 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
       if (!usage) {
         contextBody.content = "(waiting for usage)";
         contextBody.fg = COLORS.hint;
+        tokensLabel.content = "";
         return;
       }
       const usedTokens = usage.usage.totalTokens;
       const percent = Math.min(1, usedTokens / usage.contextWindow);
-      contextBody.content = [
-        progressBar(percent, 25),
-        `${formatTokenCount(usedTokens)} / ${formatTokenCount(usage.contextWindow)}`,
-      ].join("\n");
-      contextBody.fg = usedTokens >= usage.contextWindow ? COLORS.error : COLORS.agent;
+      contextBody.content = progressBar(percent, 25);
+      const overflow = usedTokens >= usage.contextWindow;
+      contextBody.fg = overflow ? COLORS.error : COLORS.agent;
+      tokensLabel.content = `${formatTokenCount(usedTokens)} / ${formatTokenCount(usage.contextWindow)}`;
+      tokensLabel.fg = overflow ? COLORS.error : COLORS.agent;
     },
     setSessionCost(cost) {
-      costLine.content = cost > 0 ? `cost: $${cost.toFixed(4)}` : "";
+      costLabel.content = cost > 0 ? `$${cost.toFixed(4)}` : "";
     },
   };
 }
