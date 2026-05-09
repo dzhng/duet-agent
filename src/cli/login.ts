@@ -1,3 +1,4 @@
+import { captureCliEvent } from "../lib/analytics.js";
 import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
 import { loginWithBrowser } from "../lib/login.js";
 import { syncDefaultSkills } from "../lib/sync-skills.js";
@@ -55,6 +56,12 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
 
   process.env.DUET_API_KEY = result.apiKey;
   shimDuetApiKeyToAiGateway();
+
+  await captureCliEvent({
+    apiKey: result.apiKey,
+    name: "cli_login",
+    logger: (message) => console.error(message),
+  });
 
   if (skipSkillSync) {
     console.error("Skipping default skill sync (--skip-skill-sync).");
