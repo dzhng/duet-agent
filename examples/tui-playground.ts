@@ -344,7 +344,8 @@ class FakePlaygroundRunner implements SessionTurnRunner {
       {
         toolName: "read_skill",
         input: { name: "release" },
-        output: "# Release\n\nUse this workflow to publish a new version through the GitHub release workflow.",
+        output:
+          "# Release\n\nUse this workflow to publish a new version through the GitHub release workflow.",
       },
       {
         toolName: "ask_user_question",

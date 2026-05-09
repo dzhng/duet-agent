@@ -468,4 +468,3 @@ function formatLineRange(offset?: number, limit?: number): string {
   if (limit !== undefined) return `first ${limit} line${limit === 1 ? "" : "s"}`;
   return "";
 }
-

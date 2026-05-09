@@ -29,7 +29,7 @@ export type SlashAutocompleteGroup = "commands" | "skills";
  * One row in the slash picker. `name` is shown as `/<name>`, the optional
  * `path` is rendered next to it (typically the skill's base dir), and the
  * description is wrapped underneath. `group` controls which header the row
- * appears under — absent group is treated as `"skills"` for legacy callers.
+ * appears under and defaults to `"skills"`.
  */
 export interface SkillAutocompleteItem {
   name: string;
