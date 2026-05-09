@@ -1,5 +1,4 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import {
   BoxRenderable,
   createCliRenderer,
@@ -10,7 +9,6 @@ import {
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
-import { formatCompactJson } from "../lib/compact-json.js";
 import type { Session } from "../session/session.js";
 import type {
   TurnAgentFile,
@@ -73,6 +71,7 @@ export {
 } from "./autocomplete.js";
 export { formatSkillAutocompleteItem } from "./autocomplete.js";
 export { historyDisplayBlocks, limitHistoryDisplayBlocks, startupHeaderLines } from "./history.js";
+import { formatToolBlock, truncateToolText } from "./tool-formatters.js";
 
 export interface RunTuiInput {
   session: Session;
@@ -322,14 +321,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // Tool results can be huge (file dumps, search output). Show only the head
   // in the transcript so the conversation flow stays readable; the full
   // payload remains in session history for the model.
-  const TOOL_RESULT_MAX_LINES = 3;
-  function truncateToolResult(text: string): string {
-    const lines = text.split("\n");
-    if (lines.length <= TOOL_RESULT_MAX_LINES) return text;
-    const head = lines.slice(0, TOOL_RESULT_MAX_LINES).join("\n");
-    const remaining = lines.length - TOOL_RESULT_MAX_LINES;
-    return `${head}\n… (+${remaining} more line${remaining === 1 ? "" : "s"})`;
-  }
+  const truncateToolResult = truncateToolText;
 
   function appendBlock(label: string | null, body: string, fg: string): void {
     beginBlock();
@@ -378,7 +370,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   interface ToolBlock {
     line: TextRenderable;
     toolName: string;
-    inputBody: string;
+    /** Formatter-produced header line, e.g. "$ ls /" or "[question]".
+     *  The renderer prepends the spinner / completion marker live. */
+    header: string;
+    /** Optional input body lines shown under the header. */
+    body: string;
+    /** Original tool input, retained so the finalize pass can re-run the
+     *  formatter with the output and produce a custom `result` section. */
+    input: unknown;
     // Wall-clock start so the running header can show a live elapsed counter
     // and the finalized header can report total tool duration. Undefined when
     // the first event we saw was already terminal (cached/replayed history),
@@ -429,8 +428,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     for (const block of activeToolBlocks.values()) {
       if (block.startedAt === undefined) continue;
       const elapsed = formatToolDuration(Date.now() - block.startedAt);
-      const header = `[tool ${block.toolName}] ⏳ ${elapsed}`;
-      block.line.content = block.inputBody ? `${header}\n${block.inputBody}` : header;
+      const headerLine = `${block.header} ⏳ ${elapsed}`;
+      block.line.content = block.body ? `${headerLine}\n${block.body}` : headerLine;
     }
   }
 
@@ -659,30 +658,51 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // (`status: "running"`) creates the block with a spinner; the second event
   // (`completed` or `error`) replaces the spinner with ✓/✗ and appends the
   // truncated result inline so the call and its outcome stay visually paired.
+  // Per-tool formatters in `tool-formatters.ts` decide the header text and
+  // whether the call should appear in the transcript at all (e.g.
+  // ask_user_question hides itself live and lets the `ask` terminal event
+  // own the question display).
   function renderToolCall(step: Extract<TurnStep, { type: "tool_call" }>): void {
     const existing = activeToolBlocks.get(step.toolCallId);
-    if (!existing) {
-      const inputBody = step.input === undefined ? "" : formatCompactJson(step.input);
-      const isLive = step.status === "running" || step.status === "pending";
-      const startedAt = isLive ? Date.now() : undefined;
-      const header = isLive ? `[tool ${step.toolName}] ⏳ 0.0s` : `[tool ${step.toolName}] ⏳`;
-      const fg = step.status === "error" ? COLORS.error : COLORS.tool;
-      const line = new TextRenderable(renderer, {
-        content: inputBody ? `${header}\n${inputBody}` : header,
-        fg,
-      });
-      beginBlock();
-      transcript.add(line);
-      const block: ToolBlock = { line, toolName: step.toolName, inputBody, startedAt };
-      activeToolBlocks.set(step.toolCallId, block);
-      // The same event may already carry a terminal status (cached/replayed
-      // history). Fall through to finalize against the just-created block.
-      if (step.status !== "running" && step.status !== "pending") {
-        finalizeToolCall(step, block);
-      }
+    if (existing) {
+      finalizeToolCall(step, existing);
       return;
     }
-    finalizeToolCall(step, existing);
+
+    const isLive = step.status === "running" || step.status === "pending";
+    const formatStatus = isLive ? "running" : step.status === "error" ? "error" : "completed";
+    const formatted = formatToolBlock({
+      toolName: step.toolName,
+      status: formatStatus,
+      input: step.input,
+      output: step.output,
+      mode: "live",
+    });
+    if (formatted.hidden) return;
+
+    const startedAt = isLive ? Date.now() : undefined;
+    const headerLine = isLive ? `${formatted.header} ⏳ 0.0s` : `${formatted.header} ⏳`;
+    const fg = step.status === "error" ? COLORS.error : COLORS.tool;
+    const line = new TextRenderable(renderer, {
+      content: formatted.body ? `${headerLine}\n${formatted.body}` : headerLine,
+      fg,
+    });
+    beginBlock();
+    transcript.add(line);
+    const block: ToolBlock = {
+      line,
+      toolName: step.toolName,
+      header: formatted.header,
+      body: formatted.body ?? "",
+      input: step.input,
+      startedAt,
+    };
+    activeToolBlocks.set(step.toolCallId, block);
+    // The same event may already carry a terminal status (cached/replayed
+    // history). Fall through to finalize against the just-created block.
+    if (!isLive) {
+      finalizeToolCall(step, block);
+    }
   }
 
   function finalizeToolCall(
@@ -691,17 +711,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   ): void {
     const isError = step.status === "error";
     const marker = isError ? "✗" : "✓";
-    const header =
-      block.startedAt === undefined
-        ? `[tool ${block.toolName}] ${marker}`
-        : `[tool ${block.toolName}] ${marker} ${formatToolDuration(Date.now() - block.startedAt)}`;
-    const sections = [block.inputBody ? `${header}\n${block.inputBody}` : header];
-    if (step.output && step.output.length > 0) {
-      const text = textFromContent(step.output);
-      if (text) {
-        const label = isError ? "[error]" : "[result]";
-        sections.push(`${label}\n${truncateToolResult(text)}`);
-      }
+    const durationSuffix =
+      block.startedAt === undefined ? "" : ` ${formatToolDuration(Date.now() - block.startedAt)}`;
+    const headerLine = `${block.header} ${marker}${durationSuffix}`;
+    const formatted = formatToolBlock({
+      toolName: block.toolName,
+      status: isError ? "error" : "completed",
+      input: block.input,
+      output: step.output,
+      mode: "live",
+    });
+    const sections = [formatted.body ? `${headerLine}\n${formatted.body}` : headerLine];
+    if (formatted.result && formatted.result.body) {
+      sections.push(`${formatted.result.label}\n${formatted.result.body}`);
     }
     block.line.content = sections.join("\n");
     block.line.fg = isError ? COLORS.error : COLORS.tool;
@@ -1277,13 +1299,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   return lastTerminal;
 
   // --------------------------------------------------------------------------
-
-  function textFromContent(content: ReadonlyArray<TextContent | ImageContent>): string {
-    return content
-      .filter((b): b is TextContent => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
-  }
 
   function appendDisplayBlock(block: HistoryDisplayBlock): void {
     appendBlock(null, block.content, colorForHistoryBlock(block.kind));

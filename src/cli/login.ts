@@ -66,6 +66,6 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
   if (syncResult.status === "unchanged") {
     console.error("Default skills already up to date.");
   } else {
-    console.error(`Synced ${syncResult.count} default skills.`);
+    console.error(`Synced default skills (${syncResult.count} total).`);
   }
 }
