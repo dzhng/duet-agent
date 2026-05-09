@@ -370,13 +370,18 @@ function clipboardProbesForPlatform(): ClipboardProbe[] {
   const os = platform();
   if (os === "darwin") {
     return [
-      // Cheap path: pngpaste handles every NSImage representation natively
-      // when the user has installed it via Homebrew.
+      // First: NSPasteboard via the ObjC bridge (JXA). This is the only
+      // reader that materializes "promise items" — the lazy clipboard slots
+      // Chromium-based apps (Figma, Slack desktop, browsers) use for
+      // images. AppleScript class-code reads do not trigger the promise.
+      readMacClipboardViaJxa,
+      // Cheap path when installed: pngpaste handles every NSImage
+      // representation natively.
       readClipboardViaCommand("pngpaste", ["-"]),
-      // Real-world clipboards rarely hold a literal `«class PNGf»`. Even
-      // "Copy as PNG" in apps like Figma typically lands on the pasteboard
-      // as TIFF (NSImage's native flavor). Probe each common image class in
-      // order and convert non-PNG flavors via macOS's built-in `sips`.
+      // Last-resort AppleScript class probes for older clipboards that JXA
+      // still cannot read. Convert non-PNG flavors via macOS's built-in
+      // `sips` so the rest of the pipeline only sees one of the four MIME
+      // types we accept.
       readMacClipboardClass("PNGf", ".png", null),
       readMacClipboardClass("TIFF", ".tiff", "png"),
       readMacClipboardClass("JPEG", ".jpg", "png"),
@@ -394,6 +399,77 @@ function clipboardProbesForPlatform(): ClipboardProbe[] {
     return [readWindowsClipboardViaPowerShell];
   }
   return [];
+}
+
+/**
+ * macOS clipboard → PNG via JavaScript for Automation (JXA) and the ObjC
+ * bridge to NSPasteboard. JXA ships with every macOS install since 10.10,
+ * so we get a real Cocoa-level pasteboard reader at no install cost.
+ *
+ * Works for clipboards that AppleScript class-code reads cannot see, in
+ * particular the NSPasteboard "promise items" that Chromium-based apps
+ * (Figma, Slack desktop, web browsers) use to defer image generation.
+ *
+ * Tries supported public UTIs in order: PNG → JPEG → TIFF → GIF → BMP → PDF.
+ * Non-PNG payloads are written to a temp file and transcoded to PNG via
+ * `sips` so the rest of the pipeline only ever sees one of the four MIME
+ * types we accept.
+ */
+async function readMacClipboardViaJxa(): Promise<Uint8Array | undefined> {
+  const stamp = `${Date.now()}-${process.pid}`;
+  const rawPath = join(tmpdir(), `duet-jxa-${stamp}.bin`);
+  const pngPath = join(tmpdir(), `duet-jxa-${stamp}.png`);
+  const script = `
+    ObjC.import('AppKit');
+    ObjC.import('Foundation');
+    const pb = $.NSPasteboard.generalPasteboard;
+    const utis = [
+      ['public.png', 'png'],
+      ['public.jpeg', 'jpeg'],
+      ['public.tiff', 'tiff'],
+      ['com.compuserve.gif', 'gif'],
+      ['com.microsoft.bmp', 'bmp'],
+      ['com.adobe.pdf', 'pdf'],
+    ];
+    for (const [uti, kind] of utis) {
+      const data = pb.dataForType(uti);
+      if (data && !data.isNil() && data.length > 0) {
+        const ok = data.writeToFileAtomically($(${JSON.stringify(rawPath)}), true);
+        if (ok) {
+          console.log(JSON.stringify({ ok: true, kind }));
+          break;
+        }
+      }
+    }
+  `;
+  let resultJson = "";
+  try {
+    const result = await runCommand("osascript", ["-l", "JavaScript", "-e", script]);
+    if (result.code !== 0) return undefined;
+    resultJson = result.stdout.trim();
+    if (!resultJson) return undefined;
+    const parsed = JSON.parse(resultJson) as { ok?: boolean; kind?: string };
+    if (!parsed.ok || !parsed.kind) return undefined;
+
+    if (parsed.kind === "png") {
+      return new Uint8Array(await readFile(rawPath));
+    }
+    // Transcode any non-PNG payload to PNG via sips so the pipeline only
+    // has to deal with the four image MIME types we already accept.
+    const conv = await runCommand("sips", ["-s", "format", "png", rawPath, "--out", pngPath]);
+    if (conv.code !== 0) return undefined;
+    return new Uint8Array(await readFile(pngPath));
+  } catch {
+    return undefined;
+  } finally {
+    for (const path of [rawPath, pngPath]) {
+      try {
+        await unlink(path);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 /**
@@ -467,12 +543,31 @@ function readMacClipboardClass(
  */
 export async function describeMacClipboardTypes(): Promise<string | undefined> {
   if (platform() !== "darwin") return undefined;
+  // Prefer JXA: NSPasteboard.types returns the real UTI list, including
+  // `public.png`, `org.chromium.*`, and any custom UTIs the source app
+  // advertised. AppleScript's `clipboard info` only surfaces the legacy
+  // four-letter class codes and misses Chromium-style promise items.
+  try {
+    const jxa = await runCommand("osascript", [
+      "-l",
+      "JavaScript",
+      "-e",
+      "ObjC.import('AppKit'); JSON.stringify(ObjC.deepUnwrap($.NSPasteboard.generalPasteboard.types))",
+    ]);
+    if (jxa.code === 0 && jxa.stdout && jxa.stdout.startsWith("[")) {
+      return jxa.stdout;
+    }
+  } catch {
+    /* fall through to AppleScript */
+  }
   try {
     const result = await runCommand("osascript", [
       "-e",
       'try\nreturn (clipboard info) as text\non error e\nreturn "err:" & e\nend try',
     ]);
-    if (result.code !== 0 || !result.stdout || result.stdout.startsWith("err:")) return undefined;
+    if (result.code !== 0 || !result.stdout || result.stdout.startsWith("err:")) {
+      return undefined;
+    }
     return result.stdout;
   } catch {
     return undefined;

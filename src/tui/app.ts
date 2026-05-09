@@ -1405,12 +1405,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         // up empty — lets users see what their source app actually put
         // there so the failure stops being mysterious.
         const types = await describeMacClipboardTypes();
-        const detail = types ? ` — clipboard types: ${types}` : "";
-        appendBlock(
-          "[paste]",
-          `clipboard had no readable image or text${detail}`,
-          COLORS.system,
-        );
+        const detail = types
+          ? ` — clipboard types: ${types}`
+          : " — (could not query clipboard types; clipboard may be empty)";
+        appendBlock("[paste]", `clipboard had no readable image or text${detail}`, COLORS.system);
       }
     } catch (error) {
       appendBlock(
