@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-  composeFormattedToolBlock,
+  assembleToolBlock,
   formatToolBlock,
   truncateToolText,
 } from "../src/tui/tool-formatters.js";
@@ -201,7 +201,7 @@ describe("historyDisplayBlocks > shared formatter parity", () => {
     ]);
 
     expect(blocks).toHaveLength(1);
-    const composed = composeFormattedToolBlock(
+    const composed = assembleToolBlock(
       formatToolBlock({
         toolName: "bash",
         status: "completed",

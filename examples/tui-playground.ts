@@ -121,8 +121,8 @@ class FakePlaygroundRunner implements SessionTurnRunner {
     }
 
     if (message.startsWith("/tools-demo")) {
-      await this.runToolsDemo();
-      return this.complete("Tools demo finished.");
+      const askTerminal = await this.runToolsDemo();
+      return askTerminal ?? this.complete("Tools demo finished.");
     }
 
     if (message.startsWith("/tools")) {
@@ -247,11 +247,11 @@ class FakePlaygroundRunner implements SessionTurnRunner {
 
   /**
    * Walks through the per-tool formatters with intentionally chunky inputs
-   * and outputs so the visual clamp (`clampToolBlockLines`) can be eyeballed
+   * and outputs so the per-tool result clamp (`assembleToolBlock`) can be eyeballed
    * without standing up a real model. Each call runs briefly with a spinner
    * before completing so live-finalize logic also exercises.
    */
-  private async runToolsDemo(): Promise<void> {
+  private async runToolsDemo(): Promise<TurnTerminalEvent | undefined> {
     const longJson = `interface AgentMessage { role: "user" | "assistant" | "tool"; content: ContentBlock[]; metadata: { traceId: string; createdAt: number; tags: string[]; }; }`;
     const grepHits = Array.from(
       { length: 42 },
@@ -318,6 +318,84 @@ class FakePlaygroundRunner implements SessionTurnRunner {
         },
       },
       {
+        toolName: "ls",
+        input: { path: "src/tui" },
+        output: ["app.ts", "history.ts", "paste.ts", "sidebar.ts", "theme.ts", "tool-formatters.ts"]
+          .map((name) => `- ${name}`)
+          .join("\n"),
+      },
+      {
+        toolName: "find",
+        input: { pattern: "*.eval.ts", path: "evals/" },
+        output: [
+          "evals/observer-priority.eval.ts",
+          "evals/state-machine.eval.ts",
+          "evals/memory-recall.eval.ts",
+        ].join("\n"),
+      },
+      {
+        toolName: "write",
+        input: {
+          path: "src/tui/scratch.ts",
+          content: `// auto-generated scratchpad\nexport const HELLO = "world";\n`,
+        },
+        output: "wrote 56 bytes",
+      },
+      {
+        toolName: "read_skill",
+        input: { name: "release" },
+        output: "# Release\n\nUse this workflow to publish a new version through the GitHub release workflow.",
+      },
+      {
+        toolName: "ask_user_question",
+        input: {
+          questions: [
+            {
+              question: "Pick a deployment target",
+              header: "Deploy",
+              options: [
+                { label: "staging" },
+                { label: "production", description: "requires approval" },
+              ],
+            },
+          ],
+        },
+        // Live formatter hides ask_user_question (the runner emits an `ask`
+        // terminal event for the picker). Included here mostly to document
+        // that path; the demo falls through with no transcript entry.
+      },
+      {
+        toolName: "create_state_machine_definition",
+        input: {
+          definition: {
+            name: "release-pipeline",
+            states: [
+              { name: "verify", kind: "agent" },
+              { name: "wait-for-ci", kind: "poll", intervalMs: 60_000 },
+              { name: "publish", kind: "agent" },
+              { name: "announce", kind: "agent" },
+            ],
+          },
+        },
+        output: "state machine registered",
+      },
+      {
+        toolName: "select_state_machine_state",
+        input: {
+          decision: {
+            kind: "transition",
+            state: "wait-for-ci",
+            reason: "verify completed; CI workflow dispatched, polling for green checks",
+          },
+        },
+        output: "moved to wait-for-ci",
+      },
+      {
+        toolName: "get_current_state_machine_state",
+        input: {},
+        output: "current: wait-for-ci\nwakeAt: 2026-05-09T18:30:00Z\nattempts: 2",
+      },
+      {
         toolName: "mystery_tool",
         input: {
           deeplyNested: {
@@ -353,7 +431,7 @@ class FakePlaygroundRunner implements SessionTurnRunner {
         },
       });
       await this.sleep(400);
-      if (this.interrupted) return;
+      if (this.interrupted) return undefined;
       this.emit({
         type: "step",
         step: {
@@ -366,8 +444,26 @@ class FakePlaygroundRunner implements SessionTurnRunner {
         },
       });
       await this.sleep(120);
-      if (this.interrupted) return;
+      if (this.interrupted) return undefined;
     }
+
+    // Cap the demo with an `ask` terminal so the question UI is exercised
+    // even though `ask_user_question` hides itself live (the runner owns the
+    // picker via this terminal event).
+    return {
+      type: "ask",
+      state: { ...this.state, status: "waiting_for_human" },
+      questions: [
+        {
+          question: "Pick a deployment target",
+          header: "Deploy",
+          options: [
+            { label: "staging" },
+            { label: "production", description: "requires approval" },
+          ],
+        },
+      ],
+    };
   }
 
   private async runMemoryPhase(

@@ -37,6 +37,7 @@ import {
   activeSkillAutocompleteToken,
   AUTOCOMPLETE_LIMITS,
   type FileAutocompleteItem,
+  BUILT_IN_SLASH_COMMANDS,
   fileAutocompleteMatches,
   formatQuestionOptionDescription,
   formatSkillAutocompleteDescription,
@@ -45,6 +46,7 @@ import {
   questionPickerAnswerPayload,
   type SkillAutocompleteItem,
   skillAutocompleteMatches,
+  type SlashAutocompleteGroup,
 } from "./autocomplete.js";
 import { buildFileIndex } from "./file-index.js";
 import {
@@ -89,12 +91,7 @@ export {
   limitHistoryDisplayBlocks,
   startupHeaderLines,
 } from "./history.js";
-import {
-  assembleToolBlock,
-  clampToolBlockLines,
-  formatToolBlock,
-  truncateToolText,
-} from "./tool-formatters.js";
+import { assembleToolBlock, formatToolBlock, truncateToolText } from "./tool-formatters.js";
 
 export interface RunTuiInput {
   session: Session;
@@ -203,13 +200,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   });
   skillAutocompletePanel.visible = false;
 
-  const skillAutocompleteTitle = new TextRenderable(renderer, {
-    content: "skills",
-    fg: COLORS.status,
-    height: 1,
-    flexShrink: 0,
-  });
-  const skillAutocompleteRows = Array.from({ length: SKILL_AUTOCOMPLETE_LIMIT }, () => {
+  // Two ordered sections: built-in commands first, skills second. Each
+  // section has its own header row plus a fixed pool of item rows. Selection
+  // navigates the flat ordered list of visible items across both sections.
+  const makeItemRow = () => {
     const row = new TextRenderable(renderer, {
       content: "",
       fg: COLORS.hint,
@@ -218,11 +212,22 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     });
     row.visible = false;
     return row;
-  });
-  skillAutocompletePanel.add(skillAutocompleteTitle);
-  for (const row of skillAutocompleteRows) {
-    skillAutocompletePanel.add(row);
-  }
+  };
+  const makeHeaderRow = (label: string) =>
+    new TextRenderable(renderer, {
+      content: label,
+      fg: COLORS.status,
+      height: 1,
+      flexShrink: 0,
+    });
+  const commandHeader = makeHeaderRow("commands");
+  const commandRows = Array.from({ length: BUILT_IN_SLASH_COMMANDS.length }, makeItemRow);
+  const skillHeader = makeHeaderRow("skills");
+  const skillRows = Array.from({ length: SKILL_AUTOCOMPLETE_LIMIT }, makeItemRow);
+  skillAutocompletePanel.add(commandHeader);
+  for (const row of commandRows) skillAutocompletePanel.add(row);
+  skillAutocompletePanel.add(skillHeader);
+  for (const row of skillRows) skillAutocompletePanel.add(row);
 
   // The @-file picker mirrors the slash picker's structure so the renderer
   // logic and key handling can stay parallel between the two pickers.
@@ -455,12 +460,23 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function refreshActiveToolBlocks(): void {
     if (activeToolBlocks.size === 0) return;
+    const columns = toolBlockColumns();
     for (const block of activeToolBlocks.values()) {
       if (block.startedAt === undefined) continue;
-      const elapsed = formatElapsed(Date.now() - block.startedAt);
-      const headerLine = `${block.header} ⏳ ${elapsed}`;
-      block.line.content = block.body ? `${headerLine}\n${block.body}` : headerLine;
+      block.line.content = assembleToolBlock(
+        { header: block.header, body: block.body || undefined },
+        runningMarker(Date.now() - block.startedAt),
+        { columns },
+      );
     }
+  }
+
+  /**
+   * Spinner marker for an in-flight tool call. Hides the elapsed counter for
+   * sub-second runs so a transcript of fast tools is not littered with "0s".
+   */
+  function runningMarker(elapsedMs: number): string {
+    return elapsedMs >= 1000 ? `⏳ ${formatElapsed(elapsedMs)}` : "⏳";
   }
 
   function startWorkingTicker(): void {
@@ -707,16 +723,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (formatted.hidden) return;
 
     const startedAt = isLive ? Date.now() : undefined;
-    const marker = isLive ? "⏳ 0s" : "⏳";
+    const marker = "⏳";
     const fg = step.status === "error" ? COLORS.error : COLORS.tool;
     const columns = toolBlockColumns();
     const line = new TextRenderable(renderer, {
-      content: clampToolBlockLines(assembleToolBlock(formatted, marker), { columns }),
+      content: assembleToolBlock(formatted, marker, { columns }),
       fg,
-      // Block content is already soft-wrapped to `columns`; tell the renderer
-      // not to re-wrap so width-estimation slack cannot push the block over
-      // the row cap.
-      wrapMode: "none",
     });
     beginBlock();
     transcript.add(line);
@@ -741,8 +753,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   ): void {
     const isError = step.status === "error";
     const glyph = isError ? "✗" : "✓";
-    const durationSuffix =
-      block.startedAt === undefined ? "" : ` ${formatElapsed(Date.now() - block.startedAt)}`;
+    const elapsedMs = block.startedAt === undefined ? 0 : Date.now() - block.startedAt;
+    // Sub-second runs drop the elapsed suffix so the transcript does not get
+    // littered with "0s" markers from fast tools (read, ls, todo_write, …).
+    const durationSuffix = elapsedMs >= 1000 ? ` ${formatElapsed(elapsedMs)}` : "";
     const formatted = formatToolBlock({
       toolName: step.toolName,
       status: isError ? "error" : "completed",
@@ -750,10 +764,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       output: step.output,
       mode: "live",
     });
-    block.line.content = clampToolBlockLines(
-      assembleToolBlock(formatted, `${glyph}${durationSuffix}`),
-      { columns: toolBlockColumns() },
-    );
+    block.line.content = assembleToolBlock(formatted, `${glyph}${durationSuffix}`, {
+      columns: toolBlockColumns(),
+    });
     block.line.fg = isError ? COLORS.error : COLORS.tool;
     activeToolBlocks.delete(step.toolCallId);
   }
@@ -855,7 +868,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     skillAutocompleteItems = [];
     skillAutocompleteSelectedIndex = 0;
     skillAutocompletePanel.visible = false;
-    for (const row of skillAutocompleteRows) {
+    commandHeader.visible = false;
+    skillHeader.visible = false;
+    for (const row of [...commandRows, ...skillRows]) {
       row.visible = false;
       row.content = "";
     }
@@ -1016,15 +1031,26 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderSkillAutocomplete(): void {
     skillAutocompletePanel.visible = skillAutocompleteItems.length > 0;
-    for (const [index, row] of skillAutocompleteRows.entries()) {
-      const item = skillAutocompleteItems[index];
-      if (!item) {
-        row.visible = false;
-        row.content = "";
-        continue;
-      }
 
-      const selected = index === skillAutocompleteSelectedIndex;
+    // Distribute matched items into the two section row pools by group. The
+    // selection index navigates the flat list, so we track each item's flat
+    // position to highlight the correct row regardless of section.
+    const groups: Record<SlashAutocompleteGroup, { rows: TextRenderable[]; cursor: number }> = {
+      commands: { rows: commandRows, cursor: 0 },
+      skills: { rows: skillRows, cursor: 0 },
+    };
+    for (const row of [...commandRows, ...skillRows]) {
+      row.visible = false;
+      row.content = "";
+    }
+
+    for (const [flatIndex, item] of skillAutocompleteItems.entries()) {
+      const groupKey = item.group ?? "skills";
+      const slot = groups[groupKey];
+      const row = slot.rows[slot.cursor];
+      if (!row) continue;
+      slot.cursor += 1;
+      const selected = flatIndex === skillAutocompleteSelectedIndex;
       const nameColor = selected ? COLORS.status : COLORS.user;
       const pathColor = selected ? COLORS.agent : COLORS.hint;
       const description = formatSkillAutocompleteDescription(item.description);
@@ -1034,6 +1060,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       row.fg = selected ? COLORS.agent : COLORS.hint;
       row.visible = true;
     }
+
+    commandHeader.visible = groups.commands.cursor > 0;
+    skillHeader.visible = groups.skills.cursor > 0;
   }
 
   function renderFileAutocomplete(): void {
@@ -1506,11 +1535,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     input.session.getSkills(),
     input.session.getResolvedAgentFiles(),
   ]);
-  skillAutocompleteSkills = skills.map((skill) => ({
-    name: skill.name,
-    description: skill.description,
-    path: skill.baseDir,
-  }));
+  skillAutocompleteSkills = [
+    ...BUILT_IN_SLASH_COMMANDS,
+    ...skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      path: skill.baseDir,
+      group: "skills" as const,
+    })),
+  ];
   refreshAutocomplete();
   renderSetupIntro(skills, agentFiles);
   refreshSidebar();
