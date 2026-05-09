@@ -201,6 +201,13 @@ export interface ObservationalContextTransformOptions {
 
 export interface ObservationalMemoryUpdateOptions {
   memory: MemoryStore;
+  /**
+   * Session that owns the runner. Stamped onto every observation and
+   * reflection produced by this update so the loader can later split
+   * memory into the current session's local layer and every other
+   * session's global layer.
+   */
+  sessionId?: string;
   settings?: ObservationalMemorySettingsInput;
   actorModel: string;
   messages: AgentMessage[];
@@ -355,6 +362,7 @@ export async function updateObservationalMemory(
       unobservedMessages,
       snapshot.observations,
       settings,
+      options.sessionId,
       options.actorModel,
       options.onUsage,
     );
@@ -380,6 +388,7 @@ export async function updateObservationalMemory(
     const reflections = await reflectObservations(
       options.memory,
       settings,
+      options.sessionId,
       options.actorModel,
       options.onUsage,
     );
@@ -454,6 +463,7 @@ async function activateObservations(
   messages: RawMemoryMessage[],
   previousObservations: Observation[],
   settings: ObservationalMemorySettings,
+  sessionId: string | undefined,
   model: string,
   onUsage?: (usage: Usage) => void,
 ): Promise<Observation | undefined> {
@@ -468,6 +478,7 @@ async function activateObservations(
   const range = `${messages[0]?.id ?? "unknown"}:${messages[messages.length - 1]?.id ?? "unknown"}`;
   return store.appendObservation({
     kind: "observation",
+    ...(sessionId !== undefined ? { sessionId } : {}),
     observedDate: new Date().toISOString().slice(0, 10),
     timeOfDay: new Date().toISOString().slice(11, 16),
     priority: inferPriority(observations.observations),
@@ -480,6 +491,7 @@ async function activateObservations(
 async function reflectObservations(
   store: MemoryStore,
   settings: ObservationalMemorySettings,
+  sessionId: string | undefined,
   model: string,
   onUsage?: (usage: Usage) => void,
 ): Promise<Observation[] | undefined> {
@@ -517,6 +529,7 @@ async function reflectObservations(
     id: createMemoryId(),
     createdAt: Date.now(),
     kind: "reflection",
+    ...(sessionId !== undefined ? { sessionId } : {}),
     observedDate: new Date().toISOString().slice(0, 10),
     timeOfDay: new Date().toISOString().slice(11, 16),
     priority: "high",

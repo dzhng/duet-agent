@@ -1036,6 +1036,7 @@ export class TurnRunner {
     }
     await updateObservationalMemory({
       memory: this.memory,
+      sessionId: this.config.sessionId,
       actorModel: this.resolveMemoryActorModel(options),
       settings: this.config.memory,
       messages,

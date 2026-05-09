@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import { Session, type SessionTurnRunner } from "../src/session/session.js";
+import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import {
   DEFAULT_MEMORY_DB_PATH,
   DEFAULT_SESSION_STORAGE_DIR,
@@ -186,6 +187,20 @@ async function writeStoredState(sessionPath: string, state: TurnState): Promise<
 }
 
 describe("Session", () => {
+  test("plumbs sessionId into the runner config so memory writes can be tagged", async () => {
+    // Real TurnRunner construction path — the FakeTurnRunner shortcut
+    // skips the config copy this test is verifying.
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
+    tempDirs.push(tempDir);
+    const session = new Session(
+      { model: "anthropic:claude-opus-4-7", memoryDbPath: false },
+      { id: "session_under_test", sessionPath: tempDir },
+    );
+    const runner = (session as unknown as { runner: TurnRunner }).runner;
+    expect(runner.config.sessionId).toBe("session_under_test");
+    await session.dispose();
+  });
+
   testIfDocker("starts a session without waiting for the runner terminal event", async () => {
     const runner = new FakeTurnRunner([complete()]);
     const session = await createSession(runner);

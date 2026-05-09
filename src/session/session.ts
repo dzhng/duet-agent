@@ -119,7 +119,11 @@ export class Session {
   ) {
     this.id = options.id;
     this.resumeFromStorage = options.resumeFromStorage ?? Boolean(options.id);
-    this.runner = options.runner ?? new TurnRunner(config);
+    // Thread the session id into the runner config so observations the
+    // observer/reflector write are tagged with this session. The memory
+    // loader uses session id to separate local memory (this session) from
+    // global memory (every other session, ranked into a budget).
+    this.runner = options.runner ?? new TurnRunner({ ...config, sessionId: options.id });
     this.sessionPath = options.sessionPath;
     this.unsubscribeRunner = this.runner.subscribe((event) => void this.handleTurnEvent(event));
   }
