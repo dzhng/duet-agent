@@ -32,7 +32,6 @@ export interface StartupHeaderInput {
   modelSource?: string;
   memoryModelName: string;
   memoryModelSource?: string;
-  newVersionNotice?: string;
 }
 
 /**
@@ -158,7 +157,6 @@ export function startupHeaderLines(input: StartupHeaderInput): string[] {
       ? `[memory model] ${input.memoryModelName} — ${input.memoryModelSource}`
       : `[memory model] ${input.memoryModelName}`,
   ];
-  if (input.newVersionNotice) lines.push(input.newVersionNotice);
   return lines;
 }
 

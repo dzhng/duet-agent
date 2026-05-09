@@ -110,8 +110,13 @@ export interface RunTuiInput {
   memoryModelName: string;
   /** Human-readable provenance for memoryModelName. */
   memoryModelSource?: string;
-  /** Best-effort package update notice, shown in-TUI because stderr is hidden. */
-  newVersionNotice?: string;
+  /**
+   * Pending probe for a package update notice. The TUI renders a placeholder
+   * line in the intro and replaces it with the notice once the probe settles.
+   * Resolves to undefined when the user is already on the latest version or
+   * the registry lookup failed.
+   */
+  versionNoticePromise?: Promise<string | undefined>;
   /** Past messages to replay into the transcript on resume. */
   history?: AgentMessage[];
   /** Maximum prior-session display lines to replay on resume; 0 disables replay. */
@@ -584,8 +589,23 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     for (const line of DUET_BANNER_LINES) appendLine(line, COLORS.status);
     const [title, ...details] = startupHeaderLines(input);
     appendLine(title ?? "[duet]", COLORS.status);
-    for (const line of details) {
-      appendLine(line, line === input.newVersionNotice ? COLORS.system : COLORS.hint);
+    for (const line of details) appendLine(line, COLORS.hint);
+
+    if (input.versionNoticePromise) {
+      const versionLine = new TextRenderable(renderer, {
+        content: "[version] checking for updates…",
+        fg: COLORS.hint,
+      });
+      transcript.add(versionLine);
+      void input.versionNoticePromise.then((notice) => {
+        if (notice) {
+          versionLine.content = notice;
+          versionLine.fg = COLORS.system;
+        } else {
+          transcript.remove(versionLine.id);
+          versionLine.destroy();
+        }
+      });
     }
 
     if (agentFiles.length === 0) {

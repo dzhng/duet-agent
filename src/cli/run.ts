@@ -105,6 +105,14 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   const promptParts: string[] = [];
   const interactive = isInteractive();
 
+  // Kick off the npm registry probe immediately so it overlaps with env
+  // loading, model resolution, skill discovery, and session bootstrap. JSON
+  // callers await the result; the TUI path only consumes it if it has already
+  // settled by the time we render, so a slow registry never delays first paint.
+  const versionNoticePromise = getNewVersionNotice(pkg.name, pkg.version).catch(
+    () => undefined,
+  );
+
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case "--model":
@@ -243,8 +251,11 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   const useTui = shouldUseTui({ interactive, jsonOutput, prompt });
   const useJson = !useTui;
 
-  const newVersionNotice = await getNewVersionNotice(pkg.name, pkg.version);
+  // JSON consumers are already waiting for stderr output, so blocking on the
+  // probe is fine. The TUI never blocks here — it consumes the promise
+  // directly and swaps in the notice once the probe settles.
   if (useJson) {
+    const newVersionNotice = await versionNoticePromise;
     if (newVersionNotice) process.stderr.write(`${newVersionNotice}\n`);
     process.stderr.write(`Model: ${modelName}\n`);
     process.stderr.write(`Source: ${describeModelResolution(modelResolution)}\n`);
@@ -305,7 +316,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         workDir,
         sessionId: session.id,
         packageVersion: pkg.version,
-        ...(newVersionNotice ? { newVersionNotice } : {}),
+        versionNoticePromise,
       });
     }
 
