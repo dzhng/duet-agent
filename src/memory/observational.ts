@@ -38,6 +38,18 @@ import {
 } from "./observational-prompts.js";
 
 export const OBSERVATIONAL_MEMORY_DEFAULTS = {
+  // Token budget for the global memory layer rendered ahead of message
+  // history. Sized to fit the highest-signal cross-session reflections
+  // without crowding out the local layer or message tail. See
+  // ObservationalMemorySettings.globalContextTokenBudget for the full
+  // rationale.
+  globalContextTokenBudget: 8_000,
+  // 7 days picked to keep last-week's context current while letting
+  // month-old chatter decay out of the global pack. Tunable per-caller.
+  recencyHalfLifeMs: 7 * 24 * 60 * 60 * 1000,
+  // 1.3 keeps reflections preferred at matched priority/recency without
+  // shutting raw observations out of the global pack entirely.
+  reflectionBias: 1.3,
   observation: {
     // Observe before the actor window gets tight; prompt caching keeps the exact
     // tail cheap while memory preserves older task state.
@@ -207,7 +219,10 @@ export function resolveObservationalMemorySettings(
   const partial = input ?? {};
 
   return {
-    scope: partial.scope ?? "session",
+    globalContextTokenBudget:
+      partial.globalContextTokenBudget ?? OBSERVATIONAL_MEMORY_DEFAULTS.globalContextTokenBudget,
+    recencyHalfLifeMs: partial.recencyHalfLifeMs ?? OBSERVATIONAL_MEMORY_DEFAULTS.recencyHalfLifeMs,
+    reflectionBias: partial.reflectionBias ?? OBSERVATIONAL_MEMORY_DEFAULTS.reflectionBias,
     observation: {
       messageTokens:
         partial.observation?.messageTokens ??
@@ -235,7 +250,7 @@ export function resolveObservationalMemorySettings(
       blockAfter: partial.reflection?.blockAfter,
       instruction: partial.reflection?.instruction,
     },
-    retrieval: partial.retrieval ?? false,
+    retrieval: partial.retrieval ?? true,
     shareTokenBudget: partial.shareTokenBudget ?? false,
     temporalMarkers: partial.temporalMarkers ?? false,
     activateAfterIdle: partial.activateAfterIdle,
@@ -452,10 +467,10 @@ async function activateObservations(
 
   const range = `${messages[0]?.id ?? "unknown"}:${messages[messages.length - 1]?.id ?? "unknown"}`;
   return store.appendObservation({
+    kind: "observation",
     observedDate: new Date().toISOString().slice(0, 10),
     timeOfDay: new Date().toISOString().slice(11, 16),
     priority: inferPriority(observations.observations),
-    scope: settings.scope,
     source: { kind: "system" },
     content: wrapInObservationGroup(observations.observations, range),
     tags: ["observational-memory"],
@@ -501,10 +516,10 @@ async function reflectObservations(
   const reflected: Observation = {
     id: createMemoryId(),
     createdAt: Date.now(),
+    kind: "reflection",
     observedDate: new Date().toISOString().slice(0, 10),
     timeOfDay: new Date().toISOString().slice(11, 16),
     priority: "high",
-    scope: settings.scope,
     source: { kind: "system" },
     content: reconciled,
     tags: ["observational-memory", "reflection"],

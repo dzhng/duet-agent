@@ -64,12 +64,14 @@ describe("Memory storage", () => {
         {
           id: "existing-observation",
           createdAt: 1,
+          // Pre-migration row had no session_id; migration v2 adds the
+          // column NULL-able and the loader leaves it undefined.
+          kind: "observation",
           observedDate: "2026-05-04",
           referencedDate: "2026-05-03",
           relativeDate: "yesterday",
           timeOfDay: "17:30",
           priority: "medium",
-          scope: "session",
           source: { kind: "system" },
           content: "Loaded persisted memory.",
           tags: ["test", "persisted"],
@@ -188,9 +190,9 @@ async function openSeededDatabase(path: string): Promise<PGlite> {
 
 function createObservation(content: string): Omit<Observation, "id" | "createdAt"> {
   return {
+    kind: "observation",
     observedDate: "2026-05-04",
     priority: "high",
-    scope: "session",
     source: { kind: "system" },
     content,
     tags: ["test"],

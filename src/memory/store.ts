@@ -33,8 +33,11 @@ export class MemoryStore {
   async recall(query: ObservationQuery): Promise<Observation[]> {
     let candidates = Array.from(this.observations.values());
 
-    if (query.scope) {
-      candidates = candidates.filter((observation) => observation.scope === query.scope);
+    if (query.sessionId !== undefined) {
+      candidates = candidates.filter((observation) => observation.sessionId === query.sessionId);
+    }
+    if (query.kind) {
+      candidates = candidates.filter((observation) => observation.kind === query.kind);
     }
     if (query.tags?.length) {
       candidates = candidates.filter((observation) =>

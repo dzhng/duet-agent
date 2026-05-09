@@ -34,8 +34,8 @@ export class MemoryDb {
   /** Load all observations ordered most recent first. */
   async list(): Promise<Observation[]> {
     const result = await this.db.query<ObservationRow>(
-      `SELECT id, created_at, observed_date, referenced_date, relative_date, time_of_day,
-              priority, scope, source_json, content, tags_json
+      `SELECT id, created_at, session_id, kind, observed_date, referenced_date, relative_date,
+              time_of_day, priority, source_json, content, tags_json
        FROM observations
        ORDER BY created_at DESC`,
     );
@@ -60,12 +60,13 @@ export class MemoryDb {
 interface ObservationRow {
   id: string;
   created_at: number;
+  session_id: string | null;
+  kind: Observation["kind"];
   observed_date: string;
   referenced_date: string | null;
   relative_date: string | null;
   time_of_day: string | null;
   priority: Observation["priority"];
-  scope: Observation["scope"];
   source_json: string;
   content: string;
   tags_json: string;
@@ -75,12 +76,13 @@ function rowToObservation(row: ObservationRow): Observation {
   return {
     id: row.id,
     createdAt: row.created_at,
+    ...(row.session_id !== null ? { sessionId: row.session_id } : {}),
+    kind: row.kind,
     observedDate: row.observed_date,
     ...(row.referenced_date !== null ? { referencedDate: row.referenced_date } : {}),
     ...(row.relative_date !== null ? { relativeDate: row.relative_date } : {}),
     ...(row.time_of_day !== null ? { timeOfDay: row.time_of_day } : {}),
     priority: row.priority,
-    scope: row.scope,
     source: JSON.parse(row.source_json) as Observation["source"],
     content: row.content,
     tags: JSON.parse(row.tags_json) as string[],

@@ -48,33 +48,153 @@ describe("Memory migrations", () => {
     });
   });
 
-  testIfDocker("creates the observations table at v1", async () => {
+  testIfDocker(
+    "converges on the post-v2 column set: drops scope, adds session_id and kind",
+    async () => {
+      await withTempDb(async (db) => {
+        await runMigrations(db);
+
+        // Column probe — fails loudly if any future migration shape drifts
+        // away from what loaders expect.
+        const columns = await db.query<{ column_name: string }>(
+          `SELECT column_name FROM information_schema.columns
+           WHERE table_name = 'observations'
+           ORDER BY column_name`,
+        );
+        const names = columns.rows.map((row) => row.column_name);
+        expect(names).toEqual([
+          "content",
+          "created_at",
+          "id",
+          "kind",
+          "observed_date",
+          "priority",
+          "referenced_date",
+          "relative_date",
+          "session_id",
+          "source_json",
+          "tags_json",
+          "time_of_day",
+        ]);
+        expect(names).not.toContain("scope");
+      });
+    },
+  );
+
+  testIfDocker("v2 backfills kind from the legacy reflection tag", async () => {
     await withTempDb(async (db) => {
+      // Seed at v1 (pre-v2) with two rows: one tagged as a reflection, one
+      // not. After migration both should carry an explicit kind.
+      await db.exec(`
+        CREATE TABLE observations (
+          id TEXT PRIMARY KEY,
+          created_at BIGINT NOT NULL,
+          observed_date TEXT NOT NULL,
+          referenced_date TEXT,
+          relative_date TEXT,
+          time_of_day TEXT,
+          priority TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          source_json TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags_json TEXT NOT NULL
+        );
+        INSERT INTO observations VALUES
+          ('mem_obs', 1, '2026-05-04', NULL, NULL, NULL, 'medium', 'session',
+           '{"kind":"system"}', 'Plain observation.',
+           '["observational-memory"]'),
+          ('mem_ref', 2, '2026-05-04', NULL, NULL, NULL, 'high', 'session',
+           '{"kind":"system"}', 'Condensed memory.',
+           '["observational-memory","reflection"]');
+      `);
+
       await runMigrations(db);
 
-      // Column probe — fails loudly if v1's schema drifts away from the
-      // baseline we promise pre-v2 migrations.
-      const columns = await db.query<{ column_name: string }>(
-        `SELECT column_name FROM information_schema.columns
-         WHERE table_name = 'observations'
-         ORDER BY column_name`,
+      const rows = await db.query<{ id: string; kind: string }>(
+        "SELECT id, kind FROM observations ORDER BY id",
       );
-      const names = columns.rows.map((row) => row.column_name);
-      expect(names).toEqual([
-        "content",
-        "created_at",
-        "id",
-        "observed_date",
-        "priority",
-        "referenced_date",
-        "relative_date",
-        "scope",
-        "source_json",
-        "tags_json",
-        "time_of_day",
+      expect(rows.rows).toEqual([
+        { id: "mem_obs", kind: "observation" },
+        { id: "mem_ref", kind: "reflection" },
       ]);
     });
   });
+
+  testIfDocker("v2 flattens tool source into a tag and rewrites source_json", async () => {
+    await withTempDb(async (db) => {
+      await db.exec(`
+        CREATE TABLE observations (
+          id TEXT PRIMARY KEY,
+          created_at BIGINT NOT NULL,
+          observed_date TEXT NOT NULL,
+          referenced_date TEXT,
+          relative_date TEXT,
+          time_of_day TEXT,
+          priority TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          source_json TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags_json TEXT NOT NULL
+        );
+        INSERT INTO observations VALUES
+          ('mem_with_tool', 1, '2026-05-04', NULL, NULL, NULL, 'medium', 'session',
+           '{"kind":"tool","toolName":"read_file"}', 'Tool-sourced.',
+           '["existing"]'),
+          ('mem_no_tool', 2, '2026-05-04', NULL, NULL, NULL, 'low', 'session',
+           '{"kind":"system"}', 'System-sourced.',
+           '["existing"]');
+      `);
+
+      await runMigrations(db);
+
+      const rows = await db.query<{ id: string; source_json: string; tags_json: string }>(
+        "SELECT id, source_json, tags_json FROM observations ORDER BY id",
+      );
+      const reshaped = rows.rows.map((row) => ({
+        id: row.id,
+        source: JSON.parse(row.source_json) as { kind: string; toolName?: string },
+        tags: JSON.parse(row.tags_json) as string[],
+      }));
+      expect(reshaped).toEqual([
+        // Tool source rewritten to `agent`; toolName lifted into tags.
+        { id: "mem_no_tool", source: { kind: "system" }, tags: ["existing"] },
+        { id: "mem_with_tool", source: { kind: "agent" }, tags: ["existing", "tool:read_file"] },
+      ]);
+    });
+  });
+
+  testIfDocker(
+    "v2 leaves session_id NULL on legacy rows so loaders treat them as non-current-session",
+    async () => {
+      await withTempDb(async (db) => {
+        await db.exec(`
+          CREATE TABLE observations (
+            id TEXT PRIMARY KEY,
+            created_at BIGINT NOT NULL,
+            observed_date TEXT NOT NULL,
+            referenced_date TEXT,
+            relative_date TEXT,
+            time_of_day TEXT,
+            priority TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            source_json TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tags_json TEXT NOT NULL
+          );
+          INSERT INTO observations VALUES
+            ('mem_legacy', 1, '2026-05-04', NULL, NULL, NULL, 'medium', 'session',
+             '{"kind":"system"}', 'Pre-session-id row.', '[]');
+        `);
+
+        await runMigrations(db);
+
+        const rows = await db.query<{ session_id: string | null }>(
+          "SELECT session_id FROM observations",
+        );
+        expect(rows.rows[0]?.session_id).toBeNull();
+      });
+    },
+  );
 
   testIfDocker("preserves rows that pre-date the migration framework", async () => {
     await withTempDb(async (db) => {

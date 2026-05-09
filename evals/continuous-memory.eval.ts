@@ -138,9 +138,9 @@ describe("continuous memory", () => {
       const events: ObservationalMemoryActivityEvent[] = [];
       for (let index = 0; index < 80; index++) {
         await memory.appendObservation({
+          kind: "observation",
           observedDate: "2026-05-08",
           priority: "high",
-          scope: "session",
           source: { kind: "system" },
           content: `Date: May 8, 2026\n* 🔴 Existing durable memory ${index}: ${"detail ".repeat(200)}`,
           tags: ["seeded"],

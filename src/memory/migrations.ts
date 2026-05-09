@@ -60,6 +60,96 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    description: "add session_id, kind; drop scope; flatten tool source into tag",
+    up: async (tx) => {
+      // Schema reshape for the cross-session memory layer.
+      //
+      //   - session_id NULL-allowed: identifies which session created the
+      //     row. NULL means "created before sessionId tracking existed";
+      //     loaders treat NULL the same as any non-current session
+      //     (always global-eligible, never local-eligible). New rows
+      //     always set it once the runner is plumbed in commit 3.
+      //
+      //   - kind: "observation" vs "reflection". Reflections rank higher
+      //     by default (reflectionBias multiplier in the loader) because
+      //     they are condensed cross-observation summaries. Backfilled
+      //     from tags_json since the existing reflector tags its output
+      //     with `["observational-memory","reflection"]`.
+      //
+      //   - scope dropped: the session/resource axis is replaced by
+      //     `session_id matches current session?`, which is what callers
+      //     actually wanted. "resource" scope was never wired through to
+      //     a real query path.
+      //
+      //   - source_json reshape: drop the `{kind:"tool",toolName:X}`
+      //     variant and lift toolName into tags as `tool:X`. Tool
+      //     provenance becomes searchable by tag, and the source enum
+      //     tightens to user|agent|system. Idempotent: rows already
+      //     reshaped (or never tool-sourced) pass through unchanged.
+      await tx.exec(`ALTER TABLE observations ADD COLUMN IF NOT EXISTS session_id TEXT`);
+      await tx.exec(
+        `ALTER TABLE observations ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'observation'`,
+      );
+
+      // Backfill kind from existing tag convention before we trust the
+      // column for queries.
+      await tx.exec(
+        `UPDATE observations
+         SET kind = 'reflection'
+         WHERE kind = 'observation' AND tags_json LIKE '%"reflection"%'`,
+      );
+
+      // Reshape source_json + tags_json for legacy tool rows. Done in JS
+      // because PGlite has no native JSON manipulation that handles the
+      // tags-array merge cleanly.
+      const toolRows = await tx.query<{ id: string; source_json: string; tags_json: string }>(
+        `SELECT id, source_json, tags_json
+         FROM observations
+         WHERE source_json LIKE '%"kind":"tool"%'`,
+      );
+      for (const row of toolRows.rows) {
+        let parsedSource: { kind?: string; toolName?: string } = {};
+        try {
+          parsedSource = JSON.parse(row.source_json) as typeof parsedSource;
+        } catch {
+          // Malformed JSON predates this code; leave the row alone rather
+          // than guessing.
+          continue;
+        }
+        if (parsedSource.kind !== "tool") continue;
+
+        let parsedTags: string[] = [];
+        try {
+          parsedTags = JSON.parse(row.tags_json) as string[];
+        } catch {
+          parsedTags = [];
+        }
+        const toolTag = parsedSource.toolName ? `tool:${parsedSource.toolName}` : undefined;
+        const nextTags =
+          toolTag && !parsedTags.includes(toolTag) ? [...parsedTags, toolTag] : parsedTags;
+
+        await tx.query(`UPDATE observations SET source_json = $1, tags_json = $2 WHERE id = $3`, [
+          JSON.stringify({ kind: "agent" }),
+          JSON.stringify(nextTags),
+          row.id,
+        ]);
+      }
+
+      await tx.exec(`ALTER TABLE observations DROP COLUMN IF EXISTS scope`);
+
+      // Indexes for the new query patterns: session-scoped local lookup
+      // and (priority, recency)-ranked global lookup. Composite index
+      // matches the loader's ORDER BY shape so the planner can avoid a
+      // sort on hot paths.
+      await tx.exec(`CREATE INDEX IF NOT EXISTS idx_obs_session_id ON observations(session_id)`);
+      await tx.exec(
+        `CREATE INDEX IF NOT EXISTS idx_obs_kind_priority_created
+         ON observations(kind, priority, created_at DESC)`,
+      );
+    },
+  },
 ];
 
 export interface MigrationResult {

@@ -28,9 +28,9 @@ class MemoryTransformTurnRunner extends TurnRunner {
 
   appendObservationForTest(content: string) {
     return this.memory.appendObservation({
+      kind: "observation",
       observedDate: "2026-05-06",
       priority: "high",
-      scope: "session",
       source: { kind: "system" },
       content,
       tags: ["test"],
@@ -144,9 +144,9 @@ class MemoryEventTurnRunner extends TurnRunner {
       .filter((message): message is NonNullable<typeof message> => Boolean(message));
     const range = `${raw[0]?.id ?? "unknown"}:${raw[raw.length - 1]?.id ?? "unknown"}`;
     const observation = await this.memory.appendObservation({
+      kind: "observation",
       observedDate: "2026-05-08",
       priority: "high",
-      scope: "session",
       source: { kind: "system" },
       content: `<observation-group id="test" range="${range}">\n* ✅ Remembered pi-run memory payload.\n</observation-group>`,
       tags: ["observational-memory"],
@@ -359,9 +359,9 @@ describe("TurnRunner memory", () => {
         {
           id: "mem_test",
           createdAt: 1,
+          kind: "observation",
           observedDate: "2026-05-08",
           priority: "high",
-          scope: "session",
           source: { kind: "system" },
           content:
             '<observation-group id="test" range="msg_assistant_observed:msg_assistant_observed">\n* ✅ Observed result.\n</observation-group>',

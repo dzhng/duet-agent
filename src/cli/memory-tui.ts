@@ -292,7 +292,7 @@ async function editInExternalEditor(
 }
 
 function formatMeta(observation: Observation): string {
-  const parts: string[] = [observation.scope];
+  const parts: string[] = [observation.kind];
   if (observation.tags.length > 0) parts.push(`#${observation.tags.join(" #")}`);
   return parts.join(" · ");
 }

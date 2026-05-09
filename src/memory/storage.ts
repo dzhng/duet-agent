@@ -63,7 +63,7 @@ async function openMemoryDatabase(path: string): Promise<MemoryDatabase> {
 
 async function readMemorySnapshot(database: MemoryDatabase): Promise<ObservationalMemorySnapshot> {
   const result = await database.query<ObservationRow>(
-    `SELECT id, created_at, observed_date, referenced_date, relative_date, time_of_day, priority, scope, source_json, content, tags_json
+    `SELECT id, created_at, session_id, kind, observed_date, referenced_date, relative_date, time_of_day, priority, source_json, content, tags_json
      FROM observations
      ORDER BY created_at ASC`,
   );
@@ -113,29 +113,31 @@ async function upsertObservation(
 ): Promise<void> {
   await database.query(
     `INSERT INTO observations (
-      id, created_at, observed_date, referenced_date, relative_date, time_of_day,
-      priority, scope, source_json, content, tags_json
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      id, created_at, session_id, kind, observed_date, referenced_date, relative_date, time_of_day,
+      priority, source_json, content, tags_json
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
     ON CONFLICT (id) DO UPDATE SET
       created_at = EXCLUDED.created_at,
+      session_id = EXCLUDED.session_id,
+      kind = EXCLUDED.kind,
       observed_date = EXCLUDED.observed_date,
       referenced_date = EXCLUDED.referenced_date,
       relative_date = EXCLUDED.relative_date,
       time_of_day = EXCLUDED.time_of_day,
       priority = EXCLUDED.priority,
-      scope = EXCLUDED.scope,
       source_json = EXCLUDED.source_json,
       content = EXCLUDED.content,
       tags_json = EXCLUDED.tags_json`,
     [
       observation.id,
       observation.createdAt,
+      observation.sessionId ?? null,
+      observation.kind,
       observation.observedDate,
       observation.referencedDate ?? null,
       observation.relativeDate ?? null,
       observation.timeOfDay ?? null,
       observation.priority,
-      observation.scope,
       JSON.stringify(observation.source),
       observation.content,
       JSON.stringify(observation.tags),
@@ -154,12 +156,13 @@ function estimateTokens(text: string): number {
 interface ObservationRow {
   id: string;
   created_at: number;
+  session_id: string | null;
+  kind: Observation["kind"];
   observed_date: string;
   referenced_date: string | null;
   relative_date: string | null;
   time_of_day: string | null;
   priority: Observation["priority"];
-  scope: Observation["scope"];
   source_json: string;
   content: string;
   tags_json: string;
@@ -169,12 +172,13 @@ function rowToObservation(row: ObservationRow): Observation {
   return {
     id: row.id,
     createdAt: row.created_at,
+    ...(row.session_id !== null ? { sessionId: row.session_id } : {}),
+    kind: row.kind,
     observedDate: row.observed_date,
-    referencedDate: row.referenced_date ?? undefined,
-    relativeDate: row.relative_date ?? undefined,
-    timeOfDay: row.time_of_day ?? undefined,
+    ...(row.referenced_date !== null ? { referencedDate: row.referenced_date } : {}),
+    ...(row.relative_date !== null ? { relativeDate: row.relative_date } : {}),
+    ...(row.time_of_day !== null ? { timeOfDay: row.time_of_day } : {}),
     priority: row.priority,
-    scope: row.scope,
     source: JSON.parse(row.source_json) as Observation["source"],
     content: row.content,
     tags: JSON.parse(row.tags_json) as string[],
