@@ -25,7 +25,7 @@ import { getNewVersionNotice } from "./version-check.js";
 export interface CliTurnConfigInput {
   modelName?: string;
   memoryModelName?: string;
-  disableDurableMemory?: boolean;
+  incognito?: boolean;
   workDir: string;
   systemInstructions?: string;
   systemPromptFiles?: string[];
@@ -71,7 +71,7 @@ export function buildCliTurnConfig(
     config: {
       model: modelResolution.modelName,
       memoryModel: memoryModelResolution.modelName,
-      ...(input.disableDurableMemory ? { memoryDbPath: false } : {}),
+      ...(input.incognito ? { memoryDbPath: false } : {}),
       cwd: input.workDir,
       ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),
       ...(input.systemPromptFiles ? { systemPromptFiles: input.systemPromptFiles } : {}),
@@ -101,7 +101,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   let resumeHistoryLinesExplicit = false;
   let jsonOutput = false;
   let envFilePath: string | undefined;
-  let disableDurableMemory = false;
+  let incognito = false;
   const promptParts: string[] = [];
   const interactive = isInteractive();
 
@@ -120,8 +120,9 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         providerFlag = args[++i];
         break;
-      case "--no-memory":
-        disableDurableMemory = true;
+      case "--incognito":
+      case "-i":
+        incognito = true;
         break;
       case "--workdir":
       case "-w":
@@ -230,7 +231,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     {
       ...(modelName ? { modelName } : {}),
       ...(memoryModelName ? { memoryModelName } : {}),
-      disableDurableMemory,
+      incognito,
       workDir,
       ...(systemInstructions ? { systemInstructions } : {}),
       ...(systemPromptFiles ? { systemPromptFiles } : {}),
@@ -314,7 +315,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         ...(modelName ? { modelName } : {}),
         ...(memoryModelName ? { memoryModelName } : {}),
         workDir,
-        disableDurableMemory,
+        incognito,
         ...(systemInstructions ? { systemInstructions } : {}),
         ...(systemPromptFiles ? { systemPromptFiles } : {}),
         ...(envFilePath ? { envFilePath } : {}),

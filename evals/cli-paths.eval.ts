@@ -62,7 +62,7 @@ describe("CLI production paths", () => {
           workDir,
           "--model",
           model,
-          "--no-memory",
+          "--incognito",
           "--system-prompt",
           dedent`
             This is a live eval. Use the state-machine tools, not a plain answer.

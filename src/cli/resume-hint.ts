@@ -9,7 +9,7 @@ export interface ResumeCommandInput {
   modelName?: string;
   memoryModelName?: string;
   workDir: string;
-  disableDurableMemory?: boolean;
+  incognito?: boolean;
   systemInstructions?: string;
   systemPromptFiles?: string[];
   envFilePath?: string;
@@ -36,8 +36,8 @@ export function resumeCommand(sessionId: string, input: ResumeCommandInput): str
   if (input.memoryModelName) {
     command.push("--memory-model", shellQuote(input.memoryModelName));
   }
-  if (input.disableDurableMemory) {
-    command.push("--no-memory");
+  if (input.incognito) {
+    command.push("--incognito");
   }
   if (input.systemInstructions) {
     command.push("--system-prompt", shellQuote(input.systemInstructions));
