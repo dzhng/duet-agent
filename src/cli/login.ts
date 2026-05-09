@@ -56,6 +56,15 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
   process.env.DUET_API_KEY = result.apiKey;
   shimDuetApiKeyToAiGateway();
 
+  await fetch(`${resolveDuetAppBaseUrl()}/api/v1/analytics/events`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${result.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name: "cli_login" }),
+  }).catch(() => {});
+
   if (skipSkillSync) {
     console.error("Skipping default skill sync (--skip-skill-sync).");
     return;
