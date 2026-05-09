@@ -31,6 +31,13 @@ export interface Sidebar {
  */
 export const SIDEBAR_WIDTH = 36;
 
+/**
+ * Maximum body lines rendered inside the follow-ups panel. The panel never
+ * grows past this height, so todos and the state machine keep their space
+ * even when many follow-ups are queued.
+ */
+const FOLLOW_UP_MAX_BODY_LINES = 3;
+
 export function createSidebar(renderer: CliRenderer): Sidebar {
   // Fixed width keeps the sidebar legible on narrow terminals without
   // squashing the transcript. The three panels stack vertically inside.
@@ -46,6 +53,7 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     renderer,
     "follow-ups",
     "(none)",
+    { maxBodyLines: FOLLOW_UP_MAX_BODY_LINES, grow: false },
   );
   const { panel: smPanel, body: smBody } = createPanel(renderer, "state machine", "(inactive)");
   const { panel: contextPanel, body: contextBody } = createPanel(
@@ -101,12 +109,21 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
         followUpBody.fg = COLORS.hint;
         return;
       }
-      followUpBody.content = entries
-        .map((entry, index) => {
-          const attachments = entry.images?.length ? ` 📎${entry.images.length}` : "";
-          return `${index + 1}. ${entry.message}${attachments}`;
-        })
-        .join("\n");
+      // Hard-cap to FOLLOW_UP_MAX_BODY_LINES so the panel never pushes the
+      // todos or state-machine panels off-screen. Each entry collapses to a
+      // single line; if more entries exist than fit, the last visible line
+      // becomes a "+N more" summary instead of a real entry.
+      const maxLines = FOLLOW_UP_MAX_BODY_LINES;
+      const showSummary = entries.length > maxLines;
+      const visibleCount = showSummary ? maxLines - 1 : entries.length;
+      const lines = entries.slice(0, visibleCount).map((entry, index) => {
+        const attachments = entry.images?.length ? ` 📎${entry.images.length}` : "";
+        return collapseToLine(`${index + 1}. ${entry.message}${attachments}`);
+      });
+      if (showSummary) {
+        lines.push(`+${entries.length - visibleCount} more`);
+      }
+      followUpBody.content = lines.join("\n");
       followUpBody.fg = COLORS.agent;
     },
     setStateMachine(session) {
@@ -149,6 +166,12 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
 
 interface PanelOptions {
   fixedHeight?: number;
+  /**
+   * Cap on body lines, used to derive the panel's `maxHeight` so the panel
+   * shrinks to fit short content but refuses to grow past the cap. Mutually
+   * exclusive with `fixedHeight`.
+   */
+  maxBodyLines?: number;
   grow?: boolean;
 }
 
@@ -159,14 +182,20 @@ function createPanel(
   options: PanelOptions = {},
 ): { panel: BoxRenderable; body: TextRenderable } {
   const grow = options.grow ?? true;
+  const compact = options.fixedHeight !== undefined || options.maxBodyLines !== undefined;
+  // Compact panels (fixed or capped height) drop top/bottom padding so the
+  // budget is spent on body lines rather than whitespace; border (2) + title
+  // (1) + body lines = total panel height.
+  const maxHeight = options.maxBodyLines !== undefined ? options.maxBodyLines + 3 : undefined;
   const panel = new BoxRenderable(renderer, {
     flexDirection: "column",
     border: true,
     borderColor: COLORS.border,
     paddingLeft: 1,
     paddingRight: 1,
-    padding: options.fixedHeight ? undefined : 1,
+    padding: compact ? undefined : 1,
     ...(options.fixedHeight ? { height: options.fixedHeight } : {}),
+    ...(maxHeight ? { maxHeight } : {}),
     ...(grow ? { flexGrow: 1, flexShrink: 1 } : { flexShrink: 0 }),
   });
   const titleNode = new TextRenderable(renderer, {
@@ -184,6 +213,15 @@ function createPanel(
   panel.add(titleNode);
   panel.add(body);
   return { panel, body };
+}
+
+// Inner text width = sidebar width (36) - border (2) - padding (2).
+const SIDEBAR_BODY_WIDTH = SIDEBAR_WIDTH - 4;
+
+function collapseToLine(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat.length <= SIDEBAR_BODY_WIDTH) return flat;
+  return `${flat.slice(0, Math.max(1, SIDEBAR_BODY_WIDTH - 1))}…`;
 }
 
 function todoStatusGlyph(status: TurnTodo["status"]): string {

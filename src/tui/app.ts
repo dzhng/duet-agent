@@ -203,11 +203,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // Two ordered sections: built-in commands first, skills second. Each
   // section has its own header row plus a fixed pool of item rows. Selection
   // navigates the flat ordered list of visible items across both sections.
+  // Row height is assigned per render based on the wrapped description
+  // length so a one-line description doesn't leave an empty trailing line
+  // beneath the name. The renderer sets `height` whenever it writes
+  // `content`.
   const makeItemRow = () => {
     const row = new TextRenderable(renderer, {
       content: "",
       fg: COLORS.hint,
-      height: 3,
       flexShrink: 0,
     });
     row.visible = false;
@@ -603,10 +606,24 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (!usage) return;
     sessionCost += usage.cost.total;
     sidebar.setSessionCost(sessionCost);
-    const parts = [`in=${usage.input}`, `out=${usage.output}`];
-    if (usage.cacheRead > 0) parts.push(`cached=${usage.cacheRead}`);
-    const cost = usage.cost.total === 0 ? "" : ` · Cost: $${usage.cost.total.toFixed(4)}`;
-    appendLine(`[usage] Tokens: ${parts.join(" ")}${cost}`, COLORS.hint);
+    // Tokens stay terse (just in/out) since the cost breakdown below is
+    // where the cache wins actually matter. Cost is split across all four
+    // buckets (in / out / cache read / cache write) so prompt-cache hits and
+    // writes are visible at a glance; zero buckets collapse out.
+    const tokens = `Tokens: in=${usage.input} out=${usage.output}`;
+    const costParts = [
+      ["in", usage.cost.input],
+      ["out", usage.cost.output],
+      ["cr", usage.cost.cacheRead],
+      ["cw", usage.cost.cacheWrite],
+    ]
+      .filter(([, value]) => (value as number) > 0)
+      .map(([label, value]) => `${label}=$${(value as number).toFixed(4)}`);
+    const cost =
+      usage.cost.total === 0
+        ? ""
+        : ` · Cost: $${usage.cost.total.toFixed(4)}${costParts.length > 1 ? ` (${costParts.join(" ")})` : ""}`;
+    appendLine(`[usage] ${tokens}${cost}`, COLORS.hint);
   }
 
   function renderTurnElapsed(): void {
@@ -1054,9 +1071,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       const nameColor = selected ? COLORS.status : COLORS.user;
       const pathColor = selected ? COLORS.agent : COLORS.hint;
       const description = formatSkillAutocompleteDescription(item.description);
+      const tail = description ? `\n${description}` : "";
       row.content = item.path
-        ? t`${fg(nameColor)(`/${item.name}`)} ${fg(pathColor)(`(${item.path})`)}\n${description}\n`
-        : t`${fg(nameColor)(`/${item.name}`)}\n${description}\n`;
+        ? t`${fg(nameColor)(`/${item.name}`)} ${fg(pathColor)(`(${item.path})`)}${tail}`
+        : t`${fg(nameColor)(`/${item.name}`)}${tail}`;
+      // Height = name line + each wrapped description line. Without this the
+      // box defaults to a single line and clips multi-line descriptions.
+      row.height = description ? 1 + description.split("\n").length : 1;
       row.fg = selected ? COLORS.agent : COLORS.hint;
       row.visible = true;
     }
@@ -1325,26 +1346,25 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
 
-    // Async path — the paste was text-shaped, but the OS clipboard may hold
-    // an image (e.g. Figma "Copy as PNG", screenshot, browser image copy)
-    // that the terminal could not forward as bytes. Suppress the default
-    // text-insert NOW, synchronously, before awaiting the clipboard probe;
-    // otherwise the InputRenderable inserts the placeholder text first and
-    // we end up with both the path and the [Image #N] in the buffer.
-    event.preventDefault();
+    // Text-shaped paste. Three sub-cases, ordered cheapest first so common
+    // text pastes never wait on the macOS Swift clipboard probe:
+    //
+    //   1. The text resolves to an image file path (Finder/Files drag-paste).
+    //   2. The terminal forwarded an empty payload but the OS clipboard
+    //      may carry an image promise (e.g. Figma "Copy as PNG", screenshot,
+    //      browser image copy that bracketed-paste cannot represent).
+    //   3. Plain text — just insert it.
+    //
+    // Sub-cases 1 and 3 are fully synchronous after the path heuristic, so
+    // the buffer paints immediately. Only sub-case 2 spawns the Swift
+    // probe, and only when there is literally no text to insert anyway.
     const originalText = decodePasteBytes(event.bytes);
-
-    const clipboardImage = await tryReadClipboardImage();
-    if (clipboardImage) {
-      await attachPastedImageBytes(clipboardImage.bytes, clipboardImage.mimeType);
-      return;
-    }
-
-    // No image on the clipboard. Opportunistically auto-attach if the paste
-    // text resolves to a single existing image file path (Finder / Files
-    // drag-paste pattern).
     const candidate = looksLikeImageFilePath(originalText);
+
     if (candidate) {
+      // Path-shaped paste: suppress the default insert so we can swap in
+      // the [Image #N] placeholder once load resolves.
+      event.preventDefault();
       try {
         const pending = await loadImageFromPath({
           cwd: input.workDir,
@@ -1356,13 +1376,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         inputField.insertText(pending.label);
         appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
         refreshAttachmentHint();
-        return;
       } catch (error) {
-        // The clipboard looked like an image path but we could not load it.
-        // Surface the reason so users do not see silent fallthrough — most
-        // commonly a path that no longer exists or whose bytes do not match
-        // an image MIME header. Restore the original text below so the user
-        // can edit it manually instead of losing what they pasted.
+        // The clipboard looked like an image path but we could not load
+        // it — surface why and restore the original text so the user can
+        // edit it manually instead of losing what they pasted.
         appendBlock(
           "[paste]",
           `looked like an image path but could not attach ${candidate}: ${
@@ -1370,14 +1387,27 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
           }`,
           COLORS.system,
         );
+        if (originalText.length > 0) inputField.insertText(originalText);
       }
+      return;
     }
 
-    // Plain text paste — we suppressed the default insert above, so put the
-    // text back into the prompt manually.
-    if (originalText.length > 0) {
-      inputField.insertText(originalText);
+    if (originalText.length === 0) {
+      // No text payload — the terminal had nothing to forward but the OS
+      // clipboard may still carry an image promise. Suppress the default
+      // (which would do nothing anyway) and run the slow probe.
+      event.preventDefault();
+      const clipboardImage = await tryReadClipboardImage();
+      if (clipboardImage) {
+        await attachPastedImageBytes(clipboardImage.bytes, clipboardImage.mimeType);
+      }
+      return;
     }
+
+    // Plain text paste — fall through to the InputRenderable's default
+    // insert path, which paints synchronously. Users whose intended image
+    // arrived as text-shaped bytes (e.g. Figma) can still trigger an
+    // explicit clipboard probe via the `/paste` slash command.
   }
 
   async function attachPastedImageBytes(bytes: Uint8Array, mimeType: string): Promise<void> {
