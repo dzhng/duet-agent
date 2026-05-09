@@ -369,32 +369,19 @@ type ClipboardProbe = () => Promise<Uint8Array | undefined>;
 function clipboardProbesForPlatform(): ClipboardProbe[] {
   const os = platform();
   if (os === "darwin") {
-    return [
-      // First: native Swift one-liner. Runs inside a real Cocoa process
-      // (NSApplication context, real run loop), which is the only env in
-      // which Chromium-based apps (Figma, Slack desktop, browsers) will
-      // actually fulfill their NSPasteboard promise items. JXA via
-      // osascript and AppleScript class-code reads both run without an
-      // NSApplication and silently get nil for promise-backed UTIs.
-      // Requires Xcode Command Line Tools (`xcode-select --install`),
-      // which is a near-universal prerequisite on dev machines.
-      readMacClipboardViaSwift,
-      // Second: NSPasteboard via the ObjC bridge (JXA). Catches non-promise
-      // clipboards Swift may have skipped, and works on machines without
-      // Xcode CLT.
-      readMacClipboardViaJxa,
-      // Cheap path when installed: pngpaste handles every NSImage
-      // representation natively.
-      readClipboardViaCommand("pngpaste", ["-"]),
-      // Last-resort AppleScript class probes for older clipboards that JXA
-      // still cannot read. Convert non-PNG flavors via macOS's built-in
-      // `sips` so the rest of the pipeline only sees one of the four MIME
-      // types we accept.
-      readMacClipboardClass("PNGf", ".png", null),
-      readMacClipboardClass("TIFF", ".tiff", "png"),
-      readMacClipboardClass("JPEG", ".jpg", "png"),
-      readMacClipboardClass("PDF ", ".pdf", "png"),
-    ];
+    // Swift one-liner. Runs inside a real NSApplication-backed Cocoa
+    // process, which is the only env in which Chromium-based apps
+    // (Figma, Slack desktop, browsers) actually fulfill their
+    // NSPasteboard promise items. AppleScript class-code reads and
+    // JXA via osascript both run without an NSApplication and silently
+    // get nil for promise-backed UTIs.
+    //
+    // Swift's NSImage(pasteboard:) handles every input AppKit
+    // recognizes — PNG, TIFF, JPEG, GIF, BMP, PDF, file URLs, and
+    // promise items — so we do not need any further fallback probes.
+    // Requires Xcode Command Line Tools (`xcode-select --install`),
+    // which is a near-universal prerequisite on macOS dev machines.
+    return [readMacClipboardViaSwift];
   }
   if (os === "linux") {
     return [
@@ -464,203 +451,6 @@ async function readMacClipboardViaSwift(): Promise<Uint8Array | undefined> {
       /* ignore */
     }
   }
-}
-
-async function readMacClipboardViaJxa(): Promise<Uint8Array | undefined> {
-  const stamp = `${Date.now()}-${process.pid}`;
-  const rawPath = join(tmpdir(), `duet-jxa-${stamp}.bin`);
-  const pngPath = join(tmpdir(), `duet-jxa-${stamp}.png`);
-  // Layered probe: try every method we know AppKit exposes for clipboard
-  // image extraction, in order from "definitely materializes promise items"
-  // to "raw byte read." Chromium-based apps (Figma, Slack, browsers) put
-  // images on the pasteboard as promise items, so -dataForType: returns nil
-  // until the promise is resolved by NSImage.
-  //
-  // Methods tried (first hit wins):
-  //   1. NSImage initWithPasteboard:        — most aggressive promise resolver
-  //   2. readObjectsForClasses:[NSImage]    — modern API, also resolves promises
-  //   3. pasteboardItems iteration          — per-item dataForType reads
-  //   4. legacy direct dataForType reads    — non-promise clipboards, PDF, etc.
-  //
-  // We use raw integer 4 for NSPNGFileType because the JXA bridge does not
-  // reliably surface the NSBitmapImageFileTypePNG enum constant.
-  const script = `
-    ObjC.import('AppKit');
-    ObjC.import('Foundation');
-    const pb = $.NSPasteboard.generalPasteboard;
-    const rawPath = $(${JSON.stringify(rawPath)});
-    const NSPNGFileType = 4;
-
-    function writeImageAsPng(img) {
-      if (!img || img.isNil()) return false;
-      const tiff = img.TIFFRepresentation;
-      if (!tiff || tiff.isNil() || tiff.length === 0) return false;
-      const rep = $.NSBitmapImageRep.imageRepWithData(tiff);
-      if (!rep || rep.isNil()) return false;
-      const png = rep.representationUsingTypeProperties(NSPNGFileType, $());
-      if (!png || png.isNil() || png.length === 0) return false;
-      return png.writeToFileAtomically(rawPath, true);
-    }
-
-    function emit(kind, method) {
-      console.log(JSON.stringify({ ok: true, kind, method }));
-    }
-
-    let done = false;
-
-    // Method 1: NSImage initWithPasteboard — most aggressive promise resolver.
-    try {
-      const img = $.NSImage.alloc.initWithPasteboard(pb);
-      if (writeImageAsPng(img)) { emit('png', 'initWithPasteboard'); done = true; }
-    } catch (e) { console.log(JSON.stringify({ ok: false, method: 'initWithPasteboard', err: String(e) })); }
-
-    // Method 2: readObjectsForClasses with NSImage.
-    if (!done) {
-      try {
-        const classes = $.NSArray.arrayWithObject($.NSImage);
-        const objs = pb.readObjectsForClassesOptions(classes, $());
-        if (objs && !objs.isNil() && objs.count > 0) {
-          if (writeImageAsPng(objs.objectAtIndex(0))) { emit('png', 'readObjectsForClasses'); done = true; }
-        }
-      } catch (e) { console.log(JSON.stringify({ ok: false, method: 'readObjectsForClasses', err: String(e) })); }
-    }
-
-    // Method 3: iterate pasteboardItems and try image UTIs on each item.
-    if (!done) {
-      try {
-        const items = pb.pasteboardItems;
-        if (items && !items.isNil()) {
-          const flavors = [['public.png','png'],['public.jpeg','jpeg'],['public.tiff','tiff'],['com.compuserve.gif','gif'],['com.microsoft.bmp','bmp'],['com.adobe.pdf','pdf']];
-          for (let i = 0; i < items.count && !done; i++) {
-            const item = items.objectAtIndex(i);
-            for (const [uti, kind] of flavors) {
-              const data = item.dataForType(uti);
-              if (data && !data.isNil() && data.length > 0) {
-                if (data.writeToFileAtomically(rawPath, true)) { emit(kind, 'pasteboardItems:' + uti); done = true; break; }
-              }
-            }
-          }
-        }
-      } catch (e) { console.log(JSON.stringify({ ok: false, method: 'pasteboardItems', err: String(e) })); }
-    }
-
-    // Method 4: legacy direct dataForType on the pasteboard itself.
-    if (!done) {
-      const utis = [['public.png','png'],['public.jpeg','jpeg'],['public.tiff','tiff'],['com.compuserve.gif','gif'],['com.microsoft.bmp','bmp'],['com.adobe.pdf','pdf']];
-      for (const [uti, kind] of utis) {
-        const data = pb.dataForType(uti);
-        if (data && !data.isNil() && data.length > 0) {
-          if (data.writeToFileAtomically(rawPath, true)) { emit(kind, 'dataForType:' + uti); done = true; break; }
-        }
-      }
-    }
-  `;
-  let resultJson = "";
-  try {
-    const result = await runCommand("osascript", ["-l", "JavaScript", "-e", script]);
-    if (result.code !== 0) return undefined;
-    resultJson = result.stdout.trim();
-    if (!resultJson) return undefined;
-    // The script may emit one or more JSON lines (errors before success).
-    // The successful read is always the line with ok=true.
-    const lines = resultJson.split(/\r?\n/).filter((l) => l.length > 0);
-    let parsed: { ok?: boolean; kind?: string; method?: string } | undefined;
-    for (const line of lines) {
-      try {
-        const obj = JSON.parse(line) as { ok?: boolean; kind?: string; method?: string };
-        if (obj.ok) {
-          parsed = obj;
-          break;
-        }
-      } catch {
-        /* ignore non-JSON noise */
-      }
-    }
-    if (!parsed?.ok || !parsed.kind) return undefined;
-
-    if (parsed.kind === "png") {
-      return new Uint8Array(await readFile(rawPath));
-    }
-    // Transcode any non-PNG payload to PNG via sips so the pipeline only
-    // has to deal with the four image MIME types we already accept.
-    const conv = await runCommand("sips", ["-s", "format", "png", rawPath, "--out", pngPath]);
-    if (conv.code !== 0) return undefined;
-    return new Uint8Array(await readFile(pngPath));
-  } catch {
-    return undefined;
-  } finally {
-    for (const path of [rawPath, pngPath]) {
-      try {
-        await unlink(path);
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-}
-
-/**
- * macOS clipboard → file bytes via AppleScript for a specific clipboard class
- * (e.g. `PNGf`, `TIFF`, `JPEG`, `PDF `). Writes to a temp file rather than
- * piping through stdout because AppleScript serialization corrupts CR/LF
- * bytes inside binary payloads.
- *
- * When `convertVia` is non-null we run macOS's built-in `sips` to transcode
- * the temp file into a PNG before reading the bytes back, so the rest of
- * the pipeline only ever sees one of the four MIME types we accept.
- */
-function readMacClipboardClass(
-  classCode: string,
-  extension: string,
-  convertVia: "png" | null,
-): ClipboardProbe {
-  return async () => {
-    const stamp = `${Date.now()}-${process.pid}`;
-    const tmp = join(tmpdir(), `duet-clipboard-${stamp}${extension}`);
-    const script = [
-      "set out to POSIX file " + JSON.stringify(tmp),
-      "try",
-      "  set fd to open for access out with write permission",
-      "  set eof of fd to 0",
-      `  write (the clipboard as \u00abclass ${classCode}\u00bb) to fd`,
-      "  close access fd",
-      '  return "ok"',
-      "on error errMsg",
-      "  try",
-      "    close access fd",
-      "  end try",
-      '  return "err:" & errMsg',
-      "end try",
-    ].join("\n");
-
-    let pngPath: string | undefined;
-    try {
-      const result = await runCommand("osascript", ["-e", script]);
-      if (!result.stdout.startsWith("ok")) return undefined;
-
-      if (convertVia === null) {
-        return new Uint8Array(await readFile(tmp));
-      }
-
-      pngPath = join(tmpdir(), `duet-clipboard-${stamp}.png`);
-      const conv = await runCommand("sips", ["-s", "format", "png", tmp, "--out", pngPath]);
-      if (conv.code !== 0) return undefined;
-      return new Uint8Array(await readFile(pngPath));
-    } finally {
-      try {
-        await unlink(tmp);
-      } catch {
-        /* ignore */
-      }
-      if (pngPath) {
-        try {
-          await unlink(pngPath);
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-  };
 }
 
 /**

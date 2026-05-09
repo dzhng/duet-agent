@@ -1284,6 +1284,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const inferredMime =
       metadata?.mimeType && metadata.mimeType.startsWith("image/") ? metadata.mimeType : sniffed;
 
+    // Synchronous fast paths — the paste payload itself is enough to decide.
     if (inferredMime) {
       event.preventDefault();
       await attachPastedImageBytes(event.bytes, inferredMime);
@@ -1303,24 +1304,25 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
 
-    // Most terminals do not forward binary clipboard contents on Cmd+V even
-    // when the OS pasteboard holds a real PNG (e.g. "Copy as PNG" from Figma,
-    // a screenshot, an image copied out of a browser). The terminal emits a
-    // text-shaped paste event with empty / placeholder bytes; we fall through
-    // to a platform clipboard probe so the user gets the same inline
-    // attachment they would in Claude Code.
+    // Async path — the paste was text-shaped, but the OS clipboard may hold
+    // an image (e.g. Figma "Copy as PNG", screenshot, browser image copy)
+    // that the terminal could not forward as bytes. Suppress the default
+    // text-insert NOW, synchronously, before awaiting the clipboard probe;
+    // otherwise the InputRenderable inserts the placeholder text first and
+    // we end up with both the path and the [Image #N] in the buffer.
+    event.preventDefault();
+    const originalText = decodePasteBytes(event.bytes);
+
     const clipboardImage = await tryReadClipboardImage();
     if (clipboardImage) {
-      event.preventDefault();
       await attachPastedImageBytes(clipboardImage.bytes, clipboardImage.mimeType);
       return;
     }
 
-    // Text paste path: opportunistically auto-attach if the clipboard text
-    // resolves to a single existing image file path (Finder / Files drag-paste
-    // pattern). Otherwise let the default Textarea handler insert the text.
-    const text = decodePasteBytes(event.bytes);
-    const candidate = looksLikeImageFilePath(text);
+    // No image on the clipboard. Opportunistically auto-attach if the paste
+    // text resolves to a single existing image file path (Finder / Files
+    // drag-paste pattern).
+    const candidate = looksLikeImageFilePath(originalText);
     if (candidate) {
       try {
         const pending = await loadImageFromPath({
@@ -1333,13 +1335,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         inputField.insertText(pending.label);
         appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
         refreshAttachmentHint();
-        event.preventDefault();
         return;
       } catch (error) {
         // The clipboard looked like an image path but we could not load it.
-        // Surface the reason so users do not see silent fallthrough to plain
-        // text — the most common cause is a path that no longer exists or a
-        // file whose bytes do not actually match an image MIME header.
+        // Surface the reason so users do not see silent fallthrough — most
+        // commonly a path that no longer exists or whose bytes do not match
+        // an image MIME header. Restore the original text below so the user
+        // can edit it manually instead of losing what they pasted.
         appendBlock(
           "[paste]",
           `looked like an image path but could not attach ${candidate}: ${
@@ -1347,9 +1349,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
           }`,
           COLORS.system,
         );
-        // Fall through so the text still lands in the prompt and the user
-        // can edit it manually instead of losing what they pasted.
       }
+    }
+
+    // Plain text paste — we suppressed the default insert above, so put the
+    // text back into the prompt manually.
+    if (originalText.length > 0) {
+      inputField.insertText(originalText);
     }
   }
 
