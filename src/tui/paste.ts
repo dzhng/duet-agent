@@ -357,8 +357,9 @@ export async function tryReadClipboardImage(): Promise<
         }
       }
     } catch {
-      // Try the next probe — platform tools commonly differ in availability
-      // (e.g. pngpaste only present when a user installed it via Homebrew).
+      // Try the next probe — the only known cause on macOS is that `swift`
+      // is missing (Xcode CLT not installed). Linux/Windows differ by which
+      // helper tool the user happens to have available.
     }
   }
   return undefined;
@@ -397,20 +398,6 @@ function clipboardProbesForPlatform(): ClipboardProbe[] {
 }
 
 /**
- * macOS clipboard → PNG via JavaScript for Automation (JXA) and the ObjC
- * bridge to NSPasteboard. JXA ships with every macOS install since 10.10,
- * so we get a real Cocoa-level pasteboard reader at no install cost.
- *
- * Works for clipboards that AppleScript class-code reads cannot see, in
- * particular the NSPasteboard "promise items" that Chromium-based apps
- * (Figma, Slack desktop, web browsers) use to defer image generation.
- *
- * Tries supported public UTIs in order: PNG → JPEG → TIFF → GIF → BMP → PDF.
- * Non-PNG payloads are written to a temp file and transcoded to PNG via
- * `sips` so the rest of the pipeline only ever sees one of the four MIME
- * types we accept.
- */
-/**
  * macOS clipboard → PNG via a tiny Swift program executed in-process by
  * `swift -e`. Unlike `osascript -l JavaScript`, the swift binary launches
  * a real NSApplication-backed process, so NSPasteboard promise providers
@@ -421,8 +408,8 @@ function clipboardProbesForPlatform(): ClipboardProbe[] {
  *   2. Re-encode via NSBitmapImageRep PNG output so we always hand back PNG.
  *
  * Returns undefined when `swift` is not installed (Xcode CLT missing) or
- * when the clipboard has no image at all. The caller then falls through
- * to the JXA / AppleScript probes.
+ * when the clipboard has no image at all. There is no fallback probe —
+ * Swift covers every NSImage-representable input AppKit recognizes.
  */
 async function readMacClipboardViaSwift(): Promise<Uint8Array | undefined> {
   const stamp = `${Date.now()}-${process.pid}`;

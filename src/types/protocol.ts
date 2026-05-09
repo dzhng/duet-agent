@@ -336,15 +336,6 @@ export interface TurnStartCommand {
 }
 
 /**
- * Send a new user prompt against the runner's current state.
- *
- * Callers may send prompt commands even while a previous `turn()` call is
- * active. The turn runner maps `behavior` onto the active pi agent when it can
- * and otherwise queues the command behind active non-agent work. State is held
- * inside the runner; it was bootstrapped at `start` and is updated from the
- * runner's own terminal events.
- */
-/**
  * Image attachment carried alongside a prompt's text. The data is base64-encoded
  * raw image bytes (no `data:` URL prefix) and `mimeType` is the standard
  * `image/png`, `image/jpeg`, etc. label vision-capable models expect.
@@ -357,6 +348,15 @@ export interface TurnPromptImage {
   mimeType: string;
 }
 
+/**
+ * Send a new user prompt against the runner's current state.
+ *
+ * Callers may send prompt commands even while a previous `turn()` call is
+ * active. The turn runner maps `behavior` onto the active pi agent when it can
+ * and otherwise queues the command behind active non-agent work. State is held
+ * inside the runner; it was bootstrapped at `start` and is updated from the
+ * runner's own terminal events.
+ */
 export interface TurnPromptCommand {
   type: "prompt";
   message: string;

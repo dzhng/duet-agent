@@ -266,6 +266,29 @@ Model names can use full `provider:modelId` syntax or shorthand names such as
 first configured supported provider; use full `provider:modelId` syntax to pin a
 specific provider.
 
+### Image Attachments
+
+The interactive TUI accepts image attachments (PNG, JPEG, GIF, WebP) in three
+ways. Each attached image shows up as `[Image #N]` in the prompt buffer and is
+forwarded to vision-capable models as multimodal content.
+
+- **Cmd+V / Ctrl+V** — paste an image directly from the clipboard. Works for
+  screenshots, Finder file copies, browser image copies, and Chromium-based
+  apps like Figma "Copy as PNG". Requires a kitty-keyboard-aware terminal
+  (kitty, Ghostty, recent iTerm2, WezTerm); falls back to `/paste` on others.
+- **`/paste`** — manual clipboard probe. Use this when your terminal swallows
+  Cmd+V (e.g. Warp, macOS Terminal.app).
+- **`/image <path>`** — attach an image from disk by absolute or relative
+  path. Tilde (`~/`) and `file://` URLs are accepted.
+
+`/clear-images` removes all pending attachments before submit. Attachments are
+cached under `~/.duet/cache/paste/<session-id>/` and capped at 20 MB each.
+
+On macOS, clipboard reads use a small Swift program (via `swift -e`) so
+promise-backed pasteboards from Chromium apps actually deliver bytes. This
+requires Xcode Command Line Tools — install with `xcode-select --install` if
+you see "clipboard had no readable image" with `/paste`.
+
 ### CLI Login
 
 `duet login` is the recommended setup path. It opens a browser to sign in, writes `DUET_API_KEY` for the selected org to `~/.duet/.env`, and syncs the latest default skills into `~/.duet/skills`.
