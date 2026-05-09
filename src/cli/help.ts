@@ -12,6 +12,7 @@ USAGE
   duet env [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
   duet memory [--db <path>]
+  duet send-feedback [--file <path>] [text...]
   duet upgrade [--manager npm|bun|pnpm|yarn]
   echo "prompt" | duet
 
@@ -20,6 +21,7 @@ COMMANDS
   env                      Manually create or update the shared duet env file with provider API keys
   skills                   List installed skills as JSON (name, description, path, scope)
   memory                   Open a TUI to view, edit, and delete observational memories (alias: memories)
+  send-feedback            Send free-form markdown feedback to the Duet team
   upgrade                  Upgrade the global ${packageName} installation
 
 OPTIONS
@@ -75,6 +77,7 @@ EXAMPLES
   duet login
   duet env
   duet memory
+  duet send-feedback "the TUI flickers when..."
   duet upgrade
 `);
 }
@@ -170,6 +173,25 @@ KEYS
   e                        Edit selected memory in $EDITOR
   d                        Delete selected memory
   q / Esc                  Quit
+`);
+}
+
+export function printSendFeedbackHelp(): void {
+  console.log(`
+duet send-feedback — Send free-form markdown feedback to the Duet team
+
+USAGE
+  duet send-feedback [text...]
+  duet send-feedback --file <path>
+  echo "feedback" | duet send-feedback
+
+Submits a piece of markdown feedback to the Duet team's triage queue. The
+endpoint is public — no API key required. With no input, drops you into an
+interactive prompt; submit an empty line to send.
+
+OPTIONS
+  -f, --file <path>        Read feedback content from a file
+  -h, --help               Show this help
 `);
 }
 

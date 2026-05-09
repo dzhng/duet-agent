@@ -19,6 +19,7 @@ import { runEnvCommand } from "./cli/env.js";
 import { runLoginCommand } from "./cli/login.js";
 import { runMemoryCommand } from "./cli/memory.js";
 import { runRunCommand } from "./cli/run.js";
+import { runSendFeedbackCommand } from "./cli/send-feedback.js";
 import { runSkillsCommand } from "./cli/skills.js";
 import { runUpgradeCommand } from "./cli/upgrade.js";
 import { shimDuetApiKeyToAiGateway } from "./model-resolution/duet-gateway.js";
@@ -36,6 +37,8 @@ export type { LoginCommandIO } from "./cli/login.js";
 export { runSkillsCommand } from "./cli/skills.js";
 export { runUpgradeCommand } from "./cli/upgrade.js";
 export { runMemoryCommand } from "./cli/memory.js";
+export { runSendFeedbackCommand } from "./cli/send-feedback.js";
+export type { SendFeedbackCommandIO } from "./cli/send-feedback.js";
 export {
   cliEnvFilePaths,
   defaultDuetEnvFilePath,
@@ -90,6 +93,10 @@ async function main(): Promise<void> {
     }
     if (subcommand === "memory" || subcommand === "memories") {
       await runMemoryCommand(args.slice(1));
+      return;
+    }
+    if (subcommand === "send-feedback") {
+      await runSendFeedbackCommand(args.slice(1));
       return;
     }
 
