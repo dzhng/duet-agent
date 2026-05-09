@@ -418,6 +418,34 @@ describe("CLI env files", () => {
     expect(await readFile(targetEnv, "utf8")).toBe("DUET_API_KEY=duet_gt_test\n");
   });
 
+  testIfDocker("env import only copies recognized provider keys from the source", async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-env-"));
+    const workDir = join(tempRoot, "project");
+    const targetEnv = join(tempRoot, "duet.env");
+    await mkdir(workDir);
+    await writeFile(
+      join(workDir, ".env"),
+      [
+        "DUET_API_KEY=duet_gt_test",
+        "OPENAI_API_KEY=openai_test",
+        "DATABASE_URL=postgres://example",
+        "STRIPE_SECRET_KEY=sk_test_unrelated",
+        "",
+      ].join("\n"),
+    );
+
+    const stderr = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await runEnvCommand(["--env-file", targetEnv, "--import"], { cwd: workDir });
+    } finally {
+      stderr.mockRestore();
+    }
+
+    expect(await readFile(targetEnv, "utf8")).toBe(
+      "DUET_API_KEY=duet_gt_test\nOPENAI_API_KEY=openai_test\n",
+    );
+  });
+
   testIfDocker(
     "env import with a path merges that env file into an existing custom env file",
     async () => {

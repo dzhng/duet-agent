@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import dotenv from "dotenv";
@@ -75,8 +75,16 @@ export async function runEnvCommand(args: string[], io: EnvCommandIO = {}): Prom
     if (!(await fileExists(sourceEnvFile))) {
       fail(`No .env file found at ${sourceEnvFile}`);
     }
-    await importEnvFile(sourceEnvFile, targetEnvFile);
-    console.error(`Imported ${sourceEnvFile} into ${targetEnvFile}`);
+    const imported = await importEnvFile(sourceEnvFile, targetEnvFile);
+    if (imported.length === 0) {
+      console.error(
+        `No supported provider keys found in ${sourceEnvFile}. Looked for: ${SUPPORTED_API_KEYS.join(", ")}`,
+      );
+    } else {
+      console.error(
+        `Imported ${imported.length} key${imported.length === 1 ? "" : "s"} (${imported.join(", ")}) from ${sourceEnvFile} into ${targetEnvFile}`,
+      );
+    }
   }
 
   if (pasteKeys) {
@@ -94,22 +102,26 @@ export async function runEnvCommand(args: string[], io: EnvCommandIO = {}): Prom
 }
 
 /**
- * Copy a source env file's contents into the target env file. When the
- * target already exists we merge keys (source wins) instead of overwriting,
- * so existing local settings stay intact.
+ * Pull only the provider keys we recognize out of `source` and merge them
+ * into `target`. Anything else in `source` (app secrets, unrelated config)
+ * is intentionally ignored so we never copy noise into the shared duet env
+ * file. Returns the keys that were actually imported.
  */
-async function importEnvFile(source: string, target: string): Promise<void> {
+async function importEnvFile(source: string, target: string): Promise<readonly string[]> {
   if (resolve(source) === resolve(target)) {
     console.error(`${target} is already the shared env file.`);
-    return;
-  }
-  await mkdir(dirname(target), { recursive: true });
-  if (!(await fileExists(target))) {
-    await copyFile(source, target);
-    return;
+    return [];
   }
   const parsed = dotenv.parse(await readFile(source));
-  await mergeEnvEntries(target, new Map(Object.entries(parsed)));
+  const entries = new Map<string, string>();
+  for (const key of SUPPORTED_API_KEYS) {
+    const value = parsed[key];
+    if (typeof value === "string" && value.length > 0) entries.set(key, value);
+  }
+  if (entries.size === 0) return [];
+  await mkdir(dirname(target), { recursive: true });
+  await mergeEnvEntries(target, entries);
+  return [...entries.keys()];
 }
 
 /**
