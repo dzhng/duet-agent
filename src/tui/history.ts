@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { formatCompactJson } from "../lib/compact-json.js";
+import { composeFormattedToolBlock, formatToolBlock } from "./tool-formatters.js";
 
 /**
  * Visual category for a transcript block. The TUI uses this to pick a color
@@ -38,13 +38,29 @@ export interface StartupHeaderInput {
 /**
  * Convert a persisted agent transcript into transcript-ready blocks.
  *
- * Tool calls and their tool results are stitched back together by id so the
- * resumed view matches what the live runner renders during a turn — running
- * spinner first, then `✓`/`✗` plus result body once the result arrives.
+ * Tool calls and their tool results are stitched back together by id and run
+ * through the shared per-tool formatter, so the resumed view matches what
+ * the live runner renders during a turn — same header, same body, same
+ * truncated result. Tools that hide themselves live (e.g. ask_user_question)
+ * still surface in history because the terminal event that mirrored them
+ * does not replay on resume.
  */
 export function historyDisplayBlocks(history: readonly AgentMessage[]): HistoryDisplayBlock[] {
   const blocks: HistoryDisplayBlock[] = [];
-  const activeToolBlockIndexes = new Map<string, number>();
+
+  // Pending tool_call calls keyed by id. We store the assistant-side data
+  // until the matching toolResult arrives so the formatter can run once with
+  // both halves and produce a single combined block.
+  interface PendingToolCall {
+    /** Index in `blocks` if we already pushed a placeholder; -1 means no
+     *  placeholder yet (the formatter would have hidden it live, but for
+     *  history we still want to render it once the result arrives). */
+    placeholderIndex: number;
+    toolName: string;
+    input: unknown;
+  }
+  const pending = new Map<string, PendingToolCall>();
+
   for (const message of history) {
     if (!("role" in message)) continue;
     if (message.role === "user") {
@@ -58,10 +74,30 @@ export function historyDisplayBlocks(history: readonly AgentMessage[]): HistoryD
           const trimmed = block.thinking.trim();
           if (trimmed) blocks.push({ kind: "reasoning", content: `[reasoning]\n${trimmed}` });
         } else if (block.type === "toolCall") {
-          const input =
-            block.arguments === undefined ? "" : `\n${formatCompactJson(block.arguments)}`;
-          activeToolBlockIndexes.set(block.id, blocks.length);
-          blocks.push({ kind: "tool", content: `[tool ${block.name}] ⏳${input}` });
+          // Render a "still running" placeholder using the shared formatter so
+          // the look matches what the live transcript shows mid-call. If the
+          // matching toolResult never arrives (truncated history), the
+          // placeholder remains as the final visible block.
+          const formatted = formatToolBlock({
+            toolName: block.name,
+            status: "running",
+            input: block.arguments,
+            mode: "history",
+          });
+          if (formatted.hidden) {
+            // Tools hidden live still get a block in history once the result
+            // arrives; record the call without pushing a placeholder.
+            pending.set(block.id, {
+              placeholderIndex: -1,
+              toolName: block.name,
+              input: block.arguments,
+            });
+            continue;
+          }
+          const content = composeFormattedToolBlock(formatted, "⏳");
+          const placeholderIndex = blocks.length;
+          blocks.push({ kind: "tool", content });
+          pending.set(block.id, { placeholderIndex, toolName: block.name, input: block.arguments });
         }
       }
       if (message.errorMessage) {
@@ -69,24 +105,27 @@ export function historyDisplayBlocks(history: readonly AgentMessage[]): HistoryD
       }
     } else if (message.role === "toolResult") {
       const text = textFromHistoryContent(message.content);
-      const existingIndex = activeToolBlockIndexes.get(message.toolCallId);
+      const call = pending.get(message.toolCallId);
+      const toolName = call?.toolName ?? message.toolName;
+      const input = call?.input;
+      const formatted = formatToolBlock({
+        toolName,
+        status: message.isError ? "error" : "completed",
+        input,
+        output: toFormatterContent(text, message.isError),
+        mode: "history",
+      });
       const marker = message.isError ? "✗" : "✓";
-      const label = message.isError ? "[error]" : "[result]";
-      if (existingIndex !== undefined) {
-        const existing = blocks[existingIndex]!;
-        const [, ...inputLines] = existing.content.split("\n");
-        const input = inputLines.length > 0 ? `\n${inputLines.join("\n")}` : "";
-        existing.kind = message.isError ? "error" : "tool";
-        existing.content = text
-          ? `[tool ${message.toolName}] ${marker}${input}\n${label}\n${text}`
-          : `[tool ${message.toolName}] ${marker}${input}`;
-        activeToolBlockIndexes.delete(message.toolCallId);
+      const content = composeFormattedToolBlock(formatted, marker);
+      const kind: HistoryBlockKind = message.isError ? "error" : "tool";
+      if (call && call.placeholderIndex >= 0) {
+        const existing = blocks[call.placeholderIndex]!;
+        existing.kind = kind;
+        existing.content = content;
       } else {
-        const content = text
-          ? `[tool ${message.toolName}] ${marker}\n${label}\n${text}`
-          : `[tool ${message.toolName}] ${marker}`;
-        blocks.push({ kind: message.isError ? "error" : "tool", content });
+        blocks.push({ kind, content });
       }
+      pending.delete(message.toolCallId);
     }
   }
   return blocks;
@@ -183,4 +222,9 @@ function textFromHistoryContent(content: ReadonlyArray<TextContent | ImageConten
     .filter((block): block is TextContent => block.type === "text")
     .map((block) => block.text)
     .join("\n");
+}
+
+function toFormatterContent(text: string, _isError: boolean): ReadonlyArray<TextContent> {
+  if (!text) return [];
+  return [{ type: "text", text }];
 }

@@ -232,6 +232,17 @@ export class Session {
     return Boolean(this.activeTurn);
   }
 
+  /**
+   * Most recent terminal event emitted by the runner, or `undefined` if no
+   * turn has settled yet. Subscribers attached after `hydrate()` / `start()`
+   * (e.g. a deferred TUI) can use this to recover state — notably the sleep
+   * banner — that was emitted before they began listening.
+   */
+  getLastTerminal(): TurnTerminalEvent | undefined {
+    if (this.activeTurn) return undefined;
+    return this.lastTerminal;
+  }
+
   /** Current runner-owned turn state snapshot, including agent message history. */
   getState(): TurnState | undefined {
     return this.runner.getState();
