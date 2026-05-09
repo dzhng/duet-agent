@@ -587,4 +587,39 @@ describe("TurnRunner memory", () => {
     expect(result.length).toBeLessThanOrEqual(40);
     expect(result).toContain("y");
   });
+
+  test("sticky horizon reuses the same eviction across consecutive transform calls", async () => {
+    // Tiny token budget so the trigger fires immediately; the test then
+    // confirms the second call does not advance the horizon further when
+    // the input has not grown past the existing cut.
+    const runner = new MemoryTransformTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+      memory: {
+        observation: { messageTokens: 20, bufferActivation: 5 },
+      },
+    });
+    const transform = runner.createMemoryTransformForTest();
+    const messages: AgentMessage[] = [
+      { role: "user", content: [{ type: "text", text: "x".repeat(80) }], timestamp: 1 },
+      { role: "user", content: [{ type: "text", text: "latest prompt" }], timestamp: 2 },
+    ];
+
+    const firstPass = await transform(messages);
+    const secondPass = await transform(messages);
+
+    // The dispatched lists must be content-equivalent across turns when the
+    // input does not change — that is the whole point of the sticky horizon.
+    expect(secondPass.length).toBe(firstPass.length);
+    for (let i = 0; i < firstPass.length; i++) {
+      expect((secondPass[i] as { content: unknown }).content).toEqual(
+        (firstPass[i] as { content: unknown }).content,
+      );
+    }
+    // Latest prompt always survives.
+    expect(firstPass.at(-1)).toMatchObject({
+      role: "user",
+      content: [{ type: "text", text: "latest prompt" }],
+    });
+  });
 });

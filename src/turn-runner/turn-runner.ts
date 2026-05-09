@@ -44,6 +44,7 @@ import type {
 import type { StateMachineAgentState } from "../types/state-machine.js";
 import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
 import { createStateMachineSystemPromptLayer } from "./prompts.js";
+import { createInitialHorizon, type WireGuardHorizon } from "./wire-shaping.js";
 import {
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
@@ -1087,11 +1088,22 @@ export class TurnRunner {
   }
 
   protected createMemoryTransform() {
+    // The memory transform owns history retention against both the token
+    // budget (context-window cost on smaller models) and the wire-byte
+    // budget (gateway request-body caps). It applies the sticky horizon
+    // first so subsequent turns reuse the same eviction decision and the
+    // provider prompt cache stays valid between eviction events.
     return createObservationalContextTransform({
       memory: this.memory,
       settings: this.config.memory,
+      horizon: this.wireGuardHorizon,
     });
   }
+
+  // Sticky across all turns within this runner instance. Resets on
+  // session resume (new runner). Mutated in place by the memory transform
+  // when either the token or byte budget triggers eviction.
+  private readonly wireGuardHorizon: WireGuardHorizon = createInitialHorizon();
 
   async getSkills(): Promise<readonly Skill[]> {
     await this.ensureSkillsLoaded();
