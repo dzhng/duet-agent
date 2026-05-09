@@ -36,6 +36,7 @@ import {
 } from "./autocomplete.js";
 import { buildFileIndex } from "./file-index.js";
 import {
+  DUET_BANNER_LINES,
   type HistoryBlockKind,
   type HistoryDisplayBlock,
   historyDisplayBlocks,
@@ -70,7 +71,12 @@ export {
   skillAutocompleteMatches,
 } from "./autocomplete.js";
 export { formatSkillAutocompleteItem } from "./autocomplete.js";
-export { historyDisplayBlocks, limitHistoryDisplayBlocks, startupHeaderLines } from "./history.js";
+export {
+  DUET_BANNER_LINES,
+  historyDisplayBlocks,
+  limitHistoryDisplayBlocks,
+  startupHeaderLines,
+} from "./history.js";
 import { formatToolBlock, truncateToolText } from "./tool-formatters.js";
 
 export interface RunTuiInput {
@@ -526,6 +532,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     skills: ReadonlyArray<{ name: string }>,
     agentFiles: readonly TurnAgentFile[],
   ): void {
+    for (const line of DUET_BANNER_LINES) appendLine(line, COLORS.status);
     const [title, ...details] = startupHeaderLines(input);
     appendLine(title ?? "[duet]", COLORS.status);
     for (const line of details) {
