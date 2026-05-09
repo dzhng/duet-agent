@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { testIfDocker } from "./helpers/docker-only.js";
 import {
   loadImageFromPath,
   looksLikeImageFilePath,
@@ -82,7 +83,7 @@ describe("tui/paste", () => {
     );
   });
 
-  test("persistPastedImage writes the bytes and returns the wire payload", async () => {
+  testIfDocker("persistPastedImage writes the bytes and returns the wire payload", async () => {
     const dir = mkdtempSync(join(tmpdir(), "duet-paste-"));
     process.env.HOME = dir;
     const sessionId = "test-session";
@@ -105,7 +106,7 @@ describe("tui/paste", () => {
     expect(onDisk.equals(Buffer.from(png))).toBe(true);
   });
 
-  test("persistPastedImage rejects unsupported MIME types", async () => {
+  testIfDocker("persistPastedImage rejects unsupported MIME types", async () => {
     process.env.HOME = mkdtempSync(join(tmpdir(), "duet-paste-"));
     await expect(
       persistPastedImage({
@@ -117,7 +118,7 @@ describe("tui/paste", () => {
     ).rejects.toThrow(/Unsupported image type/);
   });
 
-  test("persistPastedImage rejects empty payloads", async () => {
+  testIfDocker("persistPastedImage rejects empty payloads", async () => {
     process.env.HOME = mkdtempSync(join(tmpdir(), "duet-paste-"));
     await expect(
       persistPastedImage({
@@ -129,7 +130,7 @@ describe("tui/paste", () => {
     ).rejects.toThrow(/Empty image bytes/);
   });
 
-  test("persistPastedImage enforces the 20MB cap", async () => {
+  testIfDocker("persistPastedImage enforces the 20MB cap", async () => {
     process.env.HOME = mkdtempSync(join(tmpdir(), "duet-paste-"));
     const big = new Uint8Array(MAX_IMAGE_BYTES + 1);
     big.set(PNG_HEADER, 0);
@@ -143,7 +144,7 @@ describe("tui/paste", () => {
     ).rejects.toThrow(/too large/);
   });
 
-  test("loadImageFromPath validates bytes and returns a wire payload", async () => {
+  testIfDocker("loadImageFromPath validates bytes and returns a wire payload", async () => {
     const dir = mkdtempSync(join(tmpdir(), "duet-load-"));
     const bytes = new Uint8Array(64);
     bytes.set(PNG_HEADER, 0);
@@ -158,14 +159,14 @@ describe("tui/paste", () => {
     expect(pending.attachment.data).toBe(Buffer.from(bytes).toString("base64"));
   });
 
-  test("loadImageFromPath errors on missing files", async () => {
+  testIfDocker("loadImageFromPath errors on missing files", async () => {
     const dir = mkdtempSync(join(tmpdir(), "duet-load-"));
     await expect(loadImageFromPath({ cwd: dir, rawPath: "nope.png", id: 1 })).rejects.toThrow(
       /No file at/,
     );
   });
 
-  test("loadImageFromPath rejects files whose bytes are not image data", async () => {
+  testIfDocker("loadImageFromPath rejects files whose bytes are not image data", async () => {
     const dir = mkdtempSync(join(tmpdir(), "duet-load-"));
     const file = join(dir, "fake.png");
     writeFileSync(file, "this is not actually a PNG");

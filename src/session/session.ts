@@ -12,6 +12,7 @@ import type {
   TurnInterruptCommand,
   TurnMode,
   TurnPromptBehavior,
+  TurnFollowUpQueueEntry,
   TurnPromptImage,
   TurnQuestion,
   TurnStartCommand,
@@ -54,7 +55,7 @@ export interface SessionAnswerInput {
 }
 
 export interface SessionEditFollowUpQueueInput {
-  prompts: string[];
+  prompts: TurnFollowUpQueueEntry[];
 }
 
 export type SessionEventHandler = (event: TurnEvent) => void;
@@ -185,7 +186,7 @@ export class Session {
       type: "prompt",
       message: input.message,
       behavior: input.behavior ?? "follow_up",
-      ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+      images: input.images,
     };
     this.dispatchTurn(command);
   }

@@ -192,9 +192,12 @@ export interface TurnState {
   todos?: TurnTodo[];
   /**
    * User-visible follow-up prompts waiting to be delivered. The runner mirrors
-   * this into pi-agent follow-up queues when a parent agent is active.
+   * this into pi-agent follow-up queues when a parent agent is active. Each
+   * entry is a subset of `TurnPromptCommand` (its `message` and optional
+   * `images`), persisted alongside state so resumed runners can replay the
+   * same multimodal payload they would have delivered live.
    */
-  followUpQueue?: string[];
+  followUpQueue?: TurnFollowUpQueueEntry[];
   /**
    * Commands accepted by the runner but not yet executed because active work
    * could not absorb them. These are replayed after resume in the original
@@ -349,6 +352,19 @@ export interface TurnPromptImage {
 }
 
 /**
+ * Pending follow-up prompt waiting to be replayed against the parent agent.
+ *
+ * Shape is a subset of `TurnPromptCommand` (the user-facing prompt fields,
+ * minus `behavior`, which is implicit — every queued entry runs as a
+ * follow-up). Persisted with `TurnState.followUpQueue` so resumed sessions
+ * deliver the same multimodal payload the original turn would have.
+ */
+export interface TurnFollowUpQueueEntry {
+  message: string;
+  images?: TurnPromptImage[];
+}
+
+/**
  * Send a new user prompt against the runner's current state.
  *
  * Callers may send prompt commands even while a previous `turn()` call is
@@ -404,7 +420,7 @@ export interface TurnWakeCommand {
 export interface TurnEditFollowUpQueueCommand {
   type: "edit_follow_up_queue";
   /** Full replacement queue, in the order prompts should be delivered. */
-  prompts: string[];
+  prompts: TurnFollowUpQueueEntry[];
 }
 
 /**
@@ -451,7 +467,7 @@ export interface TurnTodosEvent {
 export interface TurnFollowUpQueueEvent {
   type: "follow_up_queue";
   /** Prompts currently waiting to run as follow-ups after active work settles. */
-  prompts: string[];
+  prompts: TurnFollowUpQueueEntry[];
 }
 
 export interface TurnStateMachineEvent {

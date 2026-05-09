@@ -49,8 +49,12 @@ export interface FormattedTool {
   hidden?: boolean;
 }
 
-/** Cap noisy tool output (file dumps, search hits) inline; the full payload
- *  is still in session history for the model to consult. */
+/**
+ * Cap noisy tool output (file dumps, search hits) before it enters the
+ * assembled block. Bounds raw result text to a sensible number of source
+ * lines; the visual clamp below still re-trims the assembled block to fit
+ * the terminal.
+ */
 const TOOL_RESULT_MAX_LINES = 3;
 
 export function truncateToolText(text: string): string {
@@ -59,6 +63,70 @@ export function truncateToolText(text: string): string {
   const head = lines.slice(0, TOOL_RESULT_MAX_LINES).join("\n");
   const remaining = lines.length - TOOL_RESULT_MAX_LINES;
   return `${head}\n… (+${remaining} more line${remaining === 1 ? "" : "s"})`;
+}
+
+/**
+ * Total visual rows a rendered tool call may occupy (header + body + optional
+ * result, after wrapping). Keeps the transcript scannable when a call has a
+ * verbose JSON input or a wide bash command.
+ */
+export const TOOL_BLOCK_MAX_LINES = 3;
+
+export interface ClampToolBlockOptions {
+  /**
+   * Width in terminal columns available to the block. When provided, source
+   * lines are soft-wrapped to this width before the row clamp, so a single
+   * very long line (e.g. compact JSON) collapses to one visual row plus a
+   * "+N more" tail rather than spilling the whole block.
+   */
+  columns?: number;
+  maxLines?: number;
+}
+
+/**
+ * Clamp the assembled tool-block content to a target number of *visual* rows.
+ *
+ * If `columns` is supplied, each source line is char-wrapped to that width
+ * first so the row count matches what the user will see on screen. The first
+ * row (tool header) always survives; overflow is replaced with a
+ * `… (+N more line(s))` tail.
+ */
+export function clampToolBlockLines(content: string, options: ClampToolBlockOptions = {}): string {
+  const maxLines = options.maxLines ?? TOOL_BLOCK_MAX_LINES;
+  const columns = options.columns;
+  const visualLines =
+    columns && columns > 0
+      ? content.split("\n").flatMap((line) => softWrap(line, columns))
+      : content.split("\n");
+  if (visualLines.length <= maxLines) return visualLines.join("\n");
+  const headCount = Math.max(1, maxLines - 1);
+  const head = visualLines.slice(0, headCount).join("\n");
+  const remaining = visualLines.length - headCount;
+  return `${head}\n… (+${remaining} more line${remaining === 1 ? "" : "s"})`;
+}
+
+function softWrap(line: string, columns: number): string[] {
+  if (line.length === 0) return [""];
+  if (line.length <= columns) return [line];
+  const out: string[] = [];
+  for (let i = 0; i < line.length; i += columns) {
+    out.push(line.slice(i, i + columns));
+  }
+  return out;
+}
+
+/**
+ * Single-source assembly of a formatted tool block. Both the live renderer
+ * and the resume-history renderer feed the resulting string through
+ * `clampToolBlockLines` to produce the final transcript text.
+ */
+export function assembleToolBlock(formatted: FormattedTool, marker: string): string {
+  const headerLine = `${formatted.header} ${marker}`.trimEnd();
+  const sections: string[] = [formatted.body ? `${headerLine}\n${formatted.body}` : headerLine];
+  if (formatted.result && formatted.result.body) {
+    sections.push(`${formatted.result.label}\n${formatted.result.body}`);
+  }
+  return sections.join("\n");
 }
 
 export function textFromToolContent(
@@ -384,14 +452,18 @@ function formatLineRange(offset?: number, limit?: number): string {
   return "";
 }
 
-/** Compose a formatter result into a single multi-line string suitable for
- *  history rendering or for use as a fallback display surface. The live
- *  renderer instead prepends a spinner / marker per its own layout rules. */
-export function composeFormattedToolBlock(formatted: FormattedTool, marker: string): string {
-  const headerLine = `${formatted.header} ${marker}`.trimEnd();
-  const sections: string[] = [formatted.body ? `${headerLine}\n${formatted.body}` : headerLine];
-  if (formatted.result && formatted.result.body) {
-    sections.push(`${formatted.result.label}\n${formatted.result.body}`);
-  }
-  return sections.join("\n");
+/**
+ * Compose a formatted tool block for history rendering. Returns the raw
+ * assembled block; pass `clamp` (and optional `columns`) to also trim it to a
+ * visual row budget. History playback intentionally keeps the full block by
+ * default so question/answer transcripts replay in full; the live renderer
+ * applies its own clamp with the current terminal width.
+ */
+export function composeFormattedToolBlock(
+  formatted: FormattedTool,
+  marker: string,
+  options: ClampToolBlockOptions & { clamp?: boolean } = {},
+): string {
+  const assembled = assembleToolBlock(formatted, marker);
+  return options.clamp ? clampToolBlockLines(assembled, options) : assembled;
 }

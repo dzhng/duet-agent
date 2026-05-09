@@ -72,7 +72,7 @@ describe("TurnRunner active turns", () => {
       "Turn runner has not been started.",
     );
     expect(() =>
-      runner.editFollowUpQueue({ type: "edit_follow_up_queue", prompts: ["later"] }),
+      runner.editFollowUpQueue({ type: "edit_follow_up_queue", prompts: [{ message: "later" }] }),
     ).toThrow("Turn runner has not been started.");
   });
 
@@ -140,7 +140,7 @@ describe("TurnRunner active turns", () => {
     );
     runner.editFollowUpQueue({
       type: "edit_follow_up_queue",
-      prompts: ["replacement follow-up"],
+      prompts: [{ message: "replacement follow-up" }],
     });
 
     expect(followUpQueueEvents(events)).toContainEqual(["queued before edit"]);
@@ -162,7 +162,7 @@ describe("TurnRunner active turns", () => {
       status: "completed",
       mode: "agent",
       agent: { status: "completed", messages: [] },
-      followUpQueue: ["persisted follow-up"],
+      followUpQueue: [{ message: "persisted follow-up" }],
     };
 
     await runner.start({ type: "start", state: JSON.parse(JSON.stringify(state)) as TurnState });
@@ -623,8 +623,8 @@ describe("TurnRunner active turns", () => {
       "prompt",
     ]);
     expect(turnTerminal.state.followUpQueue).toEqual([
-      "first question during poll",
-      "second question during poll",
+      { message: "first question during poll" },
+      { message: "second question during poll" },
     ]);
     expect(terminalEvents(events)).toHaveLength(1);
   });
@@ -949,7 +949,7 @@ function followUpQueueEvents(events: TurnEvent[]): string[][] {
       (event): event is Extract<TurnEvent, { type: "follow_up_queue" }> =>
         event.type === "follow_up_queue",
     )
-    .map((event) => event.prompts);
+    .map((event) => event.prompts.map((entry) => entry.message));
 }
 
 function messageTexts(state: TurnState): string[] {

@@ -223,4 +223,3 @@ function textFromHistoryContent(content: ReadonlyArray<TextContent | ImageConten
     .map((block) => block.text)
     .join("\n");
 }
-

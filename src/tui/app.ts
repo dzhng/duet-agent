@@ -55,7 +55,7 @@ import {
   limitHistoryDisplayBlocks,
   startupHeaderLines,
 } from "./history.js";
-import { createSidebar } from "./sidebar.js";
+import { createSidebar, SIDEBAR_WIDTH } from "./sidebar.js";
 import { COLORS, HINT_IDLE, HINT_RUNNING } from "./theme.js";
 
 export type { HistoryBlockKind, HistoryDisplayBlock, LimitedHistory } from "./history.js";
@@ -89,7 +89,12 @@ export {
   limitHistoryDisplayBlocks,
   startupHeaderLines,
 } from "./history.js";
-import { formatToolBlock, truncateToolText } from "./tool-formatters.js";
+import {
+  assembleToolBlock,
+  clampToolBlockLines,
+  formatToolBlock,
+  truncateToolText,
+} from "./tool-formatters.js";
 
 export interface RunTuiInput {
   session: Session;
@@ -381,6 +386,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let nextImageId = 1;
   let lastTerminal: TurnTerminalEvent | undefined;
   let latestContextUsage: TurnContextUsageEvent | undefined;
+  // Running USD total across every settled turn in this session. Reset only
+  // by exiting the TUI; resumed sessions start fresh because per-turn usage
+  // events are not replayed from persisted state.
+  let sessionCost = 0;
   let activeTextStream: StreamingBlock | undefined;
   let activeReasoningStream: StreamingBlock | undefined;
   // Tool calls fire twice (running → completed/error). Track the rendered
@@ -497,6 +506,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     sidebar.setFollowUpQueue(state?.followUpQueue ?? []);
     sidebar.setStateMachine(state?.stateMachine);
     sidebar.setContextUsage(latestContextUsage);
+    sidebar.setSessionCost(sessionCost);
   }
 
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
@@ -575,6 +585,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderUsage(usage?: TurnTokenUsage): void {
     if (!usage) return;
+    sessionCost += usage.cost.total;
+    sidebar.setSessionCost(sessionCost);
     const parts = [`in=${usage.input}`, `out=${usage.output}`];
     if (usage.cacheRead > 0) parts.push(`cached=${usage.cacheRead}`);
     const cost = usage.cost.total === 0 ? "" : ` · Cost: $${usage.cost.total.toFixed(4)}`;
@@ -666,6 +678,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // whether the call should appear in the transcript at all (e.g.
   // ask_user_question hides itself live and lets the `ask` terminal event
   // own the question display).
+  // Width budget for a tool block: terminal width minus the fixed sidebar
+  // column and a small fudge for borders/padding. Recomputed per render so a
+  // resize after a tool block lands updates new blocks; existing blocks keep
+  // the width they were rendered at, which is acceptable since the renderer
+  // would otherwise re-wrap and could exceed the row cap.
+  function toolBlockColumns(): number {
+    const transcriptColumnPadding = 4;
+    return Math.max(20, renderer.terminalWidth - SIDEBAR_WIDTH - transcriptColumnPadding);
+  }
+
   function renderToolCall(step: Extract<TurnStep, { type: "tool_call" }>): void {
     const existing = activeToolBlocks.get(step.toolCallId);
     if (existing) {
@@ -685,11 +707,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (formatted.hidden) return;
 
     const startedAt = isLive ? Date.now() : undefined;
-    const headerLine = isLive ? `${formatted.header} ⏳ 0s` : `${formatted.header} ⏳`;
+    const marker = isLive ? "⏳ 0s" : "⏳";
     const fg = step.status === "error" ? COLORS.error : COLORS.tool;
+    const columns = toolBlockColumns();
     const line = new TextRenderable(renderer, {
-      content: formatted.body ? `${headerLine}\n${formatted.body}` : headerLine,
+      content: clampToolBlockLines(assembleToolBlock(formatted, marker), { columns }),
       fg,
+      // Block content is already soft-wrapped to `columns`; tell the renderer
+      // not to re-wrap so width-estimation slack cannot push the block over
+      // the row cap.
+      wrapMode: "none",
     });
     beginBlock();
     transcript.add(line);
@@ -713,10 +740,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     block: ToolBlock,
   ): void {
     const isError = step.status === "error";
-    const marker = isError ? "✗" : "✓";
+    const glyph = isError ? "✗" : "✓";
     const durationSuffix =
       block.startedAt === undefined ? "" : ` ${formatElapsed(Date.now() - block.startedAt)}`;
-    const headerLine = `${block.header} ${marker}${durationSuffix}`;
     const formatted = formatToolBlock({
       toolName: step.toolName,
       status: isError ? "error" : "completed",
@@ -724,11 +750,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       output: step.output,
       mode: "live",
     });
-    const sections = [formatted.body ? `${headerLine}\n${formatted.body}` : headerLine];
-    if (formatted.result && formatted.result.body) {
-      sections.push(`${formatted.result.label}\n${formatted.result.body}`);
-    }
-    block.line.content = sections.join("\n");
+    block.line.content = clampToolBlockLines(
+      assembleToolBlock(formatted, `${glyph}${durationSuffix}`),
+      { columns: toolBlockColumns() },
+    );
     block.line.fg = isError ? COLORS.error : COLORS.tool;
     activeToolBlocks.delete(step.toolCallId);
   }
@@ -1411,15 +1436,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
 
     const submittedImages = pendingImages;
-    const annotation =
-      submittedImages.length > 0
-        ? `\n${submittedImages.map((p) => `(${p.label} → ${p.path})`).join("\n")}`
-        : "";
-    appendBlock("you:", `${message}${annotation}`, COLORS.user);
+    appendBlock("you:", message, COLORS.user);
+    // Render attachments as a separate hint-colored footnote rather than
+    // inlining them into the user-message block. Keeps the transcript
+    // structure honest — the user message persists exactly as the agent
+    // sees it, and resumed sessions render identically because no extra
+    // text was concatenated.
+    if (submittedImages.length > 0) {
+      const lines = submittedImages.map((p) => `📎 ${p.label}: ${p.path}`).join("\n");
+      appendBlock(null, lines, COLORS.hint);
+    }
     hideQuestions();
 
-    const images =
-      submittedImages.length > 0 ? submittedImages.map((p) => p.attachment) : undefined;
+    const images = submittedImages.map((p) => p.attachment);
 
     // Reset before dispatch so an in-flight error does not leave the user
     // double-charged with the same attachments on retry.
@@ -1427,15 +1456,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
     if (running) {
       const behavior = shiftEnter ? "follow_up" : "steer";
-      void input.session
-        .prompt({ message, behavior, ...(images ? { images } : {}) })
-        .catch(reportError);
+      void input.session.prompt({ message, behavior, images }).catch(reportError);
       return;
     }
 
-    void input.session
-      .prompt({ message, behavior: "follow_up", ...(images ? { images } : {}) })
-      .catch(reportError);
+    void input.session.prompt({ message, behavior: "follow_up", images }).catch(reportError);
     markRunning();
   }
 

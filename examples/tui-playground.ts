@@ -9,7 +9,8 @@
  *   /observe <secs>            same, but as an observational memory phase
  *   /queue <a,b,c>             emit a follow-up queue with the given prompts
  *   /queue+observe <secs>      run an observation phase with a non-empty queue
- *   /tools <secs>              emit a fake tool-call running → completed
+ *   /tools <secs>              emit one fake tool-call running → completed
+ *   /tools-demo                run a batch of formatters with verbose data
  *   /ask                       emit an `ask` terminal with two questions
  *   /sleep <secs>              emit a `sleep` terminal that wakes in N seconds
  *   /error <message>           emit a system error and end the turn
@@ -119,6 +120,11 @@ class FakePlaygroundRunner implements SessionTurnRunner {
       return this.complete(`Worked for ${secs}s.`);
     }
 
+    if (message.startsWith("/tools-demo")) {
+      await this.runToolsDemo();
+      return this.complete("Tools demo finished.");
+    }
+
     if (message.startsWith("/tools")) {
       const secs = parseSeconds(message, 4);
       this.emit({
@@ -161,7 +167,11 @@ class FakePlaygroundRunner implements SessionTurnRunner {
       const secs = parseSeconds(message, 30);
       this.emit({
         type: "follow_up_queue",
-        prompts: ["draft release notes", "ping reviewers", "merge once green"],
+        prompts: [
+          { message: "draft release notes" },
+          { message: "ping reviewers" },
+          { message: "merge once green" },
+        ],
       });
       const terminal = await this.runMemoryPhase("observation", secs);
       this.emit({ type: "follow_up_queue", prompts: [] });
@@ -170,18 +180,21 @@ class FakePlaygroundRunner implements SessionTurnRunner {
 
     if (message.startsWith("/queue")) {
       const arg = message.slice("/queue".length).trim();
-      const prompts =
+      const messages =
         arg.length > 0
           ? arg
               .split(",")
               .map((entry) => entry.trim())
               .filter(Boolean)
           : ["follow-up one", "follow-up two", "follow-up three"];
-      this.emit({ type: "follow_up_queue", prompts });
+      this.emit({
+        type: "follow_up_queue",
+        prompts: messages.map((m) => ({ message: m })),
+      });
       await this.sleep(2000);
       if (this.interrupted) return this.interruptedTerminal();
       this.emit({ type: "follow_up_queue", prompts: [] });
-      return this.complete(`Queued ${prompts.length} follow-ups.`);
+      return this.complete(`Queued ${messages.length} follow-ups.`);
     }
 
     if (message.startsWith("/ask")) {
@@ -230,6 +243,131 @@ class FakePlaygroundRunner implements SessionTurnRunner {
     }
     this.emit({ type: "step", step: { type: "text", text: reply } });
     return this.complete(reply);
+  }
+
+  /**
+   * Walks through the per-tool formatters with intentionally chunky inputs
+   * and outputs so the visual clamp (`clampToolBlockLines`) can be eyeballed
+   * without standing up a real model. Each call runs briefly with a spinner
+   * before completing so live-finalize logic also exercises.
+   */
+  private async runToolsDemo(): Promise<void> {
+    const longJson = `interface AgentMessage { role: "user" | "assistant" | "tool"; content: ContentBlock[]; metadata: { traceId: string; createdAt: number; tags: string[]; }; }`;
+    const grepHits = Array.from(
+      { length: 42 },
+      (_, i) =>
+        `src/tui/app.ts:${100 + i}: const handler${i} = (event: TurnEvent) => sidebar.refresh();`,
+    ).join("\n");
+    const bashOutput = Array.from(
+      { length: 18 },
+      (_, i) =>
+        `[2026-05-09T17:${String(i).padStart(2, "0")}:00] worker-${i}: built target ${i} in ${(Math.random() * 4 + 1).toFixed(2)}s with cache hit ratio 0.${(Math.random() * 100) | 0}`,
+    ).join("\n");
+
+    const fixtures: Array<{
+      toolName: string;
+      input: Record<string, unknown>;
+      output?: string;
+      isError?: boolean;
+    }> = [
+      {
+        toolName: "bash",
+        input: { command: "rg --json 'AgentMessage' node_modules/@earendil-works/" },
+        output: bashOutput,
+      },
+      {
+        toolName: "bash",
+        input: {
+          command: "set -euo pipefail\nfor i in $(seq 1 5); do echo run $i; done\necho done",
+          timeout: 600,
+        },
+        output: "run 1\nrun 2\nrun 3\nrun 4\nrun 5\ndone",
+      },
+      {
+        toolName: "read",
+        input: { path: "src/tui/app.ts", offset: 100, limit: 40 },
+        output: longJson,
+      },
+      {
+        toolName: "grep",
+        input: { pattern: "TurnEvent", path: "src/", glob: "*.ts", ignoreCase: true },
+        output: grepHits,
+      },
+      {
+        toolName: "edit",
+        input: {
+          path: "src/tui/sidebar.ts",
+          edits: [
+            { old: "width: 36", new: "width: SIDEBAR_WIDTH" },
+            { old: "fixedHeight: 5", new: "fixedHeight: 6" },
+            { old: "(waiting for usage)", new: "(no usage yet)" },
+          ],
+        },
+        output: "applied 3 edits",
+      },
+      {
+        toolName: "todo_write",
+        input: {
+          merge: false,
+          todos: [
+            { id: "1", content: "Audit tool block clamping", status: "completed" },
+            { id: "2", content: "Wrap then clamp visual rows", status: "in_progress" },
+            { id: "3", content: "Update playground with verbose fixtures", status: "pending" },
+            { id: "4", content: "Add session cost in sidebar", status: "completed" },
+          ],
+        },
+      },
+      {
+        toolName: "mystery_tool",
+        input: {
+          deeplyNested: {
+            config: {
+              retries: 3,
+              backoffMs: [100, 200, 400, 800, 1600],
+              flags: { strict: true, dryRun: false },
+            },
+            payload: longJson,
+          },
+        },
+        output: longJson,
+      },
+      {
+        toolName: "bash",
+        input: { command: "cargo test --workspace --no-fail-fast" },
+        output:
+          "error[E0277]: the trait bound is not satisfied\n  --> src/lib.rs:42:9\n   |\n42 |         do_thing();\n   |         ^^^^^^^^ the trait `Send` is not implemented for `Rc<T>`",
+        isError: true,
+      },
+    ];
+
+    for (const [index, fixture] of fixtures.entries()) {
+      const toolCallId = `demo_${index}`;
+      this.emit({
+        type: "step",
+        step: {
+          type: "tool_call",
+          toolName: fixture.toolName,
+          toolCallId,
+          status: "running",
+          input: fixture.input,
+        },
+      });
+      await this.sleep(400);
+      if (this.interrupted) return;
+      this.emit({
+        type: "step",
+        step: {
+          type: "tool_call",
+          toolName: fixture.toolName,
+          toolCallId,
+          status: fixture.isError ? "error" : "completed",
+          input: fixture.input,
+          ...(fixture.output ? { output: [{ type: "text", text: fixture.output }] } : {}),
+        },
+      });
+      await this.sleep(120);
+      if (this.interrupted) return;
+    }
   }
 
   private async runMemoryPhase(
