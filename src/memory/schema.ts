@@ -1,7 +1,11 @@
 /**
- * Schema for the persisted observational memory database. Used by both the
- * runner (`memory/storage.ts`) and the `duet memory` CLI (`cli/memory-db.ts`)
- * so the two stay in sync.
+ * Lightweight connectivity probe run by `openPGlite` before migrations.
+ *
+ * The schema source of truth lives in `memory/migrations.ts`; this constant
+ * only exists so corruption detection has something cheap to run (a failure
+ * here triggers `quarantineDataDirectory`). Keeping it permissive
+ * (`IF NOT EXISTS`, no DROPs) means a brain that has already been migrated
+ * past this baseline still passes the probe untouched.
  */
 export const OBSERVATIONS_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS observations (

@@ -5,6 +5,7 @@ import type {
   Observation,
   ObservationalMemorySnapshot,
 } from "../types/memory.js";
+import { runMigrations } from "./migrations.js";
 import { openPGlite } from "./pglite.js";
 import { OBSERVATIONS_SCHEMA_SQL } from "./schema.js";
 import type { MemoryStore } from "./store.js";
@@ -48,7 +49,16 @@ export async function loadStoredMemory(
 }
 
 async function openMemoryDatabase(path: string): Promise<MemoryDatabase> {
-  return openPGlite(path, { schemaSql: OBSERVATIONS_SCHEMA_SQL });
+  // Migrations run inside the same try block that triggers quarantine on
+  // unreadable directories. If a migration fails on a corrupted brain,
+  // the directory is moved aside and we start fresh rather than wedging
+  // the agent behind an opaque PGlite abort.
+  return openPGlite(path, {
+    schemaSql: OBSERVATIONS_SCHEMA_SQL,
+    init: async (db) => {
+      await runMigrations(db);
+    },
+  });
 }
 
 async function readMemorySnapshot(database: MemoryDatabase): Promise<ObservationalMemorySnapshot> {

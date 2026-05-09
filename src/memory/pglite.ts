@@ -11,6 +11,13 @@ export interface OpenPGliteOptions {
    */
   schemaSql?: string;
   /**
+   * Async hook run after `schemaSql` succeeds, in the same try block that
+   * triggers quarantine recovery. Typically used to apply schema migrations
+   * so a failure rolls the directory aside instead of leaving the agent
+   * wedged behind an opaque PGlite abort.
+   */
+  init?: (db: PGlite) => Promise<void>;
+  /**
    * Called once when an unreadable data directory is quarantined and a fresh
    * one is opened in its place. Receives the path the old directory was moved
    * to so callers can surface it. When omitted, a warning is written to
@@ -40,7 +47,7 @@ export async function openPGlite(path: string, options: OpenPGliteOptions = {}):
   clearStalePostmasterLock(path);
 
   try {
-    return await openAndProbe(path, options.schemaSql);
+    return await openAndProbe(path, options.schemaSql, options.init);
   } catch (error) {
     if (!isExistingDirectory(path)) throw error;
 
@@ -54,14 +61,19 @@ export async function openPGlite(path: string, options: OpenPGliteOptions = {}):
           `Moved aside to ${backupPath} and starting fresh.`,
       );
     }
-    return await openAndProbe(path, options.schemaSql);
+    return await openAndProbe(path, options.schemaSql, options.init);
   }
 }
 
-async function openAndProbe(path: string, schemaSql: string | undefined): Promise<PGlite> {
+async function openAndProbe(
+  path: string,
+  schemaSql: string | undefined,
+  init: ((db: PGlite) => Promise<void>) | undefined,
+): Promise<PGlite> {
   const db = new PGlite(path);
   try {
     if (schemaSql) await db.exec(schemaSql);
+    if (init) await init(db);
     return db;
   } catch (error) {
     // The wasm module is in an aborted state on this kind of failure; closing

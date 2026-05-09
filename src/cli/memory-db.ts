@@ -1,4 +1,5 @@
 import type { PGlite } from "@electric-sql/pglite";
+import { runMigrations } from "../memory/migrations.js";
 import { openPGlite } from "../memory/pglite.js";
 import { OBSERVATIONS_SCHEMA_SQL } from "../memory/schema.js";
 import type { Observation } from "../types/memory.js";
@@ -17,7 +18,16 @@ export class MemoryDb {
    * the runner and this CLI command stay in sync.
    */
   static async open(path: string): Promise<MemoryDb> {
-    const db = await openPGlite(path, { schemaSql: OBSERVATIONS_SCHEMA_SQL });
+    // Both the runner (`memory/storage.ts`) and this CLI command open the
+    // same on-disk database, so both must apply migrations on open.
+    // Whichever process touches the file first wins the upgrade race;
+    // the other observes a no-op since `runMigrations` is idempotent.
+    const db = await openPGlite(path, {
+      schemaSql: OBSERVATIONS_SCHEMA_SQL,
+      init: async (instance) => {
+        await runMigrations(instance);
+      },
+    });
     return new MemoryDb(db);
   }
 
