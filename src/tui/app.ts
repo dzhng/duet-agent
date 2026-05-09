@@ -17,6 +17,7 @@ import {
   type PendingImage,
   persistPastedImage,
   sniffImageMimeType,
+  tryReadClipboardImage,
 } from "./paste.js";
 import type { Session } from "../session/session.js";
 import type {
@@ -1283,6 +1284,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
 
+    // Most terminals do not forward binary clipboard contents on Cmd+V even
+    // when the OS pasteboard holds a real PNG (e.g. "Copy as PNG" from Figma,
+    // a screenshot, an image copied out of a browser). The terminal emits a
+    // text-shaped paste event with empty / placeholder bytes; we fall through
+    // to a platform clipboard probe so the user gets the same inline
+    // attachment they would in Claude Code.
+    const clipboardImage = await tryReadClipboardImage();
+    if (clipboardImage) {
+      event.preventDefault();
+      await attachPastedImageBytes(clipboardImage.bytes, clipboardImage.mimeType);
+      return;
+    }
+
     // Text paste path: opportunistically auto-attach if the clipboard text
     // resolves to a single existing image file path (Finder / Files drag-paste
     // pattern). Otherwise let the default Textarea handler insert the text.
@@ -1302,9 +1316,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         refreshAttachmentHint();
         event.preventDefault();
         return;
-      } catch {
-        // Fall through to default text paste — the path-looking string is
-        // probably a real string the user wants in the message.
+      } catch (error) {
+        // The clipboard looked like an image path but we could not load it.
+        // Surface the reason so users do not see silent fallthrough to plain
+        // text — the most common cause is a path that no longer exists or a
+        // file whose bytes do not actually match an image MIME header.
+        appendBlock(
+          "[paste]",
+          `looked like an image path but could not attach ${candidate}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          COLORS.system,
+        );
+        // Fall through so the text still lands in the prompt and the user
+        // can edit it manually instead of losing what they pasted.
       }
     }
   }

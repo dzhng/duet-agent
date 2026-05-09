@@ -1,7 +1,8 @@
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { extname, isAbsolute, resolve } from "node:path";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { homedir, platform, tmpdir } from "node:os";
+import { extname, isAbsolute, join, resolve } from "node:path";
 
 import type { TurnPromptImage } from "../types/protocol.js";
 
@@ -198,26 +199,232 @@ export async function loadImageFromPath(input: {
 
 /**
  * Heuristic: detect whether a chunk of pasted text is a single existing image
- * file path the user expects us to auto-attach. Many GUI environments
- * "paste the file path" when copying an image out of a file manager rather
- * than embedding the bytes themselves.
+ * file path the user expects us to auto-attach. Real-world clipboards do
+ * not deliver one canonical shape — we normalize the three we have seen in
+ * the wild before matching:
+ *
+ *   1. raw absolute path  e.g. /Users/me/Pictures/cat.png
+ *   2. shell-escaped path e.g. /Users/me/Desktop/Frame\ 2147228872.png
+ *      (Ghostty/iTerm/Terminal use this when dragging a file into the prompt)
+ *   3. file:// URL        e.g. file:///Users/me/Desktop/cat%20one.png
+ *      (Finder copy-as-URL, browsers, some shells)
+ *
+ * Any surrounding whitespace or matched quotes are stripped first.
  */
 export function looksLikeImageFilePath(text: string): string | undefined {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
-  // Single-line, plausible path length, and no whitespace inside the path
-  // (matches the typical drag-and-drop / Finder path-paste shape).
   if (trimmed.includes("\n")) return undefined;
   if (trimmed.length > 4096) return undefined;
-  // Strip surrounding quotes some shells/finders include.
-  const unquoted = trimmed.replace(/^['"]|['"]$/g, "");
-  if (unquoted.includes(" ") && !isAbsolute(unquoted)) return undefined;
-  if (!mimeTypeFromExtension(unquoted)) return undefined;
-  return unquoted;
+
+  const unquoted = stripMatchedQuotes(trimmed);
+  const candidate = normalizeFilePath(unquoted);
+  if (!candidate) return undefined;
+  if (!mimeTypeFromExtension(candidate)) return undefined;
+  return candidate;
+}
+
+/** Strip matching outer single or double quotes; leaves unquoted strings intact. */
+function stripMatchedQuotes(input: string): string {
+  if (input.length < 2) return input;
+  const first = input[0];
+  const last = input[input.length - 1];
+  if ((first === '"' || first === "'") && last === first) {
+    return input.slice(1, -1);
+  }
+  return input;
+}
+
+/**
+ * Convert a clipboard-shaped path string into the absolute path on disk.
+ *
+ * Returns `undefined` when the input still does not resemble a single path
+ * after normalization (e.g. multi-token shell input, no path separators, or
+ * a string with internal whitespace that is also not absolute).
+ */
+function normalizeFilePath(input: string): string | undefined {
+  let value = input;
+
+  // file:// URLs need percent-decoding; the host portion (always empty for
+  // local files in practice) is dropped.
+  if (/^file:\/\//i.test(value)) {
+    try {
+      value = decodeURIComponent(value.replace(/^file:\/\/[^/]*/i, ""));
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Shell-escaped spaces and parens come from drag-and-drop in most macOS
+  // terminals. Reverse the escaping so the result matches what the OS sees.
+  if (/\\[ ()'"\\&$;]/.test(value)) {
+    value = value.replace(/\\([ ()'"\\&$;])/g, "$1");
+  }
+
+  value = value.trim();
+  if (!value) return undefined;
+
+  // After unescaping, an absolute path is always acceptable. A relative
+  // path with internal whitespace is too ambiguous to treat as one token —
+  // could be a sentence the user intends to type — so we bail.
+  if (!isAbsolute(value) && /\s/.test(value)) return undefined;
+  return value;
 }
 
 function expandUserPath(input: string): string {
   if (input.startsWith("~/")) return resolve(homedir(), input.slice(2));
   if (input === "~") return homedir();
   return input;
+}
+
+/**
+ * Probe the operating system clipboard for an image and return its raw bytes.
+ *
+ * Most terminals do not forward binary clipboard contents on Cmd+V — even when
+ * the OS pasteboard holds a real PNG (e.g. "Copy as PNG" in Figma, copying a
+ * screenshot). The TUI calls this whenever a paste event fires without
+ * delivering image bytes itself, so the user gets the same Claude-Code-style
+ * inline attachment regardless of what the terminal stripped.
+ *
+ * Returns `undefined` when no image is on the clipboard or no probe succeeds.
+ * Does not throw — we never want a clipboard probe to break the prompt.
+ */
+export async function tryReadClipboardImage(): Promise<
+  { bytes: Uint8Array; mimeType: string } | undefined
+> {
+  const probes = clipboardProbesForPlatform();
+  for (const probe of probes) {
+    try {
+      const bytes = await probe();
+      if (bytes && bytes.length > 0) {
+        const mimeType = sniffImageMimeType(bytes);
+        if (mimeType && SUPPORTED_MIME_TYPES.has(mimeType)) {
+          return { bytes, mimeType };
+        }
+      }
+    } catch {
+      // Try the next probe — platform tools commonly differ in availability
+      // (e.g. pngpaste only present when a user installed it via Homebrew).
+    }
+  }
+  return undefined;
+}
+
+type ClipboardProbe = () => Promise<Uint8Array | undefined>;
+
+function clipboardProbesForPlatform(): ClipboardProbe[] {
+  const os = platform();
+  if (os === "darwin") {
+    return [readMacClipboardViaOsascript, readClipboardViaCommand("pngpaste", ["-"])];
+  }
+  if (os === "linux") {
+    return [
+      // Wayland first; falls through to X11 when wl-paste is missing.
+      readClipboardViaCommand("wl-paste", ["--type", "image/png"]),
+      readClipboardViaCommand("xclip", ["-selection", "clipboard", "-t", "image/png", "-o"]),
+    ];
+  }
+  if (os === "win32") {
+    return [readWindowsClipboardViaPowerShell];
+  }
+  return [];
+}
+
+/**
+ * macOS clipboard → PNG via AppleScript. Writes to a temp file and reads
+ * back, because piping `«class PNGf»` through stdout corrupts CR/LF bytes.
+ */
+async function readMacClipboardViaOsascript(): Promise<Uint8Array | undefined> {
+  const tmp = join(tmpdir(), `duet-clipboard-${Date.now()}-${process.pid}.png`);
+  const script = [
+    "set out to POSIX file " + JSON.stringify(tmp),
+    "try",
+    "  set fd to open for access out with write permission",
+    "  set eof of fd to 0",
+    "  write (the clipboard as \u00abclass PNGf\u00bb) to fd",
+    "  close access fd",
+    "  return \"ok\"",
+    "on error errMsg",
+    "  try",
+    "    close access fd",
+    "  end try",
+    "  return \"err:\" & errMsg",
+    "end try",
+  ].join("\n");
+
+  try {
+    const result = await runCommand("osascript", ["-e", script]);
+    if (!result.stdout.startsWith("ok")) return undefined;
+    const bytes = new Uint8Array(await readFile(tmp));
+    return bytes;
+  } finally {
+    // Best-effort cleanup; harmless if the file was never created.
+    try {
+      await unlink(tmp);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Generic stdout-collecting probe for tools that emit raw image bytes
+ * directly (pngpaste, xclip, wl-paste). Throws on non-zero exit so the outer
+ * loop falls through to the next probe.
+ */
+function readClipboardViaCommand(cmd: string, args: string[]): ClipboardProbe {
+  return async () => {
+    const result = await runCommandRaw(cmd, args);
+    if (result.code !== 0 || result.stdout.length === 0) return undefined;
+    return result.stdout;
+  };
+}
+
+async function readWindowsClipboardViaPowerShell(): Promise<Uint8Array | undefined> {
+  const tmp = join(tmpdir(), `duet-clipboard-${Date.now()}-${process.pid}.png`);
+  const script = [
+    "Add-Type -AssemblyName System.Windows.Forms;",
+    "$img = [System.Windows.Forms.Clipboard]::GetImage();",
+    "if ($img) {",
+    `  $img.Save('${tmp.replace(/\\/g, "\\\\")}', [System.Drawing.Imaging.ImageFormat]::Png);`,
+    "  Write-Output ok;",
+    "} else {",
+    "  Write-Output none;",
+    "}",
+  ].join(" ");
+  try {
+    const result = await runCommand("powershell", ["-NoProfile", "-Command", script]);
+    if (!result.stdout.startsWith("ok")) return undefined;
+    return new Uint8Array(await readFile(tmp));
+  } finally {
+    try {
+      await unlink(tmp);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+async function runCommand(
+  cmd: string,
+  args: string[],
+): Promise<{ stdout: string; code: number }> {
+  const result = await runCommandRaw(cmd, args);
+  return { stdout: Buffer.from(result.stdout).toString("utf8").trim(), code: result.code };
+}
+
+function runCommandRaw(
+  cmd: string,
+  args: string[],
+): Promise<{ stdout: Uint8Array; code: number }> {
+  return new Promise((resolveResult, rejectResult) => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.on("error", rejectResult);
+    child.on("close", (code) => {
+      const buffer = Buffer.concat(chunks);
+      resolveResult({ stdout: new Uint8Array(buffer), code: code ?? 0 });
+    });
+  });
 }

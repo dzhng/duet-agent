@@ -54,9 +54,32 @@ describe("tui/paste", () => {
     expect(looksLikeImageFilePath('"/Users/me/Pictures/foo.jpg"')).toBe(
       "/Users/me/Pictures/foo.jpg",
     );
+    expect(looksLikeImageFilePath("'/Users/me/Pictures/foo.jpg'")).toBe(
+      "/Users/me/Pictures/foo.jpg",
+    );
     expect(looksLikeImageFilePath("not a path")).toBeUndefined();
     expect(looksLikeImageFilePath("multi\nline\n/Users/me/foo.png")).toBeUndefined();
     expect(looksLikeImageFilePath("")).toBeUndefined();
+  });
+
+  test("looksLikeImageFilePath unescapes shell-escaped drag-and-drop paths", () => {
+    // Ghostty / iTerm / Terminal escape spaces and parens when a file is
+    // dragged into the prompt.
+    expect(looksLikeImageFilePath("/Users/me/Desktop/Frame\\ 2147228872.png")).toBe(
+      "/Users/me/Desktop/Frame 2147228872.png",
+    );
+    expect(
+      looksLikeImageFilePath("/Users/me/Photos/Screenshot\\ \\(2026-05-09\\).jpg"),
+    ).toBe("/Users/me/Photos/Screenshot (2026-05-09).jpg");
+  });
+
+  test("looksLikeImageFilePath decodes file:// URLs", () => {
+    expect(looksLikeImageFilePath("file:///Users/me/Desktop/cat.png")).toBe(
+      "/Users/me/Desktop/cat.png",
+    );
+    expect(looksLikeImageFilePath("file:///Users/me/Desktop/Frame%202147228872.png")).toBe(
+      "/Users/me/Desktop/Frame 2147228872.png",
+    );
   });
 
   test("persistPastedImage writes the bytes and returns the wire payload", async () => {
