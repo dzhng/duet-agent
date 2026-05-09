@@ -84,6 +84,13 @@ Review the diff or specified files against these principles.
 - A good split usually reduces import pressure in the original file because dependencies move with the responsibility they serve.
 - If extraction increases total indirection without clarifying ownership, keep the code local.
 
+## 12. Tests do not justify keeping unused production code
+
+- If a production function has no production callers, it is dead. Tests that exercise it in isolation do not make it live.
+- Delete the function **and** the test in the same change. The test was only validating internal behavior that no longer matters.
+- If the behavior the test was checking is still important, it is now an invariant of _some other_ production function. Move the assertion onto a test of that function (which has real callers), not back onto the dead helper.
+- Pattern: search every caller before deletion. If the only references are tests, both can go.
+
 ## Your task
 
 Review: $ARGUMENTS

@@ -652,58 +652,6 @@ function getLastObservedMessageIndex(
   return lastObservedIndex;
 }
 
-export function includeToolPairMessages(
-  messages: AgentMessage[],
-  retainedIds: Set<RawMemoryMessage["id"]>,
-): void {
-  // Provider APIs generally require every tool result to remain paired with the
-  // assistant message that emitted its tool call, so compaction retains both.
-  const toolCallAssistantIds = new Map<string, RawMemoryMessage["id"]>();
-  const toolResultIds = new Map<string, RawMemoryMessage["id"]>();
-
-  for (const message of messages) {
-    const raw = agentMessageToRaw(message);
-    if (!raw) continue;
-
-    for (const toolCallId of messageToolCallIds(message)) {
-      toolCallAssistantIds.set(toolCallId, raw.id);
-    }
-
-    if (message.role === "toolResult" && "toolCallId" in message) {
-      toolResultIds.set(String(message.toolCallId), raw.id);
-    }
-  }
-
-  for (const [toolCallId, assistantId] of toolCallAssistantIds) {
-    const resultId = toolResultIds.get(toolCallId);
-    if (resultId && retainedIds.has(assistantId)) {
-      retainedIds.add(resultId);
-    }
-    if (resultId && retainedIds.has(resultId)) {
-      retainedIds.add(assistantId);
-    }
-  }
-}
-
-function messageToolCallIds(message: AgentMessage): string[] {
-  if (message.role !== "assistant") return [];
-
-  const content = (message as { content?: unknown }).content;
-  if (!Array.isArray(content)) return [];
-
-  return content
-    .filter(
-      (part): part is { type: string; id: string } =>
-        Boolean(part) &&
-        typeof part === "object" &&
-        "type" in part &&
-        part.type === "toolCall" &&
-        "id" in part &&
-        typeof part.id === "string",
-    )
-    .map((part) => part.id);
-}
-
 export function agentMessagesToRaw(messages: AgentMessage[]): RawMemoryMessage[] {
   return messages
     .map((message) => agentMessageToRaw(message))
