@@ -49,6 +49,7 @@ import { createInitialHorizon, type WireGuardHorizon } from "./wire-shaping.js";
 import {
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
+  type RecallMemoryToolStorage,
   isTurnRunnerControlResult,
   type TurnRunnerControlResult,
 } from "./tools.js";
@@ -915,9 +916,20 @@ export class TurnRunner {
     };
     const skills = this.skillContext.getSkills();
     const mcpTools = this.mcpRuntime?.tools ?? [];
+    const recallStorage: RecallMemoryToolStorage = {
+      getDb: () => this.memoryPersistence?.db,
+      embed: this.memoryPersistence?.embed,
+      sessionId: this.config.sessionId,
+      // Reuse the resolved memory model so recall_memory's optional
+      // expand flag goes to the same cheap model the observer uses.
+      expansionModel: this.resolveMemoryActorModel(undefined),
+    };
     if (mode === "agent") {
       return {
-        tools: [...createDefaultTurnRunnerTools(cwd, todoStorage, skills), ...mcpTools],
+        tools: [
+          ...createDefaultTurnRunnerTools(cwd, todoStorage, skills, recallStorage),
+          ...mcpTools,
+        ],
       };
     }
 
@@ -931,6 +943,7 @@ export class TurnRunner {
           getActiveStateOutput: () => this.stateMachineController.getActiveOutput(),
           todoStorage,
           skills,
+          recallStorage,
         }),
         ...mcpTools,
       ],

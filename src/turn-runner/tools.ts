@@ -23,6 +23,11 @@ import type {
   StateMachineTerminalResult,
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE } from "../types/state-machine.js";
+import { generateStructuredOutput } from "../core/structured-output.js";
+import type { EmbedFn } from "../memory/embedding.js";
+import { recallMemory, reciprocalRankFusion, type RecallScope } from "../memory/recall.js";
+import type { Observation } from "../types/memory.js";
+import type { PGlite } from "@electric-sql/pglite";
 import type { ActiveStateOutput } from "./state-machine-controller.js";
 import { readSkillInstructions } from "./skills.js";
 
@@ -430,14 +435,41 @@ interface TurnRunnerToolsInput {
   getStateMachine?: () => StateMachineSession | undefined;
   getActiveStateOutput?: () => ActiveStateOutput | undefined;
   skills?: readonly Skill[];
+  recallStorage?: RecallMemoryToolStorage;
+}
+
+export interface RecallMemoryToolStorage {
+  /**
+   * Returns the database used by the runner's MemoryStore, or undefined
+   * when memory persistence is disabled (one-shot tools, tests). The
+   * recall_memory tool no-ops when undefined so the model never sees a
+   * tool whose backing store is missing.
+   */
+  getDb: () => PGlite | undefined;
+  /**
+   * Embedding callable. Optional: when undefined or when calls fail,
+   * recall falls back to keyword-only retrieval. Built once per runner
+   * by the embedding client so connection reuse amortizes TLS setup.
+   */
+  embed?: EmbedFn;
+  /** Current session id for scope filtering. */
+  sessionId?: string;
+  /**
+   * Model used by the optional `expand` flag to generate paraphrases.
+   * Resolved by the runner so query expansion shares the same memory
+   * model as the observer/reflector — typically a cheap model like
+   * Haiku or Gemini Flash.
+   */
+  expansionModel?: string;
 }
 
 export function createDefaultTurnRunnerTools(
   cwd: string,
   todoStorage: TodoWriteToolStorage,
   skills: readonly Skill[] = [],
+  recallStorage?: RecallMemoryToolStorage,
 ): AgentTool[] {
-  return [
+  const tools: AgentTool[] = [
     ...createCodingTools(cwd, {
       bash: { operations: withDefaultBashTimeout(createLocalBashOperations()) },
     }),
@@ -445,10 +477,21 @@ export function createDefaultTurnRunnerTools(
     createAskUserQuestionTool(),
     createReadSkillTool(skills),
   ];
+  if (recallStorage) {
+    tools.push(createRecallMemoryTool(recallStorage));
+  }
+  return tools;
 }
 
 export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] {
-  const tools = [...createDefaultTurnRunnerTools(input.cwd, input.todoStorage, input.skills)];
+  const tools = [
+    ...createDefaultTurnRunnerTools(
+      input.cwd,
+      input.todoStorage,
+      input.skills,
+      input.recallStorage,
+    ),
+  ];
   if (input.mode === "agent") {
     return tools;
   }
@@ -496,6 +539,163 @@ function createAskUserQuestionTool(): AgentTool<typeof askUserQuestionSchema> {
       };
     },
   };
+}
+
+const recallMemorySchema = Type.Object({
+  query: Type.String({
+    description:
+      "Free-text description of what to recall. Use proper nouns, code symbols, or short paraphrases of the user's prior statements; the search is hybrid (vector + keyword), so both fuzzy and exact matches work.",
+  }),
+  limit: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: 20,
+      description: "Maximum results to return. Default 8.",
+    }),
+  ),
+  scope: Type.Optional(
+    Type.Union([Type.Literal("session"), Type.Literal("global"), Type.Literal("all")], {
+      description:
+        "'session' restricts to the current conversation, 'global' to every other session, 'all' (default) searches both.",
+    }),
+  ),
+  expand: Type.Optional(
+    Type.Boolean({
+      description:
+        "When true, the agent runs the original query plus two paraphrased variants and fuses the result sets. Useful when the first call returned weak results; off by default to keep latency low.",
+    }),
+  ),
+});
+
+function createRecallMemoryTool(
+  storage: RecallMemoryToolStorage,
+): AgentTool<typeof recallMemorySchema> {
+  return {
+    name: "recall_memory",
+    label: "Recall memory",
+    description: dedent`
+      Search the user's durable memory for facts, decisions, and prior context that may not be in the active prompt.
+
+      The current memory section above shows the highest-signal cross-session reflections plus this session's compaction; call this tool when the user references something older or more specific. Hybrid retrieval (vector embeddings + keyword) returns the most relevant rows ranked by reciprocal rank fusion. Pass \`expand: true\` if a first call returned weak results and you want paraphrased variants to broaden the search.
+
+      Do not use for general world knowledge or facts already visible in the rendered memory section.
+    `,
+    parameters: recallMemorySchema,
+    async execute(_toolCallId, params) {
+      const db = storage.getDb();
+      if (!db) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Memory persistence is disabled for this session, so there is nothing to recall.",
+            },
+          ],
+          details: { type: "recall_memory", disabled: true },
+        };
+      }
+      const scope: RecallScope = params.scope ?? "all";
+      const limit = params.limit ?? 8;
+
+      const queries: string[] = [params.query];
+      if (params.expand && storage.expansionModel) {
+        // Paraphrases broaden recall on vague queries by giving the
+        // hybrid pipeline two more shots at matching the user's intent.
+        // Ranks fuse across all three runs so a row that scores well
+        // on any phrasing rises to the top.
+        const paraphrases = await generateQueryParaphrases(params.query, storage.expansionModel);
+        queries.push(...paraphrases);
+      }
+
+      const runs = await Promise.all(
+        queries.map((query) =>
+          recallMemory({
+            db,
+            embed: storage.embed,
+            query,
+            // Over-fetch per run so the post-fusion top-K is drawn from
+            // a richer candidate pool when expand is on.
+            limit: params.expand ? limit * 2 : limit,
+            scope,
+            sessionId: storage.sessionId,
+          }),
+        ),
+      );
+
+      const fusedIds = reciprocalRankFusion(
+        runs.map((run) =>
+          run.observations.map((observation, rank) => ({ id: observation.id, rank })),
+        ),
+      ).slice(0, limit);
+      const byId = new Map(
+        runs.flatMap((run) => run.observations).map((observation) => [observation.id, observation]),
+      );
+      const observations = fusedIds
+        .map((id) => byId.get(id))
+        .filter((observation): observation is Observation => observation !== undefined);
+
+      const vectorAttempted = runs.some((run) => run.vectorSearchAttempted);
+      const vectorSucceeded = runs.some((run) => run.vectorSearchSucceeded);
+      const summary = observations.length
+        ? observations.map(formatRecallHit).join("\n\n")
+        : "(no matches)";
+      const header =
+        vectorAttempted && !vectorSucceeded
+          ? "# Memory recall (keyword-only fallback; semantic search unavailable)"
+          : "# Memory recall";
+
+      return {
+        content: [{ type: "text", text: `${header}\n\n${summary}` }],
+        details: {
+          type: "recall_memory",
+          query: params.query,
+          scope,
+          expanded: queries.length > 1,
+          hits: observations.length,
+          vectorSearchSucceeded: vectorSucceeded,
+        },
+      };
+    },
+  };
+}
+
+const paraphraseSchema = Type.Object({
+  paraphrases: Type.Array(Type.String(), { minItems: 1, maxItems: 4 }),
+});
+
+async function generateQueryParaphrases(query: string, model: string): Promise<string[]> {
+  // Two paraphrases is the sweet spot in the gbrain ablation: enough
+  // breadth to catch reworded queries, few enough that latency stays
+  // under ~300ms with cheap models. Returning the original on failure
+  // keeps recall_memory itself robust even when expansion misbehaves.
+  try {
+    const result = await generateStructuredOutput({
+      model,
+      tool: {
+        name: "emit_paraphrases",
+        description: "Return alternate phrasings of the user's query.",
+        parameters: paraphraseSchema,
+      },
+      systemPrompt:
+        "You rewrite a memory-recall query into 2 alternative phrasings. Keep the same intent; vary terminology. Do not answer the query.",
+      prompt: `Original query: ${query}`,
+    });
+    return result.paraphrases.slice(0, 2);
+  } catch {
+    return [];
+  }
+}
+
+function formatRecallHit(observation: Observation): string {
+  // Mirror the rendering used in the static memory section so the
+  // model sees one consistent shape across the prompt prefix and the
+  // tool's tool-result payload.
+  const time = observation.timeOfDay ? ` ${observation.timeOfDay}` : "";
+  const referenced = observation.referencedDate ? ` [ref: ${observation.referencedDate}]` : "";
+  const session = observation.sessionId ? ` (session ${observation.sessionId})` : "";
+  const priority =
+    observation.priority === "high" ? "HIGH" : observation.priority === "medium" ? "MED" : "LOW";
+  return `- ${priority} ${observation.kind} ${observation.observedDate}${time}${referenced}${session}\n  ${observation.content}`;
 }
 
 function createReadSkillTool(skills: readonly Skill[]): AgentTool<typeof readSkillSchema> {

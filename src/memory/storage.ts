@@ -17,6 +17,15 @@ type MemoryDatabase = PGlite;
 export interface MemoryPersistenceHandle {
   flush: () => Promise<void>;
   dispose: () => Promise<void>;
+  /**
+   * The opened PGlite handle, exposed so tools (recall_memory, future
+   * loaders) can run their own queries against the same database the
+   * MemoryStore writes through. Undefined when memory persistence is
+   * disabled (the no-op handle); callers must not close it.
+   */
+  db?: PGlite;
+  /** Embedding callable shared with the backfill worker, when configured. */
+  embed?: EmbedFn;
 }
 
 export interface LoadStoredMemoryOptions {
@@ -78,7 +87,7 @@ export async function loadStoredMemory(
     await flush();
     await database.close();
   };
-  return { flush, dispose };
+  return { flush, dispose, db: database, embed: options.embed };
 }
 
 function defaultEmbeddingLogPath(): string {
