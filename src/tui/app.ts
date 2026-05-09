@@ -336,11 +336,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     transcript.add(line);
   }
 
-  // Tool results can be huge (file dumps, search output). Show only the head
-  // in the transcript so the conversation flow stays readable; the full
-  // payload remains in session history for the model.
-  const truncateToolResult = truncateToolText;
-
   function appendBlock(label: string | null, body: string, fg: string): void {
     beginBlock();
     const text = label ? `${label}\n${body}` : body;
@@ -404,7 +399,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   interface ToolBlock {
     line: TextRenderable;
-    toolName: string;
     /** Formatter-produced header line, e.g. "$ ls /" or "[question]".
      *  The renderer prepends the spinner / completion marker live. */
     header: string;
@@ -450,19 +444,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     setStatus(`● ${workingMessage} (${elapsed})${queued}`);
   }
 
-  // Sub-second precision for short tool calls keeps fast operations honest;
-  // longer calls fall back to the coarser m/s formatter shared with the
-  // working-status counter.
-  function formatToolDuration(ms: number): string {
-    if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
-    return formatElapsed(ms);
-  }
-
   function refreshActiveToolBlocks(): void {
     if (activeToolBlocks.size === 0) return;
     for (const block of activeToolBlocks.values()) {
       if (block.startedAt === undefined) continue;
-      const elapsed = formatToolDuration(Date.now() - block.startedAt);
+      const elapsed = formatElapsed(Date.now() - block.startedAt);
       const headerLine = `${block.header} ⏳ ${elapsed}`;
       block.line.content = block.body ? `${headerLine}\n${block.body}` : headerLine;
     }
@@ -508,6 +494,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function refreshSidebar(): void {
     const state = input.session.getState();
     sidebar.setTodos(state?.todos ?? []);
+    sidebar.setFollowUpQueue(state?.followUpQueue ?? []);
     sidebar.setStateMachine(state?.stateMachine);
     sidebar.setContextUsage(latestContextUsage);
   }
@@ -516,10 +503,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     refreshSidebar();
     if (event.type === "step") {
       renderStep(event.step);
-    } else if (event.type === "todos") {
-      renderTodos(event.todos);
     } else if (event.type === "follow_up_queue") {
-      renderFollowUpQueue(event.prompts);
+      // Sidebar already refreshed from session state above; mirror the count
+      // into the working-status line so the user can see queued prompts at a
+      // glance without scrolling the sidebar.
+      queuedFollowUps = event.prompts.length;
+      refreshWorkingStatus();
+    } else if (event.type === "todos") {
+      // Sidebar refresh covers the visual update; nothing else to do here.
     } else if (event.type === "memory") {
       renderMemoryStatus(event);
     } else if (event.type === "context_usage") {
@@ -608,29 +599,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     appendLine(`● sleeping until ${wakeLabel}${turnDuration}`, COLORS.status);
   }
 
-  function renderTodos(todos: readonly { id: string; status: string; content: string }[]): void {
-    if (todos.length === 0) {
-      appendBlock("[todos]", "No todos", COLORS.hint);
-      return;
-    }
-    appendBlock(
-      "[todos]",
-      todos.map((todo) => `${todo.status} ${todo.id}: ${todo.content}`).join("\n"),
-      COLORS.status,
-    );
-  }
-
-  function renderFollowUpQueue(prompts: readonly string[]): void {
-    queuedFollowUps = prompts.length;
-    refreshWorkingStatus();
-    if (prompts.length === 0) return;
-    appendBlock(
-      "[follow-up queue]",
-      prompts.map((prompt, index) => `${index + 1}. ${prompt}`).join("\n"),
-      COLORS.hint,
-    );
-  }
-
   function renderStep(step: TurnStep): void {
     if (questionPickerIsOpen()) hideQuestions();
 
@@ -658,7 +626,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         activeReasoningStream = undefined;
         return;
       }
-      if (trimmed) appendBlock("[reasoning]", truncateToolResult(trimmed), COLORS.reasoning);
+      if (trimmed) appendBlock("[reasoning]", truncateToolText(trimmed), COLORS.reasoning);
     } else if (step.type === "tool_call") {
       renderToolCall(step);
     } else if (step.type === "system") {
@@ -717,7 +685,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (formatted.hidden) return;
 
     const startedAt = isLive ? Date.now() : undefined;
-    const headerLine = isLive ? `${formatted.header} ⏳ 0.0s` : `${formatted.header} ⏳`;
+    const headerLine = isLive ? `${formatted.header} ⏳ 0s` : `${formatted.header} ⏳`;
     const fg = step.status === "error" ? COLORS.error : COLORS.tool;
     const line = new TextRenderable(renderer, {
       content: formatted.body ? `${headerLine}\n${formatted.body}` : headerLine,
@@ -727,7 +695,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     transcript.add(line);
     const block: ToolBlock = {
       line,
-      toolName: step.toolName,
       header: formatted.header,
       body: formatted.body ?? "",
       input: step.input,
@@ -748,10 +715,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const isError = step.status === "error";
     const marker = isError ? "✗" : "✓";
     const durationSuffix =
-      block.startedAt === undefined ? "" : ` ${formatToolDuration(Date.now() - block.startedAt)}`;
+      block.startedAt === undefined ? "" : ` ${formatElapsed(Date.now() - block.startedAt)}`;
     const headerLine = `${block.header} ${marker}${durationSuffix}`;
     const formatted = formatToolBlock({
-      toolName: block.toolName,
+      toolName: step.toolName,
       status: isError ? "error" : "completed",
       input: block.input,
       output: step.output,
@@ -772,7 +739,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function updateStreamingBlock(block: StreamingBlock): void {
-    const body = block.truncate ? truncateToolResult(block.body) : block.body;
+    const body = block.truncate ? truncateToolText(block.body) : block.body;
     block.line.content = block.label ? `${block.label}\n${body}` : body;
   }
 
@@ -797,7 +764,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return "";
     }
     const content = event.observations.map((observation) => observation.content).join("\n\n");
-    return truncateToolResult(`${event.message}\n${content}`);
+    return truncateToolText(`${event.message}\n${content}`);
   }
 
   // ---- input handling --------------------------------------------------------

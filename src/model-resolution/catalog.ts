@@ -151,3 +151,58 @@ function findModelDefinition(modelName: string): ModelDefinition | undefined {
     (definition) => definition.shorthand === normalized || definition.aliases.includes(normalized),
   );
 }
+
+/**
+ * Map user-friendly provider names (and common aliases) onto the canonical
+ * `ProviderName`. Returns `undefined` for unknown values so callers can
+ * surface a list of accepted names.
+ */
+export function resolveProviderShorthand(name: string): ProviderName | undefined {
+  switch (name.trim().toLowerCase()) {
+    case "duet":
+    case "duet-gateway":
+      return "duet-gateway";
+    case "vercel":
+    case "vercel-gateway":
+    case "vercel-ai-gateway":
+    case "ai-gateway":
+      return "vercel-ai-gateway";
+    case "openrouter":
+      return "openrouter";
+    case "anthropic":
+    case "claude":
+      return "anthropic";
+    case "openai":
+    case "gpt":
+      return "openai";
+    default:
+      return undefined;
+  }
+}
+
+/** Names accepted by `--provider`, in canonical order, for help and errors. */
+export const PROVIDER_SHORTHANDS: readonly string[] = [
+  "duet",
+  "vercel",
+  "openrouter",
+  "anthropic",
+  "openai",
+];
+
+/** Build a `provider:modelId` reference for a provider's default chat model. */
+export function pinnedDefaultModel(provider: ProviderName): string {
+  return pinnedShorthand(provider, getProviderDefaultModel(provider));
+}
+
+/** Build a `provider:modelId` reference for a provider's memory model. */
+export function pinnedMemoryModel(provider: ProviderName): string {
+  return pinnedShorthand(provider, getProviderMemoryModel(provider));
+}
+
+function pinnedShorthand(provider: ProviderName, shorthand: string): string {
+  const candidate = getModelCandidates(shorthand).find((entry) => entry.provider === provider);
+  if (!candidate) {
+    throw new Error(`Provider ${provider} has no model mapping for ${shorthand}`);
+  }
+  return candidate.modelName;
+}

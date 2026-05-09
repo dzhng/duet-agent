@@ -4,15 +4,18 @@ import type { StateMachineSession } from "../types/state-machine.js";
 import { COLORS } from "./theme.js";
 
 /**
- * Right-hand sidebar that surfaces the runner's todos, active state machine,
- * and most recent context-window usage. Three stacked panels share the same
- * width and bordering so the column has a consistent visual rhythm.
+ * Right-hand sidebar that surfaces the runner's todos, queued follow-ups,
+ * active state machine, and most recent context-window usage. Stacked
+ * panels share width and bordering so the column has a consistent visual
+ * rhythm.
  */
 export interface Sidebar {
   /** Outer container; caller adds this to the root row. */
   readonly view: BoxRenderable;
   /** Replace the rendered todo list with the runner's current todos. */
   setTodos(todos: readonly TurnTodo[]): void;
+  /** Replace the rendered follow-up queue with the runner's pending prompts. */
+  setFollowUpQueue(prompts: readonly string[]): void;
   /** Mirror the active state-machine pipeline; pass undefined to clear. */
   setStateMachine(session: StateMachineSession | undefined): void;
   /** Render the latest context-usage progress bar; pass undefined to clear. */
@@ -30,6 +33,11 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
   });
 
   const { panel: todoPanel, body: todoBody } = createPanel(renderer, "todos", "(none)");
+  const { panel: followUpPanel, body: followUpBody } = createPanel(
+    renderer,
+    "follow-ups",
+    "(none)",
+  );
   const { panel: smPanel, body: smBody } = createPanel(renderer, "state machine", "(inactive)");
   const { panel: contextPanel, body: contextBody } = createPanel(
     renderer,
@@ -39,6 +47,7 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
   );
 
   view.add(todoPanel);
+  view.add(followUpPanel);
   view.add(smPanel);
   view.add(contextPanel);
 
@@ -54,6 +63,15 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
         .map((todo) => `${todoStatusGlyph(todo.status)} ${todo.content}`)
         .join("\n");
       todoBody.fg = COLORS.agent;
+    },
+    setFollowUpQueue(prompts) {
+      if (prompts.length === 0) {
+        followUpBody.content = "(none)";
+        followUpBody.fg = COLORS.hint;
+        return;
+      }
+      followUpBody.content = prompts.map((prompt, index) => `${index + 1}. ${prompt}`).join("\n");
+      followUpBody.fg = COLORS.agent;
     },
     setStateMachine(session) {
       if (!session) {

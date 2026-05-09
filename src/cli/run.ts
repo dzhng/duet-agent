@@ -2,6 +2,12 @@ import { createInterface } from "node:readline/promises";
 import { shimDuetApiKeyToAiGateway } from "../model-resolution/duet-gateway.js";
 import { maybeAutoSyncDefaultSkills } from "../lib/sync-skills.js";
 import {
+  pinnedDefaultModel,
+  pinnedMemoryModel,
+  PROVIDER_SHORTHANDS,
+  resolveProviderShorthand,
+} from "../model-resolution/catalog.js";
+import {
   describeModelResolution,
   resolveCliMemoryModel,
   resolveCliModel,
@@ -83,6 +89,9 @@ export function buildCliTurnConfig(
 export async function runRunCommand(args: string[], pkg: PackageMetadata): Promise<void> {
   let modelName: string | undefined;
   let memoryModelName: string | undefined;
+  // Raw value of --provider so we can both pin the default model below and
+  // surface a clearer error if --model was also passed.
+  let providerFlag: string | undefined;
   let workDir = process.cwd();
   let resumeSessionId: string | undefined;
   let systemInstructions: string | undefined;
@@ -105,6 +114,10 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       case "--memory-model":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         memoryModelName = args[++i];
+        break;
+      case "--provider":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        providerFlag = args[++i];
         break;
       case "--no-memory":
         disableDurableMemory = true;
@@ -183,6 +196,21 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     console.error("Usage: duet <prompt>");
     console.error('  e.g., duet "build a todo app"');
     process.exit(1);
+  }
+
+  if (providerFlag) {
+    if (modelName || memoryModelName) {
+      fail("--provider cannot be combined with --model or --memory-model");
+    }
+    const provider = resolveProviderShorthand(providerFlag);
+    if (!provider) {
+      fail(`Unknown provider: ${providerFlag}. Accepted values: ${PROVIDER_SHORTHANDS.join(", ")}`);
+    }
+    // Pin both the chat and memory models to this provider's catalog entry
+    // so resolution skips the env-var inference that would otherwise pick
+    // a different provider when multiple keys are present.
+    modelName = pinnedDefaultModel(provider);
+    memoryModelName = pinnedMemoryModel(provider);
   }
 
   const dotenvKeys = loadCliEnvFiles(workDir, envFilePath);

@@ -217,6 +217,22 @@ describe("CLI model inference", () => {
     });
   });
 
+  test("--provider shorthand pins the chat and memory models for that provider", async () => {
+    const { resolveProviderShorthand, pinnedDefaultModel, pinnedMemoryModel } =
+      await import("../src/model-resolution/catalog.js");
+
+    expect(resolveProviderShorthand("duet")).toBe("duet-gateway");
+    expect(resolveProviderShorthand("vercel")).toBe("vercel-ai-gateway");
+    expect(resolveProviderShorthand("ai-gateway")).toBe("vercel-ai-gateway");
+    expect(resolveProviderShorthand("claude")).toBe("anthropic");
+    expect(resolveProviderShorthand("gpt")).toBe("openai");
+    expect(resolveProviderShorthand("bogus")).toBeUndefined();
+
+    expect(pinnedDefaultModel("openai")).toBe("openai:gpt-5.5");
+    expect(pinnedMemoryModel("openai")).toBe("openai:gpt-5.4-mini");
+    expect(pinnedDefaultModel("anthropic")).toBe("anthropic:claude-opus-4-7");
+  });
+
   test("keeps an explicitly provided model", () => {
     clearModelEnv();
 
