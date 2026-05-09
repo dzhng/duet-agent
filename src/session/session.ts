@@ -12,6 +12,8 @@ import type {
   TurnInterruptCommand,
   TurnMode,
   TurnPromptBehavior,
+  TurnFollowUpQueueEntry,
+  TurnPromptImage,
   TurnQuestion,
   TurnStartCommand,
   TurnState,
@@ -39,6 +41,11 @@ export interface SessionStartInput {
 export interface SessionPromptInput {
   message: string;
   behavior?: TurnPromptBehavior;
+  /**
+   * Optional image attachments forwarded to the runner alongside the prompt
+   * text. Each entry is a base64-encoded image plus its MIME type.
+   */
+  images?: TurnPromptImage[];
 }
 
 export interface SessionAnswerInput {
@@ -48,7 +55,7 @@ export interface SessionAnswerInput {
 }
 
 export interface SessionEditFollowUpQueueInput {
-  prompts: string[];
+  prompts: TurnFollowUpQueueEntry[];
 }
 
 export type SessionEventHandler = (event: TurnEvent) => void;
@@ -179,6 +186,7 @@ export class Session {
       type: "prompt",
       message: input.message,
       behavior: input.behavior ?? "follow_up",
+      images: input.images,
     };
     this.dispatchTurn(command);
   }

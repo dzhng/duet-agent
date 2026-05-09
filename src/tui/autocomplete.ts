@@ -18,15 +18,48 @@ export const AUTOCOMPLETE_LIMITS = {
 } as const;
 
 /**
- * One row in the slash-skill picker. `name` is shown as `/<name>`, the
- * optional `path` is rendered next to it (typically the skill's base dir),
- * and the description is wrapped underneath.
+ * Group an autocomplete row belongs to. `commands` are TUI built-ins
+ * intercepted at submit time (e.g. `/image`, `/paste`, `/clear-images`);
+ * `skills` are user-installed skill packages from the runner. The picker
+ * renders each group under its own header.
+ */
+export type SlashAutocompleteGroup = "commands" | "skills";
+
+/**
+ * One row in the slash picker. `name` is shown as `/<name>`, the optional
+ * `path` is rendered next to it (typically the skill's base dir), and the
+ * description is wrapped underneath. `group` controls which header the row
+ * appears under and defaults to `"skills"`.
  */
 export interface SkillAutocompleteItem {
   name: string;
   description?: string;
   path?: string;
+  group?: SlashAutocompleteGroup;
 }
+
+/**
+ * Built-in slash commands intercepted by the TUI (not by the runner). They
+ * appear at the top of the slash picker so users can discover them by typing
+ * `/` even though they never round-trip through skill discovery.
+ */
+export const BUILT_IN_SLASH_COMMANDS: readonly SkillAutocompleteItem[] = [
+  {
+    name: "image",
+    description: "Attach a PNG/JPEG/GIF/WebP from disk by path: /image <path>",
+    group: "commands",
+  },
+  {
+    name: "paste",
+    description: "Probe the OS clipboard for an image (fallback when Cmd+V is swallowed)",
+    group: "commands",
+  },
+  {
+    name: "clear-images",
+    description: "Drop pending image attachments before submit",
+    group: "commands",
+  },
+];
 
 /**
  * One row in the @-file picker. `relativePath` is what gets inserted; the
@@ -114,8 +147,22 @@ export function skillAutocompleteMatches(
   const normalizedQuery = query.toLocaleLowerCase();
   return [...skills]
     .filter((skill) => skill.name.toLocaleLowerCase().startsWith(normalizedQuery))
-    .sort((a, b) => a.name.localeCompare(b.name))
+    .sort(compareSlashItems)
     .slice(0, limit);
+}
+
+/**
+ * Sort: commands group first (so built-ins are always visible at the top of
+ * the picker), then skills. Within a group, alphabetical by name.
+ */
+function compareSlashItems(a: SkillAutocompleteItem, b: SkillAutocompleteItem): number {
+  const groupDelta = groupOrder(a.group) - groupOrder(b.group);
+  if (groupDelta !== 0) return groupDelta;
+  return a.name.localeCompare(b.name);
+}
+
+function groupOrder(group: SlashAutocompleteGroup | undefined): number {
+  return group === "commands" ? 0 : 1;
 }
 
 /**

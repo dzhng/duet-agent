@@ -2,13 +2,25 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   BoxRenderable,
   createCliRenderer,
+  decodePasteBytes,
   fg,
   type KeyEvent,
+  type PasteEvent,
   ScrollBoxRenderable,
   t,
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
+import {
+  describeMacClipboardTypes,
+  loadImageFromPath,
+  looksLikeImageFilePath,
+  type PendingImage,
+  persistPastedImage,
+  sniffImageMimeType,
+  tryReadClipboardImage,
+  tryReadClipboardText,
+} from "./paste.js";
 import type { Session } from "../session/session.js";
 import type {
   TurnAgentFile,
@@ -25,6 +37,7 @@ import {
   activeSkillAutocompleteToken,
   AUTOCOMPLETE_LIMITS,
   type FileAutocompleteItem,
+  BUILT_IN_SLASH_COMMANDS,
   fileAutocompleteMatches,
   formatQuestionOptionDescription,
   formatSkillAutocompleteDescription,
@@ -33,6 +46,7 @@ import {
   questionPickerAnswerPayload,
   type SkillAutocompleteItem,
   skillAutocompleteMatches,
+  type SlashAutocompleteGroup,
 } from "./autocomplete.js";
 import { buildFileIndex } from "./file-index.js";
 import {
@@ -43,7 +57,7 @@ import {
   limitHistoryDisplayBlocks,
   startupHeaderLines,
 } from "./history.js";
-import { createSidebar } from "./sidebar.js";
+import { createSidebar, SIDEBAR_WIDTH } from "./sidebar.js";
 import { COLORS, HINT_IDLE, HINT_RUNNING } from "./theme.js";
 
 export type { HistoryBlockKind, HistoryDisplayBlock, LimitedHistory } from "./history.js";
@@ -77,7 +91,7 @@ export {
   limitHistoryDisplayBlocks,
   startupHeaderLines,
 } from "./history.js";
-import { formatToolBlock, truncateToolText } from "./tool-formatters.js";
+import { assembleToolBlock, formatToolBlock, truncateToolText } from "./tool-formatters.js";
 
 export interface RunTuiInput {
   session: Session;
@@ -186,13 +200,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   });
   skillAutocompletePanel.visible = false;
 
-  const skillAutocompleteTitle = new TextRenderable(renderer, {
-    content: "skills",
-    fg: COLORS.status,
-    height: 1,
-    flexShrink: 0,
-  });
-  const skillAutocompleteRows = Array.from({ length: SKILL_AUTOCOMPLETE_LIMIT }, () => {
+  // Two ordered sections: built-in commands first, skills second. Each
+  // section has its own header row plus a fixed pool of item rows. Selection
+  // navigates the flat ordered list of visible items across both sections.
+  const makeItemRow = () => {
     const row = new TextRenderable(renderer, {
       content: "",
       fg: COLORS.hint,
@@ -201,11 +212,22 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     });
     row.visible = false;
     return row;
-  });
-  skillAutocompletePanel.add(skillAutocompleteTitle);
-  for (const row of skillAutocompleteRows) {
-    skillAutocompletePanel.add(row);
-  }
+  };
+  const makeHeaderRow = (label: string) =>
+    new TextRenderable(renderer, {
+      content: label,
+      fg: COLORS.status,
+      height: 1,
+      flexShrink: 0,
+    });
+  const commandHeader = makeHeaderRow("commands");
+  const commandRows = Array.from({ length: BUILT_IN_SLASH_COMMANDS.length }, makeItemRow);
+  const skillHeader = makeHeaderRow("skills");
+  const skillRows = Array.from({ length: SKILL_AUTOCOMPLETE_LIMIT }, makeItemRow);
+  skillAutocompletePanel.add(commandHeader);
+  for (const row of commandRows) skillAutocompletePanel.add(row);
+  skillAutocompletePanel.add(skillHeader);
+  for (const row of skillRows) skillAutocompletePanel.add(row);
 
   // The @-file picker mirrors the slash picker's structure so the renderer
   // logic and key handling can stay parallel between the two pickers.
@@ -344,14 +366,35 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function setHint(running: boolean): void {
-    hint.content = running ? HINT_RUNNING : HINT_IDLE;
+    const base = running ? HINT_RUNNING : HINT_IDLE;
+    hint.content = pendingImages.length > 0 ? `${attachmentHint()} · ${base}` : base;
+  }
+
+  function attachmentHint(): string {
+    const n = pendingImages.length;
+    return n === 1 ? "📎 1 image attached" : `📎 ${n} images attached`;
+  }
+
+  function refreshAttachmentHint(): void {
+    setHint(running);
   }
 
   // ---- runtime state ---------------------------------------------------------
 
   let running = false;
+  // Image attachments collected via paste / `/image` and forwarded to the
+  // runner with the next prompt submission. Cleared after submit so each turn
+  // ships its own attachments without leaking into the next.
+  let pendingImages: PendingImage[] = [];
+  // Monotonic counter for the next `[Image #N]` placeholder. Reset alongside
+  // `pendingImages` so users see a fresh `#1` label after each submit.
+  let nextImageId = 1;
   let lastTerminal: TurnTerminalEvent | undefined;
   let latestContextUsage: TurnContextUsageEvent | undefined;
+  // Running USD total across every settled turn in this session. Reset only
+  // by exiting the TUI; resumed sessions start fresh because per-turn usage
+  // events are not replayed from persisted state.
+  let sessionCost = 0;
   let activeTextStream: StreamingBlock | undefined;
   let activeReasoningStream: StreamingBlock | undefined;
   // Tool calls fire twice (running → completed/error). Track the rendered
@@ -417,12 +460,23 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function refreshActiveToolBlocks(): void {
     if (activeToolBlocks.size === 0) return;
+    const columns = toolBlockColumns();
     for (const block of activeToolBlocks.values()) {
       if (block.startedAt === undefined) continue;
-      const elapsed = formatElapsed(Date.now() - block.startedAt);
-      const headerLine = `${block.header} ⏳ ${elapsed}`;
-      block.line.content = block.body ? `${headerLine}\n${block.body}` : headerLine;
+      block.line.content = assembleToolBlock(
+        { header: block.header, body: block.body || undefined },
+        runningMarker(Date.now() - block.startedAt),
+        { columns },
+      );
     }
+  }
+
+  /**
+   * Spinner marker for an in-flight tool call. Hides the elapsed counter for
+   * sub-second runs so a transcript of fast tools is not littered with "0s".
+   */
+  function runningMarker(elapsedMs: number): string {
+    return elapsedMs >= 1000 ? `⏳ ${formatElapsed(elapsedMs)}` : "⏳";
   }
 
   function startWorkingTicker(): void {
@@ -468,6 +522,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     sidebar.setFollowUpQueue(state?.followUpQueue ?? []);
     sidebar.setStateMachine(state?.stateMachine);
     sidebar.setContextUsage(latestContextUsage);
+    sidebar.setSessionCost(sessionCost);
   }
 
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
@@ -546,6 +601,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderUsage(usage?: TurnTokenUsage): void {
     if (!usage) return;
+    sessionCost += usage.cost.total;
+    sidebar.setSessionCost(sessionCost);
     const parts = [`in=${usage.input}`, `out=${usage.output}`];
     if (usage.cacheRead > 0) parts.push(`cached=${usage.cacheRead}`);
     const cost = usage.cost.total === 0 ? "" : ` · Cost: $${usage.cost.total.toFixed(4)}`;
@@ -637,6 +694,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // whether the call should appear in the transcript at all (e.g.
   // ask_user_question hides itself live and lets the `ask` terminal event
   // own the question display).
+  // Width budget for a tool block: terminal width minus the fixed sidebar
+  // column and a small fudge for borders/padding. Recomputed per render so a
+  // resize after a tool block lands updates new blocks; existing blocks keep
+  // the width they were rendered at, which is acceptable since the renderer
+  // would otherwise re-wrap and could exceed the row cap.
+  function toolBlockColumns(): number {
+    const transcriptColumnPadding = 4;
+    return Math.max(20, renderer.terminalWidth - SIDEBAR_WIDTH - transcriptColumnPadding);
+  }
+
   function renderToolCall(step: Extract<TurnStep, { type: "tool_call" }>): void {
     const existing = activeToolBlocks.get(step.toolCallId);
     if (existing) {
@@ -656,10 +723,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (formatted.hidden) return;
 
     const startedAt = isLive ? Date.now() : undefined;
-    const headerLine = isLive ? `${formatted.header} ⏳ 0s` : `${formatted.header} ⏳`;
+    const marker = "⏳";
     const fg = step.status === "error" ? COLORS.error : COLORS.tool;
+    const columns = toolBlockColumns();
     const line = new TextRenderable(renderer, {
-      content: formatted.body ? `${headerLine}\n${formatted.body}` : headerLine,
+      content: assembleToolBlock(formatted, marker, { columns }),
       fg,
     });
     beginBlock();
@@ -684,10 +752,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     block: ToolBlock,
   ): void {
     const isError = step.status === "error";
-    const marker = isError ? "✗" : "✓";
-    const durationSuffix =
-      block.startedAt === undefined ? "" : ` ${formatElapsed(Date.now() - block.startedAt)}`;
-    const headerLine = `${block.header} ${marker}${durationSuffix}`;
+    const glyph = isError ? "✗" : "✓";
+    const elapsedMs = block.startedAt === undefined ? 0 : Date.now() - block.startedAt;
+    // Sub-second runs drop the elapsed suffix so the transcript does not get
+    // littered with "0s" markers from fast tools (read, ls, todo_write, …).
+    const durationSuffix = elapsedMs >= 1000 ? ` ${formatElapsed(elapsedMs)}` : "";
     const formatted = formatToolBlock({
       toolName: step.toolName,
       status: isError ? "error" : "completed",
@@ -695,11 +764,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       output: step.output,
       mode: "live",
     });
-    const sections = [formatted.body ? `${headerLine}\n${formatted.body}` : headerLine];
-    if (formatted.result && formatted.result.body) {
-      sections.push(`${formatted.result.label}\n${formatted.result.body}`);
-    }
-    block.line.content = sections.join("\n");
+    block.line.content = assembleToolBlock(formatted, `${glyph}${durationSuffix}`, {
+      columns: toolBlockColumns(),
+    });
     block.line.fg = isError ? COLORS.error : COLORS.tool;
     activeToolBlocks.delete(step.toolCallId);
   }
@@ -801,7 +868,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     skillAutocompleteItems = [];
     skillAutocompleteSelectedIndex = 0;
     skillAutocompletePanel.visible = false;
-    for (const row of skillAutocompleteRows) {
+    commandHeader.visible = false;
+    skillHeader.visible = false;
+    for (const row of [...commandRows, ...skillRows]) {
       row.visible = false;
       row.content = "";
     }
@@ -962,15 +1031,26 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderSkillAutocomplete(): void {
     skillAutocompletePanel.visible = skillAutocompleteItems.length > 0;
-    for (const [index, row] of skillAutocompleteRows.entries()) {
-      const item = skillAutocompleteItems[index];
-      if (!item) {
-        row.visible = false;
-        row.content = "";
-        continue;
-      }
 
-      const selected = index === skillAutocompleteSelectedIndex;
+    // Distribute matched items into the two section row pools by group. The
+    // selection index navigates the flat list, so we track each item's flat
+    // position to highlight the correct row regardless of section.
+    const groups: Record<SlashAutocompleteGroup, { rows: TextRenderable[]; cursor: number }> = {
+      commands: { rows: commandRows, cursor: 0 },
+      skills: { rows: skillRows, cursor: 0 },
+    };
+    for (const row of [...commandRows, ...skillRows]) {
+      row.visible = false;
+      row.content = "";
+    }
+
+    for (const [flatIndex, item] of skillAutocompleteItems.entries()) {
+      const groupKey = item.group ?? "skills";
+      const slot = groups[groupKey];
+      const row = slot.rows[slot.cursor];
+      if (!row) continue;
+      slot.cursor += 1;
+      const selected = flatIndex === skillAutocompleteSelectedIndex;
       const nameColor = selected ? COLORS.status : COLORS.user;
       const pathColor = selected ? COLORS.agent : COLORS.hint;
       const description = formatSkillAutocompleteDescription(item.description);
@@ -980,6 +1060,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       row.fg = selected ? COLORS.agent : COLORS.hint;
       row.visible = true;
     }
+
+    commandHeader.visible = groups.commands.cursor > 0;
+    skillHeader.visible = groups.skills.cursor > 0;
   }
 
   function renderFileAutocomplete(): void {
@@ -1068,6 +1151,23 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // consumes escape via its own keybindings before any global keypress handler
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
+    // Cmd+V / Ctrl+V keystroke trigger. Many terminals (Warp in particular,
+    // and macOS Terminal.app for binary clipboards) do not forward a paste
+    // event to TUI programs on Cmd+V — they handle the clipboard at the app
+    // level and only deliver the resulting text. We catch the keystroke here
+    // and probe the OS clipboard directly so image attach works regardless of
+    // whether the terminal cooperates with bracketed paste for binary data.
+    //
+    // The keystroke handler only fires on terminals that actually deliver
+    // Cmd+V as a keypress (kitty-keyboard-aware terminals: kitty, Ghostty,
+    // recent iTerm2, WezTerm). For terminals that swallow Cmd+V entirely,
+    // the `/paste` slash command below provides a guaranteed fallback.
+    if (key.name === "v" && (key.super || key.meta || key.ctrl) && !key.shift) {
+      key.preventDefault();
+      void triggerClipboardProbe("keystroke");
+      return;
+    }
+
     if (skillAutocompleteIsOpen()) {
       if (key.name === "up") {
         skillAutocompleteSelectedIndex = moveSkillAutocompleteSelection(
@@ -1187,18 +1287,244 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   inputField.onContentChange = () => refreshAutocomplete();
   inputField.onCursorChange = () => refreshAutocomplete();
 
-  function submit(message: string, shiftEnter: boolean): void {
-    appendBlock("you:", message, COLORS.user);
-    hideQuestions();
+  // Paste handling. Terminals that forward binary clipboard contents (kitty,
+  // ghostty, recent iTerm2 builds) deliver image bytes directly via the paste
+  // event — we intercept those, persist them under the session cache, and
+  // surface a `[Image #N]` placeholder in the prompt buffer. Plain text pastes
+  // fall through to the Textarea's default insert path so existing behavior
+  // is unchanged for non-image clipboards.
+  inputField.onPaste = (event: PasteEvent) => {
+    void handlePasteEvent(event).catch((error) => {
+      appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
+    });
+  };
 
-    if (running) {
-      const behavior = shiftEnter ? "follow_up" : "steer";
-      void input.session.prompt({ message, behavior }).catch(reportError);
+  async function handlePasteEvent(event: PasteEvent): Promise<void> {
+    const metadata = event.metadata;
+    const sniffed = sniffImageMimeType(event.bytes);
+    const inferredMime =
+      metadata?.mimeType && metadata.mimeType.startsWith("image/") ? metadata.mimeType : sniffed;
+
+    // Synchronous fast paths — the paste payload itself is enough to decide.
+    if (inferredMime) {
+      event.preventDefault();
+      await attachPastedImageBytes(event.bytes, inferredMime);
       return;
     }
 
-    void input.session.prompt({ message, behavior: "follow_up" }).catch(reportError);
+    if (metadata?.kind === "binary") {
+      // Non-image binary paste — we cannot meaningfully forward it, but the
+      // terminal already swallowed the keystroke, so suppress the default
+      // text-insert path that would otherwise garble the prompt.
+      event.preventDefault();
+      appendBlock(
+        "[paste]",
+        "Unsupported binary clipboard contents (only PNG/JPEG/GIF/WebP).",
+        COLORS.system,
+      );
+      return;
+    }
+
+    // Async path — the paste was text-shaped, but the OS clipboard may hold
+    // an image (e.g. Figma "Copy as PNG", screenshot, browser image copy)
+    // that the terminal could not forward as bytes. Suppress the default
+    // text-insert NOW, synchronously, before awaiting the clipboard probe;
+    // otherwise the InputRenderable inserts the placeholder text first and
+    // we end up with both the path and the [Image #N] in the buffer.
+    event.preventDefault();
+    const originalText = decodePasteBytes(event.bytes);
+
+    const clipboardImage = await tryReadClipboardImage();
+    if (clipboardImage) {
+      await attachPastedImageBytes(clipboardImage.bytes, clipboardImage.mimeType);
+      return;
+    }
+
+    // No image on the clipboard. Opportunistically auto-attach if the paste
+    // text resolves to a single existing image file path (Finder / Files
+    // drag-paste pattern).
+    const candidate = looksLikeImageFilePath(originalText);
+    if (candidate) {
+      try {
+        const pending = await loadImageFromPath({
+          cwd: input.workDir,
+          rawPath: candidate,
+          id: nextImageId,
+        });
+        nextImageId += 1;
+        pendingImages.push(pending);
+        inputField.insertText(pending.label);
+        appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
+        refreshAttachmentHint();
+        return;
+      } catch (error) {
+        // The clipboard looked like an image path but we could not load it.
+        // Surface the reason so users do not see silent fallthrough — most
+        // commonly a path that no longer exists or whose bytes do not match
+        // an image MIME header. Restore the original text below so the user
+        // can edit it manually instead of losing what they pasted.
+        appendBlock(
+          "[paste]",
+          `looked like an image path but could not attach ${candidate}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          COLORS.system,
+        );
+      }
+    }
+
+    // Plain text paste — we suppressed the default insert above, so put the
+    // text back into the prompt manually.
+    if (originalText.length > 0) {
+      inputField.insertText(originalText);
+    }
+  }
+
+  async function attachPastedImageBytes(bytes: Uint8Array, mimeType: string): Promise<void> {
+    try {
+      const pending = await persistPastedImage({
+        sessionId: input.sessionId,
+        id: nextImageId,
+        bytes,
+        mimeType,
+      });
+      nextImageId += 1;
+      pendingImages.push(pending);
+      inputField.insertText(pending.label);
+      appendBlock(
+        "[paste]",
+        `attached ${pending.label} (${mimeType}, ${formatBytes(bytes.length)})`,
+        COLORS.system,
+      );
+      refreshAttachmentHint();
+    } catch (error) {
+      appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
+    }
+  }
+
+  function clearPendingImages(): void {
+    if (pendingImages.length === 0) return;
+    pendingImages = [];
+    nextImageId = 1;
+    refreshAttachmentHint();
+  }
+
+  // Manual clipboard probe. Read the OS clipboard for an image right now and
+  // attach it if found; otherwise emit a useful diagnostic line. Used both by
+  // the Cmd+V/Ctrl+V keystroke handler above and the `/paste` slash command.
+  async function triggerClipboardProbe(source: "keystroke" | "slash"): Promise<void> {
+    try {
+      const clipboardImage = await tryReadClipboardImage();
+      if (clipboardImage) {
+        await attachPastedImageBytes(clipboardImage.bytes, clipboardImage.mimeType);
+        return;
+      }
+      // No image on the clipboard. The keystroke path may have eaten a
+      // legitimate text paste, so fall back to a text probe so users do not
+      // lose what they were trying to paste.
+      const text = await tryReadClipboardText();
+      if (text) {
+        inputField.insertText(text);
+        return;
+      }
+      if (source === "slash") {
+        // Surface the actual clipboard UTI list when a /paste probe comes
+        // up empty — lets users see what their source app actually put
+        // there so the failure stops being mysterious.
+        const types = await describeMacClipboardTypes();
+        const detail = types
+          ? ` — clipboard types: ${types}`
+          : " — (could not query clipboard types; clipboard may be empty)";
+        appendBlock("[paste]", `clipboard had no readable image or text${detail}`, COLORS.system);
+      }
+    } catch (error) {
+      appendBlock(
+        "[paste]",
+        `clipboard probe failed: ${error instanceof Error ? error.message : String(error)}`,
+        COLORS.error,
+      );
+    }
+  }
+
+  function submit(message: string, shiftEnter: boolean): void {
+    // Slash-style attach commands run locally and never reach the runner so
+    // users on terminals that do not forward image bytes still have a way to
+    // attach images by path.
+    if (message.startsWith("/image ") || message === "/image") {
+      void handleImageSlashCommand(message);
+      return;
+    }
+    if (message === "/paste") {
+      void triggerClipboardProbe("slash");
+      return;
+    }
+    if (message === "/clear-images") {
+      clearPendingImages();
+      appendBlock("[paste]", "cleared pending image attachments", COLORS.system);
+      return;
+    }
+
+    const submittedImages = pendingImages;
+    appendBlock("you:", message, COLORS.user);
+    // Render attachments as a separate hint-colored footnote rather than
+    // inlining them into the user-message block. Keeps the transcript
+    // structure honest — the user message persists exactly as the agent
+    // sees it, and resumed sessions render identically because no extra
+    // text was concatenated.
+    if (submittedImages.length > 0) {
+      const lines = submittedImages.map((p) => `📎 ${p.label}: ${p.path}`).join("\n");
+      appendBlock(null, lines, COLORS.hint);
+    }
+    hideQuestions();
+
+    const images = submittedImages.map((p) => p.attachment);
+
+    // Reset before dispatch so an in-flight error does not leave the user
+    // double-charged with the same attachments on retry.
+    clearPendingImages();
+
+    if (running) {
+      const behavior = shiftEnter ? "follow_up" : "steer";
+      void input.session.prompt({ message, behavior, images }).catch(reportError);
+      return;
+    }
+
+    void input.session.prompt({ message, behavior: "follow_up", images }).catch(reportError);
     markRunning();
+  }
+
+  async function handleImageSlashCommand(raw: string): Promise<void> {
+    const rest = raw.slice("/image".length).trim();
+    if (!rest) {
+      appendBlock(
+        "[paste]",
+        "Usage: /image <path>  — attach a PNG/JPEG/GIF/WebP from disk",
+        COLORS.system,
+      );
+      return;
+    }
+    try {
+      const pending = await loadImageFromPath({
+        cwd: input.workDir,
+        rawPath: rest,
+        id: nextImageId,
+      });
+      nextImageId += 1;
+      pendingImages.push(pending);
+      // Insert the placeholder back into the (now-empty) input so the user
+      // can keep typing their prompt with the image already attached.
+      inputField.insertText(pending.label);
+      appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
+      refreshAttachmentHint();
+    } catch (error) {
+      appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
+    }
+  }
+
+  function formatBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   // ---- replay history on resume ---------------------------------------------
@@ -1209,11 +1535,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     input.session.getSkills(),
     input.session.getResolvedAgentFiles(),
   ]);
-  skillAutocompleteSkills = skills.map((skill) => ({
-    name: skill.name,
-    description: skill.description,
-    path: skill.baseDir,
-  }));
+  skillAutocompleteSkills = [
+    ...BUILT_IN_SLASH_COMMANDS,
+    ...skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      path: skill.baseDir,
+      group: "skills" as const,
+    })),
+  ];
   refreshAutocomplete();
   renderSetupIntro(skills, agentFiles);
   refreshSidebar();

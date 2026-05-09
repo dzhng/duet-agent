@@ -1,5 +1,5 @@
 import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
-import type { TurnContextUsageEvent, TurnTodo } from "../types/protocol.js";
+import type { TurnContextUsageEvent, TurnFollowUpQueueEntry, TurnTodo } from "../types/protocol.js";
 import type { StateMachineSession } from "../types/state-machine.js";
 import { COLORS } from "./theme.js";
 
@@ -14,20 +14,29 @@ export interface Sidebar {
   readonly view: BoxRenderable;
   /** Replace the rendered todo list with the runner's current todos. */
   setTodos(todos: readonly TurnTodo[]): void;
-  /** Replace the rendered follow-up queue with the runner's pending prompts. */
-  setFollowUpQueue(prompts: readonly string[]): void;
+  /** Replace the rendered follow-up queue with the runner's pending entries. */
+  setFollowUpQueue(entries: readonly TurnFollowUpQueueEntry[]): void;
   /** Mirror the active state-machine pipeline; pass undefined to clear. */
   setStateMachine(session: StateMachineSession | undefined): void;
   /** Render the latest context-usage progress bar; pass undefined to clear. */
   setContextUsage(usage: TurnContextUsageEvent | undefined): void;
+  /** Cumulative USD cost across all turns in the current session. */
+  setSessionCost(cost: number): void;
 }
+
+/**
+ * Fixed sidebar column width in terminal cells. Exported so the transcript
+ * column can compute the available width for tool-block clamping without
+ * waiting on yoga layout.
+ */
+export const SIDEBAR_WIDTH = 36;
 
 export function createSidebar(renderer: CliRenderer): Sidebar {
   // Fixed width keeps the sidebar legible on narrow terminals without
   // squashing the transcript. The three panels stack vertically inside.
   const view = new BoxRenderable(renderer, {
     flexDirection: "column",
-    width: 36,
+    width: SIDEBAR_WIDTH,
     height: "100%",
     flexShrink: 0,
   });
@@ -43,8 +52,17 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     renderer,
     "context",
     "(waiting for usage)",
-    { fixedHeight: 5, grow: false },
+    { fixedHeight: 6, grow: false },
   );
+  // Cumulative session cost rendered as a separate node so it can stay grey
+  // even when the context bar above flips to red on overflow.
+  const costLine = new TextRenderable(renderer, {
+    content: "",
+    fg: COLORS.hint,
+    height: 1,
+    flexShrink: 0,
+  });
+  contextPanel.add(costLine);
 
   view.add(todoPanel);
   view.add(followUpPanel);
@@ -64,13 +82,18 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
         .join("\n");
       todoBody.fg = COLORS.agent;
     },
-    setFollowUpQueue(prompts) {
-      if (prompts.length === 0) {
+    setFollowUpQueue(entries) {
+      if (entries.length === 0) {
         followUpBody.content = "(none)";
         followUpBody.fg = COLORS.hint;
         return;
       }
-      followUpBody.content = prompts.map((prompt, index) => `${index + 1}. ${prompt}`).join("\n");
+      followUpBody.content = entries
+        .map((entry, index) => {
+          const attachments = entry.images?.length ? ` 📎${entry.images.length}` : "";
+          return `${index + 1}. ${entry.message}${attachments}`;
+        })
+        .join("\n");
       followUpBody.fg = COLORS.agent;
     },
     setStateMachine(session) {
@@ -103,6 +126,9 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
         `${formatTokenCount(usedTokens)} / ${formatTokenCount(usage.contextWindow)}`,
       ].join("\n");
       contextBody.fg = usedTokens >= usage.contextWindow ? COLORS.error : COLORS.agent;
+    },
+    setSessionCost(cost) {
+      costLine.content = cost > 0 ? `cost: $${cost.toFixed(4)}` : "";
     },
   };
 }

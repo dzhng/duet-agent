@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
-import { composeFormattedToolBlock, formatToolBlock } from "./tool-formatters.js";
+import { assembleToolBlock, formatToolBlock } from "./tool-formatters.js";
 
 /**
  * Visual category for a transcript block. The TUI uses this to pick a color
@@ -94,7 +94,7 @@ export function historyDisplayBlocks(history: readonly AgentMessage[]): HistoryD
             });
             continue;
           }
-          const content = composeFormattedToolBlock(formatted, "⏳");
+          const content = assembleToolBlock(formatted, "⏳");
           const placeholderIndex = blocks.length;
           blocks.push({ kind: "tool", content });
           pending.set(block.id, { placeholderIndex, toolName: block.name, input: block.arguments });
@@ -116,7 +116,7 @@ export function historyDisplayBlocks(history: readonly AgentMessage[]): HistoryD
         mode: "history",
       });
       const marker = message.isError ? "✗" : "✓";
-      const content = composeFormattedToolBlock(formatted, marker);
+      const content = assembleToolBlock(formatted, marker);
       const kind: HistoryBlockKind = message.isError ? "error" : "tool";
       if (call && call.placeholderIndex >= 0) {
         const existing = blocks[call.placeholderIndex]!;

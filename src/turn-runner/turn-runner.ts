@@ -4,7 +4,7 @@ import {
   type AgentMessage,
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
-import { getEnvApiKey, type Usage } from "@earendil-works/pi-ai";
+import { getEnvApiKey, type ImageContent, type Usage } from "@earendil-works/pi-ai";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
@@ -28,9 +28,11 @@ import type {
   TurnAnswerCommand,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
+  TurnFollowUpQueueEntry,
   TurnInterruptCommand,
   TurnMode,
   TurnPromptCommand,
+  TurnPromptImage,
   TurnState,
   TurnTokenUsage,
   TurnStartCommand,
@@ -65,6 +67,12 @@ export type TurnEventHandler = (event: TurnEvent) => void;
 export interface AgentWorkerInput {
   state: TurnState;
   prompt: string;
+  /**
+   * Optional image attachments forwarded to `agent.prompt(text, images)`.
+   * Only the parent prompt path carries images; state-machine sub-agents and
+   * answer commands ignore them because their prompts are runner-synthesized.
+   */
+  images?: ImageContent[];
 }
 
 export interface AgentConfigInput {
@@ -258,11 +266,12 @@ export class TurnRunner {
 
   private sendCommandToAgent(agent: Agent, command: TurnPromptCommand | TurnAnswerCommand): void {
     const message = this.commandToUserMessage(command);
-    const agentMessage = { role: "user" as const, content: message, timestamp: Date.now() };
+    const images = command.type === "prompt" ? command.images : undefined;
+    const agentMessage = buildUserAgentMessage(message, images);
     if (command.behavior === "steer") {
       agent.steer(agentMessage);
     } else {
-      this.appendFollowUpPrompt(message);
+      this.appendFollowUpPrompt(message, images);
       agent.followUp(agentMessage);
     }
   }
@@ -297,6 +306,7 @@ export class TurnRunner {
       type: "prompt",
       message: prompt,
       behavior: command.behavior,
+      images: command.type === "prompt" ? command.images : undefined,
     });
     this.setState(terminal.state);
     return terminal;
@@ -349,36 +359,34 @@ export class TurnRunner {
       (command.type === "prompt" || command.type === "answer") &&
       command.behavior === "follow_up"
     ) {
-      this.appendFollowUpPrompt(this.commandToUserMessage(command));
+      const images = command.type === "prompt" ? command.images : undefined;
+      this.appendFollowUpPrompt(this.commandToUserMessage(command), images);
     }
     this.setQueuedCommands([...this.getQueuedCommands(), command]);
   }
 
-  private replaceFollowUpQueue(prompts: string[]): void {
-    this.setFollowUpQueue(prompts);
+  private replaceFollowUpQueue(entries: TurnFollowUpQueueEntry[]): void {
+    this.setFollowUpQueue(entries);
     this.parentAgent?.clearFollowUpQueue();
-    for (const prompt of this.getFollowUpQueue()) {
-      this.parentAgent?.followUp({
-        role: "user",
-        content: prompt,
-        timestamp: Date.now(),
-      });
+    for (const entry of this.getFollowUpQueue()) {
+      this.parentAgent?.followUp(buildUserAgentMessage(entry.message, entry.images));
     }
-    this.replaceQueuedFollowUpCommands(prompts);
+    this.replaceQueuedFollowUpCommands(entries);
     this.emitFollowUpQueue();
   }
 
-  private replaceQueuedFollowUpCommands(prompts: string[]): void {
+  private replaceQueuedFollowUpCommands(entries: TurnFollowUpQueueEntry[]): void {
     this.removeQueuedFollowUpCommands();
     if (!this.state || this.parentAgentRunning) return;
     this.setQueuedCommands([
       ...this.getQueuedCommands(),
-      ...prompts.map(
-        (prompt) =>
+      ...entries.map(
+        (entry) =>
           ({
             type: "prompt",
-            message: prompt,
+            message: entry.message,
             behavior: "follow_up",
+            images: entry.images,
           }) satisfies TurnPromptCommand,
       ),
     ]);
@@ -398,8 +406,10 @@ export class TurnRunner {
     );
   }
 
-  private appendFollowUpPrompt(prompt: string): void {
-    this.setFollowUpQueue([...this.getFollowUpQueue(), prompt]);
+  private appendFollowUpPrompt(message: string, images?: TurnPromptImage[]): void {
+    const entry: TurnFollowUpQueueEntry =
+      images && images.length > 0 ? { message, images } : { message };
+    this.setFollowUpQueue([...this.getFollowUpQueue(), entry]);
     this.emitFollowUpQueue();
   }
 
@@ -408,11 +418,17 @@ export class TurnRunner {
     this.removeFollowUpPrompt(this.commandToUserMessage(command));
   }
 
-  private removeFollowUpPrompt(prompt: string): void {
-    const prompts = this.getFollowUpQueue();
-    const index = prompts.indexOf(prompt);
+  /**
+   * Drop the first queued entry whose `message` text matches. Pi-agent's
+   * persisted transcript only retains the text portion of multimodal user
+   * content, so the text is the canonical dedup key for both live and
+   * replayed follow-ups.
+   */
+  private removeFollowUpPrompt(message: string): void {
+    const entries = this.getFollowUpQueue();
+    const index = entries.findIndex((entry) => entry.message === message);
     if (index === -1) return;
-    this.setFollowUpQueue([...prompts.slice(0, index), ...prompts.slice(index + 1)]);
+    this.setFollowUpQueue([...entries.slice(0, index), ...entries.slice(index + 1)]);
     this.emitFollowUpQueue();
   }
 
@@ -470,13 +486,15 @@ export class TurnRunner {
     const originalState = this.requireRunnerState();
     const state: TurnState = { ...originalState, status: "running" };
     const prompt = this.skillContext.resolveSlashSkillPrompt(command.message);
+    const images = promptImagesToContent(command.images);
     let terminal: TurnTerminalEvent;
     if (state.mode === "agent") {
-      terminal = await this.runAgentMode(state, prompt);
+      terminal = await this.runAgentMode(state, prompt, images);
     } else {
       terminal = await this.runTurnRunnerAgentWithStateMachineTools({
         state,
         prompt,
+        images,
         mode: state.mode,
       });
     }
@@ -738,13 +756,13 @@ export class TurnRunner {
     this.state = this.snapshotState(this.state);
   }
 
-  private getFollowUpQueue(): string[] {
+  private getFollowUpQueue(): TurnFollowUpQueueEntry[] {
     return [...(this.state?.followUpQueue ?? [])];
   }
 
-  private setFollowUpQueue(prompts: string[]): void {
+  private setFollowUpQueue(entries: TurnFollowUpQueueEntry[]): void {
     if (!this.state) return;
-    this.setState({ ...this.state, followUpQueue: [...prompts] });
+    this.setState({ ...this.state, followUpQueue: [...entries] });
   }
 
   private getQueuedCommands(): TurnCommand[] {
@@ -809,11 +827,13 @@ export class TurnRunner {
   protected async runTurnRunnerAgentWithStateMachineTools(input: {
     state: TurnState;
     prompt: string;
+    images?: ImageContent[];
     mode: Exclude<TurnMode, "agent">;
   }): Promise<TurnTerminalEvent> {
     const workerResult = await this.runAgentWorkerWithUsage({
       state: input.state,
       prompt: input.prompt,
+      images: input.images,
     });
 
     const result = await this.controllerResultFromWorkerResult(workerResult, input.state);
@@ -916,19 +936,20 @@ export class TurnRunner {
   }
 
   private replayFollowUpQueueIntoAgent(agent: Agent): void {
-    for (const prompt of this.getFollowUpQueue()) {
-      agent.followUp({
-        role: "user",
-        content: prompt,
-        timestamp: Date.now(),
-      });
+    for (const entry of this.getFollowUpQueue()) {
+      agent.followUp(buildUserAgentMessage(entry.message, entry.images));
     }
   }
 
-  protected async runAgentMode(state: TurnState, prompt: string): Promise<TurnTerminalEvent> {
+  protected async runAgentMode(
+    state: TurnState,
+    prompt: string,
+    images?: ImageContent[],
+  ): Promise<TurnTerminalEvent> {
     const workerResult = await this.runAgentWorkerWithUsage({
       state,
       prompt,
+      images,
     });
     if (workerResult.control.type === "ask_user_question") {
       return this.askUserQuestion(workerResult.terminal, workerResult.control);
@@ -949,7 +970,7 @@ export class TurnRunner {
     const unsubscribe = agent.subscribe((event) => this.emitParentAgentEvent(event));
     let interruptedDuringPrompt: TurnTerminalEvent | undefined;
     try {
-      await agent.prompt(input.prompt);
+      await agent.prompt(input.prompt, input.images);
     } catch (error) {
       interruptedDuringPrompt = this.consumeInterruptedTerminal();
       if (!interruptedDuringPrompt) {
@@ -1175,4 +1196,33 @@ export class TurnRunner {
       contextWindow: this.requireParentAgent().state.model.contextWindow,
     });
   }
+}
+
+/** Convert protocol-level prompt images into pi-ai `ImageContent` blocks. */
+function promptImagesToContent(images: TurnPromptImage[] | undefined): ImageContent[] {
+  if (!images) return [];
+  return images.map((image) => ({
+    type: "image" as const,
+    data: image.data,
+    mimeType: image.mimeType,
+  }));
+}
+
+/**
+ * Build a pi-agent user message from a prompt's text and optional images.
+ * Plain-text prompts use the simple string-content shape; multimodal prompts
+ * become a content array with the text part first and image blocks after.
+ */
+function buildUserAgentMessage(
+  message: string,
+  images: TurnPromptImage[] | undefined,
+): {
+  role: "user";
+  content: string | ({ type: "text"; text: string } | ImageContent)[];
+  timestamp: number;
+} {
+  const imageContent = promptImagesToContent(images);
+  const content =
+    imageContent.length > 0 ? [{ type: "text" as const, text: message }, ...imageContent] : message;
+  return { role: "user", content, timestamp: Date.now() };
 }

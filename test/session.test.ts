@@ -204,12 +204,15 @@ describe("Session", () => {
     const events: TurnEvent[] = [];
     session.subscribe((event) => events.push(event));
 
-    session.editFollowUpQueue({ prompts: ["after this"] });
+    session.editFollowUpQueue({ prompts: [{ message: "after this" }] });
 
     expect(runner.followUpQueueEdits).toEqual([
-      { type: "edit_follow_up_queue", prompts: ["after this"] },
+      { type: "edit_follow_up_queue", prompts: [{ message: "after this" }] },
     ]);
-    expect(events).toContainEqual({ type: "follow_up_queue", prompts: ["after this"] });
+    expect(events).toContainEqual({
+      type: "follow_up_queue",
+      prompts: [{ message: "after this" }],
+    });
   });
 
   testIfDocker("wraps runner events with the session id", async () => {
@@ -276,7 +279,7 @@ describe("Session", () => {
     const latestState: TurnState = {
       ...turnState,
       todos: [{ id: "persist", content: "Persist latest state", status: "in_progress" }],
-      followUpQueue: ["keep this follow-up"],
+      followUpQueue: [{ message: "keep this follow-up" }],
     };
     runner.state = latestState;
     await mkdir(join(tempDir, "dispose-session"), { recursive: true });
@@ -291,7 +294,7 @@ describe("Session", () => {
     const stored = JSON.parse(content);
 
     expect(stored.state.todos).toEqual(latestState.todos);
-    expect(stored.state.followUpQueue).toEqual(["keep this follow-up"]);
+    expect(stored.state.followUpQueue).toEqual([{ message: "keep this follow-up" }]);
   });
 
   testIfDocker("reads current state from the runner", async () => {
