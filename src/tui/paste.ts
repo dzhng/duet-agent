@@ -419,55 +419,87 @@ async function readMacClipboardViaJxa(): Promise<Uint8Array | undefined> {
   const stamp = `${Date.now()}-${process.pid}`;
   const rawPath = join(tmpdir(), `duet-jxa-${stamp}.bin`);
   const pngPath = join(tmpdir(), `duet-jxa-${stamp}.png`);
-  // Two-stage probe:
-  //   1. readObjectsForClasses:[NSImage] forces AppKit to resolve any
-  //      NSPasteboard promise items (Figma/Chromium copy-as-PNG, Slack,
-  //      browser image copy). We then re-encode the NSImage as PNG via
-  //      NSBitmapImageRep, which always succeeds for raster sources.
-  //   2. Fallback to dataForType for plain non-promise clipboards (Finder
-  //      Cmd+C, Preview copy, screenshots already on the pasteboard) and
-  //      for non-image-class flavors like PDF.
+  // Layered probe: try every method we know AppKit exposes for clipboard
+  // image extraction, in order from "definitely materializes promise items"
+  // to "raw byte read." Chromium-based apps (Figma, Slack, browsers) put
+  // images on the pasteboard as promise items, so -dataForType: returns nil
+  // until the promise is resolved by NSImage.
+  //
+  // Methods tried (first hit wins):
+  //   1. NSImage initWithPasteboard:        — most aggressive promise resolver
+  //   2. readObjectsForClasses:[NSImage]    — modern API, also resolves promises
+  //   3. pasteboardItems iteration          — per-item dataForType reads
+  //   4. legacy direct dataForType reads    — non-promise clipboards, PDF, etc.
+  //
+  // We use raw integer 4 for NSPNGFileType because the JXA bridge does not
+  // reliably surface the NSBitmapImageFileTypePNG enum constant.
   const script = `
     ObjC.import('AppKit');
     ObjC.import('Foundation');
     const pb = $.NSPasteboard.generalPasteboard;
     const rawPath = $(${JSON.stringify(rawPath)});
+    const NSPNGFileType = 4;
 
-    // Stage 1: pull NSImage (resolves promise items).
-    const classes = $.NSArray.arrayWithObject($.NSImage);
-    const objs = pb.readObjectsForClassesOptions(classes, $());
-    if (objs && !objs.isNil() && objs.count > 0) {
-      const img = objs.objectAtIndex(0);
+    function writeImageAsPng(img) {
+      if (!img || img.isNil()) return false;
       const tiff = img.TIFFRepresentation;
-      if (tiff && !tiff.isNil() && tiff.length > 0) {
-        const rep = $.NSBitmapImageRep.imageRepWithData(tiff);
-        if (rep && !rep.isNil()) {
-          const png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $.NSDictionary.dictionary);
-          if (png && !png.isNil() && png.length > 0) {
-            if (png.writeToFileAtomically(rawPath, true)) {
-              console.log(JSON.stringify({ ok: true, kind: 'png' }));
-              return;
+      if (!tiff || tiff.isNil() || tiff.length === 0) return false;
+      const rep = $.NSBitmapImageRep.imageRepWithData(tiff);
+      if (!rep || rep.isNil()) return false;
+      const png = rep.representationUsingTypeProperties(NSPNGFileType, $());
+      if (!png || png.isNil() || png.length === 0) return false;
+      return png.writeToFileAtomically(rawPath, true);
+    }
+
+    function emit(kind, method) {
+      console.log(JSON.stringify({ ok: true, kind, method }));
+    }
+
+    let done = false;
+
+    // Method 1: NSImage initWithPasteboard — most aggressive promise resolver.
+    try {
+      const img = $.NSImage.alloc.initWithPasteboard(pb);
+      if (writeImageAsPng(img)) { emit('png', 'initWithPasteboard'); done = true; }
+    } catch (e) { console.log(JSON.stringify({ ok: false, method: 'initWithPasteboard', err: String(e) })); }
+
+    // Method 2: readObjectsForClasses with NSImage.
+    if (!done) {
+      try {
+        const classes = $.NSArray.arrayWithObject($.NSImage);
+        const objs = pb.readObjectsForClassesOptions(classes, $());
+        if (objs && !objs.isNil() && objs.count > 0) {
+          if (writeImageAsPng(objs.objectAtIndex(0))) { emit('png', 'readObjectsForClasses'); done = true; }
+        }
+      } catch (e) { console.log(JSON.stringify({ ok: false, method: 'readObjectsForClasses', err: String(e) })); }
+    }
+
+    // Method 3: iterate pasteboardItems and try image UTIs on each item.
+    if (!done) {
+      try {
+        const items = pb.pasteboardItems;
+        if (items && !items.isNil()) {
+          const flavors = [['public.png','png'],['public.jpeg','jpeg'],['public.tiff','tiff'],['com.compuserve.gif','gif'],['com.microsoft.bmp','bmp'],['com.adobe.pdf','pdf']];
+          for (let i = 0; i < items.count && !done; i++) {
+            const item = items.objectAtIndex(i);
+            for (const [uti, kind] of flavors) {
+              const data = item.dataForType(uti);
+              if (data && !data.isNil() && data.length > 0) {
+                if (data.writeToFileAtomically(rawPath, true)) { emit(kind, 'pasteboardItems:' + uti); done = true; break; }
+              }
             }
           }
         }
-      }
+      } catch (e) { console.log(JSON.stringify({ ok: false, method: 'pasteboardItems', err: String(e) })); }
     }
 
-    // Stage 2: fall back to direct UTI reads (non-promise clipboards, PDF, etc.).
-    const utis = [
-      ['public.png', 'png'],
-      ['public.jpeg', 'jpeg'],
-      ['public.tiff', 'tiff'],
-      ['com.compuserve.gif', 'gif'],
-      ['com.microsoft.bmp', 'bmp'],
-      ['com.adobe.pdf', 'pdf'],
-    ];
-    for (const [uti, kind] of utis) {
-      const data = pb.dataForType(uti);
-      if (data && !data.isNil() && data.length > 0) {
-        if (data.writeToFileAtomically(rawPath, true)) {
-          console.log(JSON.stringify({ ok: true, kind }));
-          return;
+    // Method 4: legacy direct dataForType on the pasteboard itself.
+    if (!done) {
+      const utis = [['public.png','png'],['public.jpeg','jpeg'],['public.tiff','tiff'],['com.compuserve.gif','gif'],['com.microsoft.bmp','bmp'],['com.adobe.pdf','pdf']];
+      for (const [uti, kind] of utis) {
+        const data = pb.dataForType(uti);
+        if (data && !data.isNil() && data.length > 0) {
+          if (data.writeToFileAtomically(rawPath, true)) { emit(kind, 'dataForType:' + uti); done = true; break; }
         }
       }
     }
@@ -478,8 +510,17 @@ async function readMacClipboardViaJxa(): Promise<Uint8Array | undefined> {
     if (result.code !== 0) return undefined;
     resultJson = result.stdout.trim();
     if (!resultJson) return undefined;
-    const parsed = JSON.parse(resultJson) as { ok?: boolean; kind?: string };
-    if (!parsed.ok || !parsed.kind) return undefined;
+    // The script may emit one or more JSON lines (errors before success).
+    // The successful read is always the line with ok=true.
+    const lines = resultJson.split(/\r?\n/).filter((l) => l.length > 0);
+    let parsed: { ok?: boolean; kind?: string; method?: string } | undefined;
+    for (const line of lines) {
+      try {
+        const obj = JSON.parse(line) as { ok?: boolean; kind?: string; method?: string };
+        if (obj.ok) { parsed = obj; break; }
+      } catch { /* ignore non-JSON noise */ }
+    }
+    if (!parsed?.ok || !parsed.kind) return undefined;
 
     if (parsed.kind === "png") {
       return new Uint8Array(await readFile(rawPath));
