@@ -15,6 +15,7 @@ import {
   createObservationalContextTransform,
   updateObservationalMemory,
 } from "../memory/observational.js";
+import { createEmbeddingClient } from "../memory/embedding.js";
 import { loadStoredMemory, type MemoryPersistenceHandle } from "../memory/storage.js";
 import { MemoryStore } from "../memory/store.js";
 import {
@@ -1145,10 +1146,16 @@ export class TurnRunner {
     if (this.memoryLoaded) return;
     this.memoryLoaded = true;
 
+    // Embedding client is built once per runner so connection reuse can
+    // amortize TLS setup across both the backfill worker and (in commit
+    // 7) the recall_memory tool. The client lazily resolves DUET_API_KEY
+    // per call so a `duet login` mid-session lights up retrieval without
+    // a runner restart.
     this.memoryPersistence = await loadStoredMemory(
       this.config.memoryDbPath,
       this.config.cwd ?? process.cwd(),
       this.memory,
+      { embed: createEmbeddingClient() },
     );
   }
 
