@@ -1,11 +1,12 @@
-import { PGlite } from "@electric-sql/pglite";
-import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import type { PGlite } from "@electric-sql/pglite";
+import { join } from "node:path";
 import type {
   MemoryStoreEvent,
   Observation,
   ObservationalMemorySnapshot,
 } from "../types/memory.js";
+import { openPGlite } from "./pglite.js";
+import { OBSERVATIONS_SCHEMA_SQL } from "./schema.js";
 import type { MemoryStore } from "./store.js";
 
 type MemoryDatabase = PGlite;
@@ -47,24 +48,7 @@ export async function loadStoredMemory(
 }
 
 async function openMemoryDatabase(path: string): Promise<MemoryDatabase> {
-  mkdirSync(dirname(path), { recursive: true });
-  const database = new PGlite(path);
-  await database.exec(`
-    CREATE TABLE IF NOT EXISTS observations (
-      id TEXT PRIMARY KEY,
-      created_at BIGINT NOT NULL,
-      observed_date TEXT NOT NULL,
-      referenced_date TEXT,
-      relative_date TEXT,
-      time_of_day TEXT,
-      priority TEXT NOT NULL,
-      scope TEXT NOT NULL,
-      source_json TEXT NOT NULL,
-      content TEXT NOT NULL,
-      tags_json TEXT NOT NULL
-    );
-  `);
-  return database;
+  return openPGlite(path, { schemaSql: OBSERVATIONS_SCHEMA_SQL });
 }
 
 async function readMemorySnapshot(database: MemoryDatabase): Promise<ObservationalMemorySnapshot> {

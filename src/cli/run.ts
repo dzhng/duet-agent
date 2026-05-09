@@ -19,6 +19,7 @@ import type { TurnRunnerConfig } from "../types/config.js";
 import { DEFAULT_RESUME_HISTORY_LINES, printRunHelp } from "./help.js";
 import { resumeCommand } from "./resume-hint.js";
 import { fail, isInteractive, loadCliEnvFiles, parseResumeHistoryLines } from "./shared.js";
+import { installShutdownHandlers } from "./shutdown.js";
 import { getNewVersionNotice } from "./version-check.js";
 
 export interface CliTurnConfigInput {
@@ -258,6 +259,11 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     }
   });
 
+  // Ensure PGlite gets a chance to flush its WAL on Ctrl+C / SIGTERM. The
+  // `finally` block below handles normal returns and thrown errors, but
+  // signals bypass it and would otherwise leave the memory database dirty.
+  const removeShutdownHandlers = installShutdownHandlers(() => manager.dispose());
+
   try {
     const session = resumeSessionId
       ? manager.resume(resumeSessionId)
@@ -319,6 +325,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     console.error(`Fatal: ${err.message}`);
     process.exitCode = 1;
   } finally {
+    removeShutdownHandlers();
     await manager.dispose();
   }
 }

@@ -3,6 +3,7 @@ import { printMemoryHelp } from "./help.js";
 import { MemoryDb } from "./memory-db.js";
 import { runMemoryTui } from "./memory-tui.js";
 import { fail, resolveUserPath } from "./shared.js";
+import { installShutdownHandlers } from "./shutdown.js";
 
 /**
  * Run `duet memory` (alias: `duet memories`) — open the memory database in a TUI for browsing,
@@ -30,9 +31,11 @@ export async function runMemoryCommand(args: string[]): Promise<void> {
   }
 
   const db = await MemoryDb.open(dbPath);
+  const removeShutdownHandlers = installShutdownHandlers(() => db.close());
   try {
     await runMemoryTui(db, dbPath);
   } finally {
+    removeShutdownHandlers();
     await db.close();
   }
 }

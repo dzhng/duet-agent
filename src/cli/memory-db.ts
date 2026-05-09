@@ -1,6 +1,6 @@
-import { PGlite } from "@electric-sql/pglite";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import type { PGlite } from "@electric-sql/pglite";
+import { openPGlite } from "../memory/pglite.js";
+import { OBSERVATIONS_SCHEMA_SQL } from "../memory/schema.js";
 import type { Observation } from "../types/memory.js";
 
 /**
@@ -13,27 +13,11 @@ export class MemoryDb {
 
   /**
    * Open the memory database at `path`, creating the file and parent
-   * directory if needed. The schema matches `memory/storage.ts` so the
-   * runner and this CLI command share one source of truth.
+   * directory if needed. The schema is shared with `memory/storage.ts` so
+   * the runner and this CLI command stay in sync.
    */
   static async open(path: string): Promise<MemoryDb> {
-    mkdirSync(dirname(path), { recursive: true });
-    const db = new PGlite(path);
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS observations (
-        id TEXT PRIMARY KEY,
-        created_at BIGINT NOT NULL,
-        observed_date TEXT NOT NULL,
-        referenced_date TEXT,
-        relative_date TEXT,
-        time_of_day TEXT,
-        priority TEXT NOT NULL,
-        scope TEXT NOT NULL,
-        source_json TEXT NOT NULL,
-        content TEXT NOT NULL,
-        tags_json TEXT NOT NULL
-      );
-    `);
+    const db = await openPGlite(path, { schemaSql: OBSERVATIONS_SCHEMA_SQL });
     return new MemoryDb(db);
   }
 
