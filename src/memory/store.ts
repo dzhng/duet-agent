@@ -8,9 +8,30 @@ import type {
   ObservationalMemorySnapshot,
 } from "../types/memory.js";
 
+/**
+ * Frozen view of memory rendered into the prompt prefix. Captured at
+ * compaction events (initial load, reflector completion, wire-shaping
+ * eviction) and held immutable between events so the rendered prefix
+ * stays content-deterministic across turns. The provider's prompt
+ * cache survives unchanged until the next compaction event, at which
+ * point exactly one cache invalidation is paid — not one per turn.
+ *
+ * Observations the observer writes mid-session still flow to the
+ * database in real time; they just do not enter `contextPack` until
+ * the next refresh. The model still sees them through `recall_memory`
+ * if it asks.
+ */
+export interface ContextPack {
+  /** Cross-session ranked memory; rendered above the local section. */
+  global: Observation[];
+  /** Current session's chronological compaction summary; rendered below global. */
+  local: Observation[];
+}
+
 export class MemoryStore {
   private observations: Map<string, Observation> = new Map();
   private handlers = new Set<MemoryStoreEventHandler>();
+  private contextPack: ContextPack = { global: [], local: [] };
 
   on(handler: MemoryStoreEventHandler): () => void {
     this.handlers.add(handler);
@@ -87,6 +108,25 @@ export class MemoryStore {
       "## Observations",
       observationLines.length > 0 ? observationLines.join("\n") : "(none)",
     ].join("\n");
+  }
+
+  /**
+   * Replace the frozen view used by the runner's context transform.
+   * Called by `rebuildMemoryContextPack()` at compaction events and by
+   * `loadStoredMemory()` after the initial database seed.
+   *
+   * Holding the pack here (rather than recomputing inside the transform
+   * on every dispatch) is the entire point of the cache-stability
+   * design: until the next refresh, every turn renders exactly the
+   * same memory prefix.
+   */
+  setContextPack(pack: ContextPack): void {
+    this.contextPack = pack;
+  }
+
+  /** Current frozen pack. Returns empty arrays when memory is disabled or pre-compaction. */
+  getContextPack(): ContextPack {
+    return this.contextPack;
   }
 
   private emit(event: MemoryStoreEvent): void {

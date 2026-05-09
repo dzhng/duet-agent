@@ -187,6 +187,14 @@ export interface ObservationalContextTransformOptions {
   memory: MemoryStore;
   settings?: ObservationalMemorySettingsInput;
   /**
+   * Compaction trigger fired when the wire-shaping eviction horizon
+   * advances mid-turn. The runner uses it to rebuild the frozen memory
+   * context pack — the prompt cache is already invalidating because
+   * eviction changed the message tail, so refreshing the prefix at the
+   * same moment piggybacks on a cache miss the model is already paying.
+   */
+  onCompaction?: () => void;
+  /**
    * Sticky eviction point. The transform applies this horizon to the
    * message list before checking either budget, then advances it in place
    * when a budget is exceeded. Pi-agent re-runs `transformContext` on
@@ -313,6 +321,7 @@ export function createObservationalContextTransform(options: ObservationalContex
     const tokenTarget = settings.observation.bufferActivation;
 
     if (candidateTokens >= tokenTrigger || candidateBytes >= WIRE_BYTE_TRIGGER) {
+      const previousHorizon = options.horizon.evictionHorizon;
       options.horizon.evictionHorizon = findEvictionHorizon(
         observableMessages,
         options.horizon.evictionHorizon,
@@ -323,22 +332,59 @@ export function createObservationalContextTransform(options: ObservationalContex
         },
       );
       retainedMessages = applyEvictionHorizon(observableMessages, options.horizon.evictionHorizon);
+      // Compaction trigger: piggyback on the cache miss the eviction
+      // already forced. The handler is fire-and-forget; the runner
+      // wires it to refresh the frozen memory pack in the background.
+      if (options.horizon.evictionHorizon !== previousHorizon) {
+        options.onCompaction?.();
+      }
     }
 
-    const snapshot = await options.memory.getSnapshot();
-    const observations = snapshot.observations
-      .map((observation) => observation.content)
-      .join("\n\n");
-    if (!observations.trim()) {
+    // Render the frozen context pack rather than every observation
+    // currently in the store. The pack is rebuilt only at compaction
+    // events (see memory/context-pack.ts), so the rendered prefix stays
+    // content-deterministic across turns and the provider's prompt
+    // cache survives until the next compaction.
+    const pack = options.memory.getContextPack();
+    const rendered = renderContextPack(pack);
+    if (!rendered) {
       return retainedMessages;
     }
 
     return [
-      buildObservationContextMessage(observations),
+      buildObservationContextMessage(rendered),
       buildContinuationMessage(),
       ...retainedMessages,
     ];
   };
+}
+
+/**
+ * Compose the two-layer memory section. Global rows render first
+ * (most stable cross-session signal), local rows render second
+ * (chronological compaction summary of the current session). The
+ * fixed render order matches the prompt assembly: system prompt →
+ * memory section → message history.
+ */
+function renderContextPack(pack: { global: Observation[]; local: Observation[] }): string {
+  const sections: string[] = [];
+  if (pack.global.length > 0) {
+    sections.push(
+      [
+        "### Long-term memory (cross-session)",
+        pack.global.map((observation) => observation.content).join("\n\n"),
+      ].join("\n\n"),
+    );
+  }
+  if (pack.local.length > 0) {
+    sections.push(
+      [
+        "### From this session",
+        pack.local.map((observation) => observation.content).join("\n\n"),
+      ].join("\n\n"),
+    );
+  }
+  return sections.join("\n\n");
 }
 
 export async function updateObservationalMemory(

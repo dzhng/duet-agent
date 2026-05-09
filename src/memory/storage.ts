@@ -4,8 +4,10 @@ import { join } from "node:path";
 import type {
   MemoryStoreEvent,
   Observation,
+  ObservationalMemorySettings,
   ObservationalMemorySnapshot,
 } from "../types/memory.js";
+import { rebuildMemoryContextPack } from "./context-pack.js";
 import { DEFAULT_EMBEDDING_MODEL, type EmbedFn } from "./embedding.js";
 import { EmbeddingBackfillWorker } from "./embedding-worker.js";
 import { runMigrations } from "./migrations.js";
@@ -39,6 +41,17 @@ export interface LoadStoredMemoryOptions {
   embeddingModel?: string;
   /** Optional override for the backfill log path; defaults to ~/.duet/logs/memory-backfill.log. */
   embeddingLogPath?: string;
+  /**
+   * Settings + sessionId used to build the initial context pack. When
+   * provided, `loadStoredMemory` builds and freezes the rendered
+   * memory pack as part of the load so the first turn already sees a
+   * stable prefix. Omit to skip the initial build (the runner can
+   * trigger it later).
+   */
+  contextPack?: {
+    settings: ObservationalMemorySettings;
+    sessionId?: string;
+  };
 }
 
 export async function loadStoredMemory(
@@ -77,6 +90,27 @@ export async function loadStoredMemory(
       })
     : undefined;
   worker?.start();
+
+  if (options.contextPack) {
+    // Initial compaction trigger: freeze the rendered memory pack
+    // before the first turn dispatches so the prefix is stable from
+    // turn 1, not turn 2. Failure here is non-fatal: the pack stays
+    // empty and the runner can trigger a refresh later.
+    try {
+      await rebuildMemoryContextPack({
+        db: database,
+        store,
+        settings: options.contextPack.settings,
+        ...(options.contextPack.sessionId !== undefined
+          ? { sessionId: options.contextPack.sessionId }
+          : {}),
+      });
+    } catch {
+      // Pack build failed; rendered memory will be empty until the
+      // next compaction trigger refreshes it. Logged silently here
+      // since callers do not need the noise mid-startup.
+    }
+  }
 
   const flush = async () => {
     await writeQueue;

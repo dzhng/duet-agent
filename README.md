@@ -87,7 +87,16 @@ are not states themselves.
 
 Memory is first-class. The default `MemoryStore` is in-memory and emits observation events; optional PGlite storage hydrates and persists durable observations outside the turn runner session.
 
-The memory model follows observational memory: turn runner session messages are observed into durable text observations, and a reflector condenses observations when they grow too large. Observations are scoped as `session` or `resource`.
+The memory model follows observational memory: turn runner session messages are observed into durable text observations, and a reflector condenses observations when they grow too large. Every observation is tagged with the session id that produced it and a `kind` (`observation` or `reflection`).
+
+Memory rendered into the prompt prefix splits into two layers:
+
+- **Long-term memory** (cross-session) ranks every other session's rows by `priority × recencyDecay × kindBias` (7-day half-life, reflections weighted 1.3×) and packs the highest-scoring rows into a 8000-token budget.
+- **From this session** (local) renders the current session's compaction summary chronologically; size is bounded by the existing observer/reflector thresholds.
+
+This frozen pack is rebuilt only at three compaction events — initial load, reflector completion, wire-shaping eviction — so the rendered prefix stays stable between events and the provider's prompt cache survives turn-over-turn. Observations the observer writes mid-session flow to disk in real time but do not enter the rendered prefix until the next refresh; the model can still reach them on demand through the `recall_memory` tool.
+
+`recall_memory` runs hybrid retrieval over the durable memory database: pgvector cosine similarity (via the [pgvector PGlite extension](https://github.com/electric-sql/pglite/tree/main/packages/pglite/src/vector)) for semantic matches plus tsvector keyword search for exact-token lookups. The two ranked lists merge through Reciprocal Rank Fusion. Embeddings flow through the Duet public API endpoint (`POST /api/v1/embed`, free for logged-in users) and an always-on background worker fills missing rows so foreground turns never block on embedding work. An optional `expand` flag generates two paraphrased queries through a cheap model and fuses across all three runs when initial results are weak.
 
 Observation is multimodal. When messages contain images, the observer inspects them directly and records visual details, user-visible text, UI state, diagrams, and errors as text observations. The agent keeps continuity over screenshots, scanned documents, and other image attachments without re-attaching the original bytes on every turn.
 
@@ -445,6 +454,8 @@ The parent runner transcript stays linear across the lifecycle. State-machine co
 ## Memory And Persistence
 
 `TurnRunner` owns memory at runtime. It holds a `MemoryStore` in process, hydrates durable observations from PGlite before the first turn, and subscribes to memory-store events to write future observation changes. After each pi-agent run, the runner observes the latest unobserved transcript suffix, reflects oversized observation logs, emits memory events with generated observation payloads, and waits for durable writes before continuing. Raw conversation messages stay in `TurnState.agent.messages`; memory persistence stores only derived observations/reflections.
+
+The rendered memory section above the message tail is a _frozen_ two-layer pack — long-term cross-session memory ranked into an 8k-token budget and the current session's chronological compaction summary. The pack is rebuilt only at compaction events (initial load, reflector completion, wire-shaping eviction) so observations the observer writes mid-session do not invalidate the prompt cache. The model can still pull specific facts on demand through the default `recall_memory` tool, which runs hybrid vector + keyword search over the same database with optional query expansion.
 
 ```typescript
 import { TurnRunner } from "@duetso/agent";

@@ -26,8 +26,8 @@ class MemoryTransformTurnRunner extends TurnRunner {
     return this.memory.getSnapshot();
   }
 
-  appendObservationForTest(content: string) {
-    return this.memory.appendObservation({
+  async appendObservationForTest(content: string) {
+    const observation = await this.memory.appendObservation({
       kind: "observation",
       observedDate: "2026-05-06",
       priority: "high",
@@ -35,6 +35,11 @@ class MemoryTransformTurnRunner extends TurnRunner {
       content,
       tags: ["test"],
     });
+    // Seed the frozen pack so the transform actually renders this row.
+    // Real production refreshes happen at compaction events; in tests
+    // we set the pack directly to mimic post-compaction state.
+    this.memory.setContextPack({ global: [observation], local: [] });
+    return observation;
   }
 }
 

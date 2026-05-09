@@ -15,7 +15,9 @@ import {
   createObservationalContextTransform,
   updateObservationalMemory,
 } from "../memory/observational.js";
+import { rebuildMemoryContextPack } from "../memory/context-pack.js";
 import { createEmbeddingClient } from "../memory/embedding.js";
+import { resolveObservationalMemorySettings } from "../memory/observational.js";
 import { loadStoredMemory, type MemoryPersistenceHandle } from "../memory/storage.js";
 import { MemoryStore } from "../memory/store.js";
 import {
@@ -1048,7 +1050,7 @@ export class TurnRunner {
     if (this.config.memoryDbPath === undefined) {
       return;
     }
-    await updateObservationalMemory({
+    const result = await updateObservationalMemory({
       memory: this.memory,
       sessionId: this.config.sessionId,
       actorModel: this.resolveMemoryActorModel(options),
@@ -1058,6 +1060,30 @@ export class TurnRunner {
       onActivity: (event) => this.emit({ type: "memory", ...event }),
     });
     await this.memoryPersistence?.flush();
+
+    // Compaction trigger: a reflection just replaced the durable
+    // observation set, so rebuild the frozen context pack to pick up
+    // the new condensed view. Observer-only updates intentionally do
+    // NOT refresh the pack — they leave the rendered prefix stable so
+    // the provider's prompt cache survives.
+    if (result.reflections.length > 0) {
+      await this.refreshMemoryContextPack();
+    }
+  }
+
+  private async refreshMemoryContextPack(): Promise<void> {
+    if (!this.memoryPersistence?.db) return;
+    try {
+      await rebuildMemoryContextPack({
+        db: this.memoryPersistence.db,
+        store: this.memory,
+        settings: resolveObservationalMemorySettings(this.config.memory),
+        ...(this.config.sessionId !== undefined ? { sessionId: this.config.sessionId } : {}),
+      });
+    } catch {
+      // Pack rebuild is best-effort; the existing pack remains in
+      // place if this fails. Turn flow never blocks on memory work.
+    }
   }
 
   /**
@@ -1112,6 +1138,13 @@ export class TurnRunner {
       memory: this.memory,
       settings: this.config.memory,
       horizon: this.wireGuardHorizon,
+      // Compaction trigger #3: when wire-shaping advances the eviction
+      // horizon the prompt cache is already invalidating, so refresh
+      // the frozen memory pack at the same moment to piggyback the
+      // cache miss instead of paying it twice.
+      onCompaction: () => {
+        void this.refreshMemoryContextPack();
+      },
     });
   }
 
@@ -1159,16 +1192,27 @@ export class TurnRunner {
     if (this.memoryLoaded) return;
     this.memoryLoaded = true;
 
-    // Embedding client is built once per runner so connection reuse can
-    // amortize TLS setup across both the backfill worker and (in commit
-    // 7) the recall_memory tool. The client lazily resolves DUET_API_KEY
-    // per call so a `duet login` mid-session lights up retrieval without
+    // Embedding client is built once per runner so connection reuse
+    // amortizes TLS setup across both the backfill worker and the
+    // recall_memory tool. The client lazily resolves DUET_API_KEY per
+    // call so a `duet login` mid-session lights up retrieval without
     // a runner restart.
+    //
+    // Initial context pack build runs synchronously inside
+    // loadStoredMemory so the very first dispatched turn already sees
+    // a frozen memory prefix. Subsequent compaction triggers (reflector
+    // completion, wire-shaping eviction) refresh it.
     this.memoryPersistence = await loadStoredMemory(
       this.config.memoryDbPath,
       this.config.cwd ?? process.cwd(),
       this.memory,
-      { embed: createEmbeddingClient() },
+      {
+        embed: createEmbeddingClient(),
+        contextPack: {
+          settings: resolveObservationalMemorySettings(this.config.memory),
+          ...(this.config.sessionId !== undefined ? { sessionId: this.config.sessionId } : {}),
+        },
+      },
     );
   }
 
