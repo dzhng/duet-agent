@@ -1,10 +1,13 @@
 import type { PGlite } from "@electric-sql/pglite";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   MemoryStoreEvent,
   Observation,
   ObservationalMemorySnapshot,
 } from "../types/memory.js";
+import { DEFAULT_EMBEDDING_MODEL, type EmbedFn } from "./embedding.js";
+import { EmbeddingBackfillWorker } from "./embedding-worker.js";
 import { runMigrations } from "./migrations.js";
 import { openPGlite } from "./pglite.js";
 import { OBSERVATIONS_SCHEMA_SQL } from "./schema.js";
@@ -16,10 +19,24 @@ export interface MemoryPersistenceHandle {
   dispose: () => Promise<void>;
 }
 
+export interface LoadStoredMemoryOptions {
+  /**
+   * Embedding callable used by the background backfill worker. Omit to
+   * skip embedding work entirely — useful in tests that do not exercise
+   * `recall_memory`. The worker is built only when this is provided.
+   */
+  embed?: EmbedFn;
+  /** Embedding model identifier written alongside each vector. */
+  embeddingModel?: string;
+  /** Optional override for the backfill log path; defaults to ~/.duet/logs/memory-backfill.log. */
+  embeddingLogPath?: string;
+}
+
 export async function loadStoredMemory(
   memoryPath: string | false | undefined,
   cwd: string,
   store: MemoryStore,
+  options: LoadStoredMemoryOptions = {},
 ): Promise<MemoryPersistenceHandle> {
   if (!memoryPath) {
     const noop = async () => {};
@@ -37,15 +54,35 @@ export async function loadStoredMemory(
   };
   const unsubscribe = store.on(enqueueWrite);
 
+  // The backfill worker runs whenever the CLI is up. Observers and
+  // reflectors write rows during turns; embeddings catch up in the
+  // background within a few batches, never blocking the foreground.
+  // Skipping the worker (no `embed` option) is intentional for tests
+  // and one-shot tools that do not call recall_memory.
+  const worker = options.embed
+    ? new EmbeddingBackfillWorker({
+        db: database,
+        embed: options.embed,
+        model: options.embeddingModel ?? DEFAULT_EMBEDDING_MODEL,
+        logPath: options.embeddingLogPath ?? defaultEmbeddingLogPath(),
+      })
+    : undefined;
+  worker?.start();
+
   const flush = async () => {
     await writeQueue;
   };
   const dispose = async () => {
     unsubscribe();
+    await worker?.stop();
     await flush();
     await database.close();
   };
   return { flush, dispose };
+}
+
+function defaultEmbeddingLogPath(): string {
+  return join(homedir(), ".duet", "logs", "memory-backfill.log");
 }
 
 async function openMemoryDatabase(path: string): Promise<MemoryDatabase> {

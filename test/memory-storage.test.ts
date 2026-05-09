@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite/vector";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -153,7 +154,7 @@ describe("Memory storage", () => {
 });
 
 async function openSeededDatabase(path: string): Promise<PGlite> {
-  const database = new PGlite(path);
+  const database = await PGlite.create({ dataDir: path, extensions: { vector } });
   await database.exec(`
     CREATE TABLE observations (
       id TEXT PRIMARY KEY,
@@ -208,7 +209,7 @@ function createPersistedObservation(id: string, content: string, createdAt = 2):
 }
 
 async function readObservationContents(path: string): Promise<string[]> {
-  const database = new PGlite(path);
+  const database = await PGlite.create({ dataDir: path, extensions: { vector } });
   const result = await database.query<{ content: string }>(
     "SELECT content FROM observations ORDER BY content",
   );

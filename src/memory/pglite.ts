@@ -1,6 +1,17 @@
 import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite/vector";
 import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+
+/**
+ * pgvector ships with PGlite as an opt-in WASM extension. We load it
+ * unconditionally so every memory database can run hybrid retrieval
+ * without a feature flag dance — the cost is one extra small WASM
+ * download, paid once per install. `CREATE EXTENSION vector` then
+ * succeeds inside migration v3 where the embedding tables and HNSW
+ * index live.
+ */
+const MEMORY_EXTENSIONS = { vector } as const;
 
 export interface OpenPGliteOptions {
   /**
@@ -70,7 +81,11 @@ async function openAndProbe(
   schemaSql: string | undefined,
   init: ((db: PGlite) => Promise<void>) | undefined,
 ): Promise<PGlite> {
-  const db = new PGlite(path);
+  // PGlite.create is the only API path that lets us register loadable
+  // extensions at construction time — the bare `new PGlite(path)` form
+  // skips the extension registry, leaving `CREATE EXTENSION vector` to
+  // fail with "extension is not available" once migration v3 runs.
+  const db = await PGlite.create({ dataDir: path, extensions: MEMORY_EXTENSIONS });
   try {
     if (schemaSql) await db.exec(schemaSql);
     if (init) await init(db);

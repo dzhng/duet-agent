@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite/vector";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -163,6 +164,37 @@ describe("Memory migrations", () => {
     });
   });
 
+  testIfDocker("v3 sets up the embeddings table and tsvector index", async () => {
+    await withTempDb(async (db) => {
+      await runMigrations(db);
+
+      // Embeddings table exists with the right shape so the backfill
+      // worker can write into it without an extra schema check.
+      const tableProbe = await db.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM information_schema.tables
+         WHERE table_name = 'observation_embeddings'`,
+      );
+      expect(tableProbe.rows[0]?.count).toBe(1);
+
+      // Vector type was registered — a literal cast succeeds only when
+      // the extension is loaded.
+      const vectorProbe = await db.query<{ ok: number }>(
+        `SELECT 1 AS ok WHERE '[1,2,3]'::vector(3) = '[1,2,3]'::vector(3)`,
+      );
+      expect(vectorProbe.rows[0]?.ok).toBe(1);
+
+      // Indexes are present so hybrid retrieval queries hit them.
+      const indexes = await db.query<{ indexname: string }>(
+        `SELECT indexname FROM pg_indexes
+         WHERE tablename IN ('observations', 'observation_embeddings')
+         ORDER BY indexname`,
+      );
+      const names = indexes.rows.map((row) => row.indexname);
+      expect(names).toContain("idx_obs_emb_hnsw");
+      expect(names).toContain("idx_obs_content_fts");
+    });
+  });
+
   testIfDocker(
     "v2 leaves session_id NULL on legacy rows so loaders treat them as non-current-session",
     async () => {
@@ -272,7 +304,12 @@ describe("Memory migrations", () => {
 
 async function withTempDb(fn: (db: PGlite) => Promise<void>): Promise<void> {
   const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-migration-"));
-  const db = new PGlite(join(tempDir, "memory.db"));
+  // Tests open PGlite directly rather than through openPGlite so the
+  // pgvector extension must be registered explicitly here too.
+  const db = await PGlite.create({
+    dataDir: join(tempDir, "memory.db"),
+    extensions: { vector },
+  });
   try {
     await fn(db);
   } finally {

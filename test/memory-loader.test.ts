@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite/vector";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -208,7 +209,12 @@ describe("Memory loader", () => {
  */
 async function withSeededDb(fn: (db: PGlite) => Promise<void>): Promise<void> {
   const tempDir = await mkdtemp(join(tmpdir(), "duet-loader-"));
-  const db = new PGlite(join(tempDir, "memory.db"));
+  // Match the runtime's pgvector loading path so migration v3 can
+  // CREATE EXTENSION vector inside this test database too.
+  const db = await PGlite.create({
+    dataDir: join(tempDir, "memory.db"),
+    extensions: { vector },
+  });
   try {
     await runMigrations(db);
     await seedFixtures(db);

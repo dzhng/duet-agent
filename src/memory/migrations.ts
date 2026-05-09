@@ -150,6 +150,64 @@ const MIGRATIONS: Migration[] = [
       );
     },
   },
+  {
+    version: 3,
+    description: "pgvector embeddings table and tsvector keyword index",
+    up: async (tx) => {
+      // Hybrid retrieval (recall_memory tool) needs two indexes side by
+      // side: a vector index for semantic similarity and a tsvector GIN
+      // index for keyword matches. Reciprocal Rank Fusion in the tool
+      // merges both ranked lists; one without the other misses the
+      // class of queries the other catches (proper-noun lookups for
+      // keyword, fuzzy paraphrases for vector).
+      //
+      // pgvector itself is loaded as a PGlite extension at construction
+      // time (see memory/pglite.ts); CREATE EXTENSION is the SQL-level
+      // hook that activates the type and operator definitions.
+      await tx.exec(`CREATE EXTENSION IF NOT EXISTS vector`);
+
+      // Embeddings live in a sibling table rather than a column on
+      // observations because (a) embeddings are written asynchronously
+      // by the backfill worker, often well after the observation row
+      // lands, and (b) the embedding model may change in the future
+      // without forcing every existing row to re-embed in lockstep.
+      // The `model` column records which model produced each vector
+      // so a future re-embedding pass can selectively replace stale
+      // entries.
+      //
+      // Dimension 1536 matches OpenAI text-embedding-3-small (the
+      // model exposed by the Duet embedding endpoint). Switching to a
+      // different dimension means a new migration that drops and
+      // rebuilds this table; the dimension is part of the column type.
+      await tx.exec(`
+        CREATE TABLE IF NOT EXISTS observation_embeddings (
+          observation_id TEXT PRIMARY KEY REFERENCES observations(id) ON DELETE CASCADE,
+          model TEXT NOT NULL,
+          vector vector(1536) NOT NULL,
+          created_at BIGINT NOT NULL
+        )
+      `);
+
+      // HNSW is the right default for memory-scale corpora (typical
+      // user has thousands, not millions, of observations): build is
+      // fast, query is sub-millisecond, recall is high. Cosine
+      // operator class matches the recall_memory tool's similarity
+      // metric.
+      await tx.exec(
+        `CREATE INDEX IF NOT EXISTS idx_obs_emb_hnsw
+         ON observation_embeddings USING hnsw (vector vector_cosine_ops)`,
+      );
+
+      // GIN index on a generated tsvector lets the keyword path of
+      // hybrid retrieval run in milliseconds without per-query
+      // tokenization overhead. English config is a reasonable default;
+      // multi-language support can swap in `simple` later.
+      await tx.exec(
+        `CREATE INDEX IF NOT EXISTS idx_obs_content_fts
+         ON observations USING gin (to_tsvector('english', content))`,
+      );
+    },
+  },
 ];
 
 export interface MigrationResult {
