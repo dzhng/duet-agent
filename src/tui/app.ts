@@ -12,6 +12,7 @@ import {
   TextareaRenderable,
 } from "@opentui/core";
 import {
+  describeMacClipboardTypes,
   loadImageFromPath,
   looksLikeImageFilePath,
   type PendingImage,
@@ -1400,7 +1401,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         return;
       }
       if (source === "slash") {
-        appendBlock("[paste]", "clipboard is empty (or contains an unsupported type)", COLORS.system);
+        // Surface the actual clipboard UTI list when a /paste probe comes
+        // up empty — lets users see what their source app actually put
+        // there so the failure stops being mysterious.
+        const types = await describeMacClipboardTypes();
+        const detail = types ? ` — clipboard types: ${types}` : "";
+        appendBlock(
+          "[paste]",
+          `clipboard had no readable image or text${detail}`,
+          COLORS.system,
+        );
       }
     } catch (error) {
       appendBlock(

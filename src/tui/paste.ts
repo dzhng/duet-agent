@@ -369,7 +369,19 @@ type ClipboardProbe = () => Promise<Uint8Array | undefined>;
 function clipboardProbesForPlatform(): ClipboardProbe[] {
   const os = platform();
   if (os === "darwin") {
-    return [readMacClipboardViaOsascript, readClipboardViaCommand("pngpaste", ["-"])];
+    return [
+      // Cheap path: pngpaste handles every NSImage representation natively
+      // when the user has installed it via Homebrew.
+      readClipboardViaCommand("pngpaste", ["-"]),
+      // Real-world clipboards rarely hold a literal `«class PNGf»`. Even
+      // "Copy as PNG" in apps like Figma typically lands on the pasteboard
+      // as TIFF (NSImage's native flavor). Probe each common image class in
+      // order and convert non-PNG flavors via macOS's built-in `sips`.
+      readMacClipboardClass("PNGf", ".png", null),
+      readMacClipboardClass("TIFF", ".tiff", "png"),
+      readMacClipboardClass("JPEG", ".jpg", "png"),
+      readMacClipboardClass("PDF ", ".pdf", "png"),
+    ];
   }
   if (os === "linux") {
     return [
@@ -385,39 +397,85 @@ function clipboardProbesForPlatform(): ClipboardProbe[] {
 }
 
 /**
- * macOS clipboard → PNG via AppleScript. Writes to a temp file and reads
- * back, because piping `«class PNGf»` through stdout corrupts CR/LF bytes.
+ * macOS clipboard → file bytes via AppleScript for a specific clipboard class
+ * (e.g. `PNGf`, `TIFF`, `JPEG`, `PDF `). Writes to a temp file rather than
+ * piping through stdout because AppleScript serialization corrupts CR/LF
+ * bytes inside binary payloads.
+ *
+ * When `convertVia` is non-null we run macOS's built-in `sips` to transcode
+ * the temp file into a PNG before reading the bytes back, so the rest of
+ * the pipeline only ever sees one of the four MIME types we accept.
  */
-async function readMacClipboardViaOsascript(): Promise<Uint8Array | undefined> {
-  const tmp = join(tmpdir(), `duet-clipboard-${Date.now()}-${process.pid}.png`);
-  const script = [
-    "set out to POSIX file " + JSON.stringify(tmp),
-    "try",
-    "  set fd to open for access out with write permission",
-    "  set eof of fd to 0",
-    "  write (the clipboard as \u00abclass PNGf\u00bb) to fd",
-    "  close access fd",
-    '  return "ok"',
-    "on error errMsg",
-    "  try",
-    "    close access fd",
-    "  end try",
-    '  return "err:" & errMsg',
-    "end try",
-  ].join("\n");
+function readMacClipboardClass(
+  classCode: string,
+  extension: string,
+  convertVia: "png" | null,
+): ClipboardProbe {
+  return async () => {
+    const stamp = `${Date.now()}-${process.pid}`;
+    const tmp = join(tmpdir(), `duet-clipboard-${stamp}${extension}`);
+    const script = [
+      "set out to POSIX file " + JSON.stringify(tmp),
+      "try",
+      "  set fd to open for access out with write permission",
+      "  set eof of fd to 0",
+      `  write (the clipboard as \u00abclass ${classCode}\u00bb) to fd`,
+      "  close access fd",
+      '  return "ok"',
+      "on error errMsg",
+      "  try",
+      "    close access fd",
+      "  end try",
+      '  return "err:" & errMsg',
+      "end try",
+    ].join("\n");
 
-  try {
-    const result = await runCommand("osascript", ["-e", script]);
-    if (!result.stdout.startsWith("ok")) return undefined;
-    const bytes = new Uint8Array(await readFile(tmp));
-    return bytes;
-  } finally {
-    // Best-effort cleanup; harmless if the file was never created.
+    let pngPath: string | undefined;
     try {
-      await unlink(tmp);
-    } catch {
-      /* ignore */
+      const result = await runCommand("osascript", ["-e", script]);
+      if (!result.stdout.startsWith("ok")) return undefined;
+
+      if (convertVia === null) {
+        return new Uint8Array(await readFile(tmp));
+      }
+
+      pngPath = join(tmpdir(), `duet-clipboard-${stamp}.png`);
+      const conv = await runCommand("sips", ["-s", "format", "png", tmp, "--out", pngPath]);
+      if (conv.code !== 0) return undefined;
+      return new Uint8Array(await readFile(pngPath));
+    } finally {
+      try {
+        await unlink(tmp);
+      } catch {
+        /* ignore */
+      }
+      if (pngPath) {
+        try {
+          await unlink(pngPath);
+        } catch {
+          /* ignore */
+        }
+      }
     }
+  };
+}
+
+/**
+ * Diagnostic: list the UTI types currently on the macOS clipboard. Surfaced
+ * via the TUI when a probe round comes up empty so users can see what their
+ * source app actually put on the pasteboard.
+ */
+export async function describeMacClipboardTypes(): Promise<string | undefined> {
+  if (platform() !== "darwin") return undefined;
+  try {
+    const result = await runCommand("osascript", [
+      "-e",
+      'try\nreturn (clipboard info) as text\non error e\nreturn "err:" & e\nend try',
+    ]);
+    if (result.code !== 0 || !result.stdout || result.stdout.startsWith("err:")) return undefined;
+    return result.stdout;
+  } catch {
+    return undefined;
   }
 }
 
