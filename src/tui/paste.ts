@@ -419,10 +419,41 @@ async function readMacClipboardViaJxa(): Promise<Uint8Array | undefined> {
   const stamp = `${Date.now()}-${process.pid}`;
   const rawPath = join(tmpdir(), `duet-jxa-${stamp}.bin`);
   const pngPath = join(tmpdir(), `duet-jxa-${stamp}.png`);
+  // Two-stage probe:
+  //   1. readObjectsForClasses:[NSImage] forces AppKit to resolve any
+  //      NSPasteboard promise items (Figma/Chromium copy-as-PNG, Slack,
+  //      browser image copy). We then re-encode the NSImage as PNG via
+  //      NSBitmapImageRep, which always succeeds for raster sources.
+  //   2. Fallback to dataForType for plain non-promise clipboards (Finder
+  //      Cmd+C, Preview copy, screenshots already on the pasteboard) and
+  //      for non-image-class flavors like PDF.
   const script = `
     ObjC.import('AppKit');
     ObjC.import('Foundation');
     const pb = $.NSPasteboard.generalPasteboard;
+    const rawPath = $(${JSON.stringify(rawPath)});
+
+    // Stage 1: pull NSImage (resolves promise items).
+    const classes = $.NSArray.arrayWithObject($.NSImage);
+    const objs = pb.readObjectsForClassesOptions(classes, $());
+    if (objs && !objs.isNil() && objs.count > 0) {
+      const img = objs.objectAtIndex(0);
+      const tiff = img.TIFFRepresentation;
+      if (tiff && !tiff.isNil() && tiff.length > 0) {
+        const rep = $.NSBitmapImageRep.imageRepWithData(tiff);
+        if (rep && !rep.isNil()) {
+          const png = rep.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, $.NSDictionary.dictionary);
+          if (png && !png.isNil() && png.length > 0) {
+            if (png.writeToFileAtomically(rawPath, true)) {
+              console.log(JSON.stringify({ ok: true, kind: 'png' }));
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    // Stage 2: fall back to direct UTI reads (non-promise clipboards, PDF, etc.).
     const utis = [
       ['public.png', 'png'],
       ['public.jpeg', 'jpeg'],
@@ -434,10 +465,9 @@ async function readMacClipboardViaJxa(): Promise<Uint8Array | undefined> {
     for (const [uti, kind] of utis) {
       const data = pb.dataForType(uti);
       if (data && !data.isNil() && data.length > 0) {
-        const ok = data.writeToFileAtomically($(${JSON.stringify(rawPath)}), true);
-        if (ok) {
+        if (data.writeToFileAtomically(rawPath, true)) {
           console.log(JSON.stringify({ ok: true, kind }));
-          break;
+          return;
         }
       }
     }
