@@ -21,13 +21,27 @@ export const HINT_IDLE = "Enter: send · Shift+Enter: newline · PgUp/PgDn: scro
 export const HINT_RUNNING = "Enter: queue follow-up · PgUp/PgDn: scroll · Esc: interrupt";
 
 /**
- * Platform-aware copy keystroke shown in the hint only while a non-empty
- * drag selection exists. macOS uses Cmd+C because that is the muscle
- * memory every Mac user already has; other platforms use Ctrl+Shift+C so
- * the bare Ctrl+C keystroke can stay reserved for "exit the TUI" — which
- * matches the convention every interactive Linux/Windows terminal app
- * follows. The keystroke and the label come from the same constant so
- * the hint never drifts from the handler that implements it.
+ * Terminal-aware copy keystroke shown in the hint only while a non-empty
+ * drag selection exists. The keystroke handler accepts Cmd+C, Cmd+Shift+C,
+ * and Ctrl+Shift+C on every platform; the label here picks whichever one
+ * actually reaches the TUI on the current terminal so users do not chase
+ * a keystroke their terminal silently swallows.
+ *
+ * Warp on macOS reserves both Cmd+C (block-copy) and Cmd+Shift+C
+ * (command-palette search) for its own UI and never forwards either to
+ * TUI applications, so on Warp we surface Ctrl+Shift+C — the only combo
+ * Warp passes through. Other macOS terminals (Ghostty, kitty, recent
+ * iTerm2 with the right keybindings) forward Cmd+C, which matches Mac
+ * muscle memory. Linux and Windows terminals universally use
+ * Ctrl+Shift+C so bare Ctrl+C can stay reserved for "exit."
  */
-export const COPY_KEYSTROKE_LABEL = process.platform === "darwin" ? "Cmd+C" : "Ctrl+Shift+C";
+export const COPY_KEYSTROKE_LABEL = chooseCopyKeystrokeLabel();
 export const HINT_SELECTION_COPY = `${COPY_KEYSTROKE_LABEL}: copy`;
+
+function chooseCopyKeystrokeLabel(): string {
+  if (process.platform !== "darwin") return "Ctrl+Shift+C";
+  // TERM_PROGRAM=WarpTerminal is set by Warp itself; it is the most
+  // reliable signal we have without a runtime keypress probe.
+  if (process.env.TERM_PROGRAM === "WarpTerminal") return "Ctrl+Shift+C";
+  return "Cmd+C";
+}
