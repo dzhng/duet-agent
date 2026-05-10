@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   BoxRenderable,
+  type CliRenderer,
   createCliRenderer,
   decodePasteBytes,
   fg,
@@ -138,6 +139,14 @@ export interface RunTuiInput {
    * so resumes do not flood the transcript.
    */
   resumeHistoryMessages?: number;
+  /**
+   * Pre-built renderer for tests. When provided, `runTui` skips
+   * `createCliRenderer` and the `globalThis.window` shimming that wraps it.
+   * Production callers leave this unset; the test harness in
+   * `test/helpers/tui-harness.ts` passes a `createTestRenderer` instance so
+   * mock keys can drive the picker without a real TTY.
+   */
+  renderer?: CliRenderer;
 }
 
 const SKILL_AUTOCOMPLETE_LIMIT = AUTOCOMPLETE_LIMITS.skill;
@@ -157,7 +166,6 @@ interface InternalKeyHandlerLike {
  * keyboard protocol is enabled. We opt into it via `useKittyKeyboard`.
  */
 export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | undefined> {
-  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   // useMouse: true so the scroll wheel reaches the transcript
   // ScrollBoxRenderable and so OpenTUI receives drag events for in-app
   // text selection. Selected text is captured via the renderer's
@@ -170,13 +178,24 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // Bare Ctrl+C remains the always-exit keystroke (handled via
   // exitOnCtrlC) so the convention every other interactive Linux/Windows
   // terminal app follows still works here.
-  const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
-    useMouse: true,
-    useKittyKeyboard: {},
-    targetFps: 60,
-  });
-  restoreWindowGlobal(previousWindow);
+  //
+  // Tests inject a `createTestRenderer` instance via `input.renderer`; in
+  // that mode we skip the production renderer construction and the
+  // `globalThis.window` restore that wraps it (the test renderer never
+  // installs the shim).
+  let renderer: CliRenderer;
+  if (input.renderer) {
+    renderer = input.renderer;
+  } else {
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    renderer = await createCliRenderer({
+      exitOnCtrlC: true,
+      useMouse: true,
+      useKittyKeyboard: {},
+      targetFps: 60,
+    });
+    restoreWindowGlobal(previousWindow);
+  }
 
   // Most recent drag-selected text. OpenTUI emits the `selection` event
   // whenever a drag finishes; we cache the resulting string so /copy and
@@ -1786,7 +1805,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       }
       // Space confirms the active selection only when the composer is empty
       // so users can still type a free-form prompt that includes spaces.
-      if (key.name === "space" && inputField.plainText.length === 0) {
+      // Match either the named form (most terminals) or the literal-char
+      // form some kitty-keyboard parsers emit so the binding is robust
+      // regardless of how the host reports an unmodified Space.
+      if ((key.name === "space" || key.name === " ") && inputField.plainText.length === 0) {
         key.preventDefault();
         confirmActiveSelection();
         return;

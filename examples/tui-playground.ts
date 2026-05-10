@@ -46,12 +46,13 @@ import type {
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
+  TurnQuestion,
   TurnStartCommand,
   TurnState,
   TurnTerminalEvent,
 } from "../src/types/protocol.js";
 
-const INITIAL_STATE: TurnState = {
+export const INITIAL_STATE: TurnState = {
   status: "running",
   mode: "agent",
   agent: { status: "running", messages: [] },
@@ -60,7 +61,7 @@ const INITIAL_STATE: TurnState = {
 // Keep this list in sync with the runScenario branches below; rendered as the
 // first transcript block so users hitting `bun run examples/tui-playground.ts`
 // can discover scenarios without scrolling back to the file header.
-const PLAYGROUND_MENU = [
+export const PLAYGROUND_MENU = [
   "Playground scenarios (type any of these and press Enter):",
   "  /working <secs>            stream a fake working turn for ~secs",
   "  /observe <secs>            same, but as an observational memory phase",
@@ -80,7 +81,7 @@ const PLAYGROUND_MENU = [
   "  anything else              stream a short text reply and complete",
 ].join("\n");
 
-class FakePlaygroundRunner implements SessionTurnRunner {
+export class FakePlaygroundRunner implements SessionTurnRunner {
   private readonly handlers = new Set<(event: TurnEvent) => void>();
   private state: TurnState = INITIAL_STATE;
   private interrupted = false;
@@ -167,6 +168,22 @@ class FakePlaygroundRunner implements SessionTurnRunner {
   }
 
   async dispose(): Promise<void> {}
+
+  /**
+   * Emit a synthetic `ask` terminal so tests / playground extensions can
+   * push the picker into a known state without routing through the slash
+   * scenario layer. Mirrors what the `/ask` scenario produces, but lets
+   * the caller hand-craft the questions list.
+   */
+  emitAskTerminal(questions: TurnQuestion[]): void {
+    const terminal: TurnTerminalEvent = {
+      type: "ask",
+      state: { ...this.state, status: "waiting_for_human" },
+      questions,
+    };
+    this.state = terminal.state;
+    this.emit(terminal);
+  }
 
   // ---- scenario plumbing ---------------------------------------------------
 
