@@ -167,11 +167,6 @@ export function selectStarters(input: StartersInput): StartersResult {
   return resumePrompt ? { starters, resumePrompt, recentSessions } : { starters, recentSessions };
 }
 
-// Detection priority: content-based checks (git, package, skills, text)
-// always win over location-based scratch detection. A `/tmp/duet-clone/`
-// working tree should classify as skills, not scratch — the user is
-// working on something even though they happen to be under /tmp. Scratch
-// only fires as a last resort when no content signal is present.
 function pickStarters(cwd: string): readonly string[] {
   if (isGitRepoWithCommits(cwd)) return GIT_STARTERS;
   if (hasPackageJson(cwd)) return PACKAGE_STARTERS;
@@ -200,11 +195,8 @@ function hasPackageJson(cwd: string): boolean {
 }
 
 // Only the literal scratch roots count. Descendants like `/tmp/foo`
-// are intentionally NOT scratch — if they contain content the other
-// detectors will catch them, and if they're empty isEmptyDir handles
-// the fresh-canvas case. Matching the whole `/tmp/*` subtree as scratch
-// would otherwise pre-empt every content branch on test runners and
-// containerized environments where HOME or working trees live under /tmp.
+// fall through to content detection or isEmptyDir — a non-empty
+// directory inside /tmp is a working tree, not a scratch space.
 function isScratchDir(cwd: string): boolean {
   const resolved = resolve(cwd);
   const home = homedir();
