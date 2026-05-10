@@ -51,6 +51,7 @@ import { createInitialHorizon, type WireGuardHorizon } from "./wire-shaping.js";
 import {
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
+  formatCarriedTodosReminder,
   type RecallMemoryToolStorage,
   isTurnRunnerControlResult,
   type TurnRunnerControlResult,
@@ -490,7 +491,9 @@ export class TurnRunner {
   protected async prompt(command: TurnPromptCommand): Promise<TurnTerminalEvent> {
     const originalState = this.requireRunnerState();
     const state: TurnState = { ...originalState, status: "running" };
-    const prompt = this.skillContext.resolveSlashSkillPrompt(command.message);
+    const resolvedPrompt = this.skillContext.resolveSlashSkillPrompt(command.message);
+    const todoReminder = formatCarriedTodosReminder(state.todos);
+    const prompt = todoReminder ? `${todoReminder}\n\n${resolvedPrompt}` : resolvedPrompt;
     const images = promptImagesToContent(command.images);
     let terminal: TurnTerminalEvent;
     if (state.mode === "agent") {

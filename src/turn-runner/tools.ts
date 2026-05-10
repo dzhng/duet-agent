@@ -796,7 +796,33 @@ function normalizeTodos(todos: TodoWriteParams["todos"]): TurnTodo[] {
 function formatTodoWriteResult(todos: TurnTodo[]): string {
   if (todos.length === 0) return "Current task list is empty.";
   const lines = todos.map((todo) => `- [${todo.status}] ${todo.id}: ${todo.content}`);
-  return ["Current task list:", ...lines].join("\n");
+  const body = ["Current task list:", ...lines].join("\n");
+  const hasOpenTodos = todos.some(
+    (todo) => todo.status === "pending" || todo.status === "in_progress",
+  );
+  if (!hasOpenTodos) return body;
+  const reminder = dedent`
+    <system-reminder>
+    The todo list still has unfinished items. As you complete each one, call todo_write again with merge=true to flip its status to completed (and advance the next item to in_progress). Keep calling todo_write until every item is in a terminal state.
+    </system-reminder>
+  `;
+  return `${body}\n\n${reminder}`;
+}
+
+export function formatCarriedTodosReminder(todos: TurnTodo[] | undefined): string | undefined {
+  if (!todos || todos.length === 0) return undefined;
+  const openTodos = todos.filter(
+    (todo) => todo.status === "pending" || todo.status === "in_progress",
+  );
+  if (openTodos.length === 0) return undefined;
+  const lines = todos.map((todo) => `- [${todo.status}] ${todo.id}: ${todo.content}`);
+  return dedent`
+    <system-reminder>
+    You have an existing todo list from earlier in this conversation:
+    ${lines.join("\n")}
+    This list is shown to the user, so it must accurately reflect what you are actually working on right now. Update it with todo_write (merge=true) as you make progress, and keep calling todo_write until every item is in a terminal state. If the list is no longer relevant to the current request, call todo_write with merge=false and an empty todos array to clear it.
+    </system-reminder>
+  `;
 }
 
 function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSchema> {

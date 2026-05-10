@@ -30,6 +30,62 @@ describe("TurnRunner protocol scenarios", () => {
     expect(terminal.state.stateMachine).toBeUndefined();
   });
 
+  test("prepends a system reminder when a turn starts with carried-over todos", async () => {
+    const { runner } = createTurnRunner();
+    await runner.start({
+      type: "start",
+      mode: "agent",
+      state: {
+        status: "running",
+        mode: "agent",
+        agent: { status: "running", messages: [] },
+        todos: [
+          { id: "test", content: "Run tests", status: "in_progress" },
+          { id: "verify", content: "Verify behavior", status: "pending" },
+          { id: "plan", content: "Plan the work", status: "completed" },
+        ],
+      },
+    });
+
+    await runner.turn({ type: "prompt", message: "Continue the work.", behavior: "follow_up" });
+
+    expect(runner.workerInputs).toHaveLength(1);
+    const sentPrompt = runner.workerInputs[0]?.prompt ?? "";
+    expect(sentPrompt).toContain("<system-reminder>");
+    expect(sentPrompt).toContain(
+      "You have an existing todo list from earlier in this conversation",
+    );
+    expect(sentPrompt).toContain("- [in_progress] test: Run tests");
+    expect(sentPrompt).toContain("- [pending] verify: Verify behavior");
+    expect(sentPrompt).toContain("- [completed] plan: Plan the work");
+    expect(sentPrompt).toContain(
+      "call todo_write with merge=false and an empty todos array to clear it",
+    );
+    expect(sentPrompt.endsWith("Continue the work.")).toBe(true);
+  });
+
+  test("does not prepend a todo reminder when all carried todos are terminal", async () => {
+    const { runner } = createTurnRunner();
+    await runner.start({
+      type: "start",
+      mode: "agent",
+      state: {
+        status: "running",
+        mode: "agent",
+        agent: { status: "running", messages: [] },
+        todos: [
+          { id: "plan", content: "Plan the work", status: "completed" },
+          { id: "test", content: "Run tests", status: "failed" },
+        ],
+      },
+    });
+
+    await runner.turn({ type: "prompt", message: "Continue the work.", behavior: "follow_up" });
+
+    const sentPrompt = runner.workerInputs[0]?.prompt ?? "";
+    expect(sentPrompt).toBe("Continue the work.");
+  });
+
   test("asks the user structured questions from agent mode", async () => {
     const { runner } = createTurnRunner();
     runner.controlResults.push({

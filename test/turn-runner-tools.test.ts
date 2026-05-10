@@ -62,11 +62,15 @@ describe("TurnRunner tools", () => {
     expect(initial.content).toEqual([
       {
         type: "text",
-        text: [
-          "Current task list:",
-          "- [completed] plan: Plan the work",
-          "- [pending] test: Run tests",
-        ].join("\n"),
+        text: dedent`
+          Current task list:
+          - [completed] plan: Plan the work
+          - [pending] test: Run tests
+
+          <system-reminder>
+          The todo list still has unfinished items. As you complete each one, call todo_write again with merge=true to flip its status to completed (and advance the next item to in_progress). Keep calling todo_write until every item is in a terminal state.
+          </system-reminder>
+        `,
       },
     ]);
 
@@ -84,6 +88,24 @@ describe("TurnRunner tools", () => {
       { id: "verify", content: "Verify behavior", status: "failed" },
     ]);
     expect(merged.details).toEqual(storedTodos);
+
+    const allDone = await todoTool.execute("tool-3", {
+      merge: false,
+      todos: [
+        { id: "plan", content: "Plan the work", status: "completed" },
+        { id: "test", content: "Run tests", status: "completed" },
+      ],
+    });
+    expect(allDone.content).toEqual([
+      {
+        type: "text",
+        text: [
+          "Current task list:",
+          "- [completed] plan: Plan the work",
+          "- [completed] test: Run tests",
+        ].join("\n"),
+      },
+    ]);
   });
 
   test("returns user questions in tool details and model-visible content", async () => {
