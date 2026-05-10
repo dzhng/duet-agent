@@ -8,7 +8,7 @@ import {
   openPGlite,
   quarantineDataDirectory,
 } from "../src/memory/pglite.js";
-import { OBSERVATIONS_SCHEMA_SQL } from "../src/memory/schema.js";
+
 import { testIfDocker } from "./helpers/docker-only.js";
 
 describe("clearStalePostmasterLock", () => {
@@ -122,11 +122,15 @@ describe("quarantineDataDirectory", () => {
 });
 
 describe("openPGlite", () => {
-  testIfDocker("opens a fresh database and applies the schema probe", async () => {
+  testIfDocker("runs the init hook on a fresh database", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
     try {
       const dataDir = join(tempDir, "memory.db");
-      const db = await openPGlite(dataDir, { schemaSql: OBSERVATIONS_SCHEMA_SQL });
+      const db = await openPGlite(dataDir, {
+        init: async (database) => {
+          await database.exec("CREATE TABLE observations (id TEXT PRIMARY KEY)");
+        },
+      });
 
       const result = await db.query<{ count: string }>(
         "SELECT count(*)::text AS count FROM observations",
@@ -152,7 +156,9 @@ describe("openPGlite", () => {
 
       let recoveredFrom: string | undefined;
       const db = await openPGlite(dataDir, {
-        schemaSql: OBSERVATIONS_SCHEMA_SQL,
+        init: async (database) => {
+          await database.exec("CREATE TABLE observations (id TEXT PRIMARY KEY)");
+        },
         onRecover: ({ backupPath }) => {
           recoveredFrom = backupPath;
         },

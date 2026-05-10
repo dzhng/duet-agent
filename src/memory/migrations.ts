@@ -3,13 +3,12 @@ import type { PGlite, Transaction } from "@electric-sql/pglite";
 /**
  * Forward-only schema migrations for the observational memory database.
  *
- * Why a real migration framework instead of `CREATE TABLE IF NOT EXISTS`:
- * the memory schema is changing shape (adding `session_id` and `kind`,
- * dropping `scope`, reshaping `source_json`) and the existing
- * `OBSERVATIONS_SCHEMA_SQL` probe cannot express any of that. A user
- * upgrading Duet must have their existing rows transformed in place —
- * dropping the column without rewriting the data would lose information,
- * and there is no `duet memory migrate` CLI step we want to require.
+ * Why a real migration framework instead of bare `CREATE TABLE IF NOT
+ * EXISTS`: the memory schema is changing shape (adding `session_id` and
+ * `kind`, dropping `scope`, reshaping `source_json`) and a user upgrading
+ * Duet must have their existing rows transformed in place — dropping the
+ * column without rewriting the data would lose information, and there is
+ * no `duet memory migrate` CLI step we want to require.
  *
  * Design notes:
  *   - Migrations run inside `loadStoredMemory()` and `MemoryDb.open()` so

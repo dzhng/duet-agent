@@ -67,16 +67,27 @@ export interface RecallMemoryResult {
 export async function recallMemory(options: RecallMemoryOptions): Promise<RecallMemoryResult> {
   const limit = options.limit ?? 8;
   const scope = options.scope ?? "all";
-  const filterClause = buildScopeFilter(scope, options.sessionId);
 
-  const keywordHits = await keywordSearch(options.db, options.query, filterClause);
+  // session-scoped recall without a session id is a caller bug; return
+  // nothing rather than degrade to an unbounded global search.
+  if (scope === "session" && !options.sessionId) {
+    return { observations: [], vectorSearchAttempted: false, vectorSearchSucceeded: false };
+  }
+
+  const keywordHits = await keywordSearch(options.db, options.query, scope, options.sessionId);
 
   let vectorAttempted = false;
   let vectorHits: ScoredHit[] = [];
   if (options.embed) {
     vectorAttempted = true;
     try {
-      vectorHits = await vectorSearch(options.db, options.embed, options.query, filterClause);
+      vectorHits = await vectorSearch(
+        options.db,
+        options.embed,
+        options.query,
+        scope,
+        options.sessionId,
+      );
     } catch {
       // Embedding unavailable, network blip, or empty index — drop
       // back to keyword-only. Caller surfaces the degraded mode.
@@ -99,68 +110,35 @@ interface ScoredHit {
   rank: number;
 }
 
-interface FilterClause {
-  where: string;
-  params: unknown[];
-}
-
-function buildScopeFilter(scope: RecallScope, sessionId: string | undefined): FilterClause {
-  switch (scope) {
-    case "session":
-      if (!sessionId) {
-        // Asking for session-scoped recall without a session is a
-        // caller bug, not a query that "matched nothing". Empty
-        // filter is safer than running an unbounded global search.
-        return { where: "FALSE", params: [] };
-      }
-      return { where: "session_id = $$", params: [sessionId] };
-    case "global":
-      if (!sessionId) {
-        return { where: "TRUE", params: [] };
-      }
-      // IS DISTINCT FROM keeps NULL-session legacy rows in the pool
-      // (they cannot match any current session), matching the loader.
-      return { where: "session_id IS DISTINCT FROM $$", params: [sessionId] };
-    case "all":
-      return { where: "TRUE", params: [] };
-  }
-}
-
-/**
- * Materializes a filter clause into a positional-argument SQL fragment
- * starting at `$startIndex`. The recall queries place the filter near
- * the front of the WHERE so its parameters always come first, which
- * keeps the substitution math local and easy to audit.
- */
-function materializeFilter(filter: FilterClause, startIndex: number): string {
-  let nextParam = startIndex;
-  return filter.where.replace(/\$\$/g, () => `$${nextParam++}`);
-}
-
 async function keywordSearch(
   db: PGlite,
   query: string,
-  filter: FilterClause,
+  scope: RecallScope,
+  sessionId: string | undefined,
 ): Promise<ScoredHit[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
 
   // websearch_to_tsquery accepts free-form input with quotes and OR
-  // syntax, the same shape a user would type into a search box. Using
-  // ts_rank against the GIN index gives us a relevance order rather
-  // than a uniform "matched" set.
-  const filterSql = materializeFilter(filter, 2);
-  const { rows } = await db.query<{ id: string }>(
-    `SELECT id
+  // syntax, the same shape a user would type into a search box. ts_rank
+  // against the GIN index gives a relevance order rather than a uniform
+  // "matched" set.
+  const baseSql = `SELECT id
      FROM observations
-     WHERE (${filterSql})
-       AND to_tsvector('english', content) @@ websearch_to_tsquery('english', $1)
+     WHERE to_tsvector('english', content) @@ websearch_to_tsquery('english', $1)`;
+  const orderSql = `
      ORDER BY ts_rank(to_tsvector('english', content), websearch_to_tsquery('english', $1)) DESC,
               created_at DESC
-     LIMIT ${PER_PATH_TOP_K}`,
-    [trimmed, ...filter.params],
-  );
+     LIMIT ${PER_PATH_TOP_K}`;
 
+  const { rows } = await runScopedQuery<{ id: string }>(
+    db,
+    baseSql,
+    orderSql,
+    [trimmed],
+    scope,
+    sessionId,
+  );
   return rows.map((row, index) => ({ id: row.id, rank: index }));
 }
 
@@ -168,7 +146,8 @@ async function vectorSearch(
   db: PGlite,
   embed: EmbedFn,
   query: string,
-  filter: FilterClause,
+  scope: RecallScope,
+  sessionId: string | undefined,
 ): Promise<ScoredHit[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
@@ -176,18 +155,58 @@ async function vectorSearch(
   const [vector] = await embed([trimmed]);
   if (!vector) return [];
 
-  const filterSql = materializeFilter(filter, 2);
-  const { rows } = await db.query<{ id: string }>(
-    `SELECT o.id
+  const baseSql = `SELECT o.id
      FROM observation_embeddings e
      JOIN observations o ON o.id = e.observation_id
-     WHERE (${filterSql})
+     WHERE TRUE`;
+  const orderSql = `
      ORDER BY e.vector <=> $1::vector
-     LIMIT ${PER_PATH_TOP_K}`,
-    [`[${vector.join(",")}]`, ...filter.params],
-  );
+     LIMIT ${PER_PATH_TOP_K}`;
 
+  const { rows } = await runScopedQuery<{ id: string }>(
+    db,
+    baseSql,
+    orderSql,
+    [`[${vector.join(",")}]`],
+    scope,
+    sessionId,
+    // Vector search uses an `o.` alias for observations so the scope
+    // predicate has to follow.
+    "o.",
+  );
   return rows.map((row, index) => ({ id: row.id, rank: index }));
+}
+
+/**
+ * Append the scope predicate (if any) to a base query and run it. The
+ * base query must end with `WHERE <something>` so the predicate can
+ * be tacked on with `AND`. Predicates use IS DISTINCT FROM for the
+ * "global" branch so NULL-session legacy rows stay in the pool
+ * (they cannot match any current session), matching the loader.
+ */
+async function runScopedQuery<TRow>(
+  db: PGlite,
+  baseSql: string,
+  orderSql: string,
+  baseParams: unknown[],
+  scope: RecallScope,
+  sessionId: string | undefined,
+  columnPrefix = "",
+): Promise<{ rows: TRow[] }> {
+  const nextParam = baseParams.length + 1;
+  if (scope === "session" && sessionId) {
+    return db.query<TRow>(`${baseSql} AND ${columnPrefix}session_id = $${nextParam}${orderSql}`, [
+      ...baseParams,
+      sessionId,
+    ]);
+  }
+  if (scope === "global" && sessionId) {
+    return db.query<TRow>(
+      `${baseSql} AND ${columnPrefix}session_id IS DISTINCT FROM $${nextParam}${orderSql}`,
+      [...baseParams, sessionId],
+    );
+  }
+  return db.query<TRow>(`${baseSql}${orderSql}`, baseParams);
 }
 
 /**

@@ -12,7 +12,6 @@ import { DEFAULT_EMBEDDING_MODEL, type EmbedFn } from "./embedding.js";
 import { EmbeddingBackfillWorker } from "./embedding-worker.js";
 import { runMigrations } from "./migrations.js";
 import { openPGlite } from "./pglite.js";
-import { OBSERVATIONS_SCHEMA_SQL } from "./schema.js";
 import type { MemoryStore } from "./store.js";
 
 type MemoryDatabase = PGlite;
@@ -129,12 +128,11 @@ function defaultEmbeddingLogPath(): string {
 }
 
 async function openMemoryDatabase(path: string): Promise<MemoryDatabase> {
-  // Migrations run inside the same try block that triggers quarantine on
-  // unreadable directories. If a migration fails on a corrupted brain,
-  // the directory is moved aside and we start fresh rather than wedging
+  // Migrations double as the corruption probe: a failure inside
+  // runMigrations propagates through openPGlite's try block, which
+  // moves the directory aside and starts fresh rather than wedging
   // the agent behind an opaque PGlite abort.
   return openPGlite(path, {
-    schemaSql: OBSERVATIONS_SCHEMA_SQL,
     init: async (db) => {
       await runMigrations(db);
     },

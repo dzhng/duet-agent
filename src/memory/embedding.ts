@@ -22,8 +22,6 @@ import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
 
 /** Default embedding model identifier sent with every request. */
 export const DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small";
-/** Vector dimensionality for `DEFAULT_EMBEDDING_MODEL`; matches the column type in migration v3. */
-export const DEFAULT_EMBEDDING_DIMENSION = 1536;
 /** Maximum input strings sent in a single embedding request. */
 export const EMBEDDING_BATCH_LIMIT = 100;
 

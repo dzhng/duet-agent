@@ -1,7 +1,6 @@
 import type { PGlite } from "@electric-sql/pglite";
 import { runMigrations } from "../memory/migrations.js";
 import { openPGlite } from "../memory/pglite.js";
-import { OBSERVATIONS_SCHEMA_SQL } from "../memory/schema.js";
 import type { Observation } from "../types/memory.js";
 
 /**
@@ -23,7 +22,6 @@ export class MemoryDb {
     // Whichever process touches the file first wins the upgrade race;
     // the other observes a no-op since `runMigrations` is idempotent.
     const db = await openPGlite(path, {
-      schemaSql: OBSERVATIONS_SCHEMA_SQL,
       init: async (instance) => {
         await runMigrations(instance);
       },

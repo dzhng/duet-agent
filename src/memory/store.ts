@@ -102,14 +102,6 @@ export class MemoryStore {
     this.emit({ type: "observations_replaced", observations });
   }
 
-  render(snapshot: ObservationalMemorySnapshot): string {
-    const observationLines = snapshot.observations.map(formatObservation);
-    return [
-      "## Observations",
-      observationLines.length > 0 ? observationLines.join("\n") : "(none)",
-    ].join("\n");
-  }
-
   /**
    * Replace the frozen view used by the runner's context transform.
    * Called by `rebuildMemoryContextPack()` at compaction events and by
@@ -142,16 +134,6 @@ function createMemoryId(): string {
 
 function priorityRank(priority: ObservationPriority): number {
   return priority === "high" ? 3 : priority === "medium" ? 2 : 1;
-}
-
-function priorityMarker(priority: ObservationPriority): string {
-  return priority === "high" ? "HIGH" : priority === "medium" ? "MED" : "LOW";
-}
-
-function formatObservation(observation: Observation): string {
-  const time = observation.timeOfDay ? ` ${observation.timeOfDay}` : "";
-  const referenced = observation.referencedDate ? ` [ref: ${observation.referencedDate}]` : "";
-  return `- ${priorityMarker(observation.priority)} ${observation.observedDate}${time}${referenced} ${observation.content}`;
 }
 
 function tokenize(text: string): Set<string> {

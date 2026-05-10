@@ -15,15 +15,8 @@ const MEMORY_EXTENSIONS = { vector } as const;
 
 export interface OpenPGliteOptions {
   /**
-   * SQL run immediately after opening as a connectivity probe. Typically the
-   * `CREATE TABLE IF NOT EXISTS …` statements that initialize the schema.
-   * If this throws, the data directory is treated as unreadable and the
-   * recovery path runs (see {@link OpenPGliteOptions.onRecover}).
-   */
-  schemaSql?: string;
-  /**
-   * Async hook run after `schemaSql` succeeds, in the same try block that
-   * triggers quarantine recovery. Typically used to apply schema migrations
+   * Async hook run immediately after the database opens, in the try block
+   * that triggers quarantine recovery. Typically applies schema migrations
    * so a failure rolls the directory aside instead of leaving the agent
    * wedged behind an opaque PGlite abort.
    */
@@ -58,7 +51,7 @@ export async function openPGlite(path: string, options: OpenPGliteOptions = {}):
   clearStalePostmasterLock(path);
 
   try {
-    return await openAndProbe(path, options.schemaSql, options.init);
+    return await openAndProbe(path, options.init);
   } catch (error) {
     if (!isExistingDirectory(path)) throw error;
 
@@ -72,13 +65,12 @@ export async function openPGlite(path: string, options: OpenPGliteOptions = {}):
           `Moved aside to ${backupPath} and starting fresh.`,
       );
     }
-    return await openAndProbe(path, options.schemaSql, options.init);
+    return await openAndProbe(path, options.init);
   }
 }
 
 async function openAndProbe(
   path: string,
-  schemaSql: string | undefined,
   init: ((db: PGlite) => Promise<void>) | undefined,
 ): Promise<PGlite> {
   // PGlite.create is the only API path that lets us register loadable
@@ -87,7 +79,6 @@ async function openAndProbe(
   // fail with "extension is not available" once migration v3 runs.
   const db = await PGlite.create({ dataDir: path, extensions: MEMORY_EXTENSIONS });
   try {
-    if (schemaSql) await db.exec(schemaSql);
     if (init) await init(db);
     return db;
   } catch (error) {
