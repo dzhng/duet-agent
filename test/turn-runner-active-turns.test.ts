@@ -283,7 +283,7 @@ describe("TurnRunner active turns", () => {
     const answer = runner.turn({
       type: "answer",
       questions: [{ question: "Pick one", options: [{ label: "A" }] }],
-      answers: { choice: "A" },
+      answers: { choice: ["A"] },
       behavior: "follow_up",
     });
 
@@ -295,6 +295,109 @@ describe("TurnRunner active turns", () => {
     expect(firstTerminal).toBe(answerTerminal);
     expect(terminalEvents(events)).toHaveLength(1);
     expect(messageTexts(firstTerminal.state).join("\n")).toContain("Here are my answers");
+  });
+
+  test("answer commands serialize multi-element answer arrays in option order", async () => {
+    const { runner } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, {
+      mode: "agent",
+      prompt: "ask me later",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const answer = runner.turn({
+      type: "answer",
+      questions: [
+        {
+          question: "Suites",
+          multiSelect: true,
+          options: [{ label: "unit" }, { label: "integration" }, { label: "e2e" }],
+        },
+      ],
+      answers: { Suites: ["unit", "e2e"] },
+      behavior: "follow_up",
+    });
+
+    runner.completeNext("first response");
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("answer response");
+
+    await Promise.all([first, answer]);
+    const flushedText = lastUserText(runner.contexts[1]!);
+    expect(flushedText).toContain("unit");
+    expect(flushedText).toContain("e2e");
+    expect(flushedText.indexOf("unit")).toBeLessThan(flushedText.indexOf("e2e"));
+  });
+
+  test("answer commands with a whitespace-only message produce no trailing prompt", async () => {
+    const { runner } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, {
+      mode: "agent",
+      prompt: "ask me later",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const answer = runner.turn({
+      type: "answer",
+      questions: [{ question: "Pick one", options: [{ label: "A" }] }],
+      answers: { "Pick one": ["A"] },
+      behavior: "follow_up",
+      message: "   \n  \t  ",
+    });
+
+    runner.completeNext("first response");
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("answer response");
+
+    await Promise.all([first, answer]);
+    const flushedText = lastUserText(runner.contexts[1]!);
+    // No trailing whitespace-only "prompt" should be appended; the message
+    // ends with the closing `</answers>` block (modulo trailing newlines).
+    expect(flushedText.trimEnd().endsWith("</answers>")).toBe(true);
+  });
+
+  test("answer commands append the optional free-form message after the answer XML", async () => {
+    const { runner, events } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, {
+      mode: "agent",
+      prompt: "ask me later",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const answer = runner.turn({
+      type: "answer",
+      questions: [
+        { question: "Pick env", options: [{ label: "staging" }] },
+        {
+          question: "Suites",
+          multiSelect: true,
+          options: [{ label: "unit" }, { label: "e2e" }],
+        },
+      ],
+      answers: { "Pick env": ["staging"] },
+      behavior: "follow_up",
+      message: "also bump the changelog",
+    });
+
+    runner.completeNext("first response");
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("answer response");
+
+    await Promise.all([first, answer]);
+    expect(terminalEvents(events)).toHaveLength(1);
+    const answerContext = runner.contexts[1];
+    expect(answerContext).toBeDefined();
+    const flushedText = lastUserText(answerContext!);
+    expect(flushedText).toContain("Here are my answers to your questions.");
+    expect(flushedText).toContain("staging");
+    // Multi-select question with no entry in `answers` should still serialize
+    // its question text so the model sees the gap explicitly.
+    expect(flushedText).toContain("Suites");
+    expect(flushedText).toContain("also bump the changelog");
+    const xmlIndex = flushedText.indexOf("</answers>");
+    const trailingIndex = flushedText.indexOf("also bump the changelog");
+    expect(xmlIndex).toBeGreaterThan(-1);
+    expect(trailingIndex).toBeGreaterThan(xmlIndex);
   });
 
   test("queued wake rebases onto latest state and no-ops when no longer sleeping on a poll", async () => {
@@ -378,7 +481,7 @@ describe("TurnRunner active turns", () => {
     const answer = runner.turn({
       type: "answer",
       questions: [{ question: "Pick one", options: [{ label: "A" }] }],
-      answers: { choice: "A" },
+      answers: { choice: ["A"] },
       behavior: "follow_up",
     });
 
@@ -835,7 +938,7 @@ describe("TurnRunner active turns", () => {
     const answer = runner.turn({
       type: "answer",
       questions: [{ question: "State-agent question", options: [{ label: "A" }] }],
-      answers: { choice: "A" },
+      answers: { choice: ["A"] },
       behavior: "follow_up",
     });
 

@@ -50,8 +50,20 @@ export interface SessionPromptInput {
 
 export interface SessionAnswerInput {
   questions: TurnQuestion[];
-  answers: Record<string, string>;
+  /**
+   * Selected option labels per question, keyed by `question.question`. Always
+   * an array so single-select and multi-select share one shape; an empty
+   * array means the user advanced past a multi-select without picking.
+   */
+  answers: Record<string, string[]>;
   behavior?: TurnPromptBehavior;
+  /**
+   * Optional free-form prompt text appended after the answer XML. Used by the
+   * TUI to flush partial answers along with a typed message in one turn.
+   */
+  message?: string;
+  /** Optional image attachments delivered with the synthesized prompt. */
+  images?: TurnPromptImage[];
 }
 
 export interface SessionEditFollowUpQueueInput {
@@ -206,6 +218,8 @@ export class Session {
       questions: input.questions,
       answers: input.answers,
       behavior: input.behavior ?? "follow_up",
+      message: input.message,
+      images: input.images,
     };
     this.dispatchTurn(command);
   }

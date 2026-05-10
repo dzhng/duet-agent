@@ -29,9 +29,12 @@ import {
   formatSkillAutocompleteItem,
   historyDisplayBlocks,
   limitHistoryDisplayMessages,
-  moveQuestionOptionSelection,
+  commitActiveAnswer,
+  moveQuestionHighlight,
   moveSkillAutocompleteSelection,
-  questionPickerAnswerPayload,
+  NO_HIGHLIGHT,
+  questionPickerAnswer,
+  restoreSavedAnswer,
   replaceSkillAutocompleteToken,
   skillAutocompleteMatches,
   startupHeaderLines,
@@ -772,32 +775,143 @@ describe("TUI skill autocomplete helpers", () => {
 });
 
 describe("TUI question picker helpers", () => {
-  const questions = [
-    {
-      question: "Which environment should I deploy to?",
-      options: [
-        { label: "staging", description: "Deploy to the staging environment first." },
-        { label: "production", description: "Deploy directly to production." },
-      ],
-    },
-  ];
+  const singleSelect = {
+    question: "Which environment should I deploy to?",
+    options: [
+      { label: "staging", description: "Deploy to the staging environment first." },
+      { label: "production", description: "Deploy directly to production." },
+    ],
+  };
+  const multiSelect = {
+    question: "Which test suites should run before promotion?",
+    multiSelect: true,
+    options: [{ label: "unit" }, { label: "integration" }, { label: "e2e" }],
+  };
 
-  test("wraps question option selection through available options", () => {
-    expect(moveQuestionOptionSelection(0, 2, 1)).toBe(1);
-    expect(moveQuestionOptionSelection(1, 2, 1)).toBe(0);
-    expect(moveQuestionOptionSelection(0, 2, -1)).toBe(1);
-    expect(moveQuestionOptionSelection(0, 0, 1)).toBe(0);
+  test("moveQuestionHighlight wraps and lifts NO_HIGHLIGHT onto the first or last row", () => {
+    // From a concrete row, modular wrap.
+    expect(moveQuestionHighlight(0, 2, 1)).toBe(1);
+    expect(moveQuestionHighlight(1, 2, 1)).toBe(0);
+    expect(moveQuestionHighlight(0, 2, -1)).toBe(1);
+    // From NO_HIGHLIGHT, Down lands on row 0; Up lands on the last row. This
+    // is what makes "no highlight by default" behave like a chat-app picker
+    // when the user starts navigating.
+    expect(moveQuestionHighlight(NO_HIGHLIGHT, 4, 1)).toBe(0);
+    expect(moveQuestionHighlight(NO_HIGHLIGHT, 4, -1)).toBe(3);
+    // Empty row count yields NO_HIGHLIGHT (renders as no highlight).
+    expect(moveQuestionHighlight(0, 0, 1)).toBe(NO_HIGHLIGHT);
   });
 
-  test("builds an answer payload from the selected option", () => {
-    expect(questionPickerAnswerPayload(questions, 1)).toEqual({
-      "Which environment should I deploy to?": "production",
+  test("builds a single-element answer for single-select questions", () => {
+    expect(questionPickerAnswer(singleSelect, 1, new Set())).toEqual(["production"]);
+  });
+
+  test("returns undefined for single-select with NO_HIGHLIGHT", () => {
+    // Default state when the user has not yet pressed Up/Down. commitActiveAnswer
+    // relies on this to skip writing an answer that the user hasn't expressed.
+    expect(questionPickerAnswer(singleSelect, NO_HIGHLIGHT, new Set())).toBeUndefined();
+  });
+
+  test("emits checked labels in option order for multi-select questions", () => {
+    expect(questionPickerAnswer(multiSelect, 0, new Set([2, 0]))).toEqual(["unit", "e2e"]);
+  });
+
+  test("returns an empty array for a multi-select with nothing checked", () => {
+    expect(questionPickerAnswer(multiSelect, 0, new Set())).toEqual([]);
+  });
+
+  test("returns undefined when the question is missing or has no option at the selection", () => {
+    expect(questionPickerAnswer(undefined, 0, new Set())).toBeUndefined();
+    expect(questionPickerAnswer(singleSelect, 5, new Set())).toBeUndefined();
+  });
+
+  test("commitActiveAnswer live-records multi-select toggles without waiting for Enter", () => {
+    // Regression: if the user Space-toggles options and then types a prompt
+    // (flushing the picker via `submit()`), the toggled labels must already
+    // be in the accumulated map so the dispatched `session.answer` reflects
+    // them. Pressing Enter must not be a precondition.
+    const accumulated = commitActiveAnswer(multiSelect, 0, new Set([0, 2]), {});
+    expect(accumulated).toEqual({
+      "Which test suites should run before promotion?": ["unit", "e2e"],
     });
   });
 
-  test("returns no answer payload when selection is unavailable", () => {
-    expect(questionPickerAnswerPayload(questions, 3)).toBeUndefined();
-    expect(questionPickerAnswerPayload([], 0)).toBeUndefined();
+  test("commitActiveAnswer live-records the highlight as a single-select answer", () => {
+    // Up/Down on single-select should treat the highlighted option as the
+    // committed answer (highlight = selection), so a prompt-flush mid-flow
+    // includes it without requiring Enter first.
+    const accumulated = commitActiveAnswer(singleSelect, 1, new Set(), {});
+    expect(accumulated).toEqual({
+      "Which environment should I deploy to?": ["production"],
+    });
+  });
+
+  test("commitActiveAnswer is a no-op for single-select with NO_HIGHLIGHT", () => {
+    // Default state. The user has not yet pressed Up/Down so there is no
+    // implicit selection; the accumulated map must not gain a stale entry.
+    const before = { other: ["foo"] };
+    expect(commitActiveAnswer(singleSelect, NO_HIGHLIGHT, new Set(), before)).toBe(before);
+  });
+
+  test("commitActiveAnswer overwrites prior accumulated values for the same question", () => {
+    const before = {
+      "Which test suites should run before promotion?": ["unit"],
+    };
+    const after = commitActiveAnswer(multiSelect, 0, new Set([1]), before);
+    expect(after).toEqual({
+      "Which test suites should run before promotion?": ["integration"],
+    });
+    expect(before).toEqual({
+      "Which test suites should run before promotion?": ["unit"],
+    });
+  });
+
+  test("commitActiveAnswer preserves answers for other questions", () => {
+    const before = { "Pick env": ["staging"] };
+    const after = commitActiveAnswer(multiSelect, 0, new Set([0]), before);
+    expect(after).toEqual({
+      "Pick env": ["staging"],
+      "Which test suites should run before promotion?": ["unit"],
+    });
+  });
+
+  test("commitActiveAnswer returns the input map when no question is active", () => {
+    const before = { "Pick env": ["staging"] };
+    expect(commitActiveAnswer(undefined, 0, new Set(), before)).toBe(before);
+  });
+
+  test("restoreSavedAnswer reconstructs multi-select checks from saved labels", () => {
+    const restored = restoreSavedAnswer(multiSelect, {
+      "Which test suites should run before promotion?": ["e2e", "unit"],
+    });
+    // Multi-select highlight always starts cleared on revisit; toggles
+    // restore so the user sees their prior `[x]` boxes.
+    expect(restored.selectedIndex).toBe(NO_HIGHLIGHT);
+    expect([...restored.checked].sort()).toEqual([0, 2]);
+  });
+
+  test("restoreSavedAnswer reconstructs single-select highlight from saved label", () => {
+    const restored = restoreSavedAnswer(singleSelect, {
+      "Which environment should I deploy to?": ["production"],
+    });
+    expect(restored.selectedIndex).toBe(1);
+    expect(restored.checked.size).toBe(0);
+  });
+
+  test("restoreSavedAnswer falls back to NO_HIGHLIGHT when no answer was saved", () => {
+    // First visit to a question: nothing highlighted, nothing checked.
+    expect(restoreSavedAnswer(singleSelect, {})).toEqual({
+      selectedIndex: NO_HIGHLIGHT,
+      checked: new Set<number>(),
+    });
+    expect(restoreSavedAnswer(multiSelect, {})).toEqual({
+      selectedIndex: NO_HIGHLIGHT,
+      checked: new Set<number>(),
+    });
+    expect(restoreSavedAnswer(undefined, {})).toEqual({
+      selectedIndex: NO_HIGHLIGHT,
+      checked: new Set<number>(),
+    });
   });
 
   test("wraps full question option descriptions without truncating", () => {

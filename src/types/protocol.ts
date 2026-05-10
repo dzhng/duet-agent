@@ -400,9 +400,26 @@ export interface TurnPromptCommand {
 export interface TurnAnswerCommand {
   type: "answer";
   questions: TurnQuestion[];
-  answers: Record<string, string>;
+  /**
+   * Selected option labels per question, keyed by `question.question`.
+   * Always an array so single-select and multi-select share one shape; a
+   * single-select answer is a one-element array, and an empty array means
+   * the user advanced past a multi-select question without picking anything.
+   */
+  answers: Record<string, string[]>;
   /** Same delivery behavior as prompts after the answers are serialized. */
   behavior: TurnPromptBehavior;
+  /**
+   * Optional free-form prompt appended after the serialized answer XML.
+   * Lets the user flush partial answers and a new instruction in one turn
+   * when they decide to type instead of finishing the picker.
+   */
+  message?: string;
+  /**
+   * Optional image attachments delivered alongside the synthesized prompt,
+   * matching `TurnPromptCommand.images` semantics.
+   */
+  images?: TurnPromptImage[];
 }
 
 /** Wake the runner's sleeping state. If the state is not waiting on scheduled work, this is a no-op. */

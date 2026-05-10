@@ -1133,7 +1133,7 @@ describe("TurnRunner protocol scenarios", () => {
     const terminal = await runner.turn({
       type: "answer",
       questions: [{ question: "Which prospect?", options: [{ label: "Ada" }] }],
-      answers: { prospect: "Ada Lovelace" },
+      answers: { prospect: ["Ada Lovelace"] },
       behavior: "follow_up",
     });
 

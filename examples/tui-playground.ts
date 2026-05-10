@@ -11,7 +11,16 @@
  *   /queue+observe <secs>      run an observation phase with a non-empty queue
  *   /tools <secs>              emit one fake tool-call running → completed
  *   /tools-demo                run a batch of formatters with verbose data
- *   /ask                       emit an `ask` terminal with two questions
+ *   /ask                       emit an `ask` terminal with three questions
+ *                              (single-select, multi-select, single-select).
+ *                              Up/Down moves the highlight (and live-records
+ *                              the answer for single-select). Space/Enter
+ *                              advances on single-select, toggles a row on
+ *                              multi-select, and advances when the synthetic
+ *                              "Done" row is highlighted. ←/→ revisit prior
+ *                              or upcoming questions. Typing a prompt
+ *                              mid-flow flushes the latest answers via
+ *                              `session.answer({ ..., message })`.
  *   /sleep <secs>              emit a `sleep` terminal that wakes in N seconds
  *   /error <message>           emit a system error and end the turn
  *   anything else              stream a short text reply and complete
@@ -48,6 +57,29 @@ const INITIAL_STATE: TurnState = {
   agent: { status: "running", messages: [] },
 };
 
+// Keep this list in sync with the runScenario branches below; rendered as the
+// first transcript block so users hitting `bun run examples/tui-playground.ts`
+// can discover scenarios without scrolling back to the file header.
+const PLAYGROUND_MENU = [
+  "Playground scenarios (type any of these and press Enter):",
+  "  /working <secs>            stream a fake working turn for ~secs",
+  "  /observe <secs>            same, but as an observational memory phase",
+  "  /reflect <secs>            same, but as a reflection memory phase",
+  "  /queue <a,b,c>             emit a follow-up queue with the given prompts",
+  "  /queue+observe <secs>      observation phase with a non-empty queue",
+  "  /tools <secs>              one fake tool-call running -> completed",
+  "  /tools-demo                run a batch of formatters with verbose data",
+  "  /ask                       ask three questions (single, multi, single).",
+  "                             ↑/↓ move highlight (single-select live-records);",
+  "                             Space/Enter advance, or toggle on multi-select;",
+  "                             a 'Done' row is the multi-select advance key;",
+  "                             ←/→ revisit prior or upcoming questions;",
+  "                             typing mid-flow flushes the latest answers.",
+  "  /sleep <secs>              emit a sleep terminal that wakes in N seconds",
+  "  /error <message>           emit a system error and end the turn",
+  "  anything else              stream a short text reply and complete",
+].join("\n");
+
 class FakePlaygroundRunner implements SessionTurnRunner {
   private readonly handlers = new Set<(event: TurnEvent) => void>();
   private state: TurnState = INITIAL_STATE;
@@ -56,18 +88,49 @@ class FakePlaygroundRunner implements SessionTurnRunner {
 
   async start(_command: TurnStartCommand): Promise<TurnState> {
     this.emit({ type: "turn_started", state: this.state });
+    this.emit({ type: "system", level: "info", message: PLAYGROUND_MENU });
     return this.state;
   }
 
   async turn(command: TurnCommand): Promise<TurnTerminalEvent> {
-    if (command.type !== "prompt") {
-      return this.complete("Only prompts are scripted in the playground.");
+    if (command.type === "wake") {
+      return this.complete("Woke up.");
     }
     this.interrupted = false;
-    const terminal = await this.runScenario(command.message.trim());
+    const terminal =
+      command.type === "answer"
+        ? await this.runAnswerScenario(command)
+        : await this.runScenario(command.message.trim());
     this.state = terminal.state;
     this.emit(terminal);
     return terminal;
+  }
+
+  /**
+   * Stream a summary of the answers (and any flushed prompt) the TUI picker
+   * dispatched via `session.answer(...)`. Lets the playground exercise the
+   * picker handoff end-to-end without a real model.
+   */
+  private async runAnswerScenario(
+    command: Extract<TurnCommand, { type: "answer" }>,
+  ): Promise<TurnTerminalEvent> {
+    const lines: string[] = ["Answers received:"];
+    for (const question of command.questions) {
+      const labels = command.answers[question.question] ?? [];
+      const rendered = labels.length === 0 ? "(no selection)" : labels.join(", ");
+      lines.push(`- ${question.question} -> ${rendered}`);
+    }
+    const trailing = command.message?.trim();
+    if (trailing) lines.push(`Trailing prompt: ${trailing}`);
+    const summary = lines.join("\n");
+
+    for (const chunk of summary.match(/.{1,32}/g) ?? []) {
+      this.emit({ type: "step", step: { type: "text_delta", delta: chunk } });
+      await this.sleep(60);
+      if (this.interrupted) return this.interruptedTerminal();
+    }
+    this.emit({ type: "step", step: { type: "text", text: summary } });
+    return this.complete(summary);
   }
 
   interrupt(_command: TurnInterruptCommand): void {
@@ -207,6 +270,24 @@ class FakePlaygroundRunner implements SessionTurnRunner {
             options: [
               { label: "staging" },
               { label: "production", description: "requires approval" },
+            ],
+          },
+          {
+            question: "Which test suites should run before promotion?",
+            multiSelect: true,
+            options: [
+              { label: "unit", description: "fast, runs on every push" },
+              { label: "integration", description: "hits live services" },
+              { label: "e2e", description: "drives the browser" },
+              { label: "load", description: "long-running soak" },
+            ],
+          },
+          {
+            question: "Confirm rollout window",
+            options: [
+              { label: "now" },
+              { label: "tonight", description: "after 22:00 local" },
+              { label: "next morning" },
             ],
           },
         ],

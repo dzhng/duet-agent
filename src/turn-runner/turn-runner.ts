@@ -353,11 +353,14 @@ export class TurnRunner {
       return this.skillContext.resolveSlashSkillPrompt(command.message);
     }
 
-    return dedent`
+    const answerXml = toXML([{ questions: command.questions }, { answers: command.answers }]);
+    const base = dedent`
       Here are my answers to your questions.
 
-      ${toXML([{ questions: command.questions }, { answers: command.answers }])}
+      ${answerXml}
     `;
+    if (!command.message?.trim()) return base;
+    return `${base}\n\n${this.skillContext.resolveSlashSkillPrompt(command.message)}`;
   }
 
   private enqueueTurnCommand(command: TurnCommand): void {
@@ -365,8 +368,7 @@ export class TurnRunner {
       (command.type === "prompt" || command.type === "answer") &&
       command.behavior === "follow_up"
     ) {
-      const images = command.type === "prompt" ? command.images : undefined;
-      this.appendFollowUpPrompt(this.commandToUserMessage(command), images);
+      this.appendFollowUpPrompt(this.commandToUserMessage(command), command.images);
     }
     this.setQueuedCommands([...this.getQueuedCommands(), command]);
   }
@@ -516,6 +518,7 @@ export class TurnRunner {
       type: "prompt",
       message,
       behavior: command.behavior,
+      images: command.images,
     });
   }
 

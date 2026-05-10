@@ -41,12 +41,14 @@ import {
   AUTOCOMPLETE_LIMITS,
   type FileAutocompleteItem,
   BUILT_IN_SLASH_COMMANDS,
+  commitActiveAnswer,
   fileAutocompleteMatches,
   formatQuestionOptionDescription,
   formatSkillAutocompleteDescription,
-  moveQuestionOptionSelection,
+  moveQuestionHighlight,
   moveSkillAutocompleteSelection,
-  questionPickerAnswerPayload,
+  NO_HIGHLIGHT,
+  restoreSavedAnswer,
   type SkillAutocompleteItem,
   skillAutocompleteMatches,
   type SlashAutocompleteGroup,
@@ -80,14 +82,17 @@ export type {
 export {
   activeFileAutocompleteToken,
   activeSkillAutocompleteToken,
+  commitActiveAnswer,
   fileAutocompleteMatches,
   formatQuestionOptionDescription,
   formatSkillAutocompleteDescription,
-  moveQuestionOptionSelection,
+  moveQuestionHighlight,
   moveSkillAutocompleteSelection,
-  questionPickerAnswerPayload,
+  NO_HIGHLIGHT,
+  questionPickerAnswer,
   replaceFileAutocompleteToken,
   replaceSkillAutocompleteToken,
+  restoreSavedAnswer,
   skillAutocompleteMatches,
 } from "./autocomplete.js";
 export { formatSkillAutocompleteItem } from "./autocomplete.js";
@@ -1128,7 +1133,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let fileAutocompleteSelectedIndex = 0;
 
   let pendingQuestions: TurnQuestion[] = [];
-  let questionOptionSelectedIndex = 0;
+  let questionActiveIndex = 0;
+  // `NO_HIGHLIGHT` (-1) means no row is highlighted yet — the user must press
+  // Up/Down to land on a concrete row. Single-select live-records the
+  // highlight as the answer; multi-select uses highlight purely for
+  // navigation and toggles the checked set on Space/Enter.
+  let questionOptionSelectedIndex = NO_HIGHLIGHT;
+  // Per-question checked indices for the active multi-select question. Reset
+  // when the picker advances to the next question; single-select questions
+  // simply ignore this set and use `questionOptionSelectedIndex` instead.
+  let questionMultiSelectChecked = new Set<number>();
+  // Answers collected while walking the picker, keyed by question text. We
+  // dispatch the full map once the user finishes the last question, or flush
+  // it early when they decide to type a free-form prompt instead.
+  let questionAccumulatedAnswers: Record<string, string[]> = {};
   let suppressNextEscapeExit = false;
 
   function skillAutocompleteIsOpen(): boolean {
@@ -1140,8 +1158,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function questionPickerIsOpen(): boolean {
-    const question = pendingQuestions[0];
+    const question = pendingQuestions[questionActiveIndex];
     return Boolean(question && question.options.length > 0);
+  }
+
+  function activeQuestion(): TurnQuestion | undefined {
+    return pendingQuestions[questionActiveIndex];
   }
 
   function hideSkillAutocomplete(): void {
@@ -1170,7 +1192,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function hideQuestions(): void {
     pendingQuestions = [];
-    questionOptionSelectedIndex = 0;
+    questionActiveIndex = 0;
+    questionOptionSelectedIndex = NO_HIGHLIGHT;
+    questionMultiSelectChecked = new Set<number>();
+    questionAccumulatedAnswers = {};
     questionPanel.visible = false;
     for (const row of questionRows) {
       row.visible = false;
@@ -1180,50 +1205,201 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function showQuestions(questions: TurnQuestion[]): void {
     pendingQuestions = questions;
-    questionOptionSelectedIndex = 0;
+    questionActiveIndex = 0;
+    questionOptionSelectedIndex = NO_HIGHLIGHT;
+    questionMultiSelectChecked = new Set<number>();
+    questionAccumulatedAnswers = {};
     renderQuestions();
   }
 
+  /**
+   * Total navigable rows for the active question. The Up/Down handler clamps
+   * navigation to what is actually rendered on screen so a user cannot land
+   * the highlight on a row they cannot see.
+   */
+  function activeRowCount(): number {
+    const question = activeQuestion();
+    if (!question) return 0;
+    const optionLimit = question.multiSelect ? QUESTION_OPTION_LIMIT - 1 : QUESTION_OPTION_LIMIT;
+    const visibleOptionCount = Math.min(question.options.length, optionLimit);
+    return visibleOptionCount + (question.multiSelect ? 1 : 0);
+  }
+
+  /**
+   * Row index of the synthetic Done row when the active question is
+   * multi-select; `undefined` otherwise so callers don't compare against a
+   * sentinel value. The Done row sits one past the last visible option,
+   * clamped to the same limit `renderQuestions` uses.
+   */
+  function activeQuestionDoneIndex(): number | undefined {
+    const question = activeQuestion();
+    if (!question?.multiSelect) return undefined;
+    const optionLimit = QUESTION_OPTION_LIMIT - 1;
+    return Math.min(question.options.length, optionLimit);
+  }
+
   function renderQuestions(): void {
-    const question = pendingQuestions[0];
+    const question = activeQuestion();
     if (!question || question.options.length === 0) {
       hideQuestions();
       return;
     }
 
     questionPanel.visible = true;
-    questionTitle.content = question.header
+    const baseTitle = question.header
       ? `${question.header}: ${question.question}`
       : question.question;
-    const visibleOptions = question.options.slice(0, QUESTION_OPTION_LIMIT);
+    const positionPrefix =
+      pendingQuestions.length > 1 ? `(${questionActiveIndex + 1}/${pendingQuestions.length}) ` : "";
+    const navHint = pendingQuestions.length > 1 ? " [←/→ navigate]" : "";
+    questionTitle.content = `${positionPrefix}${baseTitle}${navHint}`;
+    const optionLimit = question.multiSelect ? QUESTION_OPTION_LIMIT - 1 : QUESTION_OPTION_LIMIT;
+    const visibleOptions = question.options.slice(0, optionLimit);
+    const doneIndex = activeQuestionDoneIndex();
     for (const [index, row] of questionRows.entries()) {
-      const option = visibleOptions[index];
-      if (!option) {
-        row.visible = false;
-        row.content = "";
+      if (index < visibleOptions.length) {
+        const option = visibleOptions[index]!;
+        const highlighted = index === questionOptionSelectedIndex;
+        const checkbox = question.multiSelect
+          ? questionMultiSelectChecked.has(index)
+            ? "[x] "
+            : "[ ] "
+          : "";
+        const labelColor = highlighted ? COLORS.status : COLORS.user;
+        const description = formatQuestionOptionDescription(option.description);
+        const labelLine = `${checkbox}${option.label}`;
+        row.content = description
+          ? t`${fg(labelColor)(labelLine)}\n${description}`
+          : t`${fg(labelColor)(labelLine)}`;
+        row.fg = highlighted ? COLORS.agent : COLORS.hint;
+        row.visible = true;
         continue;
       }
 
-      const selected = index === questionOptionSelectedIndex;
-      const labelColor = selected ? COLORS.status : COLORS.user;
-      const description = formatQuestionOptionDescription(option.description);
-      row.content = description
-        ? t`${fg(labelColor)(option.label)}\n${description}`
-        : t`${fg(labelColor)(option.label)}`;
-      row.fg = selected ? COLORS.agent : COLORS.hint;
-      row.visible = true;
+      if (question.multiSelect && index === visibleOptions.length) {
+        // Synthetic Done row carries no checkbox prefix and self-documents
+        // its purpose so users discover how to advance from a multi-select.
+        const highlighted = doneIndex === questionOptionSelectedIndex;
+        const labelColor = highlighted ? COLORS.status : COLORS.user;
+        const description = formatQuestionOptionDescription("Advance to next question");
+        row.content = t`${fg(labelColor)("Done")}\n${description}`;
+        row.fg = highlighted ? COLORS.agent : COLORS.hint;
+        row.visible = true;
+        continue;
+      }
+
+      row.visible = false;
+      row.content = "";
     }
   }
 
-  function submitSelectedQuestionOption(): boolean {
-    const answers = questionPickerAnswerPayload(pendingQuestions, questionOptionSelectedIndex);
-    if (!answers) return false;
+  function moveActiveQuestionHighlight(direction: -1 | 1): void {
+    const question = activeQuestion();
+    if (!question) return;
+    questionOptionSelectedIndex = moveQuestionHighlight(
+      questionOptionSelectedIndex,
+      activeRowCount(),
+      direction,
+    );
+    // Single-select live-records the highlight as the answer so a
+    // prompt-flush or arrow-nav captures it without requiring Space/Enter.
+    // Multi-select keeps highlight separate from the toggled set.
+    if (!question.multiSelect) {
+      questionAccumulatedAnswers = commitActiveAnswer(
+        question,
+        questionOptionSelectedIndex,
+        questionMultiSelectChecked,
+        questionAccumulatedAnswers,
+      );
+    }
+    renderQuestions();
+  }
 
-    const answerText = Object.values(answers).join("\n");
-    recordTranscriptEntry("user", answerText);
-    appendBlock("you:", answerText, COLORS.user);
+  function toggleActiveMultiSelectOption(): void {
+    const question = activeQuestion();
+    if (!question?.multiSelect) return;
+    if (questionMultiSelectChecked.has(questionOptionSelectedIndex)) {
+      questionMultiSelectChecked.delete(questionOptionSelectedIndex);
+    } else {
+      questionMultiSelectChecked.add(questionOptionSelectedIndex);
+    }
+    questionAccumulatedAnswers = commitActiveAnswer(
+      question,
+      questionOptionSelectedIndex,
+      questionMultiSelectChecked,
+      questionAccumulatedAnswers,
+    );
+    renderQuestions();
+  }
+
+  function navigateActiveQuestion(direction: -1 | 1): boolean {
+    if (pendingQuestions.length <= 1) return false;
+    const nextIndex = questionActiveIndex + direction;
+    if (nextIndex < 0 || nextIndex >= pendingQuestions.length) return false;
+
+    questionAccumulatedAnswers = commitActiveAnswer(
+      activeQuestion(),
+      questionOptionSelectedIndex,
+      questionMultiSelectChecked,
+      questionAccumulatedAnswers,
+    );
+
+    questionActiveIndex = nextIndex;
+    const restored = restoreSavedAnswer(activeQuestion(), questionAccumulatedAnswers);
+    questionOptionSelectedIndex = restored.selectedIndex;
+    questionMultiSelectChecked = restored.checked;
+    renderQuestions();
+    return true;
+  }
+
+  function describeAnswerLabels(question: TurnQuestion, labels: readonly string[]): string {
+    if (labels.length === 0) return question.multiSelect ? "(no selection)" : "";
+    return labels.join(", ");
+  }
+
+  /**
+   * Handle Space/Enter when the picker is open and the composer is empty.
+   * Multi-select on a regular row toggles; multi-select on the Done row
+   * advances. Single-select always advances (highlight = answer is already
+   * live-recorded by Up/Down). No-op when nothing is highlighted yet so the
+   * user is forced to make an explicit choice (or skip via Right-arrow).
+   */
+  function confirmActiveSelection(): boolean {
+    const question = activeQuestion();
+    if (!question) return false;
+    if (questionOptionSelectedIndex === NO_HIGHLIGHT) return false;
+    if (question.multiSelect && questionOptionSelectedIndex !== activeQuestionDoneIndex()) {
+      toggleActiveMultiSelectOption();
+      return true;
+    }
+    return advanceOrSubmit();
+  }
+
+  function advanceOrSubmit(): boolean {
+    const question = activeQuestion();
+    if (!question) return false;
+    const accumulatedForActive = questionAccumulatedAnswers[question.question] ?? [];
+    const transcriptText = describeAnswerLabels(question, accumulatedForActive);
+    if (transcriptText) {
+      recordTranscriptEntry("user", transcriptText);
+      appendBlock("you:", transcriptText, COLORS.user);
+    }
+
+    if (questionActiveIndex < pendingQuestions.length - 1) {
+      questionActiveIndex += 1;
+      const restored = restoreSavedAnswer(activeQuestion(), questionAccumulatedAnswers);
+      questionOptionSelectedIndex = restored.selectedIndex;
+      questionMultiSelectChecked = restored.checked;
+      renderQuestions();
+      return true;
+    }
+
     void input.session
-      .answer({ questions: pendingQuestions, answers, behavior: "follow_up" })
+      .answer({
+        questions: pendingQuestions,
+        answers: questionAccumulatedAnswers,
+        behavior: "follow_up",
+      })
       .catch(reportError);
     hideQuestions();
     markRunning();
@@ -1599,24 +1775,34 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
     if (questionPickerIsOpen()) {
       if (key.name === "up") {
-        questionOptionSelectedIndex = moveQuestionOptionSelection(
-          questionOptionSelectedIndex,
-          Math.min(pendingQuestions[0]?.options.length ?? 0, QUESTION_OPTION_LIMIT),
-          -1,
-        );
-        renderQuestions();
+        moveActiveQuestionHighlight(-1);
         key.preventDefault();
         return;
       }
       if (key.name === "down") {
-        questionOptionSelectedIndex = moveQuestionOptionSelection(
-          questionOptionSelectedIndex,
-          Math.min(pendingQuestions[0]?.options.length ?? 0, QUESTION_OPTION_LIMIT),
-          1,
-        );
-        renderQuestions();
+        moveActiveQuestionHighlight(1);
         key.preventDefault();
         return;
+      }
+      // Space confirms the active selection only when the composer is empty
+      // so users can still type a free-form prompt that includes spaces.
+      if (key.name === "space" && inputField.plainText.length === 0) {
+        key.preventDefault();
+        confirmActiveSelection();
+        return;
+      }
+      // Left/Right navigate between questions, but only when the composer is
+      // empty so editing a typed prompt with arrow keys still works.
+      if (
+        (key.name === "left" || key.name === "right") &&
+        inputField.plainText.length === 0 &&
+        pendingQuestions.length > 1
+      ) {
+        const direction = key.name === "left" ? -1 : 1;
+        if (navigateActiveQuestion(direction)) {
+          key.preventDefault();
+          return;
+        }
       }
       if (key.name === "escape") {
         key.preventDefault();
@@ -1641,7 +1827,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       if (value) {
         submit(value);
       } else if (questionPickerIsOpen()) {
-        submitSelectedQuestionOption();
+        confirmActiveSelection();
       } else if (startersAreVisible()) {
         submitHighlightedStarter();
       }
@@ -1961,13 +2147,31 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       const lines = submittedImages.map((p) => `📎 ${p.label}: ${p.path}`).join("\n");
       appendBlock(null, lines, COLORS.hint);
     }
-    hideQuestions();
 
     const images = submittedImages.map((p) => p.attachment);
 
     // Reset before dispatch so an in-flight error does not leave the user
     // double-charged with the same attachments on retry.
     clearPendingImages();
+
+    // If the question picker is open, treat the typed message as a flush:
+    // dispatch whatever answers were already collected together with the new
+    // prompt text so the model sees one combined turn instead of dropping
+    // the partial answers on the floor.
+    if (pendingQuestions.length > 0) {
+      void input.session
+        .answer({
+          questions: pendingQuestions,
+          answers: questionAccumulatedAnswers,
+          behavior: "follow_up",
+          message,
+          images,
+        })
+        .catch(reportError);
+      hideQuestions();
+      if (!running) markRunning();
+      return;
+    }
 
     // Every submit — running or idle — is a follow_up. While the agent is
     // running this queues; while idle it kicks off a fresh turn. Single

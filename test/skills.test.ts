@@ -427,6 +427,58 @@ describe("TurnRunner skills", () => {
     expect(runner.workerInputs[0]?.prompt).toBe("/missing do work");
   });
 
+  testIfDocker(
+    "resolves slash skills inside the trailing message of an answer command",
+    async () => {
+      tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
+      const skillPath = join(tempDir, "SKILL.md");
+      await writeFile(
+        skillPath,
+        dedent`
+          ---
+          name: review
+          description: Review changed code.
+          ---
+
+          # Review Skill
+        `,
+      );
+      const { runner } = createTurnRunner({
+        mode: "agent",
+        skills: [
+          {
+            name: "review",
+            description: "Review changed code.",
+            filePath: skillPath,
+            baseDir: tempDir,
+            sourceInfo: {} as Skill["sourceInfo"],
+            disableModelInvocation: false,
+          },
+        ],
+      });
+
+      await runner.start({ type: "start" });
+      await runner.turn({
+        type: "answer",
+        questions: [{ question: "Pick one", options: [{ label: "A" }] }],
+        answers: { "Pick one": ["A"] },
+        behavior: "follow_up",
+        message: "/review tighten the diff",
+      });
+
+      const sentPrompt = runner.workerInputs[0]?.prompt ?? "";
+      expect(sentPrompt).toContain("Here are my answers to your questions.");
+      expect(sentPrompt).toContain("/review tighten the diff");
+      expect(sentPrompt).toContain('<skill name="review">');
+      expect(sentPrompt).toContain("# Review Skill");
+      // The skill block must follow the answer XML and the trailing prompt
+      // text, not be spliced into them.
+      expect(sentPrompt.indexOf("</answers>")).toBeLessThan(
+        sentPrompt.indexOf('<skill name="review">'),
+      );
+    },
+  );
+
   testIfDocker("discovers project skills from .duet in the configured cwd", async () => {
     app = await createTestTurnRunner();
     const skillPath = await app.addProjectDuetSkill({

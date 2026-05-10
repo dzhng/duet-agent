@@ -445,7 +445,7 @@ describe("Session", () => {
     await session.waitForTerminal();
     await session.answer({
       questions: [{ question: "Pick one", options: [{ label: "A" }] }],
-      answers: { choice: "A" },
+      answers: { choice: ["A"] },
     });
 
     expect(runner.commands.at(-1)).toMatchObject({
