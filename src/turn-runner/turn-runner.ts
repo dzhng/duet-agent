@@ -19,7 +19,7 @@ import { rebuildMemoryContextPack } from "../memory/context-pack.js";
 import { createEmbeddingClient } from "../memory/embedding.js";
 import { resolveObservationalMemorySettings } from "../memory/observational.js";
 import { loadStoredMemory, type MemoryPersistenceHandle } from "../memory/storage.js";
-import { MemoryStore } from "../memory/store.js";
+import { MemoryContextCache } from "../memory/store.js";
 import {
   DEFAULT_CLI_MEMORY_MODEL,
   DEFAULT_CLI_MODEL,
@@ -95,7 +95,7 @@ export interface AgentWorkerResult {
 export class TurnRunner {
   private readonly eventHandlers = new Set<TurnEventHandler>();
   /** In-memory observation store used by context transforms during agent turns. */
-  protected readonly memory = new MemoryStore();
+  protected readonly memory = new MemoryContextCache();
   /** Hydrates, flushes, and disposes durable observation storage. */
   private memoryPersistence?: MemoryPersistenceHandle;
   /**
@@ -1054,7 +1054,10 @@ export class TurnRunner {
     if (this.config.memoryDbPath === undefined) {
       return;
     }
+    const db = this.memoryPersistence?.db;
+    if (!db) return;
     const result = await updateObservationalMemory({
+      db,
       memory: this.memory,
       sessionId: this.config.sessionId,
       actorModel: this.resolveMemoryActorModel(options),
@@ -1063,7 +1066,6 @@ export class TurnRunner {
       onUsage: (usage) => this.recordUsage(usage),
       onActivity: (event) => this.emit({ type: "memory", ...event }),
     });
-    await this.memoryPersistence?.flush();
 
     // Compaction trigger: a reflection just replaced the durable
     // observation set, so rebuild the frozen context pack to pick up
@@ -1080,7 +1082,7 @@ export class TurnRunner {
     try {
       await rebuildMemoryContextPack({
         db: this.memoryPersistence.db,
-        store: this.memory,
+        cache: this.memory,
         settings: resolveObservationalMemorySettings(this.config.memory),
         ...(this.config.sessionId !== undefined ? { sessionId: this.config.sessionId } : {}),
       });
@@ -1209,10 +1211,10 @@ export class TurnRunner {
     this.memoryPersistence = await loadStoredMemory(
       this.config.memoryDbPath,
       this.config.cwd ?? process.cwd(),
-      this.memory,
       {
         embed: createEmbeddingClient(),
         contextPack: {
+          cache: this.memory,
           settings: resolveObservationalMemorySettings(this.config.memory),
           ...(this.config.sessionId !== undefined ? { sessionId: this.config.sessionId } : {}),
         },

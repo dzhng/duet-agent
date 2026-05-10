@@ -1,11 +1,11 @@
 import type { PGlite } from "@electric-sql/pglite";
 import type { ObservationalMemorySettings } from "../types/memory.js";
 import { loadGlobalPack, loadLocalPack } from "./loader.js";
-import type { MemoryStore } from "./store.js";
+import type { MemoryContextCache } from "./store.js";
 
 /**
  * Compaction trigger: rebuild the frozen memory pack rendered above
- * the message tail, then store it on the runner's MemoryStore.
+ * the message tail, then store it on the runner's MemoryContextCache.
  *
  * Three events trigger a refresh and exactly three:
  *   1. `loadStoredMemory()` finishes — initial seed.
@@ -24,7 +24,7 @@ import type { MemoryStore } from "./store.js";
  */
 export async function rebuildMemoryContextPack(options: {
   db: PGlite | undefined;
-  store: MemoryStore;
+  cache: MemoryContextCache;
   settings: ObservationalMemorySettings;
   sessionId?: string;
 }): Promise<void> {
@@ -45,5 +45,5 @@ export async function rebuildMemoryContextPack(options: {
       : Promise.resolve([]),
   ]);
 
-  options.store.setContextPack({ global: globalPack, local: localPack });
+  options.cache.setContextPack({ global: globalPack, local: localPack });
 }

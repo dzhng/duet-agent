@@ -134,13 +134,13 @@ async function withSeededDb(fn: (db: PGlite) => Promise<void>): Promise<void> {
     await runMigrations(db);
     await db.exec(`
       INSERT INTO observations (
-        id, created_at, kind, observed_date, priority, source_json, content, tags_json
+        id, created_at, last_used_at, kind, observed_date, priority, source_json, content, tags_json
       ) VALUES
-        ('mem_low', 1, 'observation', '2026-05-04', 'low',
+        ('mem_low', 1, 1, 'observation', '2026-05-04', 'low',
          '{"kind":"system"}', 'Low-priority memory.', '[]'),
-        ('mem_high', 2, 'observation', '2026-05-04', 'high',
+        ('mem_high', 2, 2, 'observation', '2026-05-04', 'high',
          '{"kind":"system"}', 'High-priority memory.', '[]'),
-        ('mem_medium', 3, 'observation', '2026-05-04', 'medium',
+        ('mem_medium', 3, 3, 'observation', '2026-05-04', 'medium',
          '{"kind":"system"}', 'Medium-priority memory.', '[]');
     `);
     await fn(db);

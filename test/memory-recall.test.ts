@@ -151,17 +151,17 @@ async function withSeededDb(fn: (db: PGlite) => Promise<void>): Promise<void> {
     await runMigrations(db);
     await db.exec(`
       INSERT INTO observations (
-        id, created_at, session_id, kind, observed_date, priority, source_json, content, tags_json
+        id, created_at, last_used_at, session_id, kind, observed_date, priority, source_json, content, tags_json
       ) VALUES
-        ('mem_local_today', 1, 'session_local', 'observation', '2026-05-09', 'medium',
+        ('mem_local_today', 1, 1, 'session_local', 'observation', '2026-05-09', 'medium',
          '{"kind":"system"}', 'Started writing recall memory tests today.', '[]'),
-        ('mem_local_yesterday', 2, 'session_local', 'reflection', '2026-05-08', 'high',
+        ('mem_local_yesterday', 2, 2, 'session_local', 'reflection', '2026-05-08', 'high',
          '{"kind":"system"}', 'Local session memory landed yesterday.', '[]'),
-        ('mem_wire_budget', 3, 'session_a', 'reflection', '2026-05-07', 'high',
+        ('mem_wire_budget', 3, 3, 'session_a', 'reflection', '2026-05-07', 'high',
          '{"kind":"system"}', 'Wire-byte budget cap on the proxy is 4.5 MiB.', '[]'),
-        ('mem_state_machine', 4, 'session_b', 'observation', '2026-05-06', 'medium',
+        ('mem_state_machine', 4, 4, 'session_b', 'observation', '2026-05-06', 'medium',
          '{"kind":"system"}', 'State machine routing handles recurring tasks.', '[]'),
-        ('mem_legacy_null_session', 5, NULL, 'reflection', '2026-04-15', 'high',
+        ('mem_legacy_null_session', 5, 5, NULL, 'reflection', '2026-04-15', 'high',
          '{"kind":"system"}', 'Legacy memory predating session id tracking.', '[]');
     `);
     await fn(db);

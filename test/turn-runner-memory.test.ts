@@ -22,24 +22,32 @@ class MemoryTransformTurnRunner extends TurnRunner {
     return this.createMemoryTransform();
   }
 
-  getMemorySnapshotForTest() {
-    return this.memory.getSnapshot();
-  }
-
-  async appendObservationForTest(content: string) {
-    const observation = await this.memory.appendObservation({
-      kind: "observation",
+  /**
+   * Test-only synthetic seeding: the runner has no PGlite database
+   * configured here, so we mint an Observation in process and shove
+   * it into the cache as if a compaction had just frozen it. That
+   * matches the production invariant (only the cache shape matters
+   * to the transform) without spinning up a real database.
+   */
+  async seedFrozenObservationForTest(content: string) {
+    const now = Date.now();
+    const observation = {
+      id: `mem_test_${now}`,
+      createdAt: now,
+      lastUsedAt: now,
+      kind: "observation" as const,
       observedDate: "2026-05-06",
-      priority: "high",
-      source: { kind: "system" },
+      priority: "high" as const,
+      source: { kind: "system" } as const,
       content,
       tags: ["test"],
-    });
-    // Seed the frozen pack so the transform actually renders this row.
-    // Real production refreshes happen at compaction events; in tests
-    // we set the pack directly to mimic post-compaction state.
+    };
     this.memory.setContextPack({ global: [observation], local: [] });
     return observation;
+  }
+
+  getFrozenContextPackForTest() {
+    return this.memory.getContextPack();
   }
 }
 
@@ -148,14 +156,21 @@ class MemoryEventTurnRunner extends TurnRunner {
       .map(agentMessageToRaw)
       .filter((message): message is NonNullable<typeof message> => Boolean(message));
     const range = `${raw[0]?.id ?? "unknown"}:${raw[raw.length - 1]?.id ?? "unknown"}`;
-    const observation = await this.memory.appendObservation({
-      kind: "observation",
+    // No DB configured for this test runner; mint a synthetic
+    // observation and emit it directly so subscribers see the
+    // expected memory event shape.
+    const now = Date.now();
+    const observation = {
+      id: `mem_test_${now}`,
+      createdAt: now,
+      lastUsedAt: now,
+      kind: "observation" as const,
       observedDate: "2026-05-08",
-      priority: "high",
-      source: { kind: "system" },
+      priority: "high" as const,
+      source: { kind: "system" } as const,
       content: `<observation-group id="test" range="${range}">\n* ✅ Remembered pi-run memory payload.\n</observation-group>`,
       tags: ["observational-memory"],
-    });
+    };
     this.emit({
       type: "memory",
       phase: "observation",
@@ -202,11 +217,10 @@ describe("TurnRunner memory", () => {
 
     await transform(messages);
 
-    const snapshot = await runner.getMemorySnapshotForTest();
-    expect(snapshot).toMatchObject({
-      observations: [],
-      estimatedTokens: { observations: 0 },
-    });
+    // Pack stays empty because the transform never refreshes it on
+    // its own — only compaction events do, and none fire below
+    // threshold.
+    expect(runner.getFrozenContextPackForTest()).toEqual({ global: [], local: [] });
   });
 
   test("observational transform only shapes context at compaction threshold", async () => {
@@ -252,7 +266,7 @@ describe("TurnRunner memory", () => {
         },
       },
     });
-    await runner.appendObservationForTest(
+    await runner.seedFrozenObservationForTest(
       '<observation-group id="test" range="msg_assistant_observed:msg_assistant_observed">\n* 🔴 Already observed the long message.\n</observation-group>',
     );
     const events: unknown[] = [];
@@ -364,6 +378,7 @@ describe("TurnRunner memory", () => {
         {
           id: "mem_test",
           createdAt: 1,
+          lastUsedAt: 1,
           kind: "observation",
           observedDate: "2026-05-08",
           priority: "high",

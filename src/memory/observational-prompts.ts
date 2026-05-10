@@ -142,6 +142,9 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
     - Secondary: other pending tasks, marked "waiting for user" when appropriate
     - If the agent started doing something without user approval, note that it is off-task
 
+    usedObservationIds:
+    The existing observations block above lists prior cross-session memories with explicit \`[memory id: mem_xxx]\` markers. If the assistant's response in this exchange leaned on one or more of those memories — referenced facts, preferences, prior decisions, or context drawn from them — list the matching ids here. Omit or return [] when no prior memory was actually used. Only cite ids that appear verbatim in the markers above; do not invent ids.
+
     suggestedContinuation:
     Hint for the agent's immediate next message. If the assistant needs to respond to the user, say that it should pause for user reply before continuing other tasks.
     ${threadTitleSection}

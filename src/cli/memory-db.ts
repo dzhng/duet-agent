@@ -4,7 +4,7 @@ import { openPGlite } from "../memory/pglite.js";
 import type { Observation } from "../types/memory.js";
 
 /**
- * Thin read/edit/delete wrapper over the PGlite database `MemoryStore` writes
+ * Thin read/edit/delete wrapper over the PGlite database the memory pipeline writes
  * to. The `duet memory` command opens the same on-disk file, so changes
  * made here are visible to subsequent runner sessions.
  */
@@ -32,7 +32,7 @@ export class MemoryDb {
   /** Load all observations ordered most recent first. */
   async list(): Promise<Observation[]> {
     const result = await this.db.query<ObservationRow>(
-      `SELECT id, created_at, session_id, kind, observed_date, referenced_date, relative_date,
+      `SELECT id, created_at, last_used_at, session_id, kind, observed_date, referenced_date, relative_date,
               time_of_day, priority, source_json, content, tags_json
        FROM observations
        ORDER BY created_at DESC`,
@@ -58,6 +58,7 @@ export class MemoryDb {
 interface ObservationRow {
   id: string;
   created_at: number;
+  last_used_at: number;
   session_id: string | null;
   kind: Observation["kind"];
   observed_date: string;
@@ -74,6 +75,7 @@ function rowToObservation(row: ObservationRow): Observation {
   return {
     id: row.id,
     createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
     ...(row.session_id !== null ? { sessionId: row.session_id } : {}),
     kind: row.kind,
     observedDate: row.observed_date,
