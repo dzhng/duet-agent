@@ -13,6 +13,7 @@ import {
   orderedSelectableStarters,
   selectStarters,
 } from "../src/tui/starters.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 
 function userMessage(text: string | { type: "text"; text: string }[]): AgentMessage {
   return {
@@ -61,26 +62,11 @@ afterEach(() => {
   }
 });
 
-// Some CI containers (the duet-agent test harness uses oven/bun base
-// images) do not ship git. Production code already returns false from
-// isGitRepoWithCommits when git throws ENOENT, so skipping the test on
-// those runners reflects real behavior — we only assert the path that
-// matters when git actually exists.
-function hasGitBinary(): boolean {
-  try {
-    execFileSync("git", ["--version"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-const itIfGit = hasGitBinary() ? it : it.skip;
-
 describe("selectStarters", () => {
-  itIfGit("picks git starters when cwd is a git repo with commits", () => {
+  testIfDocker("picks git starters when cwd is a git repo with commits", () => {
     const dir = fixtureDir("git");
-    // Pass author identity inline so the test runs on CI runners with no
-    // global ~/.gitconfig (e.g. ephemeral GitHub Actions images).
+    // Pass author identity inline because the docker test image has no
+    // global ~/.gitconfig and `git commit` would otherwise fail.
     execFileSync("git", ["-C", dir, "init", "-q", "-b", "main"]);
     writeFileSync(join(dir, "README.md"), "hi");
     execFileSync("git", ["-C", dir, "add", "."]);
