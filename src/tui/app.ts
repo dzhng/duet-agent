@@ -60,7 +60,7 @@ import {
 } from "./history.js";
 import { listRecentSessions } from "./recent-sessions.js";
 import { createSidebar, SIDEBAR_WIDTH } from "./sidebar.js";
-import { selectStarters } from "./starters.js";
+import { orderedSelectableStarters, selectStarters } from "./starters.js";
 import { COLORS, HINT_IDLE, HINT_RUNNING } from "./theme.js";
 
 export type { HistoryBlockKind, HistoryDisplayBlock, LimitedHistory } from "./history.js";
@@ -674,46 +674,63 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // directory is the common first-boot case.
     const recentSessions = listRecentSessions({
       excludeId: input.sessionId,
-      limit: 3,
+      limit: 4,
     });
-    const {
-      starters,
-      resumePrompt,
-      recentSessions: recentRows,
-    } = selectStarters({
+    const result = selectStarters({
       cwd: input.workDir,
       sessionHistory: input.history,
       recentSessions,
     });
+    // Selectable rows in render order. Recent sessions lead so returning
+    // users hit "pick up the thread" first; new users see the cwd starters
+    // under the original "what should we work on today?" headline.
+    const ordered = orderedSelectableStarters(result);
     starterEntries.length = 0;
-    for (const text of starters) {
-      starterEntries.push({ kind: "prompt", label: text, submit: text });
-    }
-    if (resumePrompt) {
-      starterEntries.push({
-        kind: "prompt",
-        label: `resume: ${resumePrompt}`,
-        submit: resumePrompt,
-      });
-    }
-    for (const row of recentRows) {
-      starterEntries.push({
-        kind: "recent",
-        label: row.label,
-        submit: row.prompt,
-        sessionId: row.sessionId,
-      });
+    for (const row of ordered) {
+      if (row.kind === "recent" && row.sessionId !== undefined) {
+        starterEntries.push({
+          kind: "recent",
+          label: row.label,
+          submit: row.submit,
+          sessionId: row.sessionId,
+        });
+      } else {
+        starterEntries.push({ kind: "prompt", label: row.label, submit: row.submit });
+      }
     }
 
-    appendLine(" ", COLORS.hint);
-    starterRefs.push(addLine("what should we work on today?", COLORS.agent));
-    appendLine(" ", COLORS.hint);
+    const hasRecent = result.recentSessions.length > 0;
 
     starterRowIndexes.length = 0;
-    for (let i = 0; i < starterEntries.length; i += 1) {
-      const ref = addLine(formatStarterRow(i, false), COLORS.hint);
-      starterRowIndexes.push(starterRefs.length);
-      starterRefs.push(ref);
+    appendLine(" ", COLORS.hint);
+
+    if (hasRecent) {
+      // Returning user: continuity first.
+      starterRefs.push(addLine("pick up the thread", COLORS.agent));
+      appendLine(" ", COLORS.hint);
+      for (let i = 0; i < result.recentSessions.length; i += 1) {
+        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+        starterRowIndexes.push(starterRefs.length);
+        starterRefs.push(ref);
+      }
+      appendLine(" ", COLORS.hint);
+      starterRefs.push(addLine("or start something new", COLORS.agent));
+      appendLine(" ", COLORS.hint);
+      for (let j = 0; j < result.starters.length; j += 1) {
+        const i = result.recentSessions.length + j;
+        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+        starterRowIndexes.push(starterRefs.length);
+        starterRefs.push(ref);
+      }
+    } else {
+      // New user: original cwd-only ice-break.
+      starterRefs.push(addLine("what should we work on today?", COLORS.agent));
+      appendLine(" ", COLORS.hint);
+      for (let i = 0; i < starterEntries.length; i += 1) {
+        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+        starterRowIndexes.push(starterRefs.length);
+        starterRefs.push(ref);
+      }
     }
 
     appendLine(" ", COLORS.hint);
@@ -722,7 +739,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     );
     starterRefs.push(
       addLine(
-        `✦ ${skills.length} skill${skills.length === 1 ? "" : "s"} · /help · drag-select + Cmd+C to copy`,
+        `✦ ${skills.length} skill${skills.length === 1 ? "" : "s"} · /help`,
         COLORS.hint,
       ),
     );

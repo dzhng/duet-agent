@@ -51,8 +51,47 @@ export interface StartersResult {
    * `prompt` is the raw last user prompt from that session (caller decides
    * what to do when a row is picked); `label` is the rendered row body
    * (truncated prompt + relative time) ready to drop into the boot list.
+   * The label intentionally omits any "continue:" prefix — the boot screen
+   * carries that meaning in the "pick up the thread" section header.
    */
   recentSessions: { sessionId: string; prompt: string; label: string }[];
+}
+
+/**
+ * One numbered, selectable boot row in render order.
+ *
+ * `kind: "recent"` rows always render under the "pick up the thread" header
+ * and come first when any recent session exists; `kind: "prompt"` rows render
+ * under "or start something new" (returning user) or "what should we work on
+ * today?" (new user). The numbering 1..N matches the position in this list,
+ * so callers can drive arrow-key + digit navigation off a single index space.
+ */
+export interface SelectableStarter {
+  kind: "prompt" | "recent";
+  label: string;
+  submit: string;
+  sessionId?: string;
+}
+
+/**
+ * Flatten a {@link StartersResult} into the ordered, numbered list the boot
+ * screen renders. Recent-session rows lead when present so returning users
+ * see continuity first; otherwise the cwd-based starters lead.
+ */
+export function orderedSelectableStarters(result: StartersResult): SelectableStarter[] {
+  const ordered: SelectableStarter[] = [];
+  for (const row of result.recentSessions) {
+    ordered.push({
+      kind: "recent",
+      label: row.label,
+      submit: row.prompt,
+      sessionId: row.sessionId,
+    });
+  }
+  for (const text of result.starters) {
+    ordered.push({ kind: "prompt", label: text, submit: text });
+  }
+  return ordered;
 }
 
 /** Hard cap on the resume preview before it gets ellipsis-truncated. */
@@ -118,7 +157,7 @@ export function selectStarters(input: StartersInput): StartersResult {
   const recentSessions = (input.recentSessions ?? []).map((session) => ({
     sessionId: session.sessionId,
     prompt: session.lastUserPrompt,
-    label: `continue: ${truncateRecentPrompt(session.lastUserPrompt)} — ${relativeTimeLabel(
+    label: `${truncateRecentPrompt(session.lastUserPrompt)} — ${relativeTimeLabel(
       session.modifiedAt,
       input.now,
     )}`,

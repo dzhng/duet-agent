@@ -1,14 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 import { listRecentSessions, relativeTimeLabel } from "../src/tui/recent-sessions.js";
-import { RESUME_MAX_LENGTH, selectStarters } from "../src/tui/starters.js";
+import {
+  RESUME_MAX_LENGTH,
+  orderedSelectableStarters,
+  selectStarters,
+} from "../src/tui/starters.js";
 
 function userMessage(text: string | { type: "text"; text: string }[]): AgentMessage {
   return {
@@ -26,19 +30,61 @@ function assistantMessage(text: string): AgentMessage {
   } as unknown as AgentMessage;
 }
 
+// Fixture dirs live under the user's home, not under os.tmpdir() and not
+// under the repo working tree:
+//   - os.tmpdir() resolves to /tmp on Linux CI; isScratchDir matches the
+//     literal /tmp/* prefix and would otherwise pre-empt every other
+//     detection branch.
+//   - placing fixtures inside the repo means `git -C <fixture> rev-list HEAD`
+//     walks up to the parent .git and reports commits, so isGitRepoWithCommits
+//     wins for non-git fixtures.
+// Home is outside both traps on macOS and on standard Linux CI runners.
+const fixtureDirs: string[] = [];
+const FIXTURE_ROOT = join(homedir(), ".cache", `duet-test-tmp-starters-${process.pid}`);
+
 function fixtureDir(label: string): string {
-  return mkdtempSync(join(tmpdir(), `starters-${label}-`));
+  mkdirSync(FIXTURE_ROOT, { recursive: true });
+  const dir = mkdtempSync(join(FIXTURE_ROOT, `${label}-`));
+  fixtureDirs.push(dir);
+  return dir;
 }
+
+afterEach(() => {
+  while (fixtureDirs.length > 0) {
+    const dir = fixtureDirs.pop()!;
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best-effort cleanup; tests must not fail on stray fs state.
+    }
+  }
+  try {
+    rmSync(FIXTURE_ROOT, { recursive: true, force: true });
+  } catch {
+    // ignore — only matters when the dir is empty.
+  }
+});
 
 describe("selectStarters", () => {
   it("picks git starters when cwd is a git repo with commits", () => {
     const dir = fixtureDir("git");
+    // Pass author identity inline so the test runs on CI runners with no
+    // global ~/.gitconfig (e.g. ephemeral GitHub Actions images).
     execFileSync("git", ["-C", dir, "init", "-q", "-b", "main"]);
-    execFileSync("git", ["-C", dir, "config", "user.email", "test@example.com"]);
-    execFileSync("git", ["-C", dir, "config", "user.name", "Test"]);
     writeFileSync(join(dir, "README.md"), "hi");
     execFileSync("git", ["-C", dir, "add", "."]);
-    execFileSync("git", ["-C", dir, "commit", "-q", "-m", "init"]);
+    execFileSync("git", [
+      "-C",
+      dir,
+      "-c",
+      "user.email=t@example.com",
+      "-c",
+      "user.name=t",
+      "commit",
+      "-q",
+      "-m",
+      "init",
+    ]);
 
     const result = selectStarters({ cwd: dir });
     expect(result.starters).toEqual([
@@ -58,14 +104,13 @@ describe("selectStarters", () => {
     expect(result.starters).toHaveLength(4);
   });
 
-  it("picks scratch starters for /tmp-style and empty dirs", () => {
+  it("picks scratch starters for empty dirs", () => {
     const dir = fixtureDir("scratch");
     const result = selectStarters({ cwd: dir });
     expect(result.starters[0]).toBe("build me a landing page");
   });
 
   it("picks skill starters when .duet/skills/ is present and no package/git", () => {
-    // A non-scratch parent so the SCRATCH branch does not pre-empt skills.
     const home = fixtureDir("skill-home");
     const dir = join(home, "project");
     mkdirSync(join(dir, ".duet", "skills"), { recursive: true });
@@ -128,7 +173,7 @@ describe("selectStarters", () => {
     expect(result.resumePrompt).toBe("hello world");
   });
 
-  it("surfaces recent-session continuations with truncation and relative time", () => {
+  it("surfaces recent-session continuations with truncation and relative time, no continue prefix", () => {
     const dir = fixtureDir("recent");
     const now = 1_000_000_000_000;
     const longPrompt = "plan the launch step by step ".repeat(10).trim();
@@ -153,7 +198,8 @@ describe("selectStarters", () => {
       sessionId: "session_aaa",
       prompt: "draft a tweet thread",
     });
-    expect(result.recentSessions[0]!.label).toBe("continue: draft a tweet thread \u2014 5m ago");
+    expect(result.recentSessions[0]!.label).toBe("draft a tweet thread \u2014 5m ago");
+    expect(result.recentSessions[0]!.label.startsWith("continue:")).toBe(false);
     expect(result.recentSessions[1]!.label.endsWith("\u2014 3h ago")).toBe(true);
     expect(result.recentSessions[1]!.label).toContain("\u2026");
   });
@@ -162,6 +208,40 @@ describe("selectStarters", () => {
     const dir = fixtureDir("recent-empty");
     const result = selectStarters({ cwd: dir });
     expect(result.recentSessions).toEqual([]);
+  });
+});
+
+describe("orderedSelectableStarters", () => {
+  it("places recent rows before cwd starters when at least one recent exists", () => {
+    const dir = fixtureDir("ordered-recent");
+    const now = 1_000_000_000_000;
+    const result = selectStarters({
+      cwd: dir,
+      now,
+      recentSessions: [
+        {
+          sessionId: "session_aaa",
+          lastUserPrompt: "draft a tweet thread",
+          modifiedAt: now - 5 * 60_000,
+        },
+      ],
+    });
+    const ordered = orderedSelectableStarters(result);
+    expect(ordered.length).toBe(result.recentSessions.length + result.starters.length);
+    expect(ordered[0]!.kind).toBe("recent");
+    expect(ordered[0]!.sessionId).toBe("session_aaa");
+    // First cwd starter follows immediately after the last recent row.
+    expect(ordered[result.recentSessions.length]!.kind).toBe("prompt");
+    expect(ordered[result.recentSessions.length]!.submit).toBe(result.starters[0]);
+  });
+
+  it("places cwd starters first when no recent sessions exist", () => {
+    const dir = fixtureDir("ordered-empty");
+    const result = selectStarters({ cwd: dir });
+    const ordered = orderedSelectableStarters(result);
+    expect(ordered.length).toBe(result.starters.length);
+    expect(ordered[0]!.kind).toBe("prompt");
+    expect(ordered.every((row) => row.kind === "prompt")).toBe(true);
   });
 });
 
@@ -240,7 +320,7 @@ describe("listRecentSessions", () => {
 
   it("returns an empty list when the sessions directory is missing", () => {
     const result = listRecentSessions({
-      sessionsRoot: join(tmpdir(), "definitely-not-a-real-path-" + Date.now()),
+      sessionsRoot: join(FIXTURE_ROOT, "definitely-not-a-real-path-" + Date.now()),
     });
     expect(result).toEqual([]);
   });
@@ -257,6 +337,20 @@ describe("listRecentSessions", () => {
     }
     const result = listRecentSessions({ sessionsRoot: root, limit: 2 });
     expect(result).toHaveLength(2);
+  });
+
+  it("defaults limit to 4", () => {
+    const root = fixtureDir("recent-default-limit");
+    for (let i = 0; i < 6; i += 1) {
+      writeSession(
+        root,
+        `session_${i}`,
+        [{ role: "user", content: `prompt ${i}` }],
+        Date.now() - i * 60_000,
+      );
+    }
+    const result = listRecentSessions({ sessionsRoot: root });
+    expect(result).toHaveLength(4);
   });
 });
 

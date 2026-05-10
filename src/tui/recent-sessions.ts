@@ -22,7 +22,7 @@ export interface RecentSessionsInput {
    * the user is literally already in.
    */
   excludeId?: string;
-  /** Maximum recent sessions to return. Default 3. */
+  /** Maximum recent sessions to return. Default 4. */
   limit?: number;
   /**
    * Override the sessions directory. Tests pass a tmp dir; production uses
@@ -51,7 +51,7 @@ export const RECENT_PROMPT_MAX_LENGTH = 60;
  */
 export function listRecentSessions(input: RecentSessionsInput = {}): RecentSession[] {
   const root = input.sessionsRoot ?? DEFAULT_SESSIONS_ROOT;
-  const limit = input.limit ?? 3;
+  const limit = input.limit ?? 4;
   const excludeId = input.excludeId;
 
   let entries: string[];
