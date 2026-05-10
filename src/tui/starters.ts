@@ -1,0 +1,203 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
+
+/**
+ * Inputs for {@link selectStarters}. The helper is a pure function over the
+ * filesystem and the persisted session history; it never reads from a session
+ * runtime, so it can be exercised cheaply in tests with tmp-dir fixtures.
+ */
+export interface StartersInput {
+  /** Absolute working directory. Used to detect git/package/scratch context. */
+  cwd: string;
+  /**
+   * Replayed session history (most recent last). When present, the most
+   * recent user prompt becomes the optional 5th "resume" starter.
+   */
+  sessionHistory?: readonly AgentMessage[];
+}
+
+/** Output of {@link selectStarters}: 4 starters plus an optional resume line. */
+export interface StartersResult {
+  /** Always exactly 4 prompts, ordered for the numbered list rendering. */
+  starters: string[];
+  /**
+   * Last user message from {@link StartersInput.sessionHistory}, trimmed and
+   * truncated to {@link RESUME_MAX_LENGTH}. Undefined when no resumable
+   * prompt exists.
+   */
+  resumePrompt?: string;
+}
+
+/** Hard cap on the resume preview before it gets ellipsis-truncated. */
+export const RESUME_MAX_LENGTH = 80;
+
+const GIT_STARTERS: readonly string[] = [
+  "review my latest commit and suggest fixes",
+  "write release notes for the last 5 commits",
+  "find unused exports",
+  "summarize what changed in the last week",
+];
+
+const PACKAGE_STARTERS: readonly string[] = [
+  "scaffold this idea into a working app",
+  "pick a tech stack for me",
+  "audit my dependencies",
+  "what should I build first",
+];
+
+const SCRATCH_STARTERS: readonly string[] = [
+  "build me a landing page",
+  "research my top 3 competitors",
+  "write a cold email",
+  "plan my next launch",
+];
+
+const SKILL_STARTERS: readonly string[] = [
+  "create a new skill",
+  "improve an existing skill",
+  "review my skill catalog",
+  "find skills I'm missing",
+];
+
+const TEXT_STARTERS: readonly string[] = [
+  "summarize these notes",
+  "find duplicates across files",
+  "write a blog post from these notes",
+  "organize this folder",
+];
+
+const DEFAULT_STARTERS: readonly string[] = [
+  "build me something",
+  "research a topic",
+  "write something",
+  "help me think through a decision",
+];
+
+/**
+ * Pick four starter prompts (and an optional resume preview) based on the
+ * shape of the working directory and any prior session history.
+ *
+ * Detection rules run in priority order; the first match wins:
+ *   1. git repo with at least one commit
+ *   2. package.json present (no commits / empty git is fine)
+ *   3. scratch dir: /tmp, ~/Desktop, ~/Downloads, or empty
+ *   4. .duet/skills/ present
+ *   5. text-heavy: more than 5 .md or .txt files and no package.json
+ *   6. default
+ */
+export function selectStarters(input: StartersInput): StartersResult {
+  const starters = [...pickStarters(input.cwd)];
+  const resumePrompt = pickResumePrompt(input.sessionHistory);
+  return resumePrompt ? { starters, resumePrompt } : { starters };
+}
+
+function pickStarters(cwd: string): readonly string[] {
+  if (isGitRepoWithCommits(cwd)) return GIT_STARTERS;
+  if (hasPackageJson(cwd)) return PACKAGE_STARTERS;
+  if (isScratchDir(cwd) || isEmptyDir(cwd)) return SCRATCH_STARTERS;
+  if (hasDuetSkills(cwd)) return SKILL_STARTERS;
+  if (isTextHeavy(cwd)) return TEXT_STARTERS;
+  return DEFAULT_STARTERS;
+}
+
+function isGitRepoWithCommits(cwd: string): boolean {
+  if (!safeIsDir(cwd)) return false;
+  try {
+    const out = execFileSync("git", ["-C", cwd, "rev-list", "--count", "HEAD"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1000,
+      encoding: "utf8",
+    });
+    return Number.parseInt(out.trim(), 10) > 0;
+  } catch {
+    return false;
+  }
+}
+
+function hasPackageJson(cwd: string): boolean {
+  return existsSync(join(cwd, "package.json"));
+}
+
+function isScratchDir(cwd: string): boolean {
+  const resolved = resolve(cwd);
+  const home = homedir();
+  return (
+    resolved === "/tmp" ||
+    resolved.startsWith("/tmp/") ||
+    resolved === join(home, "Desktop") ||
+    resolved === join(home, "Downloads")
+  );
+}
+
+function isEmptyDir(cwd: string): boolean {
+  if (!safeIsDir(cwd)) return false;
+  try {
+    return readdirSync(cwd).length === 0;
+  } catch {
+    return false;
+  }
+}
+
+function hasDuetSkills(cwd: string): boolean {
+  const dir = join(cwd, ".duet", "skills");
+  return existsSync(dir) && safeIsDir(dir);
+}
+
+function isTextHeavy(cwd: string): boolean {
+  if (!safeIsDir(cwd)) return false;
+  if (hasPackageJson(cwd)) return false;
+  let textFiles = 0;
+  try {
+    for (const name of readdirSync(cwd)) {
+      const lower = name.toLowerCase();
+      if (lower.endsWith(".md") || lower.endsWith(".txt")) {
+        textFiles += 1;
+        if (textFiles > 5) return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function safeIsDir(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function pickResumePrompt(history?: readonly AgentMessage[]): string | undefined {
+  if (!history || history.length === 0) return undefined;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (!msg || !("role" in msg) || msg.role !== "user") continue;
+    const text = userMessageText(msg.content).trim();
+    if (!text) continue;
+    if (text.length <= RESUME_MAX_LENGTH) return text;
+    return `${text.slice(0, RESUME_MAX_LENGTH - 1).trimEnd()}…`;
+  }
+  return undefined;
+}
+
+type UserHistoryContent =
+  | string
+  | ReadonlyArray<TextContent | ImageContent | { type: string; text?: unknown }>;
+
+function userMessageText(content: UserHistoryContent): string {
+  if (typeof content === "string") return content;
+  return content
+    .filter(
+      (block): block is { type: "text"; text: string } =>
+        block.type === "text" && typeof (block as { text?: unknown }).text === "string",
+    )
+    .map((block) => block.text)
+    .join("");
+}

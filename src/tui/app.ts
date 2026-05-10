@@ -48,16 +48,17 @@ import {
   skillAutocompleteMatches,
   type SlashAutocompleteGroup,
 } from "./autocomplete.js";
+import * as os from "node:os";
+
 import { buildFileIndex } from "./file-index.js";
 import {
-  DUET_BANNER_LINES,
   type HistoryBlockKind,
   type HistoryDisplayBlock,
   historyDisplayBlocks,
   limitHistoryDisplayBlocks,
-  startupHeaderLines,
 } from "./history.js";
 import { createSidebar, SIDEBAR_WIDTH } from "./sidebar.js";
+import { selectStarters } from "./starters.js";
 import { COLORS, HINT_IDLE, HINT_RUNNING } from "./theme.js";
 
 export type { HistoryBlockKind, HistoryDisplayBlock, LimitedHistory } from "./history.js";
@@ -586,10 +587,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     skills: ReadonlyArray<{ name: string }>,
     agentFiles: readonly TurnAgentFile[],
   ): void {
-    for (const line of DUET_BANNER_LINES) appendLine(line, COLORS.status);
-    const [title, ...details] = startupHeaderLines(input);
-    appendLine(title ?? "[duet]", COLORS.status);
-    for (const line of details) appendLine(line, COLORS.hint);
+    // One-line header. Keeps the wordmark prominent without burning six
+    // rows of vertical space on every boot. Provenance (env/file source)
+    // is intentionally dropped here — surface it via /whoami later.
+    appendLine(formatBootHeader(input), COLORS.status);
 
     if (input.versionNoticePromise) {
       const versionLine = new TextRenderable(renderer, {
@@ -608,18 +609,147 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       });
     }
 
-    if (agentFiles.length === 0) {
-      appendLine("[agent file] none", COLORS.hint);
-    } else {
+    // Only mention agent files when one is actually loaded; "[agent file]
+    // none" is noise on every empty boot.
+    if (agentFiles.length > 0) {
       appendLine(`[agent file] ${agentFiles.map((file) => file.name).join(", ")}`, COLORS.hint);
     }
 
-    if (skills.length === 0) {
-      appendLine("[skills] none", COLORS.hint);
-    } else {
-      const names = skills.map((skill) => skill.name).join(", ");
-      appendLine(`[skills] ${skills.length} loaded: ${names}`, COLORS.hint);
+    renderStarters(skills);
+  }
+
+  function formatBootHeader(headerInput: RunTuiInput): string {
+    const cwdLabel = shortenCwd(headerInput.workDir);
+    return `DUET AGENT  v${headerInput.packageVersion}   ·   ${cwdLabel}   ·   ${headerInput.modelName} + ${headerInput.memoryModelName}`;
+  }
+
+  function shortenCwd(cwd: string): string {
+    const home = os.homedir();
+    if (cwd === home) return "~";
+    if (cwd.startsWith(`${home}/`)) return `~${cwd.slice(home.length)}`;
+    return cwd;
+  }
+
+  // ---- starter prompts (boot screen) ---------------------------------------
+
+  // Boot screen offers a small set of context-aware starter prompts so
+  // first-time and returning users land on something concrete in <2 seconds
+  // instead of staring at a blank input. The starter section dismisses on
+  // first composition or first submit and never re-renders that session.
+  const starterTexts: string[] = [];
+  // Lines we render for the starter section so we can repaint highlights
+  // and tear them all down on dismissal. Includes the headline, numbered
+  // rows, the optional resume row, and the two trailing hint rows.
+  const starterRefs: TextRenderable[] = [];
+  // Indexes within `starterRefs` that correspond to numbered/resume rows;
+  // used to repaint highlight on arrow / digit navigation.
+  const starterRowIndexes: number[] = [];
+  let highlightedStarterIndex = 0;
+  let startersVisible = false;
+
+  function startersAreVisible(): boolean {
+    return startersVisible;
+  }
+
+  function renderStarters(skills: ReadonlyArray<{ name: string }>): void {
+    const { starters, resumePrompt } = selectStarters({
+      cwd: input.workDir,
+      sessionHistory: input.history,
+    });
+    starterTexts.length = 0;
+    starterTexts.push(...starters);
+    if (resumePrompt) starterTexts.push(`resume: ${resumePrompt}`);
+
+    appendLine(" ", COLORS.hint);
+    starterRefs.push(addLine("what should we work on today?", COLORS.agent));
+    appendLine(" ", COLORS.hint);
+
+    starterRowIndexes.length = 0;
+    for (let i = 0; i < starterTexts.length; i += 1) {
+      const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+      starterRowIndexes.push(starterRefs.length);
+      starterRefs.push(ref);
     }
+
+    appendLine(" ", COLORS.hint);
+    starterRefs.push(
+      addLine("type a number to run, ↑/↓ to highlight, or just start typing.", COLORS.hint),
+    );
+    starterRefs.push(
+      addLine(
+        `✦ ${skills.length} skill${skills.length === 1 ? "" : "s"} · /help · drag-select + Cmd+C to copy`,
+        COLORS.hint,
+      ),
+    );
+
+    startersVisible = starterTexts.length > 0;
+    if (startersVisible) {
+      highlightedStarterIndex = 0;
+      paintStarterHighlight();
+    }
+  }
+
+  function addLine(content: string, fg: string): TextRenderable {
+    const line = new TextRenderable(renderer, { content: content || " ", fg });
+    transcript.add(line);
+    return line;
+  }
+
+  function formatStarterRow(index: number, highlighted: boolean): string {
+    const text = starterTexts[index] ?? "";
+    const number = index + 1;
+    const arrow = highlighted ? "▶" : "→";
+    const numberCell = highlighted ? `[${number}]` : ` ${number} `;
+    return `   ${numberCell}  ${arrow}  ${text}`;
+  }
+
+  function paintStarterHighlight(): void {
+    for (let i = 0; i < starterRowIndexes.length; i += 1) {
+      const refIndex = starterRowIndexes[i];
+      if (refIndex === undefined) continue;
+      const ref = starterRefs[refIndex];
+      if (!ref) continue;
+      const isHighlighted = i === highlightedStarterIndex;
+      ref.content = formatStarterRow(i, isHighlighted);
+      ref.fg = isHighlighted ? COLORS.user : COLORS.hint;
+    }
+  }
+
+  function moveStarterHighlight(delta: number): void {
+    if (!startersVisible || starterTexts.length === 0) return;
+    const next = (highlightedStarterIndex + delta + starterTexts.length) % starterTexts.length;
+    highlightedStarterIndex = next;
+    paintStarterHighlight();
+  }
+
+  function jumpStarterHighlight(targetIndex: number): boolean {
+    if (!startersVisible) return false;
+    if (targetIndex < 0 || targetIndex >= starterTexts.length) return false;
+    highlightedStarterIndex = targetIndex;
+    paintStarterHighlight();
+    return true;
+  }
+
+  function dismissStarters(): void {
+    if (!startersVisible && starterRefs.length === 0) return;
+    for (const ref of starterRefs) {
+      transcript.remove(ref.id);
+      ref.destroy();
+    }
+    starterRefs.length = 0;
+    starterRowIndexes.length = 0;
+    starterTexts.length = 0;
+    startersVisible = false;
+  }
+
+  function submitHighlightedStarter(): boolean {
+    if (!startersVisible) return false;
+    const text = starterTexts[highlightedStarterIndex];
+    if (!text) return false;
+    const message = text.startsWith("resume: ") ? text.slice("resume: ".length) : text;
+    dismissStarters();
+    submit(message, false);
+    return true;
   }
 
   function renderUsage(usage?: TurnTokenUsage): void {
@@ -1192,6 +1322,37 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // consumes escape via its own keybindings before any global keypress handler
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
+    // Boot starter navigation. Only intercepts when the starter section is
+    // still on screen; once dismissed (by composition or first submit) all
+    // of these branches no-op and keys flow normally to the input.
+    if (startersAreVisible() && inputField.plainText.length === 0) {
+      if (key.name === "up") {
+        moveStarterHighlight(-1);
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "down") {
+        moveStarterHighlight(1);
+        key.preventDefault();
+        return;
+      }
+      if (
+        key.name &&
+        key.name.length === 1 &&
+        key.name >= "1" &&
+        key.name <= "9" &&
+        !key.ctrl &&
+        !key.meta &&
+        !key.super
+      ) {
+        const target = Number.parseInt(key.name, 10) - 1;
+        if (jumpStarterHighlight(target)) {
+          key.preventDefault();
+          return;
+        }
+      }
+    }
+
     // Cmd+V / Ctrl+V keystroke trigger. Many terminals (Warp in particular,
     // and macOS Terminal.app for binary clipboards) do not forward a paste
     // event to TUI programs on Cmd+V — they handle the clipboard at the app
@@ -1315,6 +1476,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         submit(value, lastEnterShift);
       } else if (questionPickerIsOpen()) {
         submitSelectedQuestionOption();
+      } else if (startersAreVisible()) {
+        submitHighlightedStarter();
       }
       lastEnterShift = false;
       return;
@@ -1325,7 +1488,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   };
 
-  inputField.onContentChange = () => refreshAutocomplete();
+  inputField.onContentChange = () => {
+    // First real keystroke into the input collapses the starter section
+    // — the user is composing their own prompt, so the suggestions get
+    // out of the way for the rest of the session.
+    if (startersAreVisible() && inputField.plainText.length > 0) dismissStarters();
+    refreshAutocomplete();
+  };
   inputField.onCursorChange = () => refreshAutocomplete();
 
   // Paste handling. Terminals that forward binary clipboard contents (kitty,
@@ -1497,6 +1666,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function submit(message: string, shiftEnter: boolean): void {
+    // First user submit collapses the boot starter section permanently for
+    // this session, even when the prompt came from autocomplete or paste.
+    if (startersAreVisible()) dismissStarters();
     // Slash-style attach commands run locally and never reach the runner so
     // users on terminals that do not forward image bytes still have a way to
     // attach images by path.
