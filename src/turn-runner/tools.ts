@@ -440,7 +440,7 @@ interface TurnRunnerToolsInput {
 
 export interface RecallMemoryToolStorage {
   /**
-   * Returns the database used by the runner's MemoryStore, or undefined
+   * Returns the database backing the runner's durable memory, or undefined
    * when memory persistence is disabled (one-shot tools, tests). The
    * recall_memory tool no-ops when undefined so the model never sees a
    * tool whose backing store is missing.

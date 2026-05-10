@@ -1,53 +1,36 @@
-import type { PGlite } from "@electric-sql/pglite";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type {
-  MemoryStoreEvent,
-  Observation,
-  ObservationalMemorySettings,
-  ObservationalMemorySnapshot,
-} from "../types/memory.js";
-import { rebuildMemoryContextPack } from "./context-pack.js";
+import type { PGlite, Transaction } from "@electric-sql/pglite";
+import type { Observation, ObservationalMemorySettings } from "../types/memory.js";
 import { DEFAULT_EMBEDDING_MODEL, type EmbedFn } from "./embedding.js";
 import { EmbeddingBackfillWorker } from "./embedding-worker.js";
+import { rebuildMemoryContextPack } from "./context-pack.js";
 import { runMigrations } from "./migrations.js";
 import { openPGlite } from "./pglite.js";
-import type { MemoryStore } from "./store.js";
+import type { MemoryContextCache } from "./store.js";
+import { nanoid } from "nanoid";
 
-type MemoryDatabase = PGlite;
+export type MemoryDatabase = PGlite;
+
+/**
+ * Handle returned by `loadStoredMemory`. Callers use `db` directly with
+ * the helpers in this module — there is no in-memory mirror to keep in
+ * sync, so writes are inline awaits against PGlite. Memory disabled
+ * leaves `db` undefined and persistence becomes a no-op.
+ */
 export interface MemoryPersistenceHandle {
-  flush: () => Promise<void>;
+  db: MemoryDatabase | undefined;
+  embed: EmbedFn | undefined;
   dispose: () => Promise<void>;
-  /**
-   * The opened PGlite handle, exposed so tools (recall_memory, future
-   * loaders) can run their own queries against the same database the
-   * MemoryStore writes through. Undefined when memory persistence is
-   * disabled (the no-op handle); callers must not close it.
-   */
-  db?: PGlite;
-  /** Embedding callable shared with the backfill worker, when configured. */
-  embed?: EmbedFn;
 }
 
 export interface LoadStoredMemoryOptions {
-  /**
-   * Embedding callable used by the background backfill worker. Omit to
-   * skip embedding work entirely — useful in tests that do not exercise
-   * `recall_memory`. The worker is built only when this is provided.
-   */
   embed?: EmbedFn;
-  /** Embedding model identifier written alongside each vector. */
   embeddingModel?: string;
-  /** Optional override for the backfill log path; defaults to ~/.duet/logs/memory-backfill.log. */
   embeddingLogPath?: string;
-  /**
-   * Settings + sessionId used to build the initial context pack. When
-   * provided, `loadStoredMemory` builds and freezes the rendered
-   * memory pack as part of the load so the first turn already sees a
-   * stable prefix. Omit to skip the initial build (the runner can
-   * trigger it later).
-   */
+  /** When set, freeze the initial context pack into the cache before the first turn dispatches. */
   contextPack?: {
+    cache: MemoryContextCache;
     settings: ObservationalMemorySettings;
     sessionId?: string;
   };
@@ -56,24 +39,14 @@ export interface LoadStoredMemoryOptions {
 export async function loadStoredMemory(
   memoryPath: string | false | undefined,
   cwd: string,
-  store: MemoryStore,
   options: LoadStoredMemoryOptions = {},
 ): Promise<MemoryPersistenceHandle> {
   if (!memoryPath) {
     const noop = async () => {};
-    return { flush: noop, dispose: noop };
+    return { db: undefined, embed: undefined, dispose: noop };
   }
 
   const database = await openMemoryDatabase(resolveMemoryPath(memoryPath, cwd));
-  const snapshot = await readMemorySnapshot(database);
-  await store.replaceObservations(snapshot.observations);
-
-  let writeQueue = Promise.resolve();
-  const enqueueWrite = (event: MemoryStoreEvent) => {
-    writeQueue = writeQueue.then(() => persistMemoryEvent(database, event));
-    void writeQueue;
-  };
-  const unsubscribe = store.on(enqueueWrite);
 
   // The backfill worker runs whenever the CLI is up. Observers and
   // reflectors write rows during turns; embeddings catch up in the
@@ -98,7 +71,7 @@ export async function loadStoredMemory(
     try {
       await rebuildMemoryContextPack({
         db: database,
-        store,
+        cache: options.contextPack.cache,
         settings: options.contextPack.settings,
         ...(options.contextPack.sessionId !== undefined
           ? { sessionId: options.contextPack.sessionId }
@@ -111,16 +84,11 @@ export async function loadStoredMemory(
     }
   }
 
-  const flush = async () => {
-    await writeQueue;
-  };
   const dispose = async () => {
-    unsubscribe();
     await worker?.stop();
-    await flush();
     await database.close();
   };
-  return { flush, dispose, db: database, embed: options.embed };
+  return { db: database, embed: options.embed, dispose };
 }
 
 function defaultEmbeddingLogPath(): string {
@@ -139,63 +107,117 @@ async function openMemoryDatabase(path: string): Promise<MemoryDatabase> {
   });
 }
 
-async function readMemorySnapshot(database: MemoryDatabase): Promise<ObservationalMemorySnapshot> {
-  const result = await database.query<ObservationRow>(
-    `SELECT id, created_at, session_id, kind, observed_date, referenced_date, relative_date, time_of_day, priority, source_json, content, tags_json
-     FROM observations
-     ORDER BY created_at ASC`,
-  );
-  const observations = result.rows.map(rowToObservation);
-  return {
-    observations,
-    estimatedTokens: {
-      observations: estimateTokens(observations.map((item) => item.content).join("\n")),
-    },
-    updatedAt: Date.now(),
+/**
+ * Insert a new observation row, materializing `id`, `createdAt`, and
+ * `lastUsedAt = createdAt`. Returns the populated `Observation` so
+ * callers can refer to the freshly-assigned id (e.g. to keep
+ * observation-group range markers consistent).
+ */
+export async function appendObservation(
+  db: MemoryDatabase,
+  input: Omit<Observation, "id" | "createdAt" | "lastUsedAt">,
+): Promise<Observation> {
+  const observation: Observation = {
+    ...input,
+    id: createMemoryId(),
+    createdAt: Date.now(),
+    lastUsedAt: Date.now(),
   };
+  await upsertObservation(db, observation);
+  return observation;
 }
 
-async function persistMemoryEvent(
-  database: MemoryDatabase,
-  event: MemoryStoreEvent,
-): Promise<void> {
-  if (event.type === "observation_appended") {
-    await upsertObservation(database, event.observation);
-    return;
-  }
-
-  await syncObservations(database, event.observations);
-}
-
-async function syncObservations(
-  database: MemoryDatabase,
+/**
+ * Replace this session's rows with the given list. Used by reflection,
+ * which condenses the session's observation log into one reflection
+ * row. Scoping the delete to `session_id = $1` is what makes the
+ * cross-session global pool durable: another session's rows are never
+ * touched by the current session's reflection.
+ */
+export async function replaceSessionObservations(
+  db: MemoryDatabase,
+  sessionId: string,
   observations: readonly Observation[],
 ): Promise<void> {
   const ids = observations.map((observation) => observation.id);
-  await database.transaction(async (tx) => {
+  await db.transaction(async (tx) => {
     if (ids.length === 0) {
-      await tx.exec("DELETE FROM observations");
+      await tx.query("DELETE FROM observations WHERE session_id = $1", [sessionId]);
     } else {
-      await tx.query("DELETE FROM observations WHERE NOT (id = ANY($1::text[]))", [ids]);
+      await tx.query(
+        "DELETE FROM observations WHERE session_id = $1 AND NOT (id = ANY($2::text[]))",
+        [sessionId, ids],
+      );
     }
-
     for (const observation of observations) {
       await upsertObservation(tx, observation);
     }
   });
 }
 
+/**
+ * Read this session's observations in chronological order along with a
+ * rough token count. Used by the observer (to gate reflection on
+ * cumulative session-local observation tokens) and by
+ * `getUnobservedMessageTail` to find the highest message id already
+ * folded into an observation-group range.
+ */
+export interface SessionObservationsSnapshot {
+  observations: Observation[];
+  estimatedObservationTokens: number;
+}
+
+export async function readSessionObservations(
+  db: MemoryDatabase,
+  sessionId: string,
+): Promise<SessionObservationsSnapshot> {
+  const result = await db.query<ObservationRow>(
+    `SELECT id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
+            relative_date, time_of_day, priority, source_json, content, tags_json
+     FROM observations
+     WHERE session_id = $1
+     ORDER BY created_at ASC`,
+    [sessionId],
+  );
+  const observations = result.rows.map(rowToObservation);
+  return {
+    observations,
+    estimatedObservationTokens: estimateTokens(
+      observations.map((observation) => observation.content).join("\n"),
+    ),
+  };
+}
+
+/**
+ * Bump `last_used_at` for the given ids to `now`. Fire-and-forget
+ * usage signal: if the model's response leaned on a particular
+ * memory, that memory's ranking refreshes so it stays surfaced. No-op
+ * when `ids` is empty.
+ */
+export async function bumpLastUsed(
+  db: MemoryDatabase,
+  ids: readonly string[],
+  now: number,
+): Promise<void> {
+  if (ids.length === 0) return;
+  await db.query("UPDATE observations SET last_used_at = $1 WHERE id = ANY($2::text[])", [
+    now,
+    ids,
+  ]);
+}
+
 async function upsertObservation(
-  database: Pick<MemoryDatabase, "query">,
+  database: Pick<MemoryDatabase, "query"> | Transaction,
   observation: Observation,
 ): Promise<void> {
   await database.query(
     `INSERT INTO observations (
-      id, created_at, session_id, kind, observed_date, referenced_date, relative_date, time_of_day,
+      id, created_at, last_used_at, session_id, kind, observed_date, referenced_date, relative_date, time_of_day,
       priority, source_json, content, tags_json
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
     ON CONFLICT (id) DO UPDATE SET
       created_at = EXCLUDED.created_at,
+      last_used_at = EXCLUDED.last_used_at,
       session_id = EXCLUDED.session_id,
       kind = EXCLUDED.kind,
       observed_date = EXCLUDED.observed_date,
@@ -209,6 +231,7 @@ async function upsertObservation(
     [
       observation.id,
       observation.createdAt,
+      observation.lastUsedAt,
       observation.sessionId ?? null,
       observation.kind,
       observation.observedDate,
@@ -231,9 +254,14 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+function createMemoryId(): string {
+  return `mem_${nanoid(12)}`;
+}
+
 interface ObservationRow {
   id: string;
   created_at: number;
+  last_used_at: number;
   session_id: string | null;
   kind: Observation["kind"];
   observed_date: string;
@@ -250,6 +278,7 @@ function rowToObservation(row: ObservationRow): Observation {
   return {
     id: row.id,
     createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
     ...(row.session_id !== null ? { sessionId: row.session_id } : {}),
     kind: row.kind,
     observedDate: row.observed_date,

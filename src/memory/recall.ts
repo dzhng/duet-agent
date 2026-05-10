@@ -246,7 +246,7 @@ export function reciprocalRankFusion(rankedLists: ScoredHit[][]): string[] {
 async function hydrate(db: PGlite, ids: string[]): Promise<Observation[]> {
   if (ids.length === 0) return [];
   const { rows } = await db.query<HydratedRow>(
-    `SELECT id, created_at, session_id, kind, observed_date, referenced_date,
+    `SELECT id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
             relative_date, time_of_day, priority, source_json, content, tags_json
      FROM observations
      WHERE id = ANY($1::text[])`,
@@ -265,6 +265,7 @@ async function hydrate(db: PGlite, ids: string[]): Promise<Observation[]> {
 interface HydratedRow {
   id: string;
   created_at: number;
+  last_used_at: number;
   session_id: string | null;
   kind: ObservationKind;
   observed_date: string;
@@ -281,6 +282,7 @@ function rowToObservation(row: HydratedRow): Observation {
   return {
     id: row.id,
     createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
     ...(row.session_id !== null ? { sessionId: row.session_id } : {}),
     kind: row.kind,
     observedDate: row.observed_date,

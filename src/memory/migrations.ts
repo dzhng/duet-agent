@@ -207,6 +207,37 @@ const MIGRATIONS: Migration[] = [
       );
     },
   },
+  {
+    version: 4,
+    description: "add last_used_at column for usage-decay ranking",
+    up: async (tx) => {
+      // last_used_at drives the global-layer ranking instead of
+      // created_at. Bumped at end of turn for every observation the
+      // observer reports as having informed the assistant's response,
+      // so memories that keep being used keep surfacing.
+      //
+      // Two-step add: column comes in nullable, backfills to
+      // created_at for every existing row (so legacy rows enter the
+      // ranking with their original recency), then we tighten to
+      // NOT NULL. PGlite doesn't accept column-level defaults that
+      // reference other columns, which is why this can't be a single
+      // ALTER TABLE.
+      await tx.exec(`ALTER TABLE observations ADD COLUMN IF NOT EXISTS last_used_at BIGINT`);
+      await tx.exec(`UPDATE observations SET last_used_at = created_at WHERE last_used_at IS NULL`);
+      await tx.exec(`ALTER TABLE observations ALTER COLUMN last_used_at SET NOT NULL`);
+
+      // Replace the created_at-keyed ranking index with a
+      // last_used_at-keyed one. The loader's ORDER BY now sorts by
+      // last_used_at; keeping the old index would be dead weight
+      // since no query path consults created_at as the ranking key
+      // any more.
+      await tx.exec(`DROP INDEX IF EXISTS idx_obs_kind_priority_created`);
+      await tx.exec(
+        `CREATE INDEX IF NOT EXISTS idx_obs_kind_priority_lastused
+         ON observations(kind, priority, last_used_at DESC)`,
+      );
+    },
+  },
 ];
 
 export interface MigrationResult {

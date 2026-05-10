@@ -28,6 +28,15 @@ export interface Observation {
   /** Unix timestamp in milliseconds when this observation was stored. */
   createdAt: number;
   /**
+   * Unix timestamp in milliseconds for the most recent turn that
+   * actually used this observation. Initialized to `createdAt` and
+   * advanced when the observer reports the row as having informed an
+   * assistant response (`usedObservationIds`). Drives the global-layer
+   * ranking decay so memories that keep getting used keep surfacing,
+   * regardless of how old they originally are.
+   */
+  lastUsedAt: number;
+  /**
    * Session that produced this observation. Optional only for rows that
    * predate sessionId tracking — new writes always set it. Loaders use
    * this as the local/global axis: rows whose sessionId matches the
@@ -118,19 +127,23 @@ export interface ObservationalMemorySettings {
   /**
    * Token budget for the global memory layer rendered ahead of the local
    * session's compacted view. Cross-session reflections and observations
-   * are scored by `priority * recencyDecay * kindBias` and packed greedily
+   * are ranked by `priority * usageDecay * kindBias` and packed greedily
    * until this budget is exhausted. Local memory has no separate budget —
    * it reuses the existing `observation` and `reflection` thresholds since
    * the local layer is just the current session's compaction output.
    */
   globalContextTokenBudget: number;
   /**
-   * Half-life for the recency decay term in the global-layer ranking.
-   * `recencyDecay = 0.5 ^ (ageMs / halfLifeMs)` — at one half-life a row
-   * is worth half what a brand-new row of the same priority is worth.
-   * Default 7 days: short enough that month-old chatter stops crowding
-   * out current week's decisions, long enough that yesterday's
-   * conclusions still surface tomorrow.
+   * Half-life applied to time since `lastUsedAt` in the global-layer
+   * ranking. `usageDecay = 0.5 ^ ((now - lastUsedAt) / halfLifeMs)` —
+   * at one half-life since last use a row is worth half what a
+   * just-used row of the same priority is worth. Default 7 days:
+   * short enough that month-old unused chatter stops crowding out
+   * current week's decisions, long enough that yesterday's
+   * conclusions still surface tomorrow. Ranking is a monotone
+   * function of `lastUsedAt`, so the ordering between any two rows
+   * is invariant to `now` within a single ranking pass — the loader
+   * exploits this to push the entire ORDER BY into SQL.
    */
   recencyHalfLifeMs: number;
   /**
@@ -163,29 +176,3 @@ export type ObservationalMemorySettingsInput = Partial<
   observation?: Partial<ObservationalMemorySettings["observation"]>;
   reflection?: Partial<ObservationalMemorySettings["reflection"]>;
 };
-
-/** Query used by MemoryStore.recall to filter and rank observations. */
-export interface ObservationQuery {
-  /** Text query for simple lexical ranking. */
-  query?: string;
-  /** Return observations matching at least one of these tags. */
-  tags?: string[];
-  /** Restrict recall to a specific session id; omit for all-session search. */
-  sessionId?: string;
-  /** Restrict recall to one observation kind. */
-  kind?: ObservationKind;
-  /** Maximum number of observations to return. */
-  limit?: number;
-  /** Minimum priority to include. */
-  minPriority?: ObservationPriority;
-}
-
-/** Events emitted by MemoryStore for external persistence. */
-export type MemoryStoreEvent =
-  /** A new observation was added without replacing the full memory set. */
-  | { type: "observation_appended"; observation: Observation }
-  /** The complete observation set was replaced, usually after reflection. */
-  | { type: "observations_replaced"; observations: Observation[] };
-
-/** Subscription callback for MemoryStore changes. */
-export type MemoryStoreEventHandler = (event: MemoryStoreEvent) => void;

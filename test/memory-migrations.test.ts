@@ -68,6 +68,7 @@ describe("Memory migrations", () => {
           "created_at",
           "id",
           "kind",
+          "last_used_at",
           "observed_date",
           "priority",
           "referenced_date",
