@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
-import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
+import { submitDuetFeedback } from "../lib/feedback.js";
 import { printSendFeedbackHelp } from "./help.js";
 import { fail, isInteractive, resolveUserPath } from "./shared.js";
 
@@ -11,8 +11,6 @@ export interface SendFeedbackCommandIO {
   /** Inject a stand-in for fetch so tests can intercept the upload. */
   fetch?: typeof fetch;
 }
-
-const FEEDBACK_SOURCE = "duet-agent-cli";
 
 /**
  * Run `duet send-feedback`.
@@ -76,20 +74,12 @@ export async function runSendFeedbackCommand(
     fail("Feedback content is required.");
   }
 
-  const url = `${resolveDuetAppBaseUrl()}/api/v1/feedback`;
-  const fetchImpl = io.fetch ?? globalThis.fetch;
-  const response = await fetchImpl(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, source: FEEDBACK_SOURCE }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    fail(`Feedback submission failed (${response.status}): ${text || response.statusText}`);
+  try {
+    const { baseUrl } = await submitDuetFeedback({ content, fetch: io.fetch });
+    console.error(`Thanks! Feedback sent to ${baseUrl}.`);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
-
-  console.error(`Thanks! Feedback sent to ${resolveDuetAppBaseUrl()}.`);
 }
 
 async function readStdin(): Promise<string> {
