@@ -64,6 +64,12 @@ export const BUILT_IN_SLASH_COMMANDS: readonly SkillAutocompleteItem[] = [
     description: "Copy text to your clipboard: /copy [last|all|<N>] (default: last agent reply)",
     group: "commands",
   },
+  {
+    name: "diag",
+    description:
+      "Toggle diagnostic logging (keys, selection events) for surfacing terminal-specific issues",
+    group: "commands",
+  },
 ];
 
 /**

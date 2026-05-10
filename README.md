@@ -310,12 +310,51 @@ In the input box:
   primed to call `read_skill`.
 - Enter sends; **Shift+Enter** queues the message as a follow-up while the
   agent is running, instead of steering the active turn.
-- `Esc` cancels the current pickers; pressed on its own it interrupts the
-  active turn (or quits when idle).
+- `Esc` cancels the current pickers; on its own it interrupts the active turn,
+  or no-ops when idle. Use Ctrl+C (or close the terminal) to quit — both
+  paths drain through the SessionManager so the local memory database (PGlite)
+  flushes cleanly.
 
 Tool calls render with custom per-tool headers (e.g. `$ <command>`,
 `read <path> (lines a–b)`, `edit <path> (N edits)`, `[question]`). Resumed
 sessions render history through the same formatters so live and replay match.
+
+### Copy & Paste
+
+Drag with the mouse to highlight any text in the transcript. The bottom hint
+advertises the copy keystroke that actually reaches the TUI on your terminal
+(it appears only while a selection is active so the hint stays terse):
+
+- **Cmd+C** — macOS terminals that forward Cmd+C as a keypress (Ghostty,
+  kitty, recent iTerm2 with the right keybindings).
+- **Ctrl+Shift+C** — Linux/Windows terminals, and macOS terminals that own
+  Cmd+C for their own UI (notably Warp, where Cmd+C selects a Warp block and
+  is never forwarded). Cmd+Shift+C also works on terminals where it is
+  forwarded.
+
+Copying writes via `pbcopy` / `wl-copy` / `xclip` / `xsel` / `clip.exe` and
+verifies the write through a readback (so a writer that exits 0 without
+actually updating the system clipboard — which has been observed on macOS in
+some configs — surfaces a real error instead of a fake "copied" line). When
+no local CLI is available (e.g. an SSH session with no clipboard tool), the
+TUI falls back to OSC 52.
+
+For explicit copies of transcript content (independent of mouse selection):
+
+- **`/copy`** — copies the most recent agent reply.
+- **`/copy all`** — copies the full conversation, formatted with `you:` /
+  `agent:` labels.
+- **`/copy <N>`** — copies the last N user/agent messages.
+
+### Diagnostics
+
+**`/diag`** toggles a diagnostic log inside the transcript. While on, every
+keypress and every drag-selection event prints a `[diag]` line with the exact
+name, modifier flags, raw sequence, and parser source the renderer
+received — plus a snapshot of the current selection state. This is the
+fastest way to figure out why a keystroke or gesture works in one terminal
+but not another (e.g. Cmd+C silently swallowed by Warp). Run `/diag` again to
+turn it off.
 
 ### Image Attachments
 

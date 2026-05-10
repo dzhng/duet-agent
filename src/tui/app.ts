@@ -181,6 +181,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let lastSelectionText = "";
   renderer.on("selection", (selection: Selection) => {
     lastSelectionText = selection.getSelectedText();
+    logSelectionDiag(lastSelectionText);
     refreshHint();
   });
 
@@ -1401,6 +1402,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
   keyHandler.onInternal("keypress", (key: KeyEvent) => {
+    logKeyDiag("global", key);
     // Copy keystroke. Lives on the global handler (not
     // inputField.onKeyDown) because the mousedown that starts a
     // drag-select moves focus off the textarea — the focused-renderable
@@ -1450,6 +1452,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // consumes escape via its own keybindings before any global keypress handler
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
+    logKeyDiag("keydown", key);
     if (key.name === "pageup") {
       scrollTranscriptByPage(-1);
       key.preventDefault();
@@ -1651,6 +1654,60 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function handleEscape(): void {
     if (!running) return;
     void input.session.interrupt().catch(reportError);
+  }
+
+  // ---- /diag diagnostics -----------------------------------------------------
+
+  // `/diag` toggles a key+selection event log so the user can show us
+  // exactly what their terminal forwards when something silently fails
+  // (e.g. a keystroke not reaching the handler, a selection event firing
+  // with empty text). Kept as a flag rather than a one-shot capture so
+  // we can layer additional diagnostic facets on the same surface
+  // without inventing new commands every time.
+  let keyDiagnostics = false;
+
+  function handleDiagSlashCommand(raw: string): void {
+    const argument = raw === "/diag" ? "" : raw.slice("/diag ".length).trim();
+    if (argument === "" || argument === "keys") {
+      keyDiagnostics = !keyDiagnostics;
+      appendBlock(
+        "[diag]",
+        keyDiagnostics
+          ? "key + selection event logging ON. Run /diag again to stop."
+          : "key + selection event logging OFF.",
+        COLORS.system,
+      );
+      return;
+    }
+    appendBlock(
+      "[diag]",
+      "Usage: /diag (or /diag keys) — toggles key + selection event logging",
+      COLORS.system,
+    );
+  }
+
+  function logKeyDiag(label: string, key: KeyEvent): void {
+    if (!keyDiagnostics) return;
+    const flags: string[] = [];
+    if (key.ctrl) flags.push("ctrl");
+    if (key.shift) flags.push("shift");
+    if (key.meta) flags.push("meta");
+    if (key.super) flags.push("super");
+    if (key.option) flags.push("option");
+    appendBlock(
+      "[diag]",
+      `${label} name=${JSON.stringify(key.name)} flags=[${flags.join(",")}] sequence=${JSON.stringify(key.sequence)} source=${key.source} | lastSelection=${lastSelectionText.length}c rendererSel=${renderer.hasSelection ? "yes" : "no"}`,
+      COLORS.hint,
+    );
+  }
+
+  function logSelectionDiag(text: string): void {
+    if (!keyDiagnostics) return;
+    appendBlock(
+      "[diag]",
+      `selection event: ${text.length} chars — ${JSON.stringify(text.slice(0, 80))}`,
+      COLORS.hint,
+    );
   }
 
   /**
@@ -1878,6 +1935,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
     if (message === "/copy" || message.startsWith("/copy ")) {
       void handleCopySlashCommand(message);
+      return;
+    }
+    if (message === "/diag" || message.startsWith("/diag ")) {
+      handleDiagSlashCommand(message);
       return;
     }
 
