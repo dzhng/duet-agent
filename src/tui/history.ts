@@ -144,6 +144,28 @@ export const DUET_BANNER_LINES: readonly string[] = [
   "╚═════╝  ╚═════╝ ╚══════╝   ╚═╝       ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ",
 ];
 
+/**
+ * 6-row compact wordmark for the boot screen. The first 5 rows are the
+ * letter bodies, hand-drawn with only `█` and space so every glyph
+ * renders as a solid block in any monospace font — ANSI Shadow's
+ * box-drawing characters (╗╔╝╚═║) render as thin outlines in many
+ * modern coding fonts (Geist, JetBrains Mono with certain ligatures,
+ * etc.), which made letters read as wireframe and dropped legibility.
+ *
+ * The 6th row is a `░` drop-shadow shifted right by one column. `░` is
+ * in the same Block Elements range as `█` so it renders as a solid
+ * stippled fill in any monospace font, giving the banner a little
+ * depth without reintroducing stroke-based glyphs.
+ */
+export const DUET_BANNER_LINES_COMPACT: readonly string[] = [
+  "██████  ██   ██ ███████ ███████    █████   █████  ███████ ██   ██ ███████",
+  "██   ██ ██   ██ ██        ███     ██   ██ ██      ██      ███  ██   ███  ",
+  "██   ██ ██   ██ █████     ███     ███████ ██  ███ █████   ██ █ ██   ███  ",
+  "██   ██ ██   ██ ██        ███     ██   ██ ██   ██ ██      ██  ███   ███  ",
+  "██████   █████  ███████   ███     ██   ██  █████  ███████ ██   ██   ███  ",
+  " ░░░░░░   ░░░░░  ░░░░░░░   ░░░     ░░   ░░  ░░░░░  ░░░░░░░ ░░   ░░   ░░░ ",
+];
+
 /** Compose the duet startup banner for the TUI header. */
 export function startupHeaderLines(input: StartupHeaderInput): string[] {
   const lines = [
