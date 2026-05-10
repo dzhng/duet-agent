@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, type Context } from "@earendil-works/pi-ai";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
-import type { TurnEvent, TurnState, TurnTerminalEvent } from "../src/types/protocol.js";
+import type { TurnEvent, TurnState, TurnTerminalEvent, TurnTodo } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { delay, waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
@@ -207,6 +207,48 @@ describe("TurnRunner active turns", () => {
     expect(terminal.state.todos).toEqual([
       { id: "todo", content: "Keep todo state", status: "in_progress" },
     ]);
+  });
+
+  test("replacing todos in a follow-up turn keeps the new list in the terminal snapshot", async () => {
+    const { runner } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "plan work" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("todo_write", {
+      merge: false,
+      todos: [
+        { id: "a1", content: "Old item 1", status: "in_progress" },
+        { id: "a2", content: "Old item 2", status: "pending" },
+      ],
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("planned");
+    await first;
+
+    const second = runner.turn({
+      type: "prompt",
+      message: "rewrite the plan",
+      behavior: "follow_up",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("todo_write", {
+      merge: false,
+      todos: [
+        { id: "b1", content: "New item 1", status: "completed" },
+        { id: "b2", content: "New item 2", status: "in_progress" },
+      ],
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("done");
+
+    const terminal = await second;
+    const expected: TurnTodo[] = [
+      { id: "b1", content: "New item 1", status: "completed" },
+      { id: "b2", content: "New item 2", status: "in_progress" },
+    ];
+    expect(runner.getState()?.todos).toEqual(expected);
+    expect(terminal.state.todos).toEqual(expected);
   });
 
   test("steer is handled through turn and still shares the active terminal", async () => {

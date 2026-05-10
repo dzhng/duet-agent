@@ -1006,6 +1006,7 @@ export class TurnRunner {
     const messages = agent.state.messages;
     const usage = usageFromMessages(messages.slice(previousMessageCount));
     const status = agent.state.errorMessage ? "failed" : "completed";
+    const live = this.state;
     const state = {
       ...input.state,
       status,
@@ -1014,6 +1015,9 @@ export class TurnRunner {
         status,
         messages,
       },
+      todos: live?.todos ?? input.state.todos,
+      followUpQueue: live?.followUpQueue ?? input.state.followUpQueue,
+      queuedCommands: live?.queuedCommands ?? input.state.queuedCommands,
     } satisfies TurnState;
     if (status === "completed") {
       await this.updateMemoryAfterAgentRun(messages, state.options);
