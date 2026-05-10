@@ -15,6 +15,6 @@ export const COLORS = {
 } as const;
 
 export const HINT_IDLE =
-  "Enter: send · Ctrl+Y or /copy: copy last reply · Esc: quit · Ctrl+C: force quit";
+  "Enter: send · drag-select + Cmd+C to copy · Esc: quit · Ctrl+C: force quit";
 export const HINT_RUNNING =
-  "Enter: steer · Shift+Enter: queue follow-up · Ctrl+Y: copy last reply · Esc: interrupt and quit";
+  "Enter: steer · Shift+Enter: queue follow-up · drag-select + Cmd+C to copy · Esc: interrupt";

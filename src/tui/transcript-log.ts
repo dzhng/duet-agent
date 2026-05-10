@@ -82,5 +82,7 @@ function findLast<T>(items: readonly T[], predicate: (item: T) => boolean): T | 
 }
 
 function formatEntries(entries: readonly TranscriptEntry[]): string {
-  return entries.map((entry) => `${entry.kind === "user" ? "you" : "agent"}: ${entry.text}`).join("\n\n");
+  return entries
+    .map((entry) => `${entry.kind === "user" ? "you" : "agent"}: ${entry.text}`)
+    .join("\n\n");
 }

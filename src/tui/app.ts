@@ -22,11 +22,7 @@ import {
   tryReadClipboardImage,
   tryReadClipboardText,
 } from "./paste.js";
-import {
-  parseCopyArgument,
-  selectCopyText,
-  type TranscriptEntry,
-} from "./transcript-log.js";
+import { parseCopyArgument, selectCopyText, type TranscriptEntry } from "./transcript-log.js";
 import type { Session } from "../session/session.js";
 import type {
   TurnAgentFile,
@@ -147,8 +143,14 @@ interface InternalKeyHandlerLike {
  */
 export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | undefined> {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  // useMouse: false hands the mouse channel back to the terminal emulator
+  // so users can drag-select transcript text and Cmd+C / Cmd+V work
+  // natively, the way they do in Claude Code. The cost is that the
+  // sidebar and scroll wheel become keyboard-only — a tradeoff we made
+  // intentionally so copy-out works without a slash command or modifier.
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
+    useMouse: false,
     useKittyKeyboard: {},
     targetFps: 60,
   });
@@ -1607,18 +1609,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       appendBlock(
         "[copy]",
         `clipboard write failed: ${result.error ?? "unknown error"}` +
-          (process.platform === "linux"
-            ? "\nInstall one of: wl-clipboard, xclip, xsel"
-            : ""),
+          (process.platform === "linux" ? "\nInstall one of: wl-clipboard, xclip, xsel" : ""),
         COLORS.error,
       );
     }
   }
 
-  function describeCopySelection(
-    argument: "last" | "all" | number,
-    length: number,
-  ): string {
+  function describeCopySelection(argument: "last" | "all" | number, length: number): string {
     const chars = `${length} char${length === 1 ? "" : "s"}`;
     if (argument === "last") return `last message (${chars})`;
     if (argument === "all") return `full transcript (${chars})`;
