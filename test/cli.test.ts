@@ -338,7 +338,7 @@ describe("CLI model inference", () => {
 
     const { config, modelResolution, memoryModelResolution } = buildCliTurnConfig(
       {
-        disableDurableMemory: true,
+        incognito: true,
         workDir: "/repo",
         systemInstructions: "Prefer concise answers.",
         systemPromptFiles: [],
@@ -536,15 +536,15 @@ describe("CLI version checks", () => {
 });
 
 describe("CLI resume command", () => {
-  test("preserves in-process-only memory mode", () => {
+  test("preserves incognito mode", () => {
     expect(
       resumeCommand("session_123", {
         modelName: "opus-4.7",
         memoryModelName: "haiku-4.5",
         workDir: "/repo",
-        disableDurableMemory: true,
+        incognito: true,
       }),
-    ).toContain("--no-memory");
+    ).toContain("--incognito");
   });
 });
 

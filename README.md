@@ -466,7 +466,7 @@ const turnRunner = new TurnRunner({
 });
 ```
 
-By default, the CLI stores durable observations in `~/.duet/memory.db`; run it with `--no-memory` to keep observational memory in process only. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, pi-turn observation/reflection, compaction, and observation persistence.
+By default, the CLI stores durable observations in `~/.duet/memory.db`; run it with `--incognito` (or `-i`) to keep observational memory in process only. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, pi-turn observation/reflection, compaction, and observation persistence.
 
 You can also resume directly from saved state. The runner owns state
 internally after `start`, so resumed state is handed in through the start

@@ -11,6 +11,7 @@ import {
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
+import { writeClipboardText } from "./clipboard.js";
 import {
   describeMacClipboardTypes,
   loadImageFromPath,
@@ -21,6 +22,7 @@ import {
   tryReadClipboardImage,
   tryReadClipboardText,
 } from "./paste.js";
+import { parseCopyArgument, selectCopyText, type TranscriptEntry } from "./transcript-log.js";
 import type { Session } from "../session/session.js";
 import type {
   TurnAgentFile,
@@ -48,16 +50,19 @@ import {
   skillAutocompleteMatches,
   type SlashAutocompleteGroup,
 } from "./autocomplete.js";
+import { homedir } from "node:os";
+
 import { buildFileIndex } from "./file-index.js";
 import {
-  DUET_BANNER_LINES,
+  DUET_BANNER_LINES_COMPACT,
   type HistoryBlockKind,
   type HistoryDisplayBlock,
   historyDisplayBlocks,
   limitHistoryDisplayBlocks,
-  startupHeaderLines,
 } from "./history.js";
+import { listRecentSessions } from "./recent-sessions.js";
 import { createSidebar, SIDEBAR_WIDTH } from "./sidebar.js";
+import { orderedSelectableStarters, selectStarters } from "./starters.js";
 import { COLORS, HINT_IDLE, HINT_RUNNING } from "./theme.js";
 
 export type { HistoryBlockKind, HistoryDisplayBlock, LimitedHistory } from "./history.js";
@@ -141,8 +146,14 @@ interface InternalKeyHandlerLike {
  */
 export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | undefined> {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  // useMouse: false hands the mouse channel back to the terminal emulator
+  // so users can drag-select transcript text and Cmd+C / Cmd+V work
+  // natively, the way they do in Claude Code. The cost is that the
+  // sidebar and scroll wheel become keyboard-only — a tradeoff we made
+  // intentionally so copy-out works without a slash command or modifier.
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
+    useMouse: false,
     useKittyKeyboard: {},
     targetFps: 60,
   });
@@ -397,6 +408,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // Monotonic counter for the next `[Image #N]` placeholder. Reset alongside
   // `pendingImages` so users see a fresh `#1` label after each submit.
   let nextImageId = 1;
+  // Parallel record of user/agent message bodies driven by the same code
+  // paths that render them into the transcript. The `/copy` slash command
+  // and Ctrl+Y keystroke read from this log instead of trying to walk the
+  // ScrollBoxRenderable, which only stores presentation lines.
+  const transcriptLog: TranscriptEntry[] = [];
+  function recordTranscriptEntry(kind: TranscriptEntry["kind"], text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    transcriptLog.push({ kind, text: trimmed });
+  }
   let lastTerminal: TurnTerminalEvent | undefined;
   let latestContextUsage: TurnContextUsageEvent | undefined;
   // Running USD total across every settled turn in this session. Reset only
@@ -586,10 +607,17 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     skills: ReadonlyArray<{ name: string }>,
     agentFiles: readonly TurnAgentFile[],
   ): void {
-    for (const line of DUET_BANNER_LINES) appendLine(line, COLORS.status);
-    const [title, ...details] = startupHeaderLines(input);
-    appendLine(title ?? "[duet]", COLORS.status);
-    for (const line of details) appendLine(line, COLORS.hint);
+    // Compact 3-row wordmark. The full DUET_BANNER_LINES is ~6 rows tall
+    // and pushed the starter list off-screen on small terminals; this one
+    // keeps the brand mark visible while leaving room for the ice-break
+    // prompts to land above the fold.
+    for (const line of DUET_BANNER_LINES_COMPACT) appendLine(line, COLORS.status);
+    appendLine(" ", COLORS.hint);
+    appendLine(" ", COLORS.hint);
+    // One-line header. Keeps cwd/model context visible without burning
+    // another five rows. Provenance (env/file source) is intentionally
+    // dropped here — surface it via /whoami later.
+    appendLine(formatBootHeader(input), COLORS.status);
 
     if (input.versionNoticePromise) {
       const versionLine = new TextRenderable(renderer, {
@@ -608,18 +636,200 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       });
     }
 
-    if (agentFiles.length === 0) {
-      appendLine("[agent file] none", COLORS.hint);
-    } else {
+    // Only mention agent files when one is actually loaded; "[agent file]
+    // none" is noise on every empty boot.
+    if (agentFiles.length > 0) {
       appendLine(`[agent file] ${agentFiles.map((file) => file.name).join(", ")}`, COLORS.hint);
     }
 
-    if (skills.length === 0) {
-      appendLine("[skills] none", COLORS.hint);
-    } else {
-      const names = skills.map((skill) => skill.name).join(", ");
-      appendLine(`[skills] ${skills.length} loaded: ${names}`, COLORS.hint);
+    renderStarters(skills);
+  }
+
+  function formatBootHeader(headerInput: RunTuiInput): string {
+    const cwdLabel = shortenCwd(headerInput.workDir);
+    return `DUET AGENT  v${headerInput.packageVersion}   ·   ${cwdLabel}   ·   ${headerInput.modelName} + ${headerInput.memoryModelName}`;
+  }
+
+  function shortenCwd(cwd: string): string {
+    const home = homedir();
+    if (cwd === home) return "~";
+    if (cwd.startsWith(`${home}/`)) return `~${cwd.slice(home.length)}`;
+    return cwd;
+  }
+
+  // ---- starter prompts (boot screen) ---------------------------------------
+
+  // Boot screen offers a small set of context-aware starter prompts so
+  // first-time and returning users land on something concrete in <2 seconds
+  // instead of staring at a blank input. The starter section dismisses on
+  // first composition or first submit and never re-renders that session.
+  //
+  // Each entry in `starterEntries` is either a raw cwd-based prompt to
+  // submit verbatim, or a recent-session continuation that injects the
+  // previous session's last user prompt into the input field. The two
+  // kinds share the same numbered/highlighted row UX.
+  type StarterEntry =
+    | { kind: "prompt"; label: string; submit: string }
+    | { kind: "recent"; label: string; submit: string; sessionId: string };
+  const starterEntries: StarterEntry[] = [];
+  // Lines we render for the starter section so we can repaint highlights
+  // and tear them all down on dismissal. Includes the headline, numbered
+  // rows, the optional resume row, and the two trailing hint rows.
+  const starterRefs: TextRenderable[] = [];
+  // Indexes within `starterRefs` that correspond to numbered rows; used
+  // to repaint highlight on arrow / digit navigation.
+  const starterRowIndexes: number[] = [];
+  let highlightedStarterIndex = 0;
+  let startersVisible = false;
+
+  function startersAreVisible(): boolean {
+    return startersVisible;
+  }
+
+  function renderStarters(skills: ReadonlyArray<{ name: string }>): void {
+    // Read recent sessions off disk synchronously. The helper swallows fs
+    // errors and returns an empty list; a missing/empty ~/.duet/sessions
+    // directory is the common first-boot case.
+    const recentSessions = listRecentSessions({
+      excludeId: input.sessionId,
+      limit: 4,
+    });
+    const result = selectStarters({
+      cwd: input.workDir,
+      sessionHistory: input.history,
+      recentSessions,
+    });
+    // Selectable rows in render order. Recent sessions lead so returning
+    // users hit "pick up the thread" first; new users see the cwd starters
+    // under the original "what should we work on today?" headline.
+    const ordered = orderedSelectableStarters(result);
+    starterEntries.length = 0;
+    for (const row of ordered) {
+      if (row.kind === "recent" && row.sessionId !== undefined) {
+        starterEntries.push({
+          kind: "recent",
+          label: row.label,
+          submit: row.submit,
+          sessionId: row.sessionId,
+        });
+      } else {
+        starterEntries.push({ kind: "prompt", label: row.label, submit: row.submit });
+      }
     }
+
+    const hasRecent = result.recentSessions.length > 0;
+
+    starterRowIndexes.length = 0;
+    appendLine(" ", COLORS.hint);
+
+    if (hasRecent) {
+      // Returning user: continuity first.
+      starterRefs.push(addLine("pick up the thread", COLORS.agent));
+      appendLine(" ", COLORS.hint);
+      for (let i = 0; i < result.recentSessions.length; i += 1) {
+        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+        starterRowIndexes.push(starterRefs.length);
+        starterRefs.push(ref);
+      }
+      appendLine(" ", COLORS.hint);
+      starterRefs.push(addLine("or start something new", COLORS.agent));
+      appendLine(" ", COLORS.hint);
+      for (let j = 0; j < result.starters.length; j += 1) {
+        const i = result.recentSessions.length + j;
+        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+        starterRowIndexes.push(starterRefs.length);
+        starterRefs.push(ref);
+      }
+    } else {
+      // New user: original cwd-only ice-break.
+      starterRefs.push(addLine("what should we work on today?", COLORS.agent));
+      appendLine(" ", COLORS.hint);
+      for (let i = 0; i < starterEntries.length; i += 1) {
+        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+        starterRowIndexes.push(starterRefs.length);
+        starterRefs.push(ref);
+      }
+    }
+
+    appendLine(" ", COLORS.hint);
+    starterRefs.push(
+      addLine("type a number to run, ↑/↓ to highlight, or just start typing.", COLORS.hint),
+    );
+    starterRefs.push(
+      addLine(`✦ ${skills.length} skill${skills.length === 1 ? "" : "s"} · /help`, COLORS.hint),
+    );
+
+    startersVisible = starterEntries.length > 0;
+    if (startersVisible) {
+      highlightedStarterIndex = 0;
+      paintStarterHighlight();
+    }
+  }
+
+  function addLine(content: string, fg: string): TextRenderable {
+    const line = new TextRenderable(renderer, { content: content || " ", fg });
+    transcript.add(line);
+    return line;
+  }
+
+  function formatStarterRow(index: number, highlighted: boolean): string {
+    const entry = starterEntries[index];
+    const text = entry?.label ?? "";
+    const number = index + 1;
+    const arrow = highlighted ? "▶" : "→";
+    const numberCell = highlighted ? `[${number}]` : ` ${number} `;
+    return `   ${numberCell}  ${arrow}  ${text}`;
+  }
+
+  function paintStarterHighlight(): void {
+    for (let i = 0; i < starterRowIndexes.length; i += 1) {
+      const ref = starterRefs[starterRowIndexes[i]];
+      const isHighlighted = i === highlightedStarterIndex;
+      ref.content = formatStarterRow(i, isHighlighted);
+      ref.fg = isHighlighted ? COLORS.user : COLORS.hint;
+    }
+  }
+
+  function moveStarterHighlight(delta: number): void {
+    if (!startersVisible || starterEntries.length === 0) return;
+    const next = (highlightedStarterIndex + delta + starterEntries.length) % starterEntries.length;
+    highlightedStarterIndex = next;
+    paintStarterHighlight();
+  }
+
+  function jumpStarterHighlight(targetIndex: number): boolean {
+    if (!startersVisible) return false;
+    if (targetIndex < 0 || targetIndex >= starterEntries.length) return false;
+    highlightedStarterIndex = targetIndex;
+    paintStarterHighlight();
+    return true;
+  }
+
+  function dismissStarters(): void {
+    if (!startersVisible && starterRefs.length === 0) return;
+    for (const ref of starterRefs) {
+      transcript.remove(ref.id);
+      ref.destroy();
+    }
+    starterRefs.length = 0;
+    starterRowIndexes.length = 0;
+    starterEntries.length = 0;
+    startersVisible = false;
+  }
+
+  function submitHighlightedStarter(): boolean {
+    if (!startersVisible) return false;
+    const entry = starterEntries[highlightedStarterIndex];
+    if (!entry) return false;
+    dismissStarters();
+    // Recent-session rows reuse the prompt text in the *current* session
+    // rather than tearing down the runtime to switch sessions. The agent
+    // won't have prior context, but the user lands on the same task with
+    // one keystroke instead of typing it again. Documented tradeoff: a
+    // future iteration can swap this for true cross-session resume once
+    // the session manager exposes a hot-swap API.
+    submit(entry.submit);
+    return true;
   }
 
   function renderUsage(usage?: TurnTokenUsage): void {
@@ -678,6 +888,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         true,
       );
     } else if (step.type === "text") {
+      recordTranscriptEntry("agent", step.text);
       if (activeTextStream) {
         finalizeDelta(activeTextStream, step.text);
         activeTextStream = undefined;
@@ -844,10 +1055,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- input handling --------------------------------------------------------
 
-  // Track shift state for the most recent Enter keypress. The focused
-  // InputRenderable handles its own `enter` event after onKeyDown fires, so we
-  // capture the modifier here and read it during the ENTER event below.
-  let lastEnterShift = false;
   let skillAutocompleteSkills: readonly SkillAutocompleteItem[] = [];
   let skillAutocompleteToken: AutocompleteToken | undefined;
   let skillAutocompleteItems: SkillAutocompleteItem[] = [];
@@ -975,7 +1182,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const answers = questionPickerAnswerPayload(pendingQuestions, questionOptionSelectedIndex);
     if (!answers) return false;
 
-    appendBlock("you:", Object.values(answers).join("\n"), COLORS.user);
+    const answerText = Object.values(answers).join("\n");
+    recordTranscriptEntry("user", answerText);
+    appendBlock("you:", answerText, COLORS.user);
     void input.session
       .answer({ questions: pendingQuestions, answers, behavior: "follow_up" })
       .catch(reportError);
@@ -1192,6 +1401,37 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // consumes escape via its own keybindings before any global keypress handler
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
+    // Boot starter navigation. Only intercepts when the starter section is
+    // still on screen; once dismissed (by composition or first submit) all
+    // of these branches no-op and keys flow normally to the input.
+    if (startersAreVisible() && inputField.plainText.length === 0) {
+      if (key.name === "up") {
+        moveStarterHighlight(-1);
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "down") {
+        moveStarterHighlight(1);
+        key.preventDefault();
+        return;
+      }
+      if (
+        key.name &&
+        key.name.length === 1 &&
+        key.name >= "1" &&
+        key.name <= "9" &&
+        !key.ctrl &&
+        !key.meta &&
+        !key.super
+      ) {
+        const target = Number.parseInt(key.name, 10) - 1;
+        if (jumpStarterHighlight(target)) {
+          key.preventDefault();
+          return;
+        }
+      }
+    }
+
     // Cmd+V / Ctrl+V keystroke trigger. Many terminals (Warp in particular,
     // and macOS Terminal.app for binary clipboards) do not forward a paste
     // event to TUI programs on Cmd+V — they handle the clipboard at the app
@@ -1206,6 +1446,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (key.name === "v" && (key.super || key.meta || key.ctrl) && !key.shift) {
       key.preventDefault();
       void triggerClipboardProbe("keystroke");
+      return;
+    }
+
+    // Ctrl+Y — emacs-style "yank," repurposed here as the keyboard hotkey
+    // for the `/copy` slash command. macOS Cmd+C is owned by the terminal
+    // emulator and never reaches the TUI, so Ctrl+Y is the closest thing
+    // to a real copy keystroke we can deliver across all terminals.
+    if (key.name === "y" && key.ctrl && !key.shift && !key.super && !key.meta) {
+      key.preventDefault();
+      void handleCopySlashCommand("/copy");
       return;
     }
 
@@ -1307,16 +1557,24 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
 
     if (key.name === "return" || key.name === "enter") {
-      lastEnterShift = Boolean(key.shift);
+      // Shift+Enter inserts a literal newline at the cursor, matching every
+      // modern chat composer (Slack, Claude Code, ChatGPT, Discord). Plain
+      // Enter always submits — when the agent is running the submit path
+      // queues the message as a follow-up; otherwise it kicks off a new turn.
+      key.preventDefault();
+      if (key.shift) {
+        inputField.insertText("\n");
+        return;
+      }
       const value = inputField.plainText.trim();
       inputField.clear();
-      key.preventDefault();
       if (value) {
-        submit(value, lastEnterShift);
+        submit(value);
       } else if (questionPickerIsOpen()) {
         submitSelectedQuestionOption();
+      } else if (startersAreVisible()) {
+        submitHighlightedStarter();
       }
-      lastEnterShift = false;
       return;
     }
     if (key.name === "escape") {
@@ -1325,7 +1583,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   };
 
-  inputField.onContentChange = () => refreshAutocomplete();
+  inputField.onContentChange = () => {
+    // First real keystroke into the input collapses the starter section
+    // — the user is composing their own prompt, so the suggestions get
+    // out of the way for the rest of the session.
+    if (startersAreVisible() && inputField.plainText.length > 0) dismissStarters();
+    refreshAutocomplete();
+  };
   inputField.onCursorChange = () => refreshAutocomplete();
 
   // Paste handling. Terminals that forward binary clipboard contents (kitty,
@@ -1496,7 +1760,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   }
 
-  function submit(message: string, shiftEnter: boolean): void {
+  function submit(message: string): void {
+    // First user submit collapses the boot starter section permanently for
+    // this session, even when the prompt came from autocomplete or paste.
+    if (startersAreVisible()) dismissStarters();
     // Slash-style attach commands run locally and never reach the runner so
     // users on terminals that do not forward image bytes still have a way to
     // attach images by path.
@@ -1513,8 +1780,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       appendBlock("[paste]", "cleared pending image attachments", COLORS.system);
       return;
     }
+    if (message === "/copy" || message.startsWith("/copy ")) {
+      void handleCopySlashCommand(message);
+      return;
+    }
 
     const submittedImages = pendingImages;
+    recordTranscriptEntry("user", message);
     appendBlock("you:", message, COLORS.user);
     // Render attachments as a separate hint-colored footnote rather than
     // inlining them into the user-message block. Keeps the transcript
@@ -1533,14 +1805,56 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // double-charged with the same attachments on retry.
     clearPendingImages();
 
-    if (running) {
-      const behavior = shiftEnter ? "follow_up" : "steer";
-      void input.session.prompt({ message, behavior, images }).catch(reportError);
+    // Every submit — running or idle — is a follow_up. While the agent is
+    // running this queues; while idle it kicks off a fresh turn. Single
+    // mental model: type, press Enter, your message lands.
+    void input.session.prompt({ message, behavior: "follow_up", images }).catch(reportError);
+    if (!running) {
+      markRunning();
+    }
+  }
+
+  /**
+   * Resolve a `/copy ...` invocation to clipboard text and pipe it to the
+   * OS clipboard. Surfaces every failure mode in the transcript so users on
+   * minimal Linux installs see exactly which writer is missing (e.g.
+   * "install xclip or wl-clipboard").
+   */
+  async function handleCopySlashCommand(raw: string): Promise<void> {
+    const argumentRaw = raw === "/copy" ? "" : raw.slice("/copy ".length);
+    const argument = parseCopyArgument(argumentRaw);
+    if (argument === undefined) {
+      appendBlock(
+        "[copy]",
+        "Usage: /copy [last|all|<N>]  — last (default) copies the most recent agent reply",
+        COLORS.system,
+      );
       return;
     }
+    const text = selectCopyText(transcriptLog, argument);
+    if (!text) {
+      appendBlock("[copy]", "nothing to copy yet", COLORS.system);
+      return;
+    }
+    const result = await writeClipboardText(text);
+    if (result.ok) {
+      const summary = describeCopySelection(argument, text.length);
+      appendBlock("[copy]", `copied ${summary} to clipboard via ${result.via}`, COLORS.system);
+    } else {
+      appendBlock(
+        "[copy]",
+        `clipboard write failed: ${result.error ?? "unknown error"}` +
+          (process.platform === "linux" ? "\nInstall one of: wl-clipboard, xclip, xsel" : ""),
+        COLORS.error,
+      );
+    }
+  }
 
-    void input.session.prompt({ message, behavior: "follow_up", images }).catch(reportError);
-    markRunning();
+  function describeCopySelection(argument: "last" | "all" | number, length: number): string {
+    const chars = `${length} char${length === 1 ? "" : "s"}`;
+    if (argument === "last") return `last message (${chars})`;
+    if (argument === "all") return `full transcript (${chars})`;
+    return `last ${argument} messages (${chars})`;
   }
 
   async function handleImageSlashCommand(raw: string): Promise<void> {
@@ -1615,9 +1929,26 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   }
 
+  // Seed the copy-out log from full resumed history (not the trimmed display
+  // slice) so `/copy all` and `/copy <N>` can reach back further than what is
+  // actually rendered in the transcript on resume.
+  if (input.history && input.history.length > 0) {
+    for (const block of historyDisplayBlocks(input.history)) {
+      if (block.kind === "user") {
+        // History blocks for users are formatted as `you:\n<text>`; strip the
+        // label so the clipboard text matches what the user originally typed.
+        const stripped = block.content.replace(/^you:\n?/, "");
+        recordTranscriptEntry("user", stripped);
+      } else if (block.kind === "agent") {
+        recordTranscriptEntry("agent", block.content);
+      }
+    }
+  }
+
   // ---- bootstrap initial prompt ----------------------------------------------
 
   if (input.initialPrompt) {
+    recordTranscriptEntry("user", input.initialPrompt);
     appendBlock("you:", input.initialPrompt, COLORS.user);
     void input.session
       .prompt({ message: input.initialPrompt, behavior: "follow_up" })
