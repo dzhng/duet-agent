@@ -6,11 +6,7 @@ import { join, resolve } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 
-import {
-  type RecentSession,
-  relativeTimeLabel,
-  truncateRecentPrompt,
-} from "./recent-sessions.js";
+import { type RecentSession, relativeTimeLabel, truncateRecentPrompt } from "./recent-sessions.js";
 
 /**
  * Inputs for {@link selectStarters}. The helper is a pure function over the
@@ -127,9 +123,7 @@ export function selectStarters(input: StartersInput): StartersResult {
       input.now,
     )}`,
   }));
-  return resumePrompt
-    ? { starters, resumePrompt, recentSessions }
-    : { starters, recentSessions };
+  return resumePrompt ? { starters, resumePrompt, recentSessions } : { starters, recentSessions };
 }
 
 function pickStarters(cwd: string): readonly string[] {
@@ -223,17 +217,10 @@ function pickResumePrompt(history?: readonly AgentMessage[]): string | undefined
   return undefined;
 }
 
-type UserHistoryContent =
-  | string
-  | ReadonlyArray<TextContent | ImageContent | { type: string; text?: unknown }>;
-
-function userMessageText(content: UserHistoryContent): string {
+function userMessageText(content: string | ReadonlyArray<TextContent | ImageContent>): string {
   if (typeof content === "string") return content;
   return content
-    .filter(
-      (block): block is { type: "text"; text: string } =>
-        block.type === "text" && typeof (block as { text?: unknown }).text === "string",
-    )
+    .filter((block): block is TextContent => block.type === "text")
     .map((block) => block.text)
     .join("");
 }

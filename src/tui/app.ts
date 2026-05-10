@@ -48,7 +48,7 @@ import {
   skillAutocompleteMatches,
   type SlashAutocompleteGroup,
 } from "./autocomplete.js";
-import * as os from "node:os";
+import { homedir } from "node:os";
 
 import { buildFileIndex } from "./file-index.js";
 import {
@@ -633,7 +633,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function shortenCwd(cwd: string): string {
-    const home = os.homedir();
+    const home = homedir();
     if (cwd === home) return "~";
     if (cwd.startsWith(`${home}/`)) return `~${cwd.slice(home.length)}`;
     return cwd;
@@ -676,7 +676,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       excludeId: input.sessionId,
       limit: 3,
     });
-    const { starters, resumePrompt, recentSessions: recentRows } = selectStarters({
+    const {
+      starters,
+      resumePrompt,
+      recentSessions: recentRows,
+    } = selectStarters({
       cwd: input.workDir,
       sessionHistory: input.history,
       recentSessions,
@@ -747,10 +751,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function paintStarterHighlight(): void {
     for (let i = 0; i < starterRowIndexes.length; i += 1) {
-      const refIndex = starterRowIndexes[i];
-      if (refIndex === undefined) continue;
-      const ref = starterRefs[refIndex];
-      if (!ref) continue;
+      const ref = starterRefs[starterRowIndexes[i]];
       const isHighlighted = i === highlightedStarterIndex;
       ref.content = formatStarterRow(i, isHighlighted);
       ref.fg = isHighlighted ? COLORS.user : COLORS.hint;
@@ -759,8 +760,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function moveStarterHighlight(delta: number): void {
     if (!startersVisible || starterEntries.length === 0) return;
-    const next =
-      (highlightedStarterIndex + delta + starterEntries.length) % starterEntries.length;
+    const next = (highlightedStarterIndex + delta + starterEntries.length) % starterEntries.length;
     highlightedStarterIndex = next;
     paintStarterHighlight();
   }

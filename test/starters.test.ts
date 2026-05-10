@@ -100,11 +100,7 @@ describe("selectStarters", () => {
 
   it("surfaces the most recent short user prompt as resumePrompt", () => {
     const dir = fixtureDir("resume");
-    const history = [
-      userMessage("first"),
-      assistantMessage("ack"),
-      userMessage("draft a tweet"),
-    ];
+    const history = [userMessage("first"), assistantMessage("ack"), userMessage("draft a tweet")];
     const result = selectStarters({ cwd: dir, sessionHistory: history });
     expect(result.resumePrompt).toBe("draft a tweet");
   });
@@ -157,9 +153,7 @@ describe("selectStarters", () => {
       sessionId: "session_aaa",
       prompt: "draft a tweet thread",
     });
-    expect(result.recentSessions[0]!.label).toBe(
-      "continue: draft a tweet thread \u2014 5m ago",
-    );
+    expect(result.recentSessions[0]!.label).toBe("continue: draft a tweet thread \u2014 5m ago");
     expect(result.recentSessions[1]!.label.endsWith("\u2014 3h ago")).toBe(true);
     expect(result.recentSessions[1]!.label).toContain("\u2026");
   });
@@ -215,12 +209,7 @@ describe("listRecentSessions", () => {
       [{ role: "user", content: "new prompt" }],
       Date.now() - 5 * 60_000,
     );
-    writeSession(
-      root,
-      "session_active",
-      [{ role: "user", content: "current" }],
-      Date.now(),
-    );
+    writeSession(root, "session_active", [{ role: "user", content: "current" }], Date.now());
 
     const result = listRecentSessions({
       sessionsRoot: root,
