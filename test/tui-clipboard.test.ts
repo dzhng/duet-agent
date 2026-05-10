@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -104,9 +104,6 @@ describe("writeClipboardText", () => {
     // commands. Every candidate spawn must fail with ENOENT, and the
     // function should report a populated error instead of throwing.
     const empty = mkdtempSync(join(tmpdir(), "duet-clipboard-"));
-    // Drop a no-op marker so the temp dir is not empty (some test runners
-    // garbage-collect empty tmp dirs aggressively).
-    writeFileSync(join(empty, "marker"), "");
 
     const previousPath = process.env.PATH;
     process.env.PATH = empty;

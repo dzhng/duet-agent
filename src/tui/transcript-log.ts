@@ -75,8 +75,7 @@ export function parseCopyArgument(raw: string): "last" | "all" | number | undefi
 
 function findLast<T>(items: readonly T[], predicate: (item: T) => boolean): T | undefined {
   for (let i = items.length - 1; i >= 0; i--) {
-    const candidate = items[i];
-    if (candidate !== undefined && predicate(candidate)) return candidate;
+    if (predicate(items[i])) return items[i];
   }
   return undefined;
 }
