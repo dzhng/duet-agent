@@ -58,7 +58,7 @@ import {
   type HistoryBlockKind,
   type HistoryDisplayBlock,
   historyDisplayBlocks,
-  limitHistoryDisplayBlocks,
+  limitHistoryDisplayMessages,
 } from "./history.js";
 import { listRecentSessions } from "./recent-sessions.js";
 import { createSidebar, SIDEBAR_WIDTH } from "./sidebar.js";
@@ -93,7 +93,7 @@ export { formatSkillAutocompleteItem } from "./autocomplete.js";
 export {
   DUET_BANNER_LINES,
   historyDisplayBlocks,
-  limitHistoryDisplayBlocks,
+  limitHistoryDisplayMessages,
   startupHeaderLines,
 } from "./history.js";
 import { assembleToolBlock, formatToolBlock, truncateToolText } from "./tool-formatters.js";
@@ -124,8 +124,14 @@ export interface RunTuiInput {
   versionNoticePromise?: Promise<string | undefined>;
   /** Past messages to replay into the transcript on resume. */
   history?: AgentMessage[];
-  /** Maximum prior-session display lines to replay on resume; 0 disables replay. */
-  resumeHistoryLines?: number;
+  /**
+   * Number of trailing user-turn exchanges to replay from prior history.
+   * Each exchange is the user prompt plus the assistant blocks (text,
+   * reasoning, tools, errors) that followed it. `0` disables replay; when
+   * unset, every block is replayed. The CLI passes the configured default
+   * so resumes do not flood the transcript.
+   */
+  resumeHistoryMessages?: number;
 }
 
 const SKILL_AUTOCOMPLETE_LIMIT = AUTOCOMPLETE_LIMITS.skill;
@@ -1948,15 +1954,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   renderSetupIntro(skills, agentFiles);
   refreshSidebar();
 
-  const resumeHistoryLines = input.resumeHistoryLines ?? Number.POSITIVE_INFINITY;
-  if (resumeHistoryLines > 0 && input.history && input.history.length > 0) {
-    const limited = limitHistoryDisplayBlocks(
+  const resumeHistoryMessages = input.resumeHistoryMessages ?? Number.POSITIVE_INFINITY;
+  if (resumeHistoryMessages > 0 && input.history && input.history.length > 0) {
+    const limited = limitHistoryDisplayMessages(
       historyDisplayBlocks(input.history),
-      resumeHistoryLines,
+      resumeHistoryMessages,
     );
-    if (limited.omittedLines > 0) {
+    if (limited.omittedBlocks > 0) {
       appendLine(
-        `[resume] showing last ${resumeHistoryLines} lines of prior session history`,
+        `[resume] showing last ${resumeHistoryMessages} message${resumeHistoryMessages === 1 ? "" : "s"} of prior session history`,
         COLORS.hint,
       );
     }

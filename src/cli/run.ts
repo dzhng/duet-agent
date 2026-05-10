@@ -16,9 +16,9 @@ import {
 import { SessionManager } from "../session/session-manager.js";
 import { runTui } from "../tui/app.js";
 import type { TurnRunnerConfig } from "../types/config.js";
-import { DEFAULT_RESUME_HISTORY_LINES, printRunHelp } from "./help.js";
+import { DEFAULT_RESUME_HISTORY_MESSAGES, printRunHelp } from "./help.js";
 import { resumeCommand } from "./resume-hint.js";
-import { fail, isInteractive, loadCliEnvFiles, parseResumeHistoryLines } from "./shared.js";
+import { fail, isInteractive, loadCliEnvFiles, parseResumeHistoryMessages } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
 import { getNewVersionNotice } from "./version-check.js";
 
@@ -97,8 +97,8 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   let resumeSessionId: string | undefined;
   let systemInstructions: string | undefined;
   let systemPromptFiles: string[] | undefined;
-  let resumeHistoryLines = DEFAULT_RESUME_HISTORY_LINES;
-  let resumeHistoryLinesExplicit = false;
+  let resumeHistoryMessages = DEFAULT_RESUME_HISTORY_MESSAGES;
+  let resumeHistoryMessagesExplicit = false;
   let jsonOutput = false;
   let envFilePath: string | undefined;
   let incognito = false;
@@ -140,14 +140,14 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         resumeSessionId = args[++i];
         break;
-      case "--resume-history-lines":
+      case "--resume-history-messages":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         try {
-          resumeHistoryLines = parseResumeHistoryLines(args[++i]!, args[i - 1]!);
+          resumeHistoryMessages = parseResumeHistoryMessages(args[++i]!, args[i - 1]!);
         } catch (error) {
           fail(error instanceof Error ? error.message : String(error));
         }
-        resumeHistoryLinesExplicit = true;
+        resumeHistoryMessagesExplicit = true;
         break;
       case "--system-prompt":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
@@ -307,7 +307,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       await runTui({
         session,
         ...(resumedHistory ? { history: resumedHistory } : {}),
-        resumeHistoryLines,
+        resumeHistoryMessages,
         modelName,
         modelSource: describeModelResolution(modelResolution),
         memoryModelName,
@@ -328,7 +328,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         ...(systemInstructions ? { systemInstructions } : {}),
         ...(systemPromptFiles ? { systemPromptFiles } : {}),
         ...(envFilePath ? { envFilePath } : {}),
-        ...(resumeHistoryLinesExplicit ? { resumeHistoryLines } : {}),
+        ...(resumeHistoryMessagesExplicit ? { resumeHistoryMessages } : {}),
       })}\n`,
     );
   } catch (err: any) {

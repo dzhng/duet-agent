@@ -13,7 +13,7 @@ export interface ResumeCommandInput {
   systemInstructions?: string;
   systemPromptFiles?: string[];
   envFilePath?: string;
-  resumeHistoryLines?: number;
+  resumeHistoryMessages?: number;
 }
 
 /**
@@ -54,8 +54,8 @@ export function resumeCommand(sessionId: string, input: ResumeCommandInput): str
   if (input.envFilePath) {
     command.push("--env-file", shellQuote(input.envFilePath));
   }
-  if (input.resumeHistoryLines !== undefined) {
-    command.push("--resume-history-lines", String(input.resumeHistoryLines));
+  if (input.resumeHistoryMessages !== undefined) {
+    command.push("--resume-history-messages", String(input.resumeHistoryMessages));
   }
   return command.join(" ");
 }

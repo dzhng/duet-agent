@@ -1,6 +1,12 @@
 import { DEFAULT_DUET_ENV_FILE, SUPPORTED_API_KEYS } from "./shared.js";
 
-export const DEFAULT_RESUME_HISTORY_LINES = 40;
+/**
+ * How many trailing user-turn exchanges to render when resuming a session.
+ * Each exchange is the user prompt plus the assistant reply (text, reasoning,
+ * and tool blocks) that followed it; assistant blocks before the first user
+ * message in the kept window are dropped along with everything older.
+ */
+export const DEFAULT_RESUME_HISTORY_MESSAGES = 5;
 
 export function printRunHelp(packageName: string): void {
   console.log(`
@@ -31,8 +37,8 @@ OPTIONS
   -i, --incognito          Keep memory in-process; do not read or write durable memory
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
-  --resume-history-lines <n>
-                            Display up to n prior-session lines in the TUI (default: ${DEFAULT_RESUME_HISTORY_LINES})
+  --resume-history-messages <n>
+                            Replay the last n user-turn exchanges from the prior session in the TUI (default: ${DEFAULT_RESUME_HISTORY_MESSAGES})
   --system-prompt <text>   Additional system instructions for the runner
   --system-prompt-file <path>
                             Load a file into the system prompt; repeatable

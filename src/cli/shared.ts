@@ -72,10 +72,10 @@ export function loadCliEnvFiles(workDir: string, envFilePath?: string): Set<stri
   return dotenvKeys;
 }
 
-/** Reject negative or non-numeric values for `--resume-history-lines`. */
-export function parseResumeHistoryLines(
+/** Reject negative or non-numeric values for `--resume-history-messages`. */
+export function parseResumeHistoryMessages(
   value: string,
-  optionName = "--resume-history-lines",
+  optionName = "--resume-history-messages",
 ): number {
   if (!/^\d+$/.test(value)) {
     throw new Error(`${optionName} must be a non-negative integer`);

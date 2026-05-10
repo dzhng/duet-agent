@@ -12,7 +12,7 @@ import {
   formatNewVersionNotice,
   globalUpgradeCommand,
   loadCliEnvFiles,
-  parseResumeHistoryLines,
+  parseResumeHistoryMessages,
   resumeCommand,
   runEnvCommand,
   shouldUseTui,
@@ -28,7 +28,7 @@ import {
   formatSkillAutocompleteDescription,
   formatSkillAutocompleteItem,
   historyDisplayBlocks,
-  limitHistoryDisplayBlocks,
+  limitHistoryDisplayMessages,
   moveQuestionOptionSelection,
   moveSkillAutocompleteSelection,
   questionPickerAnswerPayload,
@@ -558,40 +558,61 @@ describe("CLI render mode", () => {
 });
 
 describe("CLI resume history display", () => {
-  test("parses non-negative resume history line limits", () => {
-    expect(parseResumeHistoryLines("0")).toBe(0);
-    expect(parseResumeHistoryLines("40")).toBe(40);
-    expect(() => parseResumeHistoryLines("-1")).toThrow(
-      "--resume-history-lines must be a non-negative integer",
+  test("parses non-negative resume history message limits", () => {
+    expect(parseResumeHistoryMessages("0")).toBe(0);
+    expect(parseResumeHistoryMessages("5")).toBe(5);
+    expect(() => parseResumeHistoryMessages("-1")).toThrow(
+      "--resume-history-messages must be a non-negative integer",
     );
-    expect(() => parseResumeHistoryLines("all")).toThrow(
-      "--resume-history-lines must be a non-negative integer",
+    expect(() => parseResumeHistoryMessages("all")).toThrow(
+      "--resume-history-messages must be a non-negative integer",
     );
   });
 
-  test("limits resumed history to the newest display lines", () => {
-    const limited = limitHistoryDisplayBlocks(
+  test("limits resumed history to the newest user-turn exchanges", () => {
+    const limited = limitHistoryDisplayMessages(
       [
-        { kind: "user", content: "you:\nold question" },
-        { kind: "agent", content: "old answer" },
+        { kind: "user", content: "you:\noldest question" },
+        { kind: "agent", content: "oldest answer" },
+        { kind: "user", content: "you:\nmiddle question" },
+        { kind: "agent", content: "middle answer" },
         { kind: "user", content: "you:\nnew question" },
-        { kind: "agent", content: "line one\nline two\nline three" },
+        { kind: "tool", content: "[tool read] ✓" },
+        { kind: "agent", content: "line one\nline two" },
       ],
-      4,
+      2,
     );
 
-    expect(limited.omittedLines).toBe(4);
+    expect(limited.omittedBlocks).toBe(2);
     expect(limited.blocks.map((block) => block.content)).toEqual([
-      "new question",
-      "line one\nline two\nline three",
+      "you:\nmiddle question",
+      "middle answer",
+      "you:\nnew question",
+      "[tool read] ✓",
+      "line one\nline two",
     ]);
   });
 
-  test("zero resume history lines disables replay", () => {
-    const limited = limitHistoryDisplayBlocks([{ kind: "agent", content: "one\ntwo" }], 0);
+  test("drops orphan blocks before the first kept user turn", () => {
+    const limited = limitHistoryDisplayMessages(
+      [
+        { kind: "agent", content: "orphan reply" },
+        { kind: "tool", content: "orphan tool" },
+        { kind: "user", content: "you:\nfirst real prompt" },
+        { kind: "agent", content: "answer" },
+      ],
+      5,
+    );
+
+    expect(limited.omittedBlocks).toBe(2);
+    expect(limited.blocks.map((block) => block.kind)).toEqual(["user", "agent"]);
+  });
+
+  test("zero resume history messages disables replay", () => {
+    const limited = limitHistoryDisplayMessages([{ kind: "agent", content: "one\ntwo" }], 0);
 
     expect(limited.blocks).toEqual([]);
-    expect(limited.omittedLines).toBe(2);
+    expect(limited.omittedBlocks).toBe(1);
   });
 
   test("formats resumed messages before limiting", () => {
@@ -647,7 +668,13 @@ describe("CLI resume history display", () => {
       modelSource: "default",
       memoryModelName: "haiku-4.5",
     });
-    const history = limitHistoryDisplayBlocks([{ kind: "agent", content: "previous answer" }], 40);
+    const history = limitHistoryDisplayMessages(
+      [
+        { kind: "user", content: "you:\nprevious question" },
+        { kind: "agent", content: "previous answer" },
+      ],
+      5,
+    );
 
     expect([...header, ...history.blocks.map((block) => block.content)]).toEqual([
       "[duet] v0.1.12",
@@ -655,6 +682,7 @@ describe("CLI resume history display", () => {
       "[session] session_123",
       "[model] opus-4.7 — default",
       "[memory model] haiku-4.5",
+      "you:\nprevious question",
       "previous answer",
     ]);
   });

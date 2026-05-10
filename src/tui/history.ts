@@ -15,12 +15,16 @@ export interface HistoryDisplayBlock {
   content: string;
 }
 
-/** Result of trimming history to fit a maximum line budget on resume. */
+/** Result of trimming history to fit a maximum exchange budget on resume. */
 export interface LimitedHistory {
   /** The trailing blocks that fit inside the budget, in original order. */
   blocks: HistoryDisplayBlock[];
-  /** Total number of lines that were dropped from the head of the history. */
-  omittedLines: number;
+  /**
+   * How many earlier blocks were dropped from the head of the history so the
+   * caller can render a "showing last N" notice. Counts blocks, not lines or
+   * user turns; use it as a presence flag rather than a precise size.
+   */
+  omittedBlocks: number;
 }
 
 /** Minimal field set needed to render the duet startup banner. */
@@ -183,45 +187,46 @@ export function startupHeaderLines(input: StartupHeaderInput): string[] {
 }
 
 /**
- * Trim a sequence of display blocks to fit `maxLines` total rendered lines.
+ * Trim a sequence of display blocks to the last `maxMessages` user-turn
+ * exchanges.
  *
- * Walks back-to-front so the most recent context is kept; when the budget
- * lands mid-block, the trailing portion of that block is preserved and the
- * dropped line count is reported so the caller can render a "showing last N"
- * notice.
+ * An exchange starts at a `user` block and runs through every assistant,
+ * reasoning, tool, and error block that follows it until the next user
+ * block. Walking back-to-front, we keep blocks until we have crossed the
+ * target number of user blocks and reached the start of that earliest kept
+ * exchange; any leading non-user blocks before the first user block in the
+ * window are dropped along with everything older.
  */
-export function limitHistoryDisplayBlocks(
+export function limitHistoryDisplayMessages(
   blocks: readonly HistoryDisplayBlock[],
-  maxLines: number,
+  maxMessages: number,
 ): LimitedHistory {
-  if (maxLines <= 0) return { blocks: [], omittedLines: countHistoryLines(blocks) };
+  if (maxMessages <= 0) return { blocks: [], omittedBlocks: blocks.length };
 
-  const selected: HistoryDisplayBlock[] = [];
-  let remaining = maxLines;
-  let omittedLines = 0;
-
+  let userTurns = 0;
+  let cutIndex = blocks.length;
   for (let index = blocks.length - 1; index >= 0; index--) {
-    const block = blocks[index]!;
-    const lines = block.content.split("\n");
-    if (lines.length <= remaining) {
-      selected.unshift(block);
-      remaining -= lines.length;
-      continue;
+    if (blocks[index]!.kind === "user") {
+      userTurns += 1;
+      if (userTurns >= maxMessages) {
+        cutIndex = index;
+        break;
+      }
     }
-    if (remaining > 0) {
-      selected.unshift({ ...block, content: lines.slice(-remaining).join("\n") });
-      omittedLines += lines.length - remaining;
-      remaining = 0;
-    } else {
-      omittedLines += lines.length;
-    }
+    cutIndex = index;
   }
 
-  return { blocks: selected, omittedLines };
-}
+  // If the kept window does not start on a user block (e.g. the session
+  // resumed mid-assistant turn before any user prompt), advance past the
+  // leading orphan blocks so the replayed transcript begins on a user line.
+  while (cutIndex < blocks.length && blocks[cutIndex]!.kind !== "user") {
+    cutIndex += 1;
+  }
 
-function countHistoryLines(blocks: readonly HistoryDisplayBlock[]): number {
-  return blocks.reduce((count, block) => count + block.content.split("\n").length, 0);
+  return {
+    blocks: blocks.slice(cutIndex),
+    omittedBlocks: cutIndex,
+  };
 }
 
 type UserHistoryContent = string | ReadonlyArray<{ type: string; text?: unknown }>;

@@ -42,7 +42,7 @@ export {
   fileExists,
   formatEnvEntries,
   loadCliEnvFiles,
-  parseResumeHistoryLines,
+  parseResumeHistoryMessages,
   resolveUserPath,
   shellQuote,
 } from "./cli/shared.js";
