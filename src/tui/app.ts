@@ -738,10 +738,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       addLine("type a number to run, ↑/↓ to highlight, or just start typing.", COLORS.hint),
     );
     starterRefs.push(
-      addLine(
-        `✦ ${skills.length} skill${skills.length === 1 ? "" : "s"} · /help`,
-        COLORS.hint,
-      ),
+      addLine(`✦ ${skills.length} skill${skills.length === 1 ? "" : "s"} · /help`, COLORS.hint),
     );
 
     startersVisible = starterEntries.length > 0;
