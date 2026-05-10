@@ -16,12 +16,23 @@ import { spawn } from "node:child_process";
 
 /** Result of a write attempt. `error` is undefined on success. */
 export interface ClipboardWriteResult {
-  /** True when one of the candidate commands accepted stdin and exited 0. */
+  /** True when one of the candidate commands accepted stdin, exited 0, AND
+   * a readback (where supported) confirmed the clipboard now contains the
+   * exact bytes we sent. Exit-code-only success is not enough — some
+   * macOS environments have been observed to exit pbcopy 0 without
+   * actually updating NSPasteboard. */
   ok: boolean;
-  /** Name of the command that succeeded, e.g. "pbcopy"; undefined on failure. */
+  /** Name of the command that succeeded (or, on `kind="verification-failed"`,
+   * the writer that ran). Undefined when no writer was available at all. */
   via?: string;
-  /** Last error encountered when every candidate failed. */
+  /** Last error encountered when the write failed. */
   error?: string;
+  /** Distinguishes failure modes so callers can decide whether to retry
+   * via a different mechanism (OSC 52). `"no-writer"` means no candidate
+   * was even runnable on this system; `"verification-failed"` means a
+   * writer ran but the readback did not match what we sent — retrying
+   * via OSC 52 is unlikely to help and would hide the real failure. */
+  kind?: "no-writer" | "verification-failed";
 }
 
 /**
@@ -37,9 +48,27 @@ export async function writeClipboardText(text: string): Promise<ClipboardWriteRe
   const candidates = clipboardWriteCandidates();
   let lastError: string | undefined;
 
+  let lastWriter: string | undefined;
+  let verificationFailed = false;
+
   for (const candidate of candidates) {
     try {
       await pipeToCommand(candidate.cmd, candidate.args, text);
+      lastWriter = candidate.cmd;
+      const verification = await verifyClipboardContents(text);
+      if (verification.kind === "match") {
+        return { ok: true, via: candidate.cmd };
+      }
+      if (verification.kind === "mismatch") {
+        // The writer exited 0 but the clipboard does not contain what we
+        // sent. Surface this loudly instead of pretending it worked —
+        // pbcopy from inside a raw-mode TUI on Warp/macOS has been
+        // observed to do exactly this.
+        lastError = `${candidate.cmd} exited 0 but clipboard readback returned ${verification.bytes} unexpected bytes`;
+        verificationFailed = true;
+        continue;
+      }
+      // No reader available on this platform; trust the writer's exit code.
       return { ok: true, via: candidate.cmd };
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
@@ -48,8 +77,66 @@ export async function writeClipboardText(text: string): Promise<ClipboardWriteRe
 
   return {
     ok: false,
+    ...(lastWriter ? { via: lastWriter } : {}),
     error: lastError ?? "no clipboard writer available",
+    kind: verificationFailed ? "verification-failed" : "no-writer",
   };
+}
+
+type ClipboardVerification =
+  | { kind: "match" }
+  | { kind: "mismatch"; bytes: number }
+  | { kind: "unsupported" };
+
+/**
+ * Read the clipboard back through the platform-native reader and compare
+ * to what we just wrote. macOS uses `pbpaste`, Linux Wayland uses
+ * `wl-paste`, X11 uses `xclip` or `xsel`. Anything else returns
+ * `unsupported` so the caller falls back to trusting the writer's exit
+ * code.
+ */
+async function verifyClipboardContents(expected: string): Promise<ClipboardVerification> {
+  const readers = clipboardReadCandidates();
+  for (const reader of readers) {
+    try {
+      const got = await runCaptureStdout(reader.cmd, reader.args);
+      return got === expected
+        ? { kind: "match" }
+        : { kind: "mismatch", bytes: Buffer.byteLength(got, "utf8") };
+    } catch {
+      // Reader missing or failed; try the next candidate.
+    }
+  }
+  return { kind: "unsupported" };
+}
+
+function clipboardReadCandidates(): ClipboardWriter[] {
+  if (process.platform === "darwin") return [{ cmd: "pbpaste", args: [] }];
+  if (process.platform === "win32") return [];
+  return [
+    { cmd: "wl-paste", args: ["--no-newline"] },
+    { cmd: "xclip", args: ["-selection", "clipboard", "-o"] },
+    { cmd: "xsel", args: ["--clipboard", "--output"] },
+  ];
+}
+
+function runCaptureStdout(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.on("error", reject);
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("close", (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(`${cmd} failed: ${stderr.trim() || `exit ${code}`}`));
+    });
+  });
 }
 
 interface ClipboardWriter {

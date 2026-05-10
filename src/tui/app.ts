@@ -1985,17 +1985,36 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   /**
-   * Two-stage clipboard write. OpenTUI's OSC 52 path is preferred because it
-   * lands in the user's clipboard even when the TUI is running over SSH or
-   * inside tmux — no host CLI required. When the terminal does not
-   * advertise OSC 52 support (or stdout is gone), fall back to the
-   * platform-native CLI writers in `clipboard.ts`.
+   * Two-stage clipboard write. The platform-native CLI (pbcopy / wl-copy /
+   * xclip / xsel / clip.exe) goes first because it actually writes to the
+   * OS clipboard and — critically — `writeClipboardText` reads the
+   * clipboard back through pbpaste / wl-paste / xclip -o to confirm the
+   * bytes landed. Exit-code-only success is not enough: pbcopy from inside
+   * a raw-mode TUI on Warp/macOS exits 0 without actually updating
+   * NSPasteboard, and OSC 52 has the same silent-drop problem on Warp.
+   *
+   * OSC 52 is only the fallback when no local CLI is available at all
+   * (e.g. an SSH session with no clipboard tool installed remotely). When
+   * a local CLI ran but failed verification we surface that error
+   * directly instead of falling through to OSC 52, because OSC 52 would
+   * also silently "succeed" on the same broken terminals and hide the
+   * real failure behind a fake "copied via OSC 52" line.
    */
   async function copyTextToClipboard(text: string): Promise<ClipboardWriteResult> {
-    if (renderer.isOsc52Supported() && renderer.copyToClipboardOSC52(text)) {
+    const cli = await writeClipboardText(text);
+    if (cli.ok) return cli;
+    // Only fall back to OSC 52 when the CLI was simply unavailable. If a
+    // CLI ran but the readback did not match (cli.kind ===
+    // "verification-failed"), OSC 52 is on the same broken pipe and
+    // would silently "succeed" the same way — surface the real error.
+    if (
+      cli.kind === "no-writer" &&
+      renderer.isOsc52Supported() &&
+      renderer.copyToClipboardOSC52(text)
+    ) {
       return { ok: true, via: "OSC 52" };
     }
-    return writeClipboardText(text);
+    return cli;
   }
 
   function describeCopySelection(argument: "last" | "all" | number, length: number): string {
