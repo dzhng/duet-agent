@@ -144,6 +144,17 @@ export const DUET_BANNER_LINES: readonly string[] = [
   "╚═════╝  ╚═════╝ ╚══════╝   ╚═╝       ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ",
 ];
 
+/**
+ * 3-row compact wordmark used on the boot screen so users land on the
+ * starter list without burning six rows of vertical space. The full banner
+ * above stays available for any other consumer that wants the loud version.
+ */
+export const DUET_BANNER_LINES_COMPACT: readonly string[] = [
+  "█▀▄ █ █ █▀▀ ▀█▀   █▀█ █▀▀ █▀▀ █▄█ ▀█▀",
+  "█ █ █ █ █▀▀  █    █▀█ █ █ █▀▀ █▀█  █ ",
+  "▀▀  ▀▀▀ ▀▀▀  ▀    ▀ ▀ ▀▀▀ ▀▀▀ ▀ ▀  ▀ ",
+];
+
 /** Compose the duet startup banner for the TUI header. */
 export function startupHeaderLines(input: StartupHeaderInput): string[] {
   const lines = [

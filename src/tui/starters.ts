@@ -6,6 +6,12 @@ import { join, resolve } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 
+import {
+  type RecentSession,
+  relativeTimeLabel,
+  truncateRecentPrompt,
+} from "./recent-sessions.js";
+
 /**
  * Inputs for {@link selectStarters}. The helper is a pure function over the
  * filesystem and the persisted session history; it never reads from a session
@@ -19,9 +25,22 @@ export interface StartersInput {
    * recent user prompt becomes the optional 5th "resume" starter.
    */
   sessionHistory?: readonly AgentMessage[];
+  /**
+   * Pre-loaded list of recent sessions other than the current one. Each
+   * entry surfaces as a numbered "continue: <prompt> — <relative time>"
+   * row below the cwd-based starters. Caller is responsible for excluding
+   * the active session id and ordering newest-first.
+   */
+  recentSessions?: readonly RecentSession[];
+  /** Override `now` for deterministic relative-time labels in tests. */
+  now?: number;
 }
 
-/** Output of {@link selectStarters}: 4 starters plus an optional resume line. */
+/**
+ * Output of {@link selectStarters}: cwd-based starters, plus optional
+ * recent-session continuations and an optional resume preview for the
+ * current session's own history.
+ */
 export interface StartersResult {
   /** Always exactly 4 prompts, ordered for the numbered list rendering. */
   starters: string[];
@@ -31,6 +50,13 @@ export interface StartersResult {
    * prompt exists.
    */
   resumePrompt?: string;
+  /**
+   * Continuation rows derived from {@link StartersInput.recentSessions}.
+   * `prompt` is the raw last user prompt from that session (caller decides
+   * what to do when a row is picked); `label` is the rendered row body
+   * (truncated prompt + relative time) ready to drop into the boot list.
+   */
+  recentSessions: { sessionId: string; prompt: string; label: string }[];
 }
 
 /** Hard cap on the resume preview before it gets ellipsis-truncated. */
@@ -93,7 +119,17 @@ const DEFAULT_STARTERS: readonly string[] = [
 export function selectStarters(input: StartersInput): StartersResult {
   const starters = [...pickStarters(input.cwd)];
   const resumePrompt = pickResumePrompt(input.sessionHistory);
-  return resumePrompt ? { starters, resumePrompt } : { starters };
+  const recentSessions = (input.recentSessions ?? []).map((session) => ({
+    sessionId: session.sessionId,
+    prompt: session.lastUserPrompt,
+    label: `continue: ${truncateRecentPrompt(session.lastUserPrompt)} — ${relativeTimeLabel(
+      session.modifiedAt,
+      input.now,
+    )}`,
+  }));
+  return resumePrompt
+    ? { starters, resumePrompt, recentSessions }
+    : { starters, recentSessions };
 }
 
 function pickStarters(cwd: string): readonly string[] {

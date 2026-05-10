@@ -52,11 +52,13 @@ import * as os from "node:os";
 
 import { buildFileIndex } from "./file-index.js";
 import {
+  DUET_BANNER_LINES_COMPACT,
   type HistoryBlockKind,
   type HistoryDisplayBlock,
   historyDisplayBlocks,
   limitHistoryDisplayBlocks,
 } from "./history.js";
+import { listRecentSessions } from "./recent-sessions.js";
 import { createSidebar, SIDEBAR_WIDTH } from "./sidebar.js";
 import { selectStarters } from "./starters.js";
 import { COLORS, HINT_IDLE, HINT_RUNNING } from "./theme.js";
@@ -587,9 +589,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     skills: ReadonlyArray<{ name: string }>,
     agentFiles: readonly TurnAgentFile[],
   ): void {
-    // One-line header. Keeps the wordmark prominent without burning six
-    // rows of vertical space on every boot. Provenance (env/file source)
-    // is intentionally dropped here — surface it via /whoami later.
+    // Compact 3-row wordmark. The full DUET_BANNER_LINES is ~6 rows tall
+    // and pushed the starter list off-screen on small terminals; this one
+    // keeps the brand mark visible while leaving room for the ice-break
+    // prompts to land above the fold.
+    for (const line of DUET_BANNER_LINES_COMPACT) appendLine(line, COLORS.status);
+    appendLine(" ", COLORS.hint);
+    appendLine(" ", COLORS.hint);
+    // One-line header. Keeps cwd/model context visible without burning
+    // another five rows. Provenance (env/file source) is intentionally
+    // dropped here — surface it via /whoami later.
     appendLine(formatBootHeader(input), COLORS.status);
 
     if (input.versionNoticePromise) {
@@ -636,13 +645,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // first-time and returning users land on something concrete in <2 seconds
   // instead of staring at a blank input. The starter section dismisses on
   // first composition or first submit and never re-renders that session.
-  const starterTexts: string[] = [];
+  //
+  // Each entry in `starterEntries` is either a raw cwd-based prompt to
+  // submit verbatim, or a recent-session continuation that injects the
+  // previous session's last user prompt into the input field. The two
+  // kinds share the same numbered/highlighted row UX.
+  type StarterEntry =
+    | { kind: "prompt"; label: string; submit: string }
+    | { kind: "recent"; label: string; submit: string; sessionId: string };
+  const starterEntries: StarterEntry[] = [];
   // Lines we render for the starter section so we can repaint highlights
   // and tear them all down on dismissal. Includes the headline, numbered
   // rows, the optional resume row, and the two trailing hint rows.
   const starterRefs: TextRenderable[] = [];
-  // Indexes within `starterRefs` that correspond to numbered/resume rows;
-  // used to repaint highlight on arrow / digit navigation.
+  // Indexes within `starterRefs` that correspond to numbered rows; used
+  // to repaint highlight on arrow / digit navigation.
   const starterRowIndexes: number[] = [];
   let highlightedStarterIndex = 0;
   let startersVisible = false;
@@ -652,20 +669,44 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function renderStarters(skills: ReadonlyArray<{ name: string }>): void {
-    const { starters, resumePrompt } = selectStarters({
+    // Read recent sessions off disk synchronously. The helper swallows fs
+    // errors and returns an empty list; a missing/empty ~/.duet/sessions
+    // directory is the common first-boot case.
+    const recentSessions = listRecentSessions({
+      excludeId: input.sessionId,
+      limit: 3,
+    });
+    const { starters, resumePrompt, recentSessions: recentRows } = selectStarters({
       cwd: input.workDir,
       sessionHistory: input.history,
+      recentSessions,
     });
-    starterTexts.length = 0;
-    starterTexts.push(...starters);
-    if (resumePrompt) starterTexts.push(`resume: ${resumePrompt}`);
+    starterEntries.length = 0;
+    for (const text of starters) {
+      starterEntries.push({ kind: "prompt", label: text, submit: text });
+    }
+    if (resumePrompt) {
+      starterEntries.push({
+        kind: "prompt",
+        label: `resume: ${resumePrompt}`,
+        submit: resumePrompt,
+      });
+    }
+    for (const row of recentRows) {
+      starterEntries.push({
+        kind: "recent",
+        label: row.label,
+        submit: row.prompt,
+        sessionId: row.sessionId,
+      });
+    }
 
     appendLine(" ", COLORS.hint);
     starterRefs.push(addLine("what should we work on today?", COLORS.agent));
     appendLine(" ", COLORS.hint);
 
     starterRowIndexes.length = 0;
-    for (let i = 0; i < starterTexts.length; i += 1) {
+    for (let i = 0; i < starterEntries.length; i += 1) {
       const ref = addLine(formatStarterRow(i, false), COLORS.hint);
       starterRowIndexes.push(starterRefs.length);
       starterRefs.push(ref);
@@ -682,7 +723,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       ),
     );
 
-    startersVisible = starterTexts.length > 0;
+    startersVisible = starterEntries.length > 0;
     if (startersVisible) {
       highlightedStarterIndex = 0;
       paintStarterHighlight();
@@ -696,7 +737,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function formatStarterRow(index: number, highlighted: boolean): string {
-    const text = starterTexts[index] ?? "";
+    const entry = starterEntries[index];
+    const text = entry?.label ?? "";
     const number = index + 1;
     const arrow = highlighted ? "▶" : "→";
     const numberCell = highlighted ? `[${number}]` : ` ${number} `;
@@ -716,15 +758,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function moveStarterHighlight(delta: number): void {
-    if (!startersVisible || starterTexts.length === 0) return;
-    const next = (highlightedStarterIndex + delta + starterTexts.length) % starterTexts.length;
+    if (!startersVisible || starterEntries.length === 0) return;
+    const next =
+      (highlightedStarterIndex + delta + starterEntries.length) % starterEntries.length;
     highlightedStarterIndex = next;
     paintStarterHighlight();
   }
 
   function jumpStarterHighlight(targetIndex: number): boolean {
     if (!startersVisible) return false;
-    if (targetIndex < 0 || targetIndex >= starterTexts.length) return false;
+    if (targetIndex < 0 || targetIndex >= starterEntries.length) return false;
     highlightedStarterIndex = targetIndex;
     paintStarterHighlight();
     return true;
@@ -738,17 +781,22 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
     starterRefs.length = 0;
     starterRowIndexes.length = 0;
-    starterTexts.length = 0;
+    starterEntries.length = 0;
     startersVisible = false;
   }
 
   function submitHighlightedStarter(): boolean {
     if (!startersVisible) return false;
-    const text = starterTexts[highlightedStarterIndex];
-    if (!text) return false;
-    const message = text.startsWith("resume: ") ? text.slice("resume: ".length) : text;
+    const entry = starterEntries[highlightedStarterIndex];
+    if (!entry) return false;
     dismissStarters();
-    submit(message, false);
+    // Recent-session rows reuse the prompt text in the *current* session
+    // rather than tearing down the runtime to switch sessions. The agent
+    // won't have prior context, but the user lands on the same task with
+    // one keystroke instead of typing it again. Documented tradeoff: a
+    // future iteration can swap this for true cross-session resume once
+    // the session manager exposes a hot-swap API.
+    submit(entry.submit, false);
     return true;
   }
 
