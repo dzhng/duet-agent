@@ -14,6 +14,5 @@ export const COLORS = {
   border: "#374151",
 } as const;
 
-export const HINT_IDLE =
-  "Enter: send · Shift+Enter: newline · drag-select + Cmd+C to copy · Esc: quit";
-export const HINT_RUNNING = "Enter: queue follow-up · drag-select + Cmd+C to copy · Esc: interrupt";
+export const HINT_IDLE = "Enter: send · Shift+Enter: newline · PgUp/PgDn: scroll · Esc: quit";
+export const HINT_RUNNING = "Enter: queue follow-up · PgUp/PgDn: scroll · Esc: interrupt";

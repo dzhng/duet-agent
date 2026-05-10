@@ -146,14 +146,15 @@ interface InternalKeyHandlerLike {
  */
 export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | undefined> {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-  // useMouse: false hands the mouse channel back to the terminal emulator
-  // so users can drag-select transcript text and Cmd+C / Cmd+V work
-  // natively, the way they do in Claude Code. The cost is that the
-  // sidebar and scroll wheel become keyboard-only — a tradeoff we made
-  // intentionally so copy-out works without a slash command or modifier.
+  // useMouse: true so the scroll wheel reaches the transcript
+  // ScrollBoxRenderable. Drag-select for native copy still works in every
+  // mainstream terminal by holding Option (macOS) or Shift (most Linux
+  // terminals) while dragging, which bypasses the terminal's mouse
+  // capture. PageUp/PageDown and Shift+Up/Down keyboard bindings below are
+  // the no-mouse fallback.
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
-    useMouse: false,
+    useMouse: true,
     useKittyKeyboard: {},
     targetFps: 60,
   });
@@ -1397,10 +1398,45 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     void requestExit();
   });
 
+  // Keyboard scroll bindings for the transcript. Mirrors the mouse wheel
+  // for terminals that swallow mouse events (tmux without mouse mode, ssh
+  // sessions where the local terminal owns the wheel, screen readers).
+  // Page = one viewport; Shift+arrow = three lines, matching wheel cadence.
+  function scrollTranscriptByLines(delta: number): void {
+    transcript.scrollBy({ x: 0, y: delta });
+  }
+  function scrollTranscriptByPage(direction: 1 | -1): void {
+    // Subtract 2 to account for the top+bottom border rows; padding lives
+    // inside the scroll viewport and does not need to be deducted.
+    const viewport = Math.max(1, transcript.height - 2);
+    transcript.scrollBy({ x: 0, y: direction * viewport });
+  }
+
   // Attach directly to the focused InputRenderable. The Textarea-based input
   // consumes escape via its own keybindings before any global keypress handler
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
+    if (key.name === "pageup") {
+      scrollTranscriptByPage(-1);
+      key.preventDefault();
+      return;
+    }
+    if (key.name === "pagedown") {
+      scrollTranscriptByPage(1);
+      key.preventDefault();
+      return;
+    }
+    if (key.shift && key.name === "up" && !key.ctrl && !key.meta && !key.super) {
+      scrollTranscriptByLines(-3);
+      key.preventDefault();
+      return;
+    }
+    if (key.shift && key.name === "down" && !key.ctrl && !key.meta && !key.super) {
+      scrollTranscriptByLines(3);
+      key.preventDefault();
+      return;
+    }
+
     // Boot starter navigation. Only intercepts when the starter section is
     // still on screen; once dismissed (by composition or first submit) all
     // of these branches no-op and keys flow normally to the input.
