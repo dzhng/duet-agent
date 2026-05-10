@@ -48,6 +48,7 @@ import {
   skillAutocompleteMatches,
   type SlashAutocompleteGroup,
 } from "./autocomplete.js";
+import { submitDuetFeedback } from "../lib/feedback.js";
 import { buildFileIndex } from "./file-index.js";
 import {
   DUET_BANNER_LINES,
@@ -1493,6 +1494,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       appendBlock("[paste]", "cleared pending image attachments", COLORS.system);
       return;
     }
+    if (message === "/feedback" || message.startsWith("/feedback ")) {
+      void handleFeedbackSlashCommand(message);
+      return;
+    }
 
     const submittedImages = pendingImages;
     appendBlock("you:", message, COLORS.user);
@@ -1521,6 +1526,29 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
     void input.session.prompt({ message, behavior: "follow_up", images }).catch(reportError);
     markRunning();
+  }
+
+  async function handleFeedbackSlashCommand(raw: string): Promise<void> {
+    const content = raw.slice("/feedback".length).trim();
+    if (!content) {
+      appendBlock(
+        "[feedback]",
+        "Usage: /feedback <message>  — send free-form feedback to the Duet team",
+        COLORS.system,
+      );
+      return;
+    }
+    appendBlock("[feedback]", "sending…", COLORS.system);
+    try {
+      const { baseUrl } = await submitDuetFeedback({ content });
+      appendBlock("[feedback]", `Thanks! Feedback sent to ${baseUrl}.`, COLORS.system);
+    } catch (error) {
+      appendBlock(
+        "[feedback]",
+        error instanceof Error ? error.message : String(error),
+        COLORS.error,
+      );
+    }
   }
 
   async function handleImageSlashCommand(raw: string): Promise<void> {
