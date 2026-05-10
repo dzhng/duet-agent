@@ -1097,11 +1097,18 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function formatMemoryEventBody(event: Extract<TurnEvent, { type: "memory" }>): string {
-    if (!event.observations || event.observations.length === 0) {
+    const hasObservations = Boolean(event.observations && event.observations.length > 0);
+    const hasBumps = Boolean(
+      event.usageBumpedObservations && event.usageBumpedObservations.length > 0,
+    );
+    if (!hasObservations && !hasBumps) {
       return "";
     }
-    const content = event.observations.map((observation) => observation.content).join("\n\n");
-    return truncateToolText(`${event.message}\n${content}`);
+    const sections: string[] = [event.message];
+    if (hasObservations) {
+      sections.push(event.observations!.map((observation) => observation.content).join("\n\n"));
+    }
+    return truncateToolText(sections.join("\n"));
   }
 
   // ---- input handling --------------------------------------------------------

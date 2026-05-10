@@ -92,6 +92,15 @@ export interface ObservationalMemoryActivityEvent {
   message: string;
   /** Durable observations produced or replaced by a completed memory operation. */
   observations?: Observation[];
+  /**
+   * Prior global-pack memories whose `lastUsedAt` was advanced because the
+   * observer attributed the latest exchange to them. Only set on the
+   * `observation` phase completion event, where usage attribution runs.
+   * Empty/undefined means no prior memory was reused on this turn. Carries
+   * the full observation rows (not just ids) so surfaces can render the
+   * reused content directly without a second database lookup.
+   */
+  usageBumpedObservations?: Observation[];
 }
 
 /** Runtime settings for converting turn-runner conversation context into observations. */

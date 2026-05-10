@@ -435,7 +435,7 @@ export async function updateObservationalMemory(
       status: "running",
       message: "Observing conversation into memory...",
     });
-    const observation = await activateObservations({
+    const { observation, usageBumped } = await activateObservations({
       db: options.db,
       messages: unobservedMessages,
       previousLocalObservations: localSnapshot.observations,
@@ -451,8 +451,9 @@ export async function updateObservationalMemory(
     emitMemoryActivity(options.onActivity, {
       phase: "observation",
       status: "completed",
-      message: observation ? "Memory observation recorded." : "Memory observation complete.",
+      message: buildObservationCompletedMessage(observation, usageBumped.length),
       ...(observation ? { observations: [observation] } : {}),
+      ...(usageBumped.length > 0 ? { usageBumpedObservations: usageBumped } : {}),
     });
   }
 
@@ -496,6 +497,18 @@ export function optimizeObservationsForContext(observations: string): string {
   optimized = optimized.replace(/ +/g, " ");
   optimized = optimized.replace(/\n{3,}/g, "\n\n");
   return optimized.trim();
+}
+
+function buildObservationCompletedMessage(
+  observation: Observation | undefined,
+  usageBumpedCount: number,
+): string {
+  const base = observation ? "Memory observation recorded." : "Memory observation complete.";
+  if (usageBumpedCount <= 0) return base;
+  const noun = usageBumpedCount === 1 ? "memory" : "memories";
+  // Surface the count for now; consumers can later render the full
+  // observation contents from `usageBumpedObservations` on the event.
+  return `${base} Bumped last-use on ${usageBumpedCount} prior ${noun}.`;
 }
 
 function emitMemoryActivity(
@@ -552,9 +565,15 @@ interface ActivateObservationsArgs {
   onUsage?: (usage: Usage) => void;
 }
 
+interface ActivateObservationsResult {
+  observation?: Observation;
+  /** Prior memories the bump actually applied to (intersection of usedIds and candidates). */
+  usageBumped: Observation[];
+}
+
 async function activateObservations(
   args: ActivateObservationsArgs,
-): Promise<Observation | undefined> {
+): Promise<ActivateObservationsResult> {
   const observations = await observe(
     args.messages,
     args.previousLocalObservations,
@@ -566,16 +585,20 @@ async function activateObservations(
   // Usage attribution applies whether or not the observer had new
   // memory worth recording — a turn can lean on a prior memory even
   // when nothing new is durable.
-  await applyUsageBumps(args.db, args.attributableMemories, observations.usedObservationIds);
+  const usageBumped = await applyUsageBumps(
+    args.db,
+    args.attributableMemories,
+    observations.usedObservationIds,
+  );
 
   if (!observations.hasMemory || !observations.observations.trim()) {
     // The same low-signal messages may become useful context for a
     // later suffix, so do not record an empty checkpoint.
-    return undefined;
+    return { usageBumped };
   }
 
   const range = `${args.messages[0]?.id ?? "unknown"}:${args.messages[args.messages.length - 1]?.id ?? "unknown"}`;
-  return appendObservation(args.db, {
+  const observation = await appendObservation(args.db, {
     kind: "observation",
     ...(args.sessionId !== undefined ? { sessionId: args.sessionId } : {}),
     observedDate: new Date().toISOString().slice(0, 10),
@@ -585,6 +608,7 @@ async function activateObservations(
     content: wrapInObservationGroup(observations.observations, range),
     tags: ["observational-memory"],
   });
+  return { observation, usageBumped };
 }
 
 /**
@@ -599,12 +623,19 @@ async function applyUsageBumps(
   db: MemoryDatabase,
   candidates: Observation[],
   usedIds: string[] | undefined,
-): Promise<void> {
-  if (!usedIds || usedIds.length === 0) return;
-  const candidateIds = new Set(candidates.map((c) => c.id));
-  const validated = usedIds.filter((id) => candidateIds.has(id));
-  if (validated.length === 0) return;
-  await bumpLastUsed(db, validated, Date.now());
+): Promise<Observation[]> {
+  if (!usedIds || usedIds.length === 0) return [];
+  const candidatesById = new Map(candidates.map((c) => [c.id, c]));
+  const validated = usedIds
+    .map((id) => candidatesById.get(id))
+    .filter((observation): observation is Observation => Boolean(observation));
+  if (validated.length === 0) return [];
+  await bumpLastUsed(
+    db,
+    validated.map((observation) => observation.id),
+    Date.now(),
+  );
+  return validated;
 }
 
 interface ReflectObservationsArgs {
