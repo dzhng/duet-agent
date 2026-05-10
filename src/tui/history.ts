@@ -145,18 +145,17 @@ export const DUET_BANNER_LINES: readonly string[] = [
 ];
 
 /**
- * 5-row compact wordmark used on the boot screen. Mirrors the chunky
- * outlined-shadow figlet aesthetic (Modular / Roman family) at roughly
- * half the vertical footprint of the full DUET_BANNER_LINES, so users
- * land on the starter list quickly while still seeing real brand mark.
- * `█` is body weight, `░` is the drop-shadow / outline accent.
+ * 5-row compact wordmark for the boot screen. Built by taking the full
+ * 6-row DUET_BANNER_LINES and dropping row 2 (the upper body), which
+ * keeps the gap between the middle and bottom horizontals on letters
+ * like `E` while preserving column alignment across `DUET AGENT`.
  */
 export const DUET_BANNER_LINES_COMPACT: readonly string[] = [
   "██████╗ ██╗   ██╗███████╗████████╗     █████╗  ██████╗ ███████╗███╗   ██╗████████╗",
-  "██║░░██║██║░░░██║██╔════╝╚══██╔══╝    ██╔══██╗██╔════╝ ██╔════╝████╗░░██║╚══██╔══╝",
-  "██║░░██║██║░░░██║█████╗░░░░░██║░░░    ███████║██║░░██╗ █████╗░░██╔██╗░██║░░░██║░░░",
-  "██████╔╝╚██████╔╝███████╗░░░██║░░░    ██║░░██║╚██████╔╝███████╗██║╚████║░░░██║░░░",
-  "╚═════╝░░╚═════╝░╚══════╝░░░╚═╝░░░    ╚═╝░░╚═╝░╚═════╝░╚══════╝╚═╝░╚═══╝░░░╚═╝░░░",
+  "██║  ██║██║   ██║█████╗     ██║       ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ",
+  "██║  ██║██║   ██║██╔══╝     ██║       ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ",
+  "██████╔╝╚██████╔╝███████╗   ██║       ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ",
+  "╚═════╝  ╚═════╝ ╚══════╝   ╚═╝       ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ",
 ];
 
 /** Compose the duet startup banner for the TUI header. */
