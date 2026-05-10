@@ -28,7 +28,7 @@ OPTIONS
   --provider <name>        Pin the provider and use its catalog default model.
                             Accepts: duet, vercel, openrouter, anthropic, openai.
                             Mutually exclusive with --model / --memory-model.
-  --no-memory              Keep memory in-process; do not read or write durable memory
+  -i, --incognito          Keep memory in-process; do not read or write durable memory
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
   --resume-history-lines <n>
