@@ -1401,6 +1401,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
   keyHandler.onInternal("keypress", (key: KeyEvent) => {
+    // Copy keystroke. Lives on the global handler (not
+    // inputField.onKeyDown) because the mousedown that starts a
+    // drag-select moves focus off the textarea — the focused-renderable
+    // path stops firing right when the user has something to copy. The
+    // global handler always fires regardless of focus.
+    if (handleCopyKeystroke(key)) return;
     if (key.name !== "escape") return;
     if (suppressNextEscapeExit) {
       suppressNextEscapeExit = false;
@@ -1510,32 +1516,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (key.name === "v" && (key.super || key.meta || key.ctrl) && !key.shift) {
       key.preventDefault();
       void triggerClipboardProbe("keystroke");
-      return;
-    }
-
-    // Copy keystrokes. The set is intentionally generous because each
-    // mainstream terminal forwards a different subset:
-    //
-    //   - Cmd+C: macOS muscle memory; many terminals (Terminal.app, Warp)
-    //     own this for their own selection UI and never forward it.
-    //   - Cmd+Shift+C: forwarded by Warp on macOS and by some configs of
-    //     iTerm2 / Ghostty where Cmd+C is reserved.
-    //   - Ctrl+Shift+C: Linux/Windows terminal-app convention that
-    //     leaves bare Ctrl+C free for "exit."
-    //
-    // The hint label surfaces only the OS-natural one so the bottom row
-    // stays terse. No-op when nothing is selected so the keystroke still
-    // falls through to whatever the terminal would do natively. We accept
-    // both "c" and "C" because some kitty parsers report the shifted
-    // letter while others report the base letter plus shift=true.
-    const isCopyLetter = key.name === "c" || key.name === "C";
-    const cmdHeld = key.super || key.meta;
-    const isCmdC = isCopyLetter && cmdHeld && !key.shift && !key.ctrl;
-    const isCmdShiftC = isCopyLetter && cmdHeld && key.shift && !key.ctrl;
-    const isCtrlShiftC = isCopyLetter && key.ctrl && key.shift && !cmdHeld;
-    if ((isCmdC || isCmdShiftC || isCtrlShiftC) && lastSelectionText.trim().length > 0) {
-      key.preventDefault();
-      void copyActiveSelection();
       return;
     }
 
@@ -1671,6 +1651,32 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function handleEscape(): void {
     if (!running) return;
     void input.session.interrupt().catch(reportError);
+  }
+
+  /**
+   * Copy keystroke detection. Accepts Cmd+C, Cmd+Shift+C, and Ctrl+Shift+C
+   * because each mainstream terminal forwards a different subset — see
+   * `theme.ts` for which one ends up in the hint label per terminal.
+   * Returns true (and prevents default) when the keystroke matched and a
+   * non-empty selection was on the clipboard path; false otherwise so the
+   * caller can fall through to other handlers (Esc, etc.).
+   *
+   * Accepts both "c" and "C" as the key name because some kitty parsers
+   * report the shifted letter while others report the base letter with
+   * `shift: true`.
+   */
+  function handleCopyKeystroke(key: KeyEvent): boolean {
+    const isCopyLetter = key.name === "c" || key.name === "C";
+    if (!isCopyLetter) return false;
+    const cmdHeld = key.super || key.meta;
+    const isCmdC = cmdHeld && !key.shift && !key.ctrl;
+    const isCmdShiftC = cmdHeld && key.shift && !key.ctrl;
+    const isCtrlShiftC = key.ctrl && key.shift && !cmdHeld;
+    if (!(isCmdC || isCmdShiftC || isCtrlShiftC)) return false;
+    if (lastSelectionText.trim().length === 0) return false;
+    key.preventDefault();
+    void copyActiveSelection();
+    return true;
   }
 
   inputField.onContentChange = () => {
