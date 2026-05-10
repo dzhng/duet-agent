@@ -1513,16 +1513,27 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
 
-    // Copy keystroke. Both Cmd+C (the macOS clipboard shortcut every Mac
-    // user has muscle memory for) and Ctrl+Shift+C (the Linux/Windows
-    // terminal-app convention that leaves bare Ctrl+C free for "exit")
-    // copy the active selection, regardless of platform. The hint label
-    // surfaces only the OS-natural one so the bottom row stays terse.
-    // No-op when nothing is selected so the keystroke still falls through
-    // to whatever the terminal would do natively.
-    const isCmdC = key.name === "c" && (key.super || key.meta) && !key.shift && !key.ctrl;
-    const isCtrlShiftC = key.name === "c" && key.ctrl && key.shift && !key.super && !key.meta;
-    if ((isCmdC || isCtrlShiftC) && lastSelectionText.trim().length > 0) {
+    // Copy keystrokes. The set is intentionally generous because each
+    // mainstream terminal forwards a different subset:
+    //
+    //   - Cmd+C: macOS muscle memory; many terminals (Terminal.app, Warp)
+    //     own this for their own selection UI and never forward it.
+    //   - Cmd+Shift+C: forwarded by Warp on macOS and by some configs of
+    //     iTerm2 / Ghostty where Cmd+C is reserved.
+    //   - Ctrl+Shift+C: Linux/Windows terminal-app convention that
+    //     leaves bare Ctrl+C free for "exit."
+    //
+    // The hint label surfaces only the OS-natural one so the bottom row
+    // stays terse. No-op when nothing is selected so the keystroke still
+    // falls through to whatever the terminal would do natively. We accept
+    // both "c" and "C" because some kitty parsers report the shifted
+    // letter while others report the base letter plus shift=true.
+    const isCopyLetter = key.name === "c" || key.name === "C";
+    const cmdHeld = key.super || key.meta;
+    const isCmdC = isCopyLetter && cmdHeld && !key.shift && !key.ctrl;
+    const isCmdShiftC = isCopyLetter && cmdHeld && key.shift && !key.ctrl;
+    const isCtrlShiftC = isCopyLetter && key.ctrl && key.shift && !cmdHeld;
+    if ((isCmdC || isCmdShiftC || isCtrlShiftC) && lastSelectionText.trim().length > 0) {
       key.preventDefault();
       void copyActiveSelection();
       return;
