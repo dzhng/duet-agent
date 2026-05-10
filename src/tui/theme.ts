@@ -14,5 +14,20 @@ export const COLORS = {
   border: "#374151",
 } as const;
 
-export const HINT_IDLE = "Enter: send · Shift+Enter: newline · PgUp/PgDn: scroll · Esc: quit";
+// Esc is intentionally absent from the idle hint: when no turn is running
+// it is a no-op (it only closes open pickers, which is self-evident). Use
+// Ctrl+C to quit the TUI — the universal terminal convention.
+export const HINT_IDLE = "Enter: send · Shift+Enter: newline · PgUp/PgDn: scroll · Ctrl+C: quit";
 export const HINT_RUNNING = "Enter: queue follow-up · PgUp/PgDn: scroll · Esc: interrupt";
+
+/**
+ * Platform-aware copy keystroke shown in the hint only while a non-empty
+ * drag selection exists. macOS uses Cmd+C because that is the muscle
+ * memory every Mac user already has; other platforms use Ctrl+Shift+C so
+ * the bare Ctrl+C keystroke can stay reserved for "exit the TUI" — which
+ * matches the convention every interactive Linux/Windows terminal app
+ * follows. The keystroke and the label come from the same constant so
+ * the hint never drifts from the handler that implements it.
+ */
+export const COPY_KEYSTROKE_LABEL = process.platform === "darwin" ? "Cmd+C" : "Ctrl+Shift+C";
+export const HINT_SELECTION_COPY = `${COPY_KEYSTROKE_LABEL}: copy`;

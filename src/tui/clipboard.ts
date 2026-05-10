@@ -1,13 +1,15 @@
 /**
  * Write-side clipboard helpers used by the `/copy` slash command and the
- * Ctrl+Y keystroke in the TUI. The read-side (image paste) lives in
- * `paste.ts`; this module is intentionally text-only so it can stay small,
- * dependency-free, and easy to reason about across platforms.
+ * platform copy keystroke (Cmd+C on macOS, Ctrl+Shift+C elsewhere). The
+ * TUI prefers OpenTUI's built-in OSC 52 path
+ * (`renderer.copyToClipboardOSC52`) because it works over SSH, tmux, and
+ * any modern terminal that advertises OSC 52 support. This module is the
+ * fallback for terminals that do not — we shell out to platform-native
+ * writers (pbcopy / wl-copy / xclip / xsel / clip.exe) one at a time.
  *
- * Strategy: try platform-native CLIs in order until one succeeds. Each tool
- * accepts text on stdin so we never have to escape user content into a shell
- * command. If every path fails we surface the last error so the caller can
- * tell the user what to install (e.g. `xclip` on Linux).
+ * Each tool accepts text on stdin so we never have to escape user content
+ * into a shell command. If every path fails we surface the last error so
+ * the caller can tell the user what to install (e.g. `xclip` on Linux).
  */
 
 import { spawn } from "node:child_process";
@@ -23,10 +25,13 @@ export interface ClipboardWriteResult {
 }
 
 /**
- * Pipe `text` into the system clipboard. Tries platform-appropriate writers
- * in order and returns as soon as one succeeds. Never throws — surfaces
- * failure via the returned `ClipboardWriteResult` so callers can render the
- * exact reason in the transcript without wrapping in try/catch.
+ * Pipe `text` into the system clipboard via a platform-native CLI writer.
+ * Tries writers in order and returns as soon as one succeeds. Never throws
+ * — surfaces failure via the returned `ClipboardWriteResult` so callers can
+ * render the exact reason in the transcript without wrapping in try/catch.
+ *
+ * Used as a fallback when OSC 52 is unavailable. Callers should prefer
+ * `renderer.copyToClipboardOSC52` first for cross-terminal correctness.
  */
 export async function writeClipboardText(text: string): Promise<ClipboardWriteResult> {
   const candidates = clipboardWriteCandidates();

@@ -7,11 +7,12 @@ import {
   type KeyEvent,
   type PasteEvent,
   ScrollBoxRenderable,
+  type Selection,
   t,
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
-import { writeClipboardText } from "./clipboard.js";
+import { type ClipboardWriteResult, writeClipboardText } from "./clipboard.js";
 import {
   describeMacClipboardTypes,
   loadImageFromPath,
@@ -63,7 +64,7 @@ import {
 import { listRecentSessions } from "./recent-sessions.js";
 import { createSidebar, SIDEBAR_WIDTH } from "./sidebar.js";
 import { orderedSelectableStarters, selectStarters } from "./starters.js";
-import { COLORS, HINT_IDLE, HINT_RUNNING } from "./theme.js";
+import { COLORS, HINT_IDLE, HINT_RUNNING, HINT_SELECTION_COPY } from "./theme.js";
 
 export type { HistoryBlockKind, HistoryDisplayBlock, LimitedHistory } from "./history.js";
 export type { StartupHeaderInput } from "./history.js";
@@ -153,11 +154,17 @@ interface InternalKeyHandlerLike {
 export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | undefined> {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   // useMouse: true so the scroll wheel reaches the transcript
-  // ScrollBoxRenderable. Drag-select for native copy still works in every
-  // mainstream terminal by holding Option (macOS) or Shift (most Linux
-  // terminals) while dragging, which bypasses the terminal's mouse
-  // capture. PageUp/PageDown and Shift+Up/Down keyboard bindings below are
-  // the no-mouse fallback.
+  // ScrollBoxRenderable and so OpenTUI receives drag events for in-app
+  // text selection. Selected text is captured via the renderer's
+  // `selection` event below and copied to the clipboard via OSC 52 (or
+  // CLI fallback) on the platform-appropriate copy keystroke (Cmd+C on
+  // macOS, Ctrl+Shift+C elsewhere) or `/copy`. PageUp/PageDown and
+  // Shift+Up/Down keyboard bindings below cover terminals or sessions
+  // where the wheel does not reach us (e.g. tmux without mouse mode).
+  //
+  // Bare Ctrl+C remains the always-exit keystroke (handled via
+  // exitOnCtrlC) so the convention every other interactive Linux/Windows
+  // terminal app follows still works here.
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
     useMouse: true,
@@ -165,6 +172,17 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     targetFps: 60,
   });
   restoreWindowGlobal(previousWindow);
+
+  // Most recent drag-selected text. OpenTUI emits the `selection` event
+  // whenever a drag finishes; we cache the resulting string so /copy and
+  // the copy keystroke can prefer the user's actual highlight over the
+  // last-message heuristic, and so the bottom hint can advertise the
+  // copy keystroke only while it actually does something.
+  let lastSelectionText = "";
+  renderer.on("selection", (selection: Selection) => {
+    lastSelectionText = selection.getSelectedText();
+    refreshHint();
+  });
 
   // Outer row wraps the main column and a right-side sidebar that surfaces
   // the runner's current todo list and state-machine progress.
@@ -199,11 +217,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     padding: 1,
   });
 
+  // Status and hint chrome are excluded from drag-select so a highlight that
+  // sweeps the bottom of the screen does not pull the spinner / hint text
+  // into the clipboard alongside the transcript content the user wanted.
   const status = new TextRenderable(renderer, {
     content: "",
     fg: COLORS.status,
     height: 1,
     flexShrink: 0,
+    selectable: false,
   });
 
   const hint = new TextRenderable(renderer, {
@@ -211,6 +233,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     fg: COLORS.hint,
     height: 1,
     flexShrink: 0,
+    selectable: false,
   });
 
   const skillAutocompletePanel = new BoxRenderable(renderer, {
@@ -230,11 +253,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // length so a one-line description doesn't leave an empty trailing line
   // beneath the name. The renderer sets `height` whenever it writes
   // `content`.
+  // Autocomplete and panel chrome are not part of the transcript content,
+  // so exclude them from drag-select to keep the clipboard focused on
+  // assistant/user messages.
   const makeItemRow = () => {
     const row = new TextRenderable(renderer, {
       content: "",
       fg: COLORS.hint,
       flexShrink: 0,
+      selectable: false,
     });
     row.visible = false;
     return row;
@@ -245,6 +272,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       fg: COLORS.status,
       height: 1,
       flexShrink: 0,
+      selectable: false,
     });
   const commandHeader = makeHeaderRow("commands");
   const commandRows = Array.from({ length: BUILT_IN_SLASH_COMMANDS.length }, makeItemRow);
@@ -271,6 +299,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     fg: COLORS.status,
     height: 1,
     flexShrink: 0,
+    selectable: false,
   });
   const fileAutocompleteRows = Array.from({ length: FILE_AUTOCOMPLETE_LIMIT }, () => {
     const row = new TextRenderable(renderer, {
@@ -278,6 +307,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       fg: COLORS.hint,
       height: 1,
       flexShrink: 0,
+      selectable: false,
     });
     row.visible = false;
     return row;
@@ -302,11 +332,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     fg: COLORS.agent,
     wrapMode: "word",
     flexShrink: 0,
+    selectable: false,
   });
   const questionSpacer = new TextRenderable(renderer, {
     content: "",
     height: 1,
     flexShrink: 0,
+    selectable: false,
   });
   const questionRows = Array.from({ length: QUESTION_OPTION_LIMIT }, () => {
     const row = new TextRenderable(renderer, {
@@ -314,6 +346,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       fg: COLORS.hint,
       wrapMode: "word",
       flexShrink: 0,
+      selectable: false,
     });
     row.visible = false;
     return row;
@@ -333,10 +366,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     flexShrink: 0,
   });
 
+  // The leading "> " sigil is decoration, not content; excluding it from
+  // selection means a drag that starts at the input row does not pull the
+  // sigil into the clipboard alongside the highlighted text.
   const prompt = new TextRenderable(renderer, {
     content: "> ",
     fg: COLORS.user,
     width: 2,
+    selectable: false,
   });
 
   // Textarea (rather than Input) so long messages soft-wrap visually. Enter
@@ -393,7 +430,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function setHint(running: boolean): void {
     const base = running ? HINT_RUNNING : HINT_IDLE;
-    hint.content = pendingImages.length > 0 ? `${attachmentHint()} · ${base}` : base;
+    const segments: string[] = [];
+    if (pendingImages.length > 0) segments.push(attachmentHint());
+    segments.push(base);
+    if (lastSelectionText.trim().length > 0) segments.push(HINT_SELECTION_COPY);
+    hint.content = segments.join(" · ");
   }
 
   function attachmentHint(): string {
@@ -401,7 +442,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     return n === 1 ? "📎 1 image attached" : `📎 ${n} images attached`;
   }
 
-  function refreshAttachmentHint(): void {
+  // Single-channel hint refresh used by every input that affects what the
+  // bottom row should advertise (running state, attachments, selection).
+  function refreshHint(): void {
     setHint(running);
   }
 
@@ -417,7 +460,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let nextImageId = 1;
   // Parallel record of user/agent message bodies driven by the same code
   // paths that render them into the transcript. The `/copy` slash command
-  // and Ctrl+Y keystroke read from this log instead of trying to walk the
+  // and copy keystroke read from this log instead of trying to walk the
   // ScrollBoxRenderable, which only stores presentation lines.
   const transcriptLog: TranscriptEntry[] = [];
   function recordTranscriptEntry(kind: TranscriptEntry["kind"], text: string): void {
@@ -1080,27 +1123,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let questionOptionSelectedIndex = 0;
   let suppressNextEscapeExit = false;
 
-  let closingAfterInterrupt = false;
-
-  const requestExit = async (): Promise<void> => {
-    if (running) {
-      if (closingAfterInterrupt) return;
-      closingAfterInterrupt = true;
-      stopWorkingTicker();
-      setStatus("● interrupting…");
-      try {
-        await input.session.interrupt();
-        await input.session.waitForTerminal();
-      } catch (error) {
-        reportError(error);
-      } finally {
-        renderer.destroy();
-      }
-    } else {
-      renderer.destroy();
-    }
-  };
-
   function skillAutocompleteIsOpen(): boolean {
     return Boolean(skillAutocompleteToken && skillAutocompleteItems.length > 0);
   }
@@ -1401,7 +1423,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
     key.preventDefault();
-    void requestExit();
+    handleEscape();
   });
 
   // Keyboard scroll bindings for the transcript. Mirrors the mouse wheel
@@ -1491,13 +1513,18 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
 
-    // Ctrl+Y — emacs-style "yank," repurposed here as the keyboard hotkey
-    // for the `/copy` slash command. macOS Cmd+C is owned by the terminal
-    // emulator and never reaches the TUI, so Ctrl+Y is the closest thing
-    // to a real copy keystroke we can deliver across all terminals.
-    if (key.name === "y" && key.ctrl && !key.shift && !key.super && !key.meta) {
+    // Copy keystroke. Both Cmd+C (the macOS clipboard shortcut every Mac
+    // user has muscle memory for) and Ctrl+Shift+C (the Linux/Windows
+    // terminal-app convention that leaves bare Ctrl+C free for "exit")
+    // copy the active selection, regardless of platform. The hint label
+    // surfaces only the OS-natural one so the bottom row stays terse.
+    // No-op when nothing is selected so the keystroke still falls through
+    // to whatever the terminal would do natively.
+    const isCmdC = key.name === "c" && (key.super || key.meta) && !key.shift && !key.ctrl;
+    const isCtrlShiftC = key.name === "c" && key.ctrl && key.shift && !key.super && !key.meta;
+    if ((isCmdC || isCtrlShiftC) && lastSelectionText.trim().length > 0) {
       key.preventDefault();
-      void handleCopySlashCommand("/copy");
+      void copyActiveSelection();
       return;
     }
 
@@ -1620,10 +1647,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
     if (key.name === "escape") {
-      void requestExit();
+      handleEscape();
       return;
     }
   };
+
+  // Esc interrupts the in-flight turn; when nothing is running it is a
+  // no-op so muscle memory does not eject the user out of the session.
+  // Quitting goes through Ctrl+C (renderer's exitOnCtrlC) or closing the
+  // terminal — both paths drain through the `finally` block in
+  // cli/run.ts that disposes the SessionManager and flushes PGlite.
+  function handleEscape(): void {
+    if (!running) return;
+    void input.session.interrupt().catch(reportError);
+  }
 
   inputField.onContentChange = () => {
     // First real keystroke into the input collapses the starter section
@@ -1701,7 +1738,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         pendingImages.push(pending);
         inputField.insertText(pending.label);
         appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
-        refreshAttachmentHint();
+        refreshHint();
       } catch (error) {
         // The clipboard looked like an image path but we could not load
         // it — surface why and restore the original text so the user can
@@ -1752,7 +1789,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         `attached ${pending.label} (${mimeType}, ${formatBytes(bytes.length)})`,
         COLORS.system,
       );
-      refreshAttachmentHint();
+      refreshHint();
     } catch (error) {
       appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
     }
@@ -1762,7 +1799,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (pendingImages.length === 0) return;
     pendingImages = [];
     nextImageId = 1;
-    refreshAttachmentHint();
+    refreshHint();
   }
 
   // Manual clipboard probe. Read the OS clipboard for an image right now and
@@ -1857,10 +1894,44 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   /**
+   * Copy the active drag-selection to the clipboard and clear the highlight
+   * so the user gets visual confirmation the action happened. Used by the
+   * platform copy keystroke (Cmd+C on macOS, Ctrl+Shift+C elsewhere); the
+   * slash command path goes through `handleCopySlashCommand` so it can
+   * also serve `/copy last|all|<N>`.
+   */
+  async function copyActiveSelection(): Promise<void> {
+    const text = lastSelectionText;
+    if (text.trim().length === 0) return;
+    const result = await copyTextToClipboard(text);
+    renderer.clearSelection();
+    lastSelectionText = "";
+    refreshHint();
+    if (result.ok) {
+      appendBlock(
+        "[copy]",
+        `copied selection (${text.length} char${text.length === 1 ? "" : "s"}) to clipboard via ${result.via}`,
+        COLORS.system,
+      );
+    } else {
+      appendBlock(
+        "[copy]",
+        `clipboard write failed: ${result.error ?? "unknown error"}` +
+          (process.platform === "linux" ? "\nInstall one of: wl-clipboard, xclip, xsel" : ""),
+        COLORS.error,
+      );
+    }
+  }
+
+  /**
    * Resolve a `/copy ...` invocation to clipboard text and pipe it to the
-   * OS clipboard. Surfaces every failure mode in the transcript so users on
-   * minimal Linux installs see exactly which writer is missing (e.g.
-   * "install xclip or wl-clipboard").
+   * OS clipboard. When the user has an active drag-selection and ran a bare
+   * `/copy`, copy that highlight verbatim — it matches what they actually
+   * have on screen. Otherwise fall back to the transcript-log heuristic
+   * (`last` / `all` / `<N>`).
+   *
+   * Failures are surfaced in the transcript so users on minimal Linux
+   * installs see exactly which writer is missing.
    */
   async function handleCopySlashCommand(raw: string): Promise<void> {
     const argumentRaw = raw === "/copy" ? "" : raw.slice("/copy ".length);
@@ -1868,19 +1939,29 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (argument === undefined) {
       appendBlock(
         "[copy]",
-        "Usage: /copy [last|all|<N>]  — last (default) copies the most recent agent reply",
+        "Usage: /copy [last|all|<N>]  — last (default) copies the most recent agent reply, " +
+          "or copies the active drag-selection when one is present",
         COLORS.system,
       );
       return;
     }
-    const text = selectCopyText(transcriptLog, argument);
+
+    // A bare `/copy` (or the copy keystroke while a selection is active)
+    // prefers the drag-selection so the clipboard matches what the user
+    // has highlighted on screen; an explicit `/copy last|all|<N>` always
+    // uses the transcript log instead.
+    const explicitArgument = argumentRaw.trim().length > 0;
+    const useSelection = !explicitArgument && lastSelectionText.trim().length > 0;
+    const text = useSelection ? lastSelectionText : selectCopyText(transcriptLog, argument);
     if (!text) {
       appendBlock("[copy]", "nothing to copy yet", COLORS.system);
       return;
     }
-    const result = await writeClipboardText(text);
+    const result = await copyTextToClipboard(text);
     if (result.ok) {
-      const summary = describeCopySelection(argument, text.length);
+      const summary = useSelection
+        ? `selection (${text.length} char${text.length === 1 ? "" : "s"})`
+        : describeCopySelection(argument, text.length);
       appendBlock("[copy]", `copied ${summary} to clipboard via ${result.via}`, COLORS.system);
     } else {
       appendBlock(
@@ -1890,6 +1971,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         COLORS.error,
       );
     }
+  }
+
+  /**
+   * Two-stage clipboard write. OpenTUI's OSC 52 path is preferred because it
+   * lands in the user's clipboard even when the TUI is running over SSH or
+   * inside tmux — no host CLI required. When the terminal does not
+   * advertise OSC 52 support (or stdout is gone), fall back to the
+   * platform-native CLI writers in `clipboard.ts`.
+   */
+  async function copyTextToClipboard(text: string): Promise<ClipboardWriteResult> {
+    if (renderer.isOsc52Supported() && renderer.copyToClipboardOSC52(text)) {
+      return { ok: true, via: "OSC 52" };
+    }
+    return writeClipboardText(text);
   }
 
   function describeCopySelection(argument: "last" | "all" | number, length: number): string {
@@ -1921,7 +2016,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       // can keep typing their prompt with the image already attached.
       inputField.insertText(pending.label);
       appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
-      refreshAttachmentHint();
+      refreshHint();
     } catch (error) {
       appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
     }

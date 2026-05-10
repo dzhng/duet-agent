@@ -1,6 +1,6 @@
 /**
  * Tiny in-memory log of user / agent messages used by the `/copy` slash
- * command and the Ctrl+Y keystroke. The TUI's transcript itself is rendered
+ * command and the platform copy keystroke. The TUI's transcript itself is rendered
  * line-by-line into a ScrollBoxRenderable, so there is no straightforward
  * way to retrieve "the last assistant message" as a clean string. This log
  * is the parallel structure that makes copy-out possible.
