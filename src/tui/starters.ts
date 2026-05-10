@@ -143,12 +143,14 @@ const DEFAULT_STARTERS: readonly string[] = [
  * Pick four starter prompts (and an optional resume preview) based on the
  * shape of the working directory and any prior session history.
  *
- * Detection rules run in priority order; the first match wins:
+ * Detection rules run in priority order; the first match wins. Content
+ * signals beat location signals so a working tree that happens to live
+ * under /tmp still classifies by what is in it.
  *   1. git repo with at least one commit
  *   2. package.json present (no commits / empty git is fine)
- *   3. scratch dir: /tmp, ~/Desktop, ~/Downloads, or empty
- *   4. .duet/skills/ present
- *   5. text-heavy: more than 5 .md or .txt files and no package.json
+ *   3. .duet/skills/ present
+ *   4. text-heavy: more than 5 .md or .txt files and no package.json
+ *   5. scratch dir (/tmp, ~/Desktop, ~/Downloads) or empty
  *   6. default
  */
 export function selectStarters(input: StartersInput): StartersResult {
@@ -165,12 +167,17 @@ export function selectStarters(input: StartersInput): StartersResult {
   return resumePrompt ? { starters, resumePrompt, recentSessions } : { starters, recentSessions };
 }
 
+// Detection priority: content-based checks (git, package, skills, text)
+// always win over location-based scratch detection. A `/tmp/duet-clone/`
+// working tree should classify as skills, not scratch — the user is
+// working on something even though they happen to be under /tmp. Scratch
+// only fires as a last resort when no content signal is present.
 function pickStarters(cwd: string): readonly string[] {
   if (isGitRepoWithCommits(cwd)) return GIT_STARTERS;
   if (hasPackageJson(cwd)) return PACKAGE_STARTERS;
-  if (isScratchDir(cwd) || isEmptyDir(cwd)) return SCRATCH_STARTERS;
   if (hasDuetSkills(cwd)) return SKILL_STARTERS;
   if (isTextHeavy(cwd)) return TEXT_STARTERS;
+  if (isScratchDir(cwd) || isEmptyDir(cwd)) return SCRATCH_STARTERS;
   return DEFAULT_STARTERS;
 }
 
@@ -192,12 +199,17 @@ function hasPackageJson(cwd: string): boolean {
   return existsSync(join(cwd, "package.json"));
 }
 
+// Only the literal scratch roots count. Descendants like `/tmp/foo`
+// are intentionally NOT scratch — if they contain content the other
+// detectors will catch them, and if they're empty isEmptyDir handles
+// the fresh-canvas case. Matching the whole `/tmp/*` subtree as scratch
+// would otherwise pre-empt every content branch on test runners and
+// containerized environments where HOME or working trees live under /tmp.
 function isScratchDir(cwd: string): boolean {
   const resolved = resolve(cwd);
   const home = homedir();
   return (
     resolved === "/tmp" ||
-    resolved.startsWith("/tmp/") ||
     resolved === join(home, "Desktop") ||
     resolved === join(home, "Downloads")
   );

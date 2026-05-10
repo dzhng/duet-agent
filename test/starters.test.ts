@@ -30,15 +30,11 @@ function assistantMessage(text: string): AgentMessage {
   } as unknown as AgentMessage;
 }
 
-// Fixture dirs live under the user's home, not under os.tmpdir() and not
-// under the repo working tree:
-//   - os.tmpdir() resolves to /tmp on Linux CI; isScratchDir matches the
-//     literal /tmp/* prefix and would otherwise pre-empt every other
-//     detection branch.
-//   - placing fixtures inside the repo means `git -C <fixture> rev-list HEAD`
-//     walks up to the parent .git and reports commits, so isGitRepoWithCommits
-//     wins for non-git fixtures.
-// Home is outside both traps on macOS and on standard Linux CI runners.
+// Fixture dirs live under the user's home, not under the repo working
+// tree, because `git -C <fixture> rev-list HEAD` walks up to the
+// parent .git when the fixture is inside the repo and reports commits
+// for non-git fixtures. Home is outside that trap on macOS and on the
+// docker-based CI image (which sets HOME=/tmp/home).
 const fixtureDirs: string[] = [];
 const FIXTURE_ROOT = join(homedir(), ".cache", `duet-test-tmp-starters-${process.pid}`);
 
@@ -65,8 +61,23 @@ afterEach(() => {
   }
 });
 
+// Some CI containers (the duet-agent test harness uses oven/bun base
+// images) do not ship git. Production code already returns false from
+// isGitRepoWithCommits when git throws ENOENT, so skipping the test on
+// those runners reflects real behavior — we only assert the path that
+// matters when git actually exists.
+function hasGitBinary(): boolean {
+  try {
+    execFileSync("git", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const itIfGit = hasGitBinary() ? it : it.skip;
+
 describe("selectStarters", () => {
-  it("picks git starters when cwd is a git repo with commits", () => {
+  itIfGit("picks git starters when cwd is a git repo with commits", () => {
     const dir = fixtureDir("git");
     // Pass author identity inline so the test runs on CI runners with no
     // global ~/.gitconfig (e.g. ephemeral GitHub Actions images).
