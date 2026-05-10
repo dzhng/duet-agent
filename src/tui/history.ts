@@ -145,17 +145,19 @@ export const DUET_BANNER_LINES: readonly string[] = [
 ];
 
 /**
- * 5-row compact wordmark for the boot screen. Built by taking the full
- * 6-row DUET_BANNER_LINES and dropping row 2 (the upper body), which
- * keeps the gap between the middle and bottom horizontals on letters
- * like `E` while preserving column alignment across `DUET AGENT`.
+ * 5-row compact wordmark for the boot screen. Hand-drawn with only `█`
+ * and space so every glyph renders as a solid block in any monospace
+ * font — ANSI Shadow's box-drawing characters (╗╔╝╚═║) render as thin
+ * outlines in many modern coding fonts (Geist, JetBrains Mono with
+ * certain ligatures, etc.), which made letters read as wireframe and
+ * dropped legibility on actual user terminals.
  */
 export const DUET_BANNER_LINES_COMPACT: readonly string[] = [
-  "██████╗ ██╗   ██╗███████╗████████╗     █████╗  ██████╗ ███████╗███╗   ██╗████████╗",
-  "██║  ██║██║   ██║█████╗     ██║       ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ",
-  "██║  ██║██║   ██║██╔══╝     ██║       ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ",
-  "██████╔╝╚██████╔╝███████╗   ██║       ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ",
-  "╚═════╝  ╚═════╝ ╚══════╝   ╚═╝       ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ",
+  "██████  ██   ██ ███████ ███████    █████   █████  ███████ ██   ██ ███████",
+  "██   ██ ██   ██ ██        ███     ██   ██ ██      ██      ███  ██   ███  ",
+  "██   ██ ██   ██ █████     ███     ███████ ██  ███ █████   ██ █ ██   ███  ",
+  "██   ██ ██   ██ ██        ███     ██   ██ ██   ██ ██      ██  ███   ███  ",
+  "██████   █████  ███████   ███     ██   ██  █████  ███████ ██   ██   ███  ",
 ];
 
 /** Compose the duet startup banner for the TUI header. */
