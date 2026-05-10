@@ -11,6 +11,7 @@ import {
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
+import { writeClipboardText } from "./clipboard.js";
 import {
   describeMacClipboardTypes,
   loadImageFromPath,
@@ -21,6 +22,11 @@ import {
   tryReadClipboardImage,
   tryReadClipboardText,
 } from "./paste.js";
+import {
+  parseCopyArgument,
+  selectCopyText,
+  type TranscriptEntry,
+} from "./transcript-log.js";
 import type { Session } from "../session/session.js";
 import type {
   TurnAgentFile,
@@ -397,6 +403,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // Monotonic counter for the next `[Image #N]` placeholder. Reset alongside
   // `pendingImages` so users see a fresh `#1` label after each submit.
   let nextImageId = 1;
+  // Parallel record of user/agent message bodies driven by the same code
+  // paths that render them into the transcript. The `/copy` slash command
+  // and Ctrl+Y keystroke read from this log instead of trying to walk the
+  // ScrollBoxRenderable, which only stores presentation lines.
+  const transcriptLog: TranscriptEntry[] = [];
+  function recordTranscriptEntry(kind: TranscriptEntry["kind"], text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    transcriptLog.push({ kind, text: trimmed });
+  }
   let lastTerminal: TurnTerminalEvent | undefined;
   let latestContextUsage: TurnContextUsageEvent | undefined;
   // Running USD total across every settled turn in this session. Reset only
@@ -678,6 +694,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         true,
       );
     } else if (step.type === "text") {
+      recordTranscriptEntry("agent", step.text);
       if (activeTextStream) {
         finalizeDelta(activeTextStream, step.text);
         activeTextStream = undefined;
@@ -975,7 +992,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const answers = questionPickerAnswerPayload(pendingQuestions, questionOptionSelectedIndex);
     if (!answers) return false;
 
-    appendBlock("you:", Object.values(answers).join("\n"), COLORS.user);
+    const answerText = Object.values(answers).join("\n");
+    recordTranscriptEntry("user", answerText);
+    appendBlock("you:", answerText, COLORS.user);
     void input.session
       .answer({ questions: pendingQuestions, answers, behavior: "follow_up" })
       .catch(reportError);
@@ -1206,6 +1225,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (key.name === "v" && (key.super || key.meta || key.ctrl) && !key.shift) {
       key.preventDefault();
       void triggerClipboardProbe("keystroke");
+      return;
+    }
+
+    // Ctrl+Y — emacs-style "yank," repurposed here as the keyboard hotkey
+    // for the `/copy` slash command. macOS Cmd+C is owned by the terminal
+    // emulator and never reaches the TUI, so Ctrl+Y is the closest thing
+    // to a real copy keystroke we can deliver across all terminals.
+    if (key.name === "y" && key.ctrl && !key.shift && !key.super && !key.meta) {
+      key.preventDefault();
+      void handleCopySlashCommand("/copy");
       return;
     }
 
@@ -1513,8 +1542,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       appendBlock("[paste]", "cleared pending image attachments", COLORS.system);
       return;
     }
+    if (message === "/copy" || message.startsWith("/copy ")) {
+      void handleCopySlashCommand(message);
+      return;
+    }
 
     const submittedImages = pendingImages;
+    recordTranscriptEntry("user", message);
     appendBlock("you:", message, COLORS.user);
     // Render attachments as a separate hint-colored footnote rather than
     // inlining them into the user-message block. Keeps the transcript
@@ -1541,6 +1575,54 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
     void input.session.prompt({ message, behavior: "follow_up", images }).catch(reportError);
     markRunning();
+  }
+
+  /**
+   * Resolve a `/copy ...` invocation to clipboard text and pipe it to the
+   * OS clipboard. Surfaces every failure mode in the transcript so users on
+   * minimal Linux installs see exactly which writer is missing (e.g.
+   * "install xclip or wl-clipboard").
+   */
+  async function handleCopySlashCommand(raw: string): Promise<void> {
+    const argumentRaw = raw === "/copy" ? "" : raw.slice("/copy ".length);
+    const argument = parseCopyArgument(argumentRaw);
+    if (argument === undefined) {
+      appendBlock(
+        "[copy]",
+        "Usage: /copy [last|all|<N>]  — last (default) copies the most recent agent reply",
+        COLORS.system,
+      );
+      return;
+    }
+    const text = selectCopyText(transcriptLog, argument);
+    if (!text) {
+      appendBlock("[copy]", "nothing to copy yet", COLORS.system);
+      return;
+    }
+    const result = await writeClipboardText(text);
+    if (result.ok) {
+      const summary = describeCopySelection(argument, text.length);
+      appendBlock("[copy]", `copied ${summary} to clipboard via ${result.via}`, COLORS.system);
+    } else {
+      appendBlock(
+        "[copy]",
+        `clipboard write failed: ${result.error ?? "unknown error"}` +
+          (process.platform === "linux"
+            ? "\nInstall one of: wl-clipboard, xclip, xsel"
+            : ""),
+        COLORS.error,
+      );
+    }
+  }
+
+  function describeCopySelection(
+    argument: "last" | "all" | number,
+    length: number,
+  ): string {
+    const chars = `${length} char${length === 1 ? "" : "s"}`;
+    if (argument === "last") return `last message (${chars})`;
+    if (argument === "all") return `full transcript (${chars})`;
+    return `last ${argument} messages (${chars})`;
   }
 
   async function handleImageSlashCommand(raw: string): Promise<void> {
@@ -1615,9 +1697,26 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   }
 
+  // Seed the copy-out log from full resumed history (not the trimmed display
+  // slice) so `/copy all` and `/copy <N>` can reach back further than what is
+  // actually rendered in the transcript on resume.
+  if (input.history && input.history.length > 0) {
+    for (const block of historyDisplayBlocks(input.history)) {
+      if (block.kind === "user") {
+        // History blocks for users are formatted as `you:\n<text>`; strip the
+        // label so the clipboard text matches what the user originally typed.
+        const stripped = block.content.replace(/^you:\n?/, "");
+        recordTranscriptEntry("user", stripped);
+      } else if (block.kind === "agent") {
+        recordTranscriptEntry("agent", block.content);
+      }
+    }
+  }
+
   // ---- bootstrap initial prompt ----------------------------------------------
 
   if (input.initialPrompt) {
+    recordTranscriptEntry("user", input.initialPrompt);
     appendBlock("you:", input.initialPrompt, COLORS.user);
     void input.session
       .prompt({ message: input.initialPrompt, behavior: "follow_up" })

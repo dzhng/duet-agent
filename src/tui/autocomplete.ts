@@ -59,6 +59,11 @@ export const BUILT_IN_SLASH_COMMANDS: readonly SkillAutocompleteItem[] = [
     description: "Drop pending image attachments before submit",
     group: "commands",
   },
+  {
+    name: "copy",
+    description: "Copy text to your clipboard: /copy [last|all|<N>] (default: last agent reply)",
+    group: "commands",
+  },
 ];
 
 /**
