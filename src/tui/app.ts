@@ -828,7 +828,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // one keystroke instead of typing it again. Documented tradeoff: a
     // future iteration can swap this for true cross-session resume once
     // the session manager exposes a hot-swap API.
-    submit(entry.submit, false);
+    submit(entry.submit);
     return true;
   }
 
@@ -1055,10 +1055,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- input handling --------------------------------------------------------
 
-  // Track shift state for the most recent Enter keypress. The focused
-  // InputRenderable handles its own `enter` event after onKeyDown fires, so we
-  // capture the modifier here and read it during the ENTER event below.
-  let lastEnterShift = false;
   let skillAutocompleteSkills: readonly SkillAutocompleteItem[] = [];
   let skillAutocompleteToken: AutocompleteToken | undefined;
   let skillAutocompleteItems: SkillAutocompleteItem[] = [];
@@ -1561,18 +1557,24 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
 
     if (key.name === "return" || key.name === "enter") {
-      lastEnterShift = Boolean(key.shift);
+      // Shift+Enter inserts a literal newline at the cursor, matching every
+      // modern chat composer (Slack, Claude Code, ChatGPT, Discord). Plain
+      // Enter always submits — when the agent is running the submit path
+      // queues the message as a follow-up; otherwise it kicks off a new turn.
+      key.preventDefault();
+      if (key.shift) {
+        inputField.insertText("\n");
+        return;
+      }
       const value = inputField.plainText.trim();
       inputField.clear();
-      key.preventDefault();
       if (value) {
-        submit(value, lastEnterShift);
+        submit(value);
       } else if (questionPickerIsOpen()) {
         submitSelectedQuestionOption();
       } else if (startersAreVisible()) {
         submitHighlightedStarter();
       }
-      lastEnterShift = false;
       return;
     }
     if (key.name === "escape") {
@@ -1758,7 +1760,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   }
 
-  function submit(message: string, shiftEnter: boolean): void {
+  function submit(message: string): void {
     // First user submit collapses the boot starter section permanently for
     // this session, even when the prompt came from autocomplete or paste.
     if (startersAreVisible()) dismissStarters();
@@ -1803,14 +1805,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // double-charged with the same attachments on retry.
     clearPendingImages();
 
-    if (running) {
-      const behavior = shiftEnter ? "follow_up" : "steer";
-      void input.session.prompt({ message, behavior, images }).catch(reportError);
-      return;
-    }
-
+    // Every submit — running or idle — is a follow_up. While the agent is
+    // running this queues; while idle it kicks off a fresh turn. Single
+    // mental model: type, press Enter, your message lands.
     void input.session.prompt({ message, behavior: "follow_up", images }).catch(reportError);
-    markRunning();
+    if (!running) {
+      markRunning();
+    }
   }
 
   /**
