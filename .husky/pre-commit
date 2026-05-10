@@ -1,3 +1,7 @@
-bun run format
+staged=$(git diff --cached --name-only --diff-filter=ACMR -z)
+if [ -n "$staged" ]; then
+  printf '%s' "$staged" | xargs -0 bunx oxfmt --write --no-error-on-unmatched-pattern
+  printf '%s' "$staged" | xargs -0 git add
+fi
 bun run check-types
 bun run lint
