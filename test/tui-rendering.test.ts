@@ -41,7 +41,7 @@ describe("TUI rendering smoke test", () => {
     // before we snapshot.
     await harness.flush();
 
-    const frame = harness.captureCharFrame();
+    const frame = await harness.captureCharFrame();
 
     // The streamed agent reply must land in the rendered frame. The boot
     // banner / playground menu may push the user submit out of the visible

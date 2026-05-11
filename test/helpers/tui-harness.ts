@@ -10,7 +10,12 @@ import {
   type SessionPromptInput,
 } from "../../src/session/session.js";
 import { runTui } from "../../src/tui/app.js";
-import type { TurnEvent, TurnQuestion, TurnTerminalEvent } from "../../src/types/protocol.js";
+import type {
+  TurnContextUsageEvent,
+  TurnEvent,
+  TurnQuestion,
+  TurnTerminalEvent,
+} from "../../src/types/protocol.js";
 
 /**
  * Boot the real TUI on top of a `createTestRenderer` so synthetic
@@ -58,15 +63,24 @@ export interface TuiHarness {
   /**
    * Snapshot the renderer's current frame as a plain-text string. Wraps
    * `createTestRenderer`'s `captureCharFrame` so tests can assert on
-   * actually-painted content rather than internal state.
+   * actually-painted content rather than internal state. Forces one
+   * render cycle before snapshotting so handlers that mutated the scene
+   * since the last natural tick (e.g. a synthetic event push) are
+   * reflected in the captured cells.
    */
-  captureCharFrame(): string;
+  captureCharFrame(): Promise<string>;
   /**
    * Push a single `ask` terminal with the provided questions. The TUI
    * reacts to the resulting state event and shows the picker. Returns
    * once the renderer has had a tick to react.
    */
   pushAskTerminal(questions: TurnQuestion[]): Promise<void>;
+  /**
+   * Push a single `context_usage` event with the provided payload so
+   * tests can drive the sidebar bar with hand-crafted breakdowns.
+   * Returns once the renderer has had a tick to repaint.
+   */
+  pushContextUsage(event: Omit<TurnContextUsageEvent, "type">): Promise<void>;
   /** Yield to the event loop so queued key events and microtasks drain. */
   flush(): Promise<void>;
   /** Tear down renderer, session, and the temp session directory. */
@@ -108,7 +122,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
   const width = options.width ?? 100;
   const height = options.height ?? 32;
 
-  const { renderer, mockInput, captureCharFrame } = await createTestRenderer({
+  const { renderer, mockInput, captureCharFrame, renderOnce } = await createTestRenderer({
     width,
     height,
     kittyKeyboard: true,
@@ -233,7 +247,15 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
         await new Promise<void>((resolve) => setTimeout(resolve, 5));
       }
     },
-    captureCharFrame,
+    async captureCharFrame() {
+      // Drain pending microtasks so any event handler scheduled by the
+      // most recent push has actually mutated the scene, then force a
+      // render so `captureCharFrame` reads the post-mutation buffer
+      // instead of a stale tick.
+      await yieldToEventLoop();
+      await renderOnce();
+      return captureCharFrame();
+    },
     async pushAskTerminal(questions) {
       // Bypass slash parsing by emitting an `ask` terminal as if a turn
       // had produced it. Session.handleTurnEvent awaits a state-file
@@ -251,6 +273,22 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
       }
       // One extra tick so any synchronous render side effects (e.g. layout
       // measure) settle before the test starts pressing keys.
+      await yieldToEventLoop();
+    },
+    async pushContextUsage(event) {
+      // Same polling contract as `pushAskTerminal`: wait until the session
+      // observer records the event so downstream handlers have run.
+      const before = sessionEvents.length;
+      runner.emitContextUsage(event);
+      const start = Date.now();
+      while (!sessionEvents.slice(before).some((e) => e.type === "context_usage")) {
+        if (Date.now() - start > 1000) {
+          throw new Error(
+            "pushContextUsage: context_usage event never reached the session subscriber",
+          );
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
       await yieldToEventLoop();
     },
     async flush() {

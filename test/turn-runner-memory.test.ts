@@ -12,7 +12,11 @@ import {
   getUnobservedMessageTail,
 } from "../src/memory/observational.js";
 import { buildObserverPrompt } from "../src/memory/observational-prompts.js";
-import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
+import {
+  scaleContextWindowUsageToTotalTokens,
+  TurnRunner,
+  type AgentConfigInput,
+} from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import type { TurnEvent, TurnOptions } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
@@ -722,23 +726,61 @@ describe("TurnRunner memory", () => {
     expect(breakdown.localMemory).toBeGreaterThan(0);
     expect(breakdown.globalMemory).toBeGreaterThan(0);
 
+    // Emitted segments are scaled to match the provider-reported total.
+    const total =
+      breakdown.systemPrompt + breakdown.messages + breakdown.localMemory + breakdown.globalMemory;
+    expect(total).toBe(contextUsage!.usage.totalTokens);
+
     // The two global rows together should contribute more tokens than
     // the single local row, since their combined content is longer.
     expect(breakdown.globalMemory).toBeGreaterThan(breakdown.localMemory);
 
-    // The seeded pack defines the lower bound on the memory segments:
-    // each rendered row's tokens must contribute, so the segment is at
-    // least the sum of its content estimates.
-    const expectedGlobalLowerBound = seeded.global.reduce(
-      (total, row) => total + Math.ceil(row.content.length / 4),
+    // Raw estimates (before scaling) should still reflect pack sizes:
+    // global content is longer than local, so the scaled global segment
+    // should still exceed the scaled local segment by a healthy margin.
+    const expectedGlobalRaw = seeded.global.reduce(
+      (sum, row) => sum + Math.ceil(row.content.length / 4),
       0,
     );
-    const expectedLocalLowerBound = seeded.local.reduce(
-      (total, row) => total + Math.ceil(row.content.length / 4),
+    const expectedLocalRaw = seeded.local.reduce(
+      (sum, row) => sum + Math.ceil(row.content.length / 4),
       0,
     );
-    expect(breakdown.globalMemory).toBe(expectedGlobalLowerBound);
-    expect(breakdown.localMemory).toBe(expectedLocalLowerBound);
+    expect(expectedGlobalRaw).toBeGreaterThan(expectedLocalRaw);
+  });
+});
+
+describe("scaleContextWindowUsageToTotalTokens", () => {
+  test("splits the target across segments with per-slice minimums when the budget allows", () => {
+    const scaled = scaleContextWindowUsageToTotalTokens(
+      { systemPrompt: 10, messages: 20, localMemory: 5, globalMemory: 5 },
+      41,
+    );
+    expect(scaled.systemPrompt + scaled.messages + scaled.localMemory + scaled.globalMemory).toBe(
+      41,
+    );
+    expect(scaled.systemPrompt).toBe(10);
+    expect(scaled.messages).toBe(19);
+    expect(scaled.localMemory).toBe(6);
+    expect(scaled.globalMemory).toBe(6);
+  });
+
+  test("when every raw segment is zero, attributes the full total to messages", () => {
+    expect(
+      scaleContextWindowUsageToTotalTokens(
+        { systemPrompt: 0, messages: 0, localMemory: 0, globalMemory: 0 },
+        99,
+      ),
+    ).toEqual({ systemPrompt: 0, messages: 99, localMemory: 0, globalMemory: 0 });
+  });
+
+  test("zero target clears every segment", () => {
+    expect(
+      scaleContextWindowUsageToTotalTokens(
+        { systemPrompt: 100, messages: 200, localMemory: 50, globalMemory: 25 },
+        0,
+      ),
+    ).toEqual({ systemPrompt: 0, messages: 0, localMemory: 0, globalMemory: 0 });
   });
 });
 

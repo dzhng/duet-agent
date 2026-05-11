@@ -1,4 +1,11 @@
-import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
+import {
+  BoxRenderable,
+  type CliRenderer,
+  fg,
+  StyledText,
+  type TextChunk,
+  TextRenderable,
+} from "@opentui/core";
 import type {
   TurnContextUsageEvent,
   TurnContextWindowUsage,
@@ -15,6 +22,18 @@ import { COLORS } from "./theme.js";
  * fills the remaining headroom up to this width.
  */
 const CONTEXT_BAR_WIDTH = 25;
+
+const BAR_FILLED_CELL = "\u2588";
+const BAR_EMPTY_CELL = "\u2591";
+
+/**
+ * Placeholder trailing run for the idle bar (before any usage event has
+ * been received). Width must equal the live trailing `] _NN%` so the bar
+ * does not visually jitter when the first usage arrives, and so the total
+ * bar content (`[` + `CONTEXT_BAR_WIDTH` cells + trailing) fits inside the
+ * sidebar's inner width without wrapping.
+ */
+const BAR_PLACEHOLDER_TRAILING = "]  --%";
 
 /**
  * Visual breakdown of `TurnContextWindowUsage` for the sidebar bar and
@@ -134,53 +153,22 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
   titleRow.add(costLabel);
   contextPanel.add(titleRow);
 
-  // Colored bar row: open bracket, one TextRenderable per tracked segment
-  // (its `content` length controls how many cells it occupies in the flex
-  // row), an "untracked" run for provider-reported tokens our segment
-  // breakdown does not attribute, the empty remainder, and a close bracket
-  // with percentage. Updating widths is just rewriting `content`.
-  const barRow = new BoxRenderable(renderer, {
-    flexDirection: "row",
-    height: 1,
+  // The whole bar is a single TextRenderable with a StyledText payload so
+  // an empty segment contributes zero cells. Splitting the bar across
+  // sibling TextRenderables looks tempting, but OpenTUI's TextRenderable
+  // measure function clamps the layout width to `max(1, ...)` even for
+  // content "", which turned every zero-token segment into a phantom
+  // 1-cell gap mid-bar.
+  const barRow = new TextRenderable(renderer, {
+    content: makeBarContent({
+      segmentCells: CONTEXT_SEGMENTS.map(() => 0),
+      untrackedCells: 0,
+      emptyCells: CONTEXT_BAR_WIDTH,
+      trailing: BAR_PLACEHOLDER_TRAILING,
+      trailingFg: COLORS.hint,
+    }),
     flexShrink: 0,
   });
-  const barOpen = new TextRenderable(renderer, {
-    content: "[",
-    fg: COLORS.hint,
-    flexShrink: 0,
-  });
-  barRow.add(barOpen);
-  const segmentNodes = CONTEXT_SEGMENTS.map((segment) => {
-    const node = new TextRenderable(renderer, {
-      content: "",
-      fg: segment.color,
-      flexShrink: 0,
-    });
-    barRow.add(node);
-    return node;
-  });
-  // Cells used by the provider-reported total beyond what the four tracked
-  // segments add up to (e.g. tool definitions, reasoning, or overhead the
-  // runner does not model explicitly). Rendered in `reasoning` grey so it
-  // reads as "used but unattributed."
-  const untrackedNode = new TextRenderable(renderer, {
-    content: "",
-    fg: COLORS.reasoning,
-    flexShrink: 0,
-  });
-  barRow.add(untrackedNode);
-  const emptyNode = new TextRenderable(renderer, {
-    content: "\u2591".repeat(CONTEXT_BAR_WIDTH),
-    fg: COLORS.hint,
-    flexShrink: 0,
-  });
-  barRow.add(emptyNode);
-  const barClose = new TextRenderable(renderer, {
-    content: "]   --%",
-    fg: COLORS.hint,
-    flexShrink: 0,
-  });
-  barRow.add(barClose);
   contextPanel.add(barRow);
 
   // Legend row: a colored square plus a hint-colored label per segment,
@@ -268,11 +256,13 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     },
     setContextUsage(usage) {
       if (!usage) {
-        for (const node of segmentNodes) node.content = "";
-        untrackedNode.content = "";
-        emptyNode.content = "\u2591".repeat(CONTEXT_BAR_WIDTH);
-        barClose.content = "]   --%";
-        barClose.fg = COLORS.hint;
+        barRow.content = makeBarContent({
+          segmentCells: CONTEXT_SEGMENTS.map(() => 0),
+          untrackedCells: 0,
+          emptyCells: CONTEXT_BAR_WIDTH,
+          trailing: BAR_PLACEHOLDER_TRAILING,
+          trailingFg: COLORS.hint,
+        });
         tokensLabel.content = "";
         return;
       }
@@ -319,15 +309,14 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
       }
       const emptyCells = Math.max(0, CONTEXT_BAR_WIDTH - usedCells);
 
-      segmentNodes.forEach((node, i) => {
-        node.content = "\u2588".repeat(segmentCells[i]);
-      });
-      untrackedNode.content = "\u2588".repeat(untrackedCells);
-      emptyNode.content = "\u2591".repeat(emptyCells);
-
       const percent = Math.min(100, Math.round((usedTokens / cap) * 100));
-      barClose.content = `] ${String(percent).padStart(3)}%`;
-      barClose.fg = overflow ? COLORS.error : COLORS.hint;
+      barRow.content = makeBarContent({
+        segmentCells,
+        untrackedCells,
+        emptyCells,
+        trailing: `] ${String(percent).padStart(3)}%`,
+        trailingFg: overflow ? COLORS.error : COLORS.hint,
+      });
       tokensLabel.content = `${formatTokenCount(usedTokens)} / ${formatTokenCount(cap)}`;
       tokensLabel.fg = overflow ? COLORS.error : COLORS.agent;
     },
@@ -404,6 +393,37 @@ function todoStatusGlyph(status: TurnTodo["status"]): string {
   if (status === "in_progress") return "●";
   if (status === "failed") return "✗";
   return "○";
+}
+
+/**
+ * Build the single-line context bar as styled chunks so an empty segment
+ * contributes zero cells. Order matches `CONTEXT_SEGMENTS` for the
+ * tracked runs, with the untracked-remainder run drawn after the last
+ * tracked segment and empty headroom drawn last before the trailing
+ * `] NN%`.
+ */
+function makeBarContent(params: {
+  segmentCells: readonly number[];
+  untrackedCells: number;
+  emptyCells: number;
+  trailing: string;
+  trailingFg: string;
+}): StyledText {
+  const chunks: TextChunk[] = [fg(COLORS.hint)("[")];
+  CONTEXT_SEGMENTS.forEach((segment, i) => {
+    const cells = params.segmentCells[i];
+    if (cells > 0) {
+      chunks.push(fg(segment.color)(BAR_FILLED_CELL.repeat(cells)));
+    }
+  });
+  if (params.untrackedCells > 0) {
+    chunks.push(fg(COLORS.reasoning)(BAR_FILLED_CELL.repeat(params.untrackedCells)));
+  }
+  if (params.emptyCells > 0) {
+    chunks.push(fg(COLORS.hint)(BAR_EMPTY_CELL.repeat(params.emptyCells)));
+  }
+  chunks.push(fg(params.trailingFg)(params.trailing));
+  return new StyledText(chunks);
 }
 
 function formatTokenCount(tokens: number): string {

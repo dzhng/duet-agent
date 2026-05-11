@@ -12,7 +12,6 @@ import dedent from "dedent";
 import { assistantText } from "../core/serializer.js";
 import { toXML } from "../lib/xml.js";
 import {
-  agentMessagesToRaw,
   createObservationalContextTransform,
   DEFAULT_EFFECTIVE_CONTEXT,
   estimateTokens,
@@ -32,6 +31,7 @@ import type { TurnRunnerConfig } from "../types/config.js";
 import type {
   TurnAgentFile,
   TurnAnswerCommand,
+  TurnContextWindowUsage,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnFollowUpQueueEntry,
@@ -50,7 +50,7 @@ import type {
 import type { StateMachineAgentState } from "../types/state-machine.js";
 import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
 import { createStateMachineSystemPromptLayer } from "./prompts.js";
-import { createInitialHorizon, type WireGuardHorizon } from "./wire-shaping.js";
+import { calculateWireBytes, createInitialHorizon, type WireGuardHorizon } from "./wire-shaping.js";
 import {
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
@@ -94,6 +94,83 @@ export interface AgentConfigInput {
 export interface AgentWorkerResult {
   terminal: TurnTerminalEvent;
   control: TurnRunnerControlResult;
+}
+
+/** Order matches `TurnContextWindowUsage` fields; indexes map to `scaled[0..3]`. */
+const CONTEXT_USAGE_KEYS = [
+  "systemPrompt",
+  "messages",
+  "localMemory",
+  "globalMemory",
+] as const satisfies readonly (keyof TurnContextWindowUsage)[];
+
+/**
+ * Rescale the four segment estimates so they sum exactly to the
+ * provider-reported `totalTokens` on the latest assistant message.
+ * When `totalTokens` is at least the number of non-zero raw slices, each
+ * such slice gets at least one token, then the rest is split by raw
+ * weight with largest-remainder tie-breaks so the total is exact.
+ * Otherwise proportional floors apply (some slices may be zero). When
+ * every raw slice is zero, everything is attributed to `messages`.
+ */
+export function scaleContextWindowUsageToTotalTokens(
+  base: TurnContextWindowUsage,
+  totalTokens: number,
+): TurnContextWindowUsage {
+  const target = Math.max(0, Math.floor(totalTokens));
+  if (target === 0) {
+    return { systemPrompt: 0, messages: 0, localMemory: 0, globalMemory: 0 };
+  }
+
+  const raw = CONTEXT_USAGE_KEYS.map((k) => Math.max(0, Math.floor(base[k])));
+  const sum = raw.reduce((a, b) => a + b, 0);
+  if (sum === 0) {
+    return { systemPrompt: 0, messages: target, localMemory: 0, globalMemory: 0 };
+  }
+
+  const minAlloc: number[] = raw.map((v) => (v > 0 ? 1 : 0));
+  const minSum = minAlloc.reduce((a, b) => a + b, 0);
+
+  let scaled: number[];
+  if (target >= minSum && minSum > 0) {
+    // Reserve one token per non-empty raw slice so tiny provider totals
+    // do not wipe whole segments in the UI, then split the rest by weight.
+    scaled = [...minAlloc];
+    const remainderPool = target - minSum;
+    if (remainderPool > 0) {
+      const extra = raw.map((v) => Math.floor((v * remainderPool) / sum));
+      for (let i = 0; i < 4; i++) scaled[i]! += extra[i]!;
+      let remainder = remainderPool - extra.reduce((a, b) => a + b, 0);
+      const fracs = raw.map((v, i) => ({
+        i,
+        frac: (v * remainderPool) / sum - extra[i]!,
+      }));
+      fracs.sort((a, b) => b.frac - a.frac);
+      for (let r = 0; r < remainder; r++) {
+        scaled[fracs[r]!.i]! += 1;
+      }
+    }
+  } else {
+    // Provider total smaller than the number of non-empty slices — fall
+    // back to pure proportional floors (some segments may be zero).
+    scaled = raw.map((v) => Math.floor((v * target) / sum));
+    let remainder = target - scaled.reduce((a, b) => a + b, 0);
+    const fracs = raw.map((v, i) => ({
+      i,
+      frac: (v * target) / sum - scaled[i]!,
+    }));
+    fracs.sort((a, b) => b.frac - a.frac);
+    for (let r = 0; r < remainder; r++) {
+      scaled[fracs[r]!.i]! += 1;
+    }
+  }
+
+  return {
+    systemPrompt: scaled[0]!,
+    messages: scaled[1]!,
+    localMemory: scaled[2]!,
+    globalMemory: scaled[3]!,
+  };
 }
 
 export class TurnRunner {
@@ -1290,35 +1367,41 @@ export class TurnRunner {
     this.emitAgentEvent(event);
     if (event.type !== "message_end" || event.message.role !== "assistant") return;
 
+    const estimated = this.estimateContextWindowUsage();
     this.emit({
       type: "context_usage",
       usage: event.message.usage,
       effectiveContextWindow: this.effectiveContextWindow(),
-      contextWindowUsage: this.estimateContextWindowUsage(),
+      contextWindowUsage: scaleContextWindowUsageToTotalTokens(
+        estimated,
+        event.message.usage.totalTokens,
+      ),
     });
   }
 
   /**
-   * Estimate the per-segment occupancy of the parent agent's input. Uses the
-   * same character-heuristic token count the memory pipeline uses for its
-   * triggers, so the segment numbers and the compaction thresholds in
-   * `MEMORY_BUDGET_RATIOS` stay on the same scale. Each segment maps to
-   * what the actor will receive on its next request: the system prompt
-   * (already concatenated with any loaded AGENTS.md), the raw message
-   * history retained in agent state, and the two memory pack layers
-   * currently frozen in the cache.
+   * Estimate the per-segment occupancy of the parent agent's input before
+   * reconciliation with provider `totalTokens`. System prompt and memory
+   * packs use the same `ceil(chars/4)` heuristic as the memory pipeline so
+   * compaction triggers stay on the same scale as `MEMORY_BUDGET_RATIOS`.
+   *
+   * The message tail uses {@link calculateWireBytes}: text and image blocks
+   * match the eviction guard, and structured blocks (`toolCall`, thinking,
+   * etc.) contribute a `JSON.stringify` length like the serialized request —
+   * unlike `agentMessagesToRaw`, which only counted plain text and turned
+   * tool calls into tiny placeholder previews.
+   *
+   * `emitParentAgentEvent` rescales all four segments with
+   * {@link scaleContextWindowUsageToTotalTokens} so the emitted breakdown
+   * sums exactly to the API-reported `usage.totalTokens`.
    */
   protected estimateContextWindowUsage() {
     const agent = this.requireParentAgent();
     const pack = this.memory.getContextPack();
-    const rawMessages = agentMessagesToRaw(agent.state.messages);
+    const messageWireTokens = Math.max(0, Math.ceil(calculateWireBytes(agent.state.messages) / 4));
     return {
       systemPrompt: estimateTokens(agent.state.systemPrompt),
-      messages: rawMessages.reduce(
-        (total, message) =>
-          total + (message.estimatedTokens ?? estimateTokens(message.textPreview)),
-        0,
-      ),
+      messages: messageWireTokens,
       localMemory: pack.local.reduce((total, row) => total + estimateTokens(row.content), 0),
       globalMemory: pack.global.reduce((total, row) => total + estimateTokens(row.content), 0),
     };

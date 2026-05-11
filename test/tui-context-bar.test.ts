@@ -1,0 +1,93 @@
+import { afterEach, beforeEach, describe, expect } from "bun:test";
+import { testIfDocker } from "./helpers/docker-only.js";
+import { bootTui, type TuiHarness } from "./helpers/tui-harness.js";
+
+/**
+ * Sidebar context bar: zero-width segments must not reserve layout cells.
+ * OpenTUI measures `TextRenderable` with `max(1, contentWidth)`, so an
+ * empty sibling still occupies one cell; the bar is one `StyledText`
+ * stream instead. Asserts the bracketed interior is only `█`/`░` (25
+ * cells) so a stray space from a phantom slot fails the regex.
+ */
+describe("sidebar context bar", () => {
+  let harness: TuiHarness;
+
+  beforeEach(async () => {
+    harness = await bootTui();
+  });
+
+  afterEach(async () => {
+    await harness.dispose();
+  });
+
+  testIfDocker("zero-token segments do not produce phantom empty cells", async () => {
+    // `localMemory: 0` must not insert a gap between non-zero segments.
+    await harness.pushContextUsage({
+      usage: {
+        input: 78_000,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 78_000,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      effectiveContextWindow: 200_000,
+      contextWindowUsage: {
+        systemPrompt: 5_000,
+        messages: 30_000,
+        localMemory: 0,
+        globalMemory: 10_000,
+      },
+    });
+    await harness.flush();
+
+    // Bar interior is exactly `CONTEXT_BAR_WIDTH` (25) cells of `█`
+    // and `░` glyphs sandwiched between `[` and `]`. A phantom 1-cell
+    // slot from an empty TextRenderable would surface as a space (or
+    // any non-glyph character) inside the brackets, breaking the
+    // all-glyph match. The capture frame includes ANSI escape noise
+    // outside the rendered cells, so we extract the bracket-bounded
+    // glyph run directly rather than slicing by line.
+    const frame = await harness.captureCharFrame();
+    const match = frame.match(/\[([\u2588\u2591]+)\]/);
+    expect(match).toBeDefined();
+    expect(match![1]).toHaveLength(25);
+
+    // The bar must show at least one filled cell — anything else means
+    // the push did not propagate through Runner → Session → TUI →
+    // sidebar (the placeholder is all `░`). Filled cells then proves
+    // the contiguity invariant: every filled segment renders next to
+    // every other filled segment with no `░` interleaved.
+    expect(match![1]).toContain("\u2588");
+    expect(match![1]).toMatch(/^\u2588+\u2591*$/);
+  });
+
+  testIfDocker("an all-zero breakdown still renders a full-width empty bar", async () => {
+    // Before usage is reported the sidebar paints `░` × CONTEXT_BAR_WIDTH;
+    // pushing an explicit all-zero breakdown should match that initial
+    // state rather than collapsing to nothing or leaving phantom cells.
+    await harness.pushContextUsage({
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      effectiveContextWindow: 200_000,
+      contextWindowUsage: {
+        systemPrompt: 0,
+        messages: 0,
+        localMemory: 0,
+        globalMemory: 0,
+      },
+    });
+    await harness.flush();
+
+    const frame = await harness.captureCharFrame();
+    const match = frame.match(/\[([\u2588\u2591]+)\]/);
+    expect(match).toBeDefined();
+    expect(match![1]).toBe("\u2591".repeat(25));
+  });
+});

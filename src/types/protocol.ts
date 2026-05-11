@@ -504,6 +504,9 @@ export interface TurnMemoryEvent extends ObservationalMemoryActivityEvent {
  * to the segments the runner controls, so surfaces can show *which* part
  * of the budget is filling up. Values are heuristic character-length
  * estimates, not exact tokenizer counts.
+ *
+ * On `context_usage` events, the runner rescales these four fields so their
+ * sum equals `usage.totalTokens` from the provider.
  */
 export interface TurnContextWindowUsage {
   /**

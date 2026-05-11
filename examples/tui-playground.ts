@@ -43,6 +43,7 @@ import type { SkillCollision } from "../src/turn-runner/skills.js";
 import type {
   TurnAgentFile,
   TurnCommand,
+  TurnContextUsageEvent,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
@@ -187,6 +188,11 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
     this.emit(terminal);
   }
 
+  /** Emit `context_usage` for tests that need explicit segment totals. */
+  emitContextUsage(event: Omit<TurnContextUsageEvent, "type">): void {
+    this.emit({ type: "context_usage", ...event });
+  }
+
   // ---- scenario plumbing ---------------------------------------------------
 
   private emit(event: TurnEvent): void {
@@ -324,30 +330,43 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
     }
 
     if (message.startsWith("/context")) {
-      // Emits a synthetic `context_usage` event so the sidebar's colored
-      // bar + legend can be eyeballed without a live turn. The optional
-      // first arg is the target fill percentage; tokens are split across
-      // every segment so all four colors plus the untracked tail render.
+      // Synthetic `context_usage` for the sidebar bar. Optional arg: target
+      // fill percent (default 60). Breakdown uses fixed-ish system + memory
+      // caps, ~7% untracked overhead, remainder as messages; usage fields
+      // are shaped so the title-row cost readout is non-zero (Opus 4 $/M).
       const arg = message.slice("/context".length).trim();
       const target = Math.max(1, Math.min(120, Number.parseInt(arg, 10) || 60));
       const cap = 200_000;
       const total = Math.round((target / 100) * cap);
-      // Split: 10% system prompt, 55% messages, 15% local memory, 10%
-      // global memory, 10% untracked (provider overhead the runner does
-      // not attribute to a named segment).
-      const systemPrompt = Math.round(total * 0.1);
-      const messages = Math.round(total * 0.55);
-      const localMemory = Math.round(total * 0.15);
-      const globalMemory = Math.round(total * 0.1);
+
+      const systemPrompt = Math.min(total, 6_400);
+      const localMemory = Math.min(Math.round(total * 0.06), Math.round(cap * 0.05));
+      const globalMemory = Math.min(Math.round(total * 0.025), Math.round(cap * 0.03));
+      const overhead = Math.round(total * 0.07);
+      const messages = Math.max(0, total - systemPrompt - localMemory - globalMemory - overhead);
+
+      const output = Math.round(total * 0.04);
+      const cacheRead = Math.round(total * 0.7);
+      const cacheWrite = Math.round(total * 0.05);
+      const input = Math.max(0, total - cacheRead - cacheWrite);
+      const cost = {
+        input: (input / 1_000_000) * 15,
+        output: (output / 1_000_000) * 75,
+        cacheRead: (cacheRead / 1_000_000) * 1.5,
+        cacheWrite: (cacheWrite / 1_000_000) * 18.75,
+        total: 0,
+      };
+      cost.total = cost.input + cost.output + cost.cacheRead + cost.cacheWrite;
+
       this.emit({
         type: "context_usage",
         usage: {
-          input: total,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
+          input,
+          output,
+          cacheRead,
+          cacheWrite,
           totalTokens: total,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          cost,
         },
         effectiveContextWindow: cap,
         contextWindowUsage: { systemPrompt, messages, localMemory, globalMemory },
