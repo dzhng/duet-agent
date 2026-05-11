@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
   createEmbeddingClient,
-  EmbeddingUnavailableError,
   EMBEDDING_BATCH_LIMIT,
+  EMBEDDING_DIMENSIONS,
+  EmbeddingUnavailableError,
 } from "../src/memory/embedding.js";
 
 describe("Embedding client", () => {
-  test("posts inputs and the model to the embed endpoint", async () => {
+  test("posts inputs and dimensions to the embed endpoint", async () => {
     let capturedUrl = "";
     let capturedBody: unknown = null;
     let capturedAuth = "";
@@ -15,30 +16,36 @@ describe("Embedding client", () => {
       capturedAuth = String((init?.headers as Record<string, string>)?.authorization ?? "");
       capturedBody = JSON.parse(String(init?.body));
       return jsonResponse({
-        embeddings: [
-          [0.1, 0.2],
-          [0.3, 0.4],
-        ],
+        data: {
+          embeddings: [
+            [0.1, 0.2],
+            [0.3, 0.4],
+          ],
+          dimensions: EMBEDDING_DIMENSIONS,
+          model: "google/gemini-embedding-2",
+        },
       });
     }) as unknown as typeof fetch;
     const embed = createEmbeddingClient({
       apiKey: "test-key",
       baseUrl: "https://example.test",
       fetch: fetchStub,
-      model: "openai/text-embedding-3-small",
     });
 
     const result = await embed(["alpha", "beta"]);
 
-    expect(result).toEqual([
-      [0.1, 0.2],
-      [0.3, 0.4],
-    ]);
+    expect(result).toEqual({
+      embeddings: [
+        [0.1, 0.2],
+        [0.3, 0.4],
+      ],
+      model: "google/gemini-embedding-2",
+    });
     expect(capturedUrl).toBe("https://example.test/api/v1/embed");
     expect(capturedAuth).toBe("Bearer test-key");
     expect(capturedBody).toEqual({
       input: ["alpha", "beta"],
-      model: "openai/text-embedding-3-small",
+      dimensions: EMBEDDING_DIMENSIONS,
     });
   });
 
@@ -49,7 +56,11 @@ describe("Embedding client", () => {
       calls.push(body.input);
       // Echo: each input becomes a one-element vector with its length.
       return jsonResponse({
-        embeddings: body.input.map((value) => [value.length]),
+        data: {
+          embeddings: body.input.map((value) => [value.length]),
+          dimensions: EMBEDDING_DIMENSIONS,
+          model: "google/gemini-embedding-2",
+        },
       });
     }) as unknown as typeof fetch;
     const embed = createEmbeddingClient({ apiKey: "k", fetch: fetchStub });
@@ -60,7 +71,8 @@ describe("Embedding client", () => {
     expect(calls).toHaveLength(2);
     expect(calls[0]).toHaveLength(EMBEDDING_BATCH_LIMIT);
     expect(calls[1]).toHaveLength(5);
-    expect(result).toHaveLength(inputs.length);
+    expect(result.embeddings).toHaveLength(inputs.length);
+    expect(result.model).toBe("google/gemini-embedding-2");
   });
 
   test("throws EmbeddingUnavailableError when the API key is missing", async () => {
@@ -90,12 +102,19 @@ describe("Embedding client", () => {
     const fetchStub = (async () => {
       calls++;
       if (calls < 3) return new Response("oops", { status: 503 });
-      return jsonResponse({ embeddings: [[1, 2, 3]] });
+      return jsonResponse({
+        data: {
+          embeddings: [[1, 2, 3]],
+          dimensions: EMBEDDING_DIMENSIONS,
+          model: "google/gemini-embedding-2",
+        },
+      });
     }) as unknown as typeof fetch;
     const embed = createEmbeddingClient({ apiKey: "k", fetch: fetchStub });
 
     const result = await embed(["recovers"]);
-    expect(result).toEqual([[1, 2, 3]]);
+    expect(result.embeddings).toEqual([[1, 2, 3]]);
+    expect(result.model).toBe("google/gemini-embedding-2");
     expect(calls).toBe(3);
   });
 });

@@ -152,7 +152,8 @@ async function vectorSearch(
   const trimmed = query.trim();
   if (!trimmed) return [];
 
-  const [vector] = await embed([trimmed]);
+  const { embeddings } = await embed([trimmed]);
+  const vector = embeddings[0];
   if (!vector) return [];
 
   const baseSql = `SELECT o.id

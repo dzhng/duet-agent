@@ -32,8 +32,6 @@ export interface EmbeddingBackfillWorkerOptions {
   db: PGlite;
   /** Embedding callable. Defaults to the gateway client; tests inject a stub. */
   embed: EmbedFn;
-  /** Identifier for the embedding model, written alongside each vector for future re-embedding. */
-  model: string;
   /** Path to append progress lines to. Optional; when omitted the worker logs nothing. */
   logPath?: string;
 }
@@ -71,14 +69,14 @@ export class EmbeddingBackfillWorker {
           continue;
         }
 
-        const vectors = await this.options.embed(batch.map((row) => row.content));
-        if (vectors.length !== batch.length) {
+        const result = await this.options.embed(batch.map((row) => row.content));
+        if (result.embeddings.length !== batch.length) {
           throw new Error(
-            `Embedding response length (${vectors.length}) did not match batch size (${batch.length})`,
+            `Embedding response length (${result.embeddings.length}) did not match batch size (${batch.length})`,
           );
         }
 
-        await this.persistBatch(batch, vectors);
+        await this.persistBatch(batch, result.embeddings, result.model);
         this.log(`Embedded ${batch.length} observations`);
         await sleep(INTER_BATCH_SLEEP_MS, signal);
       } catch (error) {
@@ -112,10 +110,14 @@ export class EmbeddingBackfillWorker {
   private async persistBatch(
     batch: { id: string; content: string }[],
     vectors: number[][],
+    model: string,
   ): Promise<void> {
     // One transaction so a partial network or write failure does not
     // leave the embeddings table half-populated relative to the
-    // candidate set we just queried.
+    // candidate set we just queried. `model` is the identifier the
+    // server reported for this batch; storing it verbatim lets a
+    // future re-embedding pass match the deprecated tag and refresh
+    // only the affected rows.
     await this.options.db.transaction(async (tx) => {
       const now = Date.now();
       for (let index = 0; index < batch.length; index++) {
@@ -128,7 +130,7 @@ export class EmbeddingBackfillWorker {
              model = EXCLUDED.model,
              vector = EXCLUDED.vector,
              created_at = EXCLUDED.created_at`,
-          [row.id, this.options.model, formatVector(vector), now],
+          [row.id, model, formatVector(vector), now],
         );
       }
     });

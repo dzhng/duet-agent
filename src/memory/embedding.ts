@@ -8,6 +8,13 @@ import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
  * for free as a CLI perk; we deliberately do not expose a way to plug
  * in a different provider key here so the runtime stays single-path.
  *
+ * Model identity is owned by the server. The endpoint hardcodes the
+ * model and echoes it back on every response; we store the echoed
+ * value alongside each vector so a future server-side model swap can
+ * invalidate stale rows by tag. This client knows nothing about the
+ * concrete model name — only the dimension width, which has to match
+ * the pgvector column.
+ *
  * Behavior:
  *   - Inputs are batched up to `EMBEDDING_BATCH_LIMIT` per HTTP call so
  *     a single backfill batch never goes over the request body cap.
@@ -20,8 +27,8 @@ import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
  *     sleeps until the user logs in).
  */
 
-/** Default embedding model identifier sent with every request. */
-export const DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small";
+/** Embedding dimensions. Sent on every request and matches the pgvector column width. */
+export const EMBEDDING_DIMENSIONS = 3072;
 /** Maximum input strings sent in a single embedding request. */
 export const EMBEDDING_BATCH_LIMIT = 100;
 
@@ -30,10 +37,20 @@ const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 500;
 
 /**
- * Callable shape consumed by the backfill worker and the recall_memory
- * tool. Inputs map 1:1 to output vectors.
+ * Result of an `EmbedFn` call. `model` is the identifier the server
+ * reported alongside the vectors; storage tags each row with it so a
+ * later model swap can invalidate stale rows by string match.
  */
-export type EmbedFn = (inputs: string[]) => Promise<number[][]>;
+export interface EmbedResult {
+  embeddings: number[][];
+  model: string;
+}
+
+/**
+ * Callable shape consumed by the backfill worker and the recall_memory
+ * tool. Inputs map 1:1 to `embeddings`.
+ */
+export type EmbedFn = (inputs: string[]) => Promise<EmbedResult>;
 
 export class EmbeddingUnavailableError extends Error {
   constructor(message: string) {
@@ -43,8 +60,6 @@ export class EmbeddingUnavailableError extends Error {
 }
 
 export interface CreateEmbeddingClientOptions {
-  /** Embedding model identifier sent with each request. */
-  model?: string;
   /**
    * Override the API key resolver. Defaults to reading `DUET_API_KEY`
    * from `process.env`. Tests inject a fixed value to exercise the
@@ -70,12 +85,11 @@ export interface CreateEmbeddingClientOptions {
  * `recall_memory` query so connection reuse can amortize TLS setup.
  */
 export function createEmbeddingClient(options: CreateEmbeddingClientOptions = {}): EmbedFn {
-  const model = options.model ?? DEFAULT_EMBEDDING_MODEL;
   const baseUrl = options.baseUrl ?? resolveDuetAppBaseUrl();
   const fetchImpl = options.fetch ?? fetch;
 
   return async (inputs) => {
-    if (inputs.length === 0) return [];
+    if (inputs.length === 0) return { embeddings: [], model: "" };
     const apiKey = resolveApiKey(options.apiKey);
     if (!apiKey) {
       // Throwing a typed error lets callers branch on graceful
@@ -85,36 +99,40 @@ export function createEmbeddingClient(options: CreateEmbeddingClientOptions = {}
       );
     }
 
-    const results: number[][] = [];
+    const embeddings: number[][] = [];
+    let model = "";
     for (let offset = 0; offset < inputs.length; offset += EMBEDDING_BATCH_LIMIT) {
       const slice = inputs.slice(offset, offset + EMBEDDING_BATCH_LIMIT);
-      const vectors = await postBatch({
+      const batch = await postBatch({
         url: `${baseUrl}${ENDPOINT_PATH}`,
         apiKey,
-        model,
         inputs: slice,
         fetchImpl,
       });
-      if (vectors.length !== slice.length) {
+      if (batch.embeddings.length !== slice.length) {
         throw new Error(
-          `Embedding response length (${vectors.length}) did not match request size (${slice.length})`,
+          `Embedding response length (${batch.embeddings.length}) did not match request size (${slice.length})`,
         );
       }
-      results.push(...vectors);
+      embeddings.push(...batch.embeddings);
+      // The server returns the same model on every batch within a call.
+      // Take the last one so the caller sees what the server most
+      // recently agreed to; mid-call mismatches are not a thing we
+      // currently need to reconcile.
+      model = batch.model;
     }
-    return results;
+    return { embeddings, model };
   };
 }
 
 interface PostBatchOptions {
   url: string;
   apiKey: string;
-  model: string;
   inputs: string[];
   fetchImpl: typeof fetch;
 }
 
-async function postBatch(options: PostBatchOptions): Promise<number[][]> {
+async function postBatch(options: PostBatchOptions): Promise<EmbedResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
@@ -124,12 +142,12 @@ async function postBatch(options: PostBatchOptions): Promise<number[][]> {
           authorization: `Bearer ${options.apiKey}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ input: options.inputs, model: options.model }),
+        body: JSON.stringify({ input: options.inputs, dimensions: EMBEDDING_DIMENSIONS }),
       });
 
       if (response.ok) {
-        const body = (await response.json()) as EmbeddingResponseBody;
-        return body.embeddings;
+        const body = (await response.json()) as EmbeddingResponseEnvelope;
+        return { embeddings: body.data.embeddings, model: body.data.model };
       }
 
       // 4xx errors (auth, malformed input) will not improve on retry;
@@ -158,11 +176,17 @@ async function postBatch(options: PostBatchOptions): Promise<number[][]> {
     : new Error(`Embedding request failed after ${MAX_RETRIES} attempts`);
 }
 
-interface EmbeddingResponseBody {
-  /** Vectors in the same order as `input`. */
-  embeddings: number[][];
-  /** Echoed model identifier so callers can verify the server agreed with their request. */
-  model?: string;
+/**
+ * Server response envelope. The route wraps the action result in
+ * `{ data }`; `dimensions` is echoed back for verification but the
+ * server is the source of truth.
+ */
+interface EmbeddingResponseEnvelope {
+  data: {
+    embeddings: number[][];
+    dimensions: number;
+    model: string;
+  };
 }
 
 function resolveApiKey(override: CreateEmbeddingClientOptions["apiKey"]): string | undefined {
