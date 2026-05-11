@@ -8,6 +8,12 @@ import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
  * for free as a CLI perk; we deliberately do not expose a way to plug
  * in a different provider key here so the runtime stays single-path.
  *
+ * The endpoint hardcodes `google/gemini-embedding-2` on the server side
+ * — we match that here as a constant so every stored vector is tagged
+ * with the model that produced it. When we switch models in the future,
+ * the migration that bumps `EMBEDDING_MODEL` can selectively invalidate
+ * rows by `model` instead of nuking the entire embeddings table.
+ *
  * Behavior:
  *   - Inputs are batched up to `EMBEDDING_BATCH_LIMIT` per HTTP call so
  *     a single backfill batch never goes over the request body cap.
@@ -20,8 +26,13 @@ import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
  *     sleeps until the user logs in).
  */
 
-/** Default embedding model identifier sent with every request. */
-export const DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small";
+/**
+ * Embedding model identifier. Hardcoded here to match the server, and
+ * exported so the storage layer can tag each stored vector with it.
+ */
+export const EMBEDDING_MODEL = "google/gemini-embedding-2";
+/** Embedding dimensions. Sent on every request and matches the pgvector column width. */
+export const EMBEDDING_DIMENSIONS = 3072;
 /** Maximum input strings sent in a single embedding request. */
 export const EMBEDDING_BATCH_LIMIT = 100;
 
@@ -43,8 +54,6 @@ export class EmbeddingUnavailableError extends Error {
 }
 
 export interface CreateEmbeddingClientOptions {
-  /** Embedding model identifier sent with each request. */
-  model?: string;
   /**
    * Override the API key resolver. Defaults to reading `DUET_API_KEY`
    * from `process.env`. Tests inject a fixed value to exercise the
@@ -70,7 +79,6 @@ export interface CreateEmbeddingClientOptions {
  * `recall_memory` query so connection reuse can amortize TLS setup.
  */
 export function createEmbeddingClient(options: CreateEmbeddingClientOptions = {}): EmbedFn {
-  const model = options.model ?? DEFAULT_EMBEDDING_MODEL;
   const baseUrl = options.baseUrl ?? resolveDuetAppBaseUrl();
   const fetchImpl = options.fetch ?? fetch;
 
@@ -91,7 +99,6 @@ export function createEmbeddingClient(options: CreateEmbeddingClientOptions = {}
       const vectors = await postBatch({
         url: `${baseUrl}${ENDPOINT_PATH}`,
         apiKey,
-        model,
         inputs: slice,
         fetchImpl,
       });
@@ -109,7 +116,6 @@ export function createEmbeddingClient(options: CreateEmbeddingClientOptions = {}
 interface PostBatchOptions {
   url: string;
   apiKey: string;
-  model: string;
   inputs: string[];
   fetchImpl: typeof fetch;
 }
@@ -124,12 +130,12 @@ async function postBatch(options: PostBatchOptions): Promise<number[][]> {
           authorization: `Bearer ${options.apiKey}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ input: options.inputs, model: options.model }),
+        body: JSON.stringify({ input: options.inputs, dimensions: EMBEDDING_DIMENSIONS }),
       });
 
       if (response.ok) {
-        const body = (await response.json()) as EmbeddingResponseBody;
-        return body.embeddings;
+        const body = (await response.json()) as EmbeddingResponseEnvelope;
+        return body.data.embeddings;
       }
 
       // 4xx errors (auth, malformed input) will not improve on retry;
@@ -158,11 +164,17 @@ async function postBatch(options: PostBatchOptions): Promise<number[][]> {
     : new Error(`Embedding request failed after ${MAX_RETRIES} attempts`);
 }
 
-interface EmbeddingResponseBody {
-  /** Vectors in the same order as `input`. */
-  embeddings: number[][];
-  /** Echoed model identifier so callers can verify the server agreed with their request. */
-  model?: string;
+/**
+ * Server response envelope. The route wraps the action result in
+ * `{ data }`; `dimensions` and `model` are echoed back for verification
+ * but the server is the source of truth.
+ */
+interface EmbeddingResponseEnvelope {
+  data: {
+    embeddings: number[][];
+    dimensions: number;
+    model: string;
+  };
 }
 
 function resolveApiKey(override: CreateEmbeddingClientOptions["apiKey"]): string | undefined {
