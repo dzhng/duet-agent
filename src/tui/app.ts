@@ -441,8 +441,17 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // Skip transcript writes once the renderer has been destroyed; see the
     // matching guard in setStatus for the full rationale.
     if (destroyed) return;
-    const line = new TextRenderable(renderer, { content, fg });
-    transcript.add(line);
+    try {
+      const line = new TextRenderable(renderer, { content, fg });
+      transcript.add(line);
+    } catch (error) {
+      if (isTextBufferDestroyedError(error)) {
+        destroyed = true;
+        stopWorkingTicker();
+        return;
+      }
+      throw error;
+    }
   }
 
   function appendBlock(label: string | null, body: string, fg: string): void {
@@ -464,9 +473,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // Renderer teardown destroys the underlying TextBuffer synchronously,
     // but in-flight async work (session events, ticker callbacks, upgrade
     // status pushes) may still drive chrome updates on the next microtask.
-    // Swallow those writes instead of throwing from a destroyed buffer.
+    // The `destroyed` flag catches writes that arrive after our destroy
+    // handler runs; the try/catch backstops the window between OpenTUI
+    // tearing down child TextBuffers and emitting the `destroy` event,
+    // which is when the ticker callback in the stack trace lands.
     if (destroyed) return;
-    status.content = text;
+    try {
+      status.content = text;
+    } catch (error) {
+      if (isTextBufferDestroyedError(error)) {
+        destroyed = true;
+        stopWorkingTicker();
+        return;
+      }
+      throw error;
+    }
   }
 
   function setHint(running: boolean): void {
@@ -476,7 +497,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (pendingImages.length > 0) segments.push(attachmentHint());
     segments.push(base);
     if (lastSelectionText.trim().length > 0) segments.push(HINT_SELECTION_COPY);
-    hint.content = segments.join(" · ");
+    try {
+      hint.content = segments.join(" · ");
+    } catch (error) {
+      if (isTextBufferDestroyedError(error)) {
+        destroyed = true;
+        stopWorkingTicker();
+        return;
+      }
+      throw error;
+    }
   }
 
   function attachmentHint(): string {
@@ -2517,6 +2547,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (kind === "error") return COLORS.error;
     return COLORS.agent;
   }
+}
+
+// OpenTUI's TextBuffer throws a plain Error with this exact message from its
+// `guard()` method when any setter is touched after destroy. We sniff the
+// message to distinguish post-teardown races (swallow) from real bugs (rethrow).
+function isTextBufferDestroyedError(error: unknown): boolean {
+  return error instanceof Error && error.message === "TextBuffer is destroyed";
 }
 
 function restoreWindowGlobal(previousWindow: PropertyDescriptor | undefined): void {
