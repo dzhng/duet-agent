@@ -26,7 +26,11 @@ import {
 } from "./paste.js";
 import { parseCopyArgument, selectCopyText, type TranscriptEntry } from "./transcript-log.js";
 import type { Session } from "../session/session.js";
-import { describeUpgradeStatus, type UpgradeStatusStream } from "../cli/auto-upgrade.js";
+import {
+  describeUpgradeStatus,
+  type UpgradeStatus,
+  type UpgradeStatusStream,
+} from "../cli/auto-upgrade.js";
 import type {
   TurnAgentFile,
   TurnContextUsageEvent,
@@ -716,8 +720,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       // Statuses without text (current/locked/skipped) skip the constructor
       // entirely; constructing eagerly would allocate a native text buffer
       // against the renderer that we'd never `destroy()` on the silent path.
+      //
+      // `subscribe()` replays the latest status synchronously, so the handler
+      // runs before `subscribe()` returns its unsubscribe handle. We set a
+      // `done` flag from inside the handler and tear down after `subscribe()`
+      // returns; subsequent (async) terminal statuses unsubscribe inline via
+      // the real handle.
       let upgradeLine: TextRenderable | undefined;
-      const unsubscribe = input.upgradeStatus$.subscribe((status) => {
+      let done = false;
+      let unsubscribe = (): void => {};
+      const handle = (status: UpgradeStatus): void => {
         const text = describeUpgradeStatus(input.packageName, status);
         if (!text) {
           if (upgradeLine) {
@@ -727,7 +739,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
           }
           // Terminal statuses with no human-readable form (current, locked,
           // skipped) close the subscription so we stop reacting.
-          if (status.kind !== "checking") unsubscribe();
+          if (status.kind !== "checking") {
+            done = true;
+            unsubscribe();
+          }
           return;
         }
         const fg = status.kind === "failed" ? COLORS.error : COLORS.system;
@@ -739,9 +754,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
           upgradeLine.fg = fg;
         }
         if (status.kind === "upgraded" || status.kind === "failed") {
+          done = true;
           unsubscribe();
         }
-      });
+      };
+      unsubscribe = input.upgradeStatus$.subscribe(handle);
+      if (done) unsubscribe();
     }
 
     // Only mention agent files when one is actually loaded; "[agent file]

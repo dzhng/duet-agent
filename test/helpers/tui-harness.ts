@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestRenderer, type MockInput } from "@opentui/core/testing";
 import { FakePlaygroundRunner } from "../../examples/tui-playground.js";
+import { createUpgradeStatusStream } from "../../src/cli/auto-upgrade.js";
 import {
   Session,
   type SessionAnswerInput,
   type SessionPromptInput,
 } from "../../src/session/session.js";
 import { runTui } from "../../src/tui/app.js";
-import type { TurnEvent, TurnQuestion } from "../../src/types/protocol.js";
+import type { TurnEvent, TurnQuestion, TurnTerminalEvent } from "../../src/types/protocol.js";
 
 /**
  * Boot the real TUI on top of a `createTestRenderer` so synthetic
@@ -47,6 +48,19 @@ export interface TuiHarness {
    * and presses Enter outside of the picker.
    */
   waitForPrompt(options?: { count?: number; timeoutMs?: number }): Promise<void>;
+  /**
+   * Block until the session emits the next terminal event (`complete`,
+   * `ask`, `interrupted`, or `sleep`), then resolve with it. Watches only
+   * events emitted from the call point onward, so a prior turn's
+   * terminal does not satisfy a fresh wait. Throws on timeout.
+   */
+  waitForTerminal(options?: { timeoutMs?: number }): Promise<TurnTerminalEvent>;
+  /**
+   * Snapshot the renderer's current frame as a plain-text string. Wraps
+   * `createTestRenderer`'s `captureCharFrame` so tests can assert on
+   * actually-painted content rather than internal state.
+   */
+  captureCharFrame(): string;
   /**
    * Push a single `ask` terminal with the provided questions. The TUI
    * reacts to the resulting state event and shows the picker. Returns
@@ -94,7 +108,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
   const width = options.width ?? 100;
   const height = options.height ?? 32;
 
-  const { renderer, mockInput } = await createTestRenderer({
+  const { renderer, mockInput, captureCharFrame } = await createTestRenderer({
     width,
     height,
     kittyKeyboard: true,
@@ -132,6 +146,15 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     return originalAnswer(input);
   };
 
+  // Mirror what `cli/run.ts` does in production: always pass an
+  // `upgradeStatus$` and publish a silent terminal status (the same one
+  // `--no-auto-upgrade` and source-checkout invocations produce). Tests that
+  // exercise the renderer must hit the same code path users hit, including
+  // the upgrade-status subscriber — otherwise a regression there (e.g. the
+  // orphan-renderable bug fixed in v0.1.65) goes undetected.
+  const upgradeStatus$ = createUpgradeStatusStream();
+  upgradeStatus$.complete({ kind: "skipped", reason: "disabled" });
+
   // Capture any rejection so it surfaces from `dispose()` instead of
   // becoming an unhandled promise rejection. A clean shutdown via
   // `renderer.destroy()` resolves `runTui` normally; only a real crash
@@ -145,6 +168,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     packageVersion: "harness",
     modelName: "harness",
     memoryModelName: "harness",
+    upgradeStatus$,
     renderer,
   }).catch((error) => {
     tuiError = error;
@@ -184,6 +208,32 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     async waitForPrompt({ count = 1, timeoutMs = 1000 } = {}) {
       await waitForCount(() => promptCalls.length, count, timeoutMs, "waitForPrompt");
     },
+    async waitForTerminal({ timeoutMs = 2000 } = {}) {
+      // Watch from the call point onward so a prior terminal (e.g. the
+      // playground's synthetic `complete` after the harness's `/clear-images`
+      // submit, or an earlier turn in the same test) does not satisfy this
+      // wait spuriously.
+      const before = sessionEvents.length;
+      const start = Date.now();
+      while (true) {
+        for (let i = before; i < sessionEvents.length; i++) {
+          const event = sessionEvents[i]!;
+          if (
+            event.type === "complete" ||
+            event.type === "ask" ||
+            event.type === "interrupted" ||
+            event.type === "sleep"
+          ) {
+            return event;
+          }
+        }
+        if (Date.now() - start > timeoutMs) {
+          throw new Error(`waitForTerminal: no terminal event within ${timeoutMs}ms`);
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
+    },
+    captureCharFrame,
     async pushAskTerminal(questions) {
       // Bypass slash parsing by emitting an `ask` terminal as if a turn
       // had produced it. Session.handleTurnEvent awaits a state-file

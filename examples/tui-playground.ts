@@ -78,6 +78,7 @@ export const PLAYGROUND_MENU = [
   "                             typing mid-flow flushes the latest answers.",
   "  /sleep <secs>              emit a sleep terminal that wakes in N seconds",
   "  /error <message>           emit a system error and end the turn",
+  "  /echo <text>               stream <text> back verbatim and complete (used by tests)",
   "  anything else              stream a short text reply and complete",
 ].join("\n");
 
@@ -319,6 +320,20 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         state: { ...this.state, status: "sleeping" },
         wakeAt: Date.now() + secs * 1000,
       };
+    }
+
+    if (message.startsWith("/echo")) {
+      // Streams the trailing text back verbatim. Deterministic and free of
+      // incidental tokens (no timing strings or queue counts) so callers
+      // can assert on an exact substring of the rendered transcript.
+      const reply = message.slice("/echo".length).trim() || "echo";
+      for (const chunk of reply.match(/.{1,8}/g) ?? []) {
+        this.emit({ type: "step", step: { type: "text_delta", delta: chunk } });
+        await this.sleep(10);
+        if (this.interrupted) return this.interruptedTerminal();
+      }
+      this.emit({ type: "step", step: { type: "text", text: reply } });
+      return this.complete(reply);
     }
 
     if (message.startsWith("/error")) {
