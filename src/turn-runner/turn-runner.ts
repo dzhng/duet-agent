@@ -810,7 +810,7 @@ export class TurnRunner {
     }
   }
 
-  private requireParentAgent(): Agent {
+  protected requireParentAgent(): Agent {
     if (!this.parentAgent) {
       throw new Error("Turn runner parent agent has not been initialized.");
     }
