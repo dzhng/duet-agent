@@ -140,6 +140,12 @@ export interface RunTuiInput {
   /** Past messages to replay into the transcript on resume. */
   history?: AgentMessage[];
   /**
+   * True when this TUI mount is a `--resume <id>` invocation. Suppresses
+   * the boot starter menu so the user lands straight back in the
+   * conversation instead of seeing "what should we work on today?" again.
+   */
+  isResume?: boolean;
+  /**
    * Number of trailing user-turn exchanges to replay from prior history.
    * Each exchange is the user prompt plus the assistant blocks (text,
    * reasoning, tools, errors) that followed it. `0` disables replay; when
@@ -798,7 +804,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       appendLine(`[agent file] ${agentFiles.map((file) => file.name).join(", ")}`, COLORS.hint);
     }
 
-    renderStarters(skills);
+    // --resume <id> launches skip the starter menu entirely: the user has
+    // explicitly asked to drop back into a known conversation, so showing
+    // "what should we work on today?" before replaying history is noise.
+    // Resumed sessions with zero prior messages still skip the menu so the
+    // contract is "any --resume" not "--resume with content".
+    if (!input.isResume) {
+      renderStarters(skills);
+    }
   }
 
   function formatBootHeader(headerInput: RunTuiInput): string {
@@ -837,6 +850,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   const starterRowIndexes: number[] = [];
   let highlightedStarterIndex = 0;
   let startersVisible = false;
+  // Once the user actually commits a prompt (typed Enter, picked a starter,
+  // hit a slash command), the chrome is gone for the rest of the session.
+  // Until then `dismissStarters()` is a reversible hide that
+  // `syncStarterVisibility()` can restore when the composer empties again.
+  let startersPermanentlyDismissed = false;
+  // Cached for `mountStarterChrome()` so it can re-render the trailing
+  // "✨ N skills · /help" line without re-running selectStarters.
+  let starterSkillCount = 0;
 
   function startersAreVisible(): boolean {
     return startersVisible;
@@ -872,34 +893,57 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         starterEntries.push({ kind: "prompt", label: row.label, submit: row.submit });
       }
     }
+    starterSkillCount = skills.length;
+    highlightedStarterIndex = 0;
+    mountStarterChrome();
+  }
 
-    const hasRecent = result.recentSessions.length > 0;
+  // Paint the chrome (section headers, numbered rows, hint footer) from the
+  // current `starterEntries` + `highlightedStarterIndex`. Called on first
+  // boot and on every backspace-to-empty restoration. Idempotent: bails if
+  // the chrome is already mounted or no entries exist.
+  function mountStarterChrome(): void {
+    if (startersVisible || starterEntries.length === 0) return;
+
+    const recentEntries = starterEntries.filter((entry) => entry.kind === "recent");
+    const promptEntries = starterEntries.filter((entry) => entry.kind === "prompt");
+    const hasRecent = recentEntries.length > 0;
+
+    // Every line we render here — spacers included — goes through `addLine`
+    // and gets pushed to `starterRefs`. `dismissStarters()` iterates that
+    // list to destroy refs; spacers added via fire-and-forget `appendLine`
+    // would leak and accumulate above the next mount on each type →
+    // backspace cycle, pushing the chrome lower every time.
+    const spacer = (): void => {
+      starterRefs.push(addLine(" ", COLORS.hint));
+    };
 
     starterRowIndexes.length = 0;
-    appendLine(" ", COLORS.hint);
+    spacer();
 
     if (hasRecent) {
-      // Returning user: continuity first.
       starterRefs.push(addLine("pick up the thread", COLORS.agent));
-      appendLine(" ", COLORS.hint);
-      for (let i = 0; i < result.recentSessions.length; i += 1) {
+      spacer();
+      for (let i = 0; i < starterEntries.length; i += 1) {
+        if (starterEntries[i]!.kind !== "recent") continue;
         const ref = addLine(formatStarterRow(i, false), COLORS.hint);
         starterRowIndexes.push(starterRefs.length);
         starterRefs.push(ref);
       }
-      appendLine(" ", COLORS.hint);
-      starterRefs.push(addLine("or start something new", COLORS.agent));
-      appendLine(" ", COLORS.hint);
-      for (let j = 0; j < result.starters.length; j += 1) {
-        const i = result.recentSessions.length + j;
-        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
-        starterRowIndexes.push(starterRefs.length);
-        starterRefs.push(ref);
+      if (promptEntries.length > 0) {
+        spacer();
+        starterRefs.push(addLine("or start something new", COLORS.agent));
+        spacer();
+        for (let i = 0; i < starterEntries.length; i += 1) {
+          if (starterEntries[i]!.kind !== "prompt") continue;
+          const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+          starterRowIndexes.push(starterRefs.length);
+          starterRefs.push(ref);
+        }
       }
     } else {
-      // New user: original cwd-only ice-break.
       starterRefs.push(addLine("what should we work on today?", COLORS.agent));
-      appendLine(" ", COLORS.hint);
+      spacer();
       for (let i = 0; i < starterEntries.length; i += 1) {
         const ref = addLine(formatStarterRow(i, false), COLORS.hint);
         starterRowIndexes.push(starterRefs.length);
@@ -907,19 +951,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       }
     }
 
-    appendLine(" ", COLORS.hint);
+    spacer();
     starterRefs.push(
       addLine("type a number to run, ↑/↓ to highlight, or just start typing.", COLORS.hint),
     );
     starterRefs.push(
-      addLine(`✦ ${skills.length} skill${skills.length === 1 ? "" : "s"} · /help`, COLORS.hint),
+      addLine(
+        `✦ ${starterSkillCount} skill${starterSkillCount === 1 ? "" : "s"} · /help`,
+        COLORS.hint,
+      ),
     );
 
-    startersVisible = starterEntries.length > 0;
-    if (startersVisible) {
-      highlightedStarterIndex = 0;
-      paintStarterHighlight();
-    }
+    startersVisible = true;
+    if (highlightedStarterIndex >= starterEntries.length) highlightedStarterIndex = 0;
+    paintStarterHighlight();
   }
 
   function addLine(content: string, fg: string): TextRenderable {
@@ -961,6 +1006,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     return true;
   }
 
+  // Transient hide. Tears down the rendered refs but keeps `starterEntries`
+  // and `highlightedStarterIndex` so `mountStarterChrome()` can restore the
+  // exact same picker if the user backspaces the composer empty again.
   function dismissStarters(): void {
     if (!startersVisible && starterRefs.length === 0) return;
     for (const ref of starterRefs) {
@@ -969,15 +1017,38 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
     starterRefs.length = 0;
     starterRowIndexes.length = 0;
-    starterEntries.length = 0;
     startersVisible = false;
+  }
+
+  // Permanent destruction: called when the user commits a prompt. After
+  // this the chrome never comes back, even on backspace-to-empty.
+  function destroyStartersPermanently(): void {
+    dismissStarters();
+    starterEntries.length = 0;
+    highlightedStarterIndex = 0;
+    startersPermanentlyDismissed = true;
+  }
+
+  // Toggle hook called from `inputField.onContentChange`. Hides the
+  // chrome as soon as the user starts composing, brings it back if they
+  // backspace the composer empty (but only until they actually submit
+  // something — then `startersPermanentlyDismissed` latches).
+  function syncStarterVisibility(): void {
+    if (startersPermanentlyDismissed) return;
+    if (starterEntries.length === 0) return;
+    const empty = inputField.plainText.length === 0;
+    if (!empty && startersVisible) {
+      dismissStarters();
+    } else if (empty && !startersVisible) {
+      mountStarterChrome();
+    }
   }
 
   function submitHighlightedStarter(): boolean {
     if (!startersVisible) return false;
     const entry = starterEntries[highlightedStarterIndex];
     if (!entry) return false;
-    dismissStarters();
+    destroyStartersPermanently();
     // Recent-session rows reuse the prompt text in the *current* session
     // rather than tearing down the runtime to switch sessions. The agent
     // won't have prior context, but the user lands on the same task with
@@ -1942,6 +2013,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         return;
       }
       const value = inputField.plainText.trim();
+      // Pre-latch the starter chrome before clearing the composer so the
+      // clear-induced `onContentChange` doesn't briefly re-mount the chrome
+      // (it would see empty composer + starters hidden and call
+      // mountStarterChrome before submit got a chance to destroy them).
+      // Only pre-latch when we know a typed-submit is about to fire —
+      // empty-Enter into the picker / starter-row branches still need the
+      // chrome state intact so they can dispatch.
+      if (value && !startersPermanentlyDismissed) destroyStartersPermanently();
       inputField.clear();
       if (value) {
         submit(value);
@@ -2083,10 +2162,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   inputField.onContentChange = () => {
-    // First real keystroke into the input collapses the starter section
-    // — the user is composing their own prompt, so the suggestions get
-    // out of the way for the rest of the session.
-    if (startersAreVisible() && inputField.plainText.length > 0) dismissStarters();
+    // Typing hides the starter chrome; backspacing the composer empty
+    // brings it back (until the user actually submits a prompt, at which
+    // point it's gone for good).
+    syncStarterVisibility();
     refreshAutocomplete();
   };
   inputField.onCursorChange = () => refreshAutocomplete();
@@ -2262,7 +2341,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function submit(message: string): void {
     // First user submit collapses the boot starter section permanently for
     // this session, even when the prompt came from autocomplete or paste.
-    if (startersAreVisible()) dismissStarters();
+    if (!startersPermanentlyDismissed) destroyStartersPermanently();
     // Slash-style attach commands run locally and never reach the runner so
     // users on terminals that do not forward image bytes still have a way to
     // attach images by path.

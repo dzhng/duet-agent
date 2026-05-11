@@ -315,6 +315,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       await runTui({
         session,
         ...(resumedHistory ? { history: resumedHistory } : {}),
+        ...(resumeSessionId ? { isResume: true } : {}),
         resumeHistoryMessages,
         modelName,
         modelSource: describeModelResolution(modelResolution),
