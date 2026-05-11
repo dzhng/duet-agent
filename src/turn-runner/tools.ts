@@ -40,7 +40,7 @@ const jsonSchemaValidator = new Ajv({ strictSchema: false });
  * anything intervenes. The model can still pass a larger `timeout` argument
  * for legitimate long-running work.
  */
-export const DEFAULT_BASH_TIMEOUT_SECONDS = 300;
+export const DEFAULT_BASH_TIMEOUT_SECONDS = 600;
 
 /**
  * Wrap a `BashOperations` implementation so any `exec` call without an
