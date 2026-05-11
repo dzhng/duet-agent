@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PGlite, Transaction } from "@electric-sql/pglite";
 import type { Observation, ObservationalMemorySettings } from "../types/memory.js";
-import { EMBEDDING_MODEL, type EmbedFn } from "./embedding.js";
+import type { EmbedFn } from "./embedding.js";
 import { EmbeddingBackfillWorker } from "./embedding-worker.js";
 import { rebuildMemoryContextPack } from "./context-pack.js";
 import { runMigrations } from "./migrations.js";
@@ -56,10 +56,6 @@ export async function loadStoredMemory(
     ? new EmbeddingBackfillWorker({
         db: database,
         embed: options.embed,
-        // Hardcoded so every stored vector is tagged with the model that
-        // produced it; when we swap the server-side model in the future
-        // this tag is how we'll selectively invalidate stale rows.
-        model: EMBEDDING_MODEL,
         logPath: options.embeddingLogPath ?? defaultEmbeddingLogPath(),
       })
     : undefined;

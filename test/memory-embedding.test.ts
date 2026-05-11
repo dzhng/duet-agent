@@ -34,10 +34,13 @@ describe("Embedding client", () => {
 
     const result = await embed(["alpha", "beta"]);
 
-    expect(result).toEqual([
-      [0.1, 0.2],
-      [0.3, 0.4],
-    ]);
+    expect(result).toEqual({
+      embeddings: [
+        [0.1, 0.2],
+        [0.3, 0.4],
+      ],
+      model: "google/gemini-embedding-2",
+    });
     expect(capturedUrl).toBe("https://example.test/api/v1/embed");
     expect(capturedAuth).toBe("Bearer test-key");
     expect(capturedBody).toEqual({
@@ -68,7 +71,8 @@ describe("Embedding client", () => {
     expect(calls).toHaveLength(2);
     expect(calls[0]).toHaveLength(EMBEDDING_BATCH_LIMIT);
     expect(calls[1]).toHaveLength(5);
-    expect(result).toHaveLength(inputs.length);
+    expect(result.embeddings).toHaveLength(inputs.length);
+    expect(result.model).toBe("google/gemini-embedding-2");
   });
 
   test("throws EmbeddingUnavailableError when the API key is missing", async () => {
@@ -109,7 +113,8 @@ describe("Embedding client", () => {
     const embed = createEmbeddingClient({ apiKey: "k", fetch: fetchStub });
 
     const result = await embed(["recovers"]);
-    expect(result).toEqual([[1, 2, 3]]);
+    expect(result.embeddings).toEqual([[1, 2, 3]]);
+    expect(result.model).toBe("google/gemini-embedding-2");
     expect(calls).toBe(3);
   });
 });
