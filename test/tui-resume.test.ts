@@ -78,12 +78,12 @@ describe("TUI resume invariance", () => {
   testIfDocker("bare boot renders the starter menu", async () => {
     const { captureCharFrame, teardown } = await bootStarterTui({ isResume: false });
     const frame = captureCharFrame().toLowerCase();
-    // The fresh-boot variant always shows either the "what should we work
-    // on today?" headline (no recent sessions) or "pick up the thread"
-    // (returning user). Asserting "or just start typing" — the trailing
-    // hint line — covers both branches without coupling to which one
-    // fires on this machine.
-    expect(frame).toContain("or just start typing");
+    // The test boots in a clean Docker home so `selectStarters` lands on
+    // the "new user" branch every time. Anchor on the headline rather than
+    // the trailing hint line — the hint wraps inside the transcript box
+    // and the wrap point differs between macOS and Linux renderers, which
+    // fragments `"or just start typing"` into separate visual rows on CI.
+    expect(frame).toContain("what should we work on today");
     await teardown();
   });
 });
@@ -92,21 +92,25 @@ describe("TUI starter chrome toggle", () => {
   testIfDocker("typing hides starters; backspacing the composer empty restores them", async () => {
     const { mockInput, captureCharFrame, teardown } = await bootStarterTui({ isResume: false });
 
+    // Anchor on the headline (single-line, no wrap risk across platforms)
+    // instead of the trailing hint, which wraps differently on Linux.
+    const HEADLINE = "what should we work on today";
+
     // Boot has chrome visible.
     const boot = captureCharFrame().toLowerCase();
-    expect(boot).toContain("or just start typing");
+    expect(boot).toContain(HEADLINE);
 
     // Typing hides the chrome.
     await mockInput.typeText("h");
     await new Promise<void>((resolve) => setImmediate(resolve));
     const typed = captureCharFrame().toLowerCase();
-    expect(typed).not.toContain("or just start typing");
+    expect(typed).not.toContain(HEADLINE);
 
     // Backspace-to-empty restores it.
     mockInput.pressBackspace();
     await new Promise<void>((resolve) => setImmediate(resolve));
     const restored = captureCharFrame().toLowerCase();
-    expect(restored).toContain("or just start typing");
+    expect(restored).toContain(HEADLINE);
 
     await teardown();
   });
@@ -116,13 +120,15 @@ describe("TUI starter chrome toggle", () => {
     async () => {
       const { mockInput, captureCharFrame, teardown } = await bootStarterTui({ isResume: false });
 
-      // Find the row where the trailing hint line lands on first paint.
-      function hintRow(): number {
+      // Anchor on the headline row (single-line, no wrap risk). If
+      // `mountStarterChrome` leaks untracked spacer renderables, every
+      // remount lands a few cells further down and this row drifts.
+      function headlineRow(): number {
         const lines = captureCharFrame().toLowerCase().split("\n");
-        return lines.findIndex((line) => line.includes("or just start typing"));
+        return lines.findIndex((line) => line.includes("what should we work on today"));
       }
 
-      const initial = hintRow();
+      const initial = headlineRow();
       expect(initial).toBeGreaterThan(0);
 
       // Cycle five times. If `mountStarterChrome` leaks untracked spacer
@@ -134,7 +140,7 @@ describe("TUI starter chrome toggle", () => {
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
 
-      const after = hintRow();
+      const after = headlineRow();
       expect(after).toBe(initial);
 
       await teardown();
