@@ -334,6 +334,35 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 6,
+    description: "rebuild embeddings table at 3072 dims for google/gemini-embedding-2",
+    up: async (tx) => {
+      // The Duet embed endpoint now serves `google/gemini-embedding-2`
+      // at 3072 dimensions, replacing the previous text-embedding-3-small
+      // path. Every existing 1536-dim vector lives in a different latent
+      // space, so keeping them around would mean cosine similarity
+      // against new query embeddings is noise. Drop the table and let
+      // the backfill worker repopulate it lazily after upgrade.
+      //
+      // No HNSW index on the new table: pgvector's default
+      // `vector_cosine_ops` opclass caps HNSW at 2,000 dimensions, and
+      // adding `halfvec(3072)` + a half-precision opclass complicates
+      // the schema for a corpus that brute-force-scans in well under
+      // 10 ms at the thousands-of-rows scale this database operates at.
+      // The existing tsvector GIN index on `observations.content`
+      // survives untouched and continues to serve the keyword path.
+      await tx.exec(`DROP TABLE IF EXISTS observation_embeddings`);
+      await tx.exec(`
+        CREATE TABLE observation_embeddings (
+          observation_id TEXT PRIMARY KEY REFERENCES observations(id) ON DELETE CASCADE,
+          model TEXT NOT NULL,
+          vector vector(3072) NOT NULL,
+          created_at BIGINT NOT NULL
+        )
+      `);
+    },
+  },
 ];
 
 export interface MigrationResult {

@@ -18,7 +18,7 @@ describe("EmbeddingBackfillWorker", () => {
           calls.push(inputs);
           // Deterministic stub: encode index into vector slot 0 so
           // assertions can verify a one-to-one input/output mapping.
-          return inputs.map((_, index) => fillVector(1536, index + 1));
+          return inputs.map((_, index) => fillVector(3072, index + 1));
         },
         model: "test-model",
       });
@@ -63,7 +63,7 @@ describe("EmbeddingBackfillWorker", () => {
       await db.query(
         `INSERT INTO observation_embeddings (observation_id, model, vector, created_at)
          VALUES ('mem_high', 'preexisting', $1, $2)`,
-        [`[${Array(1536).fill(0).join(",")}]`, Date.now()],
+        [`[${Array(3072).fill(0).join(",")}]`, Date.now()],
       );
 
       const calls: string[][] = [];
@@ -71,7 +71,7 @@ describe("EmbeddingBackfillWorker", () => {
         db,
         embed: async (inputs) => {
           calls.push(inputs);
-          return inputs.map(() => fillVector(1536, 1));
+          return inputs.map(() => fillVector(3072, 1));
         },
         model: "test-model",
       });
@@ -102,7 +102,7 @@ describe("EmbeddingBackfillWorker", () => {
         embed: async (inputs) => {
           attempt++;
           if (attempt === 1) throw new Error("simulated transient failure");
-          return inputs.map(() => fillVector(1536, 1));
+          return inputs.map(() => fillVector(3072, 1));
         },
         model: "test-model",
       });

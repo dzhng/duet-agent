@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PGlite, Transaction } from "@electric-sql/pglite";
 import type { Observation, ObservationalMemorySettings } from "../types/memory.js";
-import { DEFAULT_EMBEDDING_MODEL, type EmbedFn } from "./embedding.js";
+import { EMBEDDING_MODEL, type EmbedFn } from "./embedding.js";
 import { EmbeddingBackfillWorker } from "./embedding-worker.js";
 import { rebuildMemoryContextPack } from "./context-pack.js";
 import { runMigrations } from "./migrations.js";
@@ -26,7 +26,6 @@ export interface MemoryPersistenceHandle {
 
 export interface LoadStoredMemoryOptions {
   embed?: EmbedFn;
-  embeddingModel?: string;
   embeddingLogPath?: string;
   /** When set, freeze the initial context pack into the cache before the first turn dispatches. */
   contextPack?: {
@@ -57,7 +56,10 @@ export async function loadStoredMemory(
     ? new EmbeddingBackfillWorker({
         db: database,
         embed: options.embed,
-        model: options.embeddingModel ?? DEFAULT_EMBEDDING_MODEL,
+        // Hardcoded so every stored vector is tagged with the model that
+        // produced it; when we swap the server-side model in the future
+        // this tag is how we'll selectively invalidate stale rows.
+        model: EMBEDDING_MODEL,
         logPath: options.embeddingLogPath ?? defaultEmbeddingLogPath(),
       })
     : undefined;

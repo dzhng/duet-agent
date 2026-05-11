@@ -115,7 +115,7 @@ describe("recall_memory", () => {
       async () => {
         await withSeededDb(async (db) => {
           // Seed embeddings so the vector path returns rows. Each
-          // embedding is a one-hot 1536-dim vector keyed off the
+          // embedding is a one-hot 3072-dim vector keyed off the
           // observation id so the test can predict cosine similarity:
           // mem_wire_budget gets a vector that exactly matches the
           // query embedding the stub returns.
@@ -192,7 +192,7 @@ async function seedEmbeddings(db: PGlite): Promise<void> {
 }
 
 function oneHotVector(activeIndex: number): number[] {
-  const result = new Array<number>(1536).fill(0);
+  const result = new Array<number>(3072).fill(0);
   result[activeIndex] = 1;
   return result;
 }
