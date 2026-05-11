@@ -70,6 +70,11 @@ export const BUILT_IN_SLASH_COMMANDS: readonly SkillAutocompleteItem[] = [
       "Toggle diagnostic logging (keys, selection events) for surfacing terminal-specific issues",
     group: "commands",
   },
+  {
+    name: "feedback",
+    description: "Send free-form feedback to the Duet team: /feedback <message>",
+    group: "commands",
+  },
 ];
 
 /**
