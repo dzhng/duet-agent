@@ -179,7 +179,7 @@ consumer typically renders or reacts to:
 - `todos` — the model's current todo list.
 - `state_machine` — current state name when running a state machine.
 - `memory` — observational memory writes (extraction / reflection activity).
-- `context_usage` — token accounting with `effectiveContextWindow`.
+- `context_usage` — token accounting with `effectiveContextWindow` and a per-segment `contextWindowUsage` breakdown (`systemPrompt`, `messages`, `localMemory`, `globalMemory`).
 - `complete | ask | interrupted | sleep` — terminal events. Always include
   the updated `state`. `ask` requires the caller to follow up with
   `{ "type": "answer", ... }`; `sleep` carries a `wakeAt` epoch ms; the

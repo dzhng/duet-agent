@@ -91,8 +91,10 @@ The memory model follows observational memory: turn runner session messages are 
 
 Memory rendered into the prompt prefix splits into two layers:
 
-- **Long-term memory** (cross-session) ranks every other session's rows by `priority × recencyDecay × kindBias` (7-day half-life, reflections weighted 1.3×) and packs the highest-scoring rows into a 8000-token budget.
-- **From this session** (local) renders the current session's compaction summary chronologically; size is bounded by the existing observer/reflector thresholds.
+- **Long-term memory** (cross-session) ranks every other session's rows by `priority × recencyDecay × kindBias` (7-day half-life, reflections weighted 1.3×) and packs the highest-scoring rows into 7.5 % of the effective context window.
+- **From this session** (local) renders the current session's compaction summary chronologically; size is bounded by the reflection trigger (32.5 % of the effective context window) before the reflector condenses it back to half that.
+
+All memory token budgets — the compaction trigger, the post-eviction raw-tail buffer, the reflection trigger, the post-reflection buffer, and the global pack ceiling — derive from a single `TurnRunnerConfig.effectiveContext` knob (default `200_000`, clamped to the model's hard window). Set it once per runner and every downstream threshold scales together; there are no per-field overrides.
 
 This frozen pack is rebuilt only at three compaction events — initial load, reflector completion, wire-shaping eviction — so the rendered prefix stays stable between events and the provider's prompt cache survives turn-over-turn. Observations the observer writes mid-session flow to disk in real time but do not enter the rendered prefix until the next refresh; the model can still reach them on demand through the `recall_memory` tool.
 

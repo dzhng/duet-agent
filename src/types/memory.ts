@@ -103,20 +103,44 @@ export interface ObservationalMemoryActivityEvent {
   usageBumpedObservations?: Observation[];
 }
 
-/** Runtime settings for converting turn-runner conversation context into observations. */
+/**
+ * Fully resolved memory settings consumed by the observational pipeline.
+ *
+ * All numeric token budgets are derived once from
+ * `TurnRunnerConfig.effectiveContext` by `deriveMemoryBudgets` in
+ * `src/memory/observational.ts` and merged with the user-settable
+ * non-budget knobs by `resolveObservationalMemorySettings`. See
+ * `MEMORY_BUDGET_RATIOS` for the derivation table.
+ */
 export interface ObservationalMemorySettings {
   /** Settings for extracting new observations from raw agent messages. */
   observation: {
-    /** Raw-message token threshold that triggers replacing old transcript context. */
+    /**
+     * Derived. Raw-message token threshold (per turn) that triggers
+     * replacing old transcript content via the wire-shaping horizon.
+     * `0.60 * effectiveContext`.
+     */
     messageTokens: number;
-    /** Maximum raw-message tokens to send to one observer call. */
+    /**
+     * Derived (fixed constant). Cap on raw transcript tokens sent to one
+     * observer call. Independent of `effectiveContext` because reflection
+     * quality depends on a consistent observer-call window, not on the
+     * user's actor budget.
+     */
     maxTokensPerBatch: number;
-    /** Raw-message token budget retained when context replacement is needed. */
+    /**
+     * Derived. Raw-tail token target after the wire-shaping horizon
+     * advances. `BUFFER_RATIO * messageTokens`. Does not count against
+     * `effectiveContext` since it is bounded above by `messageTokens`,
+     * which already counts.
+     */
     bufferActivation: number;
-    /** Optional hard stop for observation work after a caller-defined threshold. */
-    blockAfter?: number;
-    /** Optional budget for including previous observations in observer prompts. */
-    previousObserverTokens?: number | false;
+    /**
+     * Derived (fixed constant). Budget for including previous observations
+     * as dedupe context in observer prompts. Observer-only; never enters
+     * the actor's context window.
+     */
+    previousObserverTokens: number;
     /** Additional instructions appended to the observer system prompt. */
     instruction?: string;
     /** Whether the observer should also produce a short thread title. */
@@ -124,22 +148,26 @@ export interface ObservationalMemorySettings {
   };
   /** Settings for condensing the durable observation log. */
   reflection: {
-    /** Observation token threshold that triggers reflection. */
+    /**
+     * Derived. Local-memory token ceiling between reflections; reflection
+     * fires once the current session's observations grow past this.
+     * `0.325 * effectiveContext`.
+     */
     observationTokens: number;
-    /** Observation token budget to target after reflection condenses the log. */
+    /**
+     * Derived. Local-memory token target after a reflection event.
+     * `BUFFER_RATIO * observationTokens`. Does not count against
+     * `effectiveContext` since it is bounded above by `observationTokens`.
+     */
     bufferActivation: number;
-    /** Optional hard stop for reflection work after a caller-defined threshold. */
-    blockAfter?: number;
     /** Additional instructions appended to the reflector system prompt. */
     instruction?: string;
   };
   /**
-   * Token budget for the global memory layer rendered ahead of the local
-   * session's compacted view. Cross-session reflections and observations
-   * are ranked by `priority * usageDecay * kindBias` and packed greedily
-   * until this budget is exhausted. Local memory has no separate budget —
-   * it reuses the existing `observation` and `reflection` thresholds since
-   * the local layer is just the current session's compaction output.
+   * Derived. Token budget for the global memory layer rendered ahead of
+   * the local session's compacted view. Cross-session reflections and
+   * observations are ranked by `priority * usageDecay * kindBias` and
+   * packed greedily until this budget is exhausted. `0.075 * effectiveContext`.
    */
   globalContextTokenBudget: number;
   /**
@@ -164,24 +192,28 @@ export interface ObservationalMemorySettings {
   reflectionBias: number;
   /** Whether the recall_memory tool and embedding backfill are enabled. */
   retrieval: boolean;
-  /** Whether memory should share the actor context budget instead of using its own thresholds. */
-  shareTokenBudget: boolean;
-  /** Whether prompts should include explicit date/time markers for temporal reasoning. */
-  temporalMarkers: boolean;
-  /** Optional idle duration before activating observation work. */
-  activateAfterIdle?: number;
-  /** Whether provider/model changes should force observation activation. */
-  activateOnProviderChange: boolean;
 }
 
 /**
- * Caller-provided memory settings. Nested observation and reflection settings
- * are partial because callers commonly override only thresholds or instructions
- * while leaving the rest of the runtime defaults intact.
+ * Caller-provided memory settings. Only non-budget knobs are user-settable:
+ * every numeric token budget is derived from
+ * `TurnRunnerConfig.effectiveContext` and cannot be pinned individually.
  */
-export type ObservationalMemorySettingsInput = Partial<
-  Omit<ObservationalMemorySettings, "observation" | "reflection">
-> & {
-  observation?: Partial<ObservationalMemorySettings["observation"]>;
-  reflection?: Partial<ObservationalMemorySettings["reflection"]>;
-};
+export interface ObservationalMemorySettingsInput {
+  observation?: {
+    /** Additional instructions appended to the observer system prompt. */
+    instruction?: string;
+    /** Whether the observer should also produce a short thread title. */
+    threadTitle?: boolean;
+  };
+  reflection?: {
+    /** Additional instructions appended to the reflector system prompt. */
+    instruction?: string;
+  };
+  /** Half-life for the global-layer recency decay; see `ObservationalMemorySettings.recencyHalfLifeMs`. */
+  recencyHalfLifeMs?: number;
+  /** Reflection-vs-observation score multiplier; see `ObservationalMemorySettings.reflectionBias`. */
+  reflectionBias?: number;
+  /** Whether the recall_memory tool and embedding backfill are enabled. */
+  retrieval?: boolean;
+}

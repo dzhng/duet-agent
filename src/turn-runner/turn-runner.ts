@@ -12,12 +12,15 @@ import dedent from "dedent";
 import { assistantText } from "../core/serializer.js";
 import { toXML } from "../lib/xml.js";
 import {
+  agentMessagesToRaw,
   createObservationalContextTransform,
+  DEFAULT_EFFECTIVE_CONTEXT,
+  estimateTokens,
+  resolveObservationalMemorySettings,
   updateObservationalMemory,
 } from "../memory/observational.js";
 import { rebuildMemoryContextPack } from "../memory/context-pack.js";
 import { createEmbeddingClient } from "../memory/embedding.js";
-import { resolveObservationalMemorySettings } from "../memory/observational.js";
 import { loadStoredMemory, type MemoryPersistenceHandle } from "../memory/storage.js";
 import { MemoryContextCache } from "../memory/store.js";
 import {
@@ -1066,6 +1069,7 @@ export class TurnRunner {
       db,
       memory: this.memory,
       sessionId: this.config.sessionId,
+      effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
       actorModel: this.resolveMemoryActorModel(options),
       settings: this.config.memory,
       messages,
@@ -1089,7 +1093,10 @@ export class TurnRunner {
       await rebuildMemoryContextPack({
         db: this.memoryPersistence.db,
         cache: this.memory,
-        settings: resolveObservationalMemorySettings(this.config.memory),
+        settings: resolveObservationalMemorySettings(
+          this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
+          this.config.memory,
+        ),
         ...(this.config.sessionId !== undefined ? { sessionId: this.config.sessionId } : {}),
       });
     } catch {
@@ -1148,6 +1155,7 @@ export class TurnRunner {
     // provider prompt cache stays valid between eviction events.
     return createObservationalContextTransform({
       memory: this.memory,
+      effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
       settings: this.config.memory,
       horizon: this.wireGuardHorizon,
       // Compaction trigger #3: when wire-shaping advances the eviction
@@ -1221,7 +1229,10 @@ export class TurnRunner {
         embed: createEmbeddingClient(),
         contextPack: {
           cache: this.memory,
-          settings: resolveObservationalMemorySettings(this.config.memory),
+          settings: resolveObservationalMemorySettings(
+            this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
+            this.config.memory,
+          ),
           ...(this.config.sessionId !== undefined ? { sessionId: this.config.sessionId } : {}),
         },
       },
@@ -1283,30 +1294,59 @@ export class TurnRunner {
       type: "context_usage",
       usage: event.message.usage,
       effectiveContextWindow: this.effectiveContextWindow(),
+      contextWindowUsage: this.estimateContextWindowUsage(),
     });
   }
 
   /**
-   * Effective ceiling for the context-usage bar. When observational memory is
-   * active the compaction trigger (`observation.messageTokens`) is the practical
-   * upper bound — once raw messages cross it the transform replaces older
-   * transcript content, so the model never sees more than roughly that many
-   * input tokens regardless of the model's advertised window. Surfaces should
-   * compare reported usage against this number to show how close the turn is
-   * to triggering compaction. With memory disabled the raw model window is
-   * the only ceiling, so the bar reflects that.
-   *
-   * Gated on the loaded persistence handle rather than `config.memoryDbPath`
-   * so this stays consistent with the same check `updateMemoryAfterAgentRun`
-   * uses — incognito (`memoryDbPath: false`) and a failed db load both end
-   * up at the model-window branch, matching the reality that no compaction
-   * will run.
+   * Estimate the per-segment occupancy of the parent agent's input. Uses the
+   * same character-heuristic token count the memory pipeline uses for its
+   * triggers, so the segment numbers and the compaction thresholds in
+   * `MEMORY_BUDGET_RATIOS` stay on the same scale. Each segment maps to
+   * what the actor will receive on its next request: the system prompt
+   * (already concatenated with any loaded AGENTS.md), the raw message
+   * history retained in agent state, and the two memory pack layers
+   * currently frozen in the cache.
+   */
+  protected estimateContextWindowUsage() {
+    const agent = this.requireParentAgent();
+    const pack = this.memory.getContextPack();
+    const rawMessages = agentMessagesToRaw(agent.state.messages);
+    return {
+      systemPrompt: estimateTokens(agent.state.systemPrompt),
+      messages: rawMessages.reduce(
+        (total, message) =>
+          total + (message.estimatedTokens ?? estimateTokens(message.textPreview)),
+        0,
+      ),
+      localMemory: pack.local.reduce((total, row) => total + estimateTokens(row.content), 0),
+      globalMemory: pack.global.reduce((total, row) => total + estimateTokens(row.content), 0),
+    };
+  }
+
+  /**
+   * Effective ceiling for the context-usage bar. The user-set
+   * `config.effectiveContext` (default `DEFAULT_EFFECTIVE_CONTEXT`) is clamped
+   * to the parent model's hard window so a user asking for more than the
+   * model can fit silently caps at the model's limit. Every memory budget is
+   * derived from this same number, so the bar is also the practical
+   * compaction ceiling.
    */
   protected effectiveContextWindow(): number {
     const modelWindow = this.requireParentAgent().state.model.contextWindow;
-    if (!this.memoryPersistence?.db) return modelWindow;
-    const settings = resolveObservationalMemorySettings(this.config.memory);
-    return Math.min(modelWindow, settings.observation.messageTokens);
+    return this.resolveEffectiveContext(modelWindow);
+  }
+
+  /**
+   * Resolve the user-set `effectiveContext` against an optional model window.
+   * Memory-pipeline callers that run before the parent agent exists (initial
+   * pack load, transform construction) pass `undefined` here and accept the
+   * unclamped user value; the agent-facing `effectiveContextWindow()` always
+   * passes the live model window.
+   */
+  protected resolveEffectiveContext(modelWindow?: number): number {
+    const userValue = this.config.effectiveContext ?? DEFAULT_EFFECTIVE_CONTEXT;
+    return modelWindow !== undefined ? Math.min(userValue, modelWindow) : userValue;
   }
 }
 

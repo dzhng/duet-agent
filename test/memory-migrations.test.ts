@@ -271,14 +271,18 @@ describe("Memory migrations", () => {
 
   testIfDocker("v5 collapses duplicate observation rows that bypassed the PK index", async () => {
     await withTempDb(async (db) => {
-      // Bring the db up to v4 first (PK constraint and all columns in
-      // place), then simulate the corrupted state: drop the unique
-      // index, insert two rows with the same id (one with a stale
-      // last_used_at and one with a fresh one), and roll the
-      // schema_version table back to 4 so the next runMigrations call
-      // applies v5.
+      // The production failure mode is "unique index exists but is out
+      // of sync with the heap"; PGlite does not expose a way to forge
+      // exactly that state from SQL. The closest we can get is to drop
+      // the unique index entirely, plant duplicate heap rows, and let
+      // v5 heal it — exercising the same heap-only DELETE path the
+      // production case relies on. The migration's branch that re-adds
+      // the PK (rather than REINDEX) covers exactly this drop-and-heal
+      // recovery shape. CASCADE is required because the v3 FK from
+      // `observation_embeddings.observation_id` depends on
+      // `observations_pkey`.
       await runMigrations(db);
-      await db.exec(`ALTER TABLE observations DROP CONSTRAINT observations_pkey`);
+      await db.exec(`ALTER TABLE observations DROP CONSTRAINT observations_pkey CASCADE`);
       await db.query(
         `INSERT INTO observations (
              id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
@@ -296,9 +300,6 @@ describe("Memory migrations", () => {
       const result = await runMigrations(db);
       expect(result.applied).toEqual([5]);
 
-      // Winner is the row with the freshest last_used_at; the other is
-      // gone and the PK index is rebuilt so a fresh upsert collides
-      // cleanly rather than raising observations_pkey.
       const rows = await db.query<{ id: string; content: string; last_used_at: number }>(
         `SELECT id, content, last_used_at FROM observations ORDER BY id`,
       );
@@ -307,6 +308,9 @@ describe("Memory migrations", () => {
         { id: "mem_single", content: "untouched", last_used_at: 50 },
       ]);
 
+      // The migration is only useful if a subsequent ON CONFLICT upsert
+      // — the exact path that raised `observations_pkey` errors in
+      // production — succeeds against the rebuilt index.
       await db.query(
         `INSERT INTO observations (
              id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
@@ -321,6 +325,40 @@ describe("Memory migrations", () => {
         `SELECT content, last_used_at FROM observations WHERE id = 'mem_dup'`,
       );
       expect(upserted.rows).toEqual([{ content: "fresh upsert", last_used_at: 300 }]);
+    });
+  });
+
+  testIfDocker("v5 is a no-op on a healthy database", async () => {
+    await withTempDb(async (db) => {
+      // Forward-only and idempotent: a healthy DB has no dup rows, and
+      // re-running v5 must not drop, rewrite, or otherwise disturb the
+      // existing observations or schema. This also pins the heap row
+      // count so a future regression that mass-deletes during the
+      // dedupe pass (e.g. an incorrect ROW_NUMBER ordering or partition
+      // key) fails the test instead of silently throwing data away.
+      await runMigrations(db);
+      await db.query(
+        `INSERT INTO observations (
+             id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
+             relative_date, time_of_day, priority, source_json, content, tags_json
+           ) VALUES
+             ('mem_keep1', 100, 100, 'sess_a', 'observation', '2026-05-01', NULL, NULL, NULL,
+              'medium', '{"kind":"system"}', 'one', '[]'),
+             ('mem_keep2', 200, 200, 'sess_a', 'observation', '2026-05-01', NULL, NULL, NULL,
+              'medium', '{"kind":"system"}', 'two', '[]')`,
+      );
+
+      await db.query(`DELETE FROM schema_version WHERE version = 5`);
+      const result = await runMigrations(db);
+      expect(result.applied).toEqual([5]);
+
+      const rows = await db.query<{ id: string; content: string }>(
+        `SELECT id, content FROM observations ORDER BY id`,
+      );
+      expect(rows.rows).toEqual([
+        { id: "mem_keep1", content: "one" },
+        { id: "mem_keep2", content: "two" },
+      ]);
     });
   });
 

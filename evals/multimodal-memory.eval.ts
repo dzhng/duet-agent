@@ -1,7 +1,10 @@
 import { describe, expect } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type ImageContent } from "@earendil-works/pi-ai";
-import { updateObservationalMemory } from "../src/memory/observational.js";
+import {
+  DEFAULT_EFFECTIVE_CONTEXT,
+  updateObservationalMemory,
+} from "../src/memory/observational.js";
 import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
 import { createMemoryFixture } from "../test/helpers/memory-fixture.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
@@ -18,18 +21,12 @@ describe("multimodal memory", () => {
           db: fixture.db,
           memory: fixture.cache,
           sessionId: "session_eval",
+          effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
           actorModel: memoryModel,
           settings: {
             observation: {
-              messageTokens: 5,
-              maxTokensPerBatch: 200,
-              bufferActivation: 1,
               instruction:
                 "For this eval, preserve the visual color and shape from attached images when they are relevant.",
-            },
-            reflection: {
-              observationTokens: 1_000,
-              bufferActivation: 500,
             },
           },
           messages: [

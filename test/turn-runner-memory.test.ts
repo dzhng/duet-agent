@@ -227,13 +227,11 @@ describe("TurnRunner memory", () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
-      memory: {
-        observation: {
-          messageTokens: 10,
-          bufferActivation: 1,
-          maxTokensPerBatch: 10,
-        },
-      },
+      // E=17 → messageTokens≈10, bufferActivation≈5. A 100-char (25-token)
+      // user message clears the compaction trigger; eviction reduces the
+      // tail to ≤bufferActivation, leaving the transform output empty since
+      // no memory pack is loaded.
+      effectiveContext: 17,
     });
     const events: unknown[] = [];
     runner.subscribe((event) => events.push(event));
@@ -255,16 +253,9 @@ describe("TurnRunner memory", () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
-      memory: {
-        observation: {
-          messageTokens: 20,
-          bufferActivation: 10,
-        },
-        reflection: {
-          observationTokens: 1_000,
-          bufferActivation: 500,
-        },
-      },
+      // E=34 → messageTokens≈20, bufferActivation≈10. Reflection budgets are
+      // irrelevant here; the transform never runs the reflector.
+      effectiveContext: 34,
     });
     await runner.seedFrozenObservationForTest(
       '<observation-group id="test" range="msg_assistant_observed:msg_assistant_observed">\n* 🔴 Already observed the long message.\n</observation-group>',
@@ -565,9 +556,10 @@ describe("TurnRunner memory", () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
-      memory: {
-        observation: { messageTokens: 20, bufferActivation: 5 },
-      },
+      // E=34 → messageTokens≈20, bufferActivation≈10. The 80-char (20-token)
+      // first message triggers eviction; the second call must reuse the same
+      // sticky horizon when input is unchanged.
+      effectiveContext: 34,
     });
     const transform = runner.createMemoryTransformForTest();
     const messages: AgentMessage[] = [

@@ -74,22 +74,15 @@ describe("reflection session isolation", () => {
         // tokens against the threshold regardless of observer output.
         const messages: AgentMessage[] = [];
 
+        // E=2_000 → reflection.observationTokens≈650. The ~3.2k chars of
+        // seeded session B content estimates to ~900 tokens, comfortably
+        // clearing the trigger so reflection actually fires.
         const result = await updateObservationalMemory({
           db: fixture.db,
           memory: fixture.cache,
           sessionId: "session_b",
+          effectiveContext: 2_000,
           actorModel: memoryModel,
-          settings: {
-            observation: {
-              messageTokens: 10_000,
-              maxTokensPerBatch: 800,
-              bufferActivation: 1_000,
-            },
-            reflection: {
-              observationTokens: 600,
-              bufferActivation: 300,
-            },
-          },
           messages,
         });
 

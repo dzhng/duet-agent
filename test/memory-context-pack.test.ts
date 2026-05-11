@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rebuildMemoryContextPack } from "../src/memory/context-pack.js";
 import { runMigrations } from "../src/memory/migrations.js";
-import { resolveObservationalMemorySettings } from "../src/memory/observational.js";
+import {
+  DEFAULT_EFFECTIVE_CONTEXT,
+  resolveObservationalMemorySettings,
+} from "../src/memory/observational.js";
 import { MemoryContextCache } from "../src/memory/store.js";
 import { appendObservation } from "../src/memory/storage.js";
 import type { Observation } from "../src/types/memory.js";
@@ -73,7 +76,7 @@ describe("Memory context pack", () => {
   testIfDocker("rebuildMemoryContextPack assembles global + local from the database", async () => {
     await withSeededDb(async (db) => {
       const cache = new MemoryContextCache();
-      const settings = resolveObservationalMemorySettings({});
+      const settings = resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT);
 
       await rebuildMemoryContextPack({
         db,
@@ -97,7 +100,7 @@ describe("Memory context pack", () => {
   testIfDocker("rebuildMemoryContextPack with no sessionId leaves local empty", async () => {
     await withSeededDb(async (db) => {
       const cache = new MemoryContextCache();
-      const settings = resolveObservationalMemorySettings({});
+      const settings = resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT);
 
       await rebuildMemoryContextPack({ db, cache, settings });
 

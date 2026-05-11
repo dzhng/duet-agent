@@ -2,6 +2,7 @@ import { describe, expect } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { rebuildMemoryContextPack } from "../src/memory/context-pack.js";
 import {
+  DEFAULT_EFFECTIVE_CONTEXT,
   resolveObservationalMemorySettings,
   updateObservationalMemory,
 } from "../src/memory/observational.js";
@@ -29,17 +30,7 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
 
 const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 
-const settings = resolveObservationalMemorySettings({
-  observation: {
-    messageTokens: 10_000,
-    maxTokensPerBatch: 800,
-    bufferActivation: 1_000,
-  },
-  reflection: {
-    observationTokens: 200_000,
-    bufferActivation: 100_000,
-  },
-});
+const settings = resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT);
 
 describe("observer usedObservationIds", () => {
   testIfDocker(
@@ -105,8 +96,8 @@ describe("observer usedObservationIds", () => {
           db: fixture.db,
           memory: fixture.cache,
           sessionId: "session_eval",
+          effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
           actorModel: memoryModel,
-          settings,
           messages,
         });
 
@@ -181,8 +172,8 @@ describe("observer usedObservationIds", () => {
           db: fixture.db,
           memory: fixture.cache,
           sessionId: "session_eval",
+          effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
           actorModel: memoryModel,
-          settings,
           messages,
         });
 

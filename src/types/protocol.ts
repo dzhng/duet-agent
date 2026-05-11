@@ -497,18 +497,61 @@ export interface TurnMemoryEvent extends ObservationalMemoryActivityEvent {
   type: "memory";
 }
 
+/**
+ * Per-segment estimate of how many tokens currently occupy each region of
+ * the parent agent's input. Distinct from `TurnTokenUsage`, which reports
+ * the flat provider-side totals: this breakdown attributes the occupancy
+ * to the segments the runner controls, so surfaces can show *which* part
+ * of the budget is filling up. Values are heuristic character-length
+ * estimates, not exact tokenizer counts.
+ */
+export interface TurnContextWindowUsage {
+  /**
+   * Tokens occupied by the parent agent's full system prompt, including
+   * the base coding-agent prompt, any user-supplied `systemInstructions`,
+   * and every system-prompt file loaded from disk (typically `AGENTS.md`).
+   */
+  systemPrompt: number;
+  /**
+   * Tokens occupied by the raw message history that will be sent on the
+   * next turn. Includes the latest assistant response just appended to
+   * state. Synthetic memory wrappers re-injected by the transform on each
+   * request are not counted; they are transient.
+   */
+  messages: number;
+  /**
+   * Tokens occupied by the current session's local memory pack rendered
+   * into the actor prefix. Sums the `content` field of every observation
+   * and reflection in the frozen local pack.
+   */
+  localMemory: number;
+  /**
+   * Tokens occupied by the cross-session global memory pack rendered into
+   * the actor prefix. Sums the `content` field of every observation and
+   * reflection in the frozen global pack.
+   */
+  globalMemory: number;
+}
+
 export interface TurnContextUsageEvent {
   type: "context_usage";
   /** Token accounting reported by the parent model for the latest request context. */
   usage: TurnTokenUsage;
   /**
-   * Effective ceiling against which `usage` should be displayed. When
-   * observational memory is enabled this is the compaction trigger
-   * (`observation.messageTokens`) clamped to the model's hard window, since
-   * the runner replaces old raw messages once that trigger is crossed. With
-   * memory disabled it is the resolved parent model's full context window.
+   * Effective ceiling against which `usage` should be displayed. Reflects
+   * the user-set `TurnRunnerConfig.effectiveContext` (default 200k) clamped
+   * to the model's hard context window. Every memory budget is derived from
+   * this same value, so the bar also represents the practical compaction
+   * ceiling.
    */
   effectiveContextWindow: number;
+  /**
+   * Segment-by-segment estimate of how the actor's input is allocated
+   * across the system prompt, raw message history, and the two memory
+   * pack layers. Lets surfaces visualize which budget is filling up
+   * instead of only showing the aggregate provider-reported usage.
+   */
+  contextWindowUsage: TurnContextWindowUsage;
 }
 
 export interface TurnTerminalBaseEvent {

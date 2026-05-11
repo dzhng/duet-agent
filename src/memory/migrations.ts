@@ -242,87 +242,52 @@ const MIGRATIONS: Migration[] = [
     version: 5,
     description: "self-heal: collapse duplicate observation rows that bypassed the PK index",
     up: async (tx) => {
-      // Some installs ended up with multiple physical rows for the same
-      // `id` in `observations` despite `id TEXT PRIMARY KEY` being declared
-      // since v1. The likely culprit is a prior PGlite corruption event
-      // (visible as `memory.db.corrupted-*` directories) that left the
-      // unique index out of sync with the heap. Symptoms in the runner:
-      // `INSERT ... ON CONFLICT (id) DO UPDATE` started raising
-      // `duplicate key value violates unique constraint "observations_pkey"`
-      // as the observer/reflector tried to upsert against an id with
-      // two heap rows, which surfaced as `[system]` errors in the TUI.
+      // Some installs accumulated multiple physical rows for the same
+      // `id` in `observations` despite `id TEXT PRIMARY KEY` being
+      // declared since v1, likely fallout from a prior PGlite corruption
+      // event (visible as `memory.db.corrupted-*` directories) that
+      // left the unique index out of sync with the heap. Symptom: every
+      // `INSERT ... ON CONFLICT (id) DO UPDATE` raised
+      // `duplicate key value violates unique constraint "observations_pkey"`,
+      // which the runner surfaced as `[system]` errors in the TUI.
       //
-      // For each id with more than one row, pick the row with the
-      // freshest `last_used_at` (falling back to `created_at`) as the
-      // winner, delete every row for that id, and re-insert just the
-      // winner. After the loop, REINDEX rebuilds `observations_pkey` so
-      // subsequent ON CONFLICT inserts have a clean unique index to
-      // target. Forward-only and idempotent: a healthy DB sees an empty
-      // duplicate set and the loop is a no-op.
-      const dups = await tx.query<{ id: string }>(
-        `SELECT id FROM observations GROUP BY id HAVING count(*) > 1`,
-      );
-      for (const { id } of dups.rows) {
-        const rows = await tx.query<{
-          created_at: number;
-          last_used_at: number | null;
-          session_id: string | null;
-          kind: string;
-          observed_date: string;
-          referenced_date: string | null;
-          relative_date: string | null;
-          time_of_day: string | null;
-          priority: string;
-          source_json: string;
-          content: string;
-          tags_json: string;
-        }>(
-          `SELECT created_at, last_used_at, session_id, kind, observed_date, referenced_date,
-                  relative_date, time_of_day, priority, source_json, content, tags_json
-           FROM observations WHERE id = $1`,
-          [id],
-        );
-        const winner = rows.rows.slice().sort((a, b) => {
-          const al = a.last_used_at ?? 0;
-          const bl = b.last_used_at ?? 0;
-          if (al !== bl) return bl - al;
-          return (b.created_at ?? 0) - (a.created_at ?? 0);
-        })[0];
-        if (!winner) continue;
-        // Backfill `last_used_at` for any winner that predates v4 and
-        // never picked up a backfill (the column is NOT NULL since v4).
-        const lastUsedAt = winner.last_used_at ?? winner.created_at;
-        await tx.query(`DELETE FROM observations WHERE id = $1`, [id]);
-        await tx.query(
-          `INSERT INTO observations (
-             id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
-             relative_date, time_of_day, priority, source_json, content, tags_json
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-          [
-            id,
-            winner.created_at,
-            lastUsedAt,
-            winner.session_id,
-            winner.kind,
-            winner.observed_date,
-            winner.referenced_date,
-            winner.relative_date,
-            winner.time_of_day,
-            winner.priority,
-            winner.source_json,
-            winner.content,
-            winner.tags_json,
-          ],
-        );
-      }
+      // We can't trust the stale index, so the dedupe stays in the heap:
+      // a window function ranks rows per id (freshest `last_used_at`,
+      // then `created_at`), and an outer DELETE keyed on `ctid` removes
+      // every row that isn't the winner. Disabling index plans for this
+      // transaction forces a seq scan on the heap and a TID scan on the
+      // delete so the planner can't latch onto the broken index. After
+      // the dedupe the heap is consistent and REINDEX can rebuild the
+      // unique index from clean data.
+      //
+      // Forward-only and idempotent: a healthy DB has no dup rows and
+      // the DELETE removes nothing.
+      await tx.exec(`SET LOCAL enable_indexscan = off`);
+      await tx.exec(`SET LOCAL enable_indexonlyscan = off`);
+      await tx.exec(`SET LOCAL enable_bitmapscan = off`);
 
-      // Rebuild the PK index so it matches the heap. REINDEX is the right
-      // primitive when the index exists but is out of sync (the
-      // production failure mode), and ADD CONSTRAINT covers the
-      // pathological case where the unique index was dropped entirely.
-      // Either path fails loudly if any duplicates remain after the
-      // dedup loop above, which surfaces a half-healed state instead of
-      // leaving it in place.
+      await tx.exec(`
+        DELETE FROM observations
+        WHERE ctid IN (
+          SELECT ctid FROM (
+            SELECT ctid, ROW_NUMBER() OVER (
+              PARTITION BY id
+              ORDER BY last_used_at DESC, created_at DESC
+            ) AS rn
+            FROM observations
+          ) ranked
+          WHERE rn > 1
+        )
+      `);
+
+      // After the heap is deduped, rebuild the unique index so it
+      // matches. REINDEX covers the production case where the index
+      // existed but was stale; ADD PRIMARY KEY covers a recovery state
+      // where the unique index was dropped entirely (e.g. by an
+      // operator running `DROP CONSTRAINT ... CASCADE` to clear out
+      // dependent objects during manual cleanup). Either path fails
+      // loudly if duplicates still exist, surfacing a half-healed state
+      // instead of masking it.
       const indexExists = await tx.query<{ count: number }>(
         `SELECT COUNT(*)::int AS count FROM pg_indexes
          WHERE tablename = 'observations' AND indexname = 'observations_pkey'`,

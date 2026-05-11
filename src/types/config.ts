@@ -19,6 +19,19 @@ export interface TurnRunnerConfig extends TurnOptions {
    * tools) may not have a session. Real CLI/Session callers always set it.
    */
   sessionId?: string;
+  /**
+   * Target ceiling, in tokens, for the actor model's per-turn input. Every
+   * memory budget (raw-message compaction trigger, raw-tail buffer,
+   * reflection trigger and buffer, global pack budget) is derived from this
+   * single number via fixed ratios in `deriveMemoryBudgets`; see
+   * `MEMORY_BUDGET_RATIOS` in `src/memory/observational.ts` for the table.
+   *
+   * Defaults to 200_000. The runner clamps the resolved value to
+   * `min(effectiveContext, model.contextWindow)` at use-time so a user
+   * value larger than the model's hard window silently caps at the window
+   * instead of overflowing.
+   */
+  effectiveContext?: number;
   memory?: ObservationalMemorySettingsInput;
   /**
    * PGlite database directory for durable observational memories.

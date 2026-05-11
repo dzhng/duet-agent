@@ -2,6 +2,7 @@ import { describe, expect } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { rebuildMemoryContextPack } from "../src/memory/context-pack.js";
 import {
+  DEFAULT_EFFECTIVE_CONTEXT,
   resolveObservationalMemorySettings,
   updateObservationalMemory,
 } from "../src/memory/observational.js";
@@ -78,17 +79,7 @@ describe("last-used ranking", () => {
 
         // Freeze the pack against the current session so the observer
         // sees both memories with their `[memory id: ...]` markers.
-        const settings = resolveObservationalMemorySettings({
-          observation: {
-            messageTokens: 10_000,
-            maxTokensPerBatch: 800,
-            bufferActivation: 1_000,
-          },
-          reflection: {
-            observationTokens: 200_000,
-            bufferActivation: 100_000,
-          },
-        });
+        const settings = resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT);
         await rebuildMemoryContextPack({
           db: fixture.db,
           cache: fixture.cache,
@@ -112,8 +103,8 @@ describe("last-used ranking", () => {
           db: fixture.db,
           memory: fixture.cache,
           sessionId: "session_eval",
+          effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
           actorModel: memoryModel,
-          settings,
           messages,
         });
 

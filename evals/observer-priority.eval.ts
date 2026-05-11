@@ -1,6 +1,9 @@
 import { describe, expect } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { updateObservationalMemory } from "../src/memory/observational.js";
+import {
+  DEFAULT_EFFECTIVE_CONTEXT,
+  updateObservationalMemory,
+} from "../src/memory/observational.js";
 import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
 import type { ObservationPriority } from "../src/types/memory.js";
 import { createMemoryFixture } from "../test/helpers/memory-fixture.js";
@@ -20,18 +23,6 @@ import { createAssistantMessage } from "../test/helpers/messages.js";
 //   ✅         — concrete completion (rolls up to "high" via inferPriority)
 
 const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
-
-const baseSettings = {
-  observation: {
-    messageTokens: 10_000,
-    maxTokensPerBatch: 600,
-    bufferActivation: 1_000,
-  },
-  reflection: {
-    observationTokens: 100_000,
-    bufferActivation: 50_000,
-  },
-} as const;
 
 interface Scenario {
   name: string;
@@ -132,8 +123,8 @@ describe("observer priority inference", () => {
             db: fixture.db,
             memory: fixture.cache,
             sessionId: "session_eval",
+            effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
             actorModel: memoryModel,
-            settings: baseSettings,
             messages: scenario.messages,
           });
 

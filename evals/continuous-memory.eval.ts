@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createObservationalContextTransform,
+  DEFAULT_EFFECTIVE_CONTEXT,
   updateObservationalMemory,
 } from "../src/memory/observational.js";
 import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
@@ -86,23 +87,12 @@ describe("continuous memory", () => {
           },
         ];
 
-        const settings = {
-          observation: {
-            messageTokens: 10_000,
-            maxTokensPerBatch: 200,
-            bufferActivation: 1_000,
-          },
-          reflection: {
-            observationTokens: 10_000,
-            bufferActivation: 5_000,
-          },
-        };
         await updateObservationalMemory({
           db: fixture.db,
           memory: fixture.cache,
           sessionId: "session_eval",
+          effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
           actorModel: memoryModel,
-          settings,
           messages: firstPrompt,
           onActivity: (event) => events.push(event),
         });
@@ -110,8 +100,8 @@ describe("continuous memory", () => {
           db: fixture.db,
           memory: fixture.cache,
           sessionId: "session_eval",
+          effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
           actorModel: memoryModel,
-          settings,
           messages: secondPrompt,
           onActivity: (event) => events.push(event),
         });
@@ -153,18 +143,8 @@ describe("continuous memory", () => {
           db: fixture.db,
           memory: fixture.cache,
           sessionId: "session_eval",
+          effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
           actorModel: memoryModel,
-          settings: {
-            observation: {
-              messageTokens: 10_000,
-              maxTokensPerBatch: 200,
-              bufferActivation: 1_000,
-            },
-            reflection: {
-              observationTokens: 500_000,
-              bufferActivation: 100_000,
-            },
-          },
           messages: [
             {
               role: "user",
@@ -210,15 +190,8 @@ describe("continuous memory", () => {
       const events: ObservationalMemoryActivityEvent[] = [];
       const settings = {
         observation: {
-          messageTokens: 10_000,
-          maxTokensPerBatch: 500,
-          bufferActivation: 1_000,
           instruction:
             "For this eval, always record the marker continuous-memory-318 and the fact that compaction has not been needed yet.",
-        },
-        reflection: {
-          observationTokens: 10_000,
-          bufferActivation: 5_000,
         },
       };
       const messages: AgentMessage[] = [
@@ -239,6 +212,7 @@ describe("continuous memory", () => {
           db: fixture.db,
           memory: fixture.cache,
           sessionId: "session_eval",
+          effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
           actorModel: memoryModel,
           settings,
           messages,
@@ -256,6 +230,7 @@ describe("continuous memory", () => {
 
         const transform = createObservationalContextTransform({
           memory: fixture.cache,
+          effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
           settings,
           horizon: createInitialHorizon(),
         });

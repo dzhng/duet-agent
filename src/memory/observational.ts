@@ -44,41 +44,122 @@ import {
   type RawMemoryMessage,
 } from "./observational-prompts.js";
 
-export const OBSERVATIONAL_MEMORY_DEFAULTS = {
-  // Token budget for the global memory layer rendered ahead of message
-  // history. Sized to fit the highest-signal cross-session reflections
-  // without crowding out the local layer or message tail. See
-  // ObservationalMemorySettings.globalContextTokenBudget for the full
-  // rationale.
-  globalContextTokenBudget: 8_000,
-  // 7 days picked to keep last-week's context current while letting
-  // month-old chatter decay out of the global pack. Tunable per-caller.
-  recencyHalfLifeMs: 7 * 24 * 60 * 60 * 1000,
-  // 1.3 keeps reflections preferred at matched priority/recency without
-  // shutting raw observations out of the global pack entirely.
-  reflectionBias: 1.3,
-  observation: {
-    // Observe before the actor window gets tight; prompt caching keeps the exact
-    // tail cheap while memory preserves older task state.
-    messageTokens: 100_000,
-    // Keep observer calls comfortably below the model's practical reasoning
-    // ceiling while still batching enough transcript to avoid noisy churn.
-    maxTokensPerBatch: 35_000,
-    // Retain enough exact history for active tool work after older messages are
-    // represented by observations.
-    bufferActivation: 30_000,
-    // Existing observations help avoid semantic duplicates, but the observer
-    // should never receive the whole durable memory database.
-    previousObserverTokens: 4_000,
-  },
-  reflection: {
-    // Reflect before observations become a second large prompt layer.
-    observationTokens: 60_000,
-    // Target this many observation tokens after reflection so the pass dedupes
-    // without aggressively summarizing away useful specifics.
-    bufferActivation: 40_000,
-  },
+/**
+ * Default `effectiveContext` when the runner doesn't specify one. 200k is a
+ * comfortable mid-range target: well below frontier-model windows so memory
+ * compaction kicks in early enough to keep latency and cost predictable,
+ * but high enough that long-running sessions retain enough exact transcript
+ * for active tool work between compactions.
+ */
+export const DEFAULT_EFFECTIVE_CONTEXT = 200_000;
+
+/**
+ * Ratios of `effectiveContext` that sum to exactly 100%. These three budgets
+ * are the only ones that count against the actor model's per-turn input —
+ * `messageTokens` caps the raw-message tail, `observationTokens` caps the
+ * local-memory pack rendered into the prefix, and `globalContextTokenBudget`
+ * caps the cross-session pack rendered above local. The system prompt and
+ * tool-call slack come out of `messageTokens`'s share since the raw tail
+ * naturally absorbs whatever's left.
+ */
+export const MEMORY_BUDGET_RATIOS = {
+  /** Raw-message compaction trigger (per turn). */
+  messageTokens: 0.6,
+  /** Local-memory pack ceiling between reflection events. */
+  observationTokens: 0.325,
+  /** Cross-session global pack ceiling. */
+  globalContextTokenBudget: 0.075,
 } as const;
+
+/**
+ * Shared "keep half of the trigger" knob applied to both buffer activations.
+ * Each compact/reflect event reclaims roughly half the trigger's worth of
+ * space; the next event triggers sooner, trading larger condensation steps
+ * for smaller, more frequent ones. Buffer activations don't count toward the
+ * actor budget because they're bounded above by their respective triggers,
+ * which already do.
+ */
+export const BUFFER_RATIO = 0.5;
+
+/**
+ * Token budgets that govern observer-call quality rather than actor-context
+ * fit. These never appear in the actor model's request, so they're decoupled
+ * from `effectiveContext` and held at fixed values that the observer model
+ * handles reliably across providers.
+ */
+export const FIXED_OBSERVER_BUDGETS = {
+  /**
+   * Cap on transcript tokens sent to one observer call. Keeps observer
+   * reasoning comfortably below model ceilings while still batching enough
+   * history to avoid noisy churn.
+   */
+  maxTokensPerBatch: 35_000,
+  /**
+   * Cap on prior-observation tokens included in the observer prompt for
+   * dedupe context. Bounded so the observer never receives the whole
+   * durable memory database.
+   */
+  previousObserverTokens: 4_000,
+} as const;
+
+/**
+ * 7 days picked to keep last-week's context current while letting month-old
+ * chatter decay out of the global pack. Tunable per-caller via
+ * `ObservationalMemorySettingsInput.recencyHalfLifeMs`.
+ */
+const DEFAULT_RECENCY_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * 1.3 keeps reflections preferred at matched priority/recency without
+ * shutting raw observations out of the global pack entirely.
+ */
+const DEFAULT_REFLECTION_BIAS = 1.3;
+
+export interface DerivedMemoryBudgets {
+  observation: {
+    messageTokens: number;
+    maxTokensPerBatch: number;
+    bufferActivation: number;
+    previousObserverTokens: number;
+  };
+  reflection: {
+    observationTokens: number;
+    bufferActivation: number;
+  };
+  globalContextTokenBudget: number;
+}
+
+/**
+ * Compute every numeric token budget the memory pipeline uses from a single
+ * `effectiveContext` value. Values are floored to integers and clamped to
+ * at least 1 so tiny test-mode contexts still satisfy `buffer < trigger`
+ * after rounding.
+ */
+export function deriveMemoryBudgets(effectiveContext: number): DerivedMemoryBudgets {
+  const positive = Math.max(1, Math.floor(effectiveContext));
+  const messageTokens = atLeastOne(MEMORY_BUDGET_RATIOS.messageTokens * positive);
+  const observationTokens = atLeastOne(MEMORY_BUDGET_RATIOS.observationTokens * positive);
+  const globalContextTokenBudget = atLeastOne(
+    MEMORY_BUDGET_RATIOS.globalContextTokenBudget * positive,
+  );
+  return {
+    observation: {
+      messageTokens,
+      maxTokensPerBatch: FIXED_OBSERVER_BUDGETS.maxTokensPerBatch,
+      bufferActivation: atLeastOne(BUFFER_RATIO * messageTokens),
+      previousObserverTokens: FIXED_OBSERVER_BUDGETS.previousObserverTokens,
+    },
+    reflection: {
+      observationTokens,
+      bufferActivation: atLeastOne(BUFFER_RATIO * observationTokens),
+    },
+    globalContextTokenBudget,
+  };
+}
+
+function atLeastOne(value: number): number {
+  return Math.max(1, Math.floor(value));
+}
 
 export interface ObserverResult {
   /** Whether the observer found durable information worth writing to memory. */
@@ -206,6 +287,11 @@ export class ModelByInputTokens {
 
 export interface ObservationalContextTransformOptions {
   memory: MemoryContextCache;
+  /**
+   * Caller-resolved effective context window (already clamped to the
+   * model's hard limit). All numeric memory budgets are derived from this.
+   */
+  effectiveContext: number;
   settings?: ObservationalMemorySettingsInput;
   /**
    * Compaction trigger fired when the wire-shaping eviction horizon
@@ -240,6 +326,11 @@ export interface ObservationalMemoryUpdateOptions {
    * session's global layer.
    */
   sessionId?: string;
+  /**
+   * Caller-resolved effective context window (already clamped to the
+   * model's hard limit). All numeric memory budgets are derived from this.
+   */
+  effectiveContext: number;
   settings?: ObservationalMemorySettingsInput;
   actorModel: string;
   messages: AgentMessage[];
@@ -252,51 +343,48 @@ export interface ObservationalMemoryUpdateResult {
   reflections: Observation[];
 }
 
+/**
+ * Resolve user-provided non-budget knobs and merge with the budgets derived
+ * from `effectiveContext`. Callers must pass `effectiveContext` already
+ * clamped to the actor model's hard window when one is known; the function
+ * itself only validates that the value is positive.
+ */
 export function resolveObservationalMemorySettings(
+  effectiveContext: number,
   input?: ObservationalMemorySettingsInput,
 ): ObservationalMemorySettings {
   const partial = input ?? {};
+  const budgets = deriveMemoryBudgets(effectiveContext);
 
   return {
-    globalContextTokenBudget:
-      partial.globalContextTokenBudget ?? OBSERVATIONAL_MEMORY_DEFAULTS.globalContextTokenBudget,
-    recencyHalfLifeMs: partial.recencyHalfLifeMs ?? OBSERVATIONAL_MEMORY_DEFAULTS.recencyHalfLifeMs,
-    reflectionBias: partial.reflectionBias ?? OBSERVATIONAL_MEMORY_DEFAULTS.reflectionBias,
+    globalContextTokenBudget: budgets.globalContextTokenBudget,
+    recencyHalfLifeMs: partial.recencyHalfLifeMs ?? DEFAULT_RECENCY_HALF_LIFE_MS,
+    reflectionBias: partial.reflectionBias ?? DEFAULT_REFLECTION_BIAS,
     observation: {
-      messageTokens:
-        partial.observation?.messageTokens ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.observation.messageTokens,
-      maxTokensPerBatch:
-        partial.observation?.maxTokensPerBatch ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.observation.maxTokensPerBatch,
-      bufferActivation:
-        partial.observation?.bufferActivation ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.observation.bufferActivation,
-      blockAfter: partial.observation?.blockAfter,
-      previousObserverTokens:
-        partial.observation?.previousObserverTokens ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.observation.previousObserverTokens,
+      messageTokens: budgets.observation.messageTokens,
+      maxTokensPerBatch: budgets.observation.maxTokensPerBatch,
+      bufferActivation: budgets.observation.bufferActivation,
+      previousObserverTokens: budgets.observation.previousObserverTokens,
       instruction: partial.observation?.instruction,
       threadTitle: partial.observation?.threadTitle,
     },
     reflection: {
-      observationTokens:
-        partial.reflection?.observationTokens ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.reflection.observationTokens,
-      bufferActivation:
-        partial.reflection?.bufferActivation ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.reflection.bufferActivation,
-      blockAfter: partial.reflection?.blockAfter,
+      observationTokens: budgets.reflection.observationTokens,
+      bufferActivation: budgets.reflection.bufferActivation,
       instruction: partial.reflection?.instruction,
     },
     retrieval: partial.retrieval ?? true,
-    shareTokenBudget: partial.shareTokenBudget ?? false,
-    temporalMarkers: partial.temporalMarkers ?? false,
-    activateAfterIdle: partial.activateAfterIdle,
-    activateOnProviderChange: partial.activateOnProviderChange ?? false,
   };
 }
 
+/**
+ * Sanity-check the derived budgets. The ratio derivation in
+ * `deriveMemoryBudgets` already enforces `buffer < trigger` by construction,
+ * but tiny `effectiveContext` values (used by tests) can collapse triggers
+ * to single-digit token counts where the rounded buffer would tie. Validate
+ * at use-time so a misconfigured runner fails loudly rather than silently
+ * producing an empty raw-message tail.
+ */
 export function validateObservationalMemorySettings(settings: ObservationalMemorySettings): void {
   if (settings.observation.bufferActivation <= 0) {
     throw new Error(
@@ -324,7 +412,7 @@ export function validateObservationalMemorySettings(settings: ObservationalMemor
 }
 
 export function createObservationalContextTransform(options: ObservationalContextTransformOptions) {
-  const settings = resolveObservationalMemorySettings(options.settings);
+  const settings = resolveObservationalMemorySettings(options.effectiveContext, options.settings);
   validateObservationalMemorySettings(settings);
 
   return async (messages: AgentMessage[]): Promise<AgentMessage[]> => {
@@ -414,7 +502,7 @@ function renderContextPack(pack: { global: Observation[]; local: Observation[] }
 export async function updateObservationalMemory(
   options: ObservationalMemoryUpdateOptions,
 ): Promise<ObservationalMemoryUpdateResult> {
-  const settings = resolveObservationalMemorySettings(options.settings);
+  const settings = resolveObservationalMemorySettings(options.effectiveContext, options.settings);
   validateObservationalMemorySettings(settings);
   const rawMessages = agentMessagesToRaw(stripObservationalContextMessages(options.messages));
   // Local snapshot is the only set whose range markers gate
@@ -763,10 +851,9 @@ async function observe(
 function renderPreviousObservationsForObserver(
   localObservations: Observation[],
   attributableMemories: Observation[],
-  tokenBudget: number | false | undefined,
+  budget: number,
 ): string {
-  if (tokenBudget === false || tokenBudget === 0) return "";
-  const budget = tokenBudget ?? OBSERVATIONAL_MEMORY_DEFAULTS.observation.previousObserverTokens;
+  if (budget <= 0) return "";
   // Render attributable cross-session memories first with explicit id
   // markers so the observer can cite them in `usedObservationIds`.
   // Local-session observations follow without ids — they exist for
@@ -1077,7 +1164,14 @@ function estimateMessageTokens(message: NormalizedMessageContent): number {
   return estimateTokens(message.textPreview) + imageTokens;
 }
 
-function estimateTokens(text: string): number {
+/**
+ * Heuristic 4-chars-per-token estimator used everywhere the runner needs
+ * a budget number without tokenizing the actual provider payload. Exported
+ * so surfaces and the runner can attribute the same estimate the memory
+ * pipeline does, keeping the segment breakdown on `TurnContextUsageEvent`
+ * consistent with the trigger arithmetic in this file.
+ */
+export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
