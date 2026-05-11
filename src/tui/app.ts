@@ -1916,13 +1916,29 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
 
     if (key.name === "return" || key.name === "enter") {
-      // Shift+Enter inserts a literal newline at the cursor, matching every
-      // modern chat composer (Slack, Claude Code, ChatGPT, Discord). Plain
-      // Enter always submits — when the agent is running the submit path
-      // queues the message as a follow-up; otherwise it kicks off a new turn.
+      // Three modifier flavors on the Enter key. The modifier is only
+      // distinguishable when the terminal speaks the kitty-keyboard
+      // protocol (or modifyOtherKeys); in a legacy terminal Ctrl+Enter
+      // and Shift+Enter collapse to plain Enter. We accept that
+      // tradeoff for the same reason Shift+Enter accepts it: modern
+      // terminals are the target.
+      //
+      //   Plain Enter   → submit (idle = fresh turn, running = soft queue
+      //                  via follow_up).
+      //   Shift+Enter   → insert a literal newline at the cursor, matching
+      //                  every modern chat composer (Slack, ChatGPT,
+      //                  Discord, Cursor, Claude Code).
+      //   Ctrl+Enter    → steer: dispatch with behavior:"steer" so the
+      //                  runner hands it to agent.steer() at the next
+      //                  inference boundary instead of waiting for the
+      //                  full turn to wrap up.
       key.preventDefault();
       if (key.shift) {
         inputField.insertText("\n");
+        return;
+      }
+      if (key.ctrl) {
+        handleSteerKeystroke();
         return;
       }
       const value = inputField.plainText.trim();
@@ -1950,6 +1966,44 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function handleEscape(): void {
     if (!running) return;
     void input.session.interrupt().catch(reportError);
+  }
+
+  // Ctrl+Enter sends the composer text with behavior:"steer" — the
+  // runner routes this to agent.steer() when the agent is mid-inference
+  // (most of an active turn), which preempts the current LLM call and
+  // injects the message into the next iteration. If the runner is
+  // between inference calls (e.g. mid-tool-call) the steer-flagged
+  // command enqueues and gets picked up at the next agent boundary.
+  // Either way the user gets "at next sensible task boundary" pickup,
+  // which is sooner than the soft-queue follow_up (which only fires at
+  // end of the full turn).
+  //
+  // Empty composer: no-op. The keybind is dedicated to send-with-steer,
+  // and a bare Ctrl+Enter should not interrupt or otherwise affect state.
+  function handleSteerKeystroke(): void {
+    const message = inputField.plainText.trim();
+    if (message.length === 0) return;
+    // Snapshot before clearing so attachments ride with the steer
+    // dispatch and the user-facing labels render correctly.
+    const submittedImages = pendingImages;
+    inputField.clear();
+    clearPendingImages();
+    refreshHint();
+    recordTranscriptEntry("user", message);
+    appendBlock("you:", message, COLORS.user);
+    if (submittedImages.length > 0) {
+      const lines = submittedImages
+        .map((p) => `📎 ${p.label}: ${p.path}`)
+        .join("\n");
+      appendBlock(null, lines, COLORS.hint);
+    }
+    const images = submittedImages.map((p) => p.attachment);
+    void input.session
+      .prompt({ message, behavior: "steer", images })
+      .catch(reportError);
+    if (!running) {
+      markRunning();
+    }
   }
 
   // ---- /diag diagnostics -----------------------------------------------------
