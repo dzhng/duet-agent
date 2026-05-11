@@ -123,7 +123,7 @@ describe("recall_memory", () => {
 
           const result = await recallMemory({
             db,
-            embed: async () => [oneHotVector(0)],
+            embed: async () => ({ embeddings: [oneHotVector(0)], model: "test-model" }),
             query: "anything",
             scope: "all",
           });
