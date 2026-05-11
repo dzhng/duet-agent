@@ -170,8 +170,7 @@ describe("Memory migrations", () => {
       await runMigrations(db);
 
       // Embeddings table exists with the right shape so the backfill
-      // worker can write into it without an extra schema check. v6
-      // rebuilds this table at 3072 dims for gemini-embedding-2.
+      // worker can write into it without an extra schema check.
       const tableProbe = await db.query<{ count: number }>(
         `SELECT COUNT(*)::int AS count FROM information_schema.tables
          WHERE table_name = 'observation_embeddings'`,
@@ -300,12 +299,9 @@ describe("Memory migrations", () => {
              ('mem_single', 50, 50, 'sess_a', 'observation', '2026-05-01', NULL, NULL, NULL,
               'medium', '{"kind":"system"}', 'untouched', '[]')`,
       );
-      // Roll the schema_version cursor back below v5 so the runner
-      // replays v5 (and everything after it). Deleting only the v5 row
-      // would leave MAX(version) >= 6 and the runner's `version <=
-      // fromVersion` gate would skip v5 entirely — the test would pass
-      // for the wrong reason on a single-migration tree, and silently
-      // turn into a no-op the moment a v6+ migration lands.
+      // runMigrations gates on `version <= MAX(schema_version)`, so the
+      // cursor has to drop below v5 — not just lose the v5 row — for v5
+      // to replay on a tree that already has v6+ recorded.
       await db.query(`DELETE FROM schema_version WHERE version >= 5`);
 
       const result = await runMigrations(db);
@@ -359,9 +355,6 @@ describe("Memory migrations", () => {
               'medium', '{"kind":"system"}', 'two', '[]')`,
       );
 
-      // Same rationale as the dup test: roll the cursor back below v5 so
-      // the runner actually replays v5 instead of being blocked by a
-      // later migration's row in `schema_version`.
       await db.query(`DELETE FROM schema_version WHERE version >= 5`);
       const result = await runMigrations(db);
       expect(result.applied).toContain(5);
