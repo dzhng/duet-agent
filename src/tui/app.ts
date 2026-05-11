@@ -434,6 +434,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function appendLine(content: string, fg: string): void {
     if (!content) return;
+    // Skip transcript writes once the renderer has been destroyed; see the
+    // matching guard in setStatus for the full rationale.
+    if (destroyed) return;
     const line = new TextRenderable(renderer, { content, fg });
     transcript.add(line);
   }
@@ -454,10 +457,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function setStatus(text: string): void {
+    // Renderer teardown destroys the underlying TextBuffer synchronously,
+    // but in-flight async work (session events, ticker callbacks, upgrade
+    // status pushes) may still drive chrome updates on the next microtask.
+    // Swallow those writes instead of throwing from a destroyed buffer.
+    if (destroyed) return;
     status.content = text;
   }
 
   function setHint(running: boolean): void {
+    if (destroyed) return;
     const base = running ? HINT_RUNNING : HINT_IDLE;
     const segments: string[] = [];
     if (pendingImages.length > 0) segments.push(attachmentHint());
@@ -540,6 +549,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // surface a live "Ns" / "Nm Ns" elapsed counter while work is in flight.
   let workingStartedAt: number | undefined;
   let workingTicker: ReturnType<typeof setInterval> | undefined;
+  // Flipped in the renderer `destroy` handler so post-teardown chrome
+  // mutations short-circuit instead of writing to destroyed TextBuffers.
+  let destroyed = false;
   // Swapped out by memory events so the ticker can keep refreshing while the
   // human-readable phase ("recalling memories…", etc.) stays accurate.
   let workingMessage = "working…";
@@ -556,6 +568,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function refreshWorkingStatus(): void {
+    if (destroyed) return;
     refreshActiveToolBlocks();
     if (workingStartedAt === undefined) {
       setStatus(queuedFollowUps > 0 ? `queued follow-ups: ${queuedFollowUps}` : "");
@@ -2457,8 +2470,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const onDestroy = () => {
       // Ctrl+C (exitOnCtrlC) destroys text buffers synchronously. Any
       // setInterval that survives into the next tick will call setStatus on
-      // a destroyed TextBuffer and throw, so tear down timers here before
-      // resolving.
+      // a destroyed TextBuffer and throw, so tear down timers and stop
+      // accepting chrome writes here before resolving. Session events that
+      // race the teardown are caught by the `destroyed` guard in setStatus
+      // and the other chrome mutators.
+      destroyed = true;
       stopWorkingTicker();
       resolve();
     };
