@@ -712,29 +712,31 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     appendLine(formatBootHeader(input), COLORS.status);
 
     if (input.upgradeStatus$) {
-      const upgradeLine = new TextRenderable(renderer, {
-        content: "[update] checking for updates…",
-        fg: COLORS.hint,
-      });
-      let mounted = false;
+      // Lazy construction on the first status that has human-readable text.
+      // Statuses without text (current/locked/skipped) skip the constructor
+      // entirely; constructing eagerly would allocate a native text buffer
+      // against the renderer that we'd never `destroy()` on the silent path.
+      let upgradeLine: TextRenderable | undefined;
       const unsubscribe = input.upgradeStatus$.subscribe((status) => {
         const text = describeUpgradeStatus(input.packageName, status);
         if (!text) {
-          if (mounted) {
+          if (upgradeLine) {
             transcript.remove(upgradeLine.id);
             upgradeLine.destroy();
-            mounted = false;
+            upgradeLine = undefined;
           }
           // Terminal statuses with no human-readable form (current, locked,
           // skipped) close the subscription so we stop reacting.
           if (status.kind !== "checking") unsubscribe();
           return;
         }
-        upgradeLine.content = `[update] ${text}`;
-        upgradeLine.fg = status.kind === "failed" ? COLORS.error : COLORS.system;
-        if (!mounted) {
+        const fg = status.kind === "failed" ? COLORS.error : COLORS.system;
+        if (!upgradeLine) {
+          upgradeLine = new TextRenderable(renderer, { content: `[update] ${text}`, fg });
           transcript.add(upgradeLine);
-          mounted = true;
+        } else {
+          upgradeLine.content = `[update] ${text}`;
+          upgradeLine.fg = fg;
         }
         if (status.kind === "upgraded" || status.kind === "failed") {
           unsubscribe();
