@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, type Context } from "@earendil-works/pi-ai";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
-import type { TurnEvent, TurnState, TurnTerminalEvent } from "../src/types/protocol.js";
+import type { TurnEvent, TurnState, TurnTerminalEvent, TurnTodo } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { delay, waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
@@ -209,6 +209,48 @@ describe("TurnRunner active turns", () => {
     ]);
   });
 
+  test("replacing todos in a follow-up turn keeps the new list in the terminal snapshot", async () => {
+    const { runner } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "plan work" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("todo_write", {
+      merge: false,
+      todos: [
+        { id: "a1", content: "Old item 1", status: "in_progress" },
+        { id: "a2", content: "Old item 2", status: "pending" },
+      ],
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("planned");
+    await first;
+
+    const second = runner.turn({
+      type: "prompt",
+      message: "rewrite the plan",
+      behavior: "follow_up",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    runner.completeNextToolCall("todo_write", {
+      merge: false,
+      todos: [
+        { id: "b1", content: "New item 1", status: "completed" },
+        { id: "b2", content: "New item 2", status: "in_progress" },
+      ],
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("done");
+
+    const terminal = await second;
+    const expected: TurnTodo[] = [
+      { id: "b1", content: "New item 1", status: "completed" },
+      { id: "b2", content: "New item 2", status: "in_progress" },
+    ];
+    expect(runner.getState()?.todos).toEqual(expected);
+    expect(terminal.state.todos).toEqual(expected);
+  });
+
   test("steer is handled through turn and still shares the active terminal", async () => {
     const { runner, events } = createStreamingRunner();
     const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "first" });
@@ -241,7 +283,7 @@ describe("TurnRunner active turns", () => {
     const answer = runner.turn({
       type: "answer",
       questions: [{ question: "Pick one", options: [{ label: "A" }] }],
-      answers: { choice: "A" },
+      answers: { choice: ["A"] },
       behavior: "follow_up",
     });
 
@@ -253,6 +295,109 @@ describe("TurnRunner active turns", () => {
     expect(firstTerminal).toBe(answerTerminal);
     expect(terminalEvents(events)).toHaveLength(1);
     expect(messageTexts(firstTerminal.state).join("\n")).toContain("Here are my answers");
+  });
+
+  test("answer commands serialize multi-element answer arrays in option order", async () => {
+    const { runner } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, {
+      mode: "agent",
+      prompt: "ask me later",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const answer = runner.turn({
+      type: "answer",
+      questions: [
+        {
+          question: "Suites",
+          multiSelect: true,
+          options: [{ label: "unit" }, { label: "integration" }, { label: "e2e" }],
+        },
+      ],
+      answers: { Suites: ["unit", "e2e"] },
+      behavior: "follow_up",
+    });
+
+    runner.completeNext("first response");
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("answer response");
+
+    await Promise.all([first, answer]);
+    const flushedText = lastUserText(runner.contexts[1]!);
+    expect(flushedText).toContain("unit");
+    expect(flushedText).toContain("e2e");
+    expect(flushedText.indexOf("unit")).toBeLessThan(flushedText.indexOf("e2e"));
+  });
+
+  test("answer commands with a whitespace-only message produce no trailing prompt", async () => {
+    const { runner } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, {
+      mode: "agent",
+      prompt: "ask me later",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const answer = runner.turn({
+      type: "answer",
+      questions: [{ question: "Pick one", options: [{ label: "A" }] }],
+      answers: { "Pick one": ["A"] },
+      behavior: "follow_up",
+      message: "   \n  \t  ",
+    });
+
+    runner.completeNext("first response");
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("answer response");
+
+    await Promise.all([first, answer]);
+    const flushedText = lastUserText(runner.contexts[1]!);
+    // No trailing whitespace-only "prompt" should be appended; the message
+    // ends with the closing `</answers>` block (modulo trailing newlines).
+    expect(flushedText.trimEnd().endsWith("</answers>")).toBe(true);
+  });
+
+  test("answer commands append the optional free-form message after the answer XML", async () => {
+    const { runner, events } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, {
+      mode: "agent",
+      prompt: "ask me later",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const answer = runner.turn({
+      type: "answer",
+      questions: [
+        { question: "Pick env", options: [{ label: "staging" }] },
+        {
+          question: "Suites",
+          multiSelect: true,
+          options: [{ label: "unit" }, { label: "e2e" }],
+        },
+      ],
+      answers: { "Pick env": ["staging"] },
+      behavior: "follow_up",
+      message: "also bump the changelog",
+    });
+
+    runner.completeNext("first response");
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("answer response");
+
+    await Promise.all([first, answer]);
+    expect(terminalEvents(events)).toHaveLength(1);
+    const answerContext = runner.contexts[1];
+    expect(answerContext).toBeDefined();
+    const flushedText = lastUserText(answerContext!);
+    expect(flushedText).toContain("Here are my answers to your questions.");
+    expect(flushedText).toContain("staging");
+    // Multi-select question with no entry in `answers` should still serialize
+    // its question text so the model sees the gap explicitly.
+    expect(flushedText).toContain("Suites");
+    expect(flushedText).toContain("also bump the changelog");
+    const xmlIndex = flushedText.indexOf("</answers>");
+    const trailingIndex = flushedText.indexOf("also bump the changelog");
+    expect(xmlIndex).toBeGreaterThan(-1);
+    expect(trailingIndex).toBeGreaterThan(xmlIndex);
   });
 
   test("queued wake rebases onto latest state and no-ops when no longer sleeping on a poll", async () => {
@@ -336,7 +481,7 @@ describe("TurnRunner active turns", () => {
     const answer = runner.turn({
       type: "answer",
       questions: [{ question: "Pick one", options: [{ label: "A" }] }],
-      answers: { choice: "A" },
+      answers: { choice: ["A"] },
       behavior: "follow_up",
     });
 
@@ -793,7 +938,7 @@ describe("TurnRunner active turns", () => {
     const answer = runner.turn({
       type: "answer",
       questions: [{ question: "State-agent question", options: [{ label: "A" }] }],
-      answers: { choice: "A" },
+      answers: { choice: ["A"] },
       behavior: "follow_up",
     });
 

@@ -1,15 +1,26 @@
 import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite/vector";
 import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+/**
+ * pgvector ships with PGlite as an opt-in WASM extension. We load it
+ * unconditionally so every memory database can run hybrid retrieval
+ * without a feature flag dance — the cost is one extra small WASM
+ * download, paid once per install. `CREATE EXTENSION vector` then
+ * succeeds inside migration v3 where the embedding tables and HNSW
+ * index live.
+ */
+const MEMORY_EXTENSIONS = { vector } as const;
+
 export interface OpenPGliteOptions {
   /**
-   * SQL run immediately after opening as a connectivity probe. Typically the
-   * `CREATE TABLE IF NOT EXISTS …` statements that initialize the schema.
-   * If this throws, the data directory is treated as unreadable and the
-   * recovery path runs (see {@link OpenPGliteOptions.onRecover}).
+   * Async hook run immediately after the database opens, in the try block
+   * that triggers quarantine recovery. Typically applies schema migrations
+   * so a failure rolls the directory aside instead of leaving the agent
+   * wedged behind an opaque PGlite abort.
    */
-  schemaSql?: string;
+  init?: (db: PGlite) => Promise<void>;
   /**
    * Called once when an unreadable data directory is quarantined and a fresh
    * one is opened in its place. Receives the path the old directory was moved
@@ -40,7 +51,7 @@ export async function openPGlite(path: string, options: OpenPGliteOptions = {}):
   clearStalePostmasterLock(path);
 
   try {
-    return await openAndProbe(path, options.schemaSql);
+    return await openAndProbe(path, options.init);
   } catch (error) {
     if (!isExistingDirectory(path)) throw error;
 
@@ -54,14 +65,21 @@ export async function openPGlite(path: string, options: OpenPGliteOptions = {}):
           `Moved aside to ${backupPath} and starting fresh.`,
       );
     }
-    return await openAndProbe(path, options.schemaSql);
+    return await openAndProbe(path, options.init);
   }
 }
 
-async function openAndProbe(path: string, schemaSql: string | undefined): Promise<PGlite> {
-  const db = new PGlite(path);
+async function openAndProbe(
+  path: string,
+  init: ((db: PGlite) => Promise<void>) | undefined,
+): Promise<PGlite> {
+  // PGlite.create is the only API path that lets us register loadable
+  // extensions at construction time — the bare `new PGlite(path)` form
+  // skips the extension registry, leaving `CREATE EXTENSION vector` to
+  // fail with "extension is not available" once migration v3 runs.
+  const db = await PGlite.create({ dataDir: path, extensions: MEMORY_EXTENSIONS });
   try {
-    if (schemaSql) await db.exec(schemaSql);
+    if (init) await init(db);
     return db;
   } catch (error) {
     // The wasm module is in an aborted state on this kind of failure; closing

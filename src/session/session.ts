@@ -50,8 +50,20 @@ export interface SessionPromptInput {
 
 export interface SessionAnswerInput {
   questions: TurnQuestion[];
-  answers: Record<string, string>;
+  /**
+   * Selected option labels per question, keyed by `question.question`. Always
+   * an array so single-select and multi-select share one shape; an empty
+   * array means the user advanced past a multi-select without picking.
+   */
+  answers: Record<string, string[]>;
   behavior?: TurnPromptBehavior;
+  /**
+   * Optional free-form prompt text appended after the answer XML. Used by the
+   * TUI to flush partial answers along with a typed message in one turn.
+   */
+  message?: string;
+  /** Optional image attachments delivered with the synthesized prompt. */
+  images?: TurnPromptImage[];
 }
 
 export interface SessionEditFollowUpQueueInput {
@@ -119,7 +131,11 @@ export class Session {
   ) {
     this.id = options.id;
     this.resumeFromStorage = options.resumeFromStorage ?? Boolean(options.id);
-    this.runner = options.runner ?? new TurnRunner(config);
+    // Thread the session id into the runner config so observations the
+    // observer/reflector write are tagged with this session. The memory
+    // loader uses session id to separate local memory (this session) from
+    // global memory (every other session, ranked into a budget).
+    this.runner = options.runner ?? new TurnRunner({ ...config, sessionId: options.id });
     this.sessionPath = options.sessionPath;
     this.unsubscribeRunner = this.runner.subscribe((event) => void this.handleTurnEvent(event));
   }
@@ -202,6 +218,8 @@ export class Session {
       questions: input.questions,
       answers: input.answers,
       behavior: input.behavior ?? "follow_up",
+      message: input.message,
+      images: input.images,
     };
     this.dispatchTurn(command);
   }

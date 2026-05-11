@@ -1,16 +1,19 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   BoxRenderable,
+  type CliRenderer,
   createCliRenderer,
   decodePasteBytes,
   fg,
   type KeyEvent,
   type PasteEvent,
   ScrollBoxRenderable,
+  type Selection,
   t,
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
+import { type ClipboardWriteResult, writeClipboardText } from "./clipboard.js";
 import {
   describeMacClipboardTypes,
   loadImageFromPath,
@@ -21,7 +24,13 @@ import {
   tryReadClipboardImage,
   tryReadClipboardText,
 } from "./paste.js";
+import { parseCopyArgument, selectCopyText, type TranscriptEntry } from "./transcript-log.js";
 import type { Session } from "../session/session.js";
+import {
+  describeUpgradeStatus,
+  type UpgradeStatus,
+  type UpgradeStatusStream,
+} from "../cli/auto-upgrade.js";
 import type {
   TurnAgentFile,
   TurnContextUsageEvent,
@@ -38,28 +47,32 @@ import {
   AUTOCOMPLETE_LIMITS,
   type FileAutocompleteItem,
   BUILT_IN_SLASH_COMMANDS,
+  commitActiveAnswer,
   fileAutocompleteMatches,
   formatQuestionOptionDescription,
   formatSkillAutocompleteDescription,
-  moveQuestionOptionSelection,
+  moveQuestionHighlight,
   moveSkillAutocompleteSelection,
-  questionPickerAnswerPayload,
+  NO_HIGHLIGHT,
+  restoreSavedAnswer,
   type SkillAutocompleteItem,
   skillAutocompleteMatches,
   type SlashAutocompleteGroup,
 } from "./autocomplete.js";
+import { homedir } from "node:os";
 import { submitDuetFeedback } from "../lib/feedback.js";
 import { buildFileIndex } from "./file-index.js";
 import {
-  DUET_BANNER_LINES,
+  DUET_BANNER_LINES_COMPACT,
   type HistoryBlockKind,
   type HistoryDisplayBlock,
   historyDisplayBlocks,
-  limitHistoryDisplayBlocks,
-  startupHeaderLines,
+  limitHistoryDisplayMessages,
 } from "./history.js";
+import { listRecentSessions } from "./recent-sessions.js";
 import { createSidebar, SIDEBAR_WIDTH } from "./sidebar.js";
-import { COLORS, HINT_IDLE, HINT_RUNNING } from "./theme.js";
+import { orderedSelectableStarters, selectStarters } from "./starters.js";
+import { COLORS, HINT_IDLE, HINT_RUNNING, HINT_SELECTION_COPY } from "./theme.js";
 
 export type { HistoryBlockKind, HistoryDisplayBlock, LimitedHistory } from "./history.js";
 export type { StartupHeaderInput } from "./history.js";
@@ -75,21 +88,24 @@ export type {
 export {
   activeFileAutocompleteToken,
   activeSkillAutocompleteToken,
+  commitActiveAnswer,
   fileAutocompleteMatches,
   formatQuestionOptionDescription,
   formatSkillAutocompleteDescription,
-  moveQuestionOptionSelection,
+  moveQuestionHighlight,
   moveSkillAutocompleteSelection,
-  questionPickerAnswerPayload,
+  NO_HIGHLIGHT,
+  questionPickerAnswer,
   replaceFileAutocompleteToken,
   replaceSkillAutocompleteToken,
+  restoreSavedAnswer,
   skillAutocompleteMatches,
 } from "./autocomplete.js";
 export { formatSkillAutocompleteItem } from "./autocomplete.js";
 export {
   DUET_BANNER_LINES,
   historyDisplayBlocks,
-  limitHistoryDisplayBlocks,
+  limitHistoryDisplayMessages,
   startupHeaderLines,
 } from "./history.js";
 import { assembleToolBlock, formatToolBlock, truncateToolText } from "./tool-formatters.js";
@@ -101,6 +117,8 @@ export interface RunTuiInput {
   workDir: string;
   /** Session id shown in the startup header and resume context. */
   sessionId: string;
+  /** npm package name; used to label the auto-upgrade status line. */
+  packageName: string;
   /** Installed package version shown in the startup header. */
   packageVersion: string;
   /** User-facing model name used for this CLI session. */
@@ -111,12 +129,32 @@ export interface RunTuiInput {
   memoryModelName: string;
   /** Human-readable provenance for memoryModelName. */
   memoryModelSource?: string;
-  /** Best-effort package update notice, shown in-TUI because stderr is hidden. */
-  newVersionNotice?: string;
+  /**
+   * Live status stream from the in-process auto-upgrade flow. The TUI
+   * subscribes on mount and renders one line in the intro that mutates in
+   * place through "Checking for updates…", "Updating to vX…", and
+   * "Updated. Restart duet to use it." Undefined statuses (current, locked,
+   * skipped) hide the line entirely so the header stays clean.
+   */
+  upgradeStatus$?: UpgradeStatusStream;
   /** Past messages to replay into the transcript on resume. */
   history?: AgentMessage[];
-  /** Maximum prior-session display lines to replay on resume; 0 disables replay. */
-  resumeHistoryLines?: number;
+  /**
+   * Number of trailing user-turn exchanges to replay from prior history.
+   * Each exchange is the user prompt plus the assistant blocks (text,
+   * reasoning, tools, errors) that followed it. `0` disables replay; when
+   * unset, every block is replayed. The CLI passes the configured default
+   * so resumes do not flood the transcript.
+   */
+  resumeHistoryMessages?: number;
+  /**
+   * Pre-built renderer for tests. When provided, `runTui` skips
+   * `createCliRenderer` and the `globalThis.window` shimming that wraps it.
+   * Production callers leave this unset; the test harness in
+   * `test/helpers/tui-harness.ts` passes a `createTestRenderer` instance so
+   * mock keys can drive the picker without a real TTY.
+   */
+  renderer?: CliRenderer;
 }
 
 const SKILL_AUTOCOMPLETE_LIMIT = AUTOCOMPLETE_LIMITS.skill;
@@ -136,13 +174,48 @@ interface InternalKeyHandlerLike {
  * keyboard protocol is enabled. We opt into it via `useKittyKeyboard`.
  */
 export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | undefined> {
-  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-  const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
-    useKittyKeyboard: {},
-    targetFps: 60,
+  // useMouse: true so the scroll wheel reaches the transcript
+  // ScrollBoxRenderable and so OpenTUI receives drag events for in-app
+  // text selection. Selected text is captured via the renderer's
+  // `selection` event below and copied to the clipboard via OSC 52 (or
+  // CLI fallback) on the platform-appropriate copy keystroke (Cmd+C on
+  // macOS, Ctrl+Shift+C elsewhere) or `/copy`. PageUp/PageDown and
+  // Shift+Up/Down keyboard bindings below cover terminals or sessions
+  // where the wheel does not reach us (e.g. tmux without mouse mode).
+  //
+  // Bare Ctrl+C remains the always-exit keystroke (handled via
+  // exitOnCtrlC) so the convention every other interactive Linux/Windows
+  // terminal app follows still works here.
+  //
+  // Tests inject a `createTestRenderer` instance via `input.renderer`; in
+  // that mode we skip the production renderer construction and the
+  // `globalThis.window` restore that wraps it (the test renderer never
+  // installs the shim).
+  let renderer: CliRenderer;
+  if (input.renderer) {
+    renderer = input.renderer;
+  } else {
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    renderer = await createCliRenderer({
+      exitOnCtrlC: true,
+      useMouse: true,
+      useKittyKeyboard: {},
+      targetFps: 60,
+    });
+    restoreWindowGlobal(previousWindow);
+  }
+
+  // Most recent drag-selected text. OpenTUI emits the `selection` event
+  // whenever a drag finishes; we cache the resulting string so /copy and
+  // the copy keystroke can prefer the user's actual highlight over the
+  // last-message heuristic, and so the bottom hint can advertise the
+  // copy keystroke only while it actually does something.
+  let lastSelectionText = "";
+  renderer.on("selection", (selection: Selection) => {
+    lastSelectionText = selection.getSelectedText();
+    logSelectionDiag(lastSelectionText);
+    refreshHint();
   });
-  restoreWindowGlobal(previousWindow);
 
   // Outer row wraps the main column and a right-side sidebar that surfaces
   // the runner's current todo list and state-machine progress.
@@ -177,11 +250,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     padding: 1,
   });
 
+  // Status and hint chrome are excluded from drag-select so a highlight that
+  // sweeps the bottom of the screen does not pull the spinner / hint text
+  // into the clipboard alongside the transcript content the user wanted.
   const status = new TextRenderable(renderer, {
     content: "",
     fg: COLORS.status,
     height: 1,
     flexShrink: 0,
+    selectable: false,
   });
 
   const hint = new TextRenderable(renderer, {
@@ -189,6 +266,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     fg: COLORS.hint,
     height: 1,
     flexShrink: 0,
+    selectable: false,
   });
 
   const skillAutocompletePanel = new BoxRenderable(renderer, {
@@ -208,11 +286,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // length so a one-line description doesn't leave an empty trailing line
   // beneath the name. The renderer sets `height` whenever it writes
   // `content`.
+  // Autocomplete and panel chrome are not part of the transcript content,
+  // so exclude them from drag-select to keep the clipboard focused on
+  // assistant/user messages.
   const makeItemRow = () => {
     const row = new TextRenderable(renderer, {
       content: "",
       fg: COLORS.hint,
       flexShrink: 0,
+      selectable: false,
     });
     row.visible = false;
     return row;
@@ -223,6 +305,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       fg: COLORS.status,
       height: 1,
       flexShrink: 0,
+      selectable: false,
     });
   const commandHeader = makeHeaderRow("commands");
   const commandRows = Array.from({ length: BUILT_IN_SLASH_COMMANDS.length }, makeItemRow);
@@ -249,6 +332,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     fg: COLORS.status,
     height: 1,
     flexShrink: 0,
+    selectable: false,
   });
   const fileAutocompleteRows = Array.from({ length: FILE_AUTOCOMPLETE_LIMIT }, () => {
     const row = new TextRenderable(renderer, {
@@ -256,6 +340,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       fg: COLORS.hint,
       height: 1,
       flexShrink: 0,
+      selectable: false,
     });
     row.visible = false;
     return row;
@@ -280,11 +365,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     fg: COLORS.agent,
     wrapMode: "word",
     flexShrink: 0,
+    selectable: false,
   });
   const questionSpacer = new TextRenderable(renderer, {
     content: "",
     height: 1,
     flexShrink: 0,
+    selectable: false,
   });
   const questionRows = Array.from({ length: QUESTION_OPTION_LIMIT }, () => {
     const row = new TextRenderable(renderer, {
@@ -292,6 +379,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       fg: COLORS.hint,
       wrapMode: "word",
       flexShrink: 0,
+      selectable: false,
     });
     row.visible = false;
     return row;
@@ -311,10 +399,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     flexShrink: 0,
   });
 
+  // The leading "> " sigil is decoration, not content; excluding it from
+  // selection means a drag that starts at the input row does not pull the
+  // sigil into the clipboard alongside the highlighted text.
   const prompt = new TextRenderable(renderer, {
     content: "> ",
     fg: COLORS.user,
     width: 2,
+    selectable: false,
   });
 
   // Textarea (rather than Input) so long messages soft-wrap visually. Enter
@@ -346,8 +438,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function appendLine(content: string, fg: string): void {
     if (!content) return;
-    const line = new TextRenderable(renderer, { content, fg });
-    transcript.add(line);
+    // Skip transcript writes once the renderer has been destroyed; see the
+    // matching guard in setStatus for the full rationale.
+    if (destroyed) return;
+    try {
+      const line = new TextRenderable(renderer, { content, fg });
+      transcript.add(line);
+    } catch (error) {
+      if (isTextBufferDestroyedError(error)) {
+        destroyed = true;
+        stopWorkingTicker();
+        return;
+      }
+      throw error;
+    }
   }
 
   function appendBlock(label: string | null, body: string, fg: string): void {
@@ -366,12 +470,43 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function setStatus(text: string): void {
-    status.content = text;
+    // Renderer teardown destroys the underlying TextBuffer synchronously,
+    // but in-flight async work (session events, ticker callbacks, upgrade
+    // status pushes) may still drive chrome updates on the next microtask.
+    // The `destroyed` flag catches writes that arrive after our destroy
+    // handler runs; the try/catch backstops the window between OpenTUI
+    // tearing down child TextBuffers and emitting the `destroy` event,
+    // which is when the ticker callback in the stack trace lands.
+    if (destroyed) return;
+    try {
+      status.content = text;
+    } catch (error) {
+      if (isTextBufferDestroyedError(error)) {
+        destroyed = true;
+        stopWorkingTicker();
+        return;
+      }
+      throw error;
+    }
   }
 
   function setHint(running: boolean): void {
+    if (destroyed) return;
     const base = running ? HINT_RUNNING : HINT_IDLE;
-    hint.content = pendingImages.length > 0 ? `${attachmentHint()} · ${base}` : base;
+    const segments: string[] = [];
+    if (pendingImages.length > 0) segments.push(attachmentHint());
+    segments.push(base);
+    if (lastSelectionText.trim().length > 0) segments.push(HINT_SELECTION_COPY);
+    try {
+      hint.content = segments.join(" · ");
+    } catch (error) {
+      if (isTextBufferDestroyedError(error)) {
+        destroyed = true;
+        stopWorkingTicker();
+        return;
+      }
+      throw error;
+    }
   }
 
   function attachmentHint(): string {
@@ -379,7 +514,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     return n === 1 ? "📎 1 image attached" : `📎 ${n} images attached`;
   }
 
-  function refreshAttachmentHint(): void {
+  // Single-channel hint refresh used by every input that affects what the
+  // bottom row should advertise (running state, attachments, selection).
+  function refreshHint(): void {
     setHint(running);
   }
 
@@ -393,6 +530,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // Monotonic counter for the next `[Image #N]` placeholder. Reset alongside
   // `pendingImages` so users see a fresh `#1` label after each submit.
   let nextImageId = 1;
+  // Parallel record of user/agent message bodies driven by the same code
+  // paths that render them into the transcript. The `/copy` slash command
+  // and copy keystroke read from this log instead of trying to walk the
+  // ScrollBoxRenderable, which only stores presentation lines.
+  const transcriptLog: TranscriptEntry[] = [];
+  function recordTranscriptEntry(kind: TranscriptEntry["kind"], text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    transcriptLog.push({ kind, text: trimmed });
+  }
   let lastTerminal: TurnTerminalEvent | undefined;
   let latestContextUsage: TurnContextUsageEvent | undefined;
   // Running USD total across every settled turn in this session. Reset only
@@ -436,6 +583,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // surface a live "Ns" / "Nm Ns" elapsed counter while work is in flight.
   let workingStartedAt: number | undefined;
   let workingTicker: ReturnType<typeof setInterval> | undefined;
+  // Flipped in the renderer `destroy` handler so post-teardown chrome
+  // mutations short-circuit instead of writing to destroyed TextBuffers.
+  let destroyed = false;
   // Swapped out by memory events so the ticker can keep refreshing while the
   // human-readable phase ("recalling memories…", etc.) stays accurate.
   let workingMessage = "working…";
@@ -452,6 +602,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function refreshWorkingStatus(): void {
+    if (destroyed) return;
     refreshActiveToolBlocks();
     if (workingStartedAt === undefined) {
       setStatus(queuedFollowUps > 0 ? `queued follow-ups: ${queuedFollowUps}` : "");
@@ -582,25 +733,259 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     skills: ReadonlyArray<{ name: string }>,
     agentFiles: readonly TurnAgentFile[],
   ): void {
-    for (const line of DUET_BANNER_LINES) appendLine(line, COLORS.status);
-    const [title, ...details] = startupHeaderLines(input);
-    appendLine(title ?? "[duet]", COLORS.status);
-    for (const line of details) {
-      appendLine(line, line === input.newVersionNotice ? COLORS.system : COLORS.hint);
+    // Compact 3-row wordmark. The full DUET_BANNER_LINES is ~6 rows tall
+    // and pushed the starter list off-screen on small terminals; this one
+    // keeps the brand mark visible while leaving room for the ice-break
+    // prompts to land above the fold.
+    for (const line of DUET_BANNER_LINES_COMPACT) appendLine(line, COLORS.status);
+    appendLine(" ", COLORS.hint);
+    appendLine(" ", COLORS.hint);
+    // One-line header. Keeps cwd/model context visible without burning
+    // another five rows. Provenance (env/file source) is intentionally
+    // dropped here — surface it via /whoami later.
+    appendLine(formatBootHeader(input), COLORS.status);
+
+    if (input.upgradeStatus$) {
+      // Lazy construction on the first status that has human-readable text.
+      // Statuses without text (current/locked/skipped) skip the constructor
+      // entirely; constructing eagerly would allocate a native text buffer
+      // against the renderer that we'd never `destroy()` on the silent path.
+      //
+      // `subscribe()` replays the latest status synchronously, so the handler
+      // runs before `subscribe()` returns its unsubscribe handle. We set a
+      // `done` flag from inside the handler and tear down after `subscribe()`
+      // returns; subsequent (async) terminal statuses unsubscribe inline via
+      // the real handle.
+      let upgradeLine: TextRenderable | undefined;
+      let done = false;
+      let unsubscribe = (): void => {};
+      const handle = (status: UpgradeStatus): void => {
+        const text = describeUpgradeStatus(input.packageName, status);
+        if (!text) {
+          if (upgradeLine) {
+            transcript.remove(upgradeLine.id);
+            upgradeLine.destroy();
+            upgradeLine = undefined;
+          }
+          // Terminal statuses with no human-readable form (current, locked,
+          // skipped) close the subscription so we stop reacting.
+          if (status.kind !== "checking") {
+            done = true;
+            unsubscribe();
+          }
+          return;
+        }
+        const fg = status.kind === "failed" ? COLORS.error : COLORS.system;
+        if (!upgradeLine) {
+          upgradeLine = new TextRenderable(renderer, { content: `[update] ${text}`, fg });
+          transcript.add(upgradeLine);
+        } else {
+          upgradeLine.content = `[update] ${text}`;
+          upgradeLine.fg = fg;
+        }
+        if (status.kind === "upgraded" || status.kind === "failed") {
+          done = true;
+          unsubscribe();
+        }
+      };
+      unsubscribe = input.upgradeStatus$.subscribe(handle);
+      if (done) unsubscribe();
     }
 
-    if (agentFiles.length === 0) {
-      appendLine("[agent file] none", COLORS.hint);
-    } else {
+    // Only mention agent files when one is actually loaded; "[agent file]
+    // none" is noise on every empty boot.
+    if (agentFiles.length > 0) {
       appendLine(`[agent file] ${agentFiles.map((file) => file.name).join(", ")}`, COLORS.hint);
     }
 
-    if (skills.length === 0) {
-      appendLine("[skills] none", COLORS.hint);
-    } else {
-      const names = skills.map((skill) => skill.name).join(", ");
-      appendLine(`[skills] ${skills.length} loaded: ${names}`, COLORS.hint);
+    renderStarters(skills);
+  }
+
+  function formatBootHeader(headerInput: RunTuiInput): string {
+    const cwdLabel = shortenCwd(headerInput.workDir);
+    return `DUET AGENT  v${headerInput.packageVersion}   ·   ${cwdLabel}   ·   ${headerInput.modelName} + ${headerInput.memoryModelName}`;
+  }
+
+  function shortenCwd(cwd: string): string {
+    const home = homedir();
+    if (cwd === home) return "~";
+    if (cwd.startsWith(`${home}/`)) return `~${cwd.slice(home.length)}`;
+    return cwd;
+  }
+
+  // ---- starter prompts (boot screen) ---------------------------------------
+
+  // Boot screen offers a small set of context-aware starter prompts so
+  // first-time and returning users land on something concrete in <2 seconds
+  // instead of staring at a blank input. The starter section dismisses on
+  // first composition or first submit and never re-renders that session.
+  //
+  // Each entry in `starterEntries` is either a raw cwd-based prompt to
+  // submit verbatim, or a recent-session continuation that injects the
+  // previous session's last user prompt into the input field. The two
+  // kinds share the same numbered/highlighted row UX.
+  type StarterEntry =
+    | { kind: "prompt"; label: string; submit: string }
+    | { kind: "recent"; label: string; submit: string; sessionId: string };
+  const starterEntries: StarterEntry[] = [];
+  // Lines we render for the starter section so we can repaint highlights
+  // and tear them all down on dismissal. Includes the headline, numbered
+  // rows, the optional resume row, and the two trailing hint rows.
+  const starterRefs: TextRenderable[] = [];
+  // Indexes within `starterRefs` that correspond to numbered rows; used
+  // to repaint highlight on arrow / digit navigation.
+  const starterRowIndexes: number[] = [];
+  let highlightedStarterIndex = 0;
+  let startersVisible = false;
+
+  function startersAreVisible(): boolean {
+    return startersVisible;
+  }
+
+  function renderStarters(skills: ReadonlyArray<{ name: string }>): void {
+    // Read recent sessions off disk synchronously. The helper swallows fs
+    // errors and returns an empty list; a missing/empty ~/.duet/sessions
+    // directory is the common first-boot case.
+    const recentSessions = listRecentSessions({
+      excludeId: input.sessionId,
+      limit: 4,
+    });
+    const result = selectStarters({
+      cwd: input.workDir,
+      sessionHistory: input.history,
+      recentSessions,
+    });
+    // Selectable rows in render order. Recent sessions lead so returning
+    // users hit "pick up the thread" first; new users see the cwd starters
+    // under the original "what should we work on today?" headline.
+    const ordered = orderedSelectableStarters(result);
+    starterEntries.length = 0;
+    for (const row of ordered) {
+      if (row.kind === "recent" && row.sessionId !== undefined) {
+        starterEntries.push({
+          kind: "recent",
+          label: row.label,
+          submit: row.submit,
+          sessionId: row.sessionId,
+        });
+      } else {
+        starterEntries.push({ kind: "prompt", label: row.label, submit: row.submit });
+      }
     }
+
+    const hasRecent = result.recentSessions.length > 0;
+
+    starterRowIndexes.length = 0;
+    appendLine(" ", COLORS.hint);
+
+    if (hasRecent) {
+      // Returning user: continuity first.
+      starterRefs.push(addLine("pick up the thread", COLORS.agent));
+      appendLine(" ", COLORS.hint);
+      for (let i = 0; i < result.recentSessions.length; i += 1) {
+        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+        starterRowIndexes.push(starterRefs.length);
+        starterRefs.push(ref);
+      }
+      appendLine(" ", COLORS.hint);
+      starterRefs.push(addLine("or start something new", COLORS.agent));
+      appendLine(" ", COLORS.hint);
+      for (let j = 0; j < result.starters.length; j += 1) {
+        const i = result.recentSessions.length + j;
+        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+        starterRowIndexes.push(starterRefs.length);
+        starterRefs.push(ref);
+      }
+    } else {
+      // New user: original cwd-only ice-break.
+      starterRefs.push(addLine("what should we work on today?", COLORS.agent));
+      appendLine(" ", COLORS.hint);
+      for (let i = 0; i < starterEntries.length; i += 1) {
+        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
+        starterRowIndexes.push(starterRefs.length);
+        starterRefs.push(ref);
+      }
+    }
+
+    appendLine(" ", COLORS.hint);
+    starterRefs.push(
+      addLine("type a number to run, ↑/↓ to highlight, or just start typing.", COLORS.hint),
+    );
+    starterRefs.push(
+      addLine(`✦ ${skills.length} skill${skills.length === 1 ? "" : "s"} · /help`, COLORS.hint),
+    );
+
+    startersVisible = starterEntries.length > 0;
+    if (startersVisible) {
+      highlightedStarterIndex = 0;
+      paintStarterHighlight();
+    }
+  }
+
+  function addLine(content: string, fg: string): TextRenderable {
+    const line = new TextRenderable(renderer, { content: content || " ", fg });
+    transcript.add(line);
+    return line;
+  }
+
+  function formatStarterRow(index: number, highlighted: boolean): string {
+    const entry = starterEntries[index];
+    const text = entry?.label ?? "";
+    const number = index + 1;
+    const arrow = highlighted ? "▶" : "→";
+    const numberCell = highlighted ? `[${number}]` : ` ${number} `;
+    return `   ${numberCell}  ${arrow}  ${text}`;
+  }
+
+  function paintStarterHighlight(): void {
+    for (let i = 0; i < starterRowIndexes.length; i += 1) {
+      const ref = starterRefs[starterRowIndexes[i]];
+      const isHighlighted = i === highlightedStarterIndex;
+      ref.content = formatStarterRow(i, isHighlighted);
+      ref.fg = isHighlighted ? COLORS.user : COLORS.hint;
+    }
+  }
+
+  function moveStarterHighlight(delta: number): void {
+    if (!startersVisible || starterEntries.length === 0) return;
+    const next = (highlightedStarterIndex + delta + starterEntries.length) % starterEntries.length;
+    highlightedStarterIndex = next;
+    paintStarterHighlight();
+  }
+
+  function jumpStarterHighlight(targetIndex: number): boolean {
+    if (!startersVisible) return false;
+    if (targetIndex < 0 || targetIndex >= starterEntries.length) return false;
+    highlightedStarterIndex = targetIndex;
+    paintStarterHighlight();
+    return true;
+  }
+
+  function dismissStarters(): void {
+    if (!startersVisible && starterRefs.length === 0) return;
+    for (const ref of starterRefs) {
+      transcript.remove(ref.id);
+      ref.destroy();
+    }
+    starterRefs.length = 0;
+    starterRowIndexes.length = 0;
+    starterEntries.length = 0;
+    startersVisible = false;
+  }
+
+  function submitHighlightedStarter(): boolean {
+    if (!startersVisible) return false;
+    const entry = starterEntries[highlightedStarterIndex];
+    if (!entry) return false;
+    dismissStarters();
+    // Recent-session rows reuse the prompt text in the *current* session
+    // rather than tearing down the runtime to switch sessions. The agent
+    // won't have prior context, but the user lands on the same task with
+    // one keystroke instead of typing it again. Documented tradeoff: a
+    // future iteration can swap this for true cross-session resume once
+    // the session manager exposes a hot-swap API.
+    submit(entry.submit);
+    return true;
   }
 
   function renderUsage(usage?: TurnTokenUsage): void {
@@ -659,6 +1044,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         true,
       );
     } else if (step.type === "text") {
+      recordTranscriptEntry("agent", step.text);
       if (activeTextStream) {
         finalizeDelta(activeTextStream, step.text);
         activeTextStream = undefined;
@@ -816,19 +1202,22 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function formatMemoryEventBody(event: Extract<TurnEvent, { type: "memory" }>): string {
-    if (!event.observations || event.observations.length === 0) {
+    const hasObservations = Boolean(event.observations && event.observations.length > 0);
+    const hasBumps = Boolean(
+      event.usageBumpedObservations && event.usageBumpedObservations.length > 0,
+    );
+    if (!hasObservations && !hasBumps) {
       return "";
     }
-    const content = event.observations.map((observation) => observation.content).join("\n\n");
-    return truncateToolText(`${event.message}\n${content}`);
+    const sections: string[] = [event.message];
+    if (hasObservations) {
+      sections.push(event.observations!.map((observation) => observation.content).join("\n\n"));
+    }
+    return truncateToolText(sections.join("\n"));
   }
 
   // ---- input handling --------------------------------------------------------
 
-  // Track shift state for the most recent Enter keypress. The focused
-  // InputRenderable handles its own `enter` event after onKeyDown fires, so we
-  // capture the modifier here and read it during the ENTER event below.
-  let lastEnterShift = false;
   let skillAutocompleteSkills: readonly SkillAutocompleteItem[] = [];
   let skillAutocompleteToken: AutocompleteToken | undefined;
   let skillAutocompleteItems: SkillAutocompleteItem[] = [];
@@ -844,29 +1233,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let fileAutocompleteSelectedIndex = 0;
 
   let pendingQuestions: TurnQuestion[] = [];
-  let questionOptionSelectedIndex = 0;
+  let questionActiveIndex = 0;
+  // `NO_HIGHLIGHT` (-1) means no row is highlighted yet — the user must press
+  // Up/Down to land on a concrete row. Single-select live-records the
+  // highlight as the answer; multi-select uses highlight purely for
+  // navigation and toggles the checked set on Space/Enter.
+  let questionOptionSelectedIndex = NO_HIGHLIGHT;
+  // Per-question checked indices for the active multi-select question. Reset
+  // when the picker advances to the next question; single-select questions
+  // simply ignore this set and use `questionOptionSelectedIndex` instead.
+  let questionMultiSelectChecked = new Set<number>();
+  // Answers collected while walking the picker, keyed by question text. We
+  // dispatch the full map once the user finishes the last question, or flush
+  // it early when they decide to type a free-form prompt instead.
+  let questionAccumulatedAnswers: Record<string, string[]> = {};
   let suppressNextEscapeExit = false;
-
-  let closingAfterInterrupt = false;
-
-  const requestExit = async (): Promise<void> => {
-    if (running) {
-      if (closingAfterInterrupt) return;
-      closingAfterInterrupt = true;
-      stopWorkingTicker();
-      setStatus("● interrupting…");
-      try {
-        await input.session.interrupt();
-        await input.session.waitForTerminal();
-      } catch (error) {
-        reportError(error);
-      } finally {
-        renderer.destroy();
-      }
-    } else {
-      renderer.destroy();
-    }
-  };
 
   function skillAutocompleteIsOpen(): boolean {
     return Boolean(skillAutocompleteToken && skillAutocompleteItems.length > 0);
@@ -877,8 +1258,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function questionPickerIsOpen(): boolean {
-    const question = pendingQuestions[0];
+    const question = pendingQuestions[questionActiveIndex];
     return Boolean(question && question.options.length > 0);
+  }
+
+  function activeQuestion(): TurnQuestion | undefined {
+    return pendingQuestions[questionActiveIndex];
   }
 
   function hideSkillAutocomplete(): void {
@@ -907,7 +1292,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function hideQuestions(): void {
     pendingQuestions = [];
-    questionOptionSelectedIndex = 0;
+    questionActiveIndex = 0;
+    questionOptionSelectedIndex = NO_HIGHLIGHT;
+    questionMultiSelectChecked = new Set<number>();
+    questionAccumulatedAnswers = {};
     questionPanel.visible = false;
     for (const row of questionRows) {
       row.visible = false;
@@ -917,48 +1305,201 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function showQuestions(questions: TurnQuestion[]): void {
     pendingQuestions = questions;
-    questionOptionSelectedIndex = 0;
+    questionActiveIndex = 0;
+    questionOptionSelectedIndex = NO_HIGHLIGHT;
+    questionMultiSelectChecked = new Set<number>();
+    questionAccumulatedAnswers = {};
     renderQuestions();
   }
 
+  /**
+   * Total navigable rows for the active question. The Up/Down handler clamps
+   * navigation to what is actually rendered on screen so a user cannot land
+   * the highlight on a row they cannot see.
+   */
+  function activeRowCount(): number {
+    const question = activeQuestion();
+    if (!question) return 0;
+    const optionLimit = question.multiSelect ? QUESTION_OPTION_LIMIT - 1 : QUESTION_OPTION_LIMIT;
+    const visibleOptionCount = Math.min(question.options.length, optionLimit);
+    return visibleOptionCount + (question.multiSelect ? 1 : 0);
+  }
+
+  /**
+   * Row index of the synthetic Done row when the active question is
+   * multi-select; `undefined` otherwise so callers don't compare against a
+   * sentinel value. The Done row sits one past the last visible option,
+   * clamped to the same limit `renderQuestions` uses.
+   */
+  function activeQuestionDoneIndex(): number | undefined {
+    const question = activeQuestion();
+    if (!question?.multiSelect) return undefined;
+    const optionLimit = QUESTION_OPTION_LIMIT - 1;
+    return Math.min(question.options.length, optionLimit);
+  }
+
   function renderQuestions(): void {
-    const question = pendingQuestions[0];
+    const question = activeQuestion();
     if (!question || question.options.length === 0) {
       hideQuestions();
       return;
     }
 
     questionPanel.visible = true;
-    questionTitle.content = question.header
+    const baseTitle = question.header
       ? `${question.header}: ${question.question}`
       : question.question;
-    const visibleOptions = question.options.slice(0, QUESTION_OPTION_LIMIT);
+    const positionPrefix =
+      pendingQuestions.length > 1 ? `(${questionActiveIndex + 1}/${pendingQuestions.length}) ` : "";
+    const navHint = pendingQuestions.length > 1 ? " [←/→ navigate]" : "";
+    questionTitle.content = `${positionPrefix}${baseTitle}${navHint}`;
+    const optionLimit = question.multiSelect ? QUESTION_OPTION_LIMIT - 1 : QUESTION_OPTION_LIMIT;
+    const visibleOptions = question.options.slice(0, optionLimit);
+    const doneIndex = activeQuestionDoneIndex();
     for (const [index, row] of questionRows.entries()) {
-      const option = visibleOptions[index];
-      if (!option) {
-        row.visible = false;
-        row.content = "";
+      if (index < visibleOptions.length) {
+        const option = visibleOptions[index]!;
+        const highlighted = index === questionOptionSelectedIndex;
+        const checkbox = question.multiSelect
+          ? questionMultiSelectChecked.has(index)
+            ? "[x] "
+            : "[ ] "
+          : "";
+        const labelColor = highlighted ? COLORS.status : COLORS.user;
+        const description = formatQuestionOptionDescription(option.description);
+        const labelLine = `${checkbox}${option.label}`;
+        row.content = description
+          ? t`${fg(labelColor)(labelLine)}\n${description}`
+          : t`${fg(labelColor)(labelLine)}`;
+        row.fg = highlighted ? COLORS.agent : COLORS.hint;
+        row.visible = true;
         continue;
       }
 
-      const selected = index === questionOptionSelectedIndex;
-      const labelColor = selected ? COLORS.status : COLORS.user;
-      const description = formatQuestionOptionDescription(option.description);
-      row.content = description
-        ? t`${fg(labelColor)(option.label)}\n${description}`
-        : t`${fg(labelColor)(option.label)}`;
-      row.fg = selected ? COLORS.agent : COLORS.hint;
-      row.visible = true;
+      if (question.multiSelect && index === visibleOptions.length) {
+        // Synthetic Done row carries no checkbox prefix and self-documents
+        // its purpose so users discover how to advance from a multi-select.
+        const highlighted = doneIndex === questionOptionSelectedIndex;
+        const labelColor = highlighted ? COLORS.status : COLORS.user;
+        const description = formatQuestionOptionDescription("Advance to next question");
+        row.content = t`${fg(labelColor)("Done")}\n${description}`;
+        row.fg = highlighted ? COLORS.agent : COLORS.hint;
+        row.visible = true;
+        continue;
+      }
+
+      row.visible = false;
+      row.content = "";
     }
   }
 
-  function submitSelectedQuestionOption(): boolean {
-    const answers = questionPickerAnswerPayload(pendingQuestions, questionOptionSelectedIndex);
-    if (!answers) return false;
+  function moveActiveQuestionHighlight(direction: -1 | 1): void {
+    const question = activeQuestion();
+    if (!question) return;
+    questionOptionSelectedIndex = moveQuestionHighlight(
+      questionOptionSelectedIndex,
+      activeRowCount(),
+      direction,
+    );
+    // Single-select live-records the highlight as the answer so a
+    // prompt-flush or arrow-nav captures it without requiring Space/Enter.
+    // Multi-select keeps highlight separate from the toggled set.
+    if (!question.multiSelect) {
+      questionAccumulatedAnswers = commitActiveAnswer(
+        question,
+        questionOptionSelectedIndex,
+        questionMultiSelectChecked,
+        questionAccumulatedAnswers,
+      );
+    }
+    renderQuestions();
+  }
 
-    appendBlock("you:", Object.values(answers).join("\n"), COLORS.user);
+  function toggleActiveMultiSelectOption(): void {
+    const question = activeQuestion();
+    if (!question?.multiSelect) return;
+    if (questionMultiSelectChecked.has(questionOptionSelectedIndex)) {
+      questionMultiSelectChecked.delete(questionOptionSelectedIndex);
+    } else {
+      questionMultiSelectChecked.add(questionOptionSelectedIndex);
+    }
+    questionAccumulatedAnswers = commitActiveAnswer(
+      question,
+      questionOptionSelectedIndex,
+      questionMultiSelectChecked,
+      questionAccumulatedAnswers,
+    );
+    renderQuestions();
+  }
+
+  function navigateActiveQuestion(direction: -1 | 1): boolean {
+    if (pendingQuestions.length <= 1) return false;
+    const nextIndex = questionActiveIndex + direction;
+    if (nextIndex < 0 || nextIndex >= pendingQuestions.length) return false;
+
+    questionAccumulatedAnswers = commitActiveAnswer(
+      activeQuestion(),
+      questionOptionSelectedIndex,
+      questionMultiSelectChecked,
+      questionAccumulatedAnswers,
+    );
+
+    questionActiveIndex = nextIndex;
+    const restored = restoreSavedAnswer(activeQuestion(), questionAccumulatedAnswers);
+    questionOptionSelectedIndex = restored.selectedIndex;
+    questionMultiSelectChecked = restored.checked;
+    renderQuestions();
+    return true;
+  }
+
+  function describeAnswerLabels(question: TurnQuestion, labels: readonly string[]): string {
+    if (labels.length === 0) return question.multiSelect ? "(no selection)" : "";
+    return labels.join(", ");
+  }
+
+  /**
+   * Handle Space/Enter when the picker is open and the composer is empty.
+   * Multi-select on a regular row toggles; multi-select on the Done row
+   * advances. Single-select always advances (highlight = answer is already
+   * live-recorded by Up/Down). No-op when nothing is highlighted yet so the
+   * user is forced to make an explicit choice (or skip via Right-arrow).
+   */
+  function confirmActiveSelection(): boolean {
+    const question = activeQuestion();
+    if (!question) return false;
+    if (questionOptionSelectedIndex === NO_HIGHLIGHT) return false;
+    if (question.multiSelect && questionOptionSelectedIndex !== activeQuestionDoneIndex()) {
+      toggleActiveMultiSelectOption();
+      return true;
+    }
+    return advanceOrSubmit();
+  }
+
+  function advanceOrSubmit(): boolean {
+    const question = activeQuestion();
+    if (!question) return false;
+    const accumulatedForActive = questionAccumulatedAnswers[question.question] ?? [];
+    const transcriptText = describeAnswerLabels(question, accumulatedForActive);
+    if (transcriptText) {
+      recordTranscriptEntry("user", transcriptText);
+      appendBlock("you:", transcriptText, COLORS.user);
+    }
+
+    if (questionActiveIndex < pendingQuestions.length - 1) {
+      questionActiveIndex += 1;
+      const restored = restoreSavedAnswer(activeQuestion(), questionAccumulatedAnswers);
+      questionOptionSelectedIndex = restored.selectedIndex;
+      questionMultiSelectChecked = restored.checked;
+      renderQuestions();
+      return true;
+    }
+
     void input.session
-      .answer({ questions: pendingQuestions, answers, behavior: "follow_up" })
+      .answer({
+        questions: pendingQuestions,
+        answers: questionAccumulatedAnswers,
+        behavior: "follow_up",
+      })
       .catch(reportError);
     hideQuestions();
     markRunning();
@@ -1144,6 +1685,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
   keyHandler.onInternal("keypress", (key: KeyEvent) => {
+    logKeyDiag("global", key);
+    // Copy keystroke. Lives on the global handler (not
+    // inputField.onKeyDown) because the mousedown that starts a
+    // drag-select moves focus off the textarea — the focused-renderable
+    // path stops firing right when the user has something to copy. The
+    // global handler always fires regardless of focus.
+    if (handleCopyKeystroke(key)) return;
     if (key.name !== "escape") return;
     if (suppressNextEscapeExit) {
       suppressNextEscapeExit = false;
@@ -1166,13 +1714,80 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
     key.preventDefault();
-    void requestExit();
+    handleEscape();
   });
+
+  // Keyboard scroll bindings for the transcript. Mirrors the mouse wheel
+  // for terminals that swallow mouse events (tmux without mouse mode, ssh
+  // sessions where the local terminal owns the wheel, screen readers).
+  // Page = one viewport; Shift+arrow = three lines, matching wheel cadence.
+  function scrollTranscriptByLines(delta: number): void {
+    transcript.scrollBy({ x: 0, y: delta });
+  }
+  function scrollTranscriptByPage(direction: 1 | -1): void {
+    // Subtract 2 to account for the top+bottom border rows; padding lives
+    // inside the scroll viewport and does not need to be deducted.
+    const viewport = Math.max(1, transcript.height - 2);
+    transcript.scrollBy({ x: 0, y: direction * viewport });
+  }
 
   // Attach directly to the focused InputRenderable. The Textarea-based input
   // consumes escape via its own keybindings before any global keypress handler
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
+    logKeyDiag("keydown", key);
+    if (key.name === "pageup") {
+      scrollTranscriptByPage(-1);
+      key.preventDefault();
+      return;
+    }
+    if (key.name === "pagedown") {
+      scrollTranscriptByPage(1);
+      key.preventDefault();
+      return;
+    }
+    if (key.shift && key.name === "up" && !key.ctrl && !key.meta && !key.super) {
+      scrollTranscriptByLines(-3);
+      key.preventDefault();
+      return;
+    }
+    if (key.shift && key.name === "down" && !key.ctrl && !key.meta && !key.super) {
+      scrollTranscriptByLines(3);
+      key.preventDefault();
+      return;
+    }
+
+    // Boot starter navigation. Only intercepts when the starter section is
+    // still on screen; once dismissed (by composition or first submit) all
+    // of these branches no-op and keys flow normally to the input.
+    if (startersAreVisible() && inputField.plainText.length === 0) {
+      if (key.name === "up") {
+        moveStarterHighlight(-1);
+        key.preventDefault();
+        return;
+      }
+      if (key.name === "down") {
+        moveStarterHighlight(1);
+        key.preventDefault();
+        return;
+      }
+      if (
+        key.name &&
+        key.name.length === 1 &&
+        key.name >= "1" &&
+        key.name <= "9" &&
+        !key.ctrl &&
+        !key.meta &&
+        !key.super
+      ) {
+        const target = Number.parseInt(key.name, 10) - 1;
+        if (jumpStarterHighlight(target)) {
+          key.preventDefault();
+          return;
+        }
+      }
+    }
+
     // Cmd+V / Ctrl+V keystroke trigger. Many terminals (Warp in particular,
     // and macOS Terminal.app for binary clipboards) do not forward a paste
     // event to TUI programs on Cmd+V — they handle the clipboard at the app
@@ -1260,24 +1875,37 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
     if (questionPickerIsOpen()) {
       if (key.name === "up") {
-        questionOptionSelectedIndex = moveQuestionOptionSelection(
-          questionOptionSelectedIndex,
-          Math.min(pendingQuestions[0]?.options.length ?? 0, QUESTION_OPTION_LIMIT),
-          -1,
-        );
-        renderQuestions();
+        moveActiveQuestionHighlight(-1);
         key.preventDefault();
         return;
       }
       if (key.name === "down") {
-        questionOptionSelectedIndex = moveQuestionOptionSelection(
-          questionOptionSelectedIndex,
-          Math.min(pendingQuestions[0]?.options.length ?? 0, QUESTION_OPTION_LIMIT),
-          1,
-        );
-        renderQuestions();
+        moveActiveQuestionHighlight(1);
         key.preventDefault();
         return;
+      }
+      // Space confirms the active selection only when the composer is empty
+      // so users can still type a free-form prompt that includes spaces.
+      // Match either the named form (most terminals) or the literal-char
+      // form some kitty-keyboard parsers emit so the binding is robust
+      // regardless of how the host reports an unmodified Space.
+      if ((key.name === "space" || key.name === " ") && inputField.plainText.length === 0) {
+        key.preventDefault();
+        confirmActiveSelection();
+        return;
+      }
+      // Left/Right navigate between questions, but only when the composer is
+      // empty so editing a typed prompt with arrow keys still works.
+      if (
+        (key.name === "left" || key.name === "right") &&
+        inputField.plainText.length === 0 &&
+        pendingQuestions.length > 1
+      ) {
+        const direction = key.name === "left" ? -1 : 1;
+        if (navigateActiveQuestion(direction)) {
+          key.preventDefault();
+          return;
+        }
       }
       if (key.name === "escape") {
         key.preventDefault();
@@ -1288,25 +1916,179 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
 
     if (key.name === "return" || key.name === "enter") {
-      lastEnterShift = Boolean(key.shift);
+      // Three modifier flavors on the Enter key. The modifier is only
+      // distinguishable when the terminal speaks the kitty-keyboard
+      // protocol (or modifyOtherKeys); in a legacy terminal Ctrl+Enter
+      // and Shift+Enter collapse to plain Enter. We accept that
+      // tradeoff for the same reason Shift+Enter accepts it: modern
+      // terminals are the target.
+      //
+      //   Plain Enter   → submit (idle = fresh turn, running = soft queue
+      //                  via follow_up).
+      //   Shift+Enter   → insert a literal newline at the cursor, matching
+      //                  every modern chat composer (Slack, ChatGPT,
+      //                  Discord, Cursor, Claude Code).
+      //   Ctrl+Enter    → steer: dispatch with behavior:"steer" so the
+      //                  runner hands it to agent.steer() at the next
+      //                  inference boundary instead of waiting for the
+      //                  full turn to wrap up.
+      key.preventDefault();
+      if (key.shift) {
+        inputField.insertText("\n");
+        return;
+      }
+      if (key.ctrl) {
+        handleSteerKeystroke();
+        return;
+      }
       const value = inputField.plainText.trim();
       inputField.clear();
-      key.preventDefault();
       if (value) {
-        submit(value, lastEnterShift);
+        submit(value);
       } else if (questionPickerIsOpen()) {
-        submitSelectedQuestionOption();
+        confirmActiveSelection();
+      } else if (startersAreVisible()) {
+        submitHighlightedStarter();
       }
-      lastEnterShift = false;
       return;
     }
     if (key.name === "escape") {
-      void requestExit();
+      handleEscape();
       return;
     }
   };
 
-  inputField.onContentChange = () => refreshAutocomplete();
+  // Esc interrupts the in-flight turn; when nothing is running it is a
+  // no-op so muscle memory does not eject the user out of the session.
+  // Quitting goes through Ctrl+C (renderer's exitOnCtrlC) or closing the
+  // terminal — both paths drain through the `finally` block in
+  // cli/run.ts that disposes the SessionManager and flushes PGlite.
+  function handleEscape(): void {
+    if (!running) return;
+    void input.session.interrupt().catch(reportError);
+  }
+
+  // Ctrl+Enter sends the composer text with behavior:"steer" — the
+  // runner routes this to agent.steer() when the agent is mid-inference
+  // (most of an active turn), which preempts the current LLM call and
+  // injects the message into the next iteration. If the runner is
+  // between inference calls (e.g. mid-tool-call) the steer-flagged
+  // command enqueues and gets picked up at the next agent boundary.
+  // Either way the user gets "at next sensible task boundary" pickup,
+  // which is sooner than the soft-queue follow_up (which only fires at
+  // end of the full turn).
+  //
+  // Empty composer: no-op. The keybind is dedicated to send-with-steer,
+  // and a bare Ctrl+Enter should not interrupt or otherwise affect state.
+  function handleSteerKeystroke(): void {
+    const message = inputField.plainText.trim();
+    if (message.length === 0) return;
+    // Snapshot before clearing so attachments ride with the steer
+    // dispatch and the user-facing labels render correctly.
+    const submittedImages = pendingImages;
+    inputField.clear();
+    clearPendingImages();
+    refreshHint();
+    recordTranscriptEntry("user", message);
+    appendBlock("you:", message, COLORS.user);
+    if (submittedImages.length > 0) {
+      const lines = submittedImages.map((p) => `📎 ${p.label}: ${p.path}`).join("\n");
+      appendBlock(null, lines, COLORS.hint);
+    }
+    const images = submittedImages.map((p) => p.attachment);
+    void input.session.prompt({ message, behavior: "steer", images }).catch(reportError);
+    if (!running) {
+      markRunning();
+    }
+  }
+
+  // ---- /diag diagnostics -----------------------------------------------------
+
+  // `/diag` toggles a key+selection event log so the user can show us
+  // exactly what their terminal forwards when something silently fails
+  // (e.g. a keystroke not reaching the handler, a selection event firing
+  // with empty text). Kept as a flag rather than a one-shot capture so
+  // we can layer additional diagnostic facets on the same surface
+  // without inventing new commands every time.
+  let keyDiagnostics = false;
+
+  function handleDiagSlashCommand(raw: string): void {
+    const argument = raw === "/diag" ? "" : raw.slice("/diag ".length).trim();
+    if (argument === "" || argument === "keys") {
+      keyDiagnostics = !keyDiagnostics;
+      appendBlock(
+        "[diag]",
+        keyDiagnostics
+          ? "key + selection event logging ON. Run /diag again to stop."
+          : "key + selection event logging OFF.",
+        COLORS.system,
+      );
+      return;
+    }
+    appendBlock(
+      "[diag]",
+      "Usage: /diag (or /diag keys) — toggles key + selection event logging",
+      COLORS.system,
+    );
+  }
+
+  function logKeyDiag(label: string, key: KeyEvent): void {
+    if (!keyDiagnostics) return;
+    const flags: string[] = [];
+    if (key.ctrl) flags.push("ctrl");
+    if (key.shift) flags.push("shift");
+    if (key.meta) flags.push("meta");
+    if (key.super) flags.push("super");
+    if (key.option) flags.push("option");
+    appendBlock(
+      "[diag]",
+      `${label} name=${JSON.stringify(key.name)} flags=[${flags.join(",")}] sequence=${JSON.stringify(key.sequence)} source=${key.source} | lastSelection=${lastSelectionText.length}c rendererSel=${renderer.hasSelection ? "yes" : "no"}`,
+      COLORS.hint,
+    );
+  }
+
+  function logSelectionDiag(text: string): void {
+    if (!keyDiagnostics) return;
+    appendBlock(
+      "[diag]",
+      `selection event: ${text.length} chars — ${JSON.stringify(text.slice(0, 80))}`,
+      COLORS.hint,
+    );
+  }
+
+  /**
+   * Copy keystroke detection. Accepts Cmd+C, Cmd+Shift+C, and Ctrl+Shift+C
+   * because each mainstream terminal forwards a different subset — see
+   * `theme.ts` for which one ends up in the hint label per terminal.
+   * Returns true (and prevents default) when the keystroke matched and a
+   * non-empty selection was on the clipboard path; false otherwise so the
+   * caller can fall through to other handlers (Esc, etc.).
+   *
+   * Accepts both "c" and "C" as the key name because some kitty parsers
+   * report the shifted letter while others report the base letter with
+   * `shift: true`.
+   */
+  function handleCopyKeystroke(key: KeyEvent): boolean {
+    const isCopyLetter = key.name === "c" || key.name === "C";
+    if (!isCopyLetter) return false;
+    const cmdHeld = key.super || key.meta;
+    const isCmdC = cmdHeld && !key.shift && !key.ctrl;
+    const isCmdShiftC = cmdHeld && key.shift && !key.ctrl;
+    const isCtrlShiftC = key.ctrl && key.shift && !cmdHeld;
+    if (!(isCmdC || isCmdShiftC || isCtrlShiftC)) return false;
+    if (lastSelectionText.trim().length === 0) return false;
+    key.preventDefault();
+    void copyActiveSelection();
+    return true;
+  }
+
+  inputField.onContentChange = () => {
+    // First real keystroke into the input collapses the starter section
+    // — the user is composing their own prompt, so the suggestions get
+    // out of the way for the rest of the session.
+    if (startersAreVisible() && inputField.plainText.length > 0) dismissStarters();
+    refreshAutocomplete();
+  };
   inputField.onCursorChange = () => refreshAutocomplete();
 
   // Paste handling. Terminals that forward binary clipboard contents (kitty,
@@ -1376,7 +2158,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         pendingImages.push(pending);
         inputField.insertText(pending.label);
         appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
-        refreshAttachmentHint();
+        refreshHint();
       } catch (error) {
         // The clipboard looked like an image path but we could not load
         // it — surface why and restore the original text so the user can
@@ -1427,7 +2209,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         `attached ${pending.label} (${mimeType}, ${formatBytes(bytes.length)})`,
         COLORS.system,
       );
-      refreshAttachmentHint();
+      refreshHint();
     } catch (error) {
       appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
     }
@@ -1437,7 +2219,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (pendingImages.length === 0) return;
     pendingImages = [];
     nextImageId = 1;
-    refreshAttachmentHint();
+    refreshHint();
   }
 
   // Manual clipboard probe. Read the OS clipboard for an image right now and
@@ -1477,7 +2259,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   }
 
-  function submit(message: string, shiftEnter: boolean): void {
+  function submit(message: string): void {
+    // First user submit collapses the boot starter section permanently for
+    // this session, even when the prompt came from autocomplete or paste.
+    if (startersAreVisible()) dismissStarters();
     // Slash-style attach commands run locally and never reach the runner so
     // users on terminals that do not forward image bytes still have a way to
     // attach images by path.
@@ -1494,12 +2279,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       appendBlock("[paste]", "cleared pending image attachments", COLORS.system);
       return;
     }
+    if (message === "/copy" || message.startsWith("/copy ")) {
+      void handleCopySlashCommand(message);
+      return;
+    }
+    if (message === "/diag" || message.startsWith("/diag ")) {
+      handleDiagSlashCommand(message);
+      return;
+    }
     if (message === "/feedback" || message.startsWith("/feedback ")) {
       void handleFeedbackSlashCommand(message);
       return;
     }
 
     const submittedImages = pendingImages;
+    recordTranscriptEntry("user", message);
     appendBlock("you:", message, COLORS.user);
     // Render attachments as a separate hint-colored footnote rather than
     // inlining them into the user-message block. Keeps the transcript
@@ -1510,7 +2304,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       const lines = submittedImages.map((p) => `📎 ${p.label}: ${p.path}`).join("\n");
       appendBlock(null, lines, COLORS.hint);
     }
-    hideQuestions();
 
     const images = submittedImages.map((p) => p.attachment);
 
@@ -1518,14 +2311,152 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // double-charged with the same attachments on retry.
     clearPendingImages();
 
-    if (running) {
-      const behavior = shiftEnter ? "follow_up" : "steer";
-      void input.session.prompt({ message, behavior, images }).catch(reportError);
+    // If the question picker is open, treat the typed message as a flush:
+    // dispatch whatever answers were already collected together with the new
+    // prompt text so the model sees one combined turn instead of dropping
+    // the partial answers on the floor.
+    if (pendingQuestions.length > 0) {
+      void input.session
+        .answer({
+          questions: pendingQuestions,
+          answers: questionAccumulatedAnswers,
+          behavior: "follow_up",
+          message,
+          images,
+        })
+        .catch(reportError);
+      hideQuestions();
+      if (!running) markRunning();
       return;
     }
 
+    // Every submit — running or idle — is a follow_up. While the agent is
+    // running this queues; while idle it kicks off a fresh turn. Single
+    // mental model: type, press Enter, your message lands.
     void input.session.prompt({ message, behavior: "follow_up", images }).catch(reportError);
-    markRunning();
+    if (!running) {
+      markRunning();
+    }
+  }
+
+  /**
+   * Copy the active drag-selection to the clipboard and clear the highlight
+   * so the user gets visual confirmation the action happened. Used by the
+   * platform copy keystroke (Cmd+C on macOS, Ctrl+Shift+C elsewhere); the
+   * slash command path goes through `handleCopySlashCommand` so it can
+   * also serve `/copy last|all|<N>`.
+   */
+  async function copyActiveSelection(): Promise<void> {
+    const text = lastSelectionText;
+    if (text.trim().length === 0) return;
+    const result = await copyTextToClipboard(text);
+    renderer.clearSelection();
+    lastSelectionText = "";
+    refreshHint();
+    if (result.ok) {
+      appendBlock(
+        "[copy]",
+        `copied selection (${text.length} char${text.length === 1 ? "" : "s"}) to clipboard via ${result.via}`,
+        COLORS.system,
+      );
+    } else {
+      appendBlock(
+        "[copy]",
+        `clipboard write failed: ${result.error ?? "unknown error"}` +
+          (process.platform === "linux" ? "\nInstall one of: wl-clipboard, xclip, xsel" : ""),
+        COLORS.error,
+      );
+    }
+  }
+
+  /**
+   * Resolve a `/copy ...` invocation to clipboard text and pipe it to the
+   * OS clipboard. When the user has an active drag-selection and ran a bare
+   * `/copy`, copy that highlight verbatim — it matches what they actually
+   * have on screen. Otherwise fall back to the transcript-log heuristic
+   * (`last` / `all` / `<N>`).
+   *
+   * Failures are surfaced in the transcript so users on minimal Linux
+   * installs see exactly which writer is missing.
+   */
+  async function handleCopySlashCommand(raw: string): Promise<void> {
+    const argumentRaw = raw === "/copy" ? "" : raw.slice("/copy ".length);
+    const argument = parseCopyArgument(argumentRaw);
+    if (argument === undefined) {
+      appendBlock(
+        "[copy]",
+        "Usage: /copy [last|all|<N>]  — last (default) copies the most recent agent reply, " +
+          "or copies the active drag-selection when one is present",
+        COLORS.system,
+      );
+      return;
+    }
+
+    // A bare `/copy` (or the copy keystroke while a selection is active)
+    // prefers the drag-selection so the clipboard matches what the user
+    // has highlighted on screen; an explicit `/copy last|all|<N>` always
+    // uses the transcript log instead.
+    const explicitArgument = argumentRaw.trim().length > 0;
+    const useSelection = !explicitArgument && lastSelectionText.trim().length > 0;
+    const text = useSelection ? lastSelectionText : selectCopyText(transcriptLog, argument);
+    if (!text) {
+      appendBlock("[copy]", "nothing to copy yet", COLORS.system);
+      return;
+    }
+    const result = await copyTextToClipboard(text);
+    if (result.ok) {
+      const summary = useSelection
+        ? `selection (${text.length} char${text.length === 1 ? "" : "s"})`
+        : describeCopySelection(argument, text.length);
+      appendBlock("[copy]", `copied ${summary} to clipboard via ${result.via}`, COLORS.system);
+    } else {
+      appendBlock(
+        "[copy]",
+        `clipboard write failed: ${result.error ?? "unknown error"}` +
+          (process.platform === "linux" ? "\nInstall one of: wl-clipboard, xclip, xsel" : ""),
+        COLORS.error,
+      );
+    }
+  }
+
+  /**
+   * Two-stage clipboard write. The platform-native CLI (pbcopy / wl-copy /
+   * xclip / xsel / clip.exe) goes first because it actually writes to the
+   * OS clipboard and — critically — `writeClipboardText` reads the
+   * clipboard back through pbpaste / wl-paste / xclip -o to confirm the
+   * bytes landed. Exit-code-only success is not enough: pbcopy from inside
+   * a raw-mode TUI on Warp/macOS exits 0 without actually updating
+   * NSPasteboard, and OSC 52 has the same silent-drop problem on Warp.
+   *
+   * OSC 52 is only the fallback when no local CLI is available at all
+   * (e.g. an SSH session with no clipboard tool installed remotely). When
+   * a local CLI ran but failed verification we surface that error
+   * directly instead of falling through to OSC 52, because OSC 52 would
+   * also silently "succeed" on the same broken terminals and hide the
+   * real failure behind a fake "copied via OSC 52" line.
+   */
+  async function copyTextToClipboard(text: string): Promise<ClipboardWriteResult> {
+    const cli = await writeClipboardText(text);
+    if (cli.ok) return cli;
+    // Only fall back to OSC 52 when the CLI was simply unavailable. If a
+    // CLI ran but the readback did not match (cli.kind ===
+    // "verification-failed"), OSC 52 is on the same broken pipe and
+    // would silently "succeed" the same way — surface the real error.
+    if (
+      cli.kind === "no-writer" &&
+      renderer.isOsc52Supported() &&
+      renderer.copyToClipboardOSC52(text)
+    ) {
+      return { ok: true, via: "OSC 52" };
+    }
+    return cli;
+  }
+
+  function describeCopySelection(argument: "last" | "all" | number, length: number): string {
+    const chars = `${length} char${length === 1 ? "" : "s"}`;
+    if (argument === "last") return `last message (${chars})`;
+    if (argument === "all") return `full transcript (${chars})`;
+    return `last ${argument} messages (${chars})`;
   }
 
   async function handleFeedbackSlashCommand(raw: string): Promise<void> {
@@ -1573,7 +2504,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       // can keep typing their prompt with the image already attached.
       inputField.insertText(pending.label);
       appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
-      refreshAttachmentHint();
+      refreshHint();
     } catch (error) {
       appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
     }
@@ -1606,15 +2537,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   renderSetupIntro(skills, agentFiles);
   refreshSidebar();
 
-  const resumeHistoryLines = input.resumeHistoryLines ?? Number.POSITIVE_INFINITY;
-  if (resumeHistoryLines > 0 && input.history && input.history.length > 0) {
-    const limited = limitHistoryDisplayBlocks(
+  const resumeHistoryMessages = input.resumeHistoryMessages ?? Number.POSITIVE_INFINITY;
+  if (resumeHistoryMessages > 0 && input.history && input.history.length > 0) {
+    const limited = limitHistoryDisplayMessages(
       historyDisplayBlocks(input.history),
-      resumeHistoryLines,
+      resumeHistoryMessages,
     );
-    if (limited.omittedLines > 0) {
+    if (limited.omittedBlocks > 0) {
       appendLine(
-        `[resume] showing last ${resumeHistoryLines} lines of prior session history`,
+        `[resume] showing last ${resumeHistoryMessages} message${resumeHistoryMessages === 1 ? "" : "s"} of prior session history`,
         COLORS.hint,
       );
     }
@@ -1623,9 +2554,26 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   }
 
+  // Seed the copy-out log from full resumed history (not the trimmed display
+  // slice) so `/copy all` and `/copy <N>` can reach back further than what is
+  // actually rendered in the transcript on resume.
+  if (input.history && input.history.length > 0) {
+    for (const block of historyDisplayBlocks(input.history)) {
+      if (block.kind === "user") {
+        // History blocks for users are formatted as `you:\n<text>`; strip the
+        // label so the clipboard text matches what the user originally typed.
+        const stripped = block.content.replace(/^you:\n?/, "");
+        recordTranscriptEntry("user", stripped);
+      } else if (block.kind === "agent") {
+        recordTranscriptEntry("agent", block.content);
+      }
+    }
+  }
+
   // ---- bootstrap initial prompt ----------------------------------------------
 
   if (input.initialPrompt) {
+    recordTranscriptEntry("user", input.initialPrompt);
     appendBlock("you:", input.initialPrompt, COLORS.user);
     void input.session
       .prompt({ message: input.initialPrompt, behavior: "follow_up" })
@@ -1649,8 +2597,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const onDestroy = () => {
       // Ctrl+C (exitOnCtrlC) destroys text buffers synchronously. Any
       // setInterval that survives into the next tick will call setStatus on
-      // a destroyed TextBuffer and throw, so tear down timers here before
-      // resolving.
+      // a destroyed TextBuffer and throw, so tear down timers and stop
+      // accepting chrome writes here before resolving. Session events that
+      // race the teardown are caught by the `destroyed` guard in setStatus
+      // and the other chrome mutators.
+      destroyed = true;
       stopWorkingTicker();
       resolve();
     };
@@ -1673,6 +2624,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (kind === "error") return COLORS.error;
     return COLORS.agent;
   }
+}
+
+// OpenTUI's TextBuffer throws a plain Error with this exact message from its
+// `guard()` method when any setter is touched after destroy. We sniff the
+// message to distinguish post-teardown races (swallow) from real bugs (rethrow).
+function isTextBufferDestroyedError(error: unknown): boolean {
+  return error instanceof Error && error.message === "TextBuffer is destroyed";
 }
 
 function restoreWindowGlobal(previousWindow: PropertyDescriptor | undefined): void {

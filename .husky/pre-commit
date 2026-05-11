@@ -1,3 +1,4 @@
 bun run format
+git add -u
 bun run check-types
 bun run lint

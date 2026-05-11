@@ -12,11 +12,17 @@ import dedent from "dedent";
 import { assistantText } from "../core/serializer.js";
 import { toXML } from "../lib/xml.js";
 import {
+  agentMessagesToRaw,
   createObservationalContextTransform,
+  DEFAULT_EFFECTIVE_CONTEXT,
+  estimateTokens,
+  resolveObservationalMemorySettings,
   updateObservationalMemory,
 } from "../memory/observational.js";
+import { rebuildMemoryContextPack } from "../memory/context-pack.js";
+import { createEmbeddingClient } from "../memory/embedding.js";
 import { loadStoredMemory, type MemoryPersistenceHandle } from "../memory/storage.js";
-import { MemoryStore } from "../memory/store.js";
+import { MemoryContextCache } from "../memory/store.js";
 import {
   DEFAULT_CLI_MEMORY_MODEL,
   DEFAULT_CLI_MODEL,
@@ -48,6 +54,8 @@ import { createInitialHorizon, type WireGuardHorizon } from "./wire-shaping.js";
 import {
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
+  formatCarriedTodosReminder,
+  type RecallMemoryToolStorage,
   isTurnRunnerControlResult,
   type TurnRunnerControlResult,
 } from "./tools.js";
@@ -91,7 +99,7 @@ export interface AgentWorkerResult {
 export class TurnRunner {
   private readonly eventHandlers = new Set<TurnEventHandler>();
   /** In-memory observation store used by context transforms during agent turns. */
-  protected readonly memory = new MemoryStore();
+  protected readonly memory = new MemoryContextCache();
   /** Hydrates, flushes, and disposes durable observation storage. */
   private memoryPersistence?: MemoryPersistenceHandle;
   /**
@@ -348,11 +356,14 @@ export class TurnRunner {
       return this.skillContext.resolveSlashSkillPrompt(command.message);
     }
 
-    return dedent`
+    const answerXml = toXML([{ questions: command.questions }, { answers: command.answers }]);
+    const base = dedent`
       Here are my answers to your questions.
 
-      ${toXML([{ questions: command.questions }, { answers: command.answers }])}
+      ${answerXml}
     `;
+    if (!command.message?.trim()) return base;
+    return `${base}\n\n${this.skillContext.resolveSlashSkillPrompt(command.message)}`;
   }
 
   private enqueueTurnCommand(command: TurnCommand): void {
@@ -360,8 +371,7 @@ export class TurnRunner {
       (command.type === "prompt" || command.type === "answer") &&
       command.behavior === "follow_up"
     ) {
-      const images = command.type === "prompt" ? command.images : undefined;
-      this.appendFollowUpPrompt(this.commandToUserMessage(command), images);
+      this.appendFollowUpPrompt(this.commandToUserMessage(command), command.images);
     }
     this.setQueuedCommands([...this.getQueuedCommands(), command]);
   }
@@ -486,7 +496,9 @@ export class TurnRunner {
   protected async prompt(command: TurnPromptCommand): Promise<TurnTerminalEvent> {
     const originalState = this.requireRunnerState();
     const state: TurnState = { ...originalState, status: "running" };
-    const prompt = this.skillContext.resolveSlashSkillPrompt(command.message);
+    const resolvedPrompt = this.skillContext.resolveSlashSkillPrompt(command.message);
+    const todoReminder = formatCarriedTodosReminder(state.todos);
+    const prompt = todoReminder ? `${todoReminder}\n\n${resolvedPrompt}` : resolvedPrompt;
     const images = promptImagesToContent(command.images);
     let terminal: TurnTerminalEvent;
     if (state.mode === "agent") {
@@ -509,6 +521,7 @@ export class TurnRunner {
       type: "prompt",
       message,
       behavior: command.behavior,
+      images: command.images,
     });
   }
 
@@ -797,7 +810,7 @@ export class TurnRunner {
     }
   }
 
-  private requireParentAgent(): Agent {
+  protected requireParentAgent(): Agent {
     if (!this.parentAgent) {
       throw new Error("Turn runner parent agent has not been initialized.");
     }
@@ -914,9 +927,20 @@ export class TurnRunner {
     };
     const skills = this.skillContext.getSkills();
     const mcpTools = this.mcpRuntime?.tools ?? [];
+    const recallStorage: RecallMemoryToolStorage = {
+      getDb: () => this.memoryPersistence?.db,
+      embed: this.memoryPersistence?.embed,
+      sessionId: this.config.sessionId,
+      // Reuse the resolved memory model so recall_memory's optional
+      // expand flag goes to the same cheap model the observer uses.
+      expansionModel: this.resolveMemoryActorModel(undefined),
+    };
     if (mode === "agent") {
       return {
-        tools: [...createDefaultTurnRunnerTools(cwd, todoStorage, skills), ...mcpTools],
+        tools: [
+          ...createDefaultTurnRunnerTools(cwd, todoStorage, skills, recallStorage),
+          ...mcpTools,
+        ],
       };
     }
 
@@ -930,6 +954,7 @@ export class TurnRunner {
           getActiveStateOutput: () => this.stateMachineController.getActiveOutput(),
           todoStorage,
           skills,
+          recallStorage,
         }),
         ...mcpTools,
       ],
@@ -990,6 +1015,7 @@ export class TurnRunner {
     const messages = agent.state.messages;
     const usage = usageFromMessages(messages.slice(previousMessageCount));
     const status = agent.state.errorMessage ? "failed" : "completed";
+    const live = this.state;
     const state = {
       ...input.state,
       status,
@@ -998,6 +1024,9 @@ export class TurnRunner {
         status,
         messages,
       },
+      todos: live?.todos ?? input.state.todos,
+      followUpQueue: live?.followUpQueue ?? input.state.followUpQueue,
+      queuedCommands: live?.queuedCommands ?? input.state.queuedCommands,
     } satisfies TurnState;
     if (status === "completed") {
       await this.updateMemoryAfterAgentRun(messages, state.options);
@@ -1034,15 +1063,46 @@ export class TurnRunner {
     if (this.config.memoryDbPath === undefined) {
       return;
     }
-    await updateObservationalMemory({
+    const db = this.memoryPersistence?.db;
+    if (!db) return;
+    const result = await updateObservationalMemory({
+      db,
       memory: this.memory,
+      sessionId: this.config.sessionId,
+      effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
       actorModel: this.resolveMemoryActorModel(options),
       settings: this.config.memory,
       messages,
       onUsage: (usage) => this.recordUsage(usage),
       onActivity: (event) => this.emit({ type: "memory", ...event }),
     });
-    await this.memoryPersistence?.flush();
+
+    // Compaction trigger: a reflection just replaced the durable
+    // observation set, so rebuild the frozen context pack to pick up
+    // the new condensed view. Observer-only updates intentionally do
+    // NOT refresh the pack — they leave the rendered prefix stable so
+    // the provider's prompt cache survives.
+    if (result.reflections.length > 0) {
+      await this.refreshMemoryContextPack();
+    }
+  }
+
+  private async refreshMemoryContextPack(): Promise<void> {
+    if (!this.memoryPersistence?.db) return;
+    try {
+      await rebuildMemoryContextPack({
+        db: this.memoryPersistence.db,
+        cache: this.memory,
+        settings: resolveObservationalMemorySettings(
+          this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
+          this.config.memory,
+        ),
+        ...(this.config.sessionId !== undefined ? { sessionId: this.config.sessionId } : {}),
+      });
+    } catch {
+      // Pack rebuild is best-effort; the existing pack remains in
+      // place if this fails. Turn flow never blocks on memory work.
+    }
   }
 
   /**
@@ -1095,8 +1155,16 @@ export class TurnRunner {
     // provider prompt cache stays valid between eviction events.
     return createObservationalContextTransform({
       memory: this.memory,
+      effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
       settings: this.config.memory,
       horizon: this.wireGuardHorizon,
+      // Compaction trigger #3: when wire-shaping advances the eviction
+      // horizon the prompt cache is already invalidating, so refresh
+      // the frozen memory pack at the same moment to piggyback the
+      // cache miss instead of paying it twice.
+      onCompaction: () => {
+        void this.refreshMemoryContextPack();
+      },
     });
   }
 
@@ -1144,10 +1212,30 @@ export class TurnRunner {
     if (this.memoryLoaded) return;
     this.memoryLoaded = true;
 
+    // Embedding client is built once per runner so connection reuse
+    // amortizes TLS setup across both the backfill worker and the
+    // recall_memory tool. The client lazily resolves DUET_API_KEY per
+    // call so a `duet login` mid-session lights up retrieval without
+    // a runner restart.
+    //
+    // Initial context pack build runs synchronously inside
+    // loadStoredMemory so the very first dispatched turn already sees
+    // a frozen memory prefix. Subsequent compaction triggers (reflector
+    // completion, wire-shaping eviction) refresh it.
     this.memoryPersistence = await loadStoredMemory(
       this.config.memoryDbPath,
       this.config.cwd ?? process.cwd(),
-      this.memory,
+      {
+        embed: createEmbeddingClient(),
+        contextPack: {
+          cache: this.memory,
+          settings: resolveObservationalMemorySettings(
+            this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
+            this.config.memory,
+          ),
+          ...(this.config.sessionId !== undefined ? { sessionId: this.config.sessionId } : {}),
+        },
+      },
     );
   }
 
@@ -1205,8 +1293,60 @@ export class TurnRunner {
     this.emit({
       type: "context_usage",
       usage: event.message.usage,
-      contextWindow: this.requireParentAgent().state.model.contextWindow,
+      effectiveContextWindow: this.effectiveContextWindow(),
+      contextWindowUsage: this.estimateContextWindowUsage(),
     });
+  }
+
+  /**
+   * Estimate the per-segment occupancy of the parent agent's input. Uses the
+   * same character-heuristic token count the memory pipeline uses for its
+   * triggers, so the segment numbers and the compaction thresholds in
+   * `MEMORY_BUDGET_RATIOS` stay on the same scale. Each segment maps to
+   * what the actor will receive on its next request: the system prompt
+   * (already concatenated with any loaded AGENTS.md), the raw message
+   * history retained in agent state, and the two memory pack layers
+   * currently frozen in the cache.
+   */
+  protected estimateContextWindowUsage() {
+    const agent = this.requireParentAgent();
+    const pack = this.memory.getContextPack();
+    const rawMessages = agentMessagesToRaw(agent.state.messages);
+    return {
+      systemPrompt: estimateTokens(agent.state.systemPrompt),
+      messages: rawMessages.reduce(
+        (total, message) =>
+          total + (message.estimatedTokens ?? estimateTokens(message.textPreview)),
+        0,
+      ),
+      localMemory: pack.local.reduce((total, row) => total + estimateTokens(row.content), 0),
+      globalMemory: pack.global.reduce((total, row) => total + estimateTokens(row.content), 0),
+    };
+  }
+
+  /**
+   * Effective ceiling for the context-usage bar. The user-set
+   * `config.effectiveContext` (default `DEFAULT_EFFECTIVE_CONTEXT`) is clamped
+   * to the parent model's hard window so a user asking for more than the
+   * model can fit silently caps at the model's limit. Every memory budget is
+   * derived from this same number, so the bar is also the practical
+   * compaction ceiling.
+   */
+  protected effectiveContextWindow(): number {
+    const modelWindow = this.requireParentAgent().state.model.contextWindow;
+    return this.resolveEffectiveContext(modelWindow);
+  }
+
+  /**
+   * Resolve the user-set `effectiveContext` against an optional model window.
+   * Memory-pipeline callers that run before the parent agent exists (initial
+   * pack load, transform construction) pass `undefined` here and accept the
+   * unclamped user value; the agent-facing `effectiveContextWindow()` always
+   * passes the live model window.
+   */
+  protected resolveEffectiveContext(modelWindow?: number): number {
+    const userValue = this.config.effectiveContext ?? DEFAULT_EFFECTIVE_CONTEXT;
+    return modelWindow !== undefined ? Math.min(userValue, modelWindow) : userValue;
   }
 }
 

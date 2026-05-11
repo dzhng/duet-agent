@@ -1,4 +1,3 @@
-import { createInterface } from "node:readline/promises";
 import { shimDuetApiKeyToAiGateway } from "../model-resolution/duet-gateway.js";
 import { maybeAutoSyncDefaultSkills } from "../lib/sync-skills.js";
 import {
@@ -16,16 +15,20 @@ import {
 import { SessionManager } from "../session/session-manager.js";
 import { runTui } from "../tui/app.js";
 import type { TurnRunnerConfig } from "../types/config.js";
-import { DEFAULT_RESUME_HISTORY_LINES, printRunHelp } from "./help.js";
+import { DEFAULT_RESUME_HISTORY_MESSAGES, printRunHelp } from "./help.js";
 import { resumeCommand } from "./resume-hint.js";
-import { fail, isInteractive, loadCliEnvFiles, parseResumeHistoryLines } from "./shared.js";
+import { fail, isInteractive, loadCliEnvFiles, parseResumeHistoryMessages } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
-import { getNewVersionNotice } from "./version-check.js";
+import {
+  createUpgradeStatusStream,
+  describeUpgradeStatus,
+  runAutoUpgrade,
+} from "./auto-upgrade.js";
 
 export interface CliTurnConfigInput {
   modelName?: string;
   memoryModelName?: string;
-  disableDurableMemory?: boolean;
+  incognito?: boolean;
   workDir: string;
   systemInstructions?: string;
   systemPromptFiles?: string[];
@@ -43,17 +46,13 @@ export interface PackageMetadata {
 }
 
 /**
- * Decide whether to render the interactive TUI vs JSONL events.
- *
- * Supplying a prompt argument selects JSONL so one-shot runs have a stable
- * machine-readable contract by default; an explicit `--json` always wins.
+ * Decide whether to render the interactive TUI vs the one-shot streaming
+ * path. The TUI runs only when the terminal is interactive and the caller
+ * did not supply a prompt argument; otherwise we run a single turn against
+ * the SessionManager and exit when it settles.
  */
-export function shouldUseTui(input: {
-  interactive: boolean;
-  jsonOutput: boolean;
-  prompt?: string;
-}): boolean {
-  return input.interactive && !input.jsonOutput && !input.prompt;
+export function shouldUseTui(input: { interactive: boolean; prompt?: string }): boolean {
+  return input.interactive && !input.prompt;
 }
 
 /**
@@ -71,7 +70,7 @@ export function buildCliTurnConfig(
     config: {
       model: modelResolution.modelName,
       memoryModel: memoryModelResolution.modelName,
-      ...(input.disableDurableMemory ? { memoryDbPath: false } : {}),
+      ...(input.incognito ? { memoryDbPath: false } : {}),
       cwd: input.workDir,
       ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),
       ...(input.systemPromptFiles ? { systemPromptFiles: input.systemPromptFiles } : {}),
@@ -97,11 +96,11 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   let resumeSessionId: string | undefined;
   let systemInstructions: string | undefined;
   let systemPromptFiles: string[] | undefined;
-  let resumeHistoryLines = DEFAULT_RESUME_HISTORY_LINES;
-  let resumeHistoryLinesExplicit = false;
-  let jsonOutput = false;
+  let resumeHistoryMessages = DEFAULT_RESUME_HISTORY_MESSAGES;
+  let resumeHistoryMessagesExplicit = false;
   let envFilePath: string | undefined;
-  let disableDurableMemory = false;
+  let incognito = false;
+  let noAutoUpgrade = false;
   const promptParts: string[] = [];
   const interactive = isInteractive();
 
@@ -120,8 +119,9 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         providerFlag = args[++i];
         break;
-      case "--no-memory":
-        disableDurableMemory = true;
+      case "--incognito":
+      case "-i":
+        incognito = true;
         break;
       case "--workdir":
       case "-w":
@@ -133,14 +133,14 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         resumeSessionId = args[++i];
         break;
-      case "--resume-history-lines":
+      case "--resume-history-messages":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         try {
-          resumeHistoryLines = parseResumeHistoryLines(args[++i]!, args[i - 1]!);
+          resumeHistoryMessages = parseResumeHistoryMessages(args[++i]!, args[i - 1]!);
         } catch (error) {
           fail(error instanceof Error ? error.message : String(error));
         }
-        resumeHistoryLinesExplicit = true;
+        resumeHistoryMessagesExplicit = true;
         break;
       case "--system-prompt":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
@@ -153,12 +153,12 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       case "--no-system-prompt-files":
         systemPromptFiles = [];
         break;
-      case "--json":
-        jsonOutput = true;
-        break;
       case "--env-file":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         envFilePath = args[++i];
+        break;
+      case "--no-auto-upgrade":
+        noAutoUpgrade = true;
         break;
       case "--version":
       case "-v":
@@ -189,10 +189,6 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     prompt = Buffer.concat(chunks).toString("utf-8").trim();
   }
 
-  if (!prompt && jsonOutput && interactive) {
-    prompt = await readInteractivePrompt();
-  }
-
   if (!prompt && !resumeSessionId && !interactive) {
     console.error("Usage: duet <prompt>");
     console.error('  e.g., duet "build a todo app"');
@@ -217,6 +213,21 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   const dotenvKeys = loadCliEnvFiles(workDir, envFilePath);
   shimDuetApiKeyToAiGateway();
 
+  // Probe the registry and (if newer) run the package manager in-process
+  // while the TUI is already mounted. The TUI subscribes to upgradeStatus$
+  // to render a live header line; the JSON path awaits the final status
+  // and prints one summary line to stderr.
+  const upgradeStatus$ = createUpgradeStatusStream();
+  const upgradePromise = runAutoUpgrade({
+    packageName: pkg.name,
+    currentVersion: pkg.version,
+    disabled: noAutoUpgrade,
+    onStatus: (status) => upgradeStatus$.publish(status),
+  }).then((status) => {
+    upgradeStatus$.complete(status);
+    return status;
+  });
+
   // Refresh the gateway-managed default skills when the user has previously
   // opted in via `duet login` (i.e. `~/.duet/.skills-hash` exists). Logging
   // in with --skip-skill-sync leaves no hash, so this stays a no-op until
@@ -230,7 +241,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     {
       ...(modelName ? { modelName } : {}),
       ...(memoryModelName ? { memoryModelName } : {}),
-      disableDurableMemory,
+      incognito,
       workDir,
       ...(systemInstructions ? { systemInstructions } : {}),
       ...(systemPromptFiles ? { systemPromptFiles } : {}),
@@ -240,12 +251,16 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   modelName = modelResolution.modelName;
   memoryModelName = memoryModelResolution.modelName;
 
-  const useTui = shouldUseTui({ interactive, jsonOutput, prompt });
-  const useJson = !useTui;
+  const useTui = shouldUseTui({ interactive, prompt });
 
-  const newVersionNotice = await getNewVersionNotice(pkg.name, pkg.version);
-  if (useJson) {
-    if (newVersionNotice) process.stderr.write(`${newVersionNotice}\n`);
+  // One-shot consumers want a single summary line, not a streaming status.
+  // Await the final upgrade status and print the human-readable form (if any)
+  // before the regular boot lines. The TUI subscribes to the live stream
+  // instead and renders intermediate "Checking…/Updating…" states inline.
+  if (!useTui) {
+    const finalStatus = await upgradePromise;
+    const notice = describeUpgradeStatus(pkg.name, finalStatus);
+    if (notice) process.stderr.write(`${notice}\n`);
     process.stderr.write(`Model: ${modelName}\n`);
     process.stderr.write(`Source: ${describeModelResolution(modelResolution)}\n`);
     process.stderr.write(`Memory model: ${memoryModelName}\n`);
@@ -253,11 +268,14 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   }
 
   const manager = new SessionManager(config);
-  manager.subscribe(({ event }) => {
-    if (useJson) {
+  if (!useTui) {
+    // Non-TUI runs (one-shot prompt, piped stdin) stream events as JSONL so
+    // CI scripts can parse them. The TUI subscribes to its own rendering
+    // pipeline and has no use for stdout JSONL.
+    manager.subscribe(({ event }) => {
       process.stdout.write(`${JSON.stringify(event)}\n`);
-    }
-  });
+    });
+  }
 
   // Ensure PGlite gets a chance to flush its WAL on Ctrl+C / SIGTERM. The
   // `finally` block below handles normal returns and thrown errors, but
@@ -297,15 +315,16 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       await runTui({
         session,
         ...(resumedHistory ? { history: resumedHistory } : {}),
-        resumeHistoryLines,
+        resumeHistoryMessages,
         modelName,
         modelSource: describeModelResolution(modelResolution),
         memoryModelName,
         memoryModelSource: describeModelResolution(memoryModelResolution),
         workDir,
         sessionId: session.id,
+        packageName: pkg.name,
         packageVersion: pkg.version,
-        ...(newVersionNotice ? { newVersionNotice } : {}),
+        upgradeStatus$,
       });
     }
 
@@ -314,11 +333,11 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         ...(modelName ? { modelName } : {}),
         ...(memoryModelName ? { memoryModelName } : {}),
         workDir,
-        disableDurableMemory,
+        incognito,
         ...(systemInstructions ? { systemInstructions } : {}),
         ...(systemPromptFiles ? { systemPromptFiles } : {}),
         ...(envFilePath ? { envFilePath } : {}),
-        ...(resumeHistoryLinesExplicit ? { resumeHistoryLines } : {}),
+        ...(resumeHistoryMessagesExplicit ? { resumeHistoryMessages } : {}),
       })}\n`,
     );
   } catch (err: any) {
@@ -327,26 +346,5 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   } finally {
     removeShutdownHandlers();
     await manager.dispose();
-  }
-}
-
-/**
- * Read a single prompt from stdin when --json is set in an interactive
- * terminal and no prompt was supplied via argv. Loops until the user
- * provides non-empty input.
- */
-async function readInteractivePrompt(): Promise<string> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stderr,
-  });
-  try {
-    let prompt = "";
-    while (!prompt) {
-      prompt = (await rl.question("> ")).trim();
-    }
-    return prompt;
-  } finally {
-    rl.close();
   }
 }

@@ -22,19 +22,32 @@ class MemoryTransformTurnRunner extends TurnRunner {
     return this.createMemoryTransform();
   }
 
-  getMemorySnapshotForTest() {
-    return this.memory.getSnapshot();
-  }
-
-  appendObservationForTest(content: string) {
-    return this.memory.appendObservation({
+  /**
+   * Test-only synthetic seeding: the runner has no PGlite database
+   * configured here, so we mint an Observation in process and shove
+   * it into the cache as if a compaction had just frozen it. That
+   * matches the production invariant (only the cache shape matters
+   * to the transform) without spinning up a real database.
+   */
+  async seedFrozenObservationForTest(content: string) {
+    const now = Date.now();
+    const observation = {
+      id: `mem_test_${now}`,
+      createdAt: now,
+      lastUsedAt: now,
+      kind: "observation" as const,
       observedDate: "2026-05-06",
-      priority: "high",
-      scope: "session",
-      source: { kind: "system" },
+      priority: "high" as const,
+      source: { kind: "system" } as const,
       content,
       tags: ["test"],
-    });
+    };
+    this.memory.setContextPack({ global: [observation], local: [] });
+    return observation;
+  }
+
+  getFrozenContextPackForTest() {
+    return this.memory.getContextPack();
   }
 }
 
@@ -134,6 +147,70 @@ class UsageTrackingTurnRunner extends TurnRunner {
   }
 }
 
+/**
+ * End-to-end harness for the `context_usage` event. Reuses the
+ * stream-stubbing pattern from `MemoryEventTurnRunner` so a full
+ * `startTurn(...).turn` drives a fake assistant `done` event through
+ * the runner, which then triggers `emitParentAgentEvent → emit
+ * context_usage`. Memory is left unconfigured; the breakdown still
+ * runs since the cache always returns `{ global: [], local: [] }`
+ * when no pack has been frozen.
+ */
+class ContextUsageTurnRunner extends TurnRunner {
+  effectiveContextWindowForTest(): number {
+    return this.effectiveContextWindow();
+  }
+
+  requireParentAgentForTest(): Agent {
+    return this.requireParentAgent();
+  }
+
+  /**
+   * Freeze a synthetic pack into the runner's memory cache so the
+   * context-usage breakdown has non-empty memory segments without
+   * spinning up a real database.
+   */
+  seedFrozenPackForTest(pack: {
+    global: ReturnType<typeof synthObservation>[];
+    local: ReturnType<typeof synthObservation>[];
+  }) {
+    this.memory.setContextPack(pack);
+    return pack;
+  }
+
+  protected override async updateMemoryAfterAgentRun(): Promise<void> {
+    // No-op: skip the memory pipeline so the turn completes solely
+    // through the streamFn stub and never depends on a database.
+  }
+
+  protected override createAgent(
+    input: AgentConfigInput,
+    onControlResult?: (result: TurnRunnerControlResult) => void,
+  ): Agent {
+    const agent = super.createAgent(input, onControlResult);
+    agent.streamFn = () => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        stream.push({
+          type: "done",
+          reason: "stop",
+          message: createAssistantMessage({
+            text: "ok",
+            usage: {
+              input: 100,
+              output: 50,
+              cacheRead: 0,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            },
+          }),
+        });
+      });
+      return stream;
+    };
+    return agent;
+  }
+}
+
 class MemoryEventTurnRunner extends TurnRunner {
   readonly memoryRuns: AgentMessage[][] = [];
 
@@ -143,14 +220,21 @@ class MemoryEventTurnRunner extends TurnRunner {
       .map(agentMessageToRaw)
       .filter((message): message is NonNullable<typeof message> => Boolean(message));
     const range = `${raw[0]?.id ?? "unknown"}:${raw[raw.length - 1]?.id ?? "unknown"}`;
-    const observation = await this.memory.appendObservation({
+    // No DB configured for this test runner; mint a synthetic
+    // observation and emit it directly so subscribers see the
+    // expected memory event shape.
+    const now = Date.now();
+    const observation = {
+      id: `mem_test_${now}`,
+      createdAt: now,
+      lastUsedAt: now,
+      kind: "observation" as const,
       observedDate: "2026-05-08",
-      priority: "high",
-      scope: "session",
-      source: { kind: "system" },
+      priority: "high" as const,
+      source: { kind: "system" } as const,
       content: `<observation-group id="test" range="${range}">\n* ✅ Remembered pi-run memory payload.\n</observation-group>`,
       tags: ["observational-memory"],
-    });
+    };
     this.emit({
       type: "memory",
       phase: "observation",
@@ -197,24 +281,21 @@ describe("TurnRunner memory", () => {
 
     await transform(messages);
 
-    const snapshot = await runner.getMemorySnapshotForTest();
-    expect(snapshot).toMatchObject({
-      observations: [],
-      estimatedTokens: { observations: 0 },
-    });
+    // Pack stays empty because the transform never refreshes it on
+    // its own — only compaction events do, and none fire below
+    // threshold.
+    expect(runner.getFrozenContextPackForTest()).toEqual({ global: [], local: [] });
   });
 
   test("observational transform only shapes context at compaction threshold", async () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
-      memory: {
-        observation: {
-          messageTokens: 10,
-          bufferActivation: 1,
-          maxTokensPerBatch: 10,
-        },
-      },
+      // E=17 → messageTokens≈10, bufferActivation≈5. A 100-char (25-token)
+      // user message clears the compaction trigger; eviction reduces the
+      // tail to ≤bufferActivation, leaving the transform output empty since
+      // no memory pack is loaded.
+      effectiveContext: 17,
     });
     const events: unknown[] = [];
     runner.subscribe((event) => events.push(event));
@@ -236,18 +317,11 @@ describe("TurnRunner memory", () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
-      memory: {
-        observation: {
-          messageTokens: 20,
-          bufferActivation: 10,
-        },
-        reflection: {
-          observationTokens: 1_000,
-          bufferActivation: 500,
-        },
-      },
+      // E=34 → messageTokens≈20, bufferActivation≈10. Reflection budgets are
+      // irrelevant here; the transform never runs the reflector.
+      effectiveContext: 34,
     });
-    await runner.appendObservationForTest(
+    await runner.seedFrozenObservationForTest(
       '<observation-group id="test" range="msg_assistant_observed:msg_assistant_observed">\n* 🔴 Already observed the long message.\n</observation-group>',
     );
     const events: unknown[] = [];
@@ -359,9 +433,10 @@ describe("TurnRunner memory", () => {
         {
           id: "mem_test",
           createdAt: 1,
+          lastUsedAt: 1,
+          kind: "observation",
           observedDate: "2026-05-08",
           priority: "high",
-          scope: "session",
           source: { kind: "system" },
           content:
             '<observation-group id="test" range="msg_assistant_observed:msg_assistant_observed">\n* ✅ Observed result.\n</observation-group>',
@@ -545,9 +620,10 @@ describe("TurnRunner memory", () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
-      memory: {
-        observation: { messageTokens: 20, bufferActivation: 5 },
-      },
+      // E=34 → messageTokens≈20, bufferActivation≈10. The 80-char (20-token)
+      // first message triggers eviction; the second call must reuse the same
+      // sticky horizon when input is unchanged.
+      effectiveContext: 34,
     });
     const transform = runner.createMemoryTransformForTest();
     const messages: AgentMessage[] = [
@@ -572,4 +648,116 @@ describe("TurnRunner memory", () => {
       content: [{ type: "text", text: "latest prompt" }],
     });
   });
+
+  test("effectiveContextWindow clamps a user value larger than the model window to the model window", async () => {
+    const runner = new ContextUsageTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+      effectiveContext: 10_000_000,
+    });
+    const { turn } = await startTurn(runner, { mode: "agent", prompt: "ping" });
+    await turn;
+
+    const modelWindow = runner.requireParentAgentForTest().state.model.contextWindow;
+    expect(runner.effectiveContextWindowForTest()).toBe(modelWindow);
+    expect(modelWindow).toBeLessThan(10_000_000);
+  });
+
+  test("effectiveContextWindow uses the user value when it fits inside the model window", async () => {
+    const runner = new ContextUsageTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+      effectiveContext: 50_000,
+    });
+    const { turn } = await startTurn(runner, { mode: "agent", prompt: "ping" });
+    await turn;
+
+    const modelWindow = runner.requireParentAgentForTest().state.model.contextWindow;
+    expect(modelWindow).toBeGreaterThan(50_000);
+    expect(runner.effectiveContextWindowForTest()).toBe(50_000);
+  });
+
+  test("context_usage event carries a contextWindowUsage breakdown that scales with inputs", async () => {
+    const runner = new ContextUsageTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+      systemInstructions:
+        "Detailed test system instructions that should grow the system prompt segment beyond the base prompt alone.",
+    });
+    const seeded = runner.seedFrozenPackForTest({
+      global: [
+        synthObservation({
+          id: "global-1",
+          content: "Cross-session memory about the deploy command pnpm deploy:prod.",
+        }),
+        synthObservation({
+          id: "global-2",
+          content: "Cross-session memory about user preferences for terse answers.",
+        }),
+      ],
+      local: [
+        synthObservation({
+          id: "local-1",
+          content: "This session: the user asked about the api service deploy flow.",
+        }),
+      ],
+    });
+
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+
+    const { turn } = await startTurn(runner, { mode: "agent", prompt: "ping" });
+    await turn;
+
+    const contextUsage = events.find(
+      (event): event is Extract<TurnEvent, { type: "context_usage" }> =>
+        event.type === "context_usage",
+    );
+    expect(contextUsage).toBeDefined();
+    expect(contextUsage!.effectiveContextWindow).toBe(runner.effectiveContextWindowForTest());
+
+    const breakdown = contextUsage!.contextWindowUsage;
+    expect(breakdown.systemPrompt).toBeGreaterThan(0);
+    expect(breakdown.messages).toBeGreaterThan(0);
+    expect(breakdown.localMemory).toBeGreaterThan(0);
+    expect(breakdown.globalMemory).toBeGreaterThan(0);
+
+    // The two global rows together should contribute more tokens than
+    // the single local row, since their combined content is longer.
+    expect(breakdown.globalMemory).toBeGreaterThan(breakdown.localMemory);
+
+    // The seeded pack defines the lower bound on the memory segments:
+    // each rendered row's tokens must contribute, so the segment is at
+    // least the sum of its content estimates.
+    const expectedGlobalLowerBound = seeded.global.reduce(
+      (total, row) => total + Math.ceil(row.content.length / 4),
+      0,
+    );
+    const expectedLocalLowerBound = seeded.local.reduce(
+      (total, row) => total + Math.ceil(row.content.length / 4),
+      0,
+    );
+    expect(breakdown.globalMemory).toBe(expectedGlobalLowerBound);
+    expect(breakdown.localMemory).toBe(expectedLocalLowerBound);
+  });
 });
+
+interface SynthObservationInput {
+  id: string;
+  content: string;
+}
+
+function synthObservation(input: SynthObservationInput) {
+  const now = Date.now();
+  return {
+    id: input.id,
+    createdAt: now,
+    lastUsedAt: now,
+    kind: "observation" as const,
+    observedDate: "2026-05-09",
+    priority: "high" as const,
+    source: { kind: "system" } as const,
+    content: input.content,
+    tags: ["test"],
+  };
+}

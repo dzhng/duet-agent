@@ -11,7 +11,16 @@
  *   /queue+observe <secs>      run an observation phase with a non-empty queue
  *   /tools <secs>              emit one fake tool-call running → completed
  *   /tools-demo                run a batch of formatters with verbose data
- *   /ask                       emit an `ask` terminal with two questions
+ *   /ask                       emit an `ask` terminal with three questions
+ *                              (single-select, multi-select, single-select).
+ *                              Up/Down moves the highlight (and live-records
+ *                              the answer for single-select). Space/Enter
+ *                              advances on single-select, toggles a row on
+ *                              multi-select, and advances when the synthetic
+ *                              "Done" row is highlighted. ←/→ revisit prior
+ *                              or upcoming questions. Typing a prompt
+ *                              mid-flow flushes the latest answers via
+ *                              `session.answer({ ..., message })`.
  *   /sleep <secs>              emit a `sleep` terminal that wakes in N seconds
  *   /error <message>           emit a system error and end the turn
  *   anything else              stream a short text reply and complete
@@ -37,18 +46,44 @@ import type {
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
+  TurnQuestion,
   TurnStartCommand,
   TurnState,
   TurnTerminalEvent,
 } from "../src/types/protocol.js";
 
-const INITIAL_STATE: TurnState = {
+export const INITIAL_STATE: TurnState = {
   status: "running",
   mode: "agent",
   agent: { status: "running", messages: [] },
 };
 
-class FakePlaygroundRunner implements SessionTurnRunner {
+// Keep this list in sync with the runScenario branches below; rendered as the
+// first transcript block so users hitting `bun run examples/tui-playground.ts`
+// can discover scenarios without scrolling back to the file header.
+export const PLAYGROUND_MENU = [
+  "Playground scenarios (type any of these and press Enter):",
+  "  /working <secs>            stream a fake working turn for ~secs",
+  "  /observe <secs>            same, but as an observational memory phase",
+  "  /reflect <secs>            same, but as a reflection memory phase",
+  "  /queue <a,b,c>             emit a follow-up queue with the given prompts",
+  "  /queue+observe <secs>      observation phase with a non-empty queue",
+  "  /tools <secs>              one fake tool-call running -> completed",
+  "  /tools-demo                run a batch of formatters with verbose data",
+  "  /ask                       ask three questions (single, multi, single).",
+  "                             ↑/↓ move highlight (single-select live-records);",
+  "                             Space/Enter advance, or toggle on multi-select;",
+  "                             a 'Done' row is the multi-select advance key;",
+  "                             ←/→ revisit prior or upcoming questions;",
+  "                             typing mid-flow flushes the latest answers.",
+  "  /context [pct]             emit a context_usage event filling the bar to ~pct (default 60)",
+  "  /sleep <secs>              emit a sleep terminal that wakes in N seconds",
+  "  /error <message>           emit a system error and end the turn",
+  "  /echo <text>               stream <text> back verbatim and complete (used by tests)",
+  "  anything else              stream a short text reply and complete",
+].join("\n");
+
+export class FakePlaygroundRunner implements SessionTurnRunner {
   private readonly handlers = new Set<(event: TurnEvent) => void>();
   private state: TurnState = INITIAL_STATE;
   private interrupted = false;
@@ -56,18 +91,49 @@ class FakePlaygroundRunner implements SessionTurnRunner {
 
   async start(_command: TurnStartCommand): Promise<TurnState> {
     this.emit({ type: "turn_started", state: this.state });
+    this.emit({ type: "system", level: "info", message: PLAYGROUND_MENU });
     return this.state;
   }
 
   async turn(command: TurnCommand): Promise<TurnTerminalEvent> {
-    if (command.type !== "prompt") {
-      return this.complete("Only prompts are scripted in the playground.");
+    if (command.type === "wake") {
+      return this.complete("Woke up.");
     }
     this.interrupted = false;
-    const terminal = await this.runScenario(command.message.trim());
+    const terminal =
+      command.type === "answer"
+        ? await this.runAnswerScenario(command)
+        : await this.runScenario(command.message.trim());
     this.state = terminal.state;
     this.emit(terminal);
     return terminal;
+  }
+
+  /**
+   * Stream a summary of the answers (and any flushed prompt) the TUI picker
+   * dispatched via `session.answer(...)`. Lets the playground exercise the
+   * picker handoff end-to-end without a real model.
+   */
+  private async runAnswerScenario(
+    command: Extract<TurnCommand, { type: "answer" }>,
+  ): Promise<TurnTerminalEvent> {
+    const lines: string[] = ["Answers received:"];
+    for (const question of command.questions) {
+      const labels = command.answers[question.question] ?? [];
+      const rendered = labels.length === 0 ? "(no selection)" : labels.join(", ");
+      lines.push(`- ${question.question} -> ${rendered}`);
+    }
+    const trailing = command.message?.trim();
+    if (trailing) lines.push(`Trailing prompt: ${trailing}`);
+    const summary = lines.join("\n");
+
+    for (const chunk of summary.match(/.{1,32}/g) ?? []) {
+      this.emit({ type: "step", step: { type: "text_delta", delta: chunk } });
+      await this.sleep(60);
+      if (this.interrupted) return this.interruptedTerminal();
+    }
+    this.emit({ type: "step", step: { type: "text", text: summary } });
+    return this.complete(summary);
   }
 
   interrupt(_command: TurnInterruptCommand): void {
@@ -104,6 +170,22 @@ class FakePlaygroundRunner implements SessionTurnRunner {
   }
 
   async dispose(): Promise<void> {}
+
+  /**
+   * Emit a synthetic `ask` terminal so tests / playground extensions can
+   * push the picker into a known state without routing through the slash
+   * scenario layer. Mirrors what the `/ask` scenario produces, but lets
+   * the caller hand-craft the questions list.
+   */
+  emitAskTerminal(questions: TurnQuestion[]): void {
+    const terminal: TurnTerminalEvent = {
+      type: "ask",
+      state: { ...this.state, status: "waiting_for_human" },
+      questions,
+    };
+    this.state = terminal.state;
+    this.emit(terminal);
+  }
 
   // ---- scenario plumbing ---------------------------------------------------
 
@@ -209,6 +291,24 @@ class FakePlaygroundRunner implements SessionTurnRunner {
               { label: "production", description: "requires approval" },
             ],
           },
+          {
+            question: "Which test suites should run before promotion?",
+            multiSelect: true,
+            options: [
+              { label: "unit", description: "fast, runs on every push" },
+              { label: "integration", description: "hits live services" },
+              { label: "e2e", description: "drives the browser" },
+              { label: "load", description: "long-running soak" },
+            ],
+          },
+          {
+            question: "Confirm rollout window",
+            options: [
+              { label: "now" },
+              { label: "tonight", description: "after 22:00 local" },
+              { label: "next morning" },
+            ],
+          },
         ],
       };
       return terminal;
@@ -221,6 +321,52 @@ class FakePlaygroundRunner implements SessionTurnRunner {
         state: { ...this.state, status: "sleeping" },
         wakeAt: Date.now() + secs * 1000,
       };
+    }
+
+    if (message.startsWith("/context")) {
+      // Emits a synthetic `context_usage` event so the sidebar's colored
+      // bar + legend can be eyeballed without a live turn. The optional
+      // first arg is the target fill percentage; tokens are split across
+      // every segment so all four colors plus the untracked tail render.
+      const arg = message.slice("/context".length).trim();
+      const target = Math.max(1, Math.min(120, Number.parseInt(arg, 10) || 60));
+      const cap = 200_000;
+      const total = Math.round((target / 100) * cap);
+      // Split: 10% system prompt, 55% messages, 15% local memory, 10%
+      // global memory, 10% untracked (provider overhead the runner does
+      // not attribute to a named segment).
+      const systemPrompt = Math.round(total * 0.1);
+      const messages = Math.round(total * 0.55);
+      const localMemory = Math.round(total * 0.15);
+      const globalMemory = Math.round(total * 0.1);
+      this.emit({
+        type: "context_usage",
+        usage: {
+          input: total,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: total,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        effectiveContextWindow: cap,
+        contextWindowUsage: { systemPrompt, messages, localMemory, globalMemory },
+      });
+      return this.complete(`Emitted context_usage at ~${target}% of ${cap} tokens.`);
+    }
+
+    if (message.startsWith("/echo")) {
+      // Streams the trailing text back verbatim. Deterministic and free of
+      // incidental tokens (no timing strings or queue counts) so callers
+      // can assert on an exact substring of the rendered transcript.
+      const reply = message.slice("/echo".length).trim() || "echo";
+      for (const chunk of reply.match(/.{1,8}/g) ?? []) {
+        this.emit({ type: "step", step: { type: "text_delta", delta: chunk } });
+        await this.sleep(10);
+        if (this.interrupted) return this.interruptedTerminal();
+      }
+      this.emit({ type: "step", step: { type: "text", text: reply } });
+      return this.complete(reply);
     }
 
     if (message.startsWith("/error")) {
@@ -549,6 +695,7 @@ async function main(): Promise<void> {
     session,
     workDir: process.cwd(),
     sessionId: "playground",
+    packageName: "@duetso/agent",
     packageVersion: "playground",
     modelName: "playground",
     memoryModelName: "playground",

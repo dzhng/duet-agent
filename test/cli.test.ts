@@ -9,10 +9,9 @@ import {
   compareSemverVersions,
   detectPackageManagerFromContext,
   formatEnvEntries,
-  formatNewVersionNotice,
   globalUpgradeCommand,
   loadCliEnvFiles,
-  parseResumeHistoryLines,
+  parseResumeHistoryMessages,
   resumeCommand,
   runEnvCommand,
   shouldUseTui,
@@ -28,10 +27,13 @@ import {
   formatSkillAutocompleteDescription,
   formatSkillAutocompleteItem,
   historyDisplayBlocks,
-  limitHistoryDisplayBlocks,
-  moveQuestionOptionSelection,
+  limitHistoryDisplayMessages,
+  commitActiveAnswer,
+  moveQuestionHighlight,
   moveSkillAutocompleteSelection,
-  questionPickerAnswerPayload,
+  NO_HIGHLIGHT,
+  questionPickerAnswer,
+  restoreSavedAnswer,
   replaceSkillAutocompleteToken,
   skillAutocompleteMatches,
   startupHeaderLines,
@@ -338,7 +340,7 @@ describe("CLI model inference", () => {
 
     const { config, modelResolution, memoryModelResolution } = buildCliTurnConfig(
       {
-        disableDurableMemory: true,
+        incognito: true,
         workDir: "/repo",
         systemInstructions: "Prefer concise answers.",
         systemPromptFiles: [],
@@ -520,12 +522,6 @@ describe("CLI env files", () => {
 });
 
 describe("CLI version checks", () => {
-  test("formats the update notice for stderr and TUI display", () => {
-    expect(formatNewVersionNotice("@duetso/agent", "0.1.2", "0.1.3")).toBe(
-      "Update available: @duetso/agent 0.1.2 -> 0.1.3. Run: duet upgrade",
-    );
-  });
-
   test("compares semantic versions", () => {
     expect(compareSemverVersions("0.1.3", "0.1.2")).toBe(1);
     expect(compareSemverVersions("0.2.0", "0.10.0")).toBe(-1);
@@ -536,62 +532,82 @@ describe("CLI version checks", () => {
 });
 
 describe("CLI resume command", () => {
-  test("preserves in-process-only memory mode", () => {
+  test("preserves incognito mode", () => {
     expect(
       resumeCommand("session_123", {
         modelName: "opus-4.7",
         memoryModelName: "haiku-4.5",
         workDir: "/repo",
-        disableDurableMemory: true,
+        incognito: true,
       }),
-    ).toContain("--no-memory");
+    ).toContain("--incognito");
   });
 });
 
 describe("CLI render mode", () => {
   test("uses TUI only for interactive sessions without a prompt", () => {
-    expect(shouldUseTui({ interactive: true, jsonOutput: false })).toBe(true);
-    expect(shouldUseTui({ interactive: true, jsonOutput: false, prompt: "hi" })).toBe(false);
-    expect(shouldUseTui({ interactive: true, jsonOutput: true })).toBe(false);
-    expect(shouldUseTui({ interactive: false, jsonOutput: false, prompt: "hi" })).toBe(false);
+    expect(shouldUseTui({ interactive: true })).toBe(true);
+    expect(shouldUseTui({ interactive: true, prompt: "hi" })).toBe(false);
+    expect(shouldUseTui({ interactive: false, prompt: "hi" })).toBe(false);
   });
 });
 
 describe("CLI resume history display", () => {
-  test("parses non-negative resume history line limits", () => {
-    expect(parseResumeHistoryLines("0")).toBe(0);
-    expect(parseResumeHistoryLines("40")).toBe(40);
-    expect(() => parseResumeHistoryLines("-1")).toThrow(
-      "--resume-history-lines must be a non-negative integer",
+  test("parses non-negative resume history message limits", () => {
+    expect(parseResumeHistoryMessages("0")).toBe(0);
+    expect(parseResumeHistoryMessages("5")).toBe(5);
+    expect(() => parseResumeHistoryMessages("-1")).toThrow(
+      "--resume-history-messages must be a non-negative integer",
     );
-    expect(() => parseResumeHistoryLines("all")).toThrow(
-      "--resume-history-lines must be a non-negative integer",
+    expect(() => parseResumeHistoryMessages("all")).toThrow(
+      "--resume-history-messages must be a non-negative integer",
     );
   });
 
-  test("limits resumed history to the newest display lines", () => {
-    const limited = limitHistoryDisplayBlocks(
+  test("limits resumed history to the newest user-turn exchanges", () => {
+    const limited = limitHistoryDisplayMessages(
       [
-        { kind: "user", content: "you:\nold question" },
-        { kind: "agent", content: "old answer" },
+        { kind: "user", content: "you:\noldest question" },
+        { kind: "agent", content: "oldest answer" },
+        { kind: "user", content: "you:\nmiddle question" },
+        { kind: "agent", content: "middle answer" },
         { kind: "user", content: "you:\nnew question" },
-        { kind: "agent", content: "line one\nline two\nline three" },
+        { kind: "tool", content: "[tool read] ✓" },
+        { kind: "agent", content: "line one\nline two" },
       ],
-      4,
+      2,
     );
 
-    expect(limited.omittedLines).toBe(4);
+    expect(limited.omittedBlocks).toBe(2);
     expect(limited.blocks.map((block) => block.content)).toEqual([
-      "new question",
-      "line one\nline two\nline three",
+      "you:\nmiddle question",
+      "middle answer",
+      "you:\nnew question",
+      "[tool read] ✓",
+      "line one\nline two",
     ]);
   });
 
-  test("zero resume history lines disables replay", () => {
-    const limited = limitHistoryDisplayBlocks([{ kind: "agent", content: "one\ntwo" }], 0);
+  test("drops orphan blocks before the first kept user turn", () => {
+    const limited = limitHistoryDisplayMessages(
+      [
+        { kind: "agent", content: "orphan reply" },
+        { kind: "tool", content: "orphan tool" },
+        { kind: "user", content: "you:\nfirst real prompt" },
+        { kind: "agent", content: "answer" },
+      ],
+      5,
+    );
+
+    expect(limited.omittedBlocks).toBe(2);
+    expect(limited.blocks.map((block) => block.kind)).toEqual(["user", "agent"]);
+  });
+
+  test("zero resume history messages disables replay", () => {
+    const limited = limitHistoryDisplayMessages([{ kind: "agent", content: "one\ntwo" }], 0);
 
     expect(limited.blocks).toEqual([]);
-    expect(limited.omittedLines).toBe(2);
+    expect(limited.omittedBlocks).toBe(1);
   });
 
   test("formats resumed messages before limiting", () => {
@@ -647,7 +663,13 @@ describe("CLI resume history display", () => {
       modelSource: "default",
       memoryModelName: "haiku-4.5",
     });
-    const history = limitHistoryDisplayBlocks([{ kind: "agent", content: "previous answer" }], 40);
+    const history = limitHistoryDisplayMessages(
+      [
+        { kind: "user", content: "you:\nprevious question" },
+        { kind: "agent", content: "previous answer" },
+      ],
+      5,
+    );
 
     expect([...header, ...history.blocks.map((block) => block.content)]).toEqual([
       "[duet] v0.1.12",
@@ -655,6 +677,7 @@ describe("CLI resume history display", () => {
       "[session] session_123",
       "[model] opus-4.7 — default",
       "[memory model] haiku-4.5",
+      "you:\nprevious question",
       "previous answer",
     ]);
   });
@@ -744,32 +767,143 @@ describe("TUI skill autocomplete helpers", () => {
 });
 
 describe("TUI question picker helpers", () => {
-  const questions = [
-    {
-      question: "Which environment should I deploy to?",
-      options: [
-        { label: "staging", description: "Deploy to the staging environment first." },
-        { label: "production", description: "Deploy directly to production." },
-      ],
-    },
-  ];
+  const singleSelect = {
+    question: "Which environment should I deploy to?",
+    options: [
+      { label: "staging", description: "Deploy to the staging environment first." },
+      { label: "production", description: "Deploy directly to production." },
+    ],
+  };
+  const multiSelect = {
+    question: "Which test suites should run before promotion?",
+    multiSelect: true,
+    options: [{ label: "unit" }, { label: "integration" }, { label: "e2e" }],
+  };
 
-  test("wraps question option selection through available options", () => {
-    expect(moveQuestionOptionSelection(0, 2, 1)).toBe(1);
-    expect(moveQuestionOptionSelection(1, 2, 1)).toBe(0);
-    expect(moveQuestionOptionSelection(0, 2, -1)).toBe(1);
-    expect(moveQuestionOptionSelection(0, 0, 1)).toBe(0);
+  test("moveQuestionHighlight wraps and lifts NO_HIGHLIGHT onto the first or last row", () => {
+    // From a concrete row, modular wrap.
+    expect(moveQuestionHighlight(0, 2, 1)).toBe(1);
+    expect(moveQuestionHighlight(1, 2, 1)).toBe(0);
+    expect(moveQuestionHighlight(0, 2, -1)).toBe(1);
+    // From NO_HIGHLIGHT, Down lands on row 0; Up lands on the last row. This
+    // is what makes "no highlight by default" behave like a chat-app picker
+    // when the user starts navigating.
+    expect(moveQuestionHighlight(NO_HIGHLIGHT, 4, 1)).toBe(0);
+    expect(moveQuestionHighlight(NO_HIGHLIGHT, 4, -1)).toBe(3);
+    // Empty row count yields NO_HIGHLIGHT (renders as no highlight).
+    expect(moveQuestionHighlight(0, 0, 1)).toBe(NO_HIGHLIGHT);
   });
 
-  test("builds an answer payload from the selected option", () => {
-    expect(questionPickerAnswerPayload(questions, 1)).toEqual({
-      "Which environment should I deploy to?": "production",
+  test("builds a single-element answer for single-select questions", () => {
+    expect(questionPickerAnswer(singleSelect, 1, new Set())).toEqual(["production"]);
+  });
+
+  test("returns undefined for single-select with NO_HIGHLIGHT", () => {
+    // Default state when the user has not yet pressed Up/Down. commitActiveAnswer
+    // relies on this to skip writing an answer that the user hasn't expressed.
+    expect(questionPickerAnswer(singleSelect, NO_HIGHLIGHT, new Set())).toBeUndefined();
+  });
+
+  test("emits checked labels in option order for multi-select questions", () => {
+    expect(questionPickerAnswer(multiSelect, 0, new Set([2, 0]))).toEqual(["unit", "e2e"]);
+  });
+
+  test("returns an empty array for a multi-select with nothing checked", () => {
+    expect(questionPickerAnswer(multiSelect, 0, new Set())).toEqual([]);
+  });
+
+  test("returns undefined when the question is missing or has no option at the selection", () => {
+    expect(questionPickerAnswer(undefined, 0, new Set())).toBeUndefined();
+    expect(questionPickerAnswer(singleSelect, 5, new Set())).toBeUndefined();
+  });
+
+  test("commitActiveAnswer live-records multi-select toggles without waiting for Enter", () => {
+    // Regression: if the user Space-toggles options and then types a prompt
+    // (flushing the picker via `submit()`), the toggled labels must already
+    // be in the accumulated map so the dispatched `session.answer` reflects
+    // them. Pressing Enter must not be a precondition.
+    const accumulated = commitActiveAnswer(multiSelect, 0, new Set([0, 2]), {});
+    expect(accumulated).toEqual({
+      "Which test suites should run before promotion?": ["unit", "e2e"],
     });
   });
 
-  test("returns no answer payload when selection is unavailable", () => {
-    expect(questionPickerAnswerPayload(questions, 3)).toBeUndefined();
-    expect(questionPickerAnswerPayload([], 0)).toBeUndefined();
+  test("commitActiveAnswer live-records the highlight as a single-select answer", () => {
+    // Up/Down on single-select should treat the highlighted option as the
+    // committed answer (highlight = selection), so a prompt-flush mid-flow
+    // includes it without requiring Enter first.
+    const accumulated = commitActiveAnswer(singleSelect, 1, new Set(), {});
+    expect(accumulated).toEqual({
+      "Which environment should I deploy to?": ["production"],
+    });
+  });
+
+  test("commitActiveAnswer is a no-op for single-select with NO_HIGHLIGHT", () => {
+    // Default state. The user has not yet pressed Up/Down so there is no
+    // implicit selection; the accumulated map must not gain a stale entry.
+    const before = { other: ["foo"] };
+    expect(commitActiveAnswer(singleSelect, NO_HIGHLIGHT, new Set(), before)).toBe(before);
+  });
+
+  test("commitActiveAnswer overwrites prior accumulated values for the same question", () => {
+    const before = {
+      "Which test suites should run before promotion?": ["unit"],
+    };
+    const after = commitActiveAnswer(multiSelect, 0, new Set([1]), before);
+    expect(after).toEqual({
+      "Which test suites should run before promotion?": ["integration"],
+    });
+    expect(before).toEqual({
+      "Which test suites should run before promotion?": ["unit"],
+    });
+  });
+
+  test("commitActiveAnswer preserves answers for other questions", () => {
+    const before = { "Pick env": ["staging"] };
+    const after = commitActiveAnswer(multiSelect, 0, new Set([0]), before);
+    expect(after).toEqual({
+      "Pick env": ["staging"],
+      "Which test suites should run before promotion?": ["unit"],
+    });
+  });
+
+  test("commitActiveAnswer returns the input map when no question is active", () => {
+    const before = { "Pick env": ["staging"] };
+    expect(commitActiveAnswer(undefined, 0, new Set(), before)).toBe(before);
+  });
+
+  test("restoreSavedAnswer reconstructs multi-select checks from saved labels", () => {
+    const restored = restoreSavedAnswer(multiSelect, {
+      "Which test suites should run before promotion?": ["e2e", "unit"],
+    });
+    // Multi-select highlight always starts cleared on revisit; toggles
+    // restore so the user sees their prior `[x]` boxes.
+    expect(restored.selectedIndex).toBe(NO_HIGHLIGHT);
+    expect([...restored.checked].sort()).toEqual([0, 2]);
+  });
+
+  test("restoreSavedAnswer reconstructs single-select highlight from saved label", () => {
+    const restored = restoreSavedAnswer(singleSelect, {
+      "Which environment should I deploy to?": ["production"],
+    });
+    expect(restored.selectedIndex).toBe(1);
+    expect(restored.checked.size).toBe(0);
+  });
+
+  test("restoreSavedAnswer falls back to NO_HIGHLIGHT when no answer was saved", () => {
+    // First visit to a question: nothing highlighted, nothing checked.
+    expect(restoreSavedAnswer(singleSelect, {})).toEqual({
+      selectedIndex: NO_HIGHLIGHT,
+      checked: new Set<number>(),
+    });
+    expect(restoreSavedAnswer(multiSelect, {})).toEqual({
+      selectedIndex: NO_HIGHLIGHT,
+      checked: new Set<number>(),
+    });
+    expect(restoreSavedAnswer(undefined, {})).toEqual({
+      selectedIndex: NO_HIGHLIGHT,
+      checked: new Set<number>(),
+    });
   });
 
   test("wraps full question option descriptions without truncating", () => {

@@ -11,7 +11,14 @@ import {
   WIRE_BYTE_TRIGGER,
   type WireGuardHorizon,
 } from "../turn-runner/wire-shaping.js";
-import type { MemoryStore } from "./store.js";
+import type { MemoryContextCache } from "./store.js";
+import {
+  appendObservation,
+  bumpLastUsed,
+  readSessionObservations,
+  replaceSessionObservations,
+  type MemoryDatabase,
+} from "./storage.js";
 import type {
   Observation,
   ObservationPriority,
@@ -37,35 +44,136 @@ import {
   type RawMemoryMessage,
 } from "./observational-prompts.js";
 
-export const OBSERVATIONAL_MEMORY_DEFAULTS = {
-  observation: {
-    // Observe before the actor window gets tight; prompt caching keeps the exact
-    // tail cheap while memory preserves older task state.
-    messageTokens: 100_000,
-    // Keep observer calls comfortably below the model's practical reasoning
-    // ceiling while still batching enough transcript to avoid noisy churn.
-    maxTokensPerBatch: 35_000,
-    // Retain enough exact history for active tool work after older messages are
-    // represented by observations.
-    bufferActivation: 30_000,
-    // Existing observations help avoid semantic duplicates, but the observer
-    // should never receive the whole durable memory database.
-    previousObserverTokens: 4_000,
-  },
-  reflection: {
-    // Reflect before observations become a second large prompt layer.
-    observationTokens: 60_000,
-    // Target this many observation tokens after reflection so the pass dedupes
-    // without aggressively summarizing away useful specifics.
-    bufferActivation: 40_000,
-  },
+/**
+ * Default `effectiveContext` when the runner doesn't specify one. 200k is a
+ * comfortable mid-range target: well below frontier-model windows so memory
+ * compaction kicks in early enough to keep latency and cost predictable,
+ * but high enough that long-running sessions retain enough exact transcript
+ * for active tool work between compactions.
+ */
+export const DEFAULT_EFFECTIVE_CONTEXT = 200_000;
+
+/**
+ * Ratios of `effectiveContext` that sum to exactly 100%. These three budgets
+ * are the only ones that count against the actor model's per-turn input —
+ * `messageTokens` caps the raw-message tail, `observationTokens` caps the
+ * local-memory pack rendered into the prefix, and `globalContextTokenBudget`
+ * caps the cross-session pack rendered above local. The system prompt and
+ * tool-call slack come out of `messageTokens`'s share since the raw tail
+ * naturally absorbs whatever's left.
+ */
+export const MEMORY_BUDGET_RATIOS = {
+  /** Raw-message compaction trigger (per turn). */
+  messageTokens: 0.6,
+  /** Local-memory pack ceiling between reflection events. */
+  observationTokens: 0.325,
+  /** Cross-session global pack ceiling. */
+  globalContextTokenBudget: 0.075,
 } as const;
+
+/**
+ * Shared "keep half of the trigger" knob applied to both buffer activations.
+ * Each compact/reflect event reclaims roughly half the trigger's worth of
+ * space; the next event triggers sooner, trading larger condensation steps
+ * for smaller, more frequent ones. Buffer activations don't count toward the
+ * actor budget because they're bounded above by their respective triggers,
+ * which already do.
+ */
+export const BUFFER_RATIO = 0.5;
+
+/**
+ * Token budgets that govern observer-call quality rather than actor-context
+ * fit. These never appear in the actor model's request, so they're decoupled
+ * from `effectiveContext` and held at fixed values that the observer model
+ * handles reliably across providers.
+ */
+export const FIXED_OBSERVER_BUDGETS = {
+  /**
+   * Cap on transcript tokens sent to one observer call. Keeps observer
+   * reasoning comfortably below model ceilings while still batching enough
+   * history to avoid noisy churn.
+   */
+  maxTokensPerBatch: 35_000,
+  /**
+   * Cap on prior-observation tokens included in the observer prompt for
+   * dedupe context. Bounded so the observer never receives the whole
+   * durable memory database.
+   */
+  previousObserverTokens: 4_000,
+} as const;
+
+/**
+ * 7 days picked to keep last-week's context current while letting month-old
+ * chatter decay out of the global pack. Tunable per-caller via
+ * `ObservationalMemorySettingsInput.recencyHalfLifeMs`.
+ */
+const DEFAULT_RECENCY_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * 1.3 keeps reflections preferred at matched priority/recency without
+ * shutting raw observations out of the global pack entirely.
+ */
+const DEFAULT_REFLECTION_BIAS = 1.3;
+
+export interface DerivedMemoryBudgets {
+  observation: {
+    messageTokens: number;
+    maxTokensPerBatch: number;
+    bufferActivation: number;
+    previousObserverTokens: number;
+  };
+  reflection: {
+    observationTokens: number;
+    bufferActivation: number;
+  };
+  globalContextTokenBudget: number;
+}
+
+/**
+ * Compute every numeric token budget the memory pipeline uses from a single
+ * `effectiveContext` value. Values are floored to integers and clamped to
+ * at least 1 so tiny test-mode contexts still satisfy `buffer < trigger`
+ * after rounding.
+ */
+export function deriveMemoryBudgets(effectiveContext: number): DerivedMemoryBudgets {
+  const positive = Math.max(1, Math.floor(effectiveContext));
+  const messageTokens = atLeastOne(MEMORY_BUDGET_RATIOS.messageTokens * positive);
+  const observationTokens = atLeastOne(MEMORY_BUDGET_RATIOS.observationTokens * positive);
+  const globalContextTokenBudget = atLeastOne(
+    MEMORY_BUDGET_RATIOS.globalContextTokenBudget * positive,
+  );
+  return {
+    observation: {
+      messageTokens,
+      maxTokensPerBatch: FIXED_OBSERVER_BUDGETS.maxTokensPerBatch,
+      bufferActivation: atLeastOne(BUFFER_RATIO * messageTokens),
+      previousObserverTokens: FIXED_OBSERVER_BUDGETS.previousObserverTokens,
+    },
+    reflection: {
+      observationTokens,
+      bufferActivation: atLeastOne(BUFFER_RATIO * observationTokens),
+    },
+    globalContextTokenBudget,
+  };
+}
+
+function atLeastOne(value: number): number {
+  return Math.max(1, Math.floor(value));
+}
 
 export interface ObserverResult {
   /** Whether the observer found durable information worth writing to memory. */
   hasMemory: boolean;
   /** New observation log text extracted from raw messages. */
   observations: string;
+  /**
+   * Ids of prior memories that the observer reports as having actually
+   * informed the assistant's response in this exchange. The runner
+   * advances `lastUsedAt` on these rows so reused memories keep
+   * climbing in the global ranking even as their original
+   * `createdAt` recedes.
+   */
+  usedObservationIds?: string[];
   /** Current task state distilled for continuity and optional thread metadata. */
   currentTask?: string;
   /** Hint for the actor's next response after context has been compressed. */
@@ -94,6 +202,12 @@ const observerResultSchema = Type.Object({
     description:
       "New observation log text extracted from the raw message history. When hasMemory is false, return an empty string.",
   }),
+  usedObservationIds: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "Ids of prior memories from the [memory id: mem_...] markers in the existing observations block whose content actually informed the assistant's response in this exchange. Drives the lastUsedAt freshness signal so reused memories keep surfacing. Omit or return [] when no prior memory was leaned on.",
+    }),
+  ),
   currentTask: Type.Optional(
     Type.String({ description: "Current task state distilled for continuity." }),
   ),
@@ -172,8 +286,21 @@ export class ModelByInputTokens {
 }
 
 export interface ObservationalContextTransformOptions {
-  memory: MemoryStore;
+  memory: MemoryContextCache;
+  /**
+   * Caller-resolved effective context window (already clamped to the
+   * model's hard limit). All numeric memory budgets are derived from this.
+   */
+  effectiveContext: number;
   settings?: ObservationalMemorySettingsInput;
+  /**
+   * Compaction trigger fired when the wire-shaping eviction horizon
+   * advances mid-turn. The runner uses it to rebuild the frozen memory
+   * context pack — the prompt cache is already invalidating because
+   * eviction changed the message tail, so refreshing the prefix at the
+   * same moment piggybacks on a cache miss the model is already paying.
+   */
+  onCompaction?: () => void;
   /**
    * Sticky eviction point. The transform applies this horizon to the
    * message list before checking either budget, then advances it in place
@@ -188,7 +315,22 @@ export interface ObservationalContextTransformOptions {
 }
 
 export interface ObservationalMemoryUpdateOptions {
-  memory: MemoryStore;
+  /** PGlite database that owns the durable memory rows. */
+  db: MemoryDatabase;
+  /** Frozen context-pack cache; queried for the global memories the observer can attribute usage against. */
+  memory: MemoryContextCache;
+  /**
+   * Session that owns the runner. Stamped onto every observation and
+   * reflection produced by this update so the loader can later split
+   * memory into the current session's local layer and every other
+   * session's global layer.
+   */
+  sessionId?: string;
+  /**
+   * Caller-resolved effective context window (already clamped to the
+   * model's hard limit). All numeric memory budgets are derived from this.
+   */
+  effectiveContext: number;
   settings?: ObservationalMemorySettingsInput;
   actorModel: string;
   messages: AgentMessage[];
@@ -201,48 +343,48 @@ export interface ObservationalMemoryUpdateResult {
   reflections: Observation[];
 }
 
+/**
+ * Resolve user-provided non-budget knobs and merge with the budgets derived
+ * from `effectiveContext`. Callers must pass `effectiveContext` already
+ * clamped to the actor model's hard window when one is known; the function
+ * itself only validates that the value is positive.
+ */
 export function resolveObservationalMemorySettings(
+  effectiveContext: number,
   input?: ObservationalMemorySettingsInput,
 ): ObservationalMemorySettings {
   const partial = input ?? {};
+  const budgets = deriveMemoryBudgets(effectiveContext);
 
   return {
-    scope: partial.scope ?? "session",
+    globalContextTokenBudget: budgets.globalContextTokenBudget,
+    recencyHalfLifeMs: partial.recencyHalfLifeMs ?? DEFAULT_RECENCY_HALF_LIFE_MS,
+    reflectionBias: partial.reflectionBias ?? DEFAULT_REFLECTION_BIAS,
     observation: {
-      messageTokens:
-        partial.observation?.messageTokens ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.observation.messageTokens,
-      maxTokensPerBatch:
-        partial.observation?.maxTokensPerBatch ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.observation.maxTokensPerBatch,
-      bufferActivation:
-        partial.observation?.bufferActivation ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.observation.bufferActivation,
-      blockAfter: partial.observation?.blockAfter,
-      previousObserverTokens:
-        partial.observation?.previousObserverTokens ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.observation.previousObserverTokens,
+      messageTokens: budgets.observation.messageTokens,
+      maxTokensPerBatch: budgets.observation.maxTokensPerBatch,
+      bufferActivation: budgets.observation.bufferActivation,
+      previousObserverTokens: budgets.observation.previousObserverTokens,
       instruction: partial.observation?.instruction,
       threadTitle: partial.observation?.threadTitle,
     },
     reflection: {
-      observationTokens:
-        partial.reflection?.observationTokens ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.reflection.observationTokens,
-      bufferActivation:
-        partial.reflection?.bufferActivation ??
-        OBSERVATIONAL_MEMORY_DEFAULTS.reflection.bufferActivation,
-      blockAfter: partial.reflection?.blockAfter,
+      observationTokens: budgets.reflection.observationTokens,
+      bufferActivation: budgets.reflection.bufferActivation,
       instruction: partial.reflection?.instruction,
     },
-    retrieval: partial.retrieval ?? false,
-    shareTokenBudget: partial.shareTokenBudget ?? false,
-    temporalMarkers: partial.temporalMarkers ?? false,
-    activateAfterIdle: partial.activateAfterIdle,
-    activateOnProviderChange: partial.activateOnProviderChange ?? false,
+    retrieval: partial.retrieval ?? true,
   };
 }
 
+/**
+ * Sanity-check the derived budgets. The ratio derivation in
+ * `deriveMemoryBudgets` already enforces `buffer < trigger` by construction,
+ * but tiny `effectiveContext` values (used by tests) can collapse triggers
+ * to single-digit token counts where the rounded buffer would tie. Validate
+ * at use-time so a misconfigured runner fails loudly rather than silently
+ * producing an empty raw-message tail.
+ */
 export function validateObservationalMemorySettings(settings: ObservationalMemorySettings): void {
   if (settings.observation.bufferActivation <= 0) {
     throw new Error(
@@ -270,7 +412,7 @@ export function validateObservationalMemorySettings(settings: ObservationalMemor
 }
 
 export function createObservationalContextTransform(options: ObservationalContextTransformOptions) {
-  const settings = resolveObservationalMemorySettings(options.settings);
+  const settings = resolveObservationalMemorySettings(options.effectiveContext, options.settings);
   validateObservationalMemorySettings(settings);
 
   return async (messages: AgentMessage[]): Promise<AgentMessage[]> => {
@@ -291,6 +433,7 @@ export function createObservationalContextTransform(options: ObservationalContex
     const tokenTarget = settings.observation.bufferActivation;
 
     if (candidateTokens >= tokenTrigger || candidateBytes >= WIRE_BYTE_TRIGGER) {
+      const previousHorizon = options.horizon.evictionHorizon;
       options.horizon.evictionHorizon = findEvictionHorizon(
         observableMessages,
         options.horizon.evictionHorizon,
@@ -301,32 +444,77 @@ export function createObservationalContextTransform(options: ObservationalContex
         },
       );
       retainedMessages = applyEvictionHorizon(observableMessages, options.horizon.evictionHorizon);
+      // Compaction trigger: piggyback on the cache miss the eviction
+      // already forced. The handler is fire-and-forget; the runner
+      // wires it to refresh the frozen memory pack in the background.
+      if (options.horizon.evictionHorizon !== previousHorizon) {
+        options.onCompaction?.();
+      }
     }
 
-    const snapshot = await options.memory.getSnapshot();
-    const observations = snapshot.observations
-      .map((observation) => observation.content)
-      .join("\n\n");
-    if (!observations.trim()) {
+    // Render the frozen context pack rather than every observation
+    // currently in the store. The pack is rebuilt only at compaction
+    // events (see memory/context-pack.ts), so the rendered prefix stays
+    // content-deterministic across turns and the provider's prompt
+    // cache survives until the next compaction.
+    const pack = options.memory.getContextPack();
+    const rendered = renderContextPack(pack);
+    if (!rendered) {
       return retainedMessages;
     }
 
     return [
-      buildObservationContextMessage(observations),
+      buildObservationContextMessage(rendered),
       buildContinuationMessage(),
       ...retainedMessages,
     ];
   };
 }
 
+/**
+ * Compose the two-layer memory section. Global rows render first
+ * (most stable cross-session signal), local rows render second
+ * (chronological compaction summary of the current session). The
+ * fixed render order matches the prompt assembly: system prompt →
+ * memory section → message history.
+ */
+function renderContextPack(pack: { global: Observation[]; local: Observation[] }): string {
+  const sections: string[] = [];
+  if (pack.global.length > 0) {
+    sections.push(
+      [
+        "### Long-term memory (cross-session)",
+        pack.global.map((observation) => observation.content).join("\n\n"),
+      ].join("\n\n"),
+    );
+  }
+  if (pack.local.length > 0) {
+    sections.push(
+      [
+        "### From this session",
+        pack.local.map((observation) => observation.content).join("\n\n"),
+      ].join("\n\n"),
+    );
+  }
+  return sections.join("\n\n");
+}
+
 export async function updateObservationalMemory(
   options: ObservationalMemoryUpdateOptions,
 ): Promise<ObservationalMemoryUpdateResult> {
-  const settings = resolveObservationalMemorySettings(options.settings);
+  const settings = resolveObservationalMemorySettings(options.effectiveContext, options.settings);
   validateObservationalMemorySettings(settings);
   const rawMessages = agentMessagesToRaw(stripObservationalContextMessages(options.messages));
-  const snapshot = await options.memory.getSnapshot();
-  const unobservedMessages = getUnobservedMessageTail(rawMessages, snapshot.observations);
+  // Local snapshot is the only set whose range markers gate
+  // `getUnobservedMessageTail`. The observer's prior-context input
+  // includes both this and the global pack rendered with id markers
+  // so the model can attribute usage back to specific cross-session
+  // memories.
+  const localSnapshot = options.sessionId
+    ? await readSessionObservations(options.db, options.sessionId)
+    : { observations: [], estimatedObservationTokens: 0 };
+  const globalPack = options.memory.getContextPack().global;
+  const unobservedMessages = getUnobservedMessageTail(rawMessages, localSnapshot.observations);
   const result: ObservationalMemoryUpdateResult = { observations: [], reflections: [] };
 
   if (unobservedMessages.length > 0) {
@@ -335,48 +523,54 @@ export async function updateObservationalMemory(
       status: "running",
       message: "Observing conversation into memory...",
     });
-    const observation = await activateObservations(
-      options.memory,
-      unobservedMessages,
-      snapshot.observations,
+    const { observation, usageBumped } = await activateObservations({
+      db: options.db,
+      messages: unobservedMessages,
+      previousLocalObservations: localSnapshot.observations,
+      attributableMemories: globalPack,
       settings,
-      options.actorModel,
-      options.onUsage,
-    );
+      sessionId: options.sessionId,
+      model: options.actorModel,
+      onUsage: options.onUsage,
+    });
     if (observation) {
       result.observations.push(observation);
     }
     emitMemoryActivity(options.onActivity, {
       phase: "observation",
       status: "completed",
-      message: observation ? "Memory observation recorded." : "Memory observation complete.",
+      message: buildObservationCompletedMessage(observation, usageBumped.length),
       ...(observation ? { observations: [observation] } : {}),
+      ...(usageBumped.length > 0 ? { usageBumpedObservations: usageBumped } : {}),
     });
   }
 
-  const refreshed = await options.memory.getSnapshot();
-  const observationTokens = refreshed.estimatedTokens.observations;
-  if (observationTokens >= settings.reflection.observationTokens) {
-    emitMemoryActivity(options.onActivity, {
-      phase: "reflection",
-      status: "running",
-      message: "Reflecting memory observations...",
-    });
-    const reflections = await reflectObservations(
-      options.memory,
-      settings,
-      options.actorModel,
-      options.onUsage,
-    );
-    if (reflections) {
-      result.reflections.push(...reflections);
+  if (options.sessionId) {
+    const refreshed = await readSessionObservations(options.db, options.sessionId);
+    if (refreshed.estimatedObservationTokens >= settings.reflection.observationTokens) {
+      emitMemoryActivity(options.onActivity, {
+        phase: "reflection",
+        status: "running",
+        message: "Reflecting memory observations...",
+      });
+      const reflections = await reflectObservations({
+        db: options.db,
+        sessionObservations: refreshed.observations,
+        settings,
+        sessionId: options.sessionId,
+        model: options.actorModel,
+        onUsage: options.onUsage,
+      });
+      if (reflections) {
+        result.reflections.push(...reflections);
+      }
+      emitMemoryActivity(options.onActivity, {
+        phase: "reflection",
+        status: "completed",
+        message: reflections ? "Memory reflection recorded." : "Memory reflection complete.",
+        ...(reflections ? { observations: reflections } : {}),
+      });
     }
-    emitMemoryActivity(options.onActivity, {
-      phase: "reflection",
-      status: "completed",
-      message: reflections ? "Memory reflection recorded." : "Memory reflection complete.",
-      ...(reflections ? { observations: reflections } : {}),
-    });
   }
 
   return result;
@@ -391,6 +585,18 @@ export function optimizeObservationsForContext(observations: string): string {
   optimized = optimized.replace(/ +/g, " ");
   optimized = optimized.replace(/\n{3,}/g, "\n\n");
   return optimized.trim();
+}
+
+function buildObservationCompletedMessage(
+  observation: Observation | undefined,
+  usageBumpedCount: number,
+): string {
+  const base = observation ? "Memory observation recorded." : "Memory observation complete.";
+  if (usageBumpedCount <= 0) return base;
+  const noun = usageBumpedCount === 1 ? "memory" : "memories";
+  // Surface the count for now; consumers can later render the full
+  // observation contents from `usageBumpedObservations` on the event.
+  return `${base} Bumped last-use on ${usageBumpedCount} prior ${noun}.`;
 }
 
 function emitMemoryActivity(
@@ -434,42 +640,106 @@ function isObservationalContextMessage(message: AgentMessage): boolean {
   );
 }
 
+interface ActivateObservationsArgs {
+  db: MemoryDatabase;
+  messages: RawMemoryMessage[];
+  /** Prior observations from the same session, used for dedupe context. */
+  previousLocalObservations: Observation[];
+  /** Cross-session memories rendered to the actor; the observer attributes usage against these. */
+  attributableMemories: Observation[];
+  settings: ObservationalMemorySettings;
+  sessionId: string | undefined;
+  model: string;
+  onUsage?: (usage: Usage) => void;
+}
+
+interface ActivateObservationsResult {
+  observation?: Observation;
+  /** Prior memories the bump actually applied to (intersection of usedIds and candidates). */
+  usageBumped: Observation[];
+}
+
 async function activateObservations(
-  store: MemoryStore,
-  messages: RawMemoryMessage[],
-  previousObservations: Observation[],
-  settings: ObservationalMemorySettings,
-  model: string,
-  onUsage?: (usage: Usage) => void,
-): Promise<Observation | undefined> {
-  const observations = await observe(messages, previousObservations, settings, model, onUsage);
+  args: ActivateObservationsArgs,
+): Promise<ActivateObservationsResult> {
+  const observations = await observe(
+    args.messages,
+    args.previousLocalObservations,
+    args.attributableMemories,
+    args.settings,
+    args.model,
+    args.onUsage,
+  );
+  // Usage attribution applies whether or not the observer had new
+  // memory worth recording — a turn can lean on a prior memory even
+  // when nothing new is durable.
+  const usageBumped = await applyUsageBumps(
+    args.db,
+    args.attributableMemories,
+    observations.usedObservationIds,
+  );
 
   if (!observations.hasMemory || !observations.observations.trim()) {
-    // Empty observer output intentionally does not create a checkpoint. The
-    // same low-signal messages may become useful context for a later suffix.
-    return undefined;
+    // The same low-signal messages may become useful context for a
+    // later suffix, so do not record an empty checkpoint.
+    return { usageBumped };
   }
 
-  const range = `${messages[0]?.id ?? "unknown"}:${messages[messages.length - 1]?.id ?? "unknown"}`;
-  return store.appendObservation({
+  const range = `${args.messages[0]?.id ?? "unknown"}:${args.messages[args.messages.length - 1]?.id ?? "unknown"}`;
+  const observation = await appendObservation(args.db, {
+    kind: "observation",
+    ...(args.sessionId !== undefined ? { sessionId: args.sessionId } : {}),
     observedDate: new Date().toISOString().slice(0, 10),
     timeOfDay: new Date().toISOString().slice(11, 16),
     priority: inferPriority(observations.observations),
-    scope: settings.scope,
     source: { kind: "system" },
     content: wrapInObservationGroup(observations.observations, range),
     tags: ["observational-memory"],
   });
+  return { observation, usageBumped };
+}
+
+/**
+ * Bump `last_used_at` for the subset of `usedObservationIds` that
+ * actually corresponds to an attributable memory id rendered to the
+ * observer. Filtering against the candidate set rejects hallucinated
+ * ids without an extra round-trip; the database column accepts any
+ * ids unconditionally so a strict guard here is the only line of
+ * defense.
+ */
+async function applyUsageBumps(
+  db: MemoryDatabase,
+  candidates: Observation[],
+  usedIds: string[] | undefined,
+): Promise<Observation[]> {
+  if (!usedIds || usedIds.length === 0) return [];
+  const candidatesById = new Map(candidates.map((c) => [c.id, c]));
+  const validated = usedIds
+    .map((id) => candidatesById.get(id))
+    .filter((observation): observation is Observation => Boolean(observation));
+  if (validated.length === 0) return [];
+  await bumpLastUsed(
+    db,
+    validated.map((observation) => observation.id),
+    Date.now(),
+  );
+  return validated;
+}
+
+interface ReflectObservationsArgs {
+  db: MemoryDatabase;
+  sessionObservations: Observation[];
+  settings: ObservationalMemorySettings;
+  sessionId: string;
+  model: string;
+  onUsage?: (usage: Usage) => void;
 }
 
 async function reflectObservations(
-  store: MemoryStore,
-  settings: ObservationalMemorySettings,
-  model: string,
-  onUsage?: (usage: Usage) => void,
+  args: ReflectObservationsArgs,
 ): Promise<Observation[] | undefined> {
-  const snapshot = await store.getSnapshot();
-  const source = snapshot.observations.map((observation) => observation.content).join("\n\n");
+  const { db, sessionObservations, settings, sessionId, model, onUsage } = args;
+  const source = sessionObservations.map((observation) => observation.content).join("\n\n");
   const rendered = renderObservationGroupsForReflection(source) ?? source;
   const targetTokens = settings.reflection.bufferActivation;
   const result = await generateStructuredOutput({
@@ -498,24 +768,32 @@ async function reflectObservations(
   }
 
   const reconciled = reconcileObservationGroupsFromReflection(text, source) ?? text;
+  const now = Date.now();
   const reflected: Observation = {
     id: createMemoryId(),
-    createdAt: Date.now(),
+    createdAt: now,
+    lastUsedAt: now,
+    kind: "reflection",
+    sessionId,
     observedDate: new Date().toISOString().slice(0, 10),
     timeOfDay: new Date().toISOString().slice(11, 16),
     priority: "high",
-    scope: settings.scope,
     source: { kind: "system" },
     content: reconciled,
     tags: ["observational-memory", "reflection"],
   };
-  await store.replaceObservations([reflected]);
+  // Session-scoped replace: only this session's rows are removed and
+  // replaced by the new reflection. Other sessions' rows in the
+  // global pool are untouched, which is what makes cross-session
+  // memory durable past a reflection event.
+  await replaceSessionObservations(db, sessionId, [reflected]);
   return [reflected];
 }
 
 async function observe(
   messages: RawMemoryMessage[],
-  previousObservations: Observation[],
+  previousLocalObservations: Observation[],
+  attributableMemories: Observation[],
   settings: ObservationalMemorySettings,
   model: string,
   onUsage?: (usage: Usage) => void,
@@ -525,8 +803,13 @@ async function observe(
     settings.observation.instruction,
     settings.observation.threadTitle,
   );
+  // Local prior observations support dedupe; attributable memories
+  // (the cross-session global pack the actor saw) are the only set
+  // the observer is allowed to reference back via
+  // `usedObservationIds`.
   const previousObservationText = renderPreviousObservationsForObserver(
-    previousObservations,
+    previousLocalObservations,
+    attributableMemories,
     settings.observation.previousObserverTokens,
   );
   const prompt = buildObserverPrompt(messages, previousObservationText, targetTokens);
@@ -566,21 +849,36 @@ async function observe(
 }
 
 function renderPreviousObservationsForObserver(
-  observations: Observation[],
-  tokenBudget: number | false | undefined,
+  localObservations: Observation[],
+  attributableMemories: Observation[],
+  budget: number,
 ): string {
-  if (tokenBudget === false || tokenBudget === 0) return "";
-  const budget = tokenBudget ?? OBSERVATIONAL_MEMORY_DEFAULTS.observation.previousObserverTokens;
-  const selected: string[] = [];
+  if (budget <= 0) return "";
+  // Render attributable cross-session memories first with explicit id
+  // markers so the observer can cite them in `usedObservationIds`.
+  // Local-session observations follow without ids — they exist for
+  // dedupe context only and the lastUsedAt bump does not apply
+  // within the current session anyway (their createdAt is always
+  // recent).
+  const sections: string[] = [];
   let tokens = 0;
-  for (let index = observations.length - 1; index >= 0; index--) {
-    const content = observations[index]!.content;
+  for (const memory of attributableMemories) {
+    const block = `[memory id: ${memory.id}]\n${memory.content}`;
+    const next = estimateTokens(block);
+    if (tokens + next > budget) break;
+    sections.push(block);
+    tokens += next;
+  }
+  const selected: string[] = [];
+  for (let index = localObservations.length - 1; index >= 0; index--) {
+    const content = localObservations[index]!.content;
     const nextTokens = estimateTokens(content);
     if (tokens + nextTokens > budget) break;
     selected.unshift(content);
     tokens += nextTokens;
   }
-  return selected.join("\n\n");
+  if (selected.length > 0) sections.push(selected.join("\n\n"));
+  return sections.join("\n\n");
 }
 
 export async function enforceObservationTokenBudget(options: {
@@ -866,7 +1164,14 @@ function estimateMessageTokens(message: NormalizedMessageContent): number {
   return estimateTokens(message.textPreview) + imageTokens;
 }
 
-function estimateTokens(text: string): number {
+/**
+ * Heuristic 4-chars-per-token estimator used everywhere the runner needs
+ * a budget number without tokenizing the actual provider payload. Exported
+ * so surfaces and the runner can attribute the same estimate the memory
+ * pipeline does, keeping the segment breakdown on `TurnContextUsageEvent`
+ * consistent with the trigger arithmetic in this file.
+ */
+export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 

@@ -1,136 +1,51 @@
-import { nanoid } from "nanoid";
-import type {
-  MemoryStoreEvent,
-  MemoryStoreEventHandler,
-  Observation,
-  ObservationPriority,
-  ObservationQuery,
-  ObservationalMemorySnapshot,
-} from "../types/memory.js";
+import type { Observation } from "../types/memory.js";
 
-export class MemoryStore {
-  private observations: Map<string, Observation> = new Map();
-  private handlers = new Set<MemoryStoreEventHandler>();
-
-  on(handler: MemoryStoreEventHandler): () => void {
-    this.handlers.add(handler);
-    return () => {
-      this.handlers.delete(handler);
-    };
-  }
-
-  async appendObservation(input: Omit<Observation, "id" | "createdAt">): Promise<Observation> {
-    const observation: Observation = {
-      ...input,
-      id: createMemoryId(),
-      createdAt: Date.now(),
-    };
-    this.observations.set(observation.id, observation);
-    this.emit({ type: "observation_appended", observation });
-    return observation;
-  }
-
-  async recall(query: ObservationQuery): Promise<Observation[]> {
-    let candidates = Array.from(this.observations.values());
-
-    if (query.scope) {
-      candidates = candidates.filter((observation) => observation.scope === query.scope);
-    }
-    if (query.tags?.length) {
-      candidates = candidates.filter((observation) =>
-        query.tags!.some((tag) => observation.tags.includes(tag)),
-      );
-    }
-    if (query.minPriority) {
-      const minRank = priorityRank(query.minPriority);
-      candidates = candidates.filter(
-        (observation) => priorityRank(observation.priority) >= minRank,
-      );
-    }
-    if (query.query) {
-      const terms = tokenize(query.query);
-      candidates = candidates.sort((a, b) => textScore(b, terms) - textScore(a, terms));
-    } else {
-      candidates.sort((a, b) => b.createdAt - a.createdAt);
-    }
-    return candidates.slice(0, query.limit ?? 10);
-  }
-
-  async getSnapshot(): Promise<ObservationalMemorySnapshot> {
-    const observations = Array.from(this.observations.values()).sort(
-      (a, b) => a.createdAt - b.createdAt,
-    );
-    const updatedAt = Date.now();
-    return {
-      observations,
-      estimatedTokens: {
-        observations: estimateTokens(observations.map((item) => item.content).join("\n")),
-      },
-      updatedAt,
-    };
-  }
-
-  async replaceObservations(observations: Observation[]): Promise<void> {
-    this.observations.clear();
-    for (const observation of observations) {
-      this.observations.set(observation.id, observation);
-    }
-    this.emit({ type: "observations_replaced", observations });
-  }
-
-  render(snapshot: ObservationalMemorySnapshot): string {
-    const observationLines = snapshot.observations.map(formatObservation);
-    return [
-      "## Observations",
-      observationLines.length > 0 ? observationLines.join("\n") : "(none)",
-    ].join("\n");
-  }
-
-  private emit(event: MemoryStoreEvent): void {
-    for (const handler of this.handlers) {
-      handler(event);
-    }
-  }
+/**
+ * Frozen view of memory rendered into the prompt prefix. Captured at
+ * compaction events (initial load, reflector completion, wire-shaping
+ * eviction) and held immutable between events so the rendered prefix
+ * stays content-deterministic across turns. The provider's prompt
+ * cache survives unchanged until the next compaction event, at which
+ * point exactly one cache invalidation is paid — not one per turn.
+ *
+ * Observations the observer writes mid-session still flow to PGlite in
+ * real time; they just do not enter `contextPack` until the next
+ * refresh. The model still sees them through `recall_memory` if it
+ * asks.
+ */
+export interface ContextPack {
+  /** Cross-session ranked memory; rendered above the local section. */
+  global: Observation[];
+  /** Current session's chronological compaction summary; rendered below global. */
+  local: Observation[];
 }
 
-function createMemoryId(): string {
-  return `mem_${nanoid(12)}`;
-}
+/**
+ * Holds the frozen context pack rendered above the message tail.
+ *
+ * This is the only piece of memory state the runner keeps in process —
+ * everything else (observation rows, ranking, recall) lives in PGlite
+ * and is read on demand. Holding the pack here, rather than
+ * recomputing inside the transform on every dispatch, is what lets
+ * the rendered prefix stay byte-identical between compaction events
+ * so the provider's prompt cache survives.
+ */
+export class MemoryContextCache {
+  private contextPack: ContextPack = { global: [], local: [] };
 
-function priorityRank(priority: ObservationPriority): number {
-  return priority === "high" ? 3 : priority === "medium" ? 2 : 1;
-}
-
-function priorityMarker(priority: ObservationPriority): string {
-  return priority === "high" ? "HIGH" : priority === "medium" ? "MED" : "LOW";
-}
-
-function formatObservation(observation: Observation): string {
-  const time = observation.timeOfDay ? ` ${observation.timeOfDay}` : "";
-  const referenced = observation.referencedDate ? ` [ref: ${observation.referencedDate}]` : "";
-  return `- ${priorityMarker(observation.priority)} ${observation.observedDate}${time}${referenced} ${observation.content}`;
-}
-
-function tokenize(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .split(/[^a-z0-9]+/)
-      .filter(Boolean),
-  );
-}
-
-function textScore(observation: Observation, terms: Set<string>): number {
-  const text = `${observation.content} ${observation.tags.join(" ")}`.toLowerCase();
-  let score = priorityRank(observation.priority);
-  for (const term of terms) {
-    if (text.includes(term)) {
-      score += 1;
-    }
+  /**
+   * Replace the frozen view used by the runner's context transform.
+   * Called by `rebuildMemoryContextPack()` at every compaction trigger
+   * (initial load, reflector completion, wire-shaping eviction
+   * horizon advance) and never anywhere else — that constraint is
+   * what makes the rendered prefix cache-stable.
+   */
+  setContextPack(pack: ContextPack): void {
+    this.contextPack = pack;
   }
-  return score;
-}
 
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  /** Current frozen pack. Returns empty arrays when memory is disabled or pre-compaction. */
+  getContextPack(): ContextPack {
+    return this.contextPack;
+  }
 }

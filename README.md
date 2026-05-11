@@ -87,7 +87,18 @@ are not states themselves.
 
 Memory is first-class. The default `MemoryStore` is in-memory and emits observation events; optional PGlite storage hydrates and persists durable observations outside the turn runner session.
 
-The memory model follows observational memory: turn runner session messages are observed into durable text observations, and a reflector condenses observations when they grow too large. Observations are scoped as `session` or `resource`.
+The memory model follows observational memory: turn runner session messages are observed into durable text observations, and a reflector condenses observations when they grow too large. Every observation is tagged with the session id that produced it and a `kind` (`observation` or `reflection`).
+
+Memory rendered into the prompt prefix splits into two layers:
+
+- **Long-term memory** (cross-session) ranks every other session's rows by `priority × recencyDecay × kindBias` (7-day half-life, reflections weighted 1.3×) and packs the highest-scoring rows into 7.5 % of the effective context window.
+- **From this session** (local) renders the current session's compaction summary chronologically; size is bounded by the reflection trigger (32.5 % of the effective context window) before the reflector condenses it back to half that.
+
+All memory token budgets — the compaction trigger, the post-eviction raw-tail buffer, the reflection trigger, the post-reflection buffer, and the global pack ceiling — derive from a single `TurnRunnerConfig.effectiveContext` knob (default `200_000`, clamped to the model's hard window). Set it once per runner and every downstream threshold scales together; there are no per-field overrides.
+
+This frozen pack is rebuilt only at three compaction events — initial load, reflector completion, wire-shaping eviction — so the rendered prefix stays stable between events and the provider's prompt cache survives turn-over-turn. Observations the observer writes mid-session flow to disk in real time but do not enter the rendered prefix until the next refresh; the model can still reach them on demand through the `recall_memory` tool.
+
+`recall_memory` runs hybrid retrieval over the durable memory database: pgvector cosine similarity (via the [pgvector PGlite extension](https://github.com/electric-sql/pglite/tree/main/packages/pglite/src/vector)) for semantic matches plus tsvector keyword search for exact-token lookups. The two ranked lists merge through Reciprocal Rank Fusion. Embeddings flow through the Duet public API endpoint (`POST /api/v1/embed`, free for logged-in users) and an always-on background worker fills missing rows so foreground turns never block on embedding work. An optional `expand` flag generates two paraphrased queries through a cheap model and fuses across all three runs when initial results are weak.
 
 Observation is multimodal. When messages contain images, the observer inspects them directly and records visual details, user-visible text, UI state, diagrams, and errors as text observations. The agent keeps continuity over screenshots, scanned documents, and other image attachments without re-attaching the original bytes on every turn.
 
@@ -301,12 +312,51 @@ In the input box:
   primed to call `read_skill`.
 - Enter sends; **Shift+Enter** queues the message as a follow-up while the
   agent is running, instead of steering the active turn.
-- `Esc` cancels the current pickers; pressed on its own it interrupts the
-  active turn (or quits when idle).
+- `Esc` cancels the current pickers; on its own it interrupts the active turn,
+  or no-ops when idle. Use Ctrl+C (or close the terminal) to quit — both
+  paths drain through the SessionManager so the local memory database (PGlite)
+  flushes cleanly.
 
 Tool calls render with custom per-tool headers (e.g. `$ <command>`,
 `read <path> (lines a–b)`, `edit <path> (N edits)`, `[question]`). Resumed
 sessions render history through the same formatters so live and replay match.
+
+### Copy & Paste
+
+Drag with the mouse to highlight any text in the transcript. The bottom hint
+advertises the copy keystroke that actually reaches the TUI on your terminal
+(it appears only while a selection is active so the hint stays terse):
+
+- **Cmd+C** — macOS terminals that forward Cmd+C as a keypress (Ghostty,
+  kitty, recent iTerm2 with the right keybindings).
+- **Ctrl+Shift+C** — Linux/Windows terminals, and macOS terminals that own
+  Cmd+C for their own UI (notably Warp, where Cmd+C selects a Warp block and
+  is never forwarded). Cmd+Shift+C also works on terminals where it is
+  forwarded.
+
+Copying writes via `pbcopy` / `wl-copy` / `xclip` / `xsel` / `clip.exe` and
+verifies the write through a readback (so a writer that exits 0 without
+actually updating the system clipboard — which has been observed on macOS in
+some configs — surfaces a real error instead of a fake "copied" line). When
+no local CLI is available (e.g. an SSH session with no clipboard tool), the
+TUI falls back to OSC 52.
+
+For explicit copies of transcript content (independent of mouse selection):
+
+- **`/copy`** — copies the most recent agent reply.
+- **`/copy all`** — copies the full conversation, formatted with `you:` /
+  `agent:` labels.
+- **`/copy <N>`** — copies the last N user/agent messages.
+
+### Diagnostics
+
+**`/diag`** toggles a diagnostic log inside the transcript. While on, every
+keypress and every drag-selection event prints a `[diag]` line with the exact
+name, modifier flags, raw sequence, and parser source the renderer
+received — plus a snapshot of the current selection state. This is the
+fastest way to figure out why a keystroke or gesture works in one terminal
+but not another (e.g. Cmd+C silently swallowed by Warp). Run `/diag` again to
+turn it off.
 
 ### Image Attachments
 
@@ -446,16 +496,20 @@ The parent runner transcript stays linear across the lifecycle. State-machine co
 
 `TurnRunner` owns memory at runtime. It holds a `MemoryStore` in process, hydrates durable observations from PGlite before the first turn, and subscribes to memory-store events to write future observation changes. After each pi-agent run, the runner observes the latest unobserved transcript suffix, reflects oversized observation logs, emits memory events with generated observation payloads, and waits for durable writes before continuing. Raw conversation messages stay in `TurnState.agent.messages`; memory persistence stores only derived observations/reflections.
 
+The rendered memory section above the message tail is a _frozen_ two-layer pack — long-term cross-session memory ranked into an 8k-token budget and the current session's chronological compaction summary. The pack is rebuilt only at compaction events (initial load, reflector completion, wire-shaping eviction) so observations the observer writes mid-session do not invalidate the prompt cache. The model can still pull specific facts on demand through the default `recall_memory` tool, which runs hybrid vector + keyword search over the same database with optional query expansion.
+
 ```typescript
 import { TurnRunner } from "@duetso/agent";
 
 const turnRunner = new TurnRunner({
   model: "opus-4.7",
-  memoryDbPath: false, // Keep observational memory in process only.
+  memoryDbPath: false, // Disables observational memory and compaction.
 });
 ```
 
-By default, the CLI stores durable observations in `~/.duet/memory.db`; run it with `--no-memory` to keep observational memory in process only. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, pi-turn observation/reflection, compaction, and observation persistence.
+By default, the CLI stores durable observations in `~/.duet/memory.db`; run it with `--incognito` (or `-i`) to set `memoryDbPath: false`, which disables observational memory and compaction for that session. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, pi-turn observation/reflection, compaction, and observation persistence.
+
+**We strongly recommend running with a `memoryDbPath`, which is the default.** Compaction is implemented as part of the observational memory pipeline: raw transcript content is replaced by observations/reflections that the observer and reflector write to the durable store. Without a database, the runner skips that pipeline entirely — there is no compaction, the transcript grows unbounded against the raw model context window, and long sessions will eventually hit a provider context-length error. `memoryDbPath: false` is appropriate for short-lived scripts, tests, and incognito runs that stay well under the model window.
 
 You can also resume directly from saved state. The runner owns state
 internally after `start`, so resumed state is handed in through the start

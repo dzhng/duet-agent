@@ -1,9 +1,12 @@
 import { describe, expect } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { updateObservationalMemory } from "../src/memory/observational.js";
-import { MemoryStore } from "../src/memory/store.js";
+import {
+  DEFAULT_EFFECTIVE_CONTEXT,
+  updateObservationalMemory,
+} from "../src/memory/observational.js";
 import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
 import type { ObservationPriority } from "../src/types/memory.js";
+import { createMemoryFixture } from "../test/helpers/memory-fixture.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { createAssistantMessage } from "../test/helpers/messages.js";
 
@@ -20,18 +23,6 @@ import { createAssistantMessage } from "../test/helpers/messages.js";
 //   ✅         — concrete completion (rolls up to "high" via inferPriority)
 
 const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
-
-const baseSettings = {
-  observation: {
-    messageTokens: 10_000,
-    maxTokensPerBatch: 600,
-    bufferActivation: 1_000,
-  },
-  reflection: {
-    observationTokens: 100_000,
-    bufferActivation: 50_000,
-  },
-} as const;
 
 interface Scenario {
   name: string;
@@ -126,22 +117,28 @@ describe("observer priority inference", () => {
     testIfDocker(
       scenario.name,
       async () => {
-        const memory = new MemoryStore();
-        await updateObservationalMemory({
-          memory,
-          actorModel: memoryModel,
-          settings: baseSettings,
-          messages: scenario.messages,
-        });
+        const fixture = await createMemoryFixture();
+        try {
+          await updateObservationalMemory({
+            db: fixture.db,
+            memory: fixture.cache,
+            sessionId: "session_eval",
+            effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
+            actorModel: memoryModel,
+            messages: scenario.messages,
+          });
 
-        const snapshot = await memory.getSnapshot();
-        const observation = snapshot.observations.at(0);
-        console.log(
-          `\n[${scenario.name}] expected=${scenario.expected} got=${observation?.priority ?? "<no observation>"}\n--- content ---\n${observation?.content ?? "(empty)"}\n---`,
-        );
+          const snapshot = await fixture.snapshot("session_eval");
+          const observation = snapshot.observations.at(0);
+          console.log(
+            `\n[${scenario.name}] expected=${scenario.expected} got=${observation?.priority ?? "<no observation>"}\n--- content ---\n${observation?.content ?? "(empty)"}\n---`,
+          );
 
-        expect(observation).toBeDefined();
-        expect(observation!.priority).toBe(scenario.expected);
+          expect(observation).toBeDefined();
+          expect(observation!.priority).toBe(scenario.expected);
+        } finally {
+          await fixture.dispose();
+        }
       },
       45_000,
     );

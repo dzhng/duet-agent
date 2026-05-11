@@ -137,7 +137,7 @@ describe("state machine interrupt and resume", () => {
       const terminal = await resumed.turn({
         type: "answer",
         questions: questionsFrom(first),
-        answers: { prospect: "Ada Lovelace" },
+        answers: { prospect: ["Ada Lovelace"] },
         behavior: "follow_up",
       });
 

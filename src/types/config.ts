@@ -7,6 +7,31 @@ import type { TurnMode, TurnOptions } from "./protocol.js";
 export type SkillDiscoveryOptions = Partial<Parameters<typeof loadSkills>[0]>;
 
 export interface TurnRunnerConfig extends TurnOptions {
+  /**
+   * Session that owns this runner. Plumbed into newly-written observations
+   * so the memory loader can split them into the local layer (current
+   * session) and the global layer (every other session). Sub-agents
+   * spawned for state-machine work derive their own id from this one
+   * (`<parent>:sub:<nanoid>`) so their scratch observations stay scoped
+   * to the sub-agent and do not pollute the parent's local layer.
+   *
+   * Optional only because direct TurnRunner construction (tests, one-shot
+   * tools) may not have a session. Real CLI/Session callers always set it.
+   */
+  sessionId?: string;
+  /**
+   * Target ceiling, in tokens, for the actor model's per-turn input. Every
+   * memory budget (raw-message compaction trigger, raw-tail buffer,
+   * reflection trigger and buffer, global pack budget) is derived from this
+   * single number via fixed ratios in `deriveMemoryBudgets`; see
+   * `MEMORY_BUDGET_RATIOS` in `src/memory/observational.ts` for the table.
+   *
+   * Defaults to 200_000. The runner clamps the resolved value to
+   * `min(effectiveContext, model.contextWindow)` at use-time so a user
+   * value larger than the model's hard window silently caps at the window
+   * instead of overflowing.
+   */
+  effectiveContext?: number;
   memory?: ObservationalMemorySettingsInput;
   /**
    * PGlite database directory for durable observational memories.

@@ -9,11 +9,11 @@ export interface ResumeCommandInput {
   modelName?: string;
   memoryModelName?: string;
   workDir: string;
-  disableDurableMemory?: boolean;
+  incognito?: boolean;
   systemInstructions?: string;
   systemPromptFiles?: string[];
   envFilePath?: string;
-  resumeHistoryLines?: number;
+  resumeHistoryMessages?: number;
 }
 
 /**
@@ -36,8 +36,8 @@ export function resumeCommand(sessionId: string, input: ResumeCommandInput): str
   if (input.memoryModelName) {
     command.push("--memory-model", shellQuote(input.memoryModelName));
   }
-  if (input.disableDurableMemory) {
-    command.push("--no-memory");
+  if (input.incognito) {
+    command.push("--incognito");
   }
   if (input.systemInstructions) {
     command.push("--system-prompt", shellQuote(input.systemInstructions));
@@ -54,8 +54,8 @@ export function resumeCommand(sessionId: string, input: ResumeCommandInput): str
   if (input.envFilePath) {
     command.push("--env-file", shellQuote(input.envFilePath));
   }
-  if (input.resumeHistoryLines !== undefined) {
-    command.push("--resume-history-lines", String(input.resumeHistoryLines));
+  if (input.resumeHistoryMessages !== undefined) {
+    command.push("--resume-history-messages", String(input.resumeHistoryMessages));
   }
   return command.join(" ");
 }

@@ -18,6 +18,7 @@ import packageJson from "../package.json" with { type: "json" };
 import { runEnvCommand } from "./cli/env.js";
 import { runLoginCommand } from "./cli/login.js";
 import { runMemoryCommand } from "./cli/memory.js";
+import { runRpcCommand } from "./cli/rpc.js";
 import { runRunCommand } from "./cli/run.js";
 import { runSendFeedbackCommand } from "./cli/send-feedback.js";
 import { runSkillsCommand } from "./cli/skills.js";
@@ -30,6 +31,7 @@ import { shimDuetApiKeyToAiGateway } from "./model-resolution/duet-gateway.js";
 
 export type { CliTurnConfigInput, CliTurnConfigResolution, PackageMetadata } from "./cli/run.js";
 export { buildCliTurnConfig, runRunCommand, shouldUseTui } from "./cli/run.js";
+export { runRpcCommand } from "./cli/rpc.js";
 export { runEnvCommand } from "./cli/env.js";
 export type { EnvCommandIO } from "./cli/env.js";
 export { runLoginCommand } from "./cli/login.js";
@@ -45,18 +47,13 @@ export {
   fileExists,
   formatEnvEntries,
   loadCliEnvFiles,
-  parseResumeHistoryLines,
+  parseResumeHistoryMessages,
   resolveUserPath,
   shellQuote,
 } from "./cli/shared.js";
 export { detectPackageManagerFromContext, globalUpgradeCommand } from "./cli/package-manager.js";
 export type { PackageManager, PackageManagerDetectionContext } from "./cli/package-manager.js";
-export {
-  compareSemverVersions,
-  fetchLatestPackageVersion,
-  formatNewVersionNotice,
-  getNewVersionNotice,
-} from "./cli/version-check.js";
+export { compareSemverVersions, fetchLatestPackageVersion } from "./cli/version-check.js";
 export { resumeCommand } from "./cli/resume-hint.js";
 export type { ResumeCommandInput } from "./cli/resume-hint.js";
 
@@ -97,6 +94,14 @@ async function main(): Promise<void> {
     }
     if (subcommand === "send-feedback") {
       await runSendFeedbackCommand(args.slice(1));
+      return;
+    }
+
+    // `--rpc` is a top-level routing flag rather than a subcommand because it
+    // shares all model/workdir/env flags with the default run command; the
+    // difference is only the I/O surface (stdin commands, stdout events).
+    if (args.includes("--rpc")) {
+      await runRpcCommand(args, PACKAGE_METADATA);
       return;
     }
 

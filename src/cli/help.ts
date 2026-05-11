@@ -1,6 +1,12 @@
 import { DEFAULT_DUET_ENV_FILE, SUPPORTED_API_KEYS } from "./shared.js";
 
-export const DEFAULT_RESUME_HISTORY_LINES = 40;
+/**
+ * How many trailing user-turn exchanges to render when resuming a session.
+ * Each exchange is the user prompt plus the assistant reply (text, reasoning,
+ * and tool blocks) that followed it; assistant blocks before the first user
+ * message in the kept window are dropped along with everything older.
+ */
+export const DEFAULT_RESUME_HISTORY_MESSAGES = 5;
 
 export function printRunHelp(packageName: string): void {
   console.log(`
@@ -30,17 +36,21 @@ OPTIONS
   --provider <name>        Pin the provider and use its catalog default model.
                             Accepts: duet, vercel, openrouter, anthropic, openai.
                             Mutually exclusive with --model / --memory-model.
-  --no-memory              Keep memory in-process; do not read or write durable memory
+  -i, --incognito          Keep memory in-process; do not read or write durable memory
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
-  --resume-history-lines <n>
-                            Display up to n prior-session lines in the TUI (default: ${DEFAULT_RESUME_HISTORY_LINES})
+  --resume-history-messages <n>
+                            Replay the last n user-turn exchanges from the prior session in the TUI (default: ${DEFAULT_RESUME_HISTORY_MESSAGES})
   --system-prompt <text>   Additional system instructions for the runner
   --system-prompt-file <path>
                             Load a file into the system prompt; repeatable
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
   --env-file <path>        Shared env file to load after <workdir>/.env (default: ${DEFAULT_DUET_ENV_FILE})
-  --json                    Force JSONL event output instead of the TUI
+  --no-auto-upgrade         Skip the auto-upgrade probe for this run (also: DUET_NO_AUTO_UPGRADE=1)
+  --rpc                     Bare turn-runner control surface. Reads newline-delimited TurnRunnerCommand
+                            JSON from stdin and writes TurnEvent JSON to stdout. The first command must
+                            be "start"; the process exits after the single turn reaches its terminal
+                            event. Bypasses session persistence entirely.
   -v, --version            Print the installed duet version and exit
   -h, --help               Show this help
 

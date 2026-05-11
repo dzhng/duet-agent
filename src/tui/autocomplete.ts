@@ -60,6 +60,17 @@ export const BUILT_IN_SLASH_COMMANDS: readonly SkillAutocompleteItem[] = [
     group: "commands",
   },
   {
+    name: "copy",
+    description: "Copy text to your clipboard: /copy [last|all|<N>] (default: last agent reply)",
+    group: "commands",
+  },
+  {
+    name: "diag",
+    description:
+      "Toggle diagnostic logging (keys, selection events) for surfacing terminal-specific issues",
+    group: "commands",
+  },
+  {
     name: "feedback",
     description: "Send free-form feedback to the Duet team: /feedback <message>",
     group: "commands",
@@ -255,30 +266,114 @@ export function moveSkillAutocompleteSelection(
   return (selectedIndex + direction + itemCount) % itemCount;
 }
 
-/** Cycle the highlighted question option, wrapping at both ends. */
-export function moveQuestionOptionSelection(
+/**
+ * Build the answer-array for a single question given the picker state.
+ *
+ * For single-select questions (`multiSelect` falsy) this resolves the
+ * highlighted option to a one-element array. For multi-select questions
+ * it emits the labels of every checked index in original option order, so
+ * the serialized XML preserves the question's option ordering rather than
+ * the order in which the user toggled them.
+ *
+ * Returns `undefined` when the picker has no question to answer; callers
+ * use that to short-circuit a submission attempt. An empty array is a
+ * valid result for a multi-select where the user advanced without picking.
+ */
+export function questionPickerAnswer(
+  question: TurnQuestion | undefined,
+  selectedIndex: number,
+  checkedIndices: ReadonlySet<number>,
+): string[] | undefined {
+  if (!question) return undefined;
+  if (question.multiSelect) {
+    const checked: string[] = [];
+    for (const [index, option] of question.options.entries()) {
+      if (checkedIndices.has(index)) checked.push(option.label);
+    }
+    return checked;
+  }
+  const selectedOption = question.options[selectedIndex];
+  if (!selectedOption) return undefined;
+  return [selectedOption.label];
+}
+
+/**
+ * Fold the active question's current selection into the accumulated answers
+ * map. Single-select live-records on Up/Down so highlight equals selection;
+ * multi-select live-records on every Space/Enter toggle. Arrow-nav also
+ * calls it so the departing question's answer is saved before moving.
+ *
+ * Returns the input map unchanged when there is no active question, when a
+ * single-select question has no highlight (`selectedIndex === NO_HIGHLIGHT`,
+ * i.e. the user has not yet pressed Up/Down on this question), or when the
+ * highlight points at a row outside the question's options array (e.g. the
+ * synthetic Done row in a multi-select).
+ */
+export function commitActiveAnswer(
+  question: TurnQuestion | undefined,
+  selectedIndex: number,
+  checkedIndices: ReadonlySet<number>,
+  accumulated: Record<string, string[]>,
+): Record<string, string[]> {
+  if (!question) return accumulated;
+  const answer = questionPickerAnswer(question, selectedIndex, checkedIndices);
+  if (answer === undefined) return accumulated;
+  return { ...accumulated, [question.question]: answer };
+}
+
+/**
+ * Sentinel for "no row highlighted yet". Picker initial state and freshly
+ * advanced questions both start at this value; the first Up/Down lands on a
+ * concrete row and (for single-select) live-records the highlight.
+ */
+export const NO_HIGHLIGHT = -1;
+
+/**
+ * Reconstruct picker selection state from a previously saved answer for the
+ * given question. Used when the user navigates back via the Left arrow so
+ * their prior toggles / highlight reappear instead of a blank slate, and
+ * when advancing to a question that has not been visited yet (defaults to
+ * `NO_HIGHLIGHT` so the user must explicitly press Up/Down to commit a
+ * single-select answer).
+ */
+export function restoreSavedAnswer(
+  question: TurnQuestion | undefined,
+  accumulated: Record<string, string[]>,
+): { selectedIndex: number; checked: Set<number> } {
+  if (!question) return { selectedIndex: NO_HIGHLIGHT, checked: new Set<number>() };
+  const saved = accumulated[question.question];
+  if (question.multiSelect) {
+    const checked = new Set<number>();
+    if (saved) {
+      for (const [index, option] of question.options.entries()) {
+        if (saved.includes(option.label)) checked.add(index);
+      }
+    }
+    return { selectedIndex: NO_HIGHLIGHT, checked };
+  }
+  if (!saved || saved.length === 0) {
+    return { selectedIndex: NO_HIGHLIGHT, checked: new Set<number>() };
+  }
+  const matchIndex = question.options.findIndex((option) => option.label === saved[0]);
+  return {
+    selectedIndex: matchIndex >= 0 ? matchIndex : NO_HIGHLIGHT,
+    checked: new Set<number>(),
+  };
+}
+
+/**
+ * Move the picker highlight by one step, wrapping at both ends and lifting
+ * the `NO_HIGHLIGHT` sentinel onto the first or last row depending on
+ * direction. `itemCount` includes the synthetic Done row for multi-select.
+ */
+export function moveQuestionHighlight(
   selectedIndex: number,
   itemCount: number,
   direction: -1 | 1,
 ): number {
-  if (itemCount <= 0) return 0;
+  if (itemCount <= 0) return NO_HIGHLIGHT;
+  if (selectedIndex === NO_HIGHLIGHT) return direction === 1 ? 0 : itemCount - 1;
   return (selectedIndex + direction + itemCount) % itemCount;
-}
-
-/**
- * Build the structured `answer()` payload for the currently highlighted
- * option of the first pending question. Returns undefined when the picker
- * is empty so callers can short-circuit submission.
- */
-export function questionPickerAnswerPayload(
-  questions: readonly TurnQuestion[],
-  selectedIndex: number,
-): Record<string, string> | undefined {
-  const firstQuestion = questions[0];
-  const selectedOption = firstQuestion?.options[selectedIndex];
-  if (!firstQuestion || !selectedOption) return undefined;
-
-  return { [firstQuestion.question]: selectedOption.label };
 }
 
 export function formatQuestionOptionDescription(description: string | undefined): string {
