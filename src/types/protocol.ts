@@ -501,8 +501,14 @@ export interface TurnContextUsageEvent {
   type: "context_usage";
   /** Token accounting reported by the parent model for the latest request context. */
   usage: TurnTokenUsage;
-  /** Maximum context window for the resolved parent model, from pi's model registry. */
-  contextWindow: number;
+  /**
+   * Effective ceiling against which `usage` should be displayed. When
+   * observational memory is enabled this is the compaction trigger
+   * (`observation.messageTokens`) clamped to the model's hard window, since
+   * the runner replaces old raw messages once that trigger is crossed. With
+   * memory disabled it is the resolved parent model's full context window.
+   */
+  effectiveContextWindow: number;
 }
 
 export interface TurnTerminalBaseEvent {

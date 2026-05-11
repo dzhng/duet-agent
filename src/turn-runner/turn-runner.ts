@@ -1282,8 +1282,31 @@ export class TurnRunner {
     this.emit({
       type: "context_usage",
       usage: event.message.usage,
-      contextWindow: this.requireParentAgent().state.model.contextWindow,
+      effectiveContextWindow: this.effectiveContextWindow(),
     });
+  }
+
+  /**
+   * Effective ceiling for the context-usage bar. When observational memory is
+   * active the compaction trigger (`observation.messageTokens`) is the practical
+   * upper bound — once raw messages cross it the transform replaces older
+   * transcript content, so the model never sees more than roughly that many
+   * input tokens regardless of the model's advertised window. Surfaces should
+   * compare reported usage against this number to show how close the turn is
+   * to triggering compaction. With memory disabled the raw model window is
+   * the only ceiling, so the bar reflects that.
+   *
+   * Gated on the loaded persistence handle rather than `config.memoryDbPath`
+   * so this stays consistent with the same check `updateMemoryAfterAgentRun`
+   * uses — incognito (`memoryDbPath: false`) and a failed db load both end
+   * up at the model-window branch, matching the reality that no compaction
+   * will run.
+   */
+  protected effectiveContextWindow(): number {
+    const modelWindow = this.requireParentAgent().state.model.contextWindow;
+    if (!this.memoryPersistence?.db) return modelWindow;
+    const settings = resolveObservationalMemorySettings(this.config.memory);
+    return Math.min(modelWindow, settings.observation.messageTokens);
   }
 }
 

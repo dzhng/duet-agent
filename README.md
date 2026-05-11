@@ -501,11 +501,13 @@ import { TurnRunner } from "@duetso/agent";
 
 const turnRunner = new TurnRunner({
   model: "opus-4.7",
-  memoryDbPath: false, // Keep observational memory in process only.
+  memoryDbPath: false, // Disables observational memory and compaction.
 });
 ```
 
-By default, the CLI stores durable observations in `~/.duet/memory.db`; run it with `--incognito` (or `-i`) to keep observational memory in process only. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, pi-turn observation/reflection, compaction, and observation persistence.
+By default, the CLI stores durable observations in `~/.duet/memory.db`; run it with `--incognito` (or `-i`) to set `memoryDbPath: false`, which disables observational memory and compaction for that session. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, pi-turn observation/reflection, compaction, and observation persistence.
+
+**We strongly recommend running with a `memoryDbPath`, which is the default.** Compaction is implemented as part of the observational memory pipeline: raw transcript content is replaced by observations/reflections that the observer and reflector write to the durable store. Without a database, the runner skips that pipeline entirely — there is no compaction, the transcript grows unbounded against the raw model context window, and long sessions will eventually hit a provider context-length error. `memoryDbPath: false` is appropriate for short-lived scripts, tests, and incognito runs that stay well under the model window.
 
 You can also resume directly from saved state. The runner owns state
 internally after `start`, so resumed state is handed in through the start

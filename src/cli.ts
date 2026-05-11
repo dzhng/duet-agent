@@ -48,12 +48,7 @@ export {
 } from "./cli/shared.js";
 export { detectPackageManagerFromContext, globalUpgradeCommand } from "./cli/package-manager.js";
 export type { PackageManager, PackageManagerDetectionContext } from "./cli/package-manager.js";
-export {
-  compareSemverVersions,
-  fetchLatestPackageVersion,
-  formatNewVersionNotice,
-  getNewVersionNotice,
-} from "./cli/version-check.js";
+export { compareSemverVersions, fetchLatestPackageVersion } from "./cli/version-check.js";
 export { resumeCommand } from "./cli/resume-hint.js";
 export type { ResumeCommandInput } from "./cli/resume-hint.js";
 

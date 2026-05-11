@@ -1,11 +1,8 @@
-// Best-effort npm registry probe used to surface "duet upgrade" reminders.
-// Failures (offline, slow, registry hiccup) intentionally turn into noop:
-// the CLI must remain usable when the registry is unreachable.
-
-// Background startup notice runs on every CLI invocation, so we keep its
-// timeout tight to avoid noticeable lag on slow networks. Foreground commands
-// (`duet upgrade`) pass their own, longer timeout because the user is actively
-// waiting for a result and a clear failure beats a fast silent abort.
+// Best-effort npm registry probe. Failures (offline, slow, registry hiccup)
+// intentionally turn into noop: the CLI must remain usable when the registry
+// is unreachable. Callers pass their own timeout because the right value
+// depends on whether the user is actively waiting (foreground `duet upgrade`)
+// or the work is happening behind a TUI placeholder.
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 1_500;
 
 /**
@@ -61,33 +58,5 @@ export async function fetchLatestPackageVersion(
     return typeof latest === "string" ? latest : undefined;
   } finally {
     clearTimeout(timeout);
-  }
-}
-
-/** Format the "Update available" notice we print at startup. */
-export function formatNewVersionNotice(
-  packageName: string,
-  currentVersion: string,
-  latestVersion: string,
-): string {
-  return `Update available: ${packageName} ${currentVersion} -> ${latestVersion}. Run: duet upgrade`;
-}
-
-/**
- * Resolve the upgrade notice for `packageName@currentVersion`. Returns
- * undefined when the user is already on the latest version or the registry
- * lookup failed; callers print whatever string comes back.
- */
-export async function getNewVersionNotice(
-  packageName: string,
-  currentVersion: string,
-): Promise<string | undefined> {
-  try {
-    const latestVersion = await fetchLatestPackageVersion(packageName);
-    if (!latestVersion) return undefined;
-    if (compareSemverVersions(latestVersion, currentVersion) <= 0) return undefined;
-    return formatNewVersionNotice(packageName, currentVersion, latestVersion);
-  } catch {
-    return undefined;
   }
 }

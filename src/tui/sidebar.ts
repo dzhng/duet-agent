@@ -151,11 +151,11 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
         return;
       }
       const usedTokens = usage.usage.totalTokens;
-      const percent = Math.min(1, usedTokens / usage.contextWindow);
+      const percent = Math.min(1, usedTokens / usage.effectiveContextWindow);
       contextBody.content = progressBar(percent, 25);
-      const overflow = usedTokens >= usage.contextWindow;
+      const overflow = usedTokens >= usage.effectiveContextWindow;
       contextBody.fg = overflow ? COLORS.error : COLORS.agent;
-      tokensLabel.content = `${formatTokenCount(usedTokens)} / ${formatTokenCount(usage.contextWindow)}`;
+      tokensLabel.content = `${formatTokenCount(usedTokens)} / ${formatTokenCount(usage.effectiveContextWindow)}`;
       tokensLabel.fg = overflow ? COLORS.error : COLORS.agent;
     },
     setSessionCost(cost) {

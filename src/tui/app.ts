@@ -26,6 +26,7 @@ import {
 } from "./paste.js";
 import { parseCopyArgument, selectCopyText, type TranscriptEntry } from "./transcript-log.js";
 import type { Session } from "../session/session.js";
+import { describeUpgradeStatus, type UpgradeStatusStream } from "../cli/auto-upgrade.js";
 import type {
   TurnAgentFile,
   TurnContextUsageEvent,
@@ -112,6 +113,8 @@ export interface RunTuiInput {
   workDir: string;
   /** Session id shown in the startup header and resume context. */
   sessionId: string;
+  /** npm package name; used to label the auto-upgrade status line. */
+  packageName: string;
   /** Installed package version shown in the startup header. */
   packageVersion: string;
   /** User-facing model name used for this CLI session. */
@@ -123,12 +126,13 @@ export interface RunTuiInput {
   /** Human-readable provenance for memoryModelName. */
   memoryModelSource?: string;
   /**
-   * Pending probe for a package update notice. The TUI renders a placeholder
-   * line in the intro and replaces it with the notice once the probe settles.
-   * Resolves to undefined when the user is already on the latest version or
-   * the registry lookup failed.
+   * Live status stream from the in-process auto-upgrade flow. The TUI
+   * subscribes on mount and renders one line in the intro that mutates in
+   * place through "Checking for updates…", "Updating to vX…", and
+   * "Updated. Restart duet to use it." Undefined statuses (current, locked,
+   * skipped) hide the line entirely so the header stays clean.
    */
-  versionNoticePromise?: Promise<string | undefined>;
+  upgradeStatus$?: UpgradeStatusStream;
   /** Past messages to replay into the transcript on resume. */
   history?: AgentMessage[];
   /**
@@ -694,19 +698,33 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // dropped here — surface it via /whoami later.
     appendLine(formatBootHeader(input), COLORS.status);
 
-    if (input.versionNoticePromise) {
-      const versionLine = new TextRenderable(renderer, {
-        content: "[version] checking for updates…",
+    if (input.upgradeStatus$) {
+      const upgradeLine = new TextRenderable(renderer, {
+        content: "[update] checking for updates…",
         fg: COLORS.hint,
       });
-      transcript.add(versionLine);
-      void input.versionNoticePromise.then((notice) => {
-        if (notice) {
-          versionLine.content = notice;
-          versionLine.fg = COLORS.system;
-        } else {
-          transcript.remove(versionLine.id);
-          versionLine.destroy();
+      let mounted = false;
+      const unsubscribe = input.upgradeStatus$.subscribe((status) => {
+        const text = describeUpgradeStatus(input.packageName, status);
+        if (!text) {
+          if (mounted) {
+            transcript.remove(upgradeLine.id);
+            upgradeLine.destroy();
+            mounted = false;
+          }
+          // Terminal statuses with no human-readable form (current, locked,
+          // skipped) close the subscription so we stop reacting.
+          if (status.kind !== "checking") unsubscribe();
+          return;
+        }
+        upgradeLine.content = `[update] ${text}`;
+        upgradeLine.fg = status.kind === "failed" ? COLORS.error : COLORS.system;
+        if (!mounted) {
+          transcript.add(upgradeLine);
+          mounted = true;
+        }
+        if (status.kind === "upgraded" || status.kind === "failed") {
+          unsubscribe();
         }
       });
     }

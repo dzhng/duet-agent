@@ -141,6 +141,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     session,
     workDir: process.cwd(),
     sessionId: "harness",
+    packageName: "@duetso/agent",
     packageVersion: "harness",
     modelName: "harness",
     memoryModelName: "harness",

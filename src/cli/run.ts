@@ -20,7 +20,11 @@ import { DEFAULT_RESUME_HISTORY_MESSAGES, printRunHelp } from "./help.js";
 import { resumeCommand } from "./resume-hint.js";
 import { fail, isInteractive, loadCliEnvFiles, parseResumeHistoryMessages } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
-import { getNewVersionNotice } from "./version-check.js";
+import {
+  createUpgradeStatusStream,
+  describeUpgradeStatus,
+  runAutoUpgrade,
+} from "./auto-upgrade.js";
 
 export interface CliTurnConfigInput {
   modelName?: string;
@@ -102,14 +106,9 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   let jsonOutput = false;
   let envFilePath: string | undefined;
   let incognito = false;
+  let noAutoUpgrade = false;
   const promptParts: string[] = [];
   const interactive = isInteractive();
-
-  // Kick off the npm registry probe immediately so it overlaps with env
-  // loading, model resolution, skill discovery, and session bootstrap. JSON
-  // callers await the result; the TUI path only consumes it if it has already
-  // settled by the time we render, so a slow registry never delays first paint.
-  const versionNoticePromise = getNewVersionNotice(pkg.name, pkg.version).catch(() => undefined);
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -166,6 +165,9 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       case "--env-file":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         envFilePath = args[++i];
+        break;
+      case "--no-auto-upgrade":
+        noAutoUpgrade = true;
         break;
       case "--version":
       case "-v":
@@ -224,6 +226,21 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   const dotenvKeys = loadCliEnvFiles(workDir, envFilePath);
   shimDuetApiKeyToAiGateway();
 
+  // Probe the registry and (if newer) run the package manager in-process
+  // while the TUI is already mounted. The TUI subscribes to upgradeStatus$
+  // to render a live header line; the JSON path awaits the final status
+  // and prints one summary line to stderr.
+  const upgradeStatus$ = createUpgradeStatusStream();
+  const upgradePromise = runAutoUpgrade({
+    packageName: pkg.name,
+    currentVersion: pkg.version,
+    disabled: noAutoUpgrade,
+    onStatus: (status) => upgradeStatus$.publish(status),
+  }).then((status) => {
+    upgradeStatus$.complete(status);
+    return status;
+  });
+
   // Refresh the gateway-managed default skills when the user has previously
   // opted in via `duet login` (i.e. `~/.duet/.skills-hash` exists). Logging
   // in with --skip-skill-sync leaves no hash, so this stays a no-op until
@@ -250,12 +267,14 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   const useTui = shouldUseTui({ interactive, jsonOutput, prompt });
   const useJson = !useTui;
 
-  // JSON consumers are already waiting for stderr output, so blocking on the
-  // probe is fine. The TUI never blocks here — it consumes the promise
-  // directly and swaps in the notice once the probe settles.
+  // JSON consumers want a single summary line, not a streaming status.
+  // Await the final upgrade status and print the human-readable form (if any)
+  // before the regular boot lines. The TUI subscribes to the live stream
+  // instead and renders intermediate "Checking…/Updating…" states inline.
   if (useJson) {
-    const newVersionNotice = await versionNoticePromise;
-    if (newVersionNotice) process.stderr.write(`${newVersionNotice}\n`);
+    const finalStatus = await upgradePromise;
+    const notice = describeUpgradeStatus(pkg.name, finalStatus);
+    if (notice) process.stderr.write(`${notice}\n`);
     process.stderr.write(`Model: ${modelName}\n`);
     process.stderr.write(`Source: ${describeModelResolution(modelResolution)}\n`);
     process.stderr.write(`Memory model: ${memoryModelName}\n`);
@@ -314,8 +333,9 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         memoryModelSource: describeModelResolution(memoryModelResolution),
         workDir,
         sessionId: session.id,
+        packageName: pkg.name,
         packageVersion: pkg.version,
-        versionNoticePromise,
+        upgradeStatus$,
       });
     }
 

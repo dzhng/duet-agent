@@ -44,6 +44,7 @@ OPTIONS
                             Load a file into the system prompt; repeatable
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
   --env-file <path>        Shared env file to load after <workdir>/.env (default: ${DEFAULT_DUET_ENV_FILE})
+  --no-auto-upgrade         Skip the auto-upgrade probe for this run (also: DUET_NO_AUTO_UPGRADE=1)
   --json                    Force JSONL event output instead of the TUI
   -v, --version            Print the installed duet version and exit
   -h, --help               Show this help

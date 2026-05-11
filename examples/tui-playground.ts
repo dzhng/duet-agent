@@ -647,6 +647,7 @@ async function main(): Promise<void> {
     session,
     workDir: process.cwd(),
     sessionId: "playground",
+    packageName: "@duetso/agent",
     packageVersion: "playground",
     modelName: "playground",
     memoryModelName: "playground",
