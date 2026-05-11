@@ -269,6 +269,61 @@ describe("Memory migrations", () => {
     });
   });
 
+  testIfDocker("v5 collapses duplicate observation rows that bypassed the PK index", async () => {
+    await withTempDb(async (db) => {
+      // Bring the db up to v4 first (PK constraint and all columns in
+      // place), then simulate the corrupted state: drop the unique
+      // index, insert two rows with the same id (one with a stale
+      // last_used_at and one with a fresh one), and roll the
+      // schema_version table back to 4 so the next runMigrations call
+      // applies v5.
+      await runMigrations(db);
+      await db.exec(`ALTER TABLE observations DROP CONSTRAINT observations_pkey`);
+      await db.query(
+        `INSERT INTO observations (
+             id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
+             relative_date, time_of_day, priority, source_json, content, tags_json
+           ) VALUES
+             ('mem_dup', 100, 100, 'sess_a', 'observation', '2026-05-01', NULL, NULL, NULL,
+              'medium', '{"kind":"system"}', 'older copy', '[]'),
+             ('mem_dup', 100, 200, 'sess_a', 'observation', '2026-05-01', NULL, NULL, NULL,
+              'medium', '{"kind":"system"}', 'newer copy', '[]'),
+             ('mem_single', 50, 50, 'sess_a', 'observation', '2026-05-01', NULL, NULL, NULL,
+              'medium', '{"kind":"system"}', 'untouched', '[]')`,
+      );
+      await db.query(`DELETE FROM schema_version WHERE version = 5`);
+
+      const result = await runMigrations(db);
+      expect(result.applied).toEqual([5]);
+
+      // Winner is the row with the freshest last_used_at; the other is
+      // gone and the PK index is rebuilt so a fresh upsert collides
+      // cleanly rather than raising observations_pkey.
+      const rows = await db.query<{ id: string; content: string; last_used_at: number }>(
+        `SELECT id, content, last_used_at FROM observations ORDER BY id`,
+      );
+      expect(rows.rows).toEqual([
+        { id: "mem_dup", content: "newer copy", last_used_at: 200 },
+        { id: "mem_single", content: "untouched", last_used_at: 50 },
+      ]);
+
+      await db.query(
+        `INSERT INTO observations (
+             id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
+             relative_date, time_of_day, priority, source_json, content, tags_json
+           ) VALUES (
+             'mem_dup', 300, 300, 'sess_a', 'observation', '2026-05-01', NULL, NULL, NULL,
+             'medium', '{"kind":"system"}', 'fresh upsert', '[]'
+           )
+           ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, last_used_at = EXCLUDED.last_used_at`,
+      );
+      const upserted = await db.query<{ content: string; last_used_at: number }>(
+        `SELECT content, last_used_at FROM observations WHERE id = 'mem_dup'`,
+      );
+      expect(upserted.rows).toEqual([{ content: "fresh upsert", last_used_at: 300 }]);
+    });
+  });
+
   testIfDocker("rolls back a failing migration and reports the failing version", async () => {
     await withTempDb(async (db) => {
       // Run baseline first so we have a known starting version.
