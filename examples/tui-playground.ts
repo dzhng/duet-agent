@@ -76,6 +76,7 @@ export const PLAYGROUND_MENU = [
   "                             a 'Done' row is the multi-select advance key;",
   "                             ←/→ revisit prior or upcoming questions;",
   "                             typing mid-flow flushes the latest answers.",
+  "  /context [pct]             emit a context_usage event filling the bar to ~pct (default 60)",
   "  /sleep <secs>              emit a sleep terminal that wakes in N seconds",
   "  /error <message>           emit a system error and end the turn",
   "  /echo <text>               stream <text> back verbatim and complete (used by tests)",
@@ -320,6 +321,38 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         state: { ...this.state, status: "sleeping" },
         wakeAt: Date.now() + secs * 1000,
       };
+    }
+
+    if (message.startsWith("/context")) {
+      // Emits a synthetic `context_usage` event so the sidebar's colored
+      // bar + legend can be eyeballed without a live turn. The optional
+      // first arg is the target fill percentage; tokens are split across
+      // every segment so all four colors plus the untracked tail render.
+      const arg = message.slice("/context".length).trim();
+      const target = Math.max(1, Math.min(120, Number.parseInt(arg, 10) || 60));
+      const cap = 200_000;
+      const total = Math.round((target / 100) * cap);
+      // Split: 10% system prompt, 55% messages, 15% local memory, 10%
+      // global memory, 10% untracked (provider overhead the runner does
+      // not attribute to a named segment).
+      const systemPrompt = Math.round(total * 0.1);
+      const messages = Math.round(total * 0.55);
+      const localMemory = Math.round(total * 0.15);
+      const globalMemory = Math.round(total * 0.1);
+      this.emit({
+        type: "context_usage",
+        usage: {
+          input: total,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: total,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        effectiveContextWindow: cap,
+        contextWindowUsage: { systemPrompt, messages, localMemory, globalMemory },
+      });
+      return this.complete(`Emitted context_usage at ~${target}% of ${cap} tokens.`);
     }
 
     if (message.startsWith("/echo")) {
