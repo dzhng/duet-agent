@@ -546,10 +546,9 @@ describe("CLI resume command", () => {
 
 describe("CLI render mode", () => {
   test("uses TUI only for interactive sessions without a prompt", () => {
-    expect(shouldUseTui({ interactive: true, jsonOutput: false })).toBe(true);
-    expect(shouldUseTui({ interactive: true, jsonOutput: false, prompt: "hi" })).toBe(false);
-    expect(shouldUseTui({ interactive: true, jsonOutput: true })).toBe(false);
-    expect(shouldUseTui({ interactive: false, jsonOutput: false, prompt: "hi" })).toBe(false);
+    expect(shouldUseTui({ interactive: true })).toBe(true);
+    expect(shouldUseTui({ interactive: true, prompt: "hi" })).toBe(false);
+    expect(shouldUseTui({ interactive: false, prompt: "hi" })).toBe(false);
   });
 });
 

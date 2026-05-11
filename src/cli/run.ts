@@ -1,4 +1,3 @@
-import { createInterface } from "node:readline/promises";
 import { shimDuetApiKeyToAiGateway } from "../model-resolution/duet-gateway.js";
 import { maybeAutoSyncDefaultSkills } from "../lib/sync-skills.js";
 import {
@@ -47,17 +46,13 @@ export interface PackageMetadata {
 }
 
 /**
- * Decide whether to render the interactive TUI vs JSONL events.
- *
- * Supplying a prompt argument selects JSONL so one-shot runs have a stable
- * machine-readable contract by default; an explicit `--json` always wins.
+ * Decide whether to render the interactive TUI vs the one-shot streaming
+ * path. The TUI runs only when the terminal is interactive and the caller
+ * did not supply a prompt argument; otherwise we run a single turn against
+ * the SessionManager and exit when it settles.
  */
-export function shouldUseTui(input: {
-  interactive: boolean;
-  jsonOutput: boolean;
-  prompt?: string;
-}): boolean {
-  return input.interactive && !input.jsonOutput && !input.prompt;
+export function shouldUseTui(input: { interactive: boolean; prompt?: string }): boolean {
+  return input.interactive && !input.prompt;
 }
 
 /**
@@ -103,7 +98,6 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   let systemPromptFiles: string[] | undefined;
   let resumeHistoryMessages = DEFAULT_RESUME_HISTORY_MESSAGES;
   let resumeHistoryMessagesExplicit = false;
-  let jsonOutput = false;
   let envFilePath: string | undefined;
   let incognito = false;
   let noAutoUpgrade = false;
@@ -159,9 +153,6 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       case "--no-system-prompt-files":
         systemPromptFiles = [];
         break;
-      case "--json":
-        jsonOutput = true;
-        break;
       case "--env-file":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         envFilePath = args[++i];
@@ -196,10 +187,6 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       chunks.push(chunk as Buffer);
     }
     prompt = Buffer.concat(chunks).toString("utf-8").trim();
-  }
-
-  if (!prompt && jsonOutput && interactive) {
-    prompt = await readInteractivePrompt();
   }
 
   if (!prompt && !resumeSessionId && !interactive) {
@@ -264,14 +251,13 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   modelName = modelResolution.modelName;
   memoryModelName = memoryModelResolution.modelName;
 
-  const useTui = shouldUseTui({ interactive, jsonOutput, prompt });
-  const useJson = !useTui;
+  const useTui = shouldUseTui({ interactive, prompt });
 
-  // JSON consumers want a single summary line, not a streaming status.
+  // One-shot consumers want a single summary line, not a streaming status.
   // Await the final upgrade status and print the human-readable form (if any)
   // before the regular boot lines. The TUI subscribes to the live stream
   // instead and renders intermediate "Checking…/Updating…" states inline.
-  if (useJson) {
+  if (!useTui) {
     const finalStatus = await upgradePromise;
     const notice = describeUpgradeStatus(pkg.name, finalStatus);
     if (notice) process.stderr.write(`${notice}\n`);
@@ -282,11 +268,14 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   }
 
   const manager = new SessionManager(config);
-  manager.subscribe(({ event }) => {
-    if (useJson) {
+  if (!useTui) {
+    // Non-TUI runs (one-shot prompt, piped stdin) stream events as JSONL so
+    // CI scripts can parse them. The TUI subscribes to its own rendering
+    // pipeline and has no use for stdout JSONL.
+    manager.subscribe(({ event }) => {
       process.stdout.write(`${JSON.stringify(event)}\n`);
-    }
-  });
+    });
+  }
 
   // Ensure PGlite gets a chance to flush its WAL on Ctrl+C / SIGTERM. The
   // `finally` block below handles normal returns and thrown errors, but
@@ -357,26 +346,5 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   } finally {
     removeShutdownHandlers();
     await manager.dispose();
-  }
-}
-
-/**
- * Read a single prompt from stdin when --json is set in an interactive
- * terminal and no prompt was supplied via argv. Loops until the user
- * provides non-empty input.
- */
-async function readInteractivePrompt(): Promise<string> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stderr,
-  });
-  try {
-    let prompt = "";
-    while (!prompt) {
-      prompt = (await rl.question("> ")).trim();
-    }
-    return prompt;
-  } finally {
-    rl.close();
   }
 }

@@ -45,7 +45,10 @@ OPTIONS
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
   --env-file <path>        Shared env file to load after <workdir>/.env (default: ${DEFAULT_DUET_ENV_FILE})
   --no-auto-upgrade         Skip the auto-upgrade probe for this run (also: DUET_NO_AUTO_UPGRADE=1)
-  --json                    Force JSONL event output instead of the TUI
+  --rpc                     Bare turn-runner control surface. Reads newline-delimited TurnRunnerCommand
+                            JSON from stdin and writes TurnEvent JSON to stdout. The first command must
+                            be "start"; the process exits after the single turn reaches its terminal
+                            event. Bypasses session persistence entirely.
   -v, --version            Print the installed duet version and exit
   -h, --help               Show this help
 
