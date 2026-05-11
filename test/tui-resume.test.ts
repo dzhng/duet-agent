@@ -11,6 +11,14 @@ import { FakePlaygroundRunner } from "../examples/tui-playground.js";
 import { createUpgradeStatusStream } from "../src/cli/auto-upgrade.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
+// Drain microtasks twice so keystroke events fed through `mockInput` have
+// time to update the input field, fire `onContentChange`, and flush the
+// renderer. One tick is enough on macOS; Linux Docker needs both.
+async function flush(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
 // Architectural contract: `--resume <id>` invocations skip the boot starter
 // menu entirely. The user explicitly asked to drop back into a known
 // conversation, so showing "what should we work on today?" or
@@ -52,8 +60,7 @@ async function bootStarterTui(options: { isResume: boolean }) {
   }).catch(() => undefined);
 
   // Let the view paint and attach handlers before we read frames.
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await flush();
 
   return {
     mockInput,
@@ -102,13 +109,13 @@ describe("TUI starter chrome toggle", () => {
 
     // Typing hides the chrome.
     await mockInput.typeText("h");
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await flush();
     const typed = captureCharFrame().toLowerCase();
     expect(typed).not.toContain(HEADLINE);
 
     // Backspace-to-empty restores it.
     mockInput.pressBackspace();
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await flush();
     const restored = captureCharFrame().toLowerCase();
     expect(restored).toContain(HEADLINE);
 
@@ -135,9 +142,9 @@ describe("TUI starter chrome toggle", () => {
       // renderables, the hint row drifts a few cells lower each cycle.
       for (let i = 0; i < 5; i += 1) {
         await mockInput.typeText("x");
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await flush();
         mockInput.pressBackspace();
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        await flush();
       }
 
       const after = headlineRow();
