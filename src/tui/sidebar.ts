@@ -1,7 +1,36 @@
 import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
-import type { TurnContextUsageEvent, TurnFollowUpQueueEntry, TurnTodo } from "../types/protocol.js";
+import type {
+  TurnContextUsageEvent,
+  TurnContextWindowUsage,
+  TurnFollowUpQueueEntry,
+  TurnTodo,
+} from "../types/protocol.js";
 import type { StateMachineSession } from "../types/state-machine.js";
 import { COLORS } from "./theme.js";
+
+/**
+ * Width of the context-usage bar in terminal cells. Each tracked segment
+ * (system prompt, raw messages, local memory, global memory) plus an
+ * "untracked" remainder is drawn as a colored run of `█` cells; `░`
+ * fills the remaining headroom up to this width.
+ */
+const CONTEXT_BAR_WIDTH = 25;
+
+/**
+ * Visual breakdown of `TurnContextWindowUsage` for the sidebar bar and
+ * legend. Order here is the order cells are drawn left-to-right and the
+ * order labels appear in the legend row beneath the bar.
+ */
+const CONTEXT_SEGMENTS: ReadonlyArray<{
+  key: keyof TurnContextWindowUsage;
+  label: string;
+  color: string;
+}> = [
+  { key: "systemPrompt", label: "sys", color: COLORS.system },
+  { key: "messages", label: "msg", color: COLORS.user },
+  { key: "localMemory", label: "loc", color: COLORS.tool },
+  { key: "globalMemory", label: "glb", color: COLORS.status },
+];
 
 /**
  * Right-hand sidebar that surfaces the runner's todos, queued follow-ups,
@@ -56,34 +85,128 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     { maxBodyLines: FOLLOW_UP_MAX_BODY_LINES, grow: false },
   );
   const { panel: smPanel, body: smBody } = createPanel(renderer, "state machine", "(inactive)");
-  const { panel: contextPanel, body: contextBody } = createPanel(
-    renderer,
-    "context",
-    "(waiting for usage)",
-    { fixedHeight: 5, grow: false },
-  );
-  // Tokens and cost share a single row: tokens left-aligned (matching the
-  // panel's primary color), cost right-aligned in grey so it stays muted
-  // even when the bar above flips to red on overflow.
-  const usageRow = new BoxRenderable(renderer, {
+
+  // The context panel is hand-rolled rather than going through createPanel
+  // because the body is a horizontal colored bar plus a legend row, not a
+  // single text node. Mirrors createPanel's border + title styling so it
+  // sits flush with the other sidebar panels.
+  //
+  // Height budget (5 cells): border(2) + title+usage(1) + bar(1) +
+  // legend(1). Tokens and cost ride on the title row, right-aligned, so
+  // the panel stays the same height as the other sidebar panels.
+  const contextPanel = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    border: true,
+    borderColor: COLORS.border,
+    paddingLeft: 1,
+    paddingRight: 1,
+    height: 5,
+    flexShrink: 0,
+  });
+  // Title row: "context" label on the left, tokens + cost right-aligned
+  // so the bar/legend rows below get the full inner width.
+  const titleRow = new BoxRenderable(renderer, {
     flexDirection: "row",
     height: 1,
     flexShrink: 0,
   });
+  const contextTitle = new TextRenderable(renderer, {
+    content: "context",
+    fg: COLORS.status,
+    flexGrow: 1,
+    flexShrink: 0,
+  });
+  // Tokens + cost share the right side of the title row, rendered in
+  // white so the readout reads as primary data; overflow flips tokens
+  // to error red.
   const tokensLabel = new TextRenderable(renderer, {
     content: "",
-    fg: COLORS.hint,
-    flexGrow: 1,
-    flexShrink: 1,
+    fg: COLORS.agent,
+    flexShrink: 0,
   });
   const costLabel = new TextRenderable(renderer, {
     content: "",
+    fg: COLORS.agent,
+    flexShrink: 0,
+  });
+  titleRow.add(contextTitle);
+  titleRow.add(tokensLabel);
+  titleRow.add(costLabel);
+  contextPanel.add(titleRow);
+
+  // Colored bar row: open bracket, one TextRenderable per tracked segment
+  // (its `content` length controls how many cells it occupies in the flex
+  // row), an "untracked" run for provider-reported tokens our segment
+  // breakdown does not attribute, the empty remainder, and a close bracket
+  // with percentage. Updating widths is just rewriting `content`.
+  const barRow = new BoxRenderable(renderer, {
+    flexDirection: "row",
+    height: 1,
+    flexShrink: 0,
+  });
+  const barOpen = new TextRenderable(renderer, {
+    content: "[",
     fg: COLORS.hint,
     flexShrink: 0,
   });
-  usageRow.add(tokensLabel);
-  usageRow.add(costLabel);
-  contextPanel.add(usageRow);
+  barRow.add(barOpen);
+  const segmentNodes = CONTEXT_SEGMENTS.map((segment) => {
+    const node = new TextRenderable(renderer, {
+      content: "",
+      fg: segment.color,
+      flexShrink: 0,
+    });
+    barRow.add(node);
+    return node;
+  });
+  // Cells used by the provider-reported total beyond what the four tracked
+  // segments add up to (e.g. tool definitions, reasoning, or overhead the
+  // runner does not model explicitly). Rendered in `reasoning` grey so it
+  // reads as "used but unattributed."
+  const untrackedNode = new TextRenderable(renderer, {
+    content: "",
+    fg: COLORS.reasoning,
+    flexShrink: 0,
+  });
+  barRow.add(untrackedNode);
+  const emptyNode = new TextRenderable(renderer, {
+    content: "\u2591".repeat(CONTEXT_BAR_WIDTH),
+    fg: COLORS.hint,
+    flexShrink: 0,
+  });
+  barRow.add(emptyNode);
+  const barClose = new TextRenderable(renderer, {
+    content: "]   --%",
+    fg: COLORS.hint,
+    flexShrink: 0,
+  });
+  barRow.add(barClose);
+  contextPanel.add(barRow);
+
+  // Legend row: a colored square plus a hint-colored label per segment,
+  // matching the bar order. Lets users decode the bar at a glance without
+  // needing a tooltip surface.
+  const legendRow = new BoxRenderable(renderer, {
+    flexDirection: "row",
+    height: 1,
+    flexShrink: 0,
+  });
+  CONTEXT_SEGMENTS.forEach((segment, index) => {
+    const dot = new TextRenderable(renderer, {
+      content: "\u25A0",
+      fg: segment.color,
+      flexShrink: 0,
+    });
+    legendRow.add(dot);
+    const trailing = index < CONTEXT_SEGMENTS.length - 1 ? "  " : "";
+    const label = new TextRenderable(renderer, {
+      content: ` ${segment.label}${trailing}`,
+      fg: COLORS.hint,
+      flexShrink: 0,
+    });
+    legendRow.add(label);
+  });
+  contextPanel.add(legendRow);
 
   view.add(todoPanel);
   view.add(followUpPanel);
@@ -145,21 +268,73 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     },
     setContextUsage(usage) {
       if (!usage) {
-        contextBody.content = "(waiting for usage)";
-        contextBody.fg = COLORS.hint;
+        for (const node of segmentNodes) node.content = "";
+        untrackedNode.content = "";
+        emptyNode.content = "\u2591".repeat(CONTEXT_BAR_WIDTH);
+        barClose.content = "]   --%";
+        barClose.fg = COLORS.hint;
         tokensLabel.content = "";
         return;
       }
+      const cap = usage.effectiveContextWindow;
+      const breakdown = usage.contextWindowUsage;
       const usedTokens = usage.usage.totalTokens;
-      const percent = Math.min(1, usedTokens / usage.effectiveContextWindow);
-      contextBody.content = progressBar(percent, 25);
-      const overflow = usedTokens >= usage.effectiveContextWindow;
-      contextBody.fg = overflow ? COLORS.error : COLORS.agent;
-      tokensLabel.content = `${formatTokenCount(usedTokens)} / ${formatTokenCount(usage.effectiveContextWindow)}`;
+      const overflow = usedTokens >= cap;
+
+      // Cells per tracked segment, proportional to the effective cap so
+      // empty headroom is visible even when usage is light. Any segment
+      // with non-zero tokens shows at least one cell so a tiny but
+      // present slice does not vanish at low usage.
+      const segmentCells = CONTEXT_SEGMENTS.map((segment) => {
+        const tokens = breakdown[segment.key] ?? 0;
+        if (tokens <= 0) return 0;
+        return Math.max(1, Math.round((tokens / cap) * CONTEXT_BAR_WIDTH));
+      });
+      const trackedSum = CONTEXT_SEGMENTS.reduce(
+        (acc, segment) => acc + (breakdown[segment.key] ?? 0),
+        0,
+      );
+      const untrackedTokens = Math.max(0, usedTokens - trackedSum);
+      let untrackedCells =
+        untrackedTokens > 0
+          ? Math.max(1, Math.round((untrackedTokens / cap) * CONTEXT_BAR_WIDTH))
+          : 0;
+
+      // Clamp so the colored runs never exceed CONTEXT_BAR_WIDTH. Shave
+      // overflow off the untracked tail first (least informative), then
+      // peel from the rightmost tracked segments so users still see the
+      // dominant segment that is filling the bar.
+      let usedCells = segmentCells.reduce((a, b) => a + b, 0) + untrackedCells;
+      if (usedCells > CONTEXT_BAR_WIDTH) {
+        let excess = usedCells - CONTEXT_BAR_WIDTH;
+        const shave = Math.min(untrackedCells, excess);
+        untrackedCells -= shave;
+        excess -= shave;
+        for (let i = segmentCells.length - 1; i >= 0 && excess > 0; i--) {
+          const take = Math.min(segmentCells[i], excess);
+          segmentCells[i] -= take;
+          excess -= take;
+        }
+        usedCells = segmentCells.reduce((a, b) => a + b, 0) + untrackedCells;
+      }
+      const emptyCells = Math.max(0, CONTEXT_BAR_WIDTH - usedCells);
+
+      segmentNodes.forEach((node, i) => {
+        node.content = "\u2588".repeat(segmentCells[i]);
+      });
+      untrackedNode.content = "\u2588".repeat(untrackedCells);
+      emptyNode.content = "\u2591".repeat(emptyCells);
+
+      const percent = Math.min(100, Math.round((usedTokens / cap) * 100));
+      barClose.content = `] ${String(percent).padStart(3)}%`;
+      barClose.fg = overflow ? COLORS.error : COLORS.hint;
+      tokensLabel.content = `${formatTokenCount(usedTokens)} / ${formatTokenCount(cap)}`;
       tokensLabel.fg = overflow ? COLORS.error : COLORS.agent;
     },
     setSessionCost(cost) {
-      costLabel.content = cost > 0 ? `$${cost.toFixed(4)}` : "";
+      // Prefix with a space so cost sits visibly apart from the tokens
+      // label that shares the same right-aligned slot on the title row.
+      costLabel.content = cost > 0 ? ` $${cost.toFixed(4)}` : "";
     },
   };
 }
@@ -229,13 +404,6 @@ function todoStatusGlyph(status: TurnTodo["status"]): string {
   if (status === "in_progress") return "●";
   if (status === "failed") return "✗";
   return "○";
-}
-
-function progressBar(value: number, width: number): string {
-  const clamped = Math.max(0, Math.min(1, value));
-  const filled = Math.round(clamped * width);
-  const empty = width - filled;
-  return `[${"█".repeat(filled)}${"░".repeat(empty)}] ${`${Math.round(clamped * 100)}%`.padStart(4)}`;
 }
 
 function formatTokenCount(tokens: number): string {
