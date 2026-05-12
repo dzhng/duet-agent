@@ -83,10 +83,10 @@ describe("session resume history", () => {
       const secondManager = createManager(sessionStoragePath);
       try {
         const resumedSession = secondManager.resume(sessionId);
-        await resumedSession.start();
         const unsubSecond = resumedSession.subscribe((event) => {
           secondEvents.push(event);
         });
+        await resumedSession.start();
         await resumedSession.prompt({
           message: "What exact session token did I ask you to remember? Reply with only the token.",
         });
@@ -137,12 +137,14 @@ describe("session resume history", () => {
         expect(secondDiskUsage.usage.totalTokens).toBe(secondTerminal.usage.totalTokens);
       }
 
+      // The resumed turn has strictly more conversation than the first, so
+      // its rescaled `messages` share must grow. Other segments come from
+      // roughly constant raw inputs (system prompt + memory) whose rescaled
+      // shares can shrink as `messages` claims more of the denominator —
+      // so we don't compare those across turns.
       const a = firstDiskUsage.contextWindowUsage;
       const b = secondDiskUsage.contextWindowUsage;
       expect(b.messages).toBeGreaterThan(a.messages);
-      expect(b.systemPrompt).toBeGreaterThanOrEqual(a.systemPrompt);
-      expect(b.localMemory).toBeGreaterThanOrEqual(a.localMemory);
-      expect(b.globalMemory).toBeGreaterThanOrEqual(a.globalMemory);
     },
     30_000,
   );

@@ -90,20 +90,19 @@ describe("provider context-overflow recovery", () => {
 });
 
 /**
- * Build a synthetic prior-turn transcript whose total wire size pushes
- * the first send past a 200k-token context window. Sizing targets:
- * - Full transcript: ~800 KB of text ≈ 230 KT real tokens (Anthropic
- *   tokenizer averages ~3.5 chars/token for English), comfortably
- *   above the 200 KT haiku/sonnet window after the runner adds its
- *   system prompt and tool definitions.
- * - Half transcript (after the recovery branch advances the horizon
- *   to drop the older half): ~400 KB ≈ 115 KT real tokens, leaving
- *   headroom under the same 200 KT window even after the runner's
- *   non-message overhead.
+ * Build a synthetic prior-turn transcript whose total wire size reliably
+ * pushes the first send past a 200k-token context window. Repeated
+ * "lorem ipsum" is highly tokenizer-compressible, so we oversize the raw
+ * bytes well beyond a naive chars/token estimate to ensure the provider
+ * actually rejects the first attempt — that rejection is what triggers
+ * the recovery branch under test. After the recovery branch advances
+ * the sticky horizon past the older half, the remaining transcript fits.
  */
 function buildOversizedHistory(): AgentMessage[] {
-  // ~8 KB per message * 100 messages = ~800 KB total.
-  const filler = "lorem ipsum dolor sit amet consectetur adipiscing elit ".repeat(140);
+  // ~14 KB per message * 100 messages = ~1.4 MB total raw text. Sized so
+  // the full transcript overflows haiku-4.5's window but the halved
+  // transcript the recovery branch produces fits.
+  const filler = "lorem ipsum dolor sit amet consectetur adipiscing elit ".repeat(250);
   const messages: AgentMessage[] = [];
   for (let pair = 0; pair < 50; pair++) {
     const userTimestamp = pair * 2 + 1;
