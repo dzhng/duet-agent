@@ -111,7 +111,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
     description: "Dispose the current session and start a fresh one",
     matches: (message) => isBare(message, "reset"),
     handle: (_, ctx) => {
-      ctx.appendBlock("[reset]", "starting a new session\u2026", COLORS.system);
+      ctx.appendBlock("[reset]", "starting a new session…", COLORS.system);
       ctx.onReset();
     },
   },
@@ -168,7 +168,7 @@ function handleDiagSlashCommand(raw: string, ctx: SlashCommandContext): void {
   }
   ctx.appendBlock(
     "[diag]",
-    "Usage: /diag (or /diag keys) \u2014 toggles key + selection event logging",
+    "Usage: /diag (or /diag keys) — toggles key + selection event logging",
     COLORS.system,
   );
 }
@@ -178,12 +178,12 @@ async function handleFeedbackSlashCommand(raw: string, ctx: SlashCommandContext)
   if (!content) {
     ctx.appendBlock(
       "[feedback]",
-      "Usage: /feedback <message>  \u2014 send free-form feedback to the Duet team",
+      "Usage: /feedback <message>  — send free-form feedback to the Duet team",
       COLORS.system,
     );
     return;
   }
-  ctx.appendBlock("[feedback]", "sending\u2026", COLORS.system);
+  ctx.appendBlock("[feedback]", "sending…", COLORS.system);
   try {
     const { baseUrl } = await submitDuetFeedback({ content });
     ctx.appendBlock("[feedback]", `Thanks! Feedback sent to ${baseUrl}.`, COLORS.system);
@@ -201,7 +201,7 @@ async function handleImageSlashCommand(raw: string, ctx: SlashCommandContext): P
   if (!rest) {
     ctx.appendBlock(
       "[paste]",
-      "Usage: /image <path>  \u2014 attach a PNG/JPEG/GIF/WebP from disk",
+      "Usage: /image <path>  — attach a PNG/JPEG/GIF/WebP from disk",
       COLORS.system,
     );
     return;
