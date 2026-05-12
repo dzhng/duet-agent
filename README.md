@@ -233,7 +233,7 @@ The recommended path is `duet login`. One sign-in writes `DUET_API_KEY` to `~/.d
 
 ```bash
 duet login
-duet "build a REST API with Express"
+duet "prospect the VP Eng at Acme, send a first-touch email about our conf talk, wait up to 14 days for a reply, and book a meeting on Calendly if they're interested"
 ```
 
 If you would rather manage provider API keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set a provider API key in the environment, `<workdir>/.env`, or `~/.duet/.env`. When `--model` is omitted, the CLI infers a default from the configured provider: Duet, Anthropic, AI Gateway, and OpenRouter use Opus 4.7 (memory: Haiku 4.5); OpenAI uses GPT-5.5 (memory: GPT-5.4-mini).
@@ -444,7 +444,9 @@ await turnRunner.start();
 
 const terminal = await turnRunner.turn({
   type: "prompt",
-  message: "Build a todo app with React and TypeScript",
+  message:
+    "Prospect the VP Eng at Acme: research them, send a first-touch email, " +
+    "wait up to 14 days for a reply, and book a Calendly slot if interested.",
   behavior: "follow_up",
 });
 ```

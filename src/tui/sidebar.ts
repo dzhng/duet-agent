@@ -86,6 +86,20 @@ export const SIDEBAR_WIDTH = 36;
  */
 const FOLLOW_UP_MAX_BODY_LINES = 3;
 
+/**
+ * Empty-state copy for the three runtime panels. Doubles as the panel's
+ * initial body and the fallback the sidebar restores when the runner
+ * reports an empty list. Phrased as a short "what this panel is" hint
+ * rather than a placeholder like "(none)" so a brand-new session teaches
+ * the user what each panel will fill with once work starts.
+ */
+const TODOS_EMPTY_HINT =
+  "Empty for now. Fills with the agent's in-turn checklist while it works on a multi-step task.";
+const FOLLOW_UPS_EMPTY_HINT =
+  "Empty for now. Shift+Enter queues a message here; it's delivered when the current turn settles.";
+const LOOPS_EMPTY_HINT =
+  "No loop running. Long-running prompts (outreach, dev lifecycle, triage) open one and run across sessions.";
+
 export function createSidebar(renderer: CliRenderer): Sidebar {
   // Fixed width keeps the sidebar legible on narrow terminals without
   // squashing the transcript. The three panels stack vertically inside.
@@ -96,22 +110,14 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     flexShrink: 0,
   });
 
-  const { panel: todoPanel, body: todoBody } = createPanel(
-    renderer,
-    "todos",
-    "in-conversation checklist of work the agent is doing right now",
-  );
+  const { panel: todoPanel, body: todoBody } = createPanel(renderer, "todos", TODOS_EMPTY_HINT);
   const { panel: followUpPanel, body: followUpBody } = createPanel(
     renderer,
     "follow-ups",
-    "queued messages delivered to the agent when the current turn settles",
+    FOLLOW_UPS_EMPTY_HINT,
     { maxBodyLines: FOLLOW_UP_MAX_BODY_LINES, grow: false },
   );
-  const { panel: smPanel, body: smBody } = createPanel(
-    renderer,
-    "loops",
-    "durable background workflows that keep running across sessions",
-  );
+  const { panel: smPanel, body: smBody } = createPanel(renderer, "loops", LOOPS_EMPTY_HINT);
 
   // The context panel is hand-rolled rather than going through createPanel
   // because the body is a horizontal colored bar plus a legend row, not a
@@ -213,7 +219,7 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     view,
     setTodos(todos) {
       if (todos.length === 0) {
-        todoBody.content = "(none)";
+        todoBody.content = TODOS_EMPTY_HINT;
         todoBody.fg = COLORS.hint;
         return;
       }
@@ -224,7 +230,7 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     },
     setFollowUpQueue(entries) {
       if (entries.length === 0) {
-        followUpBody.content = "(none)";
+        followUpBody.content = FOLLOW_UPS_EMPTY_HINT;
         followUpBody.fg = COLORS.hint;
         return;
       }
@@ -247,7 +253,7 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     },
     setStateMachine(session) {
       if (!session) {
-        smBody.content = "(inactive)";
+        smBody.content = LOOPS_EMPTY_HINT;
         smBody.fg = COLORS.hint;
         return;
       }
