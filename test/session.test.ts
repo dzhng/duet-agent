@@ -169,6 +169,22 @@ afterEach(async () => {
   tempDirs = [];
 });
 
+function buildUsageEvent(costTotal: number): import("../src/types/protocol.js").TurnUsageEvent {
+  return {
+    type: "usage",
+    usage: {
+      input: 100,
+      output: 50,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 150,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: costTotal },
+    },
+    effectiveContextWindow: 200_000,
+    contextWindowUsage: { systemPrompt: 10, messages: 90, localMemory: 20, globalMemory: 30 },
+  };
+}
+
 function complete(result = "done"): TurnTerminalEvent {
   return {
     type: "complete",
@@ -405,58 +421,94 @@ describe("Session", () => {
     });
   });
 
+  testIfDocker("restores lastUsage and sessionCostUsd from state.json on start", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
+    tempDirs.push(tempDir);
+    const sessionPath = join(tempDir, "telemetry-resume");
+    await mkdir(sessionPath, { recursive: true });
+
+    const persistedUsage = {
+      usage: {
+        input: 100,
+        output: 50,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 150,
+        cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+      },
+      effectiveContextWindow: 200_000,
+      contextWindowUsage: {
+        systemPrompt: 10,
+        messages: 70,
+        localMemory: 30,
+        globalMemory: 40,
+      },
+    };
+
+    await writeFile(
+      join(sessionPath, "state.json"),
+      `${JSON.stringify(
+        {
+          sessionId: "telemetry-resume",
+          updatedAt: Date.now(),
+          state: turnState,
+          lastUsage: persistedUsage,
+          sessionCostUsd: 1.25,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf-8",
+    );
+
+    const runner = new FakeTurnRunner([complete("ok")]);
+    const session = new Session(
+      { model: "anthropic:claude-opus-4-7" },
+      { id: "telemetry-resume", runner, sessionPath, resumeFromStorage: true },
+    );
+
+    await session.start();
+
+    expect(session.getLastUsage()).toEqual(persistedUsage);
+    expect(session.getSessionCostUsd()).toBe(1.25);
+  });
+
   testIfDocker(
-    "restores lastContextUsage and sessionCostUsd from state.json on start",
+    "advances sessionCostUsd by the delta of each usage event's running aggregate",
     async () => {
-      const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
-      tempDirs.push(tempDir);
-      const sessionPath = join(tempDir, "telemetry-resume");
-      await mkdir(sessionPath, { recursive: true });
-
-      const persistedUsage = {
-        usage: {
-          input: 100,
-          output: 50,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 150,
-          cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
-        },
-        effectiveContextWindow: 200_000,
-        contextWindowUsage: {
-          systemPrompt: 10,
-          messages: 70,
-          localMemory: 30,
-          globalMemory: 40,
-        },
-      };
-
-      await writeFile(
-        join(sessionPath, "state.json"),
-        `${JSON.stringify(
-          {
-            sessionId: "telemetry-resume",
-            updatedAt: Date.now(),
-            state: turnState,
-            lastContextUsage: persistedUsage,
-            sessionCostUsd: 1.25,
-          },
-          null,
-          2,
-        )}\n`,
-        "utf-8",
-      );
-
-      const runner = new FakeTurnRunner([complete("ok")]);
-      const session = new Session(
-        { model: "anthropic:claude-opus-4-7" },
-        { id: "telemetry-resume", runner, sessionPath, resumeFromStorage: true },
-      );
-
+      const runner = new FakeTurnRunner([]);
+      const session = await createSession(runner);
       await session.start();
 
-      expect(session.getLastContextUsage()).toEqual(persistedUsage);
-      expect(session.getSessionCostUsd()).toBe(1.25);
+      // Stream three usage events from one turn, each carrying a larger
+      // running aggregate. The session should credit only the delta beyond
+      // what it already saw for this turn.
+      runner.emit(buildUsageEvent(0.05));
+      runner.emit(buildUsageEvent(0.07));
+      runner.emit(buildUsageEvent(0.1));
+      expect(session.getSessionCostUsd()).toBeCloseTo(0.1, 6);
+
+      // Terminal carrying the same running aggregate must be a no-op (already
+      // credited via the last usage event).
+      runner.emit({
+        type: "complete",
+        status: "completed",
+        result: "done",
+        state: turnState,
+        usage: buildUsageEvent(0.1).usage,
+        effectiveContextWindow: buildUsageEvent(0.1).effectiveContextWindow,
+        contextWindowUsage: buildUsageEvent(0.1).contextWindowUsage,
+      });
+      expect(session.getSessionCostUsd()).toBeCloseTo(0.1, 6);
+
+      // Second turn: turn_started resets the per-turn accumulator, so a new
+      // usage event with `cost.total === 0.04` should add 0.04, not be
+      // mistaken for a refund relative to the prior turn's 0.1.
+      runner.emit({ type: "turn_started", state: turnState });
+      runner.emit(buildUsageEvent(0.04));
+      expect(session.getSessionCostUsd()).toBeCloseTo(0.14, 6);
+
+      await session.dispose();
     },
   );
 

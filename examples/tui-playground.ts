@@ -43,7 +43,7 @@ import type { SkillCollision } from "../src/turn-runner/skills.js";
 import type {
   TurnAgentFile,
   TurnCommand,
-  TurnContextUsageEvent,
+  TurnUsageEvent,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
@@ -77,7 +77,7 @@ export const PLAYGROUND_MENU = [
   "                             a 'Done' row is the multi-select advance key;",
   "                             ←/→ revisit prior or upcoming questions;",
   "                             typing mid-flow flushes the latest answers.",
-  "  /context [pct]             emit a context_usage event filling the bar to ~pct (default 60)",
+  "  /context [pct]             emit a usage event filling the bar to ~pct (default 60)",
   "  /sleep <secs>              emit a sleep terminal that wakes in N seconds",
   "  /error <message>           emit a system error and end the turn",
   "  /echo <text>               stream <text> back verbatim and complete (used by tests)",
@@ -188,9 +188,9 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
     this.emit(terminal);
   }
 
-  /** Emit `context_usage` for tests that need explicit segment totals. */
-  emitContextUsage(event: Omit<TurnContextUsageEvent, "type">): void {
-    this.emit({ type: "context_usage", ...event });
+  /** Emit `usage` for tests that need explicit segment totals. */
+  emitUsage(event: Omit<TurnUsageEvent, "type">): void {
+    this.emit({ type: "usage", ...event });
   }
 
   // ---- scenario plumbing ---------------------------------------------------
@@ -330,7 +330,7 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
     }
 
     if (message.startsWith("/context")) {
-      // Synthetic `context_usage` for the sidebar bar. Optional arg: target
+      // Synthetic `usage` for the sidebar bar. Optional arg: target
       // fill percent (default 60). Breakdown uses fixed-ish system + memory
       // caps, ~7% untracked overhead, remainder as messages; usage fields
       // are shaped so the title-row cost readout is non-zero (Opus 4 $/M).
@@ -358,7 +358,7 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       };
       cost.total = cost.input + cost.output + cost.cacheRead + cost.cacheWrite;
 
-      this.emitContextUsage({
+      this.emitUsage({
         usage: {
           input,
           output,
@@ -370,7 +370,7 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         effectiveContextWindow: cap,
         contextWindowUsage: { systemPrompt, messages, localMemory, globalMemory },
       });
-      return this.complete(`Emitted context_usage at ~${target}% of ${cap} tokens.`);
+      return this.complete(`Emitted usage at ~${target}% of ${cap} tokens.`);
     }
 
     if (message.startsWith("/echo")) {

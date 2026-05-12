@@ -67,7 +67,7 @@ single line.
    or `wake` — to actually run the turn.
 3. The runner streams any number of during-turn events
    (`step`, `todos`, `follow_up_queue`, `state_machine`, `memory`,
-   `context_usage`, `system`).
+   `usage`, `system`).
 4. The turn ends with exactly one terminal event:
    `complete`, `ask`, `interrupted`, or `sleep`. Every terminal event carries
    the next `TurnState` snapshot.
@@ -179,9 +179,13 @@ consumer typically renders or reacts to:
 - `todos` — the model's current todo list.
 - `state_machine` — current state name when running a state machine.
 - `memory` — observational memory writes (extraction / reflection activity).
-- `context_usage` — token accounting with `effectiveContextWindow` and a per-segment `contextWindowUsage` breakdown (`systemPrompt`, `messages`, `localMemory`, `globalMemory`).
+- `usage` — running turn-aggregate token accounting (`usage`) plus the latest parent context-window snapshot (`effectiveContextWindow`, `contextWindowUsage` breakdown of `systemPrompt`, `messages`, `localMemory`, `globalMemory`). Emitted after every parent assistant message and after every state-agent finishes, so consumers can render cost ticks mid-turn.
 - `complete | ask | interrupted | sleep` — terminal events. Always include
-  the updated `state`. `ask` requires the caller to follow up with
+  the updated `state`. When at least one assistant message has been
+  recorded this turn, terminals additionally carry the same `usage` /
+  `effectiveContextWindow` / `contextWindowUsage` fields as the `usage`
+  event, so a consumer that only reads terminals can still recover the
+  final aggregate. `ask` requires the caller to follow up with
   `{ "type": "answer", ... }`; `sleep` carries a `wakeAt` epoch ms; the
   caller is responsible for scheduling a wake.
 

@@ -689,11 +689,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     sidebar.setTodos(state?.todos ?? []);
     sidebar.setFollowUpQueue(state?.followUpQueue ?? []);
     sidebar.setStateMachine(state?.stateMachine);
-    const snap = input.session.getLastContextUsage();
-    sidebar.setContextUsage(
+    const snap = input.session.getLastUsage();
+    sidebar.setUsage(
       snap
         ? {
-            type: "context_usage",
+            type: "usage",
             usage: snap.usage,
             effectiveContextWindow: snap.effectiveContextWindow,
             contextWindowUsage: snap.contextWindowUsage,

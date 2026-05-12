@@ -8,7 +8,7 @@ import {
 } from "@opentui/core";
 import type {
   TurnContextWindowUsage,
-  TurnContextUsageEvent,
+  TurnUsageEvent,
   TurnFollowUpQueueEntry,
   TurnTodo,
 } from "../types/protocol.js";
@@ -67,7 +67,7 @@ export interface Sidebar {
   /** Mirror the active state-machine pipeline; pass undefined to clear. */
   setStateMachine(session: StateMachineSession | undefined): void;
   /** Render the latest context-usage progress bar; pass undefined to clear. */
-  setContextUsage(usage: TurnContextUsageEvent | undefined): void;
+  setUsage(usage: TurnUsageEvent | undefined): void;
   /** Cumulative USD cost across all turns in the current session. */
   setSessionCost(cost: number): void;
 }
@@ -254,7 +254,7 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
       smBody.content = lines.join("\n");
       smBody.fg = COLORS.agent;
     },
-    setContextUsage(usage) {
+    setUsage(usage) {
       if (!usage) {
         barRow.content = makeBarContent({
           segmentCells: CONTEXT_SEGMENTS.map(() => 0),

@@ -152,15 +152,14 @@ class UsageTrackingTurnRunner extends TurnRunner {
 }
 
 /**
- * End-to-end harness for the `context_usage` event. Reuses the
- * stream-stubbing pattern from `MemoryEventTurnRunner` so a full
- * `startTurn(...).turn` drives a fake assistant `done` event through
- * the runner, which then triggers `emitParentAgentEvent → emit
- * context_usage`. Memory is left unconfigured; the breakdown still
- * runs since the cache always returns `{ global: [], local: [] }`
- * when no pack has been frozen.
+ * End-to-end harness for the `usage` event. Reuses the stream-stubbing
+ * pattern from `MemoryEventTurnRunner` so a full `startTurn(...).turn`
+ * drives a fake assistant `done` event through the runner, which then
+ * triggers `emitParentAgentEvent → emit usage`. Memory is left
+ * unconfigured; the breakdown still runs since the cache always returns
+ * `{ global: [], local: [] }` when no pack has been frozen.
  */
-class ContextUsageTurnRunner extends TurnRunner {
+class UsageEventTurnRunner extends TurnRunner {
   effectiveContextWindowForTest(): number {
     return this.effectiveContextWindow();
   }
@@ -654,7 +653,7 @@ describe("TurnRunner memory", () => {
   });
 
   test("effectiveContextWindow clamps a user value larger than the model window to the model window", async () => {
-    const runner = new ContextUsageTurnRunner({
+    const runner = new UsageEventTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
       effectiveContext: 10_000_000,
@@ -668,7 +667,7 @@ describe("TurnRunner memory", () => {
   });
 
   test("effectiveContextWindow uses the user value when it fits inside the model window", async () => {
-    const runner = new ContextUsageTurnRunner({
+    const runner = new UsageEventTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
       effectiveContext: 50_000,
@@ -681,8 +680,8 @@ describe("TurnRunner memory", () => {
     expect(runner.effectiveContextWindowForTest()).toBe(50_000);
   });
 
-  test("context_usage event carries a contextWindowUsage breakdown that scales with inputs", async () => {
-    const runner = new ContextUsageTurnRunner({
+  test("usage event carries a contextWindowUsage breakdown that scales with inputs", async () => {
+    const runner = new UsageEventTurnRunner({
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
       systemInstructions:
@@ -713,23 +712,24 @@ describe("TurnRunner memory", () => {
     const { turn } = await startTurn(runner, { mode: "agent", prompt: "ping" });
     await turn;
 
-    const contextUsage = events.find(
-      (event): event is Extract<TurnEvent, { type: "context_usage" }> =>
-        event.type === "context_usage",
+    const usageEvent = events.find(
+      (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
     );
-    expect(contextUsage).toBeDefined();
-    expect(contextUsage!.effectiveContextWindow).toBe(runner.effectiveContextWindowForTest());
+    expect(usageEvent).toBeDefined();
+    expect(usageEvent!.effectiveContextWindow).toBe(runner.effectiveContextWindowForTest());
 
-    const breakdown = contextUsage!.contextWindowUsage;
+    const breakdown = usageEvent!.contextWindowUsage;
     expect(breakdown.systemPrompt).toBeGreaterThan(0);
     expect(breakdown.messages).toBeGreaterThan(0);
     expect(breakdown.localMemory).toBeGreaterThan(0);
     expect(breakdown.globalMemory).toBeGreaterThan(0);
 
-    // Emitted segments are scaled to match the provider-reported total.
+    // The stub turn produces exactly one parent assistant message, so the
+    // running aggregate equals that single message's `totalTokens` and the
+    // breakdown (rescaled to that message's total) sums to the same value.
     const total =
       breakdown.systemPrompt + breakdown.messages + breakdown.localMemory + breakdown.globalMemory;
-    expect(total).toBe(contextUsage!.usage.totalTokens);
+    expect(total).toBe(usageEvent!.usage.totalTokens);
 
     // The two global rows together should contribute more tokens than
     // the single local row, since their combined content is longer.

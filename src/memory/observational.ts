@@ -434,7 +434,7 @@ export function createObservationalContextTransform(options: ObservationalContex
     // turns grow back without retriggering.
     //
     // Token accounting uses `ceil(wireBytes / 4)`, the same heuristic the
-    // runner reports on `TurnContextUsageEvent.messages`. That charges
+    // runner reports on `TurnUsageFields.contextWindowUsage.messages`. That charges
     // `JSON.stringify` length for structured blocks (toolCall, toolResult,
     // thinking), so heavy tool sessions trigger compaction at the same
     // scale the provider bills — unlike `agentMessagesToRaw`, which
@@ -1251,7 +1251,7 @@ function estimateMessageTokens(message: ObserverMessagePreview): number {
  * Heuristic 4-chars-per-token estimator used everywhere the runner needs
  * a budget number without tokenizing the actual provider payload. Exported
  * so surfaces and the runner can attribute the same estimate the memory
- * pipeline does, keeping the segment breakdown on `TurnContextUsageEvent`
+ * pipeline does, keeping the segment breakdown on `TurnUsageFields`
  * consistent with the trigger arithmetic in this file.
  */
 export function estimateTokens(text: string): number {

@@ -208,6 +208,21 @@ export class TurnRunner {
   private started = false;
   /** Aggregates model usage across parent agents, state agents, and memory work for one turn chain. */
   private turnUsage?: TurnTokenUsage;
+  /**
+   * Snapshot of the latest parent assistant `message_end`'s bar fields.
+   * State-agent and terminal emissions reuse these so the bar/breakdown
+   * does not jitter mid-turn when only a state agent advanced cost.
+   *
+   * Always set by the time a state agent runs in production: the parent
+   * worker selects a state via a real LLM call, which emits `message_end`
+   * and populates this. Exposed as `protected` for test harnesses that
+   * stub `runAgentWorker` past the real parent path and need to seed the
+   * snapshot before driving a state-agent emission.
+   */
+  protected lastParentUsageSnapshot?: {
+    effectiveContextWindow: number;
+    contextWindowUsage: TurnContextWindowUsage;
+  };
   /** Ensures persisted memory hydrates once before the first turn that needs it. */
   private memoryLoaded = false;
   /** MCP servers connected during start(). Disposed on runner.dispose(). */
@@ -304,7 +319,16 @@ export class TurnRunner {
       terminal = await this.drainQueuedTurnCommands(terminal);
       terminal = { ...terminal, state: this.snapshotState(terminal.state) };
       if (this.turnUsage) {
-        terminal = { ...terminal, usage: this.turnUsage };
+        terminal = {
+          ...terminal,
+          usage: this.turnUsage,
+          ...(this.lastParentUsageSnapshot
+            ? {
+                effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
+                contextWindowUsage: this.lastParentUsageSnapshot.contextWindowUsage,
+              }
+            : {}),
+        };
       }
       this.setState(terminal.state);
       this.emit(terminal);
@@ -777,8 +801,6 @@ export class TurnRunner {
     );
     let unsubscribe: (() => void) | undefined;
     const finish = (): StateAgentResult => {
-      const usage = usageFromMessages(agent.state.messages);
-      this.recordUsage(usage);
       if (control.type === "ask_user_question") {
         return { type: "ask", questions: control.questions };
       }
@@ -799,6 +821,11 @@ export class TurnRunner {
           if (error instanceof Error) return { type: "failed", error: error.message };
           return { type: "failed", error: String(error) };
         } finally {
+          // Record state-agent usage on every exit path — success, error, or
+          // interrupt — so partial work still flows into the turn aggregate
+          // and ticks the sidebar cost via the emitted `usage` event.
+          this.recordUsage(usageFromMessages(agent.state.messages));
+          this.emitTurnUsage();
           unsubscribe?.();
         }
       },
@@ -1137,9 +1164,18 @@ export class TurnRunner {
     this.snapshotActiveAgentState();
   }
 
+  /**
+   * Records the parent worker's per-call usage into the running turn
+   * aggregate and emits a `usage` event so consumers see cost tick after
+   * each parent agent boundary. Recording at the worker boundary (instead
+   * of per `message_end`) keeps the same behavior when test harnesses
+   * stub `runAgentWorker` and supply `terminal.usage` directly without
+   * running a real pi `Agent`.
+   */
   private async runAgentWorkerWithUsage(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     const result = await this.runAgentWorker(input);
     this.recordUsage(result.terminal.usage);
+    this.emitTurnUsage();
     return result;
   }
 
@@ -1377,15 +1413,38 @@ export class TurnRunner {
     this.emitAgentEvent(event);
     if (event.type !== "message_end" || event.message.role !== "assistant") return;
 
-    const estimated = this.estimateContextWindowUsage();
-    this.emit({
-      type: "context_usage",
-      usage: event.message.usage,
+    // Cache the parent's latest bar/breakdown so subsequent state-agent and
+    // terminal emissions can reuse it without rescaling against a stale base.
+    // Usage *recording* and `usage` event emission happen at worker / state-agent
+    // boundaries (see `runAgentWorkerWithUsage` and `createStateAgentHandle`)
+    // instead of per message, so test harnesses that stub `runAgentWorker`
+    // — without ever firing `message_end` — still get correct accounting.
+    this.lastParentUsageSnapshot = {
       effectiveContextWindow: this.effectiveContextWindow(),
       contextWindowUsage: scaleContextWindowUsageToTotalTokens(
-        estimated,
+        this.estimateContextWindowUsage(),
         event.message.usage.totalTokens,
       ),
+    };
+  }
+
+  /**
+   * Emit a `usage` event reflecting the latest `this.turnUsage`. Reuses the
+   * most recent parent context-window snapshot for the bar/breakdown so
+   * mid-turn ticks (parent worker finish, state-agent finish) surface cost
+   * without jittering the parent context fields. No-ops when no usage has
+   * been recorded yet or before the first parent emission — both are only
+   * possible during construction/teardown or in test harnesses; a real
+   * parent worker always sets the snapshot before its terminal usage is
+   * recorded.
+   */
+  protected emitTurnUsage(): void {
+    if (!this.turnUsage || !this.lastParentUsageSnapshot) return;
+    this.emit({
+      type: "usage",
+      usage: this.turnUsage,
+      effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
+      contextWindowUsage: this.lastParentUsageSnapshot.contextWindowUsage,
     });
   }
 
