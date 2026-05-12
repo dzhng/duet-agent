@@ -42,7 +42,7 @@ duet --rpc \
 The process writes a one-line banner to **stderr** on start:
 
 ```
-@duetso/agent 0.1.81 rpc
+@duetso/agent <version> rpc
 ```
 
 Use it for version-skew detection; consumers should ignore stderr otherwise.
@@ -70,7 +70,10 @@ single line.
    `usage`, `system`).
 4. The turn ends with exactly one terminal event:
    `complete`, `ask`, `interrupted`, or `sleep`. Every terminal event carries
-   the next `TurnState` snapshot.
+   the next `TurnState` snapshot, and — whenever any LLM work ran this turn —
+   the same `usage` / `effectiveContextWindow` / `contextWindowUsage` payload
+   as the last `usage` during-event, so a consumer that ignored during-events
+   can still recover the final aggregate from one terminal payload.
 5. The process exits cleanly once the terminal event has been written.
 
 ```
