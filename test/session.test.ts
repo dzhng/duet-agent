@@ -477,45 +477,69 @@ describe("Session", () => {
     expect(session.getSessionCostUsd()).toBe(1.25);
   });
 
-  testIfDocker(
-    "advances sessionCostUsd by the delta of each usage event's running aggregate",
-    async () => {
-      const runner = new FakeTurnRunner([]);
-      const session = await createSession(runner);
-      await session.start();
+  testIfDocker("tracks in-flight turn cost mid-turn and commits it on terminal", async () => {
+    const runner = new FakeTurnRunner([]);
+    const session = await createSession(runner);
+    await session.start();
 
-      // Stream three usage events from one turn, each carrying a larger
-      // running aggregate. The session should credit only the delta beyond
-      // what it already saw for this turn.
-      runner.emit(buildUsageEvent(0.05));
-      runner.emit(buildUsageEvent(0.07));
-      runner.emit(buildUsageEvent(0.1));
-      expect(session.getSessionCostUsd()).toBeCloseTo(0.1, 6);
+    // Mid-turn usage events publish the running aggregate so the sidebar
+    // ticks live, but only the terminal credits the cost to the persisted
+    // session total.
+    runner.emit(buildUsageEvent(0.05));
+    expect(session.getSessionCostUsd()).toBeCloseTo(0.05, 6);
+    runner.emit(buildUsageEvent(0.07));
+    runner.emit(buildUsageEvent(0.1));
+    expect(session.getSessionCostUsd()).toBeCloseTo(0.1, 6);
 
-      // Terminal carrying the same running aggregate must be a no-op (already
-      // credited via the last usage event).
-      runner.emit({
-        type: "complete",
-        status: "completed",
-        result: "done",
-        state: turnState,
-        turnUsage: buildUsageEvent(0.1).turnUsage,
-        lastMessageUsage: buildUsageEvent(0.1).lastMessageUsage,
-        effectiveContextWindow: buildUsageEvent(0.1).effectiveContextWindow,
-        contextWindowUsage: buildUsageEvent(0.1).contextWindowUsage,
-      });
-      expect(session.getSessionCostUsd()).toBeCloseTo(0.1, 6);
+    runner.emit({
+      type: "complete",
+      status: "completed",
+      result: "done",
+      state: turnState,
+      turnUsage: buildUsageEvent(0.1).turnUsage,
+      lastMessageUsage: buildUsageEvent(0.1).lastMessageUsage,
+      effectiveContextWindow: buildUsageEvent(0.1).effectiveContextWindow,
+      contextWindowUsage: buildUsageEvent(0.1).contextWindowUsage,
+    });
+    expect(session.getSessionCostUsd()).toBeCloseTo(0.1, 6);
 
-      // Second turn: turn_started resets the per-turn accumulator, so a new
-      // usage event with `cost.total === 0.04` should add 0.04, not be
-      // mistaken for a refund relative to the prior turn's 0.1.
-      runner.emit({ type: "turn_started", state: turnState });
-      runner.emit(buildUsageEvent(0.04));
-      expect(session.getSessionCostUsd()).toBeCloseTo(0.14, 6);
+    // Second turn: the runner does not re-emit `turn_started` between
+    // turn chains, but the terminal already cleared the in-flight tracker,
+    // so a fresh per-turn aggregate of 0.04 lifts the displayed total to
+    // 0.14 — even though that number is smaller than the prior turn's
+    // high-water mark.
+    runner.emit(buildUsageEvent(0.04));
+    expect(session.getSessionCostUsd()).toBeCloseTo(0.14, 6);
+    runner.emit({
+      type: "complete",
+      status: "completed",
+      result: "done",
+      state: turnState,
+      turnUsage: buildUsageEvent(0.04).turnUsage,
+      lastMessageUsage: buildUsageEvent(0.04).lastMessageUsage,
+      effectiveContextWindow: buildUsageEvent(0.04).effectiveContextWindow,
+      contextWindowUsage: buildUsageEvent(0.04).contextWindowUsage,
+    });
+    expect(session.getSessionCostUsd()).toBeCloseTo(0.14, 6);
 
-      await session.dispose();
-    },
-  );
+    // Third turn establishes that each terminal credits its own per-turn
+    // total exactly once and the in-flight tracker resets between turns.
+    runner.emit(buildUsageEvent(0.01));
+    expect(session.getSessionCostUsd()).toBeCloseTo(0.15, 6);
+    runner.emit({
+      type: "complete",
+      status: "completed",
+      result: "done",
+      state: turnState,
+      turnUsage: buildUsageEvent(0.01).turnUsage,
+      lastMessageUsage: buildUsageEvent(0.01).lastMessageUsage,
+      effectiveContextWindow: buildUsageEvent(0.01).effectiveContextWindow,
+      contextWindowUsage: buildUsageEvent(0.01).contextWindowUsage,
+    });
+    expect(session.getSessionCostUsd()).toBeCloseTo(0.15, 6);
+
+    await session.dispose();
+  });
 
   testIfDocker("sends active prompts through turn runner", async () => {
     const runner = new FakeTurnRunner([]);
