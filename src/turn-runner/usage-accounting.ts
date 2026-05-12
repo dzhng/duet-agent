@@ -1,47 +1,64 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TurnTokenUsage } from "../types/protocol.js";
 
+/**
+ * Returns a new `TurnTokenUsage` equal to `a + b`, treating either operand
+ * being `undefined` as the empty usage.
+ *
+ * Pure function: callers must use the return value. Earlier in-place semantics
+ * led to call sites that discarded the return and relied on the accumulator
+ * being mutated through a shared reference, which made the contract subtle.
+ */
 export function addUsage(
-  current: TurnTokenUsage | undefined,
-  usage: TurnTokenUsage | undefined,
+  a: TurnTokenUsage | undefined,
+  b: TurnTokenUsage | undefined,
 ): TurnTokenUsage | undefined {
-  if (!usage) return current;
-  const next = current ?? emptyUsage();
-  next.input += usage.input;
-  next.output += usage.output;
-  next.cacheRead += usage.cacheRead;
-  next.cacheWrite += usage.cacheWrite;
-  next.totalTokens += usage.totalTokens;
-  next.cost.input += usage.cost.input;
-  next.cost.output += usage.cost.output;
-  next.cost.cacheRead += usage.cost.cacheRead;
-  next.cost.cacheWrite += usage.cost.cacheWrite;
-  next.cost.total += usage.cost.total;
-  return next;
-}
-
-function emptyUsage(): TurnTokenUsage {
+  if (!a && !b) return undefined;
+  if (!a) return cloneUsage(b!);
+  if (!b) return cloneUsage(a);
   return {
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-    totalTokens: 0,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    input: a.input + b.input,
+    output: a.output + b.output,
+    cacheRead: a.cacheRead + b.cacheRead,
+    cacheWrite: a.cacheWrite + b.cacheWrite,
+    totalTokens: a.totalTokens + b.totalTokens,
+    cost: {
+      input: a.cost.input + b.cost.input,
+      output: a.cost.output + b.cost.output,
+      cacheRead: a.cost.cacheRead + b.cost.cacheRead,
+      cacheWrite: a.cost.cacheWrite + b.cost.cacheWrite,
+      total: a.cost.total + b.cost.total,
+    },
   };
 }
 
-export function usageFromMessages(messages: readonly AgentMessage[]): TurnTokenUsage | undefined {
-  const usage = emptyUsage();
-  let hasUsage = false;
+function cloneUsage(usage: TurnTokenUsage): TurnTokenUsage {
+  return {
+    input: usage.input,
+    output: usage.output,
+    cacheRead: usage.cacheRead,
+    cacheWrite: usage.cacheWrite,
+    totalTokens: usage.totalTokens,
+    cost: { ...usage.cost },
+  };
+}
 
+/**
+ * Sums `Usage` across every assistant message that carries one. Returns
+ * `undefined` when no assistant message contributed, so callers can
+ * distinguish "no usage yet" from "zero usage."
+ *
+ * pi-ai populates `usage` per assistant LLM call; there is no aggregate
+ * end-of-turn signal from pi, so summing per-message is the canonical
+ * total-usage path for a turn.
+ */
+export function usageFromMessages(messages: readonly AgentMessage[]): TurnTokenUsage | undefined {
+  let usage: TurnTokenUsage | undefined;
   for (const message of messages) {
     if (!isAssistantMessageWithUsage(message)) continue;
-    hasUsage = true;
-    addUsage(usage, message.usage);
+    usage = addUsage(usage, message.usage);
   }
-
-  return hasUsage ? usage : undefined;
+  return usage;
 }
 
 function isAssistantMessageWithUsage(

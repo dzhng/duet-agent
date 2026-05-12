@@ -42,7 +42,7 @@ duet --rpc \
 The process writes a one-line banner to **stderr** on start:
 
 ```
-@duetso/agent 0.1.65 rpc
+@duetso/agent <version> rpc
 ```
 
 Use it for version-skew detection; consumers should ignore stderr otherwise.
@@ -67,10 +67,13 @@ single line.
    or `wake` — to actually run the turn.
 3. The runner streams any number of during-turn events
    (`step`, `todos`, `follow_up_queue`, `state_machine`, `memory`,
-   `context_usage`, `system`).
+   `usage`, `system`).
 4. The turn ends with exactly one terminal event:
    `complete`, `ask`, `interrupted`, or `sleep`. Every terminal event carries
-   the next `TurnState` snapshot.
+   the next `TurnState` snapshot, and — whenever any LLM work ran this turn —
+   the same `usage` / `effectiveContextWindow` / `contextWindowUsage` payload
+   as the last `usage` during-event, so a consumer that ignored during-events
+   can still recover the final aggregate from one terminal payload.
 5. The process exits cleanly once the terminal event has been written.
 
 ```
@@ -179,9 +182,13 @@ consumer typically renders or reacts to:
 - `todos` — the model's current todo list.
 - `state_machine` — current state name when running a state machine.
 - `memory` — observational memory writes (extraction / reflection activity).
-- `context_usage` — token accounting with `effectiveContextWindow` and a per-segment `contextWindowUsage` breakdown (`systemPrompt`, `messages`, `localMemory`, `globalMemory`).
+- `usage` — running turn-aggregate token accounting (`usage`) plus the latest parent context-window snapshot (`effectiveContextWindow`, `contextWindowUsage` breakdown of `systemPrompt`, `messages`, `localMemory`, `globalMemory`). Emitted after every parent worker boundary and after every state-agent finishes (including error and interrupt paths), so consumers can render cost ticks mid-turn. The `usage` field is always cumulative for the turn; the bar fields mirror the latest parent emission and stay stable across state-agent ticks.
 - `complete | ask | interrupted | sleep` — terminal events. Always include
-  the updated `state`. `ask` requires the caller to follow up with
+  the updated `state`. When at least one assistant message has been
+  recorded this turn, terminals additionally carry the same `usage` /
+  `effectiveContextWindow` / `contextWindowUsage` fields as the `usage`
+  event, so a consumer that only reads terminals can still recover the
+  final aggregate. `ask` requires the caller to follow up with
   `{ "type": "answer", ... }`; `sleep` carries a `wakeAt` epoch ms; the
   caller is responsible for scheduling a wake.
 

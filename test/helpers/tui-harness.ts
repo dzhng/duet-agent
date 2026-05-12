@@ -12,10 +12,10 @@ import {
 } from "../../src/session/session.js";
 import { runTui } from "../../src/tui/app.js";
 import type {
-  TurnContextUsageEvent,
   TurnEvent,
   TurnQuestion,
   TurnTerminalEvent,
+  TurnUsageEvent,
 } from "../../src/types/protocol.js";
 
 /**
@@ -86,11 +86,11 @@ export interface TuiHarness {
    */
   pushAskTerminal(questions: TurnQuestion[]): Promise<void>;
   /**
-   * Push a single `context_usage` event with the provided payload so
-   * tests can drive the sidebar bar with hand-crafted breakdowns.
-   * Returns once the renderer has had a tick to repaint.
+   * Push a single `usage` event with the provided payload so tests can
+   * drive the sidebar bar with hand-crafted breakdowns. Returns once the
+   * renderer has had a tick to repaint.
    */
-  pushContextUsage(event: Omit<TurnContextUsageEvent, "type">): Promise<void>;
+  pushUsage(event: Omit<TurnUsageEvent, "type">): Promise<void>;
   /** Yield to the event loop so queued key events and microtasks drain. */
   flush(): Promise<void>;
   /** Tear down renderer, session, and the temp session directory. */
@@ -326,17 +326,15 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
       // measure) settle before the test starts pressing keys.
       await yieldToEventLoop();
     },
-    async pushContextUsage(event) {
+    async pushUsage(event) {
       // Same polling contract as `pushAskTerminal`: wait until the session
       // observer records the event so downstream handlers have run.
       const before = sessionEvents.length;
-      runner.emitContextUsage(event);
+      runner.emitUsage(event);
       const start = Date.now();
-      while (!sessionEvents.slice(before).some((e) => e.type === "context_usage")) {
+      while (!sessionEvents.slice(before).some((e) => e.type === "usage")) {
         if (Date.now() - start > 1000) {
-          throw new Error(
-            "pushContextUsage: context_usage event never reached the session subscriber",
-          );
+          throw new Error("pushUsage: usage event never reached the session subscriber");
         }
         await new Promise<void>((resolve) => setTimeout(resolve, 5));
       }

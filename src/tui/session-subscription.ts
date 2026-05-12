@@ -26,11 +26,11 @@ export function refreshSidebarFromSession(deps: { session: Session; sidebar: Sid
   sidebar.setTodos(state?.todos ?? []);
   sidebar.setFollowUpQueue(state?.followUpQueue ?? []);
   sidebar.setStateMachine(state?.stateMachine);
-  const snap = session.getLastContextUsage();
-  sidebar.setContextUsage(
+  const snap = session.getLastUsage();
+  sidebar.setUsage(
     snap
       ? {
-          type: "context_usage",
+          type: "usage",
           usage: snap.usage,
           effectiveContextWindow: snap.effectiveContextWindow,
           contextWindowUsage: snap.contextWindowUsage,

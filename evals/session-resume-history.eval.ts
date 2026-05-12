@@ -3,13 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "bun:test";
 import { SessionManager } from "../src/session/session-manager.js";
-import type { TurnContextUsageEvent, TurnEvent, TurnTerminalEvent } from "../src/types/protocol.js";
+import type {
+  TurnEvent,
+  TurnTerminalEvent,
+  TurnUsageEvent,
+  TurnUsageFields,
+} from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
 const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
 const resumeToken = "mango-ocean-742";
-
-type PersistedContextUsage = Omit<TurnContextUsageEvent, "type">;
 
 let tempDirs: string[] = [];
 
@@ -47,15 +50,18 @@ describe("session resume history", () => {
         firstTerminal = ft;
         expect(firstTerminal.status).toBe("completed");
         expect(firstEvents.some((e) => e.type === "turn_started")).toBe(true);
-        expect(firstEvents.some((e) => e.type === "context_usage")).toBe(true);
+        expect(firstEvents.some((e) => e.type === "usage")).toBe(true);
 
-        const contextSnap = firstSession.getLastContextUsage();
-        expect(contextSnap).toBeDefined();
-        expect(contextSnap!.effectiveContextWindow).toBeGreaterThan(0);
-        expect(contextSnap!.usage.totalTokens).toBeGreaterThan(0);
-        const cw = contextSnap!.contextWindowUsage;
+        const usageSnap = firstSession.getLastUsage();
+        expect(usageSnap).toBeDefined();
+        expect(usageSnap!.effectiveContextWindow).toBeGreaterThan(0);
+        expect(usageSnap!.usage.totalTokens).toBeGreaterThan(0);
+        const cw = usageSnap!.contextWindowUsage;
+        // Single-message turn ("Do not call tools") so the running aggregate
+        // equals the lone parent message's totalTokens, and the breakdown
+        // sum (rescaled to that message) lines up.
         expect(cw.systemPrompt + cw.messages + cw.localMemory + cw.globalMemory).toBe(
-          contextSnap!.usage.totalTokens,
+          usageSnap!.usage.totalTokens,
         );
       } finally {
         await firstManager.dispose();
@@ -63,12 +69,12 @@ describe("session resume history", () => {
 
       const diskAfterFirst = await readSessionStateJson(sessionStoragePath, sessionId);
       assertSessionCostMatchesTerminal(diskAfterFirst, firstTerminal);
-      expect(diskAfterFirst.lastContextUsage).toBeDefined();
+      expect(diskAfterFirst.lastUsage).toBeDefined();
       expect(diskAfterFirst.state).toBeDefined();
-      expectDiskContextMatchesLastEvent(diskAfterFirst, firstEvents);
+      expectDiskUsageMatchesLastEvent(diskAfterFirst, firstEvents);
 
-      const firstDiskContext = diskAfterFirst.lastContextUsage as PersistedContextUsage;
-      expect(firstDiskContext.usage.totalTokens).toBeGreaterThan(0);
+      const firstDiskUsage = diskAfterFirst.lastUsage as TurnUsageFields;
+      expect(firstDiskUsage.usage.totalTokens).toBeGreaterThan(0);
 
       let secondTerminal: TurnTerminalEvent;
       const secondEvents: TurnEvent[] = [];
@@ -95,7 +101,7 @@ describe("session resume history", () => {
         );
 
         expect(secondEvents.some((e) => e.type === "turn_started")).toBe(true);
-        expect(secondEvents.some((e) => e.type === "context_usage")).toBe(true);
+        expect(secondEvents.some((e) => e.type === "usage")).toBe(true);
 
         const secondTurnCost = terminalUsageCostUsd(secondTerminal);
         expect(secondTurnCost).toBeGreaterThan(0);
@@ -105,8 +111,8 @@ describe("session resume history", () => {
 
         const diskBeforeSecondDispose = await readSessionStateJson(sessionStoragePath, sessionId);
         expect(diskBeforeSecondDispose.sessionCostUsd).toBeCloseTo(expectedCumulativeUsd, 4);
-        expect(diskBeforeSecondDispose.lastContextUsage).toBeDefined();
-        expectDiskContextMatchesLastEvent(diskBeforeSecondDispose, secondEvents);
+        expect(diskBeforeSecondDispose.lastUsage).toBeDefined();
+        expectDiskUsageMatchesLastEvent(diskBeforeSecondDispose, secondEvents);
       } finally {
         await secondManager.dispose();
       }
@@ -115,22 +121,23 @@ describe("session resume history", () => {
 
       const diskFinal = await readSessionStateJson(sessionStoragePath, sessionId);
       expect(diskFinal.sessionCostUsd).toBeCloseTo(expectedCumulativeUsd, 4);
-      expect(diskFinal.lastContextUsage).toBeDefined();
-      expectDiskContextMatchesLastEvent(diskFinal, secondEvents);
+      expect(diskFinal.lastUsage).toBeDefined();
+      expectDiskUsageMatchesLastEvent(diskFinal, secondEvents);
 
-      const secondDiskContext = diskFinal.lastContextUsage as PersistedContextUsage;
-      expect(secondDiskContext.usage.totalTokens).toBeGreaterThanOrEqual(
-        firstDiskContext.usage.totalTokens,
-      );
+      const secondDiskUsage = diskFinal.lastUsage as TurnUsageFields;
+      // Each turn resets the runner's running aggregate, so the per-turn
+      // `usage.totalTokens` is independent across turns; what's monotonic is
+      // the persisted cumulative cost on disk, asserted above.
+      expect(secondDiskUsage.usage.totalTokens).toBeGreaterThan(0);
 
-      // `context_usage.usage.totalTokens` is full-window occupancy after that assistant
-      // message, not `turn1.totalTokens + turn2.totalTokens` (that would double-count).
+      // The persisted snapshot is the last `usage` event of the latest turn,
+      // which in turn always matches the terminal's running aggregate.
       if (secondTerminal.usage?.totalTokens != null) {
-        expect(secondDiskContext.usage.totalTokens).toBe(secondTerminal.usage.totalTokens);
+        expect(secondDiskUsage.usage.totalTokens).toBe(secondTerminal.usage.totalTokens);
       }
 
-      const a = firstDiskContext.contextWindowUsage;
-      const b = secondDiskContext.contextWindowUsage;
+      const a = firstDiskUsage.contextWindowUsage;
+      const b = secondDiskUsage.contextWindowUsage;
       expect(b.messages).toBeGreaterThan(a.messages);
       expect(b.systemPrompt).toBeGreaterThanOrEqual(a.systemPrompt);
       expect(b.localMemory).toBeGreaterThanOrEqual(a.localMemory);
@@ -164,7 +171,7 @@ interface SessionStateJson {
   sessionId?: string;
   updatedAt?: number;
   state?: unknown;
-  lastContextUsage?: PersistedContextUsage;
+  lastUsage?: TurnUsageFields;
   sessionCostUsd?: number;
 }
 
@@ -196,31 +203,32 @@ function assertSessionCostMatchesTerminal(
   expect(disk.sessionCostUsd).toBeCloseTo(expected, 6);
 }
 
-function lastContextUsageFromEvents(events: TurnEvent[]): TurnContextUsageEvent | undefined {
+function lastUsageFromEvents(events: TurnEvent[]): TurnUsageEvent | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
-    if (e?.type === "context_usage") return e;
+    if (e?.type === "usage") return e;
   }
   return undefined;
 }
 
 /**
- * Persisted `lastContextUsage` on `state.json` must match the last live
- * `context_usage` event from the same phase when any such events were recorded.
- * Asserts every `contextWindowUsage` segment (`systemPrompt`, `messages`,
- * `localMemory`, `globalMemory`) matches the wire event and sums to `totalTokens`.
+ * Persisted `lastUsage` on `state.json` must match the last live `usage`
+ * event from the same phase when any such events were recorded. The single
+ * agent turn ("Do not call tools") produces one parent assistant message,
+ * so the running aggregate equals that message's `totalTokens` and the
+ * rescaled breakdown sums to the same number.
  */
-function expectDiskContextMatchesLastEvent(disk: SessionStateJson, events: TurnEvent[]): void {
-  const fromDisk = disk.lastContextUsage;
+function expectDiskUsageMatchesLastEvent(disk: SessionStateJson, events: TurnEvent[]): void {
+  const fromDisk = disk.lastUsage;
   expect(fromDisk).toBeDefined();
   const u = fromDisk!.usage;
   expect(u.totalTokens).toBeGreaterThan(0);
   const seg = fromDisk!.contextWindowUsage;
   expect(seg.systemPrompt + seg.messages + seg.localMemory + seg.globalMemory).toBe(u.totalTokens);
 
-  const fromEvents = lastContextUsageFromEvents(events);
+  const fromEvents = lastUsageFromEvents(events);
   if (!fromEvents) {
-    throw new Error("expected at least one context_usage event in this phase");
+    throw new Error("expected at least one usage event in this phase");
   }
 
   expect(fromDisk!.usage).toEqual(fromEvents.usage);

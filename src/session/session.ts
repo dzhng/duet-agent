@@ -7,7 +7,6 @@ import type { SkillCollision } from "../turn-runner/skills.js";
 import type {
   TurnAgentFile,
   TurnAnswerCommand,
-  TurnContextUsageEvent,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
@@ -21,11 +20,10 @@ import type {
   TurnTerminalEvent,
   TurnCommand,
   TurnOptions,
+  TurnUsageEvent,
+  TurnUsageFields,
 } from "../types/protocol.js";
 import type { StateMachinePollState, StateMachineTimerState } from "../types/state-machine.js";
-
-/** `context_usage` fields persisted beside `TurnState` in `state.json`. */
-type PersistedContextUsage = Omit<TurnContextUsageEvent, "type">;
 
 /**
  * How often `scheduleWake` checks the wall clock against `wakeAt`. Polling — instead of relying
@@ -38,7 +36,7 @@ interface StoredSessionFile {
   sessionId?: string;
   updatedAt?: number;
   state?: TurnState;
-  lastContextUsage?: PersistedContextUsage;
+  lastUsage?: TurnUsageFields;
   sessionCostUsd?: number;
 }
 
@@ -137,12 +135,20 @@ export class Session {
   /** Pending callers of `waitForTerminal`, resolved together when the next terminal event arrives. */
   private readonly terminalWaiters: Array<(terminal: TurnTerminalEvent) => void> = [];
   /**
-   * Latest parent-agent context bar snapshot (from `context_usage` events).
-   * Persisted beside `TurnState` in `state.json`, not on the runner snapshot.
+   * Latest `usage` snapshot (running turn aggregate plus the parent context
+   * bar fields). Persisted beside `TurnState` in `state.json`, not on the
+   * runner snapshot, so the sidebar can rehydrate after a restart.
    */
-  private lastContextUsage?: PersistedContextUsage;
-  /** Cumulative USD from every terminal event that included `usage.cost`. */
+  private lastUsage?: TurnUsageFields;
+  /**
+   * Cumulative USD across this session. Advances from every `usage` event,
+   * which always carries the running turn aggregate; `currentTurnCost` tracks
+   * how much of `sessionCostUsd` has been credited to the active turn so a
+   * subsequent `usage` event from the same turn only contributes its delta.
+   */
   private sessionCostUsd = 0;
+  /** Aggregate cost already credited to the active turn from prior `usage` events. */
+  private currentTurnCost = 0;
 
   constructor(
     readonly config: TurnRunnerConfig,
@@ -295,12 +301,12 @@ export class Session {
     return this.runner.getState();
   }
 
-  /** Latest `context_usage` payload for sidebar resume; not part of `TurnState`. */
-  getLastContextUsage(): PersistedContextUsage | undefined {
-    return this.lastContextUsage;
+  /** Latest `usage` payload for sidebar resume; not part of `TurnState`. */
+  getLastUsage(): TurnUsageFields | undefined {
+    return this.lastUsage;
   }
 
-  /** Cumulative session cost in USD; updated from terminal `usage` events. */
+  /** Cumulative session cost in USD; advances on every `usage` event. */
   getSessionCostUsd(): number {
     return this.sessionCostUsd;
   }
@@ -371,15 +377,21 @@ export class Session {
   }
 
   private async handleTurnEvent(event: TurnEvent): Promise<void> {
-    if (event.type === "context_usage") {
-      this.applyContextUsageEvent(event);
+    if (event.type === "turn_started") {
+      // Each new turn starts a fresh delta window for `applyUsageEvent`.
+      // Without this reset, a `usage` event from a new turn carrying a
+      // smaller cumulative cost than the prior turn's final aggregate would
+      // be treated as a refund.
+      this.currentTurnCost = 0;
+    } else if (event.type === "usage") {
+      this.applyUsageEvent(event);
       void this.persistLatestState();
     }
     let emitted = event;
     if (isTerminalEvent(event)) {
       emitted = this.normalizeTerminalEvent(event);
       this.lastTerminal = emitted;
-      this.applyTerminalUsageCost(emitted);
+      this.applyTerminalUsage(emitted);
       await this.writeStoredEnvelope(emitted.state);
       if (emitted.type === "sleep") {
         this.scheduleWake(emitted);
@@ -391,27 +403,50 @@ export class Session {
     this.emit(emitted);
   }
 
-  private applyContextUsageEvent(event: TurnContextUsageEvent): void {
-    this.lastContextUsage = {
+  /**
+   * Treat `event.usage.cost.total` as the running turn aggregate and credit
+   * only the delta beyond what was already counted for this turn. The runner
+   * guarantees `usage` events are monotonic-non-decreasing within a turn,
+   * so the delta is always `>= 0`; we no-op when there's nothing to add.
+   */
+  private applyUsageEvent(event: TurnUsageEvent): void {
+    this.lastUsage = {
       usage: event.usage,
       effectiveContextWindow: event.effectiveContextWindow,
       contextWindowUsage: event.contextWindowUsage,
     };
+    const total = event.usage?.cost?.total;
+    if (typeof total !== "number" || !Number.isFinite(total)) return;
+    const delta = total - this.currentTurnCost;
+    if (delta <= 0) return;
+    this.sessionCostUsd += delta;
+    this.currentTurnCost = total;
   }
 
-  private applyTerminalUsageCost(terminal: TurnTerminalEvent): void {
-    const delta = terminal.usage?.cost?.total;
-    if (typeof delta !== "number" || !Number.isFinite(delta) || delta === 0) {
+  /**
+   * Terminal events carry the same `TurnUsageFields` shape as `usage` events.
+   * In practice the runner already emitted a `usage` event covering the same
+   * aggregate before terminal landed, so this only fires when a terminal slips
+   * past without a preceding `usage` event (e.g. an abrupt error). The
+   * delta-vs-`currentTurnCost` guard makes a redundant terminal a no-op.
+   */
+  private applyTerminalUsage(terminal: TurnTerminalEvent): void {
+    if (!terminal.usage || !terminal.effectiveContextWindow || !terminal.contextWindowUsage) {
       return;
     }
-    this.sessionCostUsd += delta;
+    this.applyUsageEvent({
+      type: "usage",
+      usage: terminal.usage,
+      effectiveContextWindow: terminal.effectiveContextWindow,
+      contextWindowUsage: terminal.contextWindowUsage,
+    });
   }
 
   private applyPersistedTelemetryFields(
-    envelope: Pick<StoredSessionFile, "lastContextUsage" | "sessionCostUsd">,
+    envelope: Pick<StoredSessionFile, "lastUsage" | "sessionCostUsd">,
   ): void {
-    if (envelope.lastContextUsage !== undefined) {
-      this.lastContextUsage = envelope.lastContextUsage;
+    if (envelope.lastUsage !== undefined) {
+      this.lastUsage = envelope.lastUsage;
     }
     if (typeof envelope.sessionCostUsd === "number" && Number.isFinite(envelope.sessionCostUsd)) {
       this.sessionCostUsd = envelope.sessionCostUsd;
@@ -532,7 +567,7 @@ export class Session {
 
   private async readStoredEnvelope(): Promise<{
     state?: TurnState;
-    lastContextUsage?: PersistedContextUsage;
+    lastUsage?: TurnUsageFields;
     sessionCostUsd?: number;
   }> {
     try {
@@ -541,14 +576,14 @@ export class Session {
       const rawState = stored.state;
       if (!rawState) {
         return {
-          lastContextUsage: stored.lastContextUsage,
+          lastUsage: stored.lastUsage,
           sessionCostUsd: stored.sessionCostUsd,
         };
       }
 
       return {
         state: rawState,
-        lastContextUsage: stored.lastContextUsage,
+        lastUsage: stored.lastUsage,
         sessionCostUsd: stored.sessionCostUsd,
       };
     } catch (error) {
@@ -566,8 +601,8 @@ export class Session {
       state,
       sessionCostUsd: this.sessionCostUsd,
     };
-    if (this.lastContextUsage !== undefined) {
-      payload.lastContextUsage = this.lastContextUsage;
+    if (this.lastUsage !== undefined) {
+      payload.lastUsage = this.lastUsage;
     }
     await writeFile(this.sessionFilePath(), `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
   }

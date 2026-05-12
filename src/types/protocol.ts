@@ -505,8 +505,11 @@ export interface TurnMemoryEvent extends ObservationalMemoryActivityEvent {
  * of the budget is filling up. Values are heuristic character-length
  * estimates, not exact tokenizer counts.
  *
- * On `context_usage` events, the runner rescales these four fields so their
- * sum equals `usage.totalTokens` from the provider.
+ * On `usage` events, the runner rescales these four fields so their sum
+ * equals the latest parent assistant message's `totalTokens` from the
+ * provider. The event's `usage` field carries the *running turn aggregate*,
+ * while this breakdown describes the latest parent input — the two
+ * intentionally have different denominators.
  */
 export interface TurnContextWindowUsage {
   /**
@@ -536,30 +539,59 @@ export interface TurnContextWindowUsage {
   globalMemory: number;
 }
 
-export interface TurnContextUsageEvent {
-  type: "context_usage";
-  /** Token accounting reported by the parent model for the latest request context. */
+/**
+ * Token-accounting payload shared by the `usage` during-event and every
+ * terminal event. Bundling these three fields under one interface keeps the
+ * during stream and terminal events in lockstep: every `usage` event and
+ * every terminal event sees the same shape, and a consumer that only reads
+ * terminals can still recover the running aggregate plus the latest parent
+ * context bar.
+ */
+export interface TurnUsageFields {
+  /**
+   * Running turn aggregate: the sum of every assistant `usage` recorded so
+   * far in this turn (parent worker calls plus every state-agent that has
+   * finished). Always cumulative; never a single-message delta.
+   */
   usage: TurnTokenUsage;
   /**
-   * Effective ceiling against which `usage` should be displayed. Reflects
-   * the user-set `TurnRunnerConfig.effectiveContext` (default 200k) clamped
-   * to the model's hard context window. Every memory budget is derived from
-   * this same value, so the bar also represents the practical compaction
-   * ceiling.
+   * Effective ceiling against which the latest parent message's input
+   * should be displayed. Reflects the user-set
+   * `TurnRunnerConfig.effectiveContext` (default 200k) clamped to the
+   * model's hard context window. Every memory budget is derived from this
+   * same value, so the bar also represents the practical compaction
+   * ceiling. Tracks the latest parent emission; stays stable when only a
+   * state agent advanced the running cost.
    */
   effectiveContextWindow: number;
   /**
-   * Segment-by-segment estimate of how the actor's input is allocated
-   * across the system prompt, raw message history, and the two memory
-   * pack layers. Lets surfaces visualize which budget is filling up
-   * instead of only showing the aggregate provider-reported usage.
+   * Segment-by-segment estimate of how the latest parent message's input
+   * is allocated across the system prompt, raw message history, and the
+   * two memory pack layers. Lets surfaces visualize which budget is
+   * filling up. Like `effectiveContextWindow`, this mirrors the latest
+   * parent emission and does not move on state-agent ticks.
    */
   contextWindowUsage: TurnContextWindowUsage;
 }
 
-export interface TurnTerminalBaseEvent {
+/**
+ * Emitted after every parent assistant `message_end` and after every
+ * state-agent finishes. Carries the running turn aggregate so consumers see
+ * cost tick mid-turn even when no terminal event has landed yet.
+ */
+export interface TurnUsageEvent extends TurnUsageFields {
+  type: "usage";
+}
+
+/**
+ * Terminal events embed the same payload optionally: the runner always
+ * attaches the final running aggregate plus the latest parent snapshot
+ * when at least one assistant message has been recorded this turn. An
+ * early terminal that did no LLM work (e.g. an immediate `ask` before
+ * any message) may omit them.
+ */
+export interface TurnTerminalBaseEvent extends Partial<TurnUsageFields> {
   state: TurnState;
-  usage?: TurnTokenUsage;
 }
 
 export interface TurnAskEvent extends TurnTerminalBaseEvent {
@@ -597,7 +629,7 @@ export type TurnDuringEvent =
   | TurnFollowUpQueueEvent
   | TurnStateMachineEvent
   | TurnMemoryEvent
-  | TurnContextUsageEvent
+  | TurnUsageEvent
   | TurnSystemEvent;
 
 /** Events that end the current turn. */

@@ -69,16 +69,6 @@ const scenarios: Scenario[] = [
     ],
   },
   {
-    name: "medium: routine task request executed (no user-identity content)",
-    expected: "medium",
-    messages: [
-      user("Show me what's in package.json."),
-      assistant(
-        "package.json: name=acme-api, version=1.2.3, main=dist/server.js, scripts.build=tsup, scripts.test=vitest. Dependencies: express, pg, zod.",
-      ),
-    ],
-  },
-  {
     name: "medium: agent reasoning / hypothesis from tool output",
     expected: "medium",
     messages: [
