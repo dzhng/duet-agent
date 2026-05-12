@@ -271,43 +271,12 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
       const usedTokens = usage.usage.totalTokens;
       const overflow = usedTokens >= cap;
 
-      // Cells per tracked segment, proportional to the effective cap so
-      // empty headroom is visible even when usage is light. Any segment
-      // with non-zero tokens shows at least one cell so a tiny but
-      // present slice does not vanish at low usage.
-      const segmentCells = CONTEXT_SEGMENTS.map((segment) => {
-        const tokens = breakdown[segment.key] ?? 0;
-        if (tokens <= 0) return 0;
-        return Math.max(1, Math.round((tokens / cap) * CONTEXT_BAR_WIDTH));
-      });
-      const trackedSum = CONTEXT_SEGMENTS.reduce(
-        (acc, segment) => acc + (breakdown[segment.key] ?? 0),
-        0,
+      const { segmentCells, untrackedCells, emptyCells } = allocateContextBarCells(
+        breakdown,
+        usedTokens,
+        cap,
+        CONTEXT_BAR_WIDTH,
       );
-      const untrackedTokens = Math.max(0, usedTokens - trackedSum);
-      let untrackedCells =
-        untrackedTokens > 0
-          ? Math.max(1, Math.round((untrackedTokens / cap) * CONTEXT_BAR_WIDTH))
-          : 0;
-
-      // Clamp so the colored runs never exceed CONTEXT_BAR_WIDTH. Shave
-      // overflow off the untracked tail first (least informative), then
-      // peel from the rightmost tracked segments so users still see the
-      // dominant segment that is filling the bar.
-      let usedCells = segmentCells.reduce((a, b) => a + b, 0) + untrackedCells;
-      if (usedCells > CONTEXT_BAR_WIDTH) {
-        let excess = usedCells - CONTEXT_BAR_WIDTH;
-        const shave = Math.min(untrackedCells, excess);
-        untrackedCells -= shave;
-        excess -= shave;
-        for (let i = segmentCells.length - 1; i >= 0 && excess > 0; i--) {
-          const take = Math.min(segmentCells[i], excess);
-          segmentCells[i] -= take;
-          excess -= take;
-        }
-        usedCells = segmentCells.reduce((a, b) => a + b, 0) + untrackedCells;
-      }
-      const emptyCells = Math.max(0, CONTEXT_BAR_WIDTH - usedCells);
 
       const percent = Math.min(100, Math.round((usedTokens / cap) * 100));
       barRow.content = makeBarContent({
@@ -386,6 +355,69 @@ function collapseToLine(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat.length <= SIDEBAR_BODY_WIDTH) return flat;
   return `${flat.slice(0, Math.max(1, SIDEBAR_BODY_WIDTH - 1))}…`;
+}
+
+/**
+ * How many `█` cells each slice gets vs the context-window cap. Weights are
+ * `(tokens / cap) * barWidth` so each segment reads as its share of the
+ * budget on the same scale as the `NNk / cap` title. When the sum of those
+ * weights exceeds `barWidth` (usage over cap), we scale all slices down
+ * proportionally instead of shaving from the right, which used to erase
+ * small segments while the bar stayed full.
+ */
+export function allocateContextBarCells(
+  breakdown: TurnContextWindowUsage,
+  usedTokens: number,
+  cap: number,
+  barWidth: number,
+): { segmentCells: number[]; untrackedCells: number; emptyCells: number } {
+  const safeCap = Math.max(1, cap);
+  const trackedSum = CONTEXT_SEGMENTS.reduce(
+    (acc, segment) => acc + (breakdown[segment.key] ?? 0),
+    0,
+  );
+  const untrackedTokens = Math.max(0, usedTokens - trackedSum);
+
+  const weights: number[] = CONTEXT_SEGMENTS.map((segment) => {
+    const tokens = breakdown[segment.key] ?? 0;
+    return tokens > 0 ? (tokens / safeCap) * barWidth : 0;
+  });
+  const untrackedWeight = untrackedTokens > 0 ? (untrackedTokens / safeCap) * barWidth : 0;
+  const allWeights = [...weights, untrackedWeight];
+  const sumWeights = allWeights.reduce((a, b) => a + b, 0);
+
+  if (sumWeights <= 0) {
+    return {
+      segmentCells: CONTEXT_SEGMENTS.map(() => 0),
+      untrackedCells: 0,
+      emptyCells: barWidth,
+    };
+  }
+
+  const filledTarget = Math.min(barWidth, Math.max(usedTokens > 0 ? 1 : 0, Math.round(sumWeights)));
+  const allocated =
+    filledTarget > 0 ? distributeProportional(allWeights, filledTarget) : allWeights.map(() => 0);
+  const segmentCells = allocated.slice(0, CONTEXT_SEGMENTS.length);
+  const untrackedCells = allocated[CONTEXT_SEGMENTS.length] ?? 0;
+  const emptyCells = barWidth - filledTarget;
+
+  return { segmentCells, untrackedCells, emptyCells };
+}
+
+/** Split `slotCount` integer slots across `weights` in proportion (largest remainder). */
+function distributeProportional(weights: readonly number[], slotCount: number): number[] {
+  const sumW = weights.reduce((a, b) => a + b, 0);
+  if (sumW <= 0 || slotCount <= 0) return weights.map(() => 0);
+  const floats = weights.map((w) => (w / sumW) * slotCount);
+  const floors = floats.map((f) => Math.floor(f));
+  let remainder = slotCount - floors.reduce((a, b) => a + b, 0);
+  const fracs = floats.map((f, i) => ({ i, frac: f - floors[i]! }));
+  fracs.sort((a, b) => b.frac - a.frac);
+  const out = [...floors];
+  for (let r = 0; r < remainder; r++) {
+    out[fracs[r]!.i]! += 1;
+  }
+  return out;
 }
 
 function todoStatusGlyph(status: TurnTodo["status"]): string {
