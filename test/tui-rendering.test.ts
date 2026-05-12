@@ -49,4 +49,12 @@ describe("TUI rendering smoke test", () => {
     // reply itself — that is the contract that regressed in v0.1.63.
     expect(frame).toContain("hellofromrunner");
   });
+
+  testIfDocker("idle hint footer advertises Enter: send", async () => {
+    // The idle hint footer documents the Enter contract to the user. The
+    // string lives in src/tui/theme.ts but the only behavior that matters
+    // is that the production chrome actually paints it on boot.
+    const frame = await harness.captureCharFrame();
+    expect(frame).toContain("Enter: send");
+  });
 });

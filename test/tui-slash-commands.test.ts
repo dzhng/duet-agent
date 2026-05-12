@@ -95,85 +95,94 @@ describe("TUI slash commands", () => {
     expect(frame).not.toContain("\u{1F4CE} 1 image attached");
   });
 
-  testIfDocker("/copy last surfaces a [copy] transcript block and dispatches no prompt", async () => {
-    // Stream an agent reply through /echo so the transcript log has an
-    // assistant entry for `selectCopyText("last")` to pick up.
-    await harness.mockInput.typeText("/echo hellofromrunner");
-    await harness.flush();
-    harness.mockInput.pressEnter();
-    await harness.waitForPrompt();
-    await harness.waitForTerminal();
-    await harness.flush();
+  testIfDocker(
+    "/copy last surfaces a [copy] transcript block and dispatches no prompt",
+    async () => {
+      // Stream an agent reply through /echo so the transcript log has an
+      // assistant entry for `selectCopyText("last")` to pick up.
+      await harness.mockInput.typeText("/echo hellofromrunner");
+      await harness.flush();
+      harness.mockInput.pressEnter();
+      await harness.waitForPrompt();
+      await harness.waitForTerminal();
+      await harness.flush();
 
-    const promptsBefore = harness.promptCalls.length;
-    await harness.mockInput.typeText("/copy last");
-    await harness.flush();
-    harness.mockInput.pressEnter();
-    // Clipboard write resolves asynchronously (CLI probe + readback); poll
-    // until the [copy] line lands in the frame.
-    const start = Date.now();
-    let frame = await harness.captureCharFrame();
-    while (!frame.includes("[copy]") && Date.now() - start < 1500) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      const promptsBefore = harness.promptCalls.length;
+      await harness.mockInput.typeText("/copy last");
+      await harness.flush();
+      harness.mockInput.pressEnter();
+      // Clipboard write resolves asynchronously (CLI probe + readback); poll
+      // until the [copy] line lands in the frame.
+      const start = Date.now();
+      let frame = await harness.captureCharFrame();
+      while (!frame.includes("[copy]") && Date.now() - start < 1500) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        frame = await harness.captureCharFrame();
+      }
+      expect(frame).toContain("[copy]");
+      // /copy is a local slash command \u2014 it must never reach the runner.
+      expect(harness.promptCalls.length).toBe(promptsBefore);
+    },
+  );
+
+  testIfDocker(
+    "/diag toggles diagnostics so the next keypress appends a [diag] block",
+    async () => {
+      // Diagnostics start off; pressing a regular character beforehand must
+      // not log anything. After /diag flips them on, the next keystroke
+      // produces a [diag] transcript block.
+      // Trailing space closes the slash autocomplete picker so the next Enter
+      // fires `submit("/diag ")` instead of completing the highlighted row.
+      await harness.mockInput.typeText("/diag ");
+      await harness.flush();
+      harness.mockInput.pressEnter();
+      await harness.flush();
+
+      let frame = await harness.captureCharFrame();
+      // The slash handler itself appends a [diag] confirmation block
+      // explaining how to turn logging off again.
+      expect(frame).toContain("[diag]");
+      expect(frame).toMatch(/key \+ selection event logging ON/);
+
+      // With logging on, any keystroke now routes through `logKey` which
+      // appends a new [diag] line. Type an arbitrary letter and confirm a
+      // fresh entry surfaces (the "name=" prefix is part of the dump).
+      await harness.mockInput.typeText("z");
+      await harness.flush();
       frame = await harness.captureCharFrame();
-    }
-    expect(frame).toContain("[copy]");
-    // /copy is a local slash command \u2014 it must never reach the runner.
-    expect(harness.promptCalls.length).toBe(promptsBefore);
-  });
+      expect(frame).toContain('name="z"');
+    },
+  );
 
-  testIfDocker("/diag toggles diagnostics so the next keypress appends a [diag] block", async () => {
-    // Diagnostics start off; pressing a regular character beforehand must
-    // not log anything. After /diag flips them on, the next keystroke
-    // produces a [diag] transcript block.
-    // Trailing space closes the slash autocomplete picker so the next Enter
-    // fires `submit("/diag ")` instead of completing the highlighted row.
-    await harness.mockInput.typeText("/diag ");
-    await harness.flush();
-    harness.mockInput.pressEnter();
-    await harness.flush();
+  testIfDocker(
+    "/image <abs-path> inserts a placeholder and submit forwards the attachment",
+    async () => {
+      const png = makePngFixture("attach");
+      await harness.mockInput.typeText(`/image ${png}`);
+      await harness.flush();
+      harness.mockInput.pressEnter();
+      const start = Date.now();
+      while (!harness.inputField.plainText.includes("[Image #1]") && Date.now() - start < 1500) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(harness.inputField.plainText).toContain("[Image #1]");
+      // /image is local \u2014 no prompt yet.
+      expect(harness.promptCalls).toHaveLength(0);
 
-    let frame = await harness.captureCharFrame();
-    // The slash handler itself appends a [diag] confirmation block
-    // explaining how to turn logging off again.
-    expect(frame).toContain("[diag]");
-    expect(frame).toMatch(/key \+ selection event logging ON/);
+      // Submit a real prompt: the attachment must be drained and forwarded.
+      await harness.mockInput.typeText(" describe this image");
+      await harness.flush();
+      harness.mockInput.pressEnter();
+      await harness.waitForPrompt();
 
-    // With logging on, any keystroke now routes through `logKey` which
-    // appends a new [diag] line. Type an arbitrary letter and confirm a
-    // fresh entry surfaces (the "name=" prefix is part of the dump).
-    await harness.mockInput.typeText("z");
-    await harness.flush();
-    frame = await harness.captureCharFrame();
-    expect(frame).toContain('name="z"');
-  });
-
-  testIfDocker("/image <abs-path> inserts a placeholder and submit forwards the attachment", async () => {
-    const png = makePngFixture("attach");
-    await harness.mockInput.typeText(`/image ${png}`);
-    await harness.flush();
-    harness.mockInput.pressEnter();
-    const start = Date.now();
-    while (!harness.inputField.plainText.includes("[Image #1]") && Date.now() - start < 1500) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    expect(harness.inputField.plainText).toContain("[Image #1]");
-    // /image is local \u2014 no prompt yet.
-    expect(harness.promptCalls).toHaveLength(0);
-
-    // Submit a real prompt: the attachment must be drained and forwarded.
-    await harness.mockInput.typeText(" describe this image");
-    await harness.flush();
-    harness.mockInput.pressEnter();
-    await harness.waitForPrompt();
-
-    expect(harness.promptCalls).toHaveLength(1);
-    expect(harness.promptCalls[0]!.images).toHaveLength(1);
-    expect(harness.promptCalls[0]!.images![0]!.mimeType).toBe("image/png");
-    // The base64 payload must round-trip the PNG header bytes verbatim so
-    // the runner sees exactly what we put on disk.
-    expect(harness.promptCalls[0]!.images![0]!.data).toBe(
-      Buffer.from(PNG_HEADER).toString("base64"),
-    );
-  });
+      expect(harness.promptCalls).toHaveLength(1);
+      expect(harness.promptCalls[0]!.images).toHaveLength(1);
+      expect(harness.promptCalls[0]!.images![0]!.mimeType).toBe("image/png");
+      // The base64 payload must round-trip the PNG header bytes verbatim so
+      // the runner sees exactly what we put on disk.
+      expect(harness.promptCalls[0]!.images![0]!.data).toBe(
+        Buffer.from(PNG_HEADER).toString("base64"),
+      );
+    },
+  );
 });

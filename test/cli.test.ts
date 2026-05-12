@@ -28,13 +28,11 @@ import {
   formatSkillAutocompleteDescription,
   historyDisplayBlocks,
   limitHistoryDisplayMessages,
-  commitActiveAnswer,
   moveQuestionHighlight,
   moveSkillAutocompleteSelection,
   NO_HIGHLIGHT,
   questionPickerAnswer,
   replaceFileAutocompleteToken,
-  restoreSavedAnswer,
   skillAutocompleteMatches,
   startupHeaderLines,
 } from "../src/tui/app.js";
@@ -823,8 +821,9 @@ describe("TUI question picker helpers", () => {
   });
 
   test("returns undefined for single-select with NO_HIGHLIGHT", () => {
-    // Default state when the user has not yet pressed Up/Down. commitActiveAnswer
-    // relies on this to skip writing an answer that the user hasn't expressed.
+    // Default state when the user has not yet pressed Up/Down. Returning
+    // undefined lets the picker orchestration skip writing an answer the
+    // user hasn't expressed yet.
     expect(questionPickerAnswer(singleSelect, NO_HIGHLIGHT, new Set())).toBeUndefined();
   });
 
@@ -839,95 +838,6 @@ describe("TUI question picker helpers", () => {
   test("returns undefined when the question is missing or has no option at the selection", () => {
     expect(questionPickerAnswer(undefined, 0, new Set())).toBeUndefined();
     expect(questionPickerAnswer(singleSelect, 5, new Set())).toBeUndefined();
-  });
-
-  test("commitActiveAnswer live-records multi-select toggles without waiting for Enter", () => {
-    // Regression: if the user Space-toggles options and then types a prompt
-    // (flushing the picker via `submit()`), the toggled labels must already
-    // be in the accumulated map so the dispatched `session.answer` reflects
-    // them. Pressing Enter must not be a precondition.
-    const accumulated = commitActiveAnswer(multiSelect, 0, new Set([0, 2]), {});
-    expect(accumulated).toEqual({
-      "Which test suites should run before promotion?": ["unit", "e2e"],
-    });
-  });
-
-  test("commitActiveAnswer live-records the highlight as a single-select answer", () => {
-    // Up/Down on single-select should treat the highlighted option as the
-    // committed answer (highlight = selection), so a prompt-flush mid-flow
-    // includes it without requiring Enter first.
-    const accumulated = commitActiveAnswer(singleSelect, 1, new Set(), {});
-    expect(accumulated).toEqual({
-      "Which environment should I deploy to?": ["production"],
-    });
-  });
-
-  test("commitActiveAnswer is a no-op for single-select with NO_HIGHLIGHT", () => {
-    // Default state. The user has not yet pressed Up/Down so there is no
-    // implicit selection; the accumulated map must not gain a stale entry.
-    const before = { other: ["foo"] };
-    expect(commitActiveAnswer(singleSelect, NO_HIGHLIGHT, new Set(), before)).toBe(before);
-  });
-
-  test("commitActiveAnswer overwrites prior accumulated values for the same question", () => {
-    const before = {
-      "Which test suites should run before promotion?": ["unit"],
-    };
-    const after = commitActiveAnswer(multiSelect, 0, new Set([1]), before);
-    expect(after).toEqual({
-      "Which test suites should run before promotion?": ["integration"],
-    });
-    expect(before).toEqual({
-      "Which test suites should run before promotion?": ["unit"],
-    });
-  });
-
-  test("commitActiveAnswer preserves answers for other questions", () => {
-    const before = { "Pick env": ["staging"] };
-    const after = commitActiveAnswer(multiSelect, 0, new Set([0]), before);
-    expect(after).toEqual({
-      "Pick env": ["staging"],
-      "Which test suites should run before promotion?": ["unit"],
-    });
-  });
-
-  test("commitActiveAnswer returns the input map when no question is active", () => {
-    const before = { "Pick env": ["staging"] };
-    expect(commitActiveAnswer(undefined, 0, new Set(), before)).toBe(before);
-  });
-
-  test("restoreSavedAnswer reconstructs multi-select checks from saved labels", () => {
-    const restored = restoreSavedAnswer(multiSelect, {
-      "Which test suites should run before promotion?": ["e2e", "unit"],
-    });
-    // Multi-select highlight always starts cleared on revisit; toggles
-    // restore so the user sees their prior `[x]` boxes.
-    expect(restored.selectedIndex).toBe(NO_HIGHLIGHT);
-    expect([...restored.checked].sort()).toEqual([0, 2]);
-  });
-
-  test("restoreSavedAnswer reconstructs single-select highlight from saved label", () => {
-    const restored = restoreSavedAnswer(singleSelect, {
-      "Which environment should I deploy to?": ["production"],
-    });
-    expect(restored.selectedIndex).toBe(1);
-    expect(restored.checked.size).toBe(0);
-  });
-
-  test("restoreSavedAnswer falls back to NO_HIGHLIGHT when no answer was saved", () => {
-    // First visit to a question: nothing highlighted, nothing checked.
-    expect(restoreSavedAnswer(singleSelect, {})).toEqual({
-      selectedIndex: NO_HIGHLIGHT,
-      checked: new Set<number>(),
-    });
-    expect(restoreSavedAnswer(multiSelect, {})).toEqual({
-      selectedIndex: NO_HIGHLIGHT,
-      checked: new Set<number>(),
-    });
-    expect(restoreSavedAnswer(undefined, {})).toEqual({
-      selectedIndex: NO_HIGHLIGHT,
-      checked: new Set<number>(),
-    });
   });
 
   test("wraps full question option descriptions without truncating", () => {
