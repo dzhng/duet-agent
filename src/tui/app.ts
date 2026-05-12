@@ -16,6 +16,7 @@ import { bindSessionToUi } from "./session-subscription.js";
 import { StarterSection } from "./starter-section.js";
 import { StatusController } from "./status-controller.js";
 import { StepRenderer } from "./step-renderer.js";
+import { applyRelayCommand } from "./relay-command.js";
 import { tryDispatchSlashCommand } from "./slash-commands.js";
 import { COLORS } from "./theme.js";
 import { TranscriptWriter } from "./transcript-writer.js";
@@ -239,7 +240,24 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       questionPicker.flushWithMessage(message, images);
       return;
     }
-    void input.session.prompt({ message, behavior, images }).catch(reportError);
+    // `/relay` is an inline token, not a standalone command: when the session
+    // can route to state-machine tools we strip every `/relay` token and
+    // append a system reminder that primes the routing tools. In `agent`
+    // mode the runner has no state-machine tools, so the token is left in
+    // the message verbatim and the picker hides the command entirely.
+    let outgoing = message;
+    if (input.session.config.mode !== "agent") {
+      const relay = applyRelayCommand(message);
+      if (relay.applied) {
+        outgoing = relay.message;
+        appendBlock(
+          "[relay]",
+          "appended state-machine routing reminder to this turn",
+          COLORS.system,
+        );
+      }
+    }
+    void input.session.prompt({ message: outgoing, behavior, images }).catch(reportError);
     if (!statusController.isRunning()) statusController.markRunning();
   }
 

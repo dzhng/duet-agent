@@ -78,6 +78,18 @@ export const BUILT_IN_SLASH_COMMANDS: readonly SkillAutocompleteItem[] = [
 ];
 
 /**
+ * The inline `/relay` token is only meaningful when the runner can route
+ * to state-machine tools, so the autocomplete row is gated to non-`agent`
+ * modes. Listed separately from {@link BUILT_IN_SLASH_COMMANDS} so the
+ * boot screen can splice it in only when the session mode allows it.
+ */
+export const RELAY_SLASH_COMMAND: SkillAutocompleteItem = {
+  name: "relay",
+  description: "Inline anywhere in a prompt to nudge the agent into state-machine (relay) mode",
+  group: "commands",
+};
+
+/**
  * One row in the @-file picker. `relativePath` is what gets inserted; the
  * basename is shown larger and the directory portion is shown next to it
  * so deeply nested files stay scannable.

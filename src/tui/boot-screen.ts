@@ -8,7 +8,7 @@ import {
 import type { Session } from "../session/session.js";
 import type { TurnAgentFile } from "../types/protocol.js";
 import type { AutocompleteController } from "./autocomplete-controller.js";
-import { BUILT_IN_SLASH_COMMANDS } from "./autocomplete.js";
+import { BUILT_IN_SLASH_COMMANDS, RELAY_SLASH_COMMAND } from "./autocomplete.js";
 import { refreshSidebarFromSession } from "./session-subscription.js";
 import type { Sidebar } from "./sidebar.js";
 import type { StarterSection } from "./starter-section.js";
@@ -160,8 +160,12 @@ export async function renderBootScreen(deps: {
     deps.session.getSkills(),
     deps.session.getResolvedAgentFiles(),
   ]);
+  // `/relay` is only meaningful when the runner can pick state-machine tools;
+  // in `agent` mode the token would be a no-op so it is hidden from the picker.
+  const relayAvailable = deps.session.config.mode !== "agent";
   deps.autocomplete.setSkillItems([
     ...BUILT_IN_SLASH_COMMANDS,
+    ...(relayAvailable ? [RELAY_SLASH_COMMAND] : []),
     ...skills.map((skill) => ({
       name: skill.name,
       description: skill.description,
