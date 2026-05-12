@@ -146,6 +146,18 @@ export interface RunTuiInput {
    */
   isResume?: boolean;
   /**
+   * Called when the user picks a "pick up the thread" recent-session
+   * row. The outer dispatcher (`run.ts`) should dispose the current
+   * session, `manager.resume(sessionId)` + `hydrate()` + `start()`, and
+   * re-enter `runTui` with the hydrated session and its replayed history.
+   *
+   * When this callback is not provided (tests, playground, any caller
+   * that does not own a SessionManager), picker rows fall back to the
+   * legacy behavior of re-submitting the prior prompt as a fresh turn
+   * in the current session.
+   */
+  onResumeRequest?: (sessionId: string) => void;
+  /**
    * Number of trailing user-turn exchanges to replay from prior history.
    * Each exchange is the user prompt plus the assistant blocks (text,
    * reasoning, tools, errors) that followed it. `0` disables replay; when
@@ -1049,12 +1061,22 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const entry = starterEntries[highlightedStarterIndex];
     if (!entry) return false;
     destroyStartersPermanently();
-    // Recent-session rows reuse the prompt text in the *current* session
-    // rather than tearing down the runtime to switch sessions. The agent
-    // won't have prior context, but the user lands on the same task with
-    // one keystroke instead of typing it again. Documented tradeoff: a
-    // future iteration can swap this for true cross-session resume once
-    // the session manager exposes a hot-swap API.
+    // Recent-session rows: when the host wires `onResumeRequest`, signal
+    // the outer dispatcher to swap sessions and tear down this renderer.
+    // The dispatcher disposes the placeholder, calls `manager.resume(id)`
+    // + `hydrate()` + `start()`, and re-enters `runTui` with the hydrated
+    // session + its full message history. End user lands on the same
+    // session id, same agent context, same transcript replayed inline.
+    //
+    // When no callback is wired (tests, playground), fall back to the
+    // legacy shortcut: re-submit the prior prompt in the current session.
+    // Agent has no context; the user lands on the same task with one
+    // keystroke instead of typing it again.
+    if (entry.kind === "recent" && input.onResumeRequest) {
+      input.onResumeRequest(entry.sessionId);
+      renderer.destroy();
+      return true;
+    }
     submit(entry.submit);
     return true;
   }
