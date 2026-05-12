@@ -5,7 +5,12 @@ import {
   type UpgradeStatus,
   type UpgradeStatusStream,
 } from "../cli/auto-upgrade.js";
+import type { Session } from "../session/session.js";
 import type { TurnAgentFile } from "../types/protocol.js";
+import type { AutocompleteController } from "./autocomplete-controller.js";
+import { BUILT_IN_SLASH_COMMANDS } from "./autocomplete.js";
+import { refreshSidebarFromSession } from "./session-subscription.js";
+import type { Sidebar } from "./sidebar.js";
 import type { StarterSection } from "./starter-section.js";
 import { DUET_BANNER_LINES_COMPACT } from "./history.js";
 import { COLORS } from "./theme.js";
@@ -138,6 +143,61 @@ export function formatBootHeader(deps: {
 }): string {
   const cwdLabel = shortenCwd(deps.workDir);
   return `DUET AGENT  v${deps.packageVersion}   ·   ${cwdLabel}   ·   ${deps.modelName} + ${deps.memoryModelName}`;
+}
+
+/**
+ * One-shot boot intro: loads skills + agent files from the session, seeds
+ * the autocomplete index, paints the banner/header/agent-file line, and
+ * refreshes the sidebar from the session's current state snapshot.
+ */
+export async function renderBootScreen(deps: {
+  renderer: CliRenderer;
+  transcript: ScrollBoxRenderable;
+  appendLine(content: string, fg: string): void;
+  session: Session;
+  sidebar: Sidebar;
+  autocomplete: AutocompleteController;
+  starters?: StarterSection;
+  isResume: boolean;
+  packageName: string;
+  packageVersion: string;
+  workDir: string;
+  modelName: string;
+  memoryModelName: string;
+  upgradeStatus$?: UpgradeStatusStream;
+}): Promise<void> {
+  const [skills, agentFiles] = await Promise.all([
+    deps.session.getSkills(),
+    deps.session.getResolvedAgentFiles(),
+  ]);
+  deps.autocomplete.setSkillItems([
+    ...BUILT_IN_SLASH_COMMANDS,
+    ...skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      path: skill.baseDir,
+      group: "skills" as const,
+    })),
+  ]);
+  deps.autocomplete.refresh();
+  renderSetupIntro(
+    {
+      renderer: deps.renderer,
+      transcript: deps.transcript,
+      appendLine: deps.appendLine,
+      packageName: deps.packageName,
+      packageVersion: deps.packageVersion,
+      workDir: deps.workDir,
+      modelName: deps.modelName,
+      memoryModelName: deps.memoryModelName,
+      upgradeStatus$: deps.upgradeStatus$,
+      starters: deps.starters,
+      isResume: deps.isResume,
+    },
+    skills,
+    agentFiles,
+  );
+  refreshSidebarFromSession({ session: deps.session, sidebar: deps.sidebar });
 }
 
 export function shortenCwd(cwd: string): string {
