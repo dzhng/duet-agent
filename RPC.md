@@ -42,7 +42,7 @@ duet --rpc \
 The process writes a one-line banner to **stderr** on start:
 
 ```
-@duetso/agent 0.1.65 rpc
+@duetso/agent 0.1.81 rpc
 ```
 
 Use it for version-skew detection; consumers should ignore stderr otherwise.
@@ -179,7 +179,7 @@ consumer typically renders or reacts to:
 - `todos` — the model's current todo list.
 - `state_machine` — current state name when running a state machine.
 - `memory` — observational memory writes (extraction / reflection activity).
-- `usage` — running turn-aggregate token accounting (`usage`) plus the latest parent context-window snapshot (`effectiveContextWindow`, `contextWindowUsage` breakdown of `systemPrompt`, `messages`, `localMemory`, `globalMemory`). Emitted after every parent assistant message and after every state-agent finishes, so consumers can render cost ticks mid-turn.
+- `usage` — running turn-aggregate token accounting (`usage`) plus the latest parent context-window snapshot (`effectiveContextWindow`, `contextWindowUsage` breakdown of `systemPrompt`, `messages`, `localMemory`, `globalMemory`). Emitted after every parent worker boundary and after every state-agent finishes (including error and interrupt paths), so consumers can render cost ticks mid-turn. The `usage` field is always cumulative for the turn; the bar fields mirror the latest parent emission and stay stable across state-agent ticks.
 - `complete | ask | interrupted | sleep` — terminal events. Always include
   the updated `state`. When at least one assistant message has been
   recorded this turn, terminals additionally carry the same `usage` /
