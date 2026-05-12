@@ -82,6 +82,78 @@ describe("state machine agent state cwd", () => {
     },
     150_000,
   );
+
+  testIfDocker(
+    "overrides agent state cwd at transition time via select_state_machine_state",
+    async () => {
+      const parentDir = await mkdtemp(join(tmpdir(), "sm-cwd-parent-"));
+      const definitionDir = await mkdtemp(join(tmpdir(), "sm-cwd-defined-"));
+      const overrideDir = await mkdtemp(join(tmpdir(), "sm-cwd-override-"));
+      const sentinel = "CWD_OVERRIDE_SENTINEL_84";
+      try {
+        // Sentinel lives only in overrideDir. The definition points the agent
+        // state at definitionDir; only the parent's runtime override can route
+        // the sub-agent to the directory that actually contains the file.
+        await writeFile(join(overrideDir, "sentinel.txt"), sentinel);
+
+        const definition: StateMachineDefinition = {
+          name: "agent_cwd_override_eval",
+          prompt:
+            "Validate that select_state_machine_state can override an agent state's cwd at transition time.",
+          states: [
+            {
+              kind: "agent",
+              name: "read_sentinel",
+              cwd: definitionDir,
+              prompt: [
+                "Call the bash tool with command `cat sentinel.txt` and no cwd argument.",
+                "Then reply with exactly the file contents and nothing else.",
+              ].join("\n"),
+            },
+            {
+              kind: "terminal",
+              name: "done",
+              status: "completed",
+              reason: "Agent cwd override eval completed.",
+            },
+          ],
+        };
+
+        const runner = new TurnRunner({
+          model,
+          cwd: parentDir,
+          mode: definition,
+          skillDiscovery: { includeDefaults: false },
+          systemInstructions: [
+            "This is a live eval. Use select_state_machine_state for every transition.",
+            "On the initial prompt, select read_sentinel with an override that swaps the agent cwd.",
+            `Use override kind "agent" with state {"cwd":${JSON.stringify(overrideDir)}}.`,
+            "After read_sentinel completes, select done.",
+          ].join("\n"),
+        });
+
+        const started = await startTurn(runner, {
+          mode: definition,
+          prompt: "Start the agent cwd override eval.",
+        });
+        const terminal = await started.turn;
+
+        expectCompleted(terminal);
+        expect(terminal.state.stateMachine?.terminal).toMatchObject({
+          state: "done",
+          status: "completed",
+        });
+        expect(completedOutput(terminal.state, "read_sentinel")).toContain(sentinel);
+      } finally {
+        await Promise.all([
+          rm(parentDir, { recursive: true, force: true }),
+          rm(definitionDir, { recursive: true, force: true }),
+          rm(overrideDir, { recursive: true, force: true }),
+        ]);
+      }
+    },
+    150_000,
+  );
 });
 
 function expectCompleted(event: TurnTerminalEvent): void {
