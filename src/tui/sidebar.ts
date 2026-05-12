@@ -97,8 +97,8 @@ const TODOS_EMPTY_HINT =
   "Empty for now. Fills with the agent's in-turn checklist while it works on a multi-step task.";
 const FOLLOW_UPS_EMPTY_HINT =
   "Empty for now. Shift+Enter queues a message here; it's delivered when the current turn settles.";
-const LOOPS_EMPTY_HINT =
-  "No loop running. Long-running prompts (outreach, dev lifecycle, triage) open one and run across sessions.";
+const RELAYS_EMPTY_HINT =
+  "No relay running. Long-running prompts (outreach, dev lifecycle, triage) open one and run across sessions.";
 
 export function createSidebar(renderer: CliRenderer): Sidebar {
   // Fixed width keeps the sidebar legible on narrow terminals without
@@ -117,7 +117,7 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     FOLLOW_UPS_EMPTY_HINT,
     { maxBodyLines: FOLLOW_UP_MAX_BODY_LINES, grow: false },
   );
-  const { panel: smPanel, body: smBody } = createPanel(renderer, "loops", LOOPS_EMPTY_HINT);
+  const { panel: smPanel, body: smBody } = createPanel(renderer, "relays", RELAYS_EMPTY_HINT);
 
   // The context panel is hand-rolled rather than going through createPanel
   // because the body is a horizontal colored bar plus a legend row, not a
@@ -253,7 +253,7 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     },
     setStateMachine(session) {
       if (!session) {
-        smBody.content = LOOPS_EMPTY_HINT;
+        smBody.content = RELAYS_EMPTY_HINT;
         smBody.fg = COLORS.hint;
         return;
       }

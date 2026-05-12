@@ -29,12 +29,13 @@ duet-agent takes the opposite approach: **memory is woven into the core architec
 
 ## Architecture
 
-The diagram below walks through a realistic agent-routed loop: outbound conference
+The diagram below walks through a realistic agent-routed relay: outbound conference
 outreach. The user prompt enters the `TurnRunner`, the runner agent picks the next state based on
-prompt, history, and available state definitions, and the loop drives the business process
+prompt, history, and available state definitions, and the relay drives the business process
 until it hits a terminal state. The same definition can start in the middle — for example, the
 runner can skip straight to `wait_for_reply` if the user says “I already emailed them”. Internally
-these loops are state machines; “loops” is the user-facing name in the UI and docs.
+these relays are state machines; “relays” is the user-facing name in the UI and docs — each state
+hands off (relay-style) to the next.
 
 ```mermaid
 stateDiagram-v2
@@ -42,7 +43,7 @@ stateDiagram-v2
 
   [*] --> Classify : user prompt
   Classify --> AgentMode : one-off task
-  Classify --> Outreach : matches a loop
+  Classify --> Outreach : matches a relay
 
   AgentMode --> [*] : answer / edits
 
@@ -119,29 +120,29 @@ The turn runner can delegate durable process steps into agent states. Agent stat
 
 `TurnRunner` is stateless across process boundaries. `TurnState` is the only runner state that needs to survive, and durable observations live in PGlite. A new process — including a fresh serverless invocation, a new sandbox container, or a different machine — can resume by passing the saved state to `runner.start({ state: savedState })`.
 
-This makes long-running work practical without keeping a process alive. A loop can sit in `wait_for_reply` for weeks, woken by a cron-driven `wake` command between runs. Work that spans months — outbound outreach loops, slow build-and-review cycles, scheduled retries — follows the same shape as a one-shot turn: load state, start the runner, run a turn, persist the terminal state, exit.
+This makes long-running work practical without keeping a process alive. A relay can sit in `wait_for_reply` for weeks, woken by a cron-driven `wake` command between runs. Work that spans months — outbound outreach relays, slow build-and-review cycles, scheduled retries — follows the same shape as a one-shot turn: load state, start the runner, run a turn, persist the terminal state, exit.
 
 ### Three Execution Modes
 
 The turn runner has three top-level modes:
 
 - `agent`: handle the prompt as a normal agent session. This is for one-off tasks, coding requests, reviews, research, and anything that can complete in the current session.
-- `state_machine`: route the prompt into an agent-routed loop (the underlying mode name is still `state_machine`). This is for long-running business processes with durable state, waits, and terminal business outcomes.
+- `state_machine`: route the prompt into an agent-routed relay (the underlying mode name is still `state_machine`). This is for long-running business processes with durable state, waits, and terminal business outcomes.
 - `auto`: let the turn runner classify the prompt and choose either `agent` or `state_machine`.
 
 Normal agent mode handles immediate work; state-machine mode handles business processes that may pause, resume, wait on external systems, or start in the middle based on the user's prompt. In `auto`, the runner classifies the prompt and routes to whichever fits.
 
-### Agent-Routed Loops
+### Agent-Routed Relays
 
-duet-agent is exploring long-running agent-routed loops for business processes like outbound sales, conference outreach, and development loops. The design goal is **not** to become a workflow engine like Temporal, Airflow, or GitHub Actions.
+duet-agent is exploring long-running agent-routed relays for business processes like outbound sales, conference outreach, and development lifecycles. The design goal is **not** to become a workflow engine like Temporal, Airflow, or GitHub Actions.
 
-Instead, loops are agent-routed. Under the hood each loop is a state machine: a state-machine definition describes the available business states (agent states, shell-script states, poll states, and terminal states). The runner keeps the state-machine system prompt cache-friendly by including only stable routing instructions plus the original prompt and available state definitions. Current state and history stay in the parent agent conversation, where state transitions, script results, poll results, and user follow-ups are already recorded.
+Instead, relays are agent-routed. Under the hood each relay is a state machine: a state-machine definition describes the available business states (agent states, shell-script states, poll states, and terminal states), and each state hands its result off to the next — the relay metaphor. The runner keeps the state-machine system prompt cache-friendly by including only stable routing instructions plus the original prompt and available state definitions. Current state and history stay in the parent agent conversation, where state transitions, script results, poll results, and user follow-ups are already recorded.
 
-A loop is higher level than task execution. It tracks one current business state at a time. If a state needs fan-out, parallelism, or a task-level workflow, that belongs inside an agent or script state. The agent can execute a complex workflow internally; the loop only records the business transition before and after that state.
+A relay is higher level than task execution. It tracks one current business state at a time. If a state needs fan-out, parallelism, or a task-level workflow, that belongs inside an agent or script state. The agent can execute a complex workflow internally; the relay only records the business transition before and after that state.
 
-This keeps loops flexible enough to start in the middle. For example, a user can say: "prospect person X, I've already sent email, just wait for response." The same outreach loop can skip research and email sending, then choose the wait-for-response state because the runner agent understands the existing context.
+This keeps relays flexible enough to start in the middle. For example, a user can say: "prospect person X, I've already sent email, just wait for response." The same outreach relay can skip research and email sending, then choose the wait-for-response state because the runner agent understands the existing context.
 
-External integrations stay simple: anything with an API or CLI is a script state or script poll. Timer polls cover pure delays such as "wait before retry." Email, GitHub, Calendly, CRM systems, and webhooks do not need first-class engine concepts. If the loop can tolerate a few minutes of polling delay, a bash script is enough.
+External integrations stay simple: anything with an API or CLI is a script state or script poll. Timer polls cover pure delays such as "wait before retry." Email, GitHub, Calendly, CRM systems, and webhooks do not need first-class engine concepts. If the relay can tolerate a few minutes of polling delay, a bash script is enough.
 
 What this is not:
 
@@ -300,7 +301,7 @@ right-hand sidebar with four panels, and a textarea at the bottom.
 - **todos** — the runner's current todo list.
 - **follow-ups** — prompts queued behind the active turn (the working-status
   line also shows the count).
-- **loops** — when a loop (state machine) is active, lists every state with
+- **relays** — when a relay (state machine) is active, lists every state with
   `▶` marking the current one and the terminal status if reached.
 - **context** — token-usage progress bar against the active model's window.
 

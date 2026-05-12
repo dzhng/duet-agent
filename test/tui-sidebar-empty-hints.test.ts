@@ -4,10 +4,10 @@ import { bootTui, type TuiHarness } from "./helpers/tui-harness.js";
 
 /**
  * On a fresh session the three runtime sidebar panels (`todos`,
- * `follow-ups`, `loops`) are empty. The placeholder copy must teach the
+ * `follow-ups`, `relays`) are empty. The placeholder copy must teach the
  * user what each panel is for instead of showing opaque `(none)` /
  * `(inactive)` markers — a brand-new user has no other way to learn that
- * Shift+Enter queues a follow-up or that long-running prompts open loops.
+ * Shift+Enter queues a follow-up or that long-running prompts open relays.
  *
  * This test would have failed before the empty-state hint refactor, when
  * `setTodos([])` / `setFollowUpQueue([])` / `setStateMachine(undefined)`
@@ -43,6 +43,6 @@ describe("sidebar empty-state hints", () => {
     // wrapped row of the rendered frame.
     expect(frame).toContain("in-turn checklist"); // todos hint
     expect(frame).toContain("queues a message here"); // follow-ups hint
-    expect(frame).toContain("No loop running."); // loops hint
+    expect(frame).toContain("No relay running."); // relays hint
   });
 });
