@@ -98,6 +98,49 @@ describe("EmbeddingBackfillWorker", () => {
     });
   });
 
+  testIfDocker(
+    "persists surviving rows when a parent observation is deleted between select and persist",
+    async () => {
+      // FK race: the reflector calls `replaceSessionObservations` mid-
+      // batch and deletes one of the rows the worker already selected.
+      // A bare INSERT into `observation_embeddings` would abort the
+      // whole transaction on FK violation, losing every embedding for
+      // this batch. The WHERE EXISTS filter must let surviving rows
+      // commit while the deleted parent is silently skipped.
+      await withSeededDb(async (db) => {
+        const worker = new EmbeddingBackfillWorker({
+          db,
+          embed: async (inputs) => {
+            // Delete one parent right when the embed call resolves so
+            // the deletion lands between `selectBatch` and
+            // `persistBatch`.
+            await db.query(`DELETE FROM observations WHERE id = 'mem_medium'`);
+            return {
+              embeddings: inputs.map(() => fillVector(3072, 1)),
+              model: "test-model",
+            };
+          },
+        });
+
+        worker.start();
+        await waitFor(async () => {
+          const result = await db.query<{ count: number }>(
+            `SELECT COUNT(*)::int AS count FROM observation_embeddings`,
+          );
+          // Two surviving parents (high + low); the deleted medium row
+          // is skipped by the WHERE EXISTS filter rather than aborting.
+          return (result.rows[0]?.count ?? 0) === 2;
+        });
+        await worker.stop();
+
+        const rows = await db.query<{ observation_id: string }>(
+          `SELECT observation_id FROM observation_embeddings ORDER BY observation_id`,
+        );
+        expect(rows.rows.map((row) => row.observation_id)).toEqual(["mem_high", "mem_low"]);
+      });
+    },
+  );
+
   testIfDocker("survives an embed failure and continues on the next batch", async () => {
     await withSeededDb(async (db) => {
       let attempt = 0;

@@ -115,6 +115,14 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
     borderColor: COLORS.border,
     padding: 1,
   });
+  // Keep keyboard focus pinned to the composer. ScrollBoxRenderable is
+  // focusable by default, so a mouse click on the transcript would steal
+  // focus from the textarea and break starter-row arrow navigation, paste
+  // keystroke handling, and drag-drop image attach — all of which are wired
+  // up through inputField.onKeyDown / onPaste. Wheel scrolling, sticky
+  // pinning, and drag-select selection do not require focus, so disabling
+  // it here costs nothing.
+  transcript.focusable = false;
 
   // Status and hint chrome are excluded from drag-select so a highlight that
   // sweeps the bottom of the screen does not pull the spinner / hint text

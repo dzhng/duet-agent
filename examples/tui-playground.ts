@@ -538,31 +538,93 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         input: {
           definition: {
             name: "release-pipeline",
+            prompt: "Cut a release once verify passes and CI is green.",
             states: [
-              { name: "verify", kind: "agent" },
-              { name: "wait-for-ci", kind: "poll", intervalMs: 60_000 },
-              { name: "publish", kind: "agent" },
-              { name: "announce", kind: "agent" },
+              {
+                name: "verify",
+                kind: "agent",
+                when: "start of the release",
+                prompt: "Run pre-publish checks: typecheck, lint, and the docker test suite.",
+              },
+              {
+                name: "prebuild",
+                kind: "script",
+                when: "after verify",
+                command: "bun run build && bun run check-types",
+              },
+              {
+                name: "wait-for-ci",
+                kind: "poll",
+                intervalMs: 15 * 60_000,
+                command: "gh run list --limit 1 --json status,conclusion",
+              },
+              {
+                name: "cooldown",
+                kind: "timer",
+                wakeAt: Date.UTC(2026, 4, 13, 18, 30),
+              },
+              {
+                name: "publish",
+                kind: "agent",
+                prompt: "Publish the package and push the tag once CI is green.",
+              },
+              {
+                name: "done",
+                kind: "terminal",
+                status: "completed",
+                reason: "release published",
+              },
             ],
           },
+          firstState: "verify",
         },
-        output: "state machine registered",
+        // create_state_machine_definition echoes the full definition back; the
+        // formatter suppresses it because the roster body covers the same data.
+        output: JSON.stringify({ type: "create_state_machine_definition", ok: true }, null, 2),
       },
       {
         toolName: "select_state_machine_state",
         input: {
           decision: {
-            kind: "transition",
+            kind: "run_state",
             state: "wait-for-ci",
             reason: "verify completed; CI workflow dispatched, polling for green checks",
+            input: { runId: "12345" },
           },
         },
-        output: "moved to wait-for-ci",
+        output: JSON.stringify({ type: "select_state_machine_state", ok: true }, null, 2),
+      },
+      {
+        toolName: "select_state_machine_state",
+        input: {
+          decision: {
+            kind: "terminal",
+            state: "done",
+            reason: "all states completed successfully",
+          },
+        },
+        output: JSON.stringify({ type: "select_state_machine_state", ok: true }, null, 2),
       },
       {
         toolName: "get_current_state_machine_state",
         input: {},
-        output: "current: wait-for-ci\nwakeAt: 2026-05-09T18:30:00Z\nattempts: 2",
+        output: JSON.stringify(
+          {
+            currentState: "wait-for-ci",
+            currentInput: { runId: "12345" },
+            progress: { verify: 1, prebuild: 1, "wait-for-ci": 3 },
+            historyCount: 7,
+            history: [
+              { type: "state_entered", state: "verify" },
+              { type: "state_completed", state: "verify", status: "ok" },
+              { type: "state_entered", state: "prebuild" },
+              { type: "state_completed", state: "prebuild", status: "ok" },
+              { type: "state_entered", state: "wait-for-ci" },
+            ],
+          },
+          null,
+          2,
+        ),
       },
       {
         toolName: "mystery_tool",

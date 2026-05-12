@@ -369,47 +369,234 @@ const formatReadSkill: Formatter = (spec) => {
   return { header: `read skill: ${name}`, result: buildDefaultResult(spec) };
 };
 
+/**
+ * Kind glyphs for state-machine states. Picked so each state kind is
+ * scannable in a column without relying on color: agent uses the runner's
+ * `◆` from elsewhere in the UI, script reuses the bash `$` sigil, poll's
+ * `⟳` and timer's `⏲` echo the cyclic / scheduled semantics, and terminal
+ * uses a solid block to signal a final exit.
+ */
+const STATE_KIND_GLYPHS: Record<string, string> = {
+  agent: "◆",
+  script: "$",
+  poll: "⟳",
+  timer: "⏲",
+  terminal: "■",
+};
+
+function stateKindGlyph(kind: string | undefined): string {
+  if (!kind) return "·";
+  return STATE_KIND_GLYPHS[kind] ?? "·";
+}
+
+/**
+ * One-line hint about what a state does. Agent states surface the first
+ * line of the prompt, script/poll states surface the command, timer states
+ * surface their wake time, and terminal states surface their status (with
+ * optional reason). `when` is preferred when present so the routing
+ * guidance authored by the agent shows up over the raw prompt body.
+ */
+function summarizeStateRow(state: Record<string, unknown>): string {
+  const when = stringField(state, "when");
+  if (when) return firstLine(when);
+  const kind = stringField(state, "kind");
+  if (kind === "agent") return firstLine(stringField(state, "prompt") ?? "");
+  if (kind === "script") return firstLine(stringField(state, "command") ?? "");
+  if (kind === "poll") {
+    const interval = numberField(state, "intervalMs");
+    const cmd = firstLine(stringField(state, "command") ?? "");
+    const cadence = interval ? `every ${formatDuration(interval)}` : undefined;
+    return [cadence, cmd].filter(Boolean).join(" · ");
+  }
+  if (kind === "timer") {
+    const wakeAt = numberField(state, "wakeAt");
+    if (wakeAt) return `wakes ${formatWakeAt(wakeAt)}`;
+    return "";
+  }
+  if (kind === "terminal") {
+    const status = stringField(state, "status") ?? "";
+    const reason = stringField(state, "reason");
+    return reason ? `${status} — ${firstLine(reason)}` : status;
+  }
+  return "";
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const secs = Math.round(ms / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+function formatWakeAt(ms: number): string {
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return String(ms);
+  return date.toISOString().replace(".000", "");
+}
+
+/**
+ * `create_state_machine_definition` renders as a compact relay roster:
+ * one row per state with a kind glyph, its name, and a short hint pulled
+ * from `when` / prompt / command / wakeAt. The tool result is just an echo
+ * of the same definition, so it is suppressed in favor of the body view.
+ */
 const formatCreateStateMachine: Formatter = (spec) => {
   const input = pickObject(spec.input);
   const definition = pickObject(input ? input["definition"] : undefined);
   const smName = stringField(definition, "name") ?? "?";
+  const firstState = stringField(input, "firstState");
   const states = arrayField(definition, "states") ?? [];
-  const stateNames = states
-    .map((s) =>
-      s && typeof s === "object" ? stringField(s as Record<string, unknown>, "name") : undefined,
-    )
-    .filter((s): s is string => Boolean(s));
-  const body = stateNames.length > 0 ? `states: ${stateNames.join(", ")}` : undefined;
+  const rows: string[] = [];
+  if (firstState) rows.push(`firstState: ${firstState}`);
+  const nameWidth = states.reduce<number>((max, s) => {
+    const name =
+      s && typeof s === "object" ? stringField(s as Record<string, unknown>, "name") : undefined;
+    return name && name.length > max ? name.length : max;
+  }, 0);
+  for (const raw of states) {
+    const state = pickObject(raw);
+    if (!state) continue;
+    const kind = stringField(state, "kind");
+    const name = stringField(state, "name") ?? "?";
+    const hint = summarizeStateRow(state);
+    const padded = name.padEnd(nameWidth);
+    rows.push(
+      hint ? `${stateKindGlyph(kind)} ${padded}  ${hint}` : `${stateKindGlyph(kind)} ${padded}`,
+    );
+  }
   return {
-    header: `relays ▶ ${smName}`,
-    body,
-    result: buildDefaultResult(spec),
-    // State-machine status is structured and short; show it in full.
+    header: `relay defined: ${smName}`,
+    body: rows.length > 0 ? rows.join("\n") : undefined,
+    // Tool result is just an echo of the definition we already rendered.
+    result: undefined,
+    // Roster is structured and meant to be read in full.
     clamp: false,
   };
 };
 
+/**
+ * `select_state_machine_state` renders the transition verb and target.
+ * Reason, input, and override hints fall into the body. The tool result
+ * echoes the decision back, which the body already covers, so it is
+ * suppressed.
+ */
 const formatSelectStateMachineState: Formatter = (spec) => {
   const input = pickObject(spec.input);
   const decision = pickObject(input ? input["decision"] : undefined);
-  const kind = stringField(decision, "kind") ?? "?";
+  const kind = stringField(decision, "kind");
   const stateName = stringField(decision, "state");
   const reason = stringField(decision, "reason");
-  const tail = stateName ? ` ${stateName}` : "";
-  const reasonNote = reason ? `reason: ${reason}` : undefined;
+  const transitionInput = pickObject(decision ? decision["input"] : undefined);
+  const override = pickObject(decision ? decision["override"] : undefined);
+  const verb =
+    kind === "run_state"
+      ? "run"
+      : kind === "terminal"
+        ? "finalize"
+        : kind === "fail"
+          ? "fail"
+          : (kind ?? "?");
+  const headerTail = stateName ? `: ${stateName}` : "";
+  const bodyParts: string[] = [];
+  if (reason) bodyParts.push(`reason: ${reason}`);
+  if (transitionInput && Object.keys(transitionInput).length > 0) {
+    bodyParts.push(`input: ${formatCompactJson(transitionInput)}`);
+  }
+  if (override) {
+    const overrideKind = stringField(override, "kind");
+    bodyParts.push(`override: ${overrideKind ?? "unknown"}`);
+  }
   return {
-    header: `→ ${kind}${tail}`,
-    body: reasonNote,
-    result: buildDefaultResult(spec),
+    header: `→ ${verb}${headerTail}`,
+    body: bodyParts.length > 0 ? bodyParts.join("\n") : undefined,
+    // Tool result is just an echo of the decision; the body already covers it.
+    result: undefined,
     clamp: false,
   };
 };
 
-const formatGetCurrentStateMachineState: Formatter = (spec) => ({
-  header: "relays status",
-  result: buildDefaultResult(spec),
-  clamp: false,
-});
+/**
+ * `get_current_state_machine_state` renders the parsed status JSON as a
+ * compact summary: current state (or terminal status), per-state progress
+ * counters, and the tail of recent history. The raw result is suppressed
+ * since the parsed view is strictly more readable.
+ */
+const formatGetCurrentStateMachineState: Formatter = (spec) => {
+  if (spec.status === "running" || !spec.output) {
+    return { header: "relay status", clamp: false };
+  }
+  const parsed = parseToolJsonOutput(spec.output);
+  if (!parsed) {
+    return { header: "relay status", result: buildDefaultResult(spec), clamp: false };
+  }
+  const currentState = stringField(parsed, "currentState");
+  const terminal = pickObject(parsed["terminal"]);
+  const terminalStatus = stringField(terminal, "status");
+  const terminalReason = stringField(terminal, "reason");
+  const headline = terminalStatus
+    ? `terminal: ${terminalStatus}`
+    : currentState
+      ? `current: ${currentState}`
+      : "idle";
+
+  const bodyParts: string[] = [];
+  if (terminalReason) bodyParts.push(`reason: ${terminalReason}`);
+
+  const progress = pickObject(parsed["progress"]);
+  if (progress) {
+    const entries = Object.entries(progress)
+      .map(([name, count]) => `${name}=${typeof count === "number" ? count : String(count)}`)
+      .join(" ");
+    if (entries) bodyParts.push(`progress: ${entries}`);
+  }
+
+  const historyCount = numberField(parsed, "historyCount");
+  const historyTail = arrayField(parsed, "history") ?? [];
+  if (historyTail.length > 0) {
+    const lines = historyTail.slice(-5).map((event) => formatHistoryEvent(event));
+    const more =
+      historyCount !== undefined && historyCount > historyTail.length
+        ? ` (+${historyCount - historyTail.length} earlier)`
+        : "";
+    bodyParts.push(`history${more}:\n${lines.map((l) => `  ${l}`).join("\n")}`);
+  }
+
+  return {
+    header: `relay status — ${headline}`,
+    body: bodyParts.length > 0 ? bodyParts.join("\n") : undefined,
+    result: undefined,
+    clamp: false,
+  };
+};
+
+function parseToolJsonOutput(
+  output: ReadonlyArray<TextContent | ImageContent>,
+): Record<string, unknown> | undefined {
+  const text = textFromToolContent(output).trim();
+  if (!text) return undefined;
+  try {
+    const parsed = JSON.parse(text);
+    return pickObject(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+function formatHistoryEvent(event: unknown): string {
+  const e = pickObject(event);
+  if (!e) return String(event);
+  const type = stringField(e, "type") ?? "event";
+  const state = stringField(e, "state");
+  const status = stringField(e, "status");
+  const parts = [type];
+  if (state) parts.push(state);
+  if (status && status !== type) parts.push(`(${status})`);
+  return parts.join(" ");
+}
 
 const TOOL_FORMATTERS: Record<string, Formatter> = {
   bash: formatBash,

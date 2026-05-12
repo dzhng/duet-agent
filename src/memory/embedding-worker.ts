@@ -118,6 +118,14 @@ export class EmbeddingBackfillWorker {
     // server reported for this batch; storing it verbatim lets a
     // future re-embedding pass match the deprecated tag and refresh
     // only the affected rows.
+    //
+    // The `INSERT ... SELECT ... WHERE EXISTS` filter avoids a FK race:
+    // between `selectBatch` and `persistBatch` the reflector may have
+    // called `replaceSessionObservations`, which deletes the parent
+    // row. A bare `INSERT` would then abort the whole transaction with
+    // a foreign-key violation, losing every embedding in this batch.
+    // Skipping the missing parent inserts 0 rows for that observation
+    // and lets the surviving rows commit.
     await this.options.db.transaction(async (tx) => {
       const now = Date.now();
       for (let index = 0; index < batch.length; index++) {
@@ -125,7 +133,8 @@ export class EmbeddingBackfillWorker {
         const vector = vectors[index]!;
         await tx.query(
           `INSERT INTO observation_embeddings (observation_id, model, vector, created_at)
-           VALUES ($1, $2, $3, $4)
+           SELECT $1, $2, $3::vector, $4
+           WHERE EXISTS (SELECT 1 FROM observations WHERE id = $1)
            ON CONFLICT (observation_id) DO UPDATE SET
              model = EXCLUDED.model,
              vector = EXCLUDED.vector,
