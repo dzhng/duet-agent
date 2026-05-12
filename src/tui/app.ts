@@ -5,7 +5,6 @@ import {
   type KeyEvent,
   type PasteEvent,
   type Selection,
-  TextRenderable,
 } from "@opentui/core";
 import { CopyController } from "./copy-controller.js";
 import { PasteController } from "./paste-controller.js";
@@ -15,24 +14,14 @@ import { StatusController } from "./status-controller.js";
 import { StepRenderer } from "./step-renderer.js";
 import { TranscriptWriter } from "./transcript-writer.js";
 import type { Session } from "../session/session.js";
-import {
-  describeUpgradeStatus,
-  type UpgradeStatus,
-  type UpgradeStatusStream,
-} from "../cli/auto-upgrade.js";
-import type { TurnAgentFile, TurnEvent, TurnTerminalEvent } from "../types/protocol.js";
+import type { UpgradeStatusStream } from "../cli/auto-upgrade.js";
+import type { TurnEvent, TurnTerminalEvent } from "../types/protocol.js";
 import { BUILT_IN_SLASH_COMMANDS } from "./autocomplete.js";
 import { AutocompleteController } from "./autocomplete-controller.js";
 import { QuestionPicker } from "./question-picker.js";
-import { homedir } from "node:os";
-import { submitDuetFeedback } from "../lib/feedback.js";
-import {
-  DUET_BANNER_LINES_COMPACT,
-  type HistoryBlockKind,
-  type HistoryDisplayBlock,
-  historyDisplayBlocks,
-  limitHistoryDisplayMessages,
-} from "./history.js";
+import { renderSetupIntro } from "./boot-screen.js";
+import { replayResumeHistory } from "./history-replay.js";
+import { tryDispatchSlashCommand } from "./slash-commands.js";
 import { buildLayout } from "./layout.js";
 import { COLORS } from "./theme.js";
 
@@ -314,99 +303,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       statusController.markIdle(event);
     }
   });
-
-  function renderSetupIntro(
-    skills: ReadonlyArray<{ name: string }>,
-    agentFiles: readonly TurnAgentFile[],
-  ): void {
-    // Compact 3-row wordmark. The full DUET_BANNER_LINES is ~6 rows tall
-    // and pushed the starter list off-screen on small terminals; this one
-    // keeps the brand mark visible while leaving room for the ice-break
-    // prompts to land above the fold.
-    for (const line of DUET_BANNER_LINES_COMPACT) appendLine(line, COLORS.status);
-    appendLine(" ", COLORS.hint);
-    appendLine(" ", COLORS.hint);
-    // One-line header. Keeps cwd/model context visible without burning
-    // another five rows. Provenance (env/file source) is intentionally
-    // dropped here — surface it via /whoami later.
-    appendLine(formatBootHeader(input), COLORS.status);
-
-    if (input.upgradeStatus$) {
-      // Lazy construction on the first status that has human-readable text.
-      // Statuses without text (current/locked/skipped) skip the constructor
-      // entirely; constructing eagerly would allocate a native text buffer
-      // against the renderer that we'd never `destroy()` on the silent path.
-      //
-      // `subscribe()` replays the latest status synchronously, so the handler
-      // runs before `subscribe()` returns its unsubscribe handle. We set a
-      // `done` flag from inside the handler and tear down after `subscribe()`
-      // returns; subsequent (async) terminal statuses unsubscribe inline via
-      // the real handle.
-      let upgradeLine: TextRenderable | undefined;
-      let done = false;
-      let unsubscribe = (): void => {};
-      const handle = (status: UpgradeStatus): void => {
-        const text = describeUpgradeStatus(input.packageName, status);
-        if (!text) {
-          if (upgradeLine) {
-            transcript.remove(upgradeLine.id);
-            upgradeLine.destroy();
-            upgradeLine = undefined;
-          }
-          // Terminal statuses with no human-readable form (current, locked,
-          // skipped) close the subscription so we stop reacting.
-          if (status.kind !== "checking") {
-            done = true;
-            unsubscribe();
-          }
-          return;
-        }
-        const fg = status.kind === "failed" ? COLORS.error : COLORS.system;
-        if (!upgradeLine) {
-          upgradeLine = new TextRenderable(renderer, { content: `[update] ${text}`, fg });
-          transcript.add(upgradeLine);
-        } else {
-          upgradeLine.content = `[update] ${text}`;
-          upgradeLine.fg = fg;
-        }
-        if (status.kind === "upgraded" || status.kind === "failed") {
-          done = true;
-          unsubscribe();
-        }
-      };
-      unsubscribe = input.upgradeStatus$.subscribe(handle);
-      if (done) unsubscribe();
-    }
-
-    // Only mention agent files when one is actually loaded; "[agent file]
-    // none" is noise on every empty boot.
-    if (agentFiles.length > 0) {
-      appendLine(`[agent file] ${agentFiles.map((file) => file.name).join(", ")}`, COLORS.hint);
-    }
-
-    // --resume <id> launches skip the starter menu entirely: the user has
-    // explicitly asked to drop back into a known conversation, so showing
-    // "what should we work on today?" before replaying history is noise.
-    // Resumed sessions with zero prior messages still skip the menu so the
-    // contract is "any --resume" not "--resume with content". `starters` is
-    // only constructed for non-resume mounts, so the call short-circuits
-    // otherwise.
-    if (starters) {
-      starters.mount(skills);
-    }
-  }
-
-  function formatBootHeader(headerInput: RunTuiInput): string {
-    const cwdLabel = shortenCwd(headerInput.workDir);
-    return `DUET AGENT  v${headerInput.packageVersion}   ·   ${cwdLabel}   ·   ${headerInput.modelName} + ${headerInput.memoryModelName}`;
-  }
-
-  function shortenCwd(cwd: string): string {
-    const home = homedir();
-    if (cwd === home) return "~";
-    if (cwd.startsWith(`${home}/`)) return `~${cwd.slice(home.length)}`;
-    return cwd;
-  }
 
   // ---- starter prompts (boot screen) ---------------------------------------
 
@@ -693,36 +589,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   }
 
-  // ---- /diag diagnostics -----------------------------------------------------
-
-  // `/diag` toggles a key+selection event log so the user can show us
-  // exactly what their terminal forwards when something silently fails
-  // (e.g. a keystroke not reaching the handler, a selection event firing
-  // with empty text). Kept as a flag rather than a one-shot capture so
-  // we can layer additional diagnostic facets on the same surface
-  // without inventing new commands every time.
-
-  function handleDiagSlashCommand(raw: string): void {
-    const argument = raw === "/diag" ? "" : raw.slice("/diag ".length).trim();
-    if (argument === "" || argument === "keys") {
-      const enabled = !transcriptWriter.isKeyDiagnosticsEnabled();
-      transcriptWriter.setKeyDiagnosticsEnabled(enabled);
-      appendBlock(
-        "[diag]",
-        enabled
-          ? "key + selection event logging ON. Run /diag again to stop."
-          : "key + selection event logging OFF.",
-        COLORS.system,
-      );
-      return;
-    }
-    appendBlock(
-      "[diag]",
-      "Usage: /diag (or /diag keys) — toggles key + selection event logging",
-      COLORS.system,
-    );
-  }
-
   const copyController = new CopyController({
     renderer,
     transcriptWriter,
@@ -763,29 +629,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // Slash-style attach commands run locally and never reach the runner so
     // users on terminals that do not forward image bytes still have a way to
     // attach images by path.
-    if (message.startsWith("/image ") || message === "/image") {
-      void handleImageSlashCommand(message);
-      return;
-    }
-    if (message === "/paste") {
-      void pasteController.triggerClipboardProbe("slash");
-      return;
-    }
-    if (message === "/clear-images") {
-      pasteController.clearPendingImages();
-      appendBlock("[paste]", "cleared pending image attachments", COLORS.system);
-      return;
-    }
-    if (message === "/copy" || message.startsWith("/copy ")) {
-      void copyController.handleCopySlashCommand(message);
-      return;
-    }
-    if (message === "/diag" || message.startsWith("/diag ")) {
-      handleDiagSlashCommand(message);
-      return;
-    }
-    if (message === "/feedback" || message.startsWith("/feedback ")) {
-      void handleFeedbackSlashCommand(message);
+    if (
+      tryDispatchSlashCommand(message, {
+        pasteController,
+        copyController,
+        transcriptWriter,
+        appendBlock,
+      })
+    ) {
       return;
     }
 
@@ -822,42 +673,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   }
 
-  async function handleFeedbackSlashCommand(raw: string): Promise<void> {
-    const content = raw.slice("/feedback".length).trim();
-    if (!content) {
-      appendBlock(
-        "[feedback]",
-        "Usage: /feedback <message>  — send free-form feedback to the Duet team",
-        COLORS.system,
-      );
-      return;
-    }
-    appendBlock("[feedback]", "sending…", COLORS.system);
-    try {
-      const { baseUrl } = await submitDuetFeedback({ content });
-      appendBlock("[feedback]", `Thanks! Feedback sent to ${baseUrl}.`, COLORS.system);
-    } catch (error) {
-      appendBlock(
-        "[feedback]",
-        error instanceof Error ? error.message : String(error),
-        COLORS.error,
-      );
-    }
-  }
-
-  async function handleImageSlashCommand(raw: string): Promise<void> {
-    const rest = raw.slice("/image".length).trim();
-    if (!rest) {
-      appendBlock(
-        "[paste]",
-        "Usage: /image <path>  — attach a PNG/JPEG/GIF/WebP from disk",
-        COLORS.system,
-      );
-      return;
-    }
-    await pasteController.attachImageFromPath(rest);
-  }
-
   // ---- replay history on resume ---------------------------------------------
 
   // Setup already ran before the TUI launched, so we can read the resolved
@@ -876,41 +691,29 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     })),
   ]);
   autocomplete.refresh();
-  renderSetupIntro(skills, agentFiles);
+  renderSetupIntro(
+    {
+      renderer,
+      transcript,
+      appendLine,
+      packageName: input.packageName,
+      packageVersion: input.packageVersion,
+      workDir: input.workDir,
+      modelName: input.modelName,
+      memoryModelName: input.memoryModelName,
+      upgradeStatus$: input.upgradeStatus$,
+      starters,
+      isResume: input.isResume ?? false,
+    },
+    skills,
+    agentFiles,
+  );
   refreshSidebar();
 
-  const resumeHistoryMessages = input.resumeHistoryMessages ?? Number.POSITIVE_INFINITY;
-  if (resumeHistoryMessages > 0 && input.history && input.history.length > 0) {
-    const limited = limitHistoryDisplayMessages(
-      historyDisplayBlocks(input.history),
-      resumeHistoryMessages,
-    );
-    if (limited.omittedBlocks > 0) {
-      appendLine(
-        `[resume] showing last ${resumeHistoryMessages} message${resumeHistoryMessages === 1 ? "" : "s"} of prior session history`,
-        COLORS.hint,
-      );
-    }
-    for (const block of limited.blocks) {
-      appendDisplayBlock(block);
-    }
-  }
-
-  // Seed the copy-out log from full resumed history (not the trimmed display
-  // slice) so `/copy all` and `/copy <N>` can reach back further than what is
-  // actually rendered in the transcript on resume.
-  if (input.history && input.history.length > 0) {
-    for (const block of historyDisplayBlocks(input.history)) {
-      if (block.kind === "user") {
-        // History blocks for users are formatted as `you:\n<text>`; strip the
-        // label so the clipboard text matches what the user originally typed.
-        const stripped = block.content.replace(/^you:\n?/, "");
-        recordTranscriptEntry("user", stripped);
-      } else if (block.kind === "agent") {
-        recordTranscriptEntry("agent", block.content);
-      }
-    }
-  }
+  replayResumeHistory(
+    { appendLine, appendBlock, recordTranscriptEntry },
+    { history: input.history, resumeHistoryMessages: input.resumeHistoryMessages },
+  );
 
   // ---- bootstrap initial prompt ----------------------------------------------
 
@@ -953,20 +756,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   unsubscribe();
   return statusController.lastTerminal();
-
-  // --------------------------------------------------------------------------
-
-  function appendDisplayBlock(block: HistoryDisplayBlock): void {
-    appendBlock(null, block.content, colorForHistoryBlock(block.kind));
-  }
-
-  function colorForHistoryBlock(kind: HistoryBlockKind): string {
-    if (kind === "user") return COLORS.user;
-    if (kind === "reasoning") return COLORS.reasoning;
-    if (kind === "tool") return COLORS.tool;
-    if (kind === "error") return COLORS.error;
-    return COLORS.agent;
-  }
 }
 
 function restoreWindowGlobal(previousWindow: PropertyDescriptor | undefined): void {
