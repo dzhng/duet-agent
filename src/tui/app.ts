@@ -22,6 +22,7 @@ import {
   tryReadClipboardText,
 } from "./paste.js";
 import { parseCopyArgument, selectCopyText, type TranscriptEntry } from "./transcript-log.js";
+import { isTextBufferDestroyedError, TranscriptWriter } from "./transcript-writer.js";
 import type { Session } from "../session/session.js";
 import {
   describeUpgradeStatus,
@@ -225,7 +226,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let lastSelectionText = "";
   renderer.on("selection", (selection: Selection) => {
     lastSelectionText = selection.getSelectedText();
-    logSelectionDiag(lastSelectionText);
+    transcriptWriter.logSelection(lastSelectionText);
     refreshHint();
   });
 
@@ -247,39 +248,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     inputField,
   } = buildLayout(renderer);
 
-  // ---- transcript helpers ----------------------------------------------------
+  // ---- transcript writer ----------------------------------------------------
+
+  const transcriptWriter = new TranscriptWriter(renderer, transcript, {
+    getLastSelectionText: () => lastSelectionText,
+    onBufferDestroyed: () => stopWorkingTicker(),
+  });
 
   function appendLine(content: string, fg: string): void {
-    if (!content) return;
-    // Skip transcript writes once the renderer has been destroyed; see the
-    // matching guard in setStatus for the full rationale.
-    if (destroyed) return;
-    try {
-      const line = new TextRenderable(renderer, { content, fg });
-      transcript.add(line);
-    } catch (error) {
-      if (isTextBufferDestroyedError(error)) {
-        destroyed = true;
-        stopWorkingTicker();
-        return;
-      }
-      throw error;
-    }
+    transcriptWriter.appendLine(content, fg);
   }
 
   function appendBlock(label: string | null, body: string, fg: string): void {
-    beginBlock();
-    const text = label ? `${label}\n${body}` : body;
-    for (const line of text.split("\n")) appendLine(line, fg);
-  }
-
-  // Insert a blank separator before each new logical block so distinct steps
-  // (text, reasoning, tool calls, system messages) are easy to tell apart.
-  // The first block in the transcript skips the separator.
-  let hasRenderedAnyBlock = false;
-  function beginBlock(): void {
-    if (hasRenderedAnyBlock) appendLine(" ", COLORS.hint);
-    hasRenderedAnyBlock = true;
+    transcriptWriter.appendBlock(label, body, fg);
   }
 
   function setStatus(text: string): void {
@@ -290,12 +271,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // handler runs; the try/catch backstops the window between OpenTUI
     // tearing down child TextBuffers and emitting the `destroy` event,
     // which is when the ticker callback in the stack trace lands.
-    if (destroyed) return;
+    if (transcriptWriter.isDestroyed()) return;
     try {
       status.content = text;
     } catch (error) {
       if (isTextBufferDestroyedError(error)) {
-        destroyed = true;
+        transcriptWriter.markDestroyed();
         stopWorkingTicker();
         return;
       }
@@ -304,7 +285,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function setHint(running: boolean): void {
-    if (destroyed) return;
+    if (transcriptWriter.isDestroyed()) return;
     const base = running ? HINT_RUNNING : HINT_IDLE;
     const segments: string[] = [];
     if (pendingImages.length > 0) segments.push(attachmentHint());
@@ -314,7 +295,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       hint.content = segments.join(" · ");
     } catch (error) {
       if (isTextBufferDestroyedError(error)) {
-        destroyed = true;
+        transcriptWriter.markDestroyed();
         stopWorkingTicker();
         return;
       }
@@ -343,15 +324,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // Monotonic counter for the next `[Image #N]` placeholder. Reset alongside
   // `pendingImages` so users see a fresh `#1` label after each submit.
   let nextImageId = 1;
-  // Parallel record of user/agent message bodies driven by the same code
-  // paths that render them into the transcript. The `/copy` slash command
-  // and copy keystroke read from this log instead of trying to walk the
-  // ScrollBoxRenderable, which only stores presentation lines.
-  const transcriptLog: TranscriptEntry[] = [];
   function recordTranscriptEntry(kind: TranscriptEntry["kind"], text: string): void {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    transcriptLog.push({ kind, text: trimmed });
+    transcriptWriter.recordEntry(kind, text);
   }
   let lastTerminal: TurnTerminalEvent | undefined;
   // Context bar + session cost are owned by `Session` (persisted beside
@@ -393,9 +367,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // surface a live "Ns" / "Nm Ns" elapsed counter while work is in flight.
   let workingStartedAt: number | undefined;
   let workingTicker: ReturnType<typeof setInterval> | undefined;
-  // Flipped in the renderer `destroy` handler so post-teardown chrome
-  // mutations short-circuit instead of writing to destroyed TextBuffers.
-  let destroyed = false;
   // Swapped out by memory events so the ticker can keep refreshing while the
   // human-readable phase ("recalling memories…", etc.) stays accurate.
   let workingMessage = "working…";
@@ -412,7 +383,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function refreshWorkingStatus(): void {
-    if (destroyed) return;
+    if (transcriptWriter.isDestroyed()) return;
     refreshActiveToolBlocks();
     if (workingStartedAt === undefined) {
       setStatus(queuedFollowUps > 0 ? `queued follow-ups: ${queuedFollowUps}` : "");
@@ -779,9 +750,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function addLine(content: string, fg: string): TextRenderable {
-    const line = new TextRenderable(renderer, { content: content || " ", fg });
-    transcript.add(line);
-    return line;
+    return transcriptWriter.addLine(content, fg);
   }
 
   function formatStarterRow(index: number, highlighted: boolean): string {
@@ -974,7 +943,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         truncate,
       } satisfies StreamingBlock);
     if (!block) {
-      beginBlock();
+      transcriptWriter.beginBlock();
       transcript.add(next.line);
     }
     next.body += delta;
@@ -1026,7 +995,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       content: assembleToolBlock(formatted, marker, { columns }),
       fg,
     });
-    beginBlock();
+    transcriptWriter.beginBlock();
     transcript.add(line);
     const block: ToolBlock = {
       line,
@@ -1586,7 +1555,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
   keyHandler.onInternal("keypress", (key: KeyEvent) => {
-    logKeyDiag("global", key);
+    transcriptWriter.logKey("global", key);
     // Copy keystroke. Lives on the global handler (not
     // inputField.onKeyDown) because the mousedown that starts a
     // drag-select moves focus off the textarea — the focused-renderable
@@ -1636,7 +1605,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // consumes escape via its own keybindings before any global keypress handler
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
-    logKeyDiag("keydown", key);
+    transcriptWriter.logKey("keydown", key);
     if (key.name === "pageup") {
       scrollTranscriptByPage(-1);
       key.preventDefault();
@@ -1919,15 +1888,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // with empty text). Kept as a flag rather than a one-shot capture so
   // we can layer additional diagnostic facets on the same surface
   // without inventing new commands every time.
-  let keyDiagnostics = false;
 
   function handleDiagSlashCommand(raw: string): void {
     const argument = raw === "/diag" ? "" : raw.slice("/diag ".length).trim();
     if (argument === "" || argument === "keys") {
-      keyDiagnostics = !keyDiagnostics;
+      const enabled = !transcriptWriter.isKeyDiagnosticsEnabled();
+      transcriptWriter.setKeyDiagnosticsEnabled(enabled);
       appendBlock(
         "[diag]",
-        keyDiagnostics
+        enabled
           ? "key + selection event logging ON. Run /diag again to stop."
           : "key + selection event logging OFF.",
         COLORS.system,
@@ -1938,30 +1907,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       "[diag]",
       "Usage: /diag (or /diag keys) — toggles key + selection event logging",
       COLORS.system,
-    );
-  }
-
-  function logKeyDiag(label: string, key: KeyEvent): void {
-    if (!keyDiagnostics) return;
-    const flags: string[] = [];
-    if (key.ctrl) flags.push("ctrl");
-    if (key.shift) flags.push("shift");
-    if (key.meta) flags.push("meta");
-    if (key.super) flags.push("super");
-    if (key.option) flags.push("option");
-    appendBlock(
-      "[diag]",
-      `${label} name=${JSON.stringify(key.name)} flags=[${flags.join(",")}] sequence=${JSON.stringify(key.sequence)} source=${key.source} | lastSelection=${lastSelectionText.length}c rendererSel=${renderer.hasSelection ? "yes" : "no"}`,
-      COLORS.hint,
-    );
-  }
-
-  function logSelectionDiag(text: string): void {
-    if (!keyDiagnostics) return;
-    appendBlock(
-      "[diag]",
-      `selection event: ${text.length} chars — ${JSON.stringify(text.slice(0, 80))}`,
-      COLORS.hint,
     );
   }
 
@@ -2307,7 +2252,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // uses the transcript log instead.
     const explicitArgument = argumentRaw.trim().length > 0;
     const useSelection = !explicitArgument && lastSelectionText.trim().length > 0;
-    const text = useSelection ? lastSelectionText : selectCopyText(transcriptLog, argument);
+    const text = useSelection
+      ? lastSelectionText
+      : selectCopyText(transcriptWriter.entries(), argument);
     if (!text) {
       appendBlock("[copy]", "nothing to copy yet", COLORS.system);
       return;
@@ -2508,9 +2455,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       // setInterval that survives into the next tick will call setStatus on
       // a destroyed TextBuffer and throw, so tear down timers and stop
       // accepting chrome writes here before resolving. Session events that
-      // race the teardown are caught by the `destroyed` guard in setStatus
-      // and the other chrome mutators.
-      destroyed = true;
+      // race the teardown are caught by the `destroyed` guard in the
+      // transcript writer and the other chrome mutators.
+      transcriptWriter.markDestroyed();
       stopWorkingTicker();
       resolve();
     };
@@ -2533,13 +2480,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (kind === "error") return COLORS.error;
     return COLORS.agent;
   }
-}
-
-// OpenTUI's TextBuffer throws a plain Error with this exact message from its
-// `guard()` method when any setter is touched after destroy. We sniff the
-// message to distinguish post-teardown races (swallow) from real bugs (rethrow).
-function isTextBufferDestroyedError(error: unknown): boolean {
-  return error instanceof Error && error.message === "TextBuffer is destroyed";
 }
 
 function restoreWindowGlobal(previousWindow: PropertyDescriptor | undefined): void {
