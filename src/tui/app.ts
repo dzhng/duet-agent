@@ -38,28 +38,17 @@ import type {
   TurnTerminalEvent,
 } from "../types/protocol.js";
 import {
-  type AutocompleteToken,
-  activeFileAutocompleteToken,
-  activeSkillAutocompleteToken,
   AUTOCOMPLETE_LIMITS,
-  type FileAutocompleteItem,
   BUILT_IN_SLASH_COMMANDS,
   commitActiveAnswer,
-  fileAutocompleteMatches,
   formatQuestionOptionDescription,
-  formatSkillAutocompleteDescription,
   moveQuestionHighlight,
-  moveSkillAutocompleteSelection,
   NO_HIGHLIGHT,
-  replaceFileAutocompleteToken,
   restoreSavedAnswer,
-  type SkillAutocompleteItem,
-  skillAutocompleteMatches,
-  type SlashAutocompleteGroup,
 } from "./autocomplete.js";
+import { AutocompleteController } from "./autocomplete-controller.js";
 import { homedir } from "node:os";
 import { submitDuetFeedback } from "../lib/feedback.js";
-import { buildFileIndex } from "./file-index.js";
 import {
   DUET_BANNER_LINES_COMPACT,
   type HistoryBlockKind,
@@ -694,19 +683,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- input handling --------------------------------------------------------
 
-  let skillAutocompleteSkills: readonly SkillAutocompleteItem[] = [];
-  let skillAutocompleteToken: AutocompleteToken | undefined;
-  let skillAutocompleteItems: SkillAutocompleteItem[] = [];
-  let skillAutocompleteSelectedIndex = 0;
-
-  // File index loads lazily after the first @ trigger and never re-runs.
-  // Repos large enough to matter would block the first keystroke otherwise;
-  // a stale-by-a-few-files index is a fair trade for a snappy first paint.
-  let fileAutocompleteAllFiles: readonly FileAutocompleteItem[] = [];
-  let fileAutocompleteIndexPromise: Promise<readonly FileAutocompleteItem[]> | undefined;
-  let fileAutocompleteToken: AutocompleteToken | undefined;
-  let fileAutocompleteItems: FileAutocompleteItem[] = [];
-  let fileAutocompleteSelectedIndex = 0;
+  const autocomplete = new AutocompleteController({
+    inputField,
+    skillAutocompletePanel,
+    commandRows,
+    commandHeader,
+    skillRows,
+    skillHeader,
+    fileAutocompletePanel,
+    fileAutocompleteRows,
+    workDir: input.workDir,
+    onEscapeClose: () => {
+      suppressNextEscapeExit = true;
+    },
+  });
 
   let pendingQuestions: TurnQuestion[] = [];
   let questionActiveIndex = 0;
@@ -725,14 +715,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   let questionAccumulatedAnswers: Record<string, string[]> = {};
   let suppressNextEscapeExit = false;
 
-  function skillAutocompleteIsOpen(): boolean {
-    return Boolean(skillAutocompleteToken && skillAutocompleteItems.length > 0);
-  }
-
-  function fileAutocompleteIsOpen(): boolean {
-    return Boolean(fileAutocompleteToken && fileAutocompleteItems.length > 0);
-  }
-
   function questionPickerIsOpen(): boolean {
     const question = pendingQuestions[questionActiveIndex];
     return Boolean(question && question.options.length > 0);
@@ -740,30 +722,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function activeQuestion(): TurnQuestion | undefined {
     return pendingQuestions[questionActiveIndex];
-  }
-
-  function hideSkillAutocomplete(): void {
-    skillAutocompleteToken = undefined;
-    skillAutocompleteItems = [];
-    skillAutocompleteSelectedIndex = 0;
-    skillAutocompletePanel.visible = false;
-    commandHeader.visible = false;
-    skillHeader.visible = false;
-    for (const row of [...commandRows, ...skillRows]) {
-      row.visible = false;
-      row.content = "";
-    }
-  }
-
-  function hideFileAutocomplete(): void {
-    fileAutocompleteToken = undefined;
-    fileAutocompleteItems = [];
-    fileAutocompleteSelectedIndex = 0;
-    fileAutocompletePanel.visible = false;
-    for (const row of fileAutocompleteRows) {
-      row.visible = false;
-      row.content = "";
-    }
   }
 
   function hideQuestions(): void {
@@ -982,192 +940,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     return true;
   }
 
-  async function ensureFileIndex(): Promise<readonly FileAutocompleteItem[]> {
-    if (fileAutocompleteAllFiles.length > 0) return fileAutocompleteAllFiles;
-    if (!fileAutocompleteIndexPromise) {
-      fileAutocompleteIndexPromise = buildFileIndex(input.workDir).catch(() => []);
-    }
-    fileAutocompleteAllFiles = await fileAutocompleteIndexPromise;
-    return fileAutocompleteAllFiles;
-  }
-
-  function refreshAutocomplete(): void {
-    refreshSkillAutocomplete();
-    refreshFileAutocomplete();
-  }
-
-  function refreshSkillAutocomplete(): void {
-    const token = activeSkillAutocompleteToken(inputField.plainText, inputField.cursorOffset);
-    if (!token) {
-      hideSkillAutocomplete();
-      return;
-    }
-
-    const items = skillAutocompleteMatches(skillAutocompleteSkills, token.query);
-    if (items.length === 0) {
-      hideSkillAutocomplete();
-      return;
-    }
-
-    const previousToken = skillAutocompleteToken;
-    skillAutocompleteToken = token;
-    skillAutocompleteItems = items;
-    const queryChanged =
-      !previousToken ||
-      previousToken.start !== token.start ||
-      previousToken.end !== token.end ||
-      previousToken.query !== token.query;
-    if (queryChanged || skillAutocompleteSelectedIndex >= items.length) {
-      skillAutocompleteSelectedIndex = 0;
-    }
-    renderSkillAutocomplete();
-  }
-
-  function refreshFileAutocomplete(): void {
-    const token = activeFileAutocompleteToken(inputField.plainText, inputField.cursorOffset);
-    if (!token) {
-      hideFileAutocomplete();
-      return;
-    }
-
-    // Capture the token id we're looking up so a slow index resolution can
-    // tell whether the user has typed past the original query and bail out.
-    const targetStart = token.start;
-    const targetEnd = token.end;
-    const targetQuery = token.query;
-    void ensureFileIndex().then((files) => {
-      const stillCurrent =
-        fileAutocompleteToken !== undefined
-          ? fileAutocompleteToken.start === targetStart &&
-            fileAutocompleteToken.end === targetEnd &&
-            fileAutocompleteToken.query === targetQuery
-          : activeFileAutocompleteToken(inputField.plainText, inputField.cursorOffset)?.query ===
-            targetQuery;
-      if (!stillCurrent && fileAutocompleteToken === undefined) return;
-      const items = fileAutocompleteMatches(files, targetQuery);
-      if (items.length === 0) {
-        hideFileAutocomplete();
-        return;
-      }
-      const previousToken = fileAutocompleteToken;
-      fileAutocompleteToken = { start: targetStart, end: targetEnd, query: targetQuery };
-      fileAutocompleteItems = items;
-      const queryChanged =
-        !previousToken ||
-        previousToken.start !== targetStart ||
-        previousToken.end !== targetEnd ||
-        previousToken.query !== targetQuery;
-      if (queryChanged || fileAutocompleteSelectedIndex >= items.length) {
-        fileAutocompleteSelectedIndex = 0;
-      }
-      renderFileAutocomplete();
-    });
-  }
-
-  function renderSkillAutocomplete(): void {
-    skillAutocompletePanel.visible = skillAutocompleteItems.length > 0;
-
-    // Distribute matched items into the two section row pools by group. The
-    // selection index navigates the flat list, so we track each item's flat
-    // position to highlight the correct row regardless of section.
-    const groups: Record<SlashAutocompleteGroup, { rows: TextRenderable[]; cursor: number }> = {
-      commands: { rows: commandRows, cursor: 0 },
-      skills: { rows: skillRows, cursor: 0 },
-    };
-    for (const row of [...commandRows, ...skillRows]) {
-      row.visible = false;
-      row.content = "";
-    }
-
-    for (const [flatIndex, item] of skillAutocompleteItems.entries()) {
-      const groupKey = item.group ?? "skills";
-      const slot = groups[groupKey];
-      const row = slot.rows[slot.cursor];
-      if (!row) continue;
-      slot.cursor += 1;
-      const selected = flatIndex === skillAutocompleteSelectedIndex;
-      const nameColor = selected ? COLORS.status : COLORS.user;
-      const pathColor = selected ? COLORS.agent : COLORS.hint;
-      const description = formatSkillAutocompleteDescription(item.description);
-      const tail = description ? `\n${description}` : "";
-      row.content = item.path
-        ? t`${fg(nameColor)(`/${item.name}`)} ${fg(pathColor)(`(${item.path})`)}${tail}`
-        : t`${fg(nameColor)(`/${item.name}`)}${tail}`;
-      // Height = name line + each wrapped description line. Without this the
-      // box defaults to a single line and clips multi-line descriptions.
-      row.height = description ? 1 + description.split("\n").length : 1;
-      row.fg = selected ? COLORS.agent : COLORS.hint;
-      row.visible = true;
-    }
-
-    commandHeader.visible = groups.commands.cursor > 0;
-    skillHeader.visible = groups.skills.cursor > 0;
-  }
-
-  function renderFileAutocomplete(): void {
-    fileAutocompletePanel.visible = fileAutocompleteItems.length > 0;
-    for (const [index, row] of fileAutocompleteRows.entries()) {
-      const item = fileAutocompleteItems[index];
-      if (!item) {
-        row.visible = false;
-        row.content = "";
-        continue;
-      }
-      const selected = index === fileAutocompleteSelectedIndex;
-      const nameColor = selected ? COLORS.status : COLORS.user;
-      const pathColor = selected ? COLORS.agent : COLORS.hint;
-      // Show basename + relative directory side-by-side. The directory
-      // portion is the path with the trailing basename removed; for files at
-      // the repo root this collapses to "./" so each row has a consistent
-      // shape.
-      const directory = item.relativePath.includes("/")
-        ? item.relativePath.slice(0, item.relativePath.lastIndexOf("/") + 1)
-        : "./";
-      row.content = t`${fg(nameColor)(item.name)} ${fg(pathColor)(directory)}`;
-      row.fg = selected ? COLORS.agent : COLORS.hint;
-      row.visible = true;
-    }
-  }
-
-  function completeSelectedSkillAutocomplete(): boolean {
-    const token = skillAutocompleteToken;
-    const item = skillAutocompleteItems[skillAutocompleteSelectedIndex];
-    if (!token || !item) return false;
-
-    const insertion = inputField.plainText[token.end]?.match(/\s/)
-      ? `/${item.name}`
-      : `/${item.name} `;
-    inputField.setSelection(token.start, token.end);
-    inputField.deleteSelection();
-    inputField.insertText(insertion);
-    hideSkillAutocomplete();
-    return true;
-  }
-
-  function completeSelectedFileAutocomplete(): boolean {
-    const token = fileAutocompleteToken;
-    const item = fileAutocompleteItems[fileAutocompleteSelectedIndex];
-    if (!token || !item) return false;
-
-    // Insert a markdown link `[@<basename>](./<relative-path>)` so the
-    // visible token still reads as an `@`-mention while the link target is
-    // a path the agent can hand straight to its `read` tool. The format
-    // contract lives in `replaceFileAutocompleteToken`; this call site
-    // mutates the inputField in place via setSelection/insertText so it
-    // composes cleanly with attachment placeholders and the cursor model.
-    const replacement = replaceFileAutocompleteToken(
-      inputField.plainText,
-      token,
-      item.relativePath,
-    );
-    const insertion = replacement.text.slice(token.start, replacement.cursorOffset);
-    inputField.setSelection(token.start, token.end);
-    inputField.deleteSelection();
-    inputField.insertText(insertion);
-    hideFileAutocomplete();
-    return true;
-  }
-
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
   keyHandler.onInternal("keypress", (key: KeyEvent) => {
     transcriptWriter.logKey("global", key);
@@ -1183,14 +955,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       key.preventDefault();
       return;
     }
-    if (skillAutocompleteIsOpen()) {
+    if (autocomplete.isSkillPickerOpen() || autocomplete.isFilePickerOpen()) {
       key.preventDefault();
-      hideSkillAutocomplete();
-      return;
-    }
-    if (fileAutocompleteIsOpen()) {
-      key.preventDefault();
-      hideFileAutocomplete();
+      autocomplete.hideAll();
       return;
     }
     if (questionPickerIsOpen()) {
@@ -1290,72 +1057,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
 
-    if (skillAutocompleteIsOpen()) {
-      if (key.name === "up") {
-        skillAutocompleteSelectedIndex = moveSkillAutocompleteSelection(
-          skillAutocompleteSelectedIndex,
-          skillAutocompleteItems.length,
-          -1,
-        );
-        renderSkillAutocomplete();
-        key.preventDefault();
-        return;
-      }
-      if (key.name === "down") {
-        skillAutocompleteSelectedIndex = moveSkillAutocompleteSelection(
-          skillAutocompleteSelectedIndex,
-          skillAutocompleteItems.length,
-          1,
-        );
-        renderSkillAutocomplete();
-        key.preventDefault();
-        return;
-      }
-      if (key.name === "return" || key.name === "enter" || key.name === "tab") {
-        key.preventDefault();
-        completeSelectedSkillAutocomplete();
-        return;
-      }
-      if (key.name === "escape") {
-        key.preventDefault();
-        suppressNextEscapeExit = true;
-        hideSkillAutocomplete();
-        return;
-      }
-    }
-
-    if (fileAutocompleteIsOpen()) {
-      if (key.name === "up") {
-        fileAutocompleteSelectedIndex = moveSkillAutocompleteSelection(
-          fileAutocompleteSelectedIndex,
-          fileAutocompleteItems.length,
-          -1,
-        );
-        renderFileAutocomplete();
-        key.preventDefault();
-        return;
-      }
-      if (key.name === "down") {
-        fileAutocompleteSelectedIndex = moveSkillAutocompleteSelection(
-          fileAutocompleteSelectedIndex,
-          fileAutocompleteItems.length,
-          1,
-        );
-        renderFileAutocomplete();
-        key.preventDefault();
-        return;
-      }
-      if (key.name === "return" || key.name === "enter" || key.name === "tab") {
-        key.preventDefault();
-        completeSelectedFileAutocomplete();
-        return;
-      }
-      if (key.name === "escape") {
-        key.preventDefault();
-        suppressNextEscapeExit = true;
-        hideFileAutocomplete();
-        return;
-      }
+    if (autocomplete.handleKey(key)) {
+      return;
     }
 
     if (questionPickerIsOpen()) {
@@ -1555,9 +1258,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // brings it back (until the user actually submits a prompt, at which
     // point it's gone for good).
     syncStarterVisibility();
-    refreshAutocomplete();
+    autocomplete.refresh();
   };
-  inputField.onCursorChange = () => refreshAutocomplete();
+  inputField.onCursorChange = () => autocomplete.refresh();
 
   // Paste handling. Terminals that forward binary clipboard contents (kitty,
   // ghostty, recent iTerm2 builds) deliver image bytes directly via the paste
@@ -1994,7 +1697,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     input.session.getSkills(),
     input.session.getResolvedAgentFiles(),
   ]);
-  skillAutocompleteSkills = [
+  autocomplete.setSkillItems([
     ...BUILT_IN_SLASH_COMMANDS,
     ...skills.map((skill) => ({
       name: skill.name,
@@ -2002,8 +1705,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       path: skill.baseDir,
       group: "skills" as const,
     })),
-  ];
-  refreshAutocomplete();
+  ]);
+  autocomplete.refresh();
   renderSetupIntro(skills, agentFiles);
   refreshSidebar();
 
