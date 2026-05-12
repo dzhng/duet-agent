@@ -5,7 +5,8 @@ import {
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
-import { AUTOCOMPLETE_LIMITS, BUILT_IN_SLASH_COMMANDS } from "./autocomplete.js";
+import { AUTOCOMPLETE_LIMITS } from "./autocomplete.js";
+import { BUILT_IN_SLASH_COMMAND_ITEMS } from "./slash-commands.js";
 import { createSidebar } from "./sidebar.js";
 import { COLORS, HINT_IDLE } from "./theme.js";
 
@@ -173,7 +174,7 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
       selectable: false,
     });
   const commandHeader = makeHeaderRow("commands");
-  const commandRows = Array.from({ length: BUILT_IN_SLASH_COMMANDS.length }, makeItemRow);
+  const commandRows = Array.from({ length: BUILT_IN_SLASH_COMMAND_ITEMS.length }, makeItemRow);
   const skillHeader = makeHeaderRow("skills");
   const skillRows = Array.from({ length: SKILL_AUTOCOMPLETE_LIMIT }, makeItemRow);
   skillAutocompletePanel.add(commandHeader);

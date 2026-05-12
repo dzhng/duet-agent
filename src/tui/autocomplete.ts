@@ -39,54 +39,12 @@ export interface SkillAutocompleteItem {
 }
 
 /**
- * Built-in slash commands intercepted by the TUI (not by the runner). They
- * appear at the top of the slash picker so users can discover them by typing
- * `/` even though they never round-trip through skill discovery.
- */
-export const BUILT_IN_SLASH_COMMANDS: readonly SkillAutocompleteItem[] = [
-  {
-    name: "image",
-    description: "Attach a PNG/JPEG/GIF/WebP from disk by path: /image <path>",
-    group: "commands",
-  },
-  {
-    name: "paste",
-    description: "Probe the OS clipboard for an image (fallback when Cmd+V is swallowed)",
-    group: "commands",
-  },
-  {
-    name: "clear-images",
-    description: "Drop pending image attachments before submit",
-    group: "commands",
-  },
-  {
-    name: "copy",
-    description: "Copy text to your clipboard: /copy [last|all|<N>] (default: last agent reply)",
-    group: "commands",
-  },
-  {
-    name: "diag",
-    description:
-      "Toggle diagnostic logging (keys, selection events) for surfacing terminal-specific issues",
-    group: "commands",
-  },
-  {
-    name: "feedback",
-    description: "Send free-form feedback to the Duet team: /feedback <message>",
-    group: "commands",
-  },
-  {
-    name: "reset",
-    description: "Dispose the current session and start a fresh one",
-    group: "commands",
-  },
-];
-
-/**
  * The inline `/relay` token is only meaningful when the runner can route
  * to state-machine tools, so the autocomplete row is gated to non-`agent`
- * modes. Listed separately from {@link BUILT_IN_SLASH_COMMANDS} so the
- * boot screen can splice it in only when the session mode allows it.
+ * modes. Lives here rather than in the slash-command registry because
+ * `/relay` is parsed inline by `applyRelayCommand` instead of being
+ * dispatched at submit time; the picker still surfaces it so users can
+ * discover the token by typing `/`.
  */
 export const RELAY_SLASH_COMMAND: SkillAutocompleteItem = {
   name: "relay",

@@ -8,7 +8,8 @@ import {
 import type { Session } from "../session/session.js";
 import type { TurnAgentFile } from "../types/protocol.js";
 import type { AutocompleteController } from "./autocomplete-controller.js";
-import { BUILT_IN_SLASH_COMMANDS, RELAY_SLASH_COMMAND } from "./autocomplete.js";
+import { RELAY_SLASH_COMMAND } from "./autocomplete.js";
+import { BUILT_IN_SLASH_COMMAND_ITEMS } from "./slash-commands.js";
 import { refreshSidebarFromSession } from "./session-subscription.js";
 import type { Sidebar } from "./sidebar.js";
 import type { StarterSection } from "./starter-section.js";
@@ -164,7 +165,7 @@ export async function renderBootScreen(deps: {
   // in `agent` mode the token would be a no-op so it is hidden from the picker.
   const relayAvailable = deps.session.config.mode !== "agent";
   deps.autocomplete.setSkillItems([
-    ...BUILT_IN_SLASH_COMMANDS,
+    ...BUILT_IN_SLASH_COMMAND_ITEMS,
     ...(relayAvailable ? [RELAY_SLASH_COMMAND] : []),
     ...skills.map((skill) => ({
       name: skill.name,
