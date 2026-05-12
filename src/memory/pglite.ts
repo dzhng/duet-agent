@@ -119,8 +119,7 @@ export async function openPGlite(path: string, options: OpenPGliteOptions = {}):
   if (existing) {
     existing.refs++;
     try {
-      const db = await existing.promise;
-      return wrapClose(db, key);
+      return await existing.promise;
     } catch (error) {
       decrementAndMaybeDelete(key);
       throw error;
@@ -131,12 +130,13 @@ export async function openPGlite(path: string, options: OpenPGliteOptions = {}):
     promise: undefined as unknown as Promise<PGlite>,
     refs: 1,
   };
-  entry.promise = openWithLock(path, options, entry);
+  entry.promise = openWithLock(path, options, entry).then((db) =>
+    installRefcountedClose(db, key, entry),
+  );
   sharedHandles.set(key, entry);
 
   try {
-    const db = await entry.promise;
-    return wrapClose(db, key);
+    return await entry.promise;
   } catch (error) {
     decrementAndMaybeDelete(key);
     throw error;
@@ -144,43 +144,31 @@ export async function openPGlite(path: string, options: OpenPGliteOptions = {}):
 }
 
 /**
- * Returns the same PGlite instance to every shared-handle caller, but
- * replaces `close` with a refcounting wrapper so the underlying handle
- * and cross-process lock survive until the last caller releases. The
- * wrapper is idempotent per caller — calling `close` twice on the same
- * wrapped reference is treated as a single release.
+ * Replace `close` on the underlying PGlite instance with refcounted
+ * teardown. Each `openPGlite` call is paired with exactly one `close`;
+ * the refcount equals the number of live opens. PGlite uses private
+ * class fields internally, so a Proxy around the instance breaks every
+ * method that touches one — method replacement preserves identity and
+ * keeps private-field access working.
  */
-function wrapClose(db: PGlite, key: string): PGlite {
-  let released = false;
+function installRefcountedClose(db: PGlite, key: string, entry: SharedHandle): PGlite {
   const originalClose = db.close.bind(db);
-  return new Proxy(db, {
-    get(target, property, receiver) {
-      if (property === "close") {
-        return async () => {
-          if (released) return;
-          released = true;
-          await releaseShared(key, originalClose);
-        };
+  db.close = async () => {
+    const current = sharedHandles.get(key);
+    if (!current || current.refs <= 0) return;
+    current.refs--;
+    if (current.refs > 0) return;
+    sharedHandles.delete(key);
+    try {
+      await originalClose();
+    } finally {
+      if (entry.lockPath) {
+        bestEffortUnlink(entry.lockPath);
+        entry.lockPath = undefined;
       }
-      return Reflect.get(target, property, receiver);
-    },
-  });
-}
-
-async function releaseShared(key: string, originalClose: () => Promise<void>): Promise<void> {
-  const entry = sharedHandles.get(key);
-  if (!entry) return;
-  entry.refs--;
-  if (entry.refs > 0) return;
-  sharedHandles.delete(key);
-  try {
-    await originalClose();
-  } finally {
-    if (entry.lockPath) {
-      bestEffortUnlink(entry.lockPath);
-      entry.lockPath = undefined;
     }
-  }
+  };
+  return db;
 }
 
 function bestEffortUnlink(path: string): void {
