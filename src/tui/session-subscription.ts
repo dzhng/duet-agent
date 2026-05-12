@@ -31,7 +31,8 @@ export function refreshSidebarFromSession(deps: { session: Session; sidebar: Sid
     snap
       ? {
           type: "usage",
-          usage: snap.usage,
+          turnUsage: snap.turnUsage,
+          lastMessageUsage: snap.lastMessageUsage,
           effectiveContextWindow: snap.effectiveContextWindow,
           contextWindowUsage: snap.contextWindowUsage,
         }
@@ -73,23 +74,23 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
     } else if (event.type === "ask") {
       appendBlock("[question]", event.questions.map((q) => q.question).join("\n"), COLORS.system);
       questionPicker.show(event.questions);
-      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderUsage(event.turnUsage);
       stepRenderer.renderTurnElapsed();
       statusController.markIdle(event);
     } else if (event.type === "complete") {
       if (event.error) {
         appendBlock("[error]", event.error, COLORS.error);
       }
-      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderUsage(event.turnUsage);
       stepRenderer.renderTurnElapsed();
       statusController.markIdle(event);
     } else if (event.type === "interrupted") {
       appendLine("[interrupted]", COLORS.system);
-      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderUsage(event.turnUsage);
       stepRenderer.renderTurnElapsed();
       statusController.markIdle(event);
     } else if (event.type === "sleep") {
-      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderUsage(event.turnUsage);
       stepRenderer.renderSleeping(event.wakeAt);
       statusController.markIdle(event);
     }

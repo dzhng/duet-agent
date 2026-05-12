@@ -460,7 +460,7 @@ export function createObservationalContextTransform(options: ObservationalContex
     // turns grow back without retriggering.
     //
     // Token accounting uses `ceil(wireBytes / 4)`, the same heuristic the
-    // runner reports on `TurnUsageFields.contextWindowUsage.messages`. That charges
+    // runner reports on `TurnUsageFields.contextWindowUsage.messages`.
     // `JSON.stringify` length for structured blocks (toolCall, toolResult,
     // thinking), so heavy tool sessions trigger compaction at the same
     // scale the provider bills — unlike `agentMessagesToRaw`, which

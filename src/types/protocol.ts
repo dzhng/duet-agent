@@ -1,4 +1,5 @@
 import type { ImageContent, TextContent, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
+
 import type { AgentSession } from "./agent.js";
 import type { ObservationalMemoryActivityEvent } from "./memory.js";
 import type { StateMachineDefinition, StateMachineSession } from "./state-machine.js";
@@ -541,11 +542,23 @@ export interface TurnContextWindowUsage {
 
 /**
  * Token-accounting payload shared by the `usage` during-event and every
- * terminal event. Bundling these three fields under one interface keeps the
+ * terminal event. Bundling these fields under one interface keeps the
  * during stream and terminal events in lockstep: every `usage` event and
  * every terminal event sees the same shape, and a consumer that only reads
  * terminals can still recover the running aggregate plus the latest parent
  * context bar.
+ *
+ * Two distinct token totals are reported:
+ *  - `turnUsage` is a per-turn aggregate across every LLM call (parent
+ *    worker + every state agent). Use it for cost accounting and "what
+ *    did this turn cost" readouts. It is not comparable to
+ *    `effectiveContextWindow` because the cap is per-request.
+ *  - `lastMessageUsage` is the exact provider-reported usage of the
+ *    most recent parent assistant message. Use it for context-window
+ *    pressure surfaces ("X / cap"): `lastMessageUsage.totalTokens` is
+ *    the true occupancy of the parent's window on the latest call, and
+ *    `contextWindowUsage` provides a heuristic segment breakdown over
+ *    the same total.
  */
 export interface TurnUsageFields {
   /**
@@ -553,23 +566,37 @@ export interface TurnUsageFields {
    * far in this turn (parent worker calls plus every state-agent that has
    * finished). Always cumulative; never a single-message delta.
    */
-  usage: TurnTokenUsage;
+  turnUsage: TurnTokenUsage;
   /**
-   * Effective ceiling against which the latest parent message's input
-   * should be displayed. Reflects the user-set
-   * `TurnRunnerConfig.effectiveContext` (default 200k) clamped to the
-   * model's hard context window. Every memory budget is derived from this
-   * same value, so the bar also represents the practical compaction
-   * ceiling. Tracks the latest parent emission; stays stable when only a
-   * state agent advanced the running cost.
+   * Provider-reported usage from the latest parent assistant message.
+   * Refreshed on every parent `message_end` and held stable while only
+   * state agents advance `turnUsage`. This is the accurate number to
+   * display against `effectiveContextWindow` — it reflects exactly what
+   * the API counted on the most recent parent call (`input` is fresh
+   * input, `cacheRead` + `cacheWrite` are the cache hits/writes, and
+   * `totalTokens` is their sum plus `output`).
+   */
+  lastMessageUsage: TurnTokenUsage;
+  /**
+   * Effective ceiling against which `lastMessageUsage.totalTokens` should
+   * be displayed. Reflects the user-set `TurnRunnerConfig.effectiveContext`
+   * (default 200k) clamped to the model's hard context window. Every
+   * memory budget is derived from this same value, so the bar also
+   * represents the practical compaction ceiling. Tracks the latest parent
+   * emission; stays stable when only a state agent advanced
+   * `turnUsage`.
    */
   effectiveContextWindow: number;
   /**
-   * Segment-by-segment estimate of how the latest parent message's input
-   * is allocated across the system prompt, raw message history, and the
-   * two memory pack layers. Lets surfaces visualize which budget is
-   * filling up. Like `effectiveContextWindow`, this mirrors the latest
-   * parent emission and does not move on state-agent ticks.
+   * Heuristic per-segment breakdown of how the latest parent message's
+   * input is allocated across the system prompt, raw message history, and
+   * the two memory pack layers. Lets surfaces visualize *which* budget is
+   * filling up. Rescaled so its four fields sum exactly to
+   * `lastMessageUsage.totalTokens`, so consumers can drive the bar's
+   * segment widths from this breakdown while keeping the absolute scale
+   * grounded in the accurate provider total. Like `effectiveContextWindow`,
+   * this mirrors the latest parent emission and does not move on
+   * state-agent ticks.
    */
   contextWindowUsage: TurnContextWindowUsage;
 }

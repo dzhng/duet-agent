@@ -404,18 +404,19 @@ export class Session {
   }
 
   /**
-   * Treat `event.usage.cost.total` as the running turn aggregate and credit
+   * Treat `event.turnUsage.cost.total` as the running turn aggregate and credit
    * only the delta beyond what was already counted for this turn. The runner
    * guarantees `usage` events are monotonic-non-decreasing within a turn,
    * so the delta is always `>= 0`; we no-op when there's nothing to add.
    */
   private applyUsageEvent(event: TurnUsageEvent): void {
     this.lastUsage = {
-      usage: event.usage,
+      turnUsage: event.turnUsage,
+      lastMessageUsage: event.lastMessageUsage,
       effectiveContextWindow: event.effectiveContextWindow,
       contextWindowUsage: event.contextWindowUsage,
     };
-    const total = event.usage?.cost?.total;
+    const total = event.turnUsage?.cost?.total;
     if (typeof total !== "number" || !Number.isFinite(total)) return;
     const delta = total - this.currentTurnCost;
     if (delta <= 0) return;
@@ -431,12 +432,22 @@ export class Session {
    * delta-vs-`currentTurnCost` guard makes a redundant terminal a no-op.
    */
   private applyTerminalUsage(terminal: TurnTerminalEvent): void {
-    if (!terminal.usage || !terminal.effectiveContextWindow || !terminal.contextWindowUsage) {
+    // `TurnTerminalBaseEvent extends Partial<TurnUsageFields>`, so each
+    // field is independently optional in the type system even though the
+    // runner attaches the bundle atomically. Check every field so the
+    // narrowing is honest and the consumer doesn't need non-null asserts.
+    if (
+      !terminal.turnUsage ||
+      !terminal.lastMessageUsage ||
+      !terminal.effectiveContextWindow ||
+      !terminal.contextWindowUsage
+    ) {
       return;
     }
     this.applyUsageEvent({
       type: "usage",
-      usage: terminal.usage,
+      turnUsage: terminal.turnUsage,
+      lastMessageUsage: terminal.lastMessageUsage,
       effectiveContextWindow: terminal.effectiveContextWindow,
       contextWindowUsage: terminal.contextWindowUsage,
     });
@@ -573,17 +584,14 @@ export class Session {
     try {
       const content = await readFile(this.sessionFilePath(), "utf-8");
       const stored = JSON.parse(content) as StoredSessionFile;
-      const rawState = stored.state;
-      if (!rawState) {
-        return {
-          lastUsage: stored.lastUsage,
-          sessionCostUsd: stored.sessionCostUsd,
-        };
-      }
-
+      // Old session files predate `lastMessageUsage`; skip the snapshot
+      // when that required field is missing so the sidebar doesn't read
+      // off an undefined. The bar repopulates on the first turn after
+      // resume; no migration here.
+      const lastUsage = stored.lastUsage?.lastMessageUsage ? stored.lastUsage : undefined;
       return {
-        state: rawState,
-        lastUsage: stored.lastUsage,
+        ...(stored.state ? { state: stored.state } : {}),
+        lastUsage,
         sessionCostUsd: stored.sessionCostUsd,
       };
     } catch (error) {

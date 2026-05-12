@@ -268,7 +268,12 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
       }
       const cap = usage.effectiveContextWindow;
       const breakdown = usage.contextWindowUsage;
-      const usedTokens = usage.usage.totalTokens;
+      // Numerator is the provider-reported totalTokens of the latest parent
+      // assistant message. The turn-aggregate `turnUsage.totalTokens` would
+      // fold in every state-agent call and is not comparable to the
+      // per-request `cap`; `contextWindowUsage` is only a heuristic
+      // breakdown used to color the bar.
+      const usedTokens = usage.lastMessageUsage.totalTokens;
       const overflow = usedTokens >= cap;
 
       const { segmentCells, untrackedCells, emptyCells } = allocateContextBarCells(

@@ -704,7 +704,7 @@ describe("TurnRunner memory", () => {
       await startTurn(runner, { mode: "agent", prompt: "Check usage." })
     ).turn;
 
-    expect(terminal.usage).toEqual({
+    expect(terminal.turnUsage).toEqual({
       input: 16,
       output: 20,
       totalTokens: 36,
@@ -712,7 +712,7 @@ describe("TurnRunner memory", () => {
       cacheWrite: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.18 },
     });
-    expect(events.at(-1)).toMatchObject({ usage: terminal.usage });
+    expect(events.at(-1)).toMatchObject({ turnUsage: terminal.turnUsage });
   });
 
   test("memory output budget retries once when over budget", async () => {
@@ -994,12 +994,11 @@ describe("TurnRunner memory", () => {
     expect(breakdown.localMemory).toBeGreaterThan(0);
     expect(breakdown.globalMemory).toBeGreaterThan(0);
 
-    // The stub turn produces exactly one parent assistant message, so the
-    // running aggregate equals that single message's `totalTokens` and the
-    // breakdown (rescaled to that message's total) sums to the same value.
+    // The breakdown is rescaled to the latest parent message's
+    // `totalTokens`, so its segments sum exactly to `lastMessageUsage.totalTokens`.
     const total =
       breakdown.systemPrompt + breakdown.messages + breakdown.localMemory + breakdown.globalMemory;
-    expect(total).toBe(usageEvent!.usage.totalTokens);
+    expect(total).toBe(usageEvent!.lastMessageUsage.totalTokens);
 
     // The two global rows together should contribute more tokens than
     // the single local row, since their combined content is longer.

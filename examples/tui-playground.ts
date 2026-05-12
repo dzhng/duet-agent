@@ -367,15 +367,10 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       };
       cost.total = cost.input + cost.output + cost.cacheRead + cost.cacheWrite;
 
+      const usage = { input, output, cacheRead, cacheWrite, totalTokens: total, cost };
       this.emitUsage({
-        usage: {
-          input,
-          output,
-          cacheRead,
-          cacheWrite,
-          totalTokens: total,
-          cost,
-        },
+        turnUsage: usage,
+        lastMessageUsage: usage,
         effectiveContextWindow: cap,
         contextWindowUsage: { systemPrompt, messages, localMemory, globalMemory },
       });

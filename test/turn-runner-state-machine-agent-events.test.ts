@@ -142,15 +142,15 @@ describe("State-machine agent state events", () => {
     // never emits a parent assistant `message_end`, so the only `usage` event
     // comes from the state-agent emission path.
     expect(usageEvents.length).toBeGreaterThanOrEqual(1);
-    expect(usageEvents[0]!.usage.cost.total).toBeCloseTo(0.25, 6);
+    expect(usageEvents[0]!.turnUsage.cost.total).toBeCloseTo(0.25, 6);
 
     const lastUsage = usageEvents.at(-1)!;
     const terminal = events.at(-1);
     expect(terminal?.type).toBe("complete");
     // Terminal event carries the same aggregate as the last `usage` event,
     // proving the single-source-of-truth invariant.
-    if (terminal && "usage" in terminal && terminal.usage) {
-      expect(terminal.usage.cost.total).toBeCloseTo(lastUsage.usage.cost.total, 6);
+    if (terminal && "turnUsage" in terminal && terminal.turnUsage) {
+      expect(terminal.turnUsage.cost.total).toBeCloseTo(lastUsage.turnUsage.cost.total, 6);
     }
   });
 
@@ -170,7 +170,7 @@ describe("State-machine agent state events", () => {
     expect(usageEvents.length).toBeGreaterThanOrEqual(1);
     // The error path runs through the same `finally`, so partial usage still
     // lands as a `usage` event.
-    expect(usageEvents.at(-1)!.usage.cost.total).toBeCloseTo(0.25, 6);
+    expect(usageEvents.at(-1)!.turnUsage.cost.total).toBeCloseTo(0.25, 6);
   });
 });
 
@@ -237,9 +237,20 @@ class StateMachineUsageTurnRunner extends TurnRunner {
     // `runAgentWorker` is stubbed so no real `message_end` fires from the
     // parent. Seed the snapshot to match production's invariant that the
     // state agent always runs after a parent emission.
+    // `lastMessageUsage.totalTokens` must equal the four `contextWindowUsage`
+    // segments summed (the runner's rescale invariant); keep both in sync
+    // when changing the stub.
     this.lastParentUsageSnapshot = {
       effectiveContextWindow: 200_000,
       contextWindowUsage: { systemPrompt: 100, messages: 200, localMemory: 0, globalMemory: 0 },
+      lastMessageUsage: {
+        input: 100,
+        output: 200,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 300,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
     };
     return {
       // Mirrors the real handle's structure: side effects of running the

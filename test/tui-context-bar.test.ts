@@ -22,15 +22,17 @@ describe("sidebar context bar", () => {
 
   testIfDocker("zero-token segments do not produce phantom empty cells", async () => {
     // `localMemory: 0` must not insert a gap between non-zero segments.
+    const usage = {
+      input: 78_000,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 78_000,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
     await harness.pushUsage({
-      usage: {
-        input: 78_000,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 78_000,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
+      turnUsage: usage,
+      lastMessageUsage: usage,
       effectiveContextWindow: 200_000,
       contextWindowUsage: {
         systemPrompt: 5_000,
@@ -66,15 +68,17 @@ describe("sidebar context bar", () => {
     // Before usage is reported the sidebar paints `░` × CONTEXT_BAR_WIDTH;
     // pushing an explicit all-zero breakdown should match that initial
     // state rather than collapsing to nothing or leaving phantom cells.
+    const zero = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
     await harness.pushUsage({
-      usage: {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 0,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
+      turnUsage: zero,
+      lastMessageUsage: zero,
       effectiveContextWindow: 200_000,
       contextWindowUsage: {
         systemPrompt: 0,

@@ -170,16 +170,18 @@ afterEach(async () => {
 });
 
 function buildUsageEvent(costTotal: number): import("../src/types/protocol.js").TurnUsageEvent {
+  const usage = {
+    input: 100,
+    output: 50,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 150,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: costTotal },
+  };
   return {
     type: "usage",
-    usage: {
-      input: 100,
-      output: 50,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 150,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: costTotal },
-    },
+    turnUsage: usage,
+    lastMessageUsage: usage,
     effectiveContextWindow: 200_000,
     contextWindowUsage: { systemPrompt: 10, messages: 90, localMemory: 20, globalMemory: 30 },
   };
@@ -427,15 +429,17 @@ describe("Session", () => {
     const sessionPath = join(tempDir, "telemetry-resume");
     await mkdir(sessionPath, { recursive: true });
 
+    const persistedUsageTokens = {
+      input: 100,
+      output: 50,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 150,
+      cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+    };
     const persistedUsage = {
-      usage: {
-        input: 100,
-        output: 50,
-        cacheRead: 0,
-        cacheWrite: 0,
-        totalTokens: 150,
-        cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
-      },
+      turnUsage: persistedUsageTokens,
+      lastMessageUsage: persistedUsageTokens,
       effectiveContextWindow: 200_000,
       contextWindowUsage: {
         systemPrompt: 10,
@@ -495,7 +499,8 @@ describe("Session", () => {
         status: "completed",
         result: "done",
         state: turnState,
-        usage: buildUsageEvent(0.1).usage,
+        turnUsage: buildUsageEvent(0.1).turnUsage,
+        lastMessageUsage: buildUsageEvent(0.1).lastMessageUsage,
         effectiveContextWindow: buildUsageEvent(0.1).effectiveContextWindow,
         contextWindowUsage: buildUsageEvent(0.1).contextWindowUsage,
       });

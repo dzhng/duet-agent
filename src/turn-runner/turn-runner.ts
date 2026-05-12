@@ -251,6 +251,7 @@ export class TurnRunner {
   protected lastParentUsageSnapshot?: {
     effectiveContextWindow: number;
     contextWindowUsage: TurnContextWindowUsage;
+    lastMessageUsage: TurnTokenUsage;
   };
   /** Ensures persisted memory hydrates once before the first turn that needs it. */
   private memoryLoaded = false;
@@ -350,11 +351,12 @@ export class TurnRunner {
       if (this.turnUsage) {
         terminal = {
           ...terminal,
-          usage: this.turnUsage,
+          turnUsage: this.turnUsage,
           ...(this.lastParentUsageSnapshot
             ? {
                 effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
                 contextWindowUsage: this.lastParentUsageSnapshot.contextWindowUsage,
+                lastMessageUsage: this.lastParentUsageSnapshot.lastMessageUsage,
               }
             : {}),
         };
@@ -1560,6 +1562,7 @@ export class TurnRunner {
         this.estimateContextWindowUsage(),
         event.message.usage.totalTokens,
       ),
+      lastMessageUsage: event.message.usage,
     };
   }
 
@@ -1577,7 +1580,8 @@ export class TurnRunner {
     if (!this.turnUsage || !this.lastParentUsageSnapshot) return;
     this.emit({
       type: "usage",
-      usage: this.turnUsage,
+      turnUsage: this.turnUsage,
+      lastMessageUsage: this.lastParentUsageSnapshot.lastMessageUsage,
       effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
       contextWindowUsage: this.lastParentUsageSnapshot.contextWindowUsage,
     });

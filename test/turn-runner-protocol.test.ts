@@ -211,7 +211,7 @@ describe("TurnRunner protocol scenarios", () => {
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
-      usage: {
+      turnUsage: {
         input: 60,
         output: 6,
         totalTokens: 66,
