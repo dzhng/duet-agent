@@ -53,6 +53,7 @@ import {
   moveQuestionHighlight,
   moveSkillAutocompleteSelection,
   NO_HIGHLIGHT,
+  replaceFileAutocompleteToken,
   restoreSavedAnswer,
   type SkillAutocompleteItem,
   skillAutocompleteMatches,
@@ -96,11 +97,9 @@ export {
   NO_HIGHLIGHT,
   questionPickerAnswer,
   replaceFileAutocompleteToken,
-  replaceSkillAutocompleteToken,
   restoreSavedAnswer,
   skillAutocompleteMatches,
 } from "./autocomplete.js";
-export { formatSkillAutocompleteItem } from "./autocomplete.js";
 export {
   DUET_BANNER_LINES,
   historyDisplayBlocks,
@@ -1769,9 +1768,18 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const item = fileAutocompleteItems[fileAutocompleteSelectedIndex];
     if (!token || !item) return false;
 
-    const insertion = inputField.plainText[token.end]?.match(/\s/)
-      ? `@${item.relativePath}`
-      : `@${item.relativePath} `;
+    // Insert a markdown link `[@<basename>](./<relative-path>)` so the
+    // visible token still reads as an `@`-mention while the link target is
+    // a path the agent can hand straight to its `read` tool. The format
+    // contract lives in `replaceFileAutocompleteToken`; this call site
+    // mutates the inputField in place via setSelection/insertText so it
+    // composes cleanly with attachment placeholders and the cursor model.
+    const replacement = replaceFileAutocompleteToken(
+      inputField.plainText,
+      token,
+      item.relativePath,
+    );
+    const insertion = replacement.text.slice(token.start, replacement.cursorOffset);
     inputField.setSelection(token.start, token.end);
     inputField.deleteSelection();
     inputField.insertText(insertion);

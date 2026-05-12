@@ -216,12 +216,6 @@ function scoreFileMatch(file: FileAutocompleteItem, normalizedQuery: string): nu
   return 0;
 }
 
-export function formatSkillAutocompleteItem(item: SkillAutocompleteItem): string {
-  const path = item.path ? ` (${item.path})` : "";
-  const lines = [`/${item.name}${path}`, formatSkillAutocompleteDescription(item.description)];
-  return lines.filter((line) => line.length > 0).join("\n");
-}
-
 export function formatSkillAutocompleteDescription(description: string | undefined): string {
   if (!description) return "";
 
@@ -380,18 +374,6 @@ export function formatQuestionOptionDescription(description: string | undefined)
   if (!description) return "";
 
   return wrapText(description, QUESTION_OPTION_DESCRIPTION_WIDTH).join("\n");
-}
-
-/**
- * Replace the slash-token under the cursor with the resolved skill name and
- * append a trailing space when the next character is not already whitespace.
- */
-export function replaceSkillAutocompleteToken(
-  text: string,
-  token: AutocompleteToken,
-  skillName: string,
-): SkillAutocompleteReplacement {
-  return replaceTriggerToken(text, token, `/${skillName}`);
 }
 
 /**

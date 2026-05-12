@@ -22,10 +22,10 @@ import {
   resolveModelName,
 } from "../src/model-resolution/resolver.js";
 import {
+  activeFileAutocompleteToken,
   activeSkillAutocompleteToken,
   formatQuestionOptionDescription,
   formatSkillAutocompleteDescription,
-  formatSkillAutocompleteItem,
   historyDisplayBlocks,
   limitHistoryDisplayMessages,
   commitActiveAnswer,
@@ -33,8 +33,8 @@ import {
   moveSkillAutocompleteSelection,
   NO_HIGHLIGHT,
   questionPickerAnswer,
+  replaceFileAutocompleteToken,
   restoreSavedAnswer,
-  replaceSkillAutocompleteToken,
   skillAutocompleteMatches,
   startupHeaderLines,
 } from "../src/tui/app.js";
@@ -730,12 +730,6 @@ describe("TUI skill autocomplete helpers", () => {
     ]);
   });
 
-  test("formats autocomplete rows with visible path and description", () => {
-    expect(formatSkillAutocompleteItem(skills[0]!)).toBe(
-      "/review (/skills/review)\nReview changed code.",
-    );
-  });
-
   test("wraps autocomplete descriptions without leading indentation", () => {
     expect(
       formatSkillAutocompleteDescription(
@@ -753,16 +747,46 @@ describe("TUI skill autocomplete helpers", () => {
     expect(moveSkillAutocompleteSelection(0, 0, 1)).toBe(0);
   });
 
-  test("replaces the active slash token while preserving surrounding text", () => {
+  test("locates the active slash token under the cursor", () => {
     const text = "please /rev now";
     const token = activeSkillAutocompleteToken(text, "please /rev".length);
     if (!token) throw new Error("Expected slash token");
 
     expect(token).toEqual({ start: 7, end: 11, query: "rev" });
-    expect(replaceSkillAutocompleteToken(text, token, "review")).toEqual({
-      text: "please /review now",
-      cursorOffset: 14,
+  });
+});
+
+describe("TUI file autocomplete helpers", () => {
+  test("replaceFileAutocompleteToken inserts a markdown link with `./` prefix", () => {
+    const text = "look at @sr now";
+    const token = activeFileAutocompleteToken(text, "look at @sr".length);
+    if (!token) throw new Error("Expected file token");
+
+    expect(token).toEqual({ start: 8, end: 11, query: "sr" });
+    expect(replaceFileAutocompleteToken(text, token, "src/tui/app.ts")).toEqual({
+      text: "look at [@app.ts](./src/tui/app.ts) now",
+      cursorOffset: "look at [@app.ts](./src/tui/app.ts)".length,
     });
+  });
+
+  test("replaceFileAutocompleteToken inserts a trailing space when none follows", () => {
+    const text = "diff @";
+    const token = activeFileAutocompleteToken(text, text.length);
+    if (!token) throw new Error("Expected file token");
+
+    const replacement = replaceFileAutocompleteToken(text, token, "README.md");
+    expect(replacement.text).toBe("diff [@README.md](./README.md) ");
+    expect(replacement.cursorOffset).toBe(replacement.text.length);
+  });
+
+  test("replaceFileAutocompleteToken uses the basename in the visible label", () => {
+    const text = "@p";
+    const token = activeFileAutocompleteToken(text, text.length);
+    if (!token) throw new Error("Expected file token");
+
+    expect(replaceFileAutocompleteToken(text, token, "packages/agent-gateway/src/index.ts").text).toBe(
+      "[@index.ts](./packages/agent-gateway/src/index.ts) ",
+    );
   });
 });
 
