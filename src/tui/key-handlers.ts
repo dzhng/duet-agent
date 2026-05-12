@@ -237,6 +237,11 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
       return;
     }
     if (key.name === "escape") {
+      // Suppress the next global keypress for this Escape press so the
+      // renderer-level handler does not also call onEscape — the textarea
+      // hook runs first and consumes the keystroke here.
+      key.preventDefault();
+      escapeState.suppress = true;
       onEscape();
       return;
     }

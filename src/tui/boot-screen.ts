@@ -32,17 +32,10 @@ export interface BootScreenDeps {
   upgradeStatus$?: UpgradeStatusStream;
   /**
    * Present only on fresh (non-resume) mounts. `runTui` creates the
-   * StarterSection lazily and threads it through here so resume mounts skip
-   * the starter chrome entirely (no `if (!isResume)` branch needed here).
+   * StarterSection lazily and leaves it undefined on resume mounts, so the
+   * starter chrome is skipped without needing a separate resume flag.
    */
   starters?: StarterSection;
-  /**
-   * True when this TUI mount is a `--resume <id>` invocation. The starter
-   * chrome is already gated by `deps.starters === undefined`; we keep the
-   * flag in the dependency surface so the boot screen has a single source of
-   * truth for resume-vs-fresh behavior.
-   */
-  isResume: boolean;
 }
 
 /**
@@ -76,11 +69,9 @@ export function renderSetupIntro(
     deps.appendLine(`[agent file] ${agentFiles.map((file) => file.name).join(", ")}`, COLORS.hint);
   }
 
-  // --resume <id> launches skip the starter menu entirely: the user has
-  // explicitly asked to drop back into a known conversation, so showing
-  // "what should we work on today?" before replaying history is noise.
-  // `runTui` enforces the resume gate by leaving `deps.starters` undefined
-  // on resume mounts, so the call short-circuits otherwise.
+  // Resume mounts leave `deps.starters` undefined so we skip the "what
+  // should we work on today?" menu — the user explicitly asked to drop
+  // back into a known conversation.
   if (deps.starters) {
     deps.starters.mount(skills);
   }
@@ -158,7 +149,6 @@ export async function renderBootScreen(deps: {
   sidebar: Sidebar;
   autocomplete: AutocompleteController;
   starters?: StarterSection;
-  isResume: boolean;
   packageName: string;
   packageVersion: string;
   workDir: string;
@@ -192,7 +182,6 @@ export async function renderBootScreen(deps: {
       memoryModelName: deps.memoryModelName,
       upgradeStatus$: deps.upgradeStatus$,
       starters: deps.starters,
-      isResume: deps.isResume,
     },
     skills,
     agentFiles,

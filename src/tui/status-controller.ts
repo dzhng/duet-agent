@@ -93,7 +93,7 @@ export class StatusController {
     this.running = true;
     this.workingMessage = "working…";
     this.workingStartedAt = Date.now();
-    this.setHint(true);
+    this.refreshHint();
     this.refreshWorkingStatus();
     this.startWorkingTicker();
   }
@@ -107,7 +107,7 @@ export class StatusController {
     this.stopWorkingTicker();
     this.workingStartedAt = undefined;
     this.workingMessage = "working…";
-    this.setHint(false);
+    this.refreshHint();
     this.refreshWorkingStatus();
   }
 
@@ -131,9 +131,13 @@ export class StatusController {
     }
   }
 
-  setHint(running: boolean): void {
+  /** Recompose the bottom hint row from the controller's current running
+   *  state plus any active attachment / selection segments. Called from any
+   *  input that changes a hint segment (attachments, selection) and from
+   *  the running-state transitions in `markRunning` / `markIdle`. */
+  refreshHint(): void {
     if (this.destroyed) return;
-    const base = running ? HINT_RUNNING : HINT_IDLE;
+    const base = this.running ? HINT_RUNNING : HINT_IDLE;
     const segments: string[] = [];
     if (this.pendingImageCount > 0) segments.push(this.attachmentHint());
     segments.push(base);
@@ -147,13 +151,6 @@ export class StatusController {
       }
       throw error;
     }
-  }
-
-  /** Repaint the hint row in the controller's current running state. Called
-   *  from any input that changes one of the hint segments (attachments,
-   *  selection) without flipping running. */
-  refreshHint(): void {
-    this.setHint(this.running);
   }
 
   refreshWorkingStatus(): void {

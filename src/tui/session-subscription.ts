@@ -62,12 +62,9 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
     if (event.type === "step") {
       stepRenderer.renderStep(event.step);
     } else if (event.type === "follow_up_queue") {
-      // Sidebar already refreshed from session state above; mirror the count
-      // into the working-status line so the user can see queued prompts at a
-      // glance without scrolling the sidebar.
+      // Mirror the count into the working-status line so the user can see
+      // queued prompts at a glance without scrolling the sidebar.
       statusController.setQueuedFollowUps(event.prompts.length);
-    } else if (event.type === "todos") {
-      // Sidebar refresh covers the visual update; nothing else to do here.
     } else if (event.type === "memory") {
       stepRenderer.renderMemoryStatus(event);
     } else if (event.type === "system") {

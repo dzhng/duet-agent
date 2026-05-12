@@ -111,14 +111,13 @@ describe("TUI submit + esc dispatch", () => {
       await harness.waitForPrompt();
 
       harness.mockInput.pressEscape();
-      // session.interrupt is async; give it a tick to resolve. The Esc keystroke
-      // travels through both the textarea `onKeyDown` and the renderer's global
-      // keypress handler, so the production wiring fires `onEscape` more than
-      // once per press — assert at least one interrupt landed rather than
-      // pinning the exact count, which is a separate dedup concern.
+      // session.interrupt is async; give it a tick to resolve. The textarea
+      // hook claims the keystroke (preventDefault + escapeState.suppress) so
+      // the renderer-level global handler skips the duplicate dispatch and
+      // exactly one interrupt lands per Esc press.
       await harness.flush();
       await harness.flush();
-      expect(harness.interruptCalls).toBeGreaterThanOrEqual(1);
+      expect(harness.interruptCalls).toBe(1);
     },
   );
 });

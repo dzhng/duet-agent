@@ -313,7 +313,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     sidebar: ui.sidebar,
     autocomplete,
     starters,
-    isResume: input.isResume ?? false,
     packageName: input.packageName,
     packageVersion: input.packageVersion,
     workDir: input.workDir,
