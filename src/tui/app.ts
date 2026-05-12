@@ -22,7 +22,8 @@ import {
   tryReadClipboardText,
 } from "./paste.js";
 import { parseCopyArgument, selectCopyText, type TranscriptEntry } from "./transcript-log.js";
-import { StatusController, formatElapsed, runningMarker } from "./status-controller.js";
+import { StatusController } from "./status-controller.js";
+import { StepRenderer } from "./step-renderer.js";
 import { TranscriptWriter } from "./transcript-writer.js";
 import type { Session } from "../session/session.js";
 import {
@@ -34,9 +35,7 @@ import type {
   TurnAgentFile,
   TurnEvent,
   TurnQuestion,
-  TurnStep,
   TurnTerminalEvent,
-  TurnTokenUsage,
 } from "../types/protocol.js";
 import {
   type AutocompleteToken,
@@ -70,7 +69,6 @@ import {
 } from "./history.js";
 import { listRecentSessions } from "./recent-sessions.js";
 import { buildLayout } from "./layout.js";
-import { SIDEBAR_WIDTH } from "./sidebar.js";
 import { orderedSelectableStarters, selectStarters } from "./starters.js";
 import { COLORS } from "./theme.js";
 
@@ -106,7 +104,6 @@ export {
   limitHistoryDisplayMessages,
   startupHeaderLines,
 } from "./history.js";
-import { assembleToolBlock, formatToolBlock, truncateToolText } from "./tool-formatters.js";
 
 export interface RunTuiInput {
   session: Session;
@@ -278,58 +275,23 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
   // Context bar + session cost are owned by `Session` (persisted beside
   // `TurnState` in `state.json`), not `TurnRunner` / `TurnState`.
-  let activeTextStream: StreamingBlock | undefined;
-  let activeReasoningStream: StreamingBlock | undefined;
-  // Tool calls fire twice (running → completed/error). Track the rendered
-  // block by toolCallId so the second event updates the same line in place
-  // — swapping the spinner for a check/cross and appending the result —
-  // instead of pushing a separate block.
-  const activeToolBlocks = new Map<string, ToolBlock>();
-
-  interface StreamingBlock {
-    line: TextRenderable;
-    label: string | null;
-    body: string;
-    /** Cap rendered output to TOOL_RESULT_MAX_LINES for noisy streams (e.g. reasoning). */
-    truncate: boolean;
-  }
-
-  interface ToolBlock {
-    line: TextRenderable;
-    /** Formatter-produced header line, e.g. "$ ls /" or "[question]".
-     *  The renderer prepends the spinner / completion marker live. */
-    header: string;
-    /** Optional input body lines shown under the header. */
-    body: string;
-    /** Original tool input, retained so the finalize pass can re-run the
-     *  formatter with the output and produce a custom `result` section. */
-    input: unknown;
-    // Wall-clock start so the running header can show a live elapsed counter
-    // and the finalized header can report total tool duration. Undefined when
-    // the first event we saw was already terminal (cached/replayed history),
-    // in which case we have no real duration to report.
-    startedAt: number | undefined;
-  }
 
   const statusController = new StatusController({
     renderer,
     status,
     hint,
-    refreshActiveToolBlocks: () => refreshActiveToolBlocks(),
+    refreshActiveToolBlocks: () => stepRenderer.refreshActiveToolBlocks(),
   });
 
-  function refreshActiveToolBlocks(): void {
-    if (activeToolBlocks.size === 0) return;
-    const columns = toolBlockColumns();
-    for (const block of activeToolBlocks.values()) {
-      if (block.startedAt === undefined) continue;
-      block.line.content = assembleToolBlock(
-        { header: block.header, body: block.body || undefined },
-        runningMarker(Date.now() - block.startedAt),
-        { columns },
-      );
-    }
-  }
+  const stepRenderer = new StepRenderer({
+    renderer,
+    transcript,
+    transcriptWriter,
+    statusController,
+    onStepStart: () => {
+      if (questionPickerIsOpen()) hideQuestions();
+    },
+  });
 
   function reportError(error: unknown): void {
     appendBlock("[error]", error instanceof Error ? error.message : String(error), COLORS.error);
@@ -360,7 +322,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
     refreshSidebar();
     if (event.type === "step") {
-      renderStep(event.step);
+      stepRenderer.renderStep(event.step);
     } else if (event.type === "follow_up_queue") {
       // Sidebar already refreshed from session state above; mirror the count
       // into the working-status line so the user can see queued prompts at a
@@ -369,31 +331,31 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     } else if (event.type === "todos") {
       // Sidebar refresh covers the visual update; nothing else to do here.
     } else if (event.type === "memory") {
-      renderMemoryStatus(event);
+      stepRenderer.renderMemoryStatus(event);
     } else if (event.type === "system") {
       appendBlock("[system]", event.message, COLORS.system);
       if (event.level === "error") statusController.markIdle();
     } else if (event.type === "ask") {
       appendBlock("[question]", event.questions.map((q) => q.question).join("\n"), COLORS.system);
       showQuestions(event.questions);
-      renderUsage(event.usage);
-      renderTurnElapsed();
+      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderTurnElapsed();
       statusController.markIdle(event);
     } else if (event.type === "complete") {
       if (event.error) {
         appendBlock("[error]", event.error, COLORS.error);
       }
-      renderUsage(event.usage);
-      renderTurnElapsed();
+      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderTurnElapsed();
       statusController.markIdle(event);
     } else if (event.type === "interrupted") {
       appendLine("[interrupted]", COLORS.system);
-      renderUsage(event.usage);
-      renderTurnElapsed();
+      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderTurnElapsed();
       statusController.markIdle(event);
     } else if (event.type === "sleep") {
-      renderUsage(event.usage);
-      renderSleeping(event.wakeAt);
+      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderSleeping(event.wakeAt);
       statusController.markIdle(event);
     }
   });
@@ -728,232 +690,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
     submit(entry.submit);
     return true;
-  }
-
-  function renderUsage(usage?: TurnTokenUsage): void {
-    if (!usage) return;
-    // Cumulative cost is updated on the session when the terminal event is
-    // handled; sidebar refreshes from `getSessionCostUsd()` via `refreshSidebar`.
-    // Tokens stay terse (just in/out) since the cost breakdown below is
-    // where the cache wins actually matter. Cost is split across all four
-    // buckets (in / out / cache read / cache write) so prompt-cache hits and
-    // writes are visible at a glance; zero buckets collapse out.
-    const tokens = `Tokens: in=${usage.input} out=${usage.output}`;
-    const costParts = [
-      ["in", usage.cost.input],
-      ["out", usage.cost.output],
-      ["cr", usage.cost.cacheRead],
-      ["cw", usage.cost.cacheWrite],
-    ]
-      .filter(([, value]) => (value as number) > 0)
-      .map(([label, value]) => `${label}=$${(value as number).toFixed(4)}`);
-    const cost =
-      usage.cost.total === 0
-        ? ""
-        : ` · Cost: $${usage.cost.total.toFixed(4)}${costParts.length > 1 ? ` (${costParts.join(" ")})` : ""}`;
-    appendLine(`[usage] ${tokens}${cost}`, COLORS.hint);
-  }
-
-  function renderTurnElapsed(): void {
-    const startedAt = statusController.getWorkingStartedAt();
-    if (startedAt === undefined) return;
-    appendLine(`● turn finished in ${formatElapsed(Date.now() - startedAt)}`, COLORS.status);
-  }
-
-  // Sleep terminals replace the usual "turn finished" line because the session
-  // is going back to sleep, not wrapping up. When a turn ran before the sleep
-  // (e.g. an injected prompt while waiting on a state machine), include its
-  // duration so the user can still see how long the work took.
-  function renderSleeping(wakeAt: number): void {
-    const wakeLabel = new Date(wakeAt).toLocaleTimeString();
-    const startedAt = statusController.getWorkingStartedAt();
-    const turnDuration =
-      startedAt === undefined ? "" : ` · turn took ${formatElapsed(Date.now() - startedAt)}`;
-    appendLine(`● sleeping until ${wakeLabel}${turnDuration}`, COLORS.status);
-  }
-
-  function renderStep(step: TurnStep): void {
-    if (questionPickerIsOpen()) hideQuestions();
-
-    if (step.type === "text_delta") {
-      activeTextStream = renderDelta(activeTextStream, null, step.delta, COLORS.agent);
-    } else if (step.type === "reasoning_delta") {
-      activeReasoningStream = renderDelta(
-        activeReasoningStream,
-        "[reasoning]",
-        step.delta,
-        COLORS.reasoning,
-        true,
-      );
-    } else if (step.type === "text") {
-      recordTranscriptEntry("agent", step.text);
-      if (activeTextStream) {
-        finalizeDelta(activeTextStream, step.text);
-        activeTextStream = undefined;
-        return;
-      }
-      appendBlock(null, step.text, COLORS.agent);
-    } else if (step.type === "reasoning") {
-      const trimmed = step.text.trim();
-      if (activeReasoningStream) {
-        finalizeDelta(activeReasoningStream, trimmed);
-        activeReasoningStream = undefined;
-        return;
-      }
-      if (trimmed) appendBlock("[reasoning]", truncateToolText(trimmed), COLORS.reasoning);
-    } else if (step.type === "tool_call") {
-      renderToolCall(step);
-    } else if (step.type === "system") {
-      appendBlock("[system]", step.message, COLORS.system);
-    }
-  }
-
-  function renderDelta(
-    block: StreamingBlock | undefined,
-    label: string | null,
-    delta: string,
-    fg: string,
-    truncate = false,
-  ): StreamingBlock {
-    const next =
-      block ??
-      ({
-        line: new TextRenderable(renderer, { content: "", fg }),
-        label,
-        body: "",
-        truncate,
-      } satisfies StreamingBlock);
-    if (!block) {
-      transcriptWriter.beginBlock();
-      transcript.add(next.line);
-    }
-    next.body += delta;
-    updateStreamingBlock(next);
-    return next;
-  }
-
-  // Render a tool call as a single, self-updating block. The first event
-  // (`status: "running"`) creates the block with a spinner; the second event
-  // (`completed` or `error`) replaces the spinner with ✓/✗ and appends the
-  // truncated result inline so the call and its outcome stay visually paired.
-  // Per-tool formatters in `tool-formatters.ts` decide the header text and
-  // whether the call should appear in the transcript at all (e.g.
-  // ask_user_question hides itself live and lets the `ask` terminal event
-  // own the question display).
-  // Width budget for a tool block: terminal width minus the fixed sidebar
-  // column and a small fudge for borders/padding. Recomputed per render so a
-  // resize after a tool block lands updates new blocks; existing blocks keep
-  // the width they were rendered at, which is acceptable since the renderer
-  // would otherwise re-wrap and could exceed the row cap.
-  function toolBlockColumns(): number {
-    const transcriptColumnPadding = 4;
-    return Math.max(20, renderer.terminalWidth - SIDEBAR_WIDTH - transcriptColumnPadding);
-  }
-
-  function renderToolCall(step: Extract<TurnStep, { type: "tool_call" }>): void {
-    const existing = activeToolBlocks.get(step.toolCallId);
-    if (existing) {
-      finalizeToolCall(step, existing);
-      return;
-    }
-
-    const isLive = step.status === "running" || step.status === "pending";
-    const formatStatus = isLive ? "running" : step.status === "error" ? "error" : "completed";
-    const formatted = formatToolBlock({
-      toolName: step.toolName,
-      status: formatStatus,
-      input: step.input,
-      output: step.output,
-      mode: "live",
-    });
-    if (formatted.hidden) return;
-
-    const startedAt = isLive ? Date.now() : undefined;
-    const marker = "⏳";
-    const fg = step.status === "error" ? COLORS.error : COLORS.tool;
-    const columns = toolBlockColumns();
-    const line = new TextRenderable(renderer, {
-      content: assembleToolBlock(formatted, marker, { columns }),
-      fg,
-    });
-    transcriptWriter.beginBlock();
-    transcript.add(line);
-    const block: ToolBlock = {
-      line,
-      header: formatted.header,
-      body: formatted.body ?? "",
-      input: step.input,
-      startedAt,
-    };
-    activeToolBlocks.set(step.toolCallId, block);
-    // The same event may already carry a terminal status (cached/replayed
-    // history). Fall through to finalize against the just-created block.
-    if (!isLive) {
-      finalizeToolCall(step, block);
-    }
-  }
-
-  function finalizeToolCall(
-    step: Extract<TurnStep, { type: "tool_call" }>,
-    block: ToolBlock,
-  ): void {
-    const isError = step.status === "error";
-    const glyph = isError ? "✗" : "✓";
-    const elapsedMs = block.startedAt === undefined ? 0 : Date.now() - block.startedAt;
-    // Sub-second runs drop the elapsed suffix so the transcript does not get
-    // littered with "0s" markers from fast tools (read, ls, todo_write, …).
-    const durationSuffix = elapsedMs >= 1000 ? ` ${formatElapsed(elapsedMs)}` : "";
-    const formatted = formatToolBlock({
-      toolName: step.toolName,
-      status: isError ? "error" : "completed",
-      input: block.input,
-      output: step.output,
-      mode: "live",
-    });
-    block.line.content = assembleToolBlock(formatted, `${glyph}${durationSuffix}`, {
-      columns: toolBlockColumns(),
-    });
-    block.line.fg = isError ? COLORS.error : COLORS.tool;
-    activeToolBlocks.delete(step.toolCallId);
-  }
-
-  function finalizeDelta(block: StreamingBlock, body: string): void {
-    block.body = body;
-    updateStreamingBlock(block);
-  }
-
-  function updateStreamingBlock(block: StreamingBlock): void {
-    const body = block.truncate ? truncateToolText(block.body) : block.body;
-    block.line.content = block.label ? `${block.label}\n${body}` : body;
-  }
-
-  function renderMemoryStatus(event: Extract<TurnEvent, { type: "memory" }>): void {
-    if (event.status === "running") {
-      statusController.setWorkingMessage(event.message);
-      return;
-    }
-    const body = formatMemoryEventBody(event);
-    if (body) {
-      appendBlock(`[memory:${event.phase}]`, body, COLORS.memory);
-    }
-    if (statusController.isRunning()) {
-      statusController.setWorkingMessage("working…");
-    }
-  }
-
-  function formatMemoryEventBody(event: Extract<TurnEvent, { type: "memory" }>): string {
-    const hasObservations = Boolean(event.observations && event.observations.length > 0);
-    const hasBumps = Boolean(
-      event.usageBumpedObservations && event.usageBumpedObservations.length > 0,
-    );
-    if (!hasObservations && !hasBumps) {
-      return "";
-    }
-    const sections: string[] = [event.message];
-    if (hasObservations) {
-      sections.push(event.observations!.map((observation) => observation.content).join("\n\n"));
-    }
-    return truncateToolText(sections.join("\n"));
   }
 
   // ---- input handling --------------------------------------------------------
@@ -2319,7 +2055,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // the user can see when the next wake will fire.
     const pending = input.session.getLastTerminal();
     if (pending?.type === "sleep") {
-      renderSleeping(pending.wakeAt);
+      stepRenderer.renderSleeping(pending.wakeAt);
       statusController.markIdle(pending);
     } else {
       statusController.markIdle();
