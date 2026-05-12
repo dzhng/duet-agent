@@ -96,14 +96,22 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     flexShrink: 0,
   });
 
-  const { panel: todoPanel, body: todoBody } = createPanel(renderer, "todos", "(none)");
+  const { panel: todoPanel, body: todoBody } = createPanel(
+    renderer,
+    "todos",
+    "in-conversation checklist of work the agent is doing right now",
+  );
   const { panel: followUpPanel, body: followUpBody } = createPanel(
     renderer,
     "follow-ups",
-    "(none)",
+    "queued messages delivered to the agent when the current turn settles",
     { maxBodyLines: FOLLOW_UP_MAX_BODY_LINES, grow: false },
   );
-  const { panel: smPanel, body: smBody } = createPanel(renderer, "state machine", "(inactive)");
+  const { panel: smPanel, body: smBody } = createPanel(
+    renderer,
+    "loops",
+    "durable background workflows that keep running across sessions",
+  );
 
   // The context panel is hand-rolled rather than going through createPanel
   // because the body is a horizontal colored bar plus a legend row, not a

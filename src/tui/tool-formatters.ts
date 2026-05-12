@@ -381,7 +381,7 @@ const formatCreateStateMachine: Formatter = (spec) => {
     .filter((s): s is string => Boolean(s));
   const body = stateNames.length > 0 ? `states: ${stateNames.join(", ")}` : undefined;
   return {
-    header: `state machine ▶ ${smName}`,
+    header: `loops ▶ ${smName}`,
     body,
     result: buildDefaultResult(spec),
     // State-machine status is structured and short; show it in full.
@@ -406,7 +406,7 @@ const formatSelectStateMachineState: Formatter = (spec) => {
 };
 
 const formatGetCurrentStateMachineState: Formatter = (spec) => ({
-  header: "state machine status",
+  header: "loops status",
   result: buildDefaultResult(spec),
   clamp: false,
 });
