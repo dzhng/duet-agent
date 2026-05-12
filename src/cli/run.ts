@@ -311,25 +311,59 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       await session.waitForTerminal();
     }
 
+    // Live session pointer for the TUI loop below. Starts as the boot-time
+    // session (fresh or `--resume <id>`-hydrated) and gets re-pointed each
+    // time the user picks a "pick up the thread" row in the starter menu.
+    // Same code path as `--resume <id>` from the command line: dispose the
+    // current session, `manager.resume(newId)` + `hydrate()` + `start()`,
+    // re-enter `runTui` with the hydrated session and its message history.
+    let activeSession = session;
+    let activeHistory = resumedHistory;
+    let activeIsResume = Boolean(resumeSessionId);
+
     if (useTui) {
-      await runTui({
-        session,
-        ...(resumedHistory ? { history: resumedHistory } : {}),
-        resumeHistoryMessages,
-        modelName,
-        modelSource: describeModelResolution(modelResolution),
-        memoryModelName,
-        memoryModelSource: describeModelResolution(memoryModelResolution),
-        workDir,
-        sessionId: session.id,
-        packageName: pkg.name,
-        packageVersion: pkg.version,
-        upgradeStatus$,
-      });
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        let pendingResumeSessionId: string | undefined;
+        await runTui({
+          session: activeSession,
+          ...(activeHistory ? { history: activeHistory } : {}),
+          ...(activeIsResume ? { isResume: true } : {}),
+          onResumeRequest: (id: string) => {
+            pendingResumeSessionId = id;
+          },
+          resumeHistoryMessages,
+          modelName,
+          modelSource: describeModelResolution(modelResolution),
+          memoryModelName,
+          memoryModelSource: describeModelResolution(memoryModelResolution),
+          workDir,
+          sessionId: activeSession.id,
+          packageName: pkg.name,
+          packageVersion: pkg.version,
+          upgradeStatus$,
+        });
+
+        if (!pendingResumeSessionId) break;
+
+        // User picked a recent session from the starter menu. Swap the
+        // placeholder for the requested session: dispose first so its
+        // state.json gets flushed, then hydrate the resume target so
+        // `agent.messages` is available for transcript replay.
+        await activeSession.dispose();
+        activeSession = manager.resume(pendingResumeSessionId);
+        await activeSession.hydrate();
+        if (!activeSession.getState()) {
+          throw new Error(`Unknown session: ${pendingResumeSessionId}`);
+        }
+        await activeSession.start();
+        activeHistory = activeSession.getState()?.agent.messages;
+        activeIsResume = true;
+      }
     }
 
     process.stderr.write(
-      `To resume this session:\n${resumeCommand(session.id, {
+      `To resume this session:\n${resumeCommand(activeSession.id, {
         ...(modelName ? { modelName } : {}),
         ...(memoryModelName ? { memoryModelName } : {}),
         workDir,

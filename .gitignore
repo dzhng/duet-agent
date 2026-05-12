@@ -53,3 +53,6 @@ mocks/
 
 # Firecrawl scrape output
 .firecrawl/
+
+# Local-only design notes / scratch (never tracked)
+.agents/notes/
