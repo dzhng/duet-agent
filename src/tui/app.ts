@@ -1,17 +1,14 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
-  BoxRenderable,
   type CliRenderer,
   createCliRenderer,
   decodePasteBytes,
   fg,
   type KeyEvent,
   type PasteEvent,
-  ScrollBoxRenderable,
   type Selection,
   t,
   TextRenderable,
-  TextareaRenderable,
 } from "@opentui/core";
 import { type ClipboardWriteResult, writeClipboardText } from "./clipboard.js";
 import {
@@ -70,7 +67,8 @@ import {
   limitHistoryDisplayMessages,
 } from "./history.js";
 import { listRecentSessions } from "./recent-sessions.js";
-import { createSidebar, SIDEBAR_WIDTH } from "./sidebar.js";
+import { buildLayout } from "./layout.js";
+import { SIDEBAR_WIDTH } from "./sidebar.js";
 import { orderedSelectableStarters, selectStarters } from "./starters.js";
 import { COLORS, HINT_IDLE, HINT_RUNNING, HINT_SELECTION_COPY } from "./theme.js";
 
@@ -173,8 +171,6 @@ export interface RunTuiInput {
   renderer?: CliRenderer;
 }
 
-const SKILL_AUTOCOMPLETE_LIMIT = AUTOCOMPLETE_LIMITS.skill;
-const FILE_AUTOCOMPLETE_LIMIT = AUTOCOMPLETE_LIMITS.file;
 const QUESTION_OPTION_LIMIT = AUTOCOMPLETE_LIMITS.questionOption;
 
 interface InternalKeyHandlerLike {
@@ -233,222 +229,23 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     refreshHint();
   });
 
-  // Outer row wraps the main column and a right-side sidebar that surfaces
-  // the runner's current todo list and state-machine progress.
-  const root = new BoxRenderable(renderer, {
-    flexDirection: "row",
-    width: "100%",
-    height: "100%",
-  });
-
-  const layout = new BoxRenderable(renderer, {
-    flexDirection: "column",
-    flexGrow: 1,
-    flexShrink: 1,
-    height: "100%",
-  });
-
-  const sidebar = createSidebar(renderer);
-
-  const transcript = new ScrollBoxRenderable(renderer, {
-    flexGrow: 1,
-    flexShrink: 1,
-    scrollY: true,
-    // Pin to bottom as new lines arrive, but only while the user has not
-    // manually scrolled away. ScrollBoxRenderable flips `_hasManualScroll`
-    // the moment the user scrolls up, which pauses pinning until they
-    // return to the bottom — without this, new output yanks the viewport
-    // down while the user is reading history.
-    stickyScroll: true,
-    stickyStart: "bottom",
-    border: true,
-    borderColor: COLORS.border,
-    padding: 1,
-  });
-
-  // Status and hint chrome are excluded from drag-select so a highlight that
-  // sweeps the bottom of the screen does not pull the spinner / hint text
-  // into the clipboard alongside the transcript content the user wanted.
-  const status = new TextRenderable(renderer, {
-    content: "",
-    fg: COLORS.status,
-    height: 1,
-    flexShrink: 0,
-    selectable: false,
-  });
-
-  const hint = new TextRenderable(renderer, {
-    content: HINT_IDLE,
-    fg: COLORS.hint,
-    height: 1,
-    flexShrink: 0,
-    selectable: false,
-  });
-
-  const skillAutocompletePanel = new BoxRenderable(renderer, {
-    flexDirection: "column",
-    border: true,
-    borderColor: COLORS.border,
-    paddingLeft: 1,
-    paddingRight: 1,
-    flexShrink: 0,
-  });
-  skillAutocompletePanel.visible = false;
-
-  // Two ordered sections: built-in commands first, skills second. Each
-  // section has its own header row plus a fixed pool of item rows. Selection
-  // navigates the flat ordered list of visible items across both sections.
-  // Row height is assigned per render based on the wrapped description
-  // length so a one-line description doesn't leave an empty trailing line
-  // beneath the name. The renderer sets `height` whenever it writes
-  // `content`.
-  // Autocomplete and panel chrome are not part of the transcript content,
-  // so exclude them from drag-select to keep the clipboard focused on
-  // assistant/user messages.
-  const makeItemRow = () => {
-    const row = new TextRenderable(renderer, {
-      content: "",
-      fg: COLORS.hint,
-      flexShrink: 0,
-      selectable: false,
-    });
-    row.visible = false;
-    return row;
-  };
-  const makeHeaderRow = (label: string) =>
-    new TextRenderable(renderer, {
-      content: label,
-      fg: COLORS.status,
-      height: 1,
-      flexShrink: 0,
-      selectable: false,
-    });
-  const commandHeader = makeHeaderRow("commands");
-  const commandRows = Array.from({ length: BUILT_IN_SLASH_COMMANDS.length }, makeItemRow);
-  const skillHeader = makeHeaderRow("skills");
-  const skillRows = Array.from({ length: SKILL_AUTOCOMPLETE_LIMIT }, makeItemRow);
-  skillAutocompletePanel.add(commandHeader);
-  for (const row of commandRows) skillAutocompletePanel.add(row);
-  skillAutocompletePanel.add(skillHeader);
-  for (const row of skillRows) skillAutocompletePanel.add(row);
-
-  // The @-file picker mirrors the slash picker's structure so the renderer
-  // logic and key handling can stay parallel between the two pickers.
-  const fileAutocompletePanel = new BoxRenderable(renderer, {
-    flexDirection: "column",
-    border: true,
-    borderColor: COLORS.border,
-    paddingLeft: 1,
-    paddingRight: 1,
-    flexShrink: 0,
-  });
-  fileAutocompletePanel.visible = false;
-  const fileAutocompleteTitle = new TextRenderable(renderer, {
-    content: "files",
-    fg: COLORS.status,
-    height: 1,
-    flexShrink: 0,
-    selectable: false,
-  });
-  const fileAutocompleteRows = Array.from({ length: FILE_AUTOCOMPLETE_LIMIT }, () => {
-    const row = new TextRenderable(renderer, {
-      content: "",
-      fg: COLORS.hint,
-      height: 1,
-      flexShrink: 0,
-      selectable: false,
-    });
-    row.visible = false;
-    return row;
-  });
-  fileAutocompletePanel.add(fileAutocompleteTitle);
-  for (const row of fileAutocompleteRows) {
-    fileAutocompletePanel.add(row);
-  }
-
-  const questionPanel = new BoxRenderable(renderer, {
-    flexDirection: "column",
-    border: true,
-    borderColor: COLORS.border,
-    paddingLeft: 1,
-    paddingRight: 1,
-    flexShrink: 0,
-  });
-  questionPanel.visible = false;
-
-  const questionTitle = new TextRenderable(renderer, {
-    content: "question",
-    fg: COLORS.agent,
-    wrapMode: "word",
-    flexShrink: 0,
-    selectable: false,
-  });
-  const questionSpacer = new TextRenderable(renderer, {
-    content: "",
-    height: 1,
-    flexShrink: 0,
-    selectable: false,
-  });
-  const questionRows = Array.from({ length: QUESTION_OPTION_LIMIT }, () => {
-    const row = new TextRenderable(renderer, {
-      content: "",
-      fg: COLORS.hint,
-      wrapMode: "word",
-      flexShrink: 0,
-      selectable: false,
-    });
-    row.visible = false;
-    return row;
-  });
-  questionPanel.add(questionTitle);
-  questionPanel.add(questionSpacer);
-  for (const row of questionRows) {
-    questionPanel.add(row);
-  }
-
-  const inputBox = new BoxRenderable(renderer, {
-    flexDirection: "row",
-    border: true,
-    borderColor: COLORS.border,
-    paddingLeft: 1,
-    paddingRight: 1,
-    flexShrink: 0,
-  });
-
-  // The leading "> " sigil is decoration, not content; excluding it from
-  // selection means a drag that starts at the input row does not pull the
-  // sigil into the clipboard alongside the highlighted text.
-  const prompt = new TextRenderable(renderer, {
-    content: "> ",
-    fg: COLORS.user,
-    width: 2,
-    selectable: false,
-  });
-
-  // Textarea (rather than Input) so long messages soft-wrap visually. Enter
-  // is intercepted in onKeyDown below to submit instead of inserting a newline.
-  const inputField = new TextareaRenderable(renderer, {
-    placeholder: "Type a message and press Enter…",
-    flexGrow: 1,
-    minHeight: 1,
-    maxHeight: 10,
-    wrapMode: "word",
-  });
-
-  inputBox.add(prompt);
-  inputBox.add(inputField);
-
-  layout.add(transcript);
-  layout.add(status);
-  layout.add(hint);
-  layout.add(skillAutocompletePanel);
-  layout.add(fileAutocompletePanel);
-  layout.add(questionPanel);
-  layout.add(inputBox);
-  root.add(layout);
-  root.add(sidebar.view);
-  renderer.root.add(root);
-  inputField.focus();
+  const {
+    sidebar,
+    transcript,
+    status,
+    hint,
+    skillAutocompletePanel,
+    commandHeader,
+    commandRows,
+    skillHeader,
+    skillRows,
+    fileAutocompletePanel,
+    fileAutocompleteRows,
+    questionPanel,
+    questionTitle,
+    questionRows,
+    inputField,
+  } = buildLayout(renderer);
 
   // ---- transcript helpers ----------------------------------------------------
 
