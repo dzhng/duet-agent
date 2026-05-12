@@ -22,7 +22,8 @@ import {
   tryReadClipboardText,
 } from "./paste.js";
 import { parseCopyArgument, selectCopyText, type TranscriptEntry } from "./transcript-log.js";
-import { isTextBufferDestroyedError, TranscriptWriter } from "./transcript-writer.js";
+import { StatusController, formatElapsed, runningMarker } from "./status-controller.js";
+import { TranscriptWriter } from "./transcript-writer.js";
 import type { Session } from "../session/session.js";
 import {
   describeUpgradeStatus,
@@ -71,7 +72,7 @@ import { listRecentSessions } from "./recent-sessions.js";
 import { buildLayout } from "./layout.js";
 import { SIDEBAR_WIDTH } from "./sidebar.js";
 import { orderedSelectableStarters, selectStarters } from "./starters.js";
-import { COLORS, HINT_IDLE, HINT_RUNNING, HINT_SELECTION_COPY } from "./theme.js";
+import { COLORS } from "./theme.js";
 
 export type { HistoryBlockKind, HistoryDisplayBlock, LimitedHistory } from "./history.js";
 export type { StartupHeaderInput } from "./history.js";
@@ -227,7 +228,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   renderer.on("selection", (selection: Selection) => {
     lastSelectionText = selection.getSelectedText();
     transcriptWriter.logSelection(lastSelectionText);
-    refreshHint();
+    statusController.setSelectionText(lastSelectionText);
   });
 
   const {
@@ -252,7 +253,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const transcriptWriter = new TranscriptWriter(renderer, transcript, {
     getLastSelectionText: () => lastSelectionText,
-    onBufferDestroyed: () => stopWorkingTicker(),
+    onBufferDestroyed: () => statusController.shutdown(),
   });
 
   function appendLine(content: string, fg: string): void {
@@ -263,60 +264,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     transcriptWriter.appendBlock(label, body, fg);
   }
 
-  function setStatus(text: string): void {
-    // Renderer teardown destroys the underlying TextBuffer synchronously,
-    // but in-flight async work (session events, ticker callbacks, upgrade
-    // status pushes) may still drive chrome updates on the next microtask.
-    // The `destroyed` flag catches writes that arrive after our destroy
-    // handler runs; the try/catch backstops the window between OpenTUI
-    // tearing down child TextBuffers and emitting the `destroy` event,
-    // which is when the ticker callback in the stack trace lands.
-    if (transcriptWriter.isDestroyed()) return;
-    try {
-      status.content = text;
-    } catch (error) {
-      if (isTextBufferDestroyedError(error)) {
-        transcriptWriter.markDestroyed();
-        stopWorkingTicker();
-        return;
-      }
-      throw error;
-    }
-  }
-
-  function setHint(running: boolean): void {
-    if (transcriptWriter.isDestroyed()) return;
-    const base = running ? HINT_RUNNING : HINT_IDLE;
-    const segments: string[] = [];
-    if (pendingImages.length > 0) segments.push(attachmentHint());
-    segments.push(base);
-    if (lastSelectionText.trim().length > 0) segments.push(HINT_SELECTION_COPY);
-    try {
-      hint.content = segments.join(" · ");
-    } catch (error) {
-      if (isTextBufferDestroyedError(error)) {
-        transcriptWriter.markDestroyed();
-        stopWorkingTicker();
-        return;
-      }
-      throw error;
-    }
-  }
-
-  function attachmentHint(): string {
-    const n = pendingImages.length;
-    return n === 1 ? "📎 1 image attached" : `📎 ${n} images attached`;
-  }
-
-  // Single-channel hint refresh used by every input that affects what the
-  // bottom row should advertise (running state, attachments, selection).
-  function refreshHint(): void {
-    setHint(running);
-  }
-
   // ---- runtime state ---------------------------------------------------------
 
-  let running = false;
   // Image attachments collected via paste / `/image` and forwarded to the
   // runner with the next prompt submission. Cleared after submit so each turn
   // ships its own attachments without leaking into the next.
@@ -327,7 +276,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function recordTranscriptEntry(kind: TranscriptEntry["kind"], text: string): void {
     transcriptWriter.recordEntry(kind, text);
   }
-  let lastTerminal: TurnTerminalEvent | undefined;
   // Context bar + session cost are owned by `Session` (persisted beside
   // `TurnState` in `state.json`), not `TurnRunner` / `TurnState`.
   let activeTextStream: StreamingBlock | undefined;
@@ -363,36 +311,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     startedAt: number | undefined;
   }
 
-  // Tracks the wall-clock start of the current turn so the status line can
-  // surface a live "Ns" / "Nm Ns" elapsed counter while work is in flight.
-  let workingStartedAt: number | undefined;
-  let workingTicker: ReturnType<typeof setInterval> | undefined;
-  // Swapped out by memory events so the ticker can keep refreshing while the
-  // human-readable phase ("recalling memories…", etc.) stays accurate.
-  let workingMessage = "working…";
-  // Queued follow-up count surfaced inline on the status line so the user can
-  // see at a glance how many prompts will run after the current turn settles.
-  let queuedFollowUps = 0;
-
-  function formatElapsed(ms: number): string {
-    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-    if (totalSeconds < 60) return `${totalSeconds}s`;
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `${minutes}m ${seconds}s`;
-  }
-
-  function refreshWorkingStatus(): void {
-    if (transcriptWriter.isDestroyed()) return;
-    refreshActiveToolBlocks();
-    if (workingStartedAt === undefined) {
-      setStatus(queuedFollowUps > 0 ? `queued follow-ups: ${queuedFollowUps}` : "");
-      return;
-    }
-    const elapsed = formatElapsed(Date.now() - workingStartedAt);
-    const queued = queuedFollowUps > 0 ? ` · queued follow-ups: ${queuedFollowUps}` : "";
-    setStatus(`● ${workingMessage} (${elapsed})${queued}`);
-  }
+  const statusController = new StatusController({
+    renderer,
+    status,
+    hint,
+    refreshActiveToolBlocks: () => refreshActiveToolBlocks(),
+  });
 
   function refreshActiveToolBlocks(): void {
     if (activeToolBlocks.size === 0) return;
@@ -407,47 +331,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
   }
 
-  /**
-   * Spinner marker for an in-flight tool call. Hides the elapsed counter for
-   * sub-second runs so a transcript of fast tools is not littered with "0s".
-   */
-  function runningMarker(elapsedMs: number): string {
-    return elapsedMs >= 1000 ? `⏳ ${formatElapsed(elapsedMs)}` : "⏳";
-  }
-
-  function startWorkingTicker(): void {
-    if (workingTicker !== undefined) return;
-    workingTicker = setInterval(refreshWorkingStatus, 1000);
-  }
-
-  function stopWorkingTicker(): void {
-    if (workingTicker !== undefined) {
-      clearInterval(workingTicker);
-      workingTicker = undefined;
-    }
-  }
-
-  function markRunning(): void {
-    running = true;
-    setHint(true);
-    workingMessage = "working…";
-    workingStartedAt = Date.now();
-    refreshWorkingStatus();
-    startWorkingTicker();
-  }
-
-  function markIdle(): void {
-    running = false;
-    setHint(false);
-    stopWorkingTicker();
-    workingStartedAt = undefined;
-    workingMessage = "working…";
-    refreshWorkingStatus();
-  }
-
   function reportError(error: unknown): void {
     appendBlock("[error]", error instanceof Error ? error.message : String(error), COLORS.error);
-    markIdle();
+    statusController.markIdle();
   }
 
   // ---- session subscription --------------------------------------------------
@@ -479,41 +365,36 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       // Sidebar already refreshed from session state above; mirror the count
       // into the working-status line so the user can see queued prompts at a
       // glance without scrolling the sidebar.
-      queuedFollowUps = event.prompts.length;
-      refreshWorkingStatus();
+      statusController.setQueuedFollowUps(event.prompts.length);
     } else if (event.type === "todos") {
       // Sidebar refresh covers the visual update; nothing else to do here.
     } else if (event.type === "memory") {
       renderMemoryStatus(event);
     } else if (event.type === "system") {
       appendBlock("[system]", event.message, COLORS.system);
-      if (event.level === "error") markIdle();
+      if (event.level === "error") statusController.markIdle();
     } else if (event.type === "ask") {
       appendBlock("[question]", event.questions.map((q) => q.question).join("\n"), COLORS.system);
       showQuestions(event.questions);
       renderUsage(event.usage);
       renderTurnElapsed();
-      lastTerminal = event;
-      markIdle();
+      statusController.markIdle(event);
     } else if (event.type === "complete") {
       if (event.error) {
         appendBlock("[error]", event.error, COLORS.error);
       }
       renderUsage(event.usage);
       renderTurnElapsed();
-      lastTerminal = event;
-      markIdle();
+      statusController.markIdle(event);
     } else if (event.type === "interrupted") {
       appendLine("[interrupted]", COLORS.system);
       renderUsage(event.usage);
       renderTurnElapsed();
-      lastTerminal = event;
-      markIdle();
+      statusController.markIdle(event);
     } else if (event.type === "sleep") {
       renderUsage(event.usage);
       renderSleeping(event.wakeAt);
-      lastTerminal = event;
-      markIdle();
+      statusController.markIdle(event);
     }
   });
 
@@ -874,8 +755,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   function renderTurnElapsed(): void {
-    if (workingStartedAt === undefined) return;
-    appendLine(`● turn finished in ${formatElapsed(Date.now() - workingStartedAt)}`, COLORS.status);
+    const startedAt = statusController.getWorkingStartedAt();
+    if (startedAt === undefined) return;
+    appendLine(`● turn finished in ${formatElapsed(Date.now() - startedAt)}`, COLORS.status);
   }
 
   // Sleep terminals replace the usual "turn finished" line because the session
@@ -884,10 +766,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // duration so the user can still see how long the work took.
   function renderSleeping(wakeAt: number): void {
     const wakeLabel = new Date(wakeAt).toLocaleTimeString();
+    const startedAt = statusController.getWorkingStartedAt();
     const turnDuration =
-      workingStartedAt !== undefined
-        ? ` · turn took ${formatElapsed(Date.now() - workingStartedAt)}`
-        : "";
+      startedAt === undefined ? "" : ` · turn took ${formatElapsed(Date.now() - startedAt)}`;
     appendLine(`● sleeping until ${wakeLabel}${turnDuration}`, COLORS.status);
   }
 
@@ -1048,17 +929,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderMemoryStatus(event: Extract<TurnEvent, { type: "memory" }>): void {
     if (event.status === "running") {
-      workingMessage = event.message;
-      refreshWorkingStatus();
+      statusController.setWorkingMessage(event.message);
       return;
     }
     const body = formatMemoryEventBody(event);
     if (body) {
       appendBlock(`[memory:${event.phase}]`, body, COLORS.memory);
     }
-    if (running) {
-      workingMessage = "working…";
-      refreshWorkingStatus();
+    if (statusController.isRunning()) {
+      statusController.setWorkingMessage("working…");
     }
   }
 
@@ -1363,7 +1242,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       })
       .catch(reportError);
     hideQuestions();
-    markRunning();
+    statusController.markRunning();
     return true;
   }
 
@@ -1842,7 +1721,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // terminal — both paths drain through the `finally` block in
   // cli/run.ts that disposes the SessionManager and flushes PGlite.
   function handleEscape(): void {
-    if (!running) return;
+    if (!statusController.isRunning()) return;
     void input.session.interrupt().catch(reportError);
   }
 
@@ -1866,7 +1745,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const submittedImages = pendingImages;
     inputField.clear();
     clearPendingImages();
-    refreshHint();
     recordTranscriptEntry("user", message);
     appendBlock("you:", message, COLORS.user);
     if (submittedImages.length > 0) {
@@ -1875,8 +1753,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
     const images = submittedImages.map((p) => p.attachment);
     void input.session.prompt({ message, behavior: "steer", images }).catch(reportError);
-    if (!running) {
-      markRunning();
+    if (!statusController.isRunning()) {
+      statusController.markRunning();
     }
   }
 
@@ -2012,7 +1890,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         pendingImages.push(pending);
         inputField.insertText(pending.label);
         appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
-        refreshHint();
+        statusController.setPendingImageCount(pendingImages.length);
       } catch (error) {
         // The clipboard looked like an image path but we could not load
         // it — surface why and restore the original text so the user can
@@ -2063,7 +1941,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         `attached ${pending.label} (${mimeType}, ${formatBytes(bytes.length)})`,
         COLORS.system,
       );
-      refreshHint();
+      statusController.setPendingImageCount(pendingImages.length);
     } catch (error) {
       appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
     }
@@ -2073,7 +1951,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (pendingImages.length === 0) return;
     pendingImages = [];
     nextImageId = 1;
-    refreshHint();
+    statusController.setPendingImageCount(0);
   }
 
   // Manual clipboard probe. Read the OS clipboard for an image right now and
@@ -2180,7 +2058,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         })
         .catch(reportError);
       hideQuestions();
-      if (!running) markRunning();
+      if (!statusController.isRunning()) statusController.markRunning();
       return;
     }
 
@@ -2188,8 +2066,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // running this queues; while idle it kicks off a fresh turn. Single
     // mental model: type, press Enter, your message lands.
     void input.session.prompt({ message, behavior: "follow_up", images }).catch(reportError);
-    if (!running) {
-      markRunning();
+    if (!statusController.isRunning()) {
+      statusController.markRunning();
     }
   }
 
@@ -2206,7 +2084,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const result = await copyTextToClipboard(text);
     renderer.clearSelection();
     lastSelectionText = "";
-    refreshHint();
+    statusController.setSelectionText("");
     if (result.ok) {
       appendBlock(
         "[copy]",
@@ -2360,7 +2238,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       // can keep typing their prompt with the image already attached.
       inputField.insertText(pending.label);
       appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
-      refreshHint();
+      statusController.setPendingImageCount(pendingImages.length);
     } catch (error) {
       appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
     }
@@ -2434,17 +2312,18 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     void input.session
       .prompt({ message: input.initialPrompt, behavior: "follow_up" })
       .catch(reportError);
-    markRunning();
+    statusController.markRunning();
   } else {
     // A resumed sleeping session emitted its `sleep` terminal during
     // hydrate(), before this subscriber attached. Surface the banner now so
     // the user can see when the next wake will fire.
     const pending = input.session.getLastTerminal();
     if (pending?.type === "sleep") {
-      lastTerminal = pending;
       renderSleeping(pending.wakeAt);
+      statusController.markIdle(pending);
+    } else {
+      statusController.markIdle();
     }
-    markIdle();
   }
 
   // ---- run renderer until the user quits -------------------------------------
@@ -2458,14 +2337,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       // race the teardown are caught by the `destroyed` guard in the
       // transcript writer and the other chrome mutators.
       transcriptWriter.markDestroyed();
-      stopWorkingTicker();
+      statusController.shutdown();
       resolve();
     };
     renderer.once("destroy", onDestroy);
   });
 
   unsubscribe();
-  return lastTerminal;
+  return statusController.lastTerminal();
 
   // --------------------------------------------------------------------------
 
