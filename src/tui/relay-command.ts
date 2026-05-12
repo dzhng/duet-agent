@@ -13,13 +13,18 @@ import dedent from "dedent";
  */
 
 /**
- * Whitespace-delimited `/relay` token. Captures the surrounding
- * whitespace so the replacement can collapse `"foo /relay bar"` into
- * `"foo bar"` without leaving a double space, while a leading or
- * trailing token disappears completely. Anchored so partial matches
- * inside other words (e.g. `/relayed`, `/relay-runner`) do not trigger.
+ * Build a fresh `/g` matcher per call. Sharing a module-scope `/g`
+ * regex would carry `lastIndex` across invocations and force a manual
+ * reset after every `.test()`; a per-call instance makes that footgun
+ * impossible. Captures the surrounding whitespace so the replacement
+ * can collapse `"foo /relay bar"` into `"foo bar"` without leaving a
+ * double space, while a leading or trailing token disappears
+ * completely. Anchored so partial matches inside other words
+ * (e.g. `/relayed`, `/relay-runner`) do not trigger.
  */
-const RELAY_TOKEN = /(^|\s)\/relay(\s|$)/g;
+function relayTokenMatcher(): RegExp {
+  return /(^|\s)\/relay(\s|$)/g;
+}
 
 /**
  * Appended verbatim to the prompt when at least one `/relay` token was
@@ -47,13 +52,12 @@ export interface RelayCommandResult {
  * before the reminder is appended.
  */
 export function applyRelayCommand(message: string): RelayCommandResult {
-  if (!RELAY_TOKEN.test(message)) {
+  const matcher = relayTokenMatcher();
+  if (!matcher.test(message)) {
     return { message, applied: false };
   }
-  // Reset lastIndex because the .test() above advanced it on the shared regex.
-  RELAY_TOKEN.lastIndex = 0;
   const stripped = message
-    .replace(RELAY_TOKEN, (_match, leading: string, trailing: string) =>
+    .replace(relayTokenMatcher(), (_match, leading: string, trailing: string) =>
       // Collapse to a single space only when the token sat between two
       // words; an edge token (no leading or no trailing) disappears
       // entirely so the trimmed message keeps clean boundaries.
