@@ -636,7 +636,13 @@ function buildContinuationMessage(): AgentMessage {
   };
 }
 
-function stripObservationalContextMessages(messages: AgentMessage[]): AgentMessage[] {
+/**
+ * Drop synthetic memory/continuation reminders injected by the actor
+ * context transform so callers see only the "real" conversation messages
+ * the observer and wire-shaping pipelines reason about. Safe to call on a
+ * message list whether or not the transform has run.
+ */
+export function stripObservationalContextMessages(messages: AgentMessage[]): AgentMessage[] {
   return messages.filter((message) => !isObservationalContextMessage(message));
 }
 

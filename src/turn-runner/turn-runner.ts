@@ -4,7 +4,12 @@ import {
   type AgentMessage,
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
-import { getEnvApiKey, type ImageContent, type Usage } from "@earendil-works/pi-ai";
+import {
+  getEnvApiKey,
+  isContextOverflow,
+  type ImageContent,
+  type Usage,
+} from "@earendil-works/pi-ai";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
@@ -16,6 +21,7 @@ import {
   DEFAULT_EFFECTIVE_CONTEXT,
   estimateTokens,
   resolveObservationalMemorySettings,
+  stripObservationalContextMessages,
   updateObservationalMemory,
 } from "../memory/observational.js";
 import { rebuildMemoryContextPack } from "../memory/context-pack.js";
@@ -50,7 +56,13 @@ import type {
 import type { StateMachineAgentState } from "../types/state-machine.js";
 import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
 import { createStateMachineSystemPromptLayer } from "./prompts.js";
-import { calculateWireBytes, createInitialHorizon, type WireGuardHorizon } from "./wire-shaping.js";
+import {
+  applyEvictionHorizon,
+  calculateWireBytes,
+  createInitialHorizon,
+  findEvictionHorizon,
+  type WireGuardHorizon,
+} from "./wire-shaping.js";
 import {
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
@@ -1111,6 +1123,17 @@ export class TurnRunner {
     let interruptedDuringPrompt: TurnTerminalEvent | undefined;
     try {
       await agent.prompt(input.prompt, input.images);
+      // Single-shot recovery: if the provider rejected the first attempt
+      // with a context-overflow error, advance the sticky wire-shaping
+      // horizon so the next send carries roughly the newer half of
+      // history, then resume the same turn via `agent.continue()`.
+      // Continuing (rather than re-prompting) keeps the existing user
+      // message at the tail instead of appending a duplicate. A
+      // still-too-big second attempt falls through as `failed` — no
+      // further retries.
+      if (this.tryRecoverFromContextOverflow(agent)) {
+        await agent.continue();
+      }
     } catch (error) {
       interruptedDuringPrompt = this.consumeInterruptedTerminal();
       if (!interruptedDuringPrompt) {
@@ -1177,6 +1200,79 @@ export class TurnRunner {
     this.recordUsage(result.terminal.usage);
     this.emitTurnUsage();
     return result;
+  }
+
+  /**
+   * Inspect the most recent assistant message after a parent prompt and,
+   * when it carries a provider context-overflow error, mutate the agent
+   * state and the sticky `wireGuardHorizon` so that a subsequent re-prompt
+   * sends roughly the newer half of observable history.
+   *
+   * Returns `true` only when recovery actually happened — meaning the
+   * horizon advanced past at least one observable message. Callers use
+   * the return value as a single-shot gate: invoke once after the first
+   * `agent.prompt(...)` and, on `true`, resume the turn via
+   * `agent.continue()` exactly once. The helper never inspects the
+   * failing message again, so a second overflow on the retry falls
+   * through naturally as a `failed` turn.
+   *
+   * Mutations on success:
+   * - pops the failure assistant message that pi-agent pushed for the
+   *   overflow (an empty-text marker with `stopReason: "error"` and
+   *   `errorMessage`) so the retry's transcript does not carry it.
+   *   `agent.continue()`'s own run lifecycle resets `errorMessage`
+   *   before the retry, so we do not clear it here;
+   * - advances `this.wireGuardHorizon.evictionHorizon` to the smallest
+   *   value at which `findEvictionHorizon` reports the dispatched list
+   *   shrinks to at most `floor(n / 2)` observable messages, where `n`
+   *   excludes the failure message itself.
+   *
+   * Emits one informational `system` event describing the compaction so
+   * surfaces can show a notice. The message reports the *actual*
+   * post-eviction drop count (after `MIN_HISTORY_TAIL` clamping and
+   * orphan-head skipping), not the half-of-n target.
+   *
+   * Returns `false` when:
+   * - the parent agent did not fail (`errorMessage` is unset);
+   * - the failure is not a context overflow (rate limit, transport
+   *   error, etc. — left as-is for the caller to surface);
+   * - no horizon advance is possible (e.g. the existing horizon already
+   *   covers every evictable message, or the history is too short to
+   *   satisfy `MIN_HISTORY_TAIL`). In those cases retrying with the
+   *   same context would still overflow, so we accept the failure
+   *   instead of paying a second pointless request.
+   */
+  protected tryRecoverFromContextOverflow(agent: Agent): boolean {
+    if (!agent.state.errorMessage) return false;
+    const messages = agent.state.messages;
+    const lastMessage = messages[messages.length - 1];
+    if (!lastMessage || lastMessage.role !== "assistant") return false;
+    if (!isContextOverflow(lastMessage, agent.state.model.contextWindow)) return false;
+
+    // Exclude the failure assistant message from the half-history
+    // calculation; only "real" prior turns should count toward the
+    // observable population the cut targets.
+    const observable = stripObservationalContextMessages(messages.slice(0, -1));
+    const target = Math.floor(observable.length / 2);
+    const previousHorizon = this.wireGuardHorizon.evictionHorizon;
+    const newHorizon = findEvictionHorizon(
+      observable,
+      previousHorizon,
+      (candidate) => candidate.length <= target,
+    );
+    if (newHorizon === previousHorizon) return false;
+
+    messages.pop();
+    this.wireGuardHorizon.evictionHorizon = newHorizon;
+
+    const remaining = applyEvictionHorizon(observable, newHorizon).length;
+    const dropped = observable.length - remaining;
+    this.emit({
+      type: "system",
+      level: "info",
+      message: `Context overflow: dropped ${dropped} older message${dropped === 1 ? "" : "s"} and retrying.`,
+    });
+    return true;
   }
 
   protected async updateMemoryAfterAgentRun(
@@ -1293,8 +1389,10 @@ export class TurnRunner {
 
   // Sticky across all turns within this runner instance. Resets on
   // session resume (new runner). Mutated in place by the memory transform
-  // when either the token or byte budget triggers eviction.
-  private readonly wireGuardHorizon: WireGuardHorizon = createInitialHorizon();
+  // when either the token or byte budget triggers eviction, and by
+  // `runAgentWorker` on a provider context-overflow error so the retry
+  // sends the newer half of history.
+  protected readonly wireGuardHorizon: WireGuardHorizon = createInitialHorizon();
 
   async getSkills(): Promise<readonly Skill[]> {
     await this.ensureSkillsLoaded();

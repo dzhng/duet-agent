@@ -3,6 +3,7 @@ import { startTurn } from "./helpers/turn-runner-protocol.js";
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   createAssistantMessageEventStream,
+  type AssistantMessage,
   type ImageContent,
   type Model,
 } from "@earendil-works/pi-ai";
@@ -207,6 +208,67 @@ class UsageEventTurnRunner extends TurnRunner {
             },
           }),
         });
+      });
+      return stream;
+    };
+    return agent;
+  }
+}
+
+/**
+ * Drives `runAgentWorker`'s overflow-recovery branch end-to-end. The
+ * stubbed `streamFn` pushes a configurable assistant message per attempt
+ * — overflow-flavored or successful — so a single `startTurn(...).turn`
+ * call exercises the first-attempt failure plus the optional retry. The
+ * runner also pre-seeds `agent.state.messages` between `start` and the
+ * actual prompt so the half-history calculation has enough observable
+ * messages to drop at least one — `MIN_HISTORY_TAIL=1` clamps the cut
+ * to zero when fewer than two messages are evictable.
+ */
+class OverflowRecoveryTurnRunner extends TurnRunner {
+  attempts = 0;
+  attemptMessages: AssistantMessage[] = [];
+  seedMessages: AgentMessage[] = [];
+  capturedAgent?: Agent;
+
+  getEvictionHorizon(): number {
+    return this.wireGuardHorizon.evictionHorizon;
+  }
+
+  protected override async updateMemoryAfterAgentRun(): Promise<void> {
+    // Memory pipeline is unrelated to overflow recovery; skip so the
+    // turn settles solely through the streamFn stub.
+  }
+
+  protected override createAgent(
+    input: AgentConfigInput,
+    onControlResult?: (result: TurnRunnerControlResult) => void,
+  ): Agent {
+    const agent = super.createAgent(input, onControlResult);
+    this.capturedAgent = agent;
+    // Seed history before any prompt runs so the first observable list
+    // already exceeds `MIN_HISTORY_TAIL`. The seeded messages are
+    // pushed into the live `_state.messages` array, matching the
+    // production shape where prior turns accumulate over time.
+    if (this.seedMessages.length > 0) {
+      agent.state.messages.push(...this.seedMessages);
+    }
+    agent.streamFn = () => {
+      const stream = createAssistantMessageEventStream();
+      const attemptIndex = this.attempts;
+      this.attempts += 1;
+      const message = this.attemptMessages[attemptIndex] ?? createAssistantMessage({ text: "ok" });
+      queueMicrotask(() => {
+        if (message.stopReason === "error") {
+          // Push as an "error" event so the agent loop routes it through
+          // the same `errorMessage`-bearing path real providers use.
+          // pi-agent's `streamAssistantResponse` will push the message
+          // onto the transcript and emit `turn_end`, which sets
+          // `agent.state.errorMessage`.
+          stream.push({ type: "error", reason: "error", error: message });
+        } else {
+          stream.push({ type: "done", reason: "stop", message });
+        }
       });
       return stream;
     };
@@ -678,6 +740,150 @@ describe("TurnRunner memory", () => {
     const modelWindow = runner.requireParentAgentForTest().state.model.contextWindow;
     expect(modelWindow).toBeGreaterThan(50_000);
     expect(runner.effectiveContextWindowForTest()).toBe(50_000);
+  });
+
+  test("provider context-overflow on first attempt advances the wire horizon and retries once", async () => {
+    const runner = new OverflowRecoveryTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    runner.seedMessages = [
+      { role: "user", content: [{ type: "text", text: "first user message" }], timestamp: 1 },
+      createAssistantMessage({ text: "first assistant reply", timestamp: 2 }),
+      { role: "user", content: [{ type: "text", text: "second user message" }], timestamp: 3 },
+      createAssistantMessage({ text: "second assistant reply", timestamp: 4 }),
+    ];
+    runner.attemptMessages = [
+      createAssistantMessage({
+        stopReason: "error",
+        errorMessage: "prompt is too long: 213462 tokens > 200000 maximum",
+        timestamp: 5,
+      }),
+      createAssistantMessage({ text: "recovered after compaction", timestamp: 6 }),
+    ];
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+
+    const terminal = await (
+      await startTurn(runner, { mode: "agent", prompt: "ping after seeded history" })
+    ).turn;
+
+    expect(runner.attempts).toBe(2);
+    expect(terminal.type).toBe("complete");
+    if (terminal.type !== "complete") throw new Error("expected complete terminal");
+    expect(terminal.status).toBe("completed");
+    expect(terminal.result).toBe("recovered after compaction");
+
+    expect(runner.getEvictionHorizon()).toBeGreaterThan(0);
+    const agent = runner.capturedAgent;
+    if (!agent) throw new Error("expected captured parent agent");
+    expect(agent.state.errorMessage).toBeUndefined();
+    // No failure-message marker should remain in the transcript after
+    // recovery popped it.
+    expect(
+      agent.state.messages.some(
+        (msg) => msg.role === "assistant" && (msg as { errorMessage?: string }).errorMessage,
+      ),
+    ).toBe(false);
+    // `agent.continue()` resumes from the existing user message instead
+    // of appending a duplicate, so exactly one user message carries the
+    // current prompt's text in the post-recovery transcript.
+    const promptUserMessages = agent.state.messages.filter(
+      (msg) =>
+        msg.role === "user" &&
+        Array.isArray(msg.content) &&
+        msg.content.some(
+          (part) =>
+            typeof part === "object" &&
+            part !== null &&
+            "type" in part &&
+            part.type === "text" &&
+            (part as { text: string }).text === "ping after seeded history",
+        ),
+    );
+    expect(promptUserMessages).toHaveLength(1);
+
+    const noticeEvents = events.filter(
+      (event): event is Extract<TurnEvent, { type: "system" }> =>
+        event.type === "system" && event.message.startsWith("Context overflow"),
+    );
+    expect(noticeEvents).toHaveLength(1);
+    expect(noticeEvents[0]!.level).toBe("info");
+    expect(noticeEvents[0]!.message).toMatch(/dropped \d+ older message/);
+  });
+
+  test("provider context-overflow on both attempts fails after exactly one retry", async () => {
+    const runner = new OverflowRecoveryTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    runner.seedMessages = [
+      { role: "user", content: [{ type: "text", text: "u1" }], timestamp: 1 },
+      createAssistantMessage({ text: "a1", timestamp: 2 }),
+      { role: "user", content: [{ type: "text", text: "u2" }], timestamp: 3 },
+      createAssistantMessage({ text: "a2", timestamp: 4 }),
+    ];
+    const overflowMessage = (timestamp: number) =>
+      createAssistantMessage({
+        stopReason: "error",
+        errorMessage: "prompt is too long: still over the limit after compaction",
+        timestamp,
+      });
+    runner.attemptMessages = [overflowMessage(5), overflowMessage(6)];
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+
+    const terminal = await (
+      await startTurn(runner, { mode: "agent", prompt: "ping that overflows twice" })
+    ).turn;
+
+    expect(runner.attempts).toBe(2);
+    expect(terminal.type).toBe("complete");
+    if (terminal.type !== "complete") throw new Error("expected complete terminal");
+    expect(terminal.status).toBe("failed");
+    expect(terminal.error).toContain("prompt is too long");
+    expect(
+      events.filter(
+        (event) => event.type === "system" && event.message.startsWith("Context overflow"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("non-overflow provider error does not retry and leaves the wire horizon unchanged", async () => {
+    const runner = new OverflowRecoveryTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    runner.seedMessages = [
+      { role: "user", content: [{ type: "text", text: "u1" }], timestamp: 1 },
+      createAssistantMessage({ text: "a1", timestamp: 2 }),
+      { role: "user", content: [{ type: "text", text: "u2" }], timestamp: 3 },
+      createAssistantMessage({ text: "a2", timestamp: 4 }),
+    ];
+    runner.attemptMessages = [
+      createAssistantMessage({
+        stopReason: "error",
+        errorMessage: "Internal server error: please try again later.",
+        timestamp: 5,
+      }),
+    ];
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+
+    const terminal = await (
+      await startTurn(runner, { mode: "agent", prompt: "ping that hits a non-overflow error" })
+    ).turn;
+
+    expect(runner.attempts).toBe(1);
+    expect(terminal.type).toBe("complete");
+    if (terminal.type !== "complete") throw new Error("expected complete terminal");
+    expect(terminal.status).toBe("failed");
+    expect(runner.getEvictionHorizon()).toBe(0);
+    expect(
+      events.filter(
+        (event) => event.type === "system" && event.message.startsWith("Context overflow"),
+      ),
+    ).toHaveLength(0);
   });
 
   test("usage event carries a contextWindowUsage breakdown that scales with inputs", async () => {
