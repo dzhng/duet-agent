@@ -13,10 +13,7 @@ async function writeSkill(name: string, body: string): Promise<Skill> {
   const skillDir = join(tempDir, name);
   await mkdir(skillDir, { recursive: true });
   const skillFile = join(skillDir, "SKILL.md");
-  await writeFile(
-    skillFile,
-    `---\nname: ${name}\ndescription: ${name} skill\n---\n${body}\n`,
-  );
+  await writeFile(skillFile, `---\nname: ${name}\ndescription: ${name} skill\n---\n${body}\n`);
   return {
     name,
     description: `${name} skill`,
@@ -75,21 +72,24 @@ describe("SkillContext.resolveSlashSkillPrompt", () => {
     expect(ctx.resolveSlashSkillPrompt("/unknown go")).toBe("/unknown go");
   });
 
-  testIfDocker("injects each unique skill once even when the same /name appears twice", async () => {
-    const skill = await writeSkill("review", "BODY_REVIEW");
-    const ctx = new SkillContext({ skills: [skill], skillDiscovery: { includeDefaults: false } });
-    await ctx.ensureLoaded();
+  testIfDocker(
+    "injects each unique skill once even when the same /name appears twice",
+    async () => {
+      const skill = await writeSkill("review", "BODY_REVIEW");
+      const ctx = new SkillContext({ skills: [skill], skillDiscovery: { includeDefaults: false } });
+      await ctx.ensureLoaded();
 
-    const resolved = ctx.resolveSlashSkillPrompt("/review pass one /review pass two");
-    const matches = resolved.match(/<skill name="review">/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(1);
-    // Body is loaded from disk; assert it appears at least as many times as
-    // the <skill> opening tag (defends against future dedup regressions: if
-    // the resolver one day collapses duplicates we want the bodies to match
-    // the tags, not silently diverge).
-    const bodyMatches = resolved.match(/BODY_REVIEW/g) ?? [];
-    expect(bodyMatches.length).toBe(matches.length);
-  });
+      const resolved = ctx.resolveSlashSkillPrompt("/review pass one /review pass two");
+      const matches = resolved.match(/<skill name="review">/g) ?? [];
+      expect(matches.length).toBeGreaterThanOrEqual(1);
+      // Body is loaded from disk; assert it appears at least as many times as
+      // the <skill> opening tag (defends against future dedup regressions: if
+      // the resolver one day collapses duplicates we want the bodies to match
+      // the tags, not silently diverge).
+      const bodyMatches = resolved.match(/BODY_REVIEW/g) ?? [];
+      expect(bodyMatches.length).toBe(matches.length);
+    },
+  );
 
   testIfDocker("injects multiple distinct skills in slash order", async () => {
     const review = await writeSkill("review", "REVIEW_BODY");

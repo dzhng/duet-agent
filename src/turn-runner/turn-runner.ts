@@ -896,10 +896,14 @@ export class TurnRunner {
 
   private initializeParentAgent(): void {
     const state = this.requireRunnerState();
+    // Append the state-machine routing guidance whenever the parent agent has
+    // state-machine tools available. "auto" mode is the case that matters most:
+    // the agent must decide between todo_write and create_state_machine_definition,
+    // and without this layer the only signal is each tool's own description.
     const appendSystemPrompt =
-      typeof state.mode === "object"
-        ? createStateMachineSystemPromptLayer({ mode: state.mode, session: state })
-        : undefined;
+      state.mode === "agent"
+        ? undefined
+        : createStateMachineSystemPromptLayer({ mode: state.mode, session: state });
     this.parentControlResult = { type: "none" };
     this.parentAgent = this.createAgent(
       {

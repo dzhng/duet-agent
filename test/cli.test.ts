@@ -784,9 +784,9 @@ describe("TUI file autocomplete helpers", () => {
     const token = activeFileAutocompleteToken(text, text.length);
     if (!token) throw new Error("Expected file token");
 
-    expect(replaceFileAutocompleteToken(text, token, "packages/agent-gateway/src/index.ts").text).toBe(
-      "[@index.ts](./packages/agent-gateway/src/index.ts) ",
-    );
+    expect(
+      replaceFileAutocompleteToken(text, token, "packages/agent-gateway/src/index.ts").text,
+    ).toBe("[@index.ts](./packages/agent-gateway/src/index.ts) ");
   });
 });
 
