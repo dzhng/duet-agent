@@ -39,6 +39,13 @@ export interface LayoutRefs {
   status: TextRenderable;
   /** Single-line hint row showing the active keystrokes (Enter / Esc / copy). */
   hint: TextRenderable;
+  /** Mount point for the dino "while-you-wait" game panel. Sits between
+   *  the hint row and the autocomplete pickers so it never overlaps the
+   *  input box. The dino factory adds its own rows into this container;
+   *  layout doesn't reserve a height because the panel sizes itself from
+   *  its children (12 rows when expanded, 1 when collapsed, 0 when
+   *  never opened). */
+  dinoPanel: BoxRenderable;
   /** Slash + skill autocomplete panel; toggled via `visible` from the autocomplete controller. */
   skillAutocompletePanel: BoxRenderable;
   /** Header row for the "commands" section of the slash/skill picker. */
@@ -132,6 +139,15 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
     height: 1,
     flexShrink: 0,
     selectable: false,
+  });
+
+  // Container for the dino game panel. The dino factory mounts its own
+  // row pool into this container; we keep it as a bare BoxRenderable so
+  // the dino module can own its sizing without layout having to know
+  // anything about the game.
+  const dinoPanel = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    flexShrink: 0,
   });
 
   const skillAutocompletePanel = new BoxRenderable(renderer, {
@@ -290,6 +306,7 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
   layout.add(transcript);
   layout.add(status);
   layout.add(hint);
+  layout.add(dinoPanel);
   layout.add(skillAutocompletePanel);
   layout.add(fileAutocompletePanel);
   layout.add(questionPanel);
@@ -306,6 +323,7 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
     transcript,
     status,
     hint,
+    dinoPanel,
     skillAutocompletePanel,
     commandHeader,
     commandRows,

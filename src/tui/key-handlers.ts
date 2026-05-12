@@ -1,9 +1,11 @@
 import type { CliRenderer, KeyEvent, ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
 import type { AutocompleteController } from "./autocomplete-controller.js";
 import type { CopyController } from "./copy-controller.js";
+import type { DinoPanel } from "./dino/index.js";
 import type { PasteController } from "./paste-controller.js";
 import type { QuestionPicker } from "./question-picker.js";
 import type { StarterSection } from "./starter-section.js";
+import type { StatusController } from "./status-controller.js";
 import type { TranscriptWriter } from "./transcript-writer.js";
 
 /**
@@ -37,6 +39,13 @@ export interface KeyHandlerDeps {
   onEscape(): void;
   /** Dispatch the composer text with behavior:"steer" (Ctrl+Enter). */
   onSteer(): void;
+  /** Dino "while-you-wait" panel. The panel always owns Ctrl-G (toggle)
+   *  and additionally receives game keystrokes (space, ArrowUp) while it
+   *  is expanded and the agent is busy. */
+  dinoPanel: DinoPanel;
+  /** Used to gate dino keystroke routing on `running === true` so the
+   *  composer keeps its keys back the moment the agent needs the user. */
+  statusController: StatusController;
 }
 
 /**
@@ -67,6 +76,8 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
     onSubmit,
     onEscape,
     onSteer,
+    dinoPanel,
+    statusController,
   } = deps;
 
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
@@ -117,6 +128,29 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
     transcriptWriter.logKey("keydown", key);
+
+    // Ctrl-G: the dino panel always owns this keystroke regardless of
+    // focus, the agent's running state, or whether the composer has
+    // typed text. Toggling the panel must never be eaten by autocomplete
+    // or starter chrome below.
+    if (key.ctrl && (key.name === "g" || key.sequence === "\u0007")) {
+      key.preventDefault();
+      dinoPanel.toggle();
+      return;
+    }
+
+    // Forward game keys (space, ArrowUp) to the dino panel only while
+    // the panel is expanded AND the agent is busy. The composer keeps
+    // its keys back during idle so the user can type a follow-up
+    // without their spacebar being eaten by the game.
+    if (dinoPanel.isExpanded() && statusController.isRunning()) {
+      if ((key.name === "space" || key.name === "up") && !key.ctrl && !key.meta && !key.super) {
+        if (dinoPanel.handleKey(key.name)) {
+          key.preventDefault();
+          return;
+        }
+      }
+    }
     if (key.name === "pageup") {
       scrollByPage(-1);
       key.preventDefault();

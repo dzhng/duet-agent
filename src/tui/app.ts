@@ -7,6 +7,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { type CliRenderer, type PasteEvent, type Selection } from "@opentui/core";
 import { renderBootScreen } from "./boot-screen.js";
 import { createTuiControllers } from "./controllers.js";
+import { createDinoPanel } from "./dino/index.js";
 import { replayResumeHistory } from "./history-replay.js";
 import { bootstrapInitialPrompt } from "./initial-prompt.js";
 import { type EscapeSuppressionFlag, installKeyHandlers } from "./key-handlers.js";
@@ -156,6 +157,17 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     },
   });
 
+  // Dino panel: a "while-you-wait" mini-game that lives below the input
+  // box. The panel is opt-in via Ctrl-G; the agent's busy/idle transitions
+  // drive its freeze/resume so the world automatically pauses the moment
+  // the user is needed.
+  const dinoPanel = createDinoPanel({ renderer });
+  ui.dinoPanel.add(dinoPanel.view);
+  const unsubscribeDino = statusController.onRunningChange((running) => {
+    if (running) dinoPanel.resume();
+    else dinoPanel.freeze();
+  });
+
   const reportError = (error: unknown): void => {
     appendBlock("[error]", error instanceof Error ? error.message : String(error), COLORS.error);
     statusController.markIdle();
@@ -286,6 +298,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     onSubmit: submit,
     onEscape: handleEscape,
     onSteer: handleSteer,
+    dinoPanel,
+    statusController,
   });
 
   // Typing hides starter chrome; backspacing empty brings it back until
@@ -342,6 +356,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // events do not land on a dead TextBuffer.
     transcriptWriter.markDestroyed();
     statusController.shutdown();
+    unsubscribeDino();
+    dinoPanel.destroy();
   });
 
   unsubscribe();
