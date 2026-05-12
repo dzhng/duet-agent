@@ -148,6 +148,10 @@ const agentOverrideSchema = Type.Partial(
       description:
         "Skill names to inject into this sub-agent. Omit to inject all available skills.",
     }),
+    cwd: Type.String({
+      description:
+        "Replacement working directory for this sub-agent's coding tools (bash, read, write, edit).",
+    }),
     inputSchema: Type.Record(Type.String(), Type.Any(), {
       description:
         'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "email": { "type": "string" }, "followUpCount": { "type": "integer" } }, "required": ["email"] }. Fields omitted from required are optional.',
@@ -237,6 +241,12 @@ const agentStateSchema = Type.Object({
         "Skill names to inject into this sub-agent. Omit to inject all available skills.",
     }),
   ),
+  cwd: Type.Optional(
+    Type.String({
+      description:
+        "Working directory for this sub-agent's coding tools. Defaults to the state-machine session cwd.",
+    }),
+  ),
 });
 
 const scriptStateSchema = Type.Object({
@@ -306,7 +316,7 @@ const stateMachineStateSchema = Type.Union([
 ]);
 
 export type StateMachineAgentStateOverride = Partial<
-  Pick<StateMachineAgentState, "prompt" | "systemPrompt" | "allowedSkills" | "inputSchema">
+  Pick<StateMachineAgentState, "prompt" | "systemPrompt" | "allowedSkills" | "cwd" | "inputSchema">
 >;
 
 export type StateMachineScriptStateOverride = Partial<

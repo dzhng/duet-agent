@@ -255,6 +255,13 @@ export interface StateMachineAgentState extends StateMachineBaseState {
    * prompt.
    */
   allowedSkills?: string[];
+  /**
+   * Working directory for this sub-agent's coding tools (bash, read, write,
+   * edit). Defaults to the state-machine session cwd. Set this when an agent
+   * state should operate on a different repository or subdirectory than the
+   * parent runner.
+   */
+  cwd?: string;
 }
 
 /** Runs a shell command. This is the generic integration primitive. */

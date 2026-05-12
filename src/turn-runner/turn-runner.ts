@@ -766,7 +766,10 @@ export class TurnRunner {
         state,
         appendSystemPrompt: input.state.systemPrompt,
         skills: this.skillContext.resolveStateAgentSkills(input.state),
-        ...this.createTools("agent"),
+        // Per-state cwd lets one agent state operate on a different
+        // repository or subdirectory than the parent runner without
+        // mutating shared config.
+        ...this.createTools("agent", input.state.cwd),
       },
       (result) => {
         control = result;
@@ -995,10 +998,13 @@ export class TurnRunner {
     return this.stateMachineController.runDecision(workerResult.control.decision);
   }
 
-  protected createTools(mode: TurnMode): {
+  protected createTools(
+    mode: TurnMode,
+    cwdOverride?: string,
+  ): {
     tools: AgentTool[];
   } {
-    const cwd = this.config.cwd ?? process.cwd();
+    const cwd = cwdOverride ?? this.config.cwd ?? process.cwd();
     const todoStorage = {
       getTodos: () => this.getTodos(),
       setTodos: (todos: TurnTodo[]) => {
