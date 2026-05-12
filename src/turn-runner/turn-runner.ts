@@ -1606,11 +1606,13 @@ export class TurnRunner {
    * packs use the same `ceil(chars/4)` heuristic as the memory pipeline so
    * compaction triggers stay on the same scale as `MEMORY_BUDGET_RATIOS`.
    *
-   * The message tail uses {@link calculateWireBytes}: text and image blocks
-   * match the eviction guard, and structured blocks (`toolCall`, thinking,
-   * etc.) contribute a `JSON.stringify` length like the serialized request —
-   * unlike `agentMessagesToRaw`, which only counted plain text and turned
-   * tool calls into tiny placeholder previews.
+   * The message tail uses {@link calculateWireBytes} over the
+   * post-eviction slice — the same slice the provider tokenized — so
+   * messages already dropped by wire-shaping stop counting against the
+   * `messages` segment instead of inflating it from the runner's full
+   * retained transcript. Text and image blocks match the eviction guard,
+   * and structured blocks (`toolCall`, thinking, etc.) contribute a
+   * `JSON.stringify` length like the serialized request body.
    *
    * `emitParentAgentEvent` rescales all four segments with
    * {@link scaleContextWindowUsageToTotalTokens} so the emitted breakdown
@@ -1619,7 +1621,11 @@ export class TurnRunner {
   protected estimateContextWindowUsage() {
     const agent = this.requireParentAgent();
     const pack = this.memory.getContextPack();
-    const messageWireTokens = Math.max(0, Math.ceil(calculateWireBytes(agent.state.messages) / 4));
+    const dispatched = applyEvictionHorizon(
+      agent.state.messages,
+      this.wireGuardHorizon.evictionHorizon,
+    );
+    const messageWireTokens = Math.max(0, Math.ceil(calculateWireBytes(dispatched) / 4));
     return {
       systemPrompt: estimateTokens(agent.state.systemPrompt),
       messages: messageWireTokens,

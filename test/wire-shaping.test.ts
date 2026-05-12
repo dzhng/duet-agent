@@ -124,6 +124,25 @@ describe("calculateWireBytes", () => {
     const messages = [userText("x".repeat(500), 1)];
     expect(calculateWireBytes(messages)).toBe(500);
   });
+
+  test("counts thinking text and signature via the JSON.stringify fallback", () => {
+    // Reasoning-heavy sessions can carry hundreds of thinking blocks where
+    // the opaque `thinkingSignature` dominates wire size, so the catch-all
+    // path must include it. Asserted as a lower bound (text + signature
+    // lengths) plus the JSON envelope on top.
+    const thinking = "y".repeat(200);
+    const signature = "s".repeat(1500);
+    const messages = [
+      {
+        role: "assistant",
+        content: [{ type: "thinking", thinking, thinkingSignature: signature }],
+        timestamp: 1,
+      } as unknown as AgentMessage,
+    ];
+    const bytes = calculateWireBytes(messages);
+    expect(bytes).toBeGreaterThanOrEqual(thinking.length + signature.length);
+    expect(bytes).toBeLessThan(thinking.length + signature.length + 100);
+  });
 });
 
 describe("createInitialHorizon", () => {

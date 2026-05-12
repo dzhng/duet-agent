@@ -91,10 +91,13 @@ function messageTimestamp(msg: AgentMessage): number {
 
 /**
  * Bytes contributed by one message to the serialized wire payload. Image
- * blocks count base64 length, text blocks count UTF-16 length, and other
- * structured blocks (thinking, toolCall, toolResult details) fall back to
- * a JSON serialization estimate. Approximate but tracks request body size
- * closely enough for budget gating.
+ * blocks count base64 length, text blocks count UTF-16 length, and every
+ * other structured block (thinking with its `thinkingSignature`, toolCall,
+ * toolResult details) falls back to a JSON serialization estimate. The
+ * JSON path is what actually gets sent on the wire for those blocks, so
+ * counting `JSON.stringify(block).length` is both the simplest and the
+ * most accurate option for them. Approximate but tracks request body size
+ * closely enough for budget gating and the context bar.
  */
 function calculateMessageBytes(msg: AgentMessage): number {
   const content = (msg as { content?: unknown }).content;
