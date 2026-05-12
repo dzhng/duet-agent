@@ -2,23 +2,13 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   type CliRenderer,
   createCliRenderer,
-  decodePasteBytes,
   type KeyEvent,
   type PasteEvent,
   type Selection,
   TextRenderable,
 } from "@opentui/core";
 import { type ClipboardWriteResult, writeClipboardText } from "./clipboard.js";
-import {
-  describeMacClipboardTypes,
-  loadImageFromPath,
-  looksLikeImageFilePath,
-  type PendingImage,
-  persistPastedImage,
-  sniffImageMimeType,
-  tryReadClipboardImage,
-  tryReadClipboardText,
-} from "./paste.js";
+import { PasteController } from "./paste-controller.js";
 import { parseCopyArgument, selectCopyText, type TranscriptEntry } from "./transcript-log.js";
 import { StatusController } from "./status-controller.js";
 import { StepRenderer } from "./step-renderer.js";
@@ -236,13 +226,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // ---- runtime state ---------------------------------------------------------
 
-  // Image attachments collected via paste / `/image` and forwarded to the
-  // runner with the next prompt submission. Cleared after submit so each turn
-  // ships its own attachments without leaking into the next.
-  let pendingImages: PendingImage[] = [];
-  // Monotonic counter for the next `[Image #N]` placeholder. Reset alongside
-  // `pendingImages` so users see a fresh `#1` label after each submit.
-  let nextImageId = 1;
   function recordTranscriptEntry(kind: TranscriptEntry["kind"], text: string): void {
     transcriptWriter.recordEntry(kind, text);
   }
@@ -700,6 +683,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     isRunning: () => statusController.isRunning(),
   });
 
+  const pasteController = new PasteController({
+    inputField,
+    sessionId: input.sessionId,
+    workDir: input.workDir,
+    appendBlock,
+    statusController,
+  });
+
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
   keyHandler.onInternal("keypress", (key: KeyEvent) => {
     transcriptWriter.logKey("global", key);
@@ -813,7 +804,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // the `/paste` slash command below provides a guaranteed fallback.
     if (key.name === "v" && (key.super || key.meta || key.ctrl) && !key.shift) {
       key.preventDefault();
-      void triggerClipboardProbe("keystroke");
+      void pasteController.triggerClipboardProbe("keystroke");
       return;
     }
 
@@ -901,9 +892,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (message.length === 0) return;
     // Snapshot before clearing so attachments ride with the steer
     // dispatch and the user-facing labels render correctly.
-    const submittedImages = pendingImages;
     inputField.clear();
-    clearPendingImages();
+    const submittedImages = pasteController.consume();
     recordTranscriptEntry("user", message);
     appendBlock("you:", message, COLORS.user);
     if (submittedImages.length > 0) {
@@ -989,166 +979,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // fall through to the Textarea's default insert path so existing behavior
   // is unchanged for non-image clipboards.
   inputField.onPaste = (event: PasteEvent) => {
-    void handlePasteEvent(event).catch((error) => {
+    void pasteController.handlePasteEvent(event).catch((error) => {
       appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
     });
   };
-
-  async function handlePasteEvent(event: PasteEvent): Promise<void> {
-    const metadata = event.metadata;
-    const sniffed = sniffImageMimeType(event.bytes);
-    const inferredMime =
-      metadata?.mimeType && metadata.mimeType.startsWith("image/") ? metadata.mimeType : sniffed;
-
-    // Synchronous fast paths — the paste payload itself is enough to decide.
-    if (inferredMime) {
-      event.preventDefault();
-      await attachPastedImageBytes(event.bytes, inferredMime);
-      return;
-    }
-
-    if (metadata?.kind === "binary") {
-      // Non-image binary paste — we cannot meaningfully forward it, but the
-      // terminal already swallowed the keystroke, so suppress the default
-      // text-insert path that would otherwise garble the prompt.
-      event.preventDefault();
-      appendBlock(
-        "[paste]",
-        "Unsupported binary clipboard contents (only PNG/JPEG/GIF/WebP).",
-        COLORS.system,
-      );
-      return;
-    }
-
-    // Text-shaped paste. Three sub-cases, ordered cheapest first so common
-    // text pastes never wait on the macOS Swift clipboard probe:
-    //
-    //   1. The text resolves to an image file path (Finder/Files drag-paste).
-    //   2. The terminal forwarded an empty payload but the OS clipboard
-    //      may carry an image promise (e.g. Figma "Copy as PNG", screenshot,
-    //      browser image copy that bracketed-paste cannot represent).
-    //   3. Plain text — just insert it.
-    //
-    // Sub-cases 1 and 3 are fully synchronous after the path heuristic, so
-    // the buffer paints immediately. Only sub-case 2 spawns the Swift
-    // probe, and only when there is literally no text to insert anyway.
-    const originalText = decodePasteBytes(event.bytes);
-    const candidate = looksLikeImageFilePath(originalText);
-
-    if (candidate) {
-      // Path-shaped paste: suppress the default insert so we can swap in
-      // the [Image #N] placeholder once load resolves.
-      event.preventDefault();
-      try {
-        const pending = await loadImageFromPath({
-          cwd: input.workDir,
-          rawPath: candidate,
-          id: nextImageId,
-        });
-        nextImageId += 1;
-        pendingImages.push(pending);
-        inputField.insertText(pending.label);
-        appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
-        statusController.setPendingImageCount(pendingImages.length);
-      } catch (error) {
-        // The clipboard looked like an image path but we could not load
-        // it — surface why and restore the original text so the user can
-        // edit it manually instead of losing what they pasted.
-        appendBlock(
-          "[paste]",
-          `looked like an image path but could not attach ${candidate}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          COLORS.system,
-        );
-        if (originalText.length > 0) inputField.insertText(originalText);
-      }
-      return;
-    }
-
-    if (originalText.length === 0) {
-      // No text payload — the terminal had nothing to forward but the OS
-      // clipboard may still carry an image promise. Suppress the default
-      // (which would do nothing anyway) and run the slow probe.
-      event.preventDefault();
-      const clipboardImage = await tryReadClipboardImage();
-      if (clipboardImage) {
-        await attachPastedImageBytes(clipboardImage.bytes, clipboardImage.mimeType);
-      }
-      return;
-    }
-
-    // Plain text paste — fall through to the InputRenderable's default
-    // insert path, which paints synchronously. Users whose intended image
-    // arrived as text-shaped bytes (e.g. Figma) can still trigger an
-    // explicit clipboard probe via the `/paste` slash command.
-  }
-
-  async function attachPastedImageBytes(bytes: Uint8Array, mimeType: string): Promise<void> {
-    try {
-      const pending = await persistPastedImage({
-        sessionId: input.sessionId,
-        id: nextImageId,
-        bytes,
-        mimeType,
-      });
-      nextImageId += 1;
-      pendingImages.push(pending);
-      inputField.insertText(pending.label);
-      appendBlock(
-        "[paste]",
-        `attached ${pending.label} (${mimeType}, ${formatBytes(bytes.length)})`,
-        COLORS.system,
-      );
-      statusController.setPendingImageCount(pendingImages.length);
-    } catch (error) {
-      appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
-    }
-  }
-
-  function clearPendingImages(): void {
-    if (pendingImages.length === 0) return;
-    pendingImages = [];
-    nextImageId = 1;
-    statusController.setPendingImageCount(0);
-  }
-
-  // Manual clipboard probe. Read the OS clipboard for an image right now and
-  // attach it if found; otherwise emit a useful diagnostic line. Used both by
-  // the Cmd+V/Ctrl+V keystroke handler above and the `/paste` slash command.
-  async function triggerClipboardProbe(source: "keystroke" | "slash"): Promise<void> {
-    try {
-      const clipboardImage = await tryReadClipboardImage();
-      if (clipboardImage) {
-        await attachPastedImageBytes(clipboardImage.bytes, clipboardImage.mimeType);
-        return;
-      }
-      // No image on the clipboard. The keystroke path may have eaten a
-      // legitimate text paste, so fall back to a text probe so users do not
-      // lose what they were trying to paste.
-      const text = await tryReadClipboardText();
-      if (text) {
-        inputField.insertText(text);
-        return;
-      }
-      if (source === "slash") {
-        // Surface the actual clipboard UTI list when a /paste probe comes
-        // up empty — lets users see what their source app actually put
-        // there so the failure stops being mysterious.
-        const types = await describeMacClipboardTypes();
-        const detail = types
-          ? ` — clipboard types: ${types}`
-          : " — (could not query clipboard types; clipboard may be empty)";
-        appendBlock("[paste]", `clipboard had no readable image or text${detail}`, COLORS.system);
-      }
-    } catch (error) {
-      appendBlock(
-        "[paste]",
-        `clipboard probe failed: ${error instanceof Error ? error.message : String(error)}`,
-        COLORS.error,
-      );
-    }
-  }
 
   function submit(message: string): void {
     // First user submit collapses the boot starter section permanently for
@@ -1162,11 +996,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
     if (message === "/paste") {
-      void triggerClipboardProbe("slash");
+      void pasteController.triggerClipboardProbe("slash");
       return;
     }
     if (message === "/clear-images") {
-      clearPendingImages();
+      pasteController.clearPendingImages();
       appendBlock("[paste]", "cleared pending image attachments", COLORS.system);
       return;
     }
@@ -1183,7 +1017,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
 
-    const submittedImages = pendingImages;
+    const submittedImages = pasteController.consume();
     recordTranscriptEntry("user", message);
     appendBlock("you:", message, COLORS.user);
     // Render attachments as a separate hint-colored footnote rather than
@@ -1197,10 +1031,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     }
 
     const images = submittedImages.map((p) => p.attachment);
-
-    // Reset before dispatch so an in-flight error does not leave the user
-    // double-charged with the same attachments on retry.
-    clearPendingImages();
 
     // If the question picker is open, treat the typed message as a flush:
     // dispatch whatever answers were already collected together with the new
@@ -1375,28 +1205,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       );
       return;
     }
-    try {
-      const pending = await loadImageFromPath({
-        cwd: input.workDir,
-        rawPath: rest,
-        id: nextImageId,
-      });
-      nextImageId += 1;
-      pendingImages.push(pending);
-      // Insert the placeholder back into the (now-empty) input so the user
-      // can keep typing their prompt with the image already attached.
-      inputField.insertText(pending.label);
-      appendBlock("[paste]", `attached ${pending.label} from ${pending.path}`, COLORS.system);
-      statusController.setPendingImageCount(pendingImages.length);
-    } catch (error) {
-      appendBlock("[paste]", error instanceof Error ? error.message : String(error), COLORS.error);
-    }
-  }
-
-  function formatBytes(n: number): string {
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    await pasteController.attachImageFromPath(rest);
   }
 
   // ---- replay history on resume ---------------------------------------------
