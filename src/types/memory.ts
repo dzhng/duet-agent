@@ -122,12 +122,25 @@ export interface ObservationalMemorySettings {
      */
     messageTokens: number;
     /**
-     * Derived (fixed constant). Cap on raw transcript tokens sent to one
-     * observer call. Independent of `effectiveContext` because reflection
-     * quality depends on a consistent observer-call window, not on the
-     * user's actor budget.
+     * Derived (fixed constant). Cap on raw transcript tokens sent to
+     * one observer call. The runner trims the unobserved tail to this
+     * size from the oldest end before each observer call, so the
+     * observer prompt never exceeds the memory model's hard window
+     * even when a long run of `hasMemory=false` turns lets the tail
+     * grow. The boundary message is included partially (head sliced,
+     * tail kept) rather than dropped whole. Independent of
+     * `effectiveContext` because the cap depends on the memory model's
+     * window, not the actor's budget.
      */
-    maxTokensPerBatch: number;
+    maxTranscriptTokens: number;
+    /**
+     * Derived (fixed constant). Cap on the observation log the
+     * observer is asked to produce in one call. Drives both the soft
+     * budget rendered into the observer prompt and the hard retry /
+     * final-trim threshold enforced by `enforceObservationTokenBudget`.
+     * Independent of `effectiveContext`.
+     */
+    maxObservationLogTokens: number;
     /**
      * Derived. Raw-tail token target after the wire-shaping horizon
      * advances. `BUFFER_RATIO * messageTokens`. Does not count against

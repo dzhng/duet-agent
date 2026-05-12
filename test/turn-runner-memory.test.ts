@@ -11,6 +11,7 @@ import {
   agentMessageToRaw,
   enforceObservationTokenBudget,
   getUnobservedMessageTail,
+  trimMessagesToTranscriptBudget,
 } from "../src/memory/observational.js";
 import { buildObserverPrompt } from "../src/memory/observational-prompts.js";
 import {
@@ -514,6 +515,69 @@ describe("TurnRunner memory", () => {
       "Observed result",
       "low-signal context for later",
     ]);
+  });
+
+  test("trimMessagesToTranscriptBudget keeps newest messages and partially includes the boundary", () => {
+    // Each whole message: 400 chars of text → 100 estimated tokens
+    // under the ceil(len/4) heuristic. Use a token budget that lands
+    // partway through one of them to exercise the boundary slice.
+    const makeMessage = (
+      index: number,
+    ): {
+      id: string;
+      createdAt: number;
+      role: "user";
+      content: { type: "text"; text: string }[];
+      textPreview: string;
+      estimatedTokens: number;
+    } => {
+      const text = `m${index}-${"x".repeat(400 - `m${index}-`.length)}`;
+      return {
+        id: `msg_${index}`,
+        createdAt: index,
+        role: "user",
+        content: [{ type: "text", text }],
+        textPreview: text,
+        estimatedTokens: 100,
+      };
+    };
+    const messages = Array.from({ length: 5 }, (_, index) => makeMessage(index));
+
+    const fits = trimMessagesToTranscriptBudget(messages, 200);
+    expect(fits.map((m) => m.id)).toEqual(["msg_3", "msg_4"]);
+    expect(fits.map((m) => m.textPreview)).toEqual([
+      messages[3]!.textPreview,
+      messages[4]!.textPreview,
+    ]);
+
+    // Budget = 280 tokens: msg_4 (100) + msg_3 (100) fit whole; msg_2
+    // gets 80 remaining tokens (~320 chars minus the marker), which is
+    // above the partial boundary threshold so it's included partially.
+    const partial = trimMessagesToTranscriptBudget(messages, 280);
+    expect(partial.map((m) => m.id)).toEqual(["msg_2", "msg_3", "msg_4"]);
+    expect(partial[0]!.textPreview.startsWith("[… older content trimmed]")).toBe(true);
+    expect(partial[0]!.textPreview.length).toBeLessThan(messages[2]!.textPreview.length);
+    expect(partial[0]!.textPreview.endsWith(messages[2]!.textPreview.slice(-20))).toBe(true);
+    expect(partial[1]).toBe(messages[3]!);
+    expect(partial[2]).toBe(messages[4]!);
+
+    // Budget = 250 tokens: msg_4 + msg_3 fit; msg_2's remaining slice
+    // (~50 tokens = ~200 chars, minus marker) falls below the partial
+    // threshold, so the boundary is dropped entirely.
+    const tooSmallForPartial = trimMessagesToTranscriptBudget(messages, 250);
+    expect(tooSmallForPartial.map((m) => m.id)).toEqual(["msg_3", "msg_4"]);
+
+    expect(trimMessagesToTranscriptBudget(messages, 500).map((m) => m.id)).toEqual([
+      "msg_0",
+      "msg_1",
+      "msg_2",
+      "msg_3",
+      "msg_4",
+    ]);
+    expect(trimMessagesToTranscriptBudget([], 100)).toEqual([]);
+    expect(trimMessagesToTranscriptBudget(messages, 0)).toEqual([]);
+    // Budget smaller than the marker overhead: no partial worth keeping.
+    expect(trimMessagesToTranscriptBudget(messages, 1)).toEqual([]);
   });
 
   test("memory event payloads are emitted after a pi-agent run below compaction threshold", async () => {

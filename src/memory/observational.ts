@@ -89,15 +89,38 @@ export const BUFFER_RATIO = 0.5;
  */
 export const FIXED_OBSERVER_BUDGETS = {
   /**
-   * Cap on transcript tokens sent to one observer call. Keeps observer
-   * reasoning comfortably below model ceilings while still batching enough
-   * history to avoid noisy churn.
+   * Cap on transcript tokens sent to one observer call. The runner
+   * trims the unobserved tail to this size from the newest end before
+   * calling the observer, so a long run of `hasMemory=false` turns
+   * can't grow the prompt past the memory model's hard window. The
+   * dropped prefix was already shown to the observer on previous turns
+   * — it was the same `hasMemory=false` content that kept the tail
+   * growing — so trimming it is information-preserving in practice.
+   * When the budget cuts through a message, that message is included
+   * partially (tail kept, head sliced) rather than dropped whole.
+   *
+   * Sized well above any plausible single-turn payload so a normal
+   * turn is never truncated. Bump this if a single turn ever needs to
+   * carry more than ~35k transcript tokens.
    */
-  maxTokensPerBatch: 35_000,
+  maxTranscriptTokens: 35_000,
   /**
-   * Cap on prior-observation tokens included in the observer prompt for
-   * dedupe context. Bounded so the observer never receives the whole
-   * durable memory database.
+   * Cap on the observation log the observer is asked to produce in
+   * one call. Used as both the instructed soft budget rendered into
+   * the prompt and the hard enforcement threshold that triggers a
+   * retry / final hard trim via `enforceObservationTokenBudget`.
+   *
+   * Real-world observation logs run a few hundred tokens for typical
+   * exchanges (the guidelines call for 1-5 terse observations per
+   * turn), so 8k is comfortable headroom for unusually rich
+   * exchanges — about a 4:1 compression ceiling against the 35k
+   * transcript cap, vs an effective ~100:1 compression in practice.
+   */
+  maxObservationLogTokens: 8_000,
+  /**
+   * Cap on prior-observation tokens included in the observer prompt
+   * for dedupe context. Bounded so the observer never receives the
+   * whole durable memory database.
    */
   previousObserverTokens: 4_000,
 } as const;
@@ -118,7 +141,8 @@ const DEFAULT_REFLECTION_BIAS = 1.3;
 export interface DerivedMemoryBudgets {
   observation: {
     messageTokens: number;
-    maxTokensPerBatch: number;
+    maxTranscriptTokens: number;
+    maxObservationLogTokens: number;
     bufferActivation: number;
     previousObserverTokens: number;
   };
@@ -145,7 +169,8 @@ export function deriveMemoryBudgets(effectiveContext: number): DerivedMemoryBudg
   return {
     observation: {
       messageTokens,
-      maxTokensPerBatch: FIXED_OBSERVER_BUDGETS.maxTokensPerBatch,
+      maxTranscriptTokens: FIXED_OBSERVER_BUDGETS.maxTranscriptTokens,
+      maxObservationLogTokens: FIXED_OBSERVER_BUDGETS.maxObservationLogTokens,
       bufferActivation: atLeastOne(BUFFER_RATIO * messageTokens),
       previousObserverTokens: FIXED_OBSERVER_BUDGETS.previousObserverTokens,
     },
@@ -362,7 +387,8 @@ export function resolveObservationalMemorySettings(
     reflectionBias: partial.reflectionBias ?? DEFAULT_REFLECTION_BIAS,
     observation: {
       messageTokens: budgets.observation.messageTokens,
-      maxTokensPerBatch: budgets.observation.maxTokensPerBatch,
+      maxTranscriptTokens: budgets.observation.maxTranscriptTokens,
+      maxObservationLogTokens: budgets.observation.maxObservationLogTokens,
       bufferActivation: budgets.observation.bufferActivation,
       previousObserverTokens: budgets.observation.previousObserverTokens,
       instruction: partial.observation?.instruction,
@@ -817,7 +843,16 @@ async function observe(
   model: string,
   onUsage?: (usage: Usage) => void,
 ): Promise<ObserverResult> {
-  const targetTokens = settings.observation.maxTokensPerBatch;
+  const transcriptBudget = settings.observation.maxTranscriptTokens;
+  const observationLogBudget = settings.observation.maxObservationLogTokens;
+  // Trim the unobserved tail from the oldest end so the observer call
+  // never overflows the memory model's hard window. A long run of
+  // `hasMemory=false` turns is exactly how a tail grows past this
+  // budget — and each of those older turns was already shown to the
+  // observer (and rejected as low-signal) on a previous call. Dropping
+  // them here is information-preserving in practice; the newest tail
+  // is what carries any durable signal worth recording.
+  const trimmedMessages = trimMessagesToTranscriptBudget(messages, transcriptBudget);
   const systemPrompt = buildObserverSystemPrompt(
     settings.observation.instruction,
     settings.observation.threadTitle,
@@ -831,7 +866,11 @@ async function observe(
     attributableMemories,
     settings.observation.previousObserverTokens,
   );
-  const prompt = buildObserverPrompt(messages, previousObservationText, targetTokens);
+  const prompt = buildObserverPrompt(
+    trimmedMessages,
+    previousObservationText,
+    observationLogBudget,
+  );
   const result = await generateStructuredOutput({
     model,
     tool: observerResultTool,
@@ -847,15 +886,18 @@ async function observe(
   }
   const observations = await enforceObservationTokenBudget({
     text: result.observations,
-    targetTokens,
+    targetTokens: observationLogBudget,
     retry: async (actualTokens) => {
       const retryResult = await generateStructuredOutput({
         model,
         tool: observerResultTool,
         systemPrompt,
-        prompt: buildObserverPrompt(messages, previousObservationText, targetTokens, {
-          actualTokens,
-        }),
+        prompt: buildObserverPrompt(
+          trimmedMessages,
+          previousObservationText,
+          observationLogBudget,
+          { actualTokens },
+        ),
         onUsage,
       });
       return retryResult.observations;
@@ -932,6 +974,66 @@ export function trimObservationTextToTokenBudget(text: string, targetTokens: num
 
   const trimmed = text.slice(0, targetChars - marker.length).trimEnd();
   return `${trimmed}${marker}`;
+}
+
+/** Smallest partial-message slice worth keeping at the boundary, in characters. */
+const MIN_PARTIAL_BOUNDARY_CHARS = 200;
+const PARTIAL_BOUNDARY_MARKER = "[… older content trimmed]\n";
+
+/**
+ * Trim the oldest end of a raw tail to fit `transcriptBudget`. Whole
+ * newest-end messages are kept verbatim; when the budget cuts through
+ * a message, that boundary message is included partially — its
+ * `textPreview` is sliced to keep the most recent characters that fit,
+ * prefixed with a marker so the observer knows the head was dropped.
+ * Image blocks on a partial boundary message are dropped since image
+ * tokens are charged per-image at a coarse 1.6k-token rate that can't
+ * be split.
+ *
+ * Empty inputs and zero/negative budgets short-circuit to `[]` so the
+ * caller can still produce a (now empty) prompt without throwing.
+ */
+export function trimMessagesToTranscriptBudget(
+  messages: RawMemoryMessage[],
+  transcriptBudget: number,
+): RawMemoryMessage[] {
+  if (messages.length === 0) return messages;
+  if (transcriptBudget <= 0) return [];
+  let runningTokens = 0;
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]!;
+    const tokens = message.estimatedTokens ?? estimateTokens(message.textPreview);
+    if (runningTokens + tokens <= transcriptBudget) {
+      runningTokens += tokens;
+      continue;
+    }
+    const remainingTokens = transcriptBudget - runningTokens;
+    const partial = buildPartialBoundaryMessage(message, remainingTokens);
+    if (partial) {
+      return [partial, ...messages.slice(index + 1)];
+    }
+    return messages.slice(index + 1);
+  }
+  return messages;
+}
+
+function buildPartialBoundaryMessage(
+  message: RawMemoryMessage,
+  remainingTokens: number,
+): RawMemoryMessage | undefined {
+  if (remainingTokens <= 0) return undefined;
+  const text = message.textPreview;
+  const charBudget = remainingTokens * 4 - PARTIAL_BOUNDARY_MARKER.length;
+  if (charBudget < MIN_PARTIAL_BOUNDARY_CHARS) return undefined;
+  const sliceLength = Math.min(text.length, charBudget);
+  if (sliceLength <= 0) return undefined;
+  const truncated = `${PARTIAL_BOUNDARY_MARKER}${text.slice(text.length - sliceLength)}`;
+  return {
+    ...message,
+    textPreview: truncated,
+    content: [{ type: "text", text: truncated }],
+    estimatedTokens: estimateTokens(truncated),
+  };
 }
 
 export function getUnobservedMessageTail(

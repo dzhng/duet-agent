@@ -33,7 +33,8 @@ describe("Memory budgets", () => {
     expect(budgets).toEqual({
       observation: {
         messageTokens: 120_000,
-        maxTokensPerBatch: FIXED_OBSERVER_BUDGETS.maxTokensPerBatch,
+        maxTranscriptTokens: FIXED_OBSERVER_BUDGETS.maxTranscriptTokens,
+        maxObservationLogTokens: FIXED_OBSERVER_BUDGETS.maxObservationLogTokens,
         bufferActivation: 60_000,
         previousObserverTokens: FIXED_OBSERVER_BUDGETS.previousObserverTokens,
       },
@@ -48,11 +49,17 @@ describe("Memory budgets", () => {
   test("observer-only budgets are fixed regardless of effectiveContext", () => {
     const small = deriveMemoryBudgets(50_000);
     const large = deriveMemoryBudgets(1_000_000);
-    expect(small.observation.maxTokensPerBatch).toBe(FIXED_OBSERVER_BUDGETS.maxTokensPerBatch);
+    expect(small.observation.maxTranscriptTokens).toBe(FIXED_OBSERVER_BUDGETS.maxTranscriptTokens);
+    expect(small.observation.maxObservationLogTokens).toBe(
+      FIXED_OBSERVER_BUDGETS.maxObservationLogTokens,
+    );
     expect(small.observation.previousObserverTokens).toBe(
       FIXED_OBSERVER_BUDGETS.previousObserverTokens,
     );
-    expect(large.observation.maxTokensPerBatch).toBe(FIXED_OBSERVER_BUDGETS.maxTokensPerBatch);
+    expect(large.observation.maxTranscriptTokens).toBe(FIXED_OBSERVER_BUDGETS.maxTranscriptTokens);
+    expect(large.observation.maxObservationLogTokens).toBe(
+      FIXED_OBSERVER_BUDGETS.maxObservationLogTokens,
+    );
     expect(large.observation.previousObserverTokens).toBe(
       FIXED_OBSERVER_BUDGETS.previousObserverTokens,
     );
