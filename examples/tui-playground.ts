@@ -193,6 +193,15 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
     this.emit({ type: "usage", ...event });
   }
 
+  /**
+   * Push a hand-crafted event through the same fan-out the scenario engine
+   * uses. Tests rely on this to drive isolated step / memory / usage flows
+   * without paying the latency of a full scripted scenario.
+   */
+  emitEvent(event: TurnEvent): void {
+    this.emit(event);
+  }
+
   // ---- scenario plumbing ---------------------------------------------------
 
   private emit(event: TurnEvent): void {

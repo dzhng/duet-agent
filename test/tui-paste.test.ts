@@ -1,15 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
-import { testIfDocker } from "./helpers/docker-only.js";
 import {
-  loadImageFromPath,
   looksLikeImageFilePath,
-  MAX_IMAGE_BYTES,
   mimeTypeFromExtension,
-  persistPastedImage,
   sniffImageMimeType,
 } from "../src/tui/paste.js";
 
@@ -80,98 +73,6 @@ describe("tui/paste", () => {
     );
     expect(looksLikeImageFilePath("file:///Users/me/Desktop/Frame%202147228872.png")).toBe(
       "/Users/me/Desktop/Frame 2147228872.png",
-    );
-  });
-
-  testIfDocker("persistPastedImage writes the bytes and returns the wire payload", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "duet-paste-"));
-    process.env.HOME = dir;
-    const sessionId = "test-session";
-    const png = new Uint8Array(64);
-    png.set(PNG_HEADER, 0);
-    const result = await persistPastedImage({
-      sessionId,
-      id: 1,
-      bytes: png,
-      mimeType: "image/png",
-    });
-
-    expect(result.id).toBe(1);
-    expect(result.label).toBe("[Image #1]");
-    expect(result.attachment.mimeType).toBe("image/png");
-    expect(result.attachment.data).toBe(Buffer.from(png).toString("base64"));
-    expect(result.path).toMatch(/paste-.*-1\.png$/);
-    // Bytes round-trip on disk.
-    const onDisk = readFileSync(result.path);
-    expect(onDisk.equals(Buffer.from(png))).toBe(true);
-  });
-
-  testIfDocker("persistPastedImage rejects unsupported MIME types", async () => {
-    process.env.HOME = mkdtempSync(join(tmpdir(), "duet-paste-"));
-    await expect(
-      persistPastedImage({
-        sessionId: "t",
-        id: 1,
-        bytes: new Uint8Array([0x00]),
-        mimeType: "application/pdf",
-      }),
-    ).rejects.toThrow(/Unsupported image type/);
-  });
-
-  testIfDocker("persistPastedImage rejects empty payloads", async () => {
-    process.env.HOME = mkdtempSync(join(tmpdir(), "duet-paste-"));
-    await expect(
-      persistPastedImage({
-        sessionId: "t",
-        id: 1,
-        bytes: new Uint8Array(0),
-        mimeType: "image/png",
-      }),
-    ).rejects.toThrow(/Empty image bytes/);
-  });
-
-  testIfDocker("persistPastedImage enforces the 20MB cap", async () => {
-    process.env.HOME = mkdtempSync(join(tmpdir(), "duet-paste-"));
-    const big = new Uint8Array(MAX_IMAGE_BYTES + 1);
-    big.set(PNG_HEADER, 0);
-    await expect(
-      persistPastedImage({
-        sessionId: "t",
-        id: 1,
-        bytes: big,
-        mimeType: "image/png",
-      }),
-    ).rejects.toThrow(/too large/);
-  });
-
-  testIfDocker("loadImageFromPath validates bytes and returns a wire payload", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "duet-load-"));
-    const bytes = new Uint8Array(64);
-    bytes.set(PNG_HEADER, 0);
-    const file = join(dir, "ok.png");
-    writeFileSync(file, bytes);
-
-    const pending = await loadImageFromPath({ cwd: dir, rawPath: "ok.png", id: 7 });
-    expect(pending.id).toBe(7);
-    expect(pending.label).toBe("[Image #7]");
-    expect(pending.path).toBe(file);
-    expect(pending.attachment.mimeType).toBe("image/png");
-    expect(pending.attachment.data).toBe(Buffer.from(bytes).toString("base64"));
-  });
-
-  testIfDocker("loadImageFromPath errors on missing files", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "duet-load-"));
-    await expect(loadImageFromPath({ cwd: dir, rawPath: "nope.png", id: 1 })).rejects.toThrow(
-      /No file at/,
-    );
-  });
-
-  testIfDocker("loadImageFromPath rejects files whose bytes are not image data", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "duet-load-"));
-    const file = join(dir, "fake.png");
-    writeFileSync(file, "this is not actually a PNG");
-    await expect(loadImageFromPath({ cwd: dir, rawPath: "fake.png", id: 1 })).rejects.toThrow(
-      /Unsupported image type/,
     );
   });
 });

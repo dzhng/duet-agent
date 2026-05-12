@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type Renderable, TextareaRenderable } from "@opentui/core";
 import { createTestRenderer, type MockInput } from "@opentui/core/testing";
 import { FakePlaygroundRunner } from "../../examples/tui-playground.js";
 import { createUpgradeStatusStream } from "../../src/cli/auto-upgrade.js";
@@ -36,10 +37,19 @@ export interface TuiHarness {
   runner: FakePlaygroundRunner;
   /** Live `Session` wrapping the runner. */
   session: Session;
+  /**
+   * Composer textarea pulled out of the layout via a tree walk. Exposed so
+   * tests that need to drive `onPaste` directly (binary clipboards that
+   * cannot be expressed through `mockInput.pasteBracketedText`) or assert
+   * composer state can reach the same handle production wires up.
+   */
+  inputField: TextareaRenderable;
   /** Every `session.prompt(...)` call, in dispatch order. */
   promptCalls: SessionPromptInput[];
   /** Every `session.answer(...)` call, in dispatch order. */
   answerCalls: SessionAnswerInput[];
+  /** Number of times `session.interrupt()` has been invoked. */
+  interruptCalls: number;
   /**
    * Wait until either:
    *  - `session.answer` has been called at least `count` times (default 1), or
@@ -98,6 +108,21 @@ async function yieldToEventLoop(): Promise<void> {
   await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+/**
+ * Depth-first walk for the first `TextareaRenderable` in the rendered tree.
+ * The layout module only mounts one composer textarea, so the first hit is
+ * the production input field. Used by the harness to expose `inputField`
+ * without reaching into `runTui` internals.
+ */
+function findTextarea(root: Renderable): TextareaRenderable | undefined {
+  if (root instanceof TextareaRenderable) return root;
+  for (const child of root.getChildren()) {
+    const hit = findTextarea(child as Renderable);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 async function waitForCount(
   read: () => number,
   target: number,
@@ -116,11 +141,18 @@ async function waitForCount(
 export interface BootTuiOptions {
   width?: number;
   height?: number;
+  /**
+   * Working directory passed to `runTui`. Drives the `@`-file index and the
+   * `/image <relative-path>` resolver. Defaults to `process.cwd()` so existing
+   * tests stay unchanged.
+   */
+  workDir?: string;
 }
 
 export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness> {
   const width = options.width ?? 100;
   const height = options.height ?? 32;
+  const workDir = options.workDir ?? process.cwd();
 
   const { renderer, mockInput, captureCharFrame, renderOnce } = await createTestRenderer({
     width,
@@ -137,6 +169,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
 
   const promptCalls: SessionPromptInput[] = [];
   const answerCalls: SessionAnswerInput[] = [];
+  let interruptCalls = 0;
   // Mirror every event the Session emits so `pushAskTerminal` can wait
   // until the runner's `ask` has actually flowed Runner → Session → TUI
   // before returning. `Session.emit` iterates handlers synchronously, so
@@ -159,6 +192,11 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     answerCalls.push(input);
     return originalAnswer(input);
   };
+  const originalInterrupt = session.interrupt.bind(session);
+  session.interrupt = async () => {
+    interruptCalls += 1;
+    return originalInterrupt();
+  };
 
   // Mirror what `cli/run.ts` does in production: always pass an
   // `upgradeStatus$` and publish a silent terminal status (the same one
@@ -176,7 +214,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
   let tuiError: unknown;
   const tuiPromise = runTui({
     session,
-    workDir: process.cwd(),
+    workDir,
     sessionId: "harness",
     packageName: "@duetso/agent",
     packageVersion: "harness",
@@ -193,6 +231,15 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
   // press can race the keypress handler registration.
   await yieldToEventLoop();
   await yieldToEventLoop();
+
+  // Production `runTui` constructs the layout internally, so the test
+  // harness reaches the composer Textarea by walking the rendered tree.
+  // The layout only mounts one TextareaRenderable, so a depth-first hit
+  // is unambiguous.
+  const inputField = findTextarea(renderer.root);
+  if (!inputField) {
+    throw new Error("bootTui: failed to locate the composer TextareaRenderable in renderer tree");
+  }
 
   // The boot transcript renders a "starter" section (recent sessions / cwd
   // suggestions) and intercepts Up/Down on an empty composer to navigate
@@ -214,8 +261,12 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     mockInput,
     runner,
     session,
+    inputField,
     promptCalls,
     answerCalls,
+    get interruptCalls() {
+      return interruptCalls;
+    },
     async waitForAnswer({ count = 1, timeoutMs = 1000 } = {}) {
       await waitForCount(() => answerCalls.length, count, timeoutMs, "waitForAnswer");
     },
