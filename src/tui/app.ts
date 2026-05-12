@@ -7,9 +7,10 @@ import {
   type Selection,
   TextRenderable,
 } from "@opentui/core";
-import { type ClipboardWriteResult, writeClipboardText } from "./clipboard.js";
+import { CopyController } from "./copy-controller.js";
 import { PasteController } from "./paste-controller.js";
-import { parseCopyArgument, selectCopyText, type TranscriptEntry } from "./transcript-log.js";
+import { StarterSection } from "./starter-section.js";
+import { type TranscriptEntry } from "./transcript-log.js";
 import { StatusController } from "./status-controller.js";
 import { StepRenderer } from "./step-renderer.js";
 import { TranscriptWriter } from "./transcript-writer.js";
@@ -32,9 +33,7 @@ import {
   historyDisplayBlocks,
   limitHistoryDisplayMessages,
 } from "./history.js";
-import { listRecentSessions } from "./recent-sessions.js";
 import { buildLayout } from "./layout.js";
-import { orderedSelectableStarters, selectStarters } from "./starters.js";
 import { COLORS } from "./theme.js";
 
 export type { HistoryBlockKind, HistoryDisplayBlock, LimitedHistory } from "./history.js";
@@ -389,9 +388,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // explicitly asked to drop back into a known conversation, so showing
     // "what should we work on today?" before replaying history is noise.
     // Resumed sessions with zero prior messages still skip the menu so the
-    // contract is "any --resume" not "--resume with content".
-    if (!input.isResume) {
-      renderStarters(skills);
+    // contract is "any --resume" not "--resume with content". `starters` is
+    // only constructed for non-resume mounts, so the call short-circuits
+    // otherwise.
+    if (starters) {
+      starters.mount(skills);
     }
   }
 
@@ -410,243 +411,26 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // ---- starter prompts (boot screen) ---------------------------------------
 
   // Boot screen offers a small set of context-aware starter prompts so
-  // first-time and returning users land on something concrete in <2 seconds
-  // instead of staring at a blank input. The starter section dismisses on
-  // first composition or first submit and never re-renders that session.
+  // first-time and returning users land on something concrete in <2
+  // seconds instead of staring at a blank input. The section dismisses
+  // on first composition and never re-renders that session.
   //
-  // Each entry in `starterEntries` is either a raw cwd-based prompt to
-  // submit verbatim, or a recent-session continuation that injects the
-  // previous session's last user prompt into the input field. The two
-  // kinds share the same numbered/highlighted row UX.
-  type StarterEntry =
-    | { kind: "prompt"; label: string; submit: string }
-    | { kind: "recent"; label: string; submit: string; sessionId: string };
-  const starterEntries: StarterEntry[] = [];
-  // Lines we render for the starter section so we can repaint highlights
-  // and tear them all down on dismissal. Includes the headline, numbered
-  // rows, the optional resume row, and the two trailing hint rows.
-  const starterRefs: TextRenderable[] = [];
-  // Indexes within `starterRefs` that correspond to numbered rows; used
-  // to repaint highlight on arrow / digit navigation.
-  const starterRowIndexes: number[] = [];
-  let highlightedStarterIndex = 0;
-  let startersVisible = false;
-  // Once the user actually commits a prompt (typed Enter, picked a starter,
-  // hit a slash command), the chrome is gone for the rest of the session.
-  // Until then `dismissStarters()` is a reversible hide that
-  // `syncStarterVisibility()` can restore when the composer empties again.
-  let startersPermanentlyDismissed = false;
-  // Cached for `mountStarterChrome()` so it can re-render the trailing
-  // "✨ N skills · /help" line without re-running selectStarters.
-  let starterSkillCount = 0;
-
-  function startersAreVisible(): boolean {
-    return startersVisible;
-  }
-
-  function renderStarters(skills: ReadonlyArray<{ name: string }>): void {
-    // Read recent sessions off disk synchronously. The helper swallows fs
-    // errors and returns an empty list; a missing/empty ~/.duet/sessions
-    // directory is the common first-boot case.
-    const recentSessions = listRecentSessions({
-      excludeId: input.sessionId,
-      limit: 4,
-    });
-    const result = selectStarters({
-      cwd: input.workDir,
-      sessionHistory: input.history,
-      recentSessions,
-    });
-    // Selectable rows in render order. Recent sessions lead so returning
-    // users hit "pick up the thread" first; new users see the cwd starters
-    // under the original "what should we work on today?" headline.
-    const ordered = orderedSelectableStarters(result);
-    starterEntries.length = 0;
-    for (const row of ordered) {
-      if (row.kind === "recent" && row.sessionId !== undefined) {
-        starterEntries.push({
-          kind: "recent",
-          label: row.label,
-          submit: row.submit,
-          sessionId: row.sessionId,
-        });
-      } else {
-        starterEntries.push({ kind: "prompt", label: row.label, submit: row.submit });
-      }
-    }
-    starterSkillCount = skills.length;
-    highlightedStarterIndex = 0;
-    mountStarterChrome();
-  }
-
-  // Paint the chrome (section headers, numbered rows, hint footer) from the
-  // current `starterEntries` + `highlightedStarterIndex`. Called on first
-  // boot and on every backspace-to-empty restoration. Idempotent: bails if
-  // the chrome is already mounted or no entries exist.
-  function mountStarterChrome(): void {
-    if (startersVisible || starterEntries.length === 0) return;
-
-    const recentEntries = starterEntries.filter((entry) => entry.kind === "recent");
-    const promptEntries = starterEntries.filter((entry) => entry.kind === "prompt");
-    const hasRecent = recentEntries.length > 0;
-
-    // Every line we render here — spacers included — goes through `addLine`
-    // and gets pushed to `starterRefs`. `dismissStarters()` iterates that
-    // list to destroy refs; spacers added via fire-and-forget `appendLine`
-    // would leak and accumulate above the next mount on each type →
-    // backspace cycle, pushing the chrome lower every time.
-    const spacer = (): void => {
-      starterRefs.push(addLine(" ", COLORS.hint));
-    };
-
-    starterRowIndexes.length = 0;
-    spacer();
-
-    if (hasRecent) {
-      starterRefs.push(addLine("pick up the thread", COLORS.agent));
-      spacer();
-      for (let i = 0; i < starterEntries.length; i += 1) {
-        if (starterEntries[i]!.kind !== "recent") continue;
-        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
-        starterRowIndexes.push(starterRefs.length);
-        starterRefs.push(ref);
-      }
-      if (promptEntries.length > 0) {
-        spacer();
-        starterRefs.push(addLine("or start something new", COLORS.agent));
-        spacer();
-        for (let i = 0; i < starterEntries.length; i += 1) {
-          if (starterEntries[i]!.kind !== "prompt") continue;
-          const ref = addLine(formatStarterRow(i, false), COLORS.hint);
-          starterRowIndexes.push(starterRefs.length);
-          starterRefs.push(ref);
-        }
-      }
-    } else {
-      starterRefs.push(addLine("what should we work on today?", COLORS.agent));
-      spacer();
-      for (let i = 0; i < starterEntries.length; i += 1) {
-        const ref = addLine(formatStarterRow(i, false), COLORS.hint);
-        starterRowIndexes.push(starterRefs.length);
-        starterRefs.push(ref);
-      }
-    }
-
-    spacer();
-    starterRefs.push(
-      addLine("type a number to run, ↑/↓ to highlight, or just start typing.", COLORS.hint),
-    );
-    starterRefs.push(
-      addLine(
-        `✦ ${starterSkillCount} skill${starterSkillCount === 1 ? "" : "s"} · /help`,
-        COLORS.hint,
-      ),
-    );
-
-    startersVisible = true;
-    if (highlightedStarterIndex >= starterEntries.length) highlightedStarterIndex = 0;
-    paintStarterHighlight();
-  }
-
-  function addLine(content: string, fg: string): TextRenderable {
-    return transcriptWriter.addLine(content, fg);
-  }
-
-  function formatStarterRow(index: number, highlighted: boolean): string {
-    const entry = starterEntries[index];
-    const text = entry?.label ?? "";
-    const number = index + 1;
-    const arrow = highlighted ? "▶" : "→";
-    const numberCell = highlighted ? `[${number}]` : ` ${number} `;
-    return `   ${numberCell}  ${arrow}  ${text}`;
-  }
-
-  function paintStarterHighlight(): void {
-    for (let i = 0; i < starterRowIndexes.length; i += 1) {
-      const ref = starterRefs[starterRowIndexes[i]];
-      const isHighlighted = i === highlightedStarterIndex;
-      ref.content = formatStarterRow(i, isHighlighted);
-      ref.fg = isHighlighted ? COLORS.user : COLORS.hint;
-    }
-  }
-
-  function moveStarterHighlight(delta: number): void {
-    if (!startersVisible || starterEntries.length === 0) return;
-    const next = (highlightedStarterIndex + delta + starterEntries.length) % starterEntries.length;
-    highlightedStarterIndex = next;
-    paintStarterHighlight();
-  }
-
-  function jumpStarterHighlight(targetIndex: number): boolean {
-    if (!startersVisible) return false;
-    if (targetIndex < 0 || targetIndex >= starterEntries.length) return false;
-    highlightedStarterIndex = targetIndex;
-    paintStarterHighlight();
-    return true;
-  }
-
-  // Transient hide. Tears down the rendered refs but keeps `starterEntries`
-  // and `highlightedStarterIndex` so `mountStarterChrome()` can restore the
-  // exact same picker if the user backspaces the composer empty again.
-  function dismissStarters(): void {
-    if (!startersVisible && starterRefs.length === 0) return;
-    for (const ref of starterRefs) {
-      transcript.remove(ref.id);
-      ref.destroy();
-    }
-    starterRefs.length = 0;
-    starterRowIndexes.length = 0;
-    startersVisible = false;
-  }
-
-  // Permanent destruction: called when the user commits a prompt. After
-  // this the chrome never comes back, even on backspace-to-empty.
-  function destroyStartersPermanently(): void {
-    dismissStarters();
-    starterEntries.length = 0;
-    highlightedStarterIndex = 0;
-    startersPermanentlyDismissed = true;
-  }
-
-  // Toggle hook called from `inputField.onContentChange`. Hides the
-  // chrome as soon as the user starts composing, brings it back if they
-  // backspace the composer empty (but only until they actually submit
-  // something — then `startersPermanentlyDismissed` latches).
-  function syncStarterVisibility(): void {
-    if (startersPermanentlyDismissed) return;
-    if (starterEntries.length === 0) return;
-    const empty = inputField.plainText.length === 0;
-    if (!empty && startersVisible) {
-      dismissStarters();
-    } else if (empty && !startersVisible) {
-      mountStarterChrome();
-    }
-  }
-
-  function submitHighlightedStarter(): boolean {
-    if (!startersVisible) return false;
-    const entry = starterEntries[highlightedStarterIndex];
-    if (!entry) return false;
-    destroyStartersPermanently();
-    // Recent-session rows: when the host wires `onResumeRequest`, signal
-    // the outer dispatcher to swap sessions and tear down this renderer.
-    // The dispatcher disposes the placeholder, calls `manager.resume(id)`
-    // + `hydrate()` + `start()`, and re-enters `runTui` with the hydrated
-    // session + its full message history. End user lands on the same
-    // session id, same agent context, same transcript replayed inline.
-    //
-    // When no callback is wired (tests, playground), fall back to the
-    // legacy shortcut: re-submit the prior prompt in the current session.
-    // Agent has no context; the user lands on the same task with one
-    // keystroke instead of typing it again.
-    if (entry.kind === "recent" && input.onResumeRequest) {
-      input.onResumeRequest(entry.sessionId);
-      renderer.destroy();
-      return true;
-    }
-    submit(entry.submit);
-    return true;
-  }
+  // Skipped entirely for --resume mounts: the user explicitly asked to
+  // drop back into a known conversation, so the starter chrome would be
+  // noise. Every call site below null-checks the local before using it.
+  const starters = input.isResume
+    ? undefined
+    : new StarterSection({
+        workDir: input.workDir,
+        sessionId: input.sessionId,
+        history: input.history,
+        inputField,
+        transcript,
+        transcriptWriter,
+        renderer,
+        submit: (text) => submit(text),
+        onResumeRequest: input.onResumeRequest,
+      });
 
   // ---- input handling --------------------------------------------------------
 
@@ -699,7 +483,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // drag-select moves focus off the textarea — the focused-renderable
     // path stops firing right when the user has something to copy. The
     // global handler always fires regardless of focus.
-    if (handleCopyKeystroke(key)) return;
+    if (copyController.handleCopyKeystroke(key)) return;
     if (key.name !== "escape") return;
     if (suppressNextEscapeExit) {
       suppressNextEscapeExit = false;
@@ -763,14 +547,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // Boot starter navigation. Only intercepts when the starter section is
     // still on screen; once dismissed (by composition or first submit) all
     // of these branches no-op and keys flow normally to the input.
-    if (startersAreVisible() && inputField.plainText.length === 0) {
+    if (starters?.isVisible() && inputField.plainText.length === 0) {
       if (key.name === "up") {
-        moveStarterHighlight(-1);
+        starters.move(-1);
         key.preventDefault();
         return;
       }
       if (key.name === "down") {
-        moveStarterHighlight(1);
+        starters.move(1);
         key.preventDefault();
         return;
       }
@@ -784,7 +568,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         !key.super
       ) {
         const target = Number.parseInt(key.name, 10) - 1;
-        if (jumpStarterHighlight(target)) {
+        if (starters.jump(target)) {
           key.preventDefault();
           return;
         }
@@ -848,14 +632,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       // Only pre-latch when we know a typed-submit is about to fire —
       // empty-Enter into the picker / starter-row branches still need the
       // chrome state intact so they can dispatch.
-      if (value && !startersPermanentlyDismissed) destroyStartersPermanently();
+      if (value && starters && !starters.isPermanentlyDismissed()) {
+        starters.destroyPermanently();
+      }
       inputField.clear();
       if (value) {
         submit(value);
       } else if (questionPicker.isOpen()) {
         questionPicker.confirmSelection();
-      } else if (startersAreVisible()) {
-        submitHighlightedStarter();
+      } else if (starters?.isVisible()) {
+        starters.submitHighlighted();
       }
       return;
     }
@@ -937,37 +723,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     );
   }
 
-  /**
-   * Copy keystroke detection. Accepts Cmd+C, Cmd+Shift+C, and Ctrl+Shift+C
-   * because each mainstream terminal forwards a different subset — see
-   * `theme.ts` for which one ends up in the hint label per terminal.
-   * Returns true (and prevents default) when the keystroke matched and a
-   * non-empty selection was on the clipboard path; false otherwise so the
-   * caller can fall through to other handlers (Esc, etc.).
-   *
-   * Accepts both "c" and "C" as the key name because some kitty parsers
-   * report the shifted letter while others report the base letter with
-   * `shift: true`.
-   */
-  function handleCopyKeystroke(key: KeyEvent): boolean {
-    const isCopyLetter = key.name === "c" || key.name === "C";
-    if (!isCopyLetter) return false;
-    const cmdHeld = key.super || key.meta;
-    const isCmdC = cmdHeld && !key.shift && !key.ctrl;
-    const isCmdShiftC = cmdHeld && key.shift && !key.ctrl;
-    const isCtrlShiftC = key.ctrl && key.shift && !cmdHeld;
-    if (!(isCmdC || isCmdShiftC || isCtrlShiftC)) return false;
-    if (lastSelectionText.trim().length === 0) return false;
-    key.preventDefault();
-    void copyActiveSelection();
-    return true;
-  }
+  const copyController = new CopyController({
+    renderer,
+    transcriptWriter,
+    statusController,
+    getLastSelectionText: () => lastSelectionText,
+    clearLastSelectionText: () => {
+      lastSelectionText = "";
+    },
+  });
 
   inputField.onContentChange = () => {
     // Typing hides the starter chrome; backspacing the composer empty
     // brings it back (until the user actually submits a prompt, at which
     // point it's gone for good).
-    syncStarterVisibility();
+    starters?.syncVisibility();
     autocomplete.refresh();
   };
   inputField.onCursorChange = () => autocomplete.refresh();
@@ -987,7 +757,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   function submit(message: string): void {
     // First user submit collapses the boot starter section permanently for
     // this session, even when the prompt came from autocomplete or paste.
-    if (!startersPermanentlyDismissed) destroyStartersPermanently();
+    if (starters && !starters.isPermanentlyDismissed()) {
+      starters.destroyPermanently();
+    }
     // Slash-style attach commands run locally and never reach the runner so
     // users on terminals that do not forward image bytes still have a way to
     // attach images by path.
@@ -1005,7 +777,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       return;
     }
     if (message === "/copy" || message.startsWith("/copy ")) {
-      void handleCopySlashCommand(message);
+      void copyController.handleCopySlashCommand(message);
       return;
     }
     if (message === "/diag" || message.startsWith("/diag ")) {
@@ -1048,128 +820,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (!statusController.isRunning()) {
       statusController.markRunning();
     }
-  }
-
-  /**
-   * Copy the active drag-selection to the clipboard and clear the highlight
-   * so the user gets visual confirmation the action happened. Used by the
-   * platform copy keystroke (Cmd+C on macOS, Ctrl+Shift+C elsewhere); the
-   * slash command path goes through `handleCopySlashCommand` so it can
-   * also serve `/copy last|all|<N>`.
-   */
-  async function copyActiveSelection(): Promise<void> {
-    const text = lastSelectionText;
-    if (text.trim().length === 0) return;
-    const result = await copyTextToClipboard(text);
-    renderer.clearSelection();
-    lastSelectionText = "";
-    statusController.setSelectionText("");
-    if (result.ok) {
-      appendBlock(
-        "[copy]",
-        `copied selection (${text.length} char${text.length === 1 ? "" : "s"}) to clipboard via ${result.via}`,
-        COLORS.system,
-      );
-    } else {
-      appendBlock(
-        "[copy]",
-        `clipboard write failed: ${result.error ?? "unknown error"}` +
-          (process.platform === "linux" ? "\nInstall one of: wl-clipboard, xclip, xsel" : ""),
-        COLORS.error,
-      );
-    }
-  }
-
-  /**
-   * Resolve a `/copy ...` invocation to clipboard text and pipe it to the
-   * OS clipboard. When the user has an active drag-selection and ran a bare
-   * `/copy`, copy that highlight verbatim — it matches what they actually
-   * have on screen. Otherwise fall back to the transcript-log heuristic
-   * (`last` / `all` / `<N>`).
-   *
-   * Failures are surfaced in the transcript so users on minimal Linux
-   * installs see exactly which writer is missing.
-   */
-  async function handleCopySlashCommand(raw: string): Promise<void> {
-    const argumentRaw = raw === "/copy" ? "" : raw.slice("/copy ".length);
-    const argument = parseCopyArgument(argumentRaw);
-    if (argument === undefined) {
-      appendBlock(
-        "[copy]",
-        "Usage: /copy [last|all|<N>]  — last (default) copies the most recent agent reply, " +
-          "or copies the active drag-selection when one is present",
-        COLORS.system,
-      );
-      return;
-    }
-
-    // A bare `/copy` (or the copy keystroke while a selection is active)
-    // prefers the drag-selection so the clipboard matches what the user
-    // has highlighted on screen; an explicit `/copy last|all|<N>` always
-    // uses the transcript log instead.
-    const explicitArgument = argumentRaw.trim().length > 0;
-    const useSelection = !explicitArgument && lastSelectionText.trim().length > 0;
-    const text = useSelection
-      ? lastSelectionText
-      : selectCopyText(transcriptWriter.entries(), argument);
-    if (!text) {
-      appendBlock("[copy]", "nothing to copy yet", COLORS.system);
-      return;
-    }
-    const result = await copyTextToClipboard(text);
-    if (result.ok) {
-      const summary = useSelection
-        ? `selection (${text.length} char${text.length === 1 ? "" : "s"})`
-        : describeCopySelection(argument, text.length);
-      appendBlock("[copy]", `copied ${summary} to clipboard via ${result.via}`, COLORS.system);
-    } else {
-      appendBlock(
-        "[copy]",
-        `clipboard write failed: ${result.error ?? "unknown error"}` +
-          (process.platform === "linux" ? "\nInstall one of: wl-clipboard, xclip, xsel" : ""),
-        COLORS.error,
-      );
-    }
-  }
-
-  /**
-   * Two-stage clipboard write. The platform-native CLI (pbcopy / wl-copy /
-   * xclip / xsel / clip.exe) goes first because it actually writes to the
-   * OS clipboard and — critically — `writeClipboardText` reads the
-   * clipboard back through pbpaste / wl-paste / xclip -o to confirm the
-   * bytes landed. Exit-code-only success is not enough: pbcopy from inside
-   * a raw-mode TUI on Warp/macOS exits 0 without actually updating
-   * NSPasteboard, and OSC 52 has the same silent-drop problem on Warp.
-   *
-   * OSC 52 is only the fallback when no local CLI is available at all
-   * (e.g. an SSH session with no clipboard tool installed remotely). When
-   * a local CLI ran but failed verification we surface that error
-   * directly instead of falling through to OSC 52, because OSC 52 would
-   * also silently "succeed" on the same broken terminals and hide the
-   * real failure behind a fake "copied via OSC 52" line.
-   */
-  async function copyTextToClipboard(text: string): Promise<ClipboardWriteResult> {
-    const cli = await writeClipboardText(text);
-    if (cli.ok) return cli;
-    // Only fall back to OSC 52 when the CLI was simply unavailable. If a
-    // CLI ran but the readback did not match (cli.kind ===
-    // "verification-failed"), OSC 52 is on the same broken pipe and
-    // would silently "succeed" the same way — surface the real error.
-    if (
-      cli.kind === "no-writer" &&
-      renderer.isOsc52Supported() &&
-      renderer.copyToClipboardOSC52(text)
-    ) {
-      return { ok: true, via: "OSC 52" };
-    }
-    return cli;
-  }
-
-  function describeCopySelection(argument: "last" | "all" | number, length: number): string {
-    const chars = `${length} char${length === 1 ? "" : "s"}`;
-    if (argument === "last") return `last message (${chars})`;
-    if (argument === "all") return `full transcript (${chars})`;
-    return `last ${argument} messages (${chars})`;
   }
 
   async function handleFeedbackSlashCommand(raw: string): Promise<void> {
