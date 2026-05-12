@@ -373,7 +373,7 @@ export class Session {
   private async handleTurnEvent(event: TurnEvent): Promise<void> {
     if (event.type === "context_usage") {
       this.applyContextUsageEvent(event);
-      void this.flushPersistedEnvelope();
+      void this.persistLatestState();
     }
     let emitted = event;
     if (isTerminalEvent(event)) {
@@ -405,13 +405,6 @@ export class Session {
       return;
     }
     this.sessionCostUsd += delta;
-  }
-
-  /** Writes `state.json` with current runner state plus session-owned envelope fields. */
-  private async flushPersistedEnvelope(): Promise<void> {
-    const state = this.runner.getState();
-    if (!state) return;
-    await this.writeStoredEnvelope(state);
   }
 
   private applyPersistedTelemetryFields(
@@ -500,6 +493,7 @@ export class Session {
     return state;
   }
 
+  /** Writes `state.json` with current runner state plus session-owned envelope fields. */
   private async persistLatestState(): Promise<void> {
     const state = this.runner.getState();
     if (!state) return;
