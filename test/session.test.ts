@@ -405,6 +405,58 @@ describe("Session", () => {
     });
   });
 
+  testIfDocker("restores lastContextUsage and sessionCostUsd from state.json on start", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
+    tempDirs.push(tempDir);
+    const sessionPath = join(tempDir, "telemetry-resume");
+    await mkdir(sessionPath, { recursive: true });
+
+    const persistedUsage = {
+      usage: {
+        input: 100,
+        output: 50,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 150,
+        cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+      },
+      effectiveContextWindow: 200_000,
+      contextWindowUsage: {
+        systemPrompt: 10,
+        messages: 70,
+        localMemory: 30,
+        globalMemory: 40,
+      },
+    };
+
+    await writeFile(
+      join(sessionPath, "state.json"),
+      `${JSON.stringify(
+        {
+          sessionId: "telemetry-resume",
+          updatedAt: Date.now(),
+          state: turnState,
+          lastContextUsage: persistedUsage,
+          sessionCostUsd: 1.25,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf-8",
+    );
+
+    const runner = new FakeTurnRunner([complete("ok")]);
+    const session = new Session(
+      { model: "anthropic:claude-opus-4-7" },
+      { id: "telemetry-resume", runner, sessionPath, resumeFromStorage: true },
+    );
+
+    await session.start();
+
+    expect(session.getLastContextUsage()).toEqual(persistedUsage);
+    expect(session.getSessionCostUsd()).toBe(1.25);
+  });
+
   testIfDocker("sends active prompts through turn runner", async () => {
     const runner = new FakeTurnRunner([]);
     const session = await createSession(runner);

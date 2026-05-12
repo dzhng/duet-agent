@@ -7,6 +7,7 @@ import type { SkillCollision } from "../turn-runner/skills.js";
 import type {
   TurnAgentFile,
   TurnAnswerCommand,
+  TurnContextUsageEvent,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
@@ -23,12 +24,23 @@ import type {
 } from "../types/protocol.js";
 import type { StateMachinePollState, StateMachineTimerState } from "../types/state-machine.js";
 
+/** `context_usage` fields persisted beside `TurnState` in `state.json`. */
+type PersistedContextUsage = Omit<TurnContextUsageEvent, "type">;
+
 /**
  * How often `scheduleWake` checks the wall clock against `wakeAt`. Polling — instead of relying
  * on a single long `setTimeout` — keeps wakes correct after macOS / Windows / container sleep,
  * because Node and Bun timers run off a monotonic clock that pauses with the process.
  */
 const WAKE_POLL_INTERVAL_MS = 30_000;
+
+interface StoredSessionFile {
+  sessionId?: string;
+  updatedAt?: number;
+  state?: TurnState;
+  lastContextUsage?: PersistedContextUsage;
+  sessionCostUsd?: number;
+}
 
 export interface SessionStartInput {
   /** Routing mode for subsequent prompts. Omit to use the session's configured default. */
@@ -124,6 +136,13 @@ export class Session {
   private readonly resumeFromStorage: boolean;
   /** Pending callers of `waitForTerminal`, resolved together when the next terminal event arrives. */
   private readonly terminalWaiters: Array<(terminal: TurnTerminalEvent) => void> = [];
+  /**
+   * Latest parent-agent context bar snapshot (from `context_usage` events).
+   * Persisted beside `TurnState` in `state.json`, not on the runner snapshot.
+   */
+  private lastContextUsage?: PersistedContextUsage;
+  /** Cumulative USD from every terminal event that included `usage.cost`. */
+  private sessionCostUsd = 0;
 
   constructor(
     readonly config: TurnRunnerConfig,
@@ -159,7 +178,9 @@ export class Session {
       await this.startPromise;
       return;
     }
-    const state = this.resumeFromStorage ? await this.readStoredState() : undefined;
+    const envelope = this.resumeFromStorage ? await this.readStoredEnvelope() : {};
+    this.applyPersistedTelemetryFields(envelope);
+    const state = envelope.state;
     const command: TurnStartCommand = {
       type: "start",
       ...((input.mode ?? this.config.mode) ? { mode: input.mode ?? this.config.mode } : {}),
@@ -274,6 +295,16 @@ export class Session {
     return this.runner.getState();
   }
 
+  /** Latest `context_usage` payload for sidebar resume; not part of `TurnState`. */
+  getLastContextUsage(): PersistedContextUsage | undefined {
+    return this.lastContextUsage;
+  }
+
+  /** Cumulative session cost in USD; updated from terminal `usage` events. */
+  getSessionCostUsd(): number {
+    return this.sessionCostUsd;
+  }
+
   /**
    * Skills discovered for this session. Available after `start()` resolves;
    * loading happens lazily on first call otherwise.
@@ -299,7 +330,9 @@ export class Session {
       return;
     }
     if (!this.resumeFromStorage) return;
-    const state = await this.readStoredState();
+    const envelope = await this.readStoredEnvelope();
+    this.applyPersistedTelemetryFields(envelope);
+    const state = envelope.state;
     if (!state) return;
     this.startPromise = this.runner
       .start({ type: "start", state, ...this.startOptions() })
@@ -338,11 +371,16 @@ export class Session {
   }
 
   private async handleTurnEvent(event: TurnEvent): Promise<void> {
+    if (event.type === "context_usage") {
+      this.applyContextUsageEvent(event);
+      void this.flushPersistedEnvelope();
+    }
     let emitted = event;
     if (isTerminalEvent(event)) {
       emitted = this.normalizeTerminalEvent(event);
       this.lastTerminal = emitted;
-      await this.writeStoredState(emitted.state);
+      this.applyTerminalUsageCost(emitted);
+      await this.writeStoredEnvelope(emitted.state);
       if (emitted.type === "sleep") {
         this.scheduleWake(emitted);
       }
@@ -351,6 +389,40 @@ export class Session {
       }
     }
     this.emit(emitted);
+  }
+
+  private applyContextUsageEvent(event: TurnContextUsageEvent): void {
+    this.lastContextUsage = {
+      usage: event.usage,
+      effectiveContextWindow: event.effectiveContextWindow,
+      contextWindowUsage: event.contextWindowUsage,
+    };
+  }
+
+  private applyTerminalUsageCost(terminal: TurnTerminalEvent): void {
+    const delta = terminal.usage?.cost?.total;
+    if (typeof delta !== "number" || !Number.isFinite(delta) || delta === 0) {
+      return;
+    }
+    this.sessionCostUsd += delta;
+  }
+
+  /** Writes `state.json` with current runner state plus session-owned envelope fields. */
+  private async flushPersistedEnvelope(): Promise<void> {
+    const state = this.runner.getState();
+    if (!state) return;
+    await this.writeStoredEnvelope(state);
+  }
+
+  private applyPersistedTelemetryFields(
+    envelope: Pick<StoredSessionFile, "lastContextUsage" | "sessionCostUsd">,
+  ): void {
+    if (envelope.lastContextUsage !== undefined) {
+      this.lastContextUsage = envelope.lastContextUsage;
+    }
+    if (typeof envelope.sessionCostUsd === "number" && Number.isFinite(envelope.sessionCostUsd)) {
+      this.sessionCostUsd = envelope.sessionCostUsd;
+    }
   }
 
   private normalizeTerminalEvent(event: TurnTerminalEvent): TurnTerminalEvent {
@@ -431,7 +503,7 @@ export class Session {
   private async persistLatestState(): Promise<void> {
     const state = this.runner.getState();
     if (!state) return;
-    await this.writeStoredState(state);
+    await this.writeStoredEnvelope(state);
   }
 
   private startOptions(options?: TurnOptions): { options?: TurnOptions } {
@@ -464,25 +536,46 @@ export class Session {
       : undefined;
   }
 
-  private async readStoredState(): Promise<TurnState | undefined> {
+  private async readStoredEnvelope(): Promise<{
+    state?: TurnState;
+    lastContextUsage?: PersistedContextUsage;
+    sessionCostUsd?: number;
+  }> {
     try {
       const content = await readFile(this.sessionFilePath(), "utf-8");
-      const stored = JSON.parse(content) as { state?: TurnState; session?: TurnState };
-      return stored.state ?? stored.session;
+      const stored = JSON.parse(content) as StoredSessionFile;
+      const rawState = stored.state;
+      if (!rawState) {
+        return {
+          lastContextUsage: stored.lastContextUsage,
+          sessionCostUsd: stored.sessionCostUsd,
+        };
+      }
+
+      return {
+        state: rawState,
+        lastContextUsage: stored.lastContextUsage,
+        sessionCostUsd: stored.sessionCostUsd,
+      };
     } catch (error) {
       if (isEnoent(error) || String(error).includes(this.sessionFilePath())) {
-        return undefined;
+        return {};
       }
       throw error;
     }
   }
 
-  private async writeStoredState(state: TurnState): Promise<void> {
-    await writeFile(
-      this.sessionFilePath(),
-      `${JSON.stringify({ sessionId: this.id, updatedAt: Date.now(), state }, null, 2)}\n`,
-      "utf-8",
-    );
+  private async writeStoredEnvelope(state: TurnState): Promise<void> {
+    const payload: StoredSessionFile = {
+      sessionId: this.id,
+      updatedAt: Date.now(),
+      state,
+      sessionCostUsd: this.sessionCostUsd,
+    };
+    if (this.lastContextUsage !== undefined) {
+      payload.lastContextUsage = this.lastContextUsage;
+    }
+    await writeFile(this.sessionFilePath(), `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
   }
 
   private sessionFilePath(): string {

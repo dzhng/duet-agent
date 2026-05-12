@@ -7,8 +7,8 @@ import {
   TextRenderable,
 } from "@opentui/core";
 import type {
-  TurnContextUsageEvent,
   TurnContextWindowUsage,
+  TurnContextUsageEvent,
   TurnFollowUpQueueEntry,
   TurnTodo,
 } from "../types/protocol.js";

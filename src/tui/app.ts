@@ -33,7 +33,6 @@ import {
 } from "../cli/auto-upgrade.js";
 import type {
   TurnAgentFile,
-  TurnContextUsageEvent,
   TurnEvent,
   TurnQuestion,
   TurnStep,
@@ -559,11 +558,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     transcriptLog.push({ kind, text: trimmed });
   }
   let lastTerminal: TurnTerminalEvent | undefined;
-  let latestContextUsage: TurnContextUsageEvent | undefined;
-  // Running USD total across every settled turn in this session. Reset only
-  // by exiting the TUI; resumed sessions start fresh because per-turn usage
-  // events are not replayed from persisted state.
-  let sessionCost = 0;
+  // Context bar + session cost are owned by `Session` (persisted beside
+  // `TurnState` in `state.json`), not `TurnRunner` / `TurnState`.
   let activeTextStream: StreamingBlock | undefined;
   let activeReasoningStream: StreamingBlock | undefined;
   // Tool calls fire twice (running → completed/error). Track the rendered
@@ -694,8 +690,18 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     sidebar.setTodos(state?.todos ?? []);
     sidebar.setFollowUpQueue(state?.followUpQueue ?? []);
     sidebar.setStateMachine(state?.stateMachine);
-    sidebar.setContextUsage(latestContextUsage);
-    sidebar.setSessionCost(sessionCost);
+    const snap = input.session.getLastContextUsage();
+    sidebar.setContextUsage(
+      snap
+        ? {
+            type: "context_usage",
+            usage: snap.usage,
+            effectiveContextWindow: snap.effectiveContextWindow,
+            contextWindowUsage: snap.contextWindowUsage,
+          }
+        : undefined,
+    );
+    sidebar.setSessionCost(input.session.getSessionCostUsd());
   }
 
   const unsubscribe = input.session.subscribe((event: TurnEvent) => {
@@ -712,9 +718,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       // Sidebar refresh covers the visual update; nothing else to do here.
     } else if (event.type === "memory") {
       renderMemoryStatus(event);
-    } else if (event.type === "context_usage") {
-      latestContextUsage = event;
-      sidebar.setContextUsage(event);
     } else if (event.type === "system") {
       appendBlock("[system]", event.message, COLORS.system);
       if (event.level === "error") markIdle();
@@ -1083,8 +1086,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   function renderUsage(usage?: TurnTokenUsage): void {
     if (!usage) return;
-    sessionCost += usage.cost.total;
-    sidebar.setSessionCost(sessionCost);
+    // Cumulative cost is updated on the session when the terminal event is
+    // handled; sidebar refreshes from `getSessionCostUsd()` via `refreshSidebar`.
     // Tokens stay terse (just in/out) since the cost breakdown below is
     // where the cache wins actually matter. Cost is split across all four
     // buckets (in / out / cache read / cache write) so prompt-cache hits and
