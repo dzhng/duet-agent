@@ -1,13 +1,21 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 /**
- * Trigger threshold for the dispatched message list. The Vercel AI Gateway
- * (and the Duet edge that proxies it) caps request bodies at roughly
- * 4.5 MiB; we hold the trigger at 4.3 MiB to leave ~100 KiB of headroom
- * for the system prompt, tool definitions, and request envelope that
- * pi-agent layers on top of `messages` before serializing the body.
+ * Byte-budget safety net for the dispatched message list. The token-budget
+ * trigger in `createObservationalContextTransform` is the primary gate for
+ * normal text-and-tool sessions, but image attachments break that gate: a
+ * single inline image can carry hundreds of KB of base64 while the
+ * provider's per-image token charge is bounded (and unpredictable across
+ * providers and resolutions). Without a byte gate, a few large screenshots
+ * could push the serialized request well past any sane limit before the
+ * token estimate catches up.
+ *
+ * 15 MB is well above typical text-only contexts but still bounded; it
+ * caps how much image payload a single dispatched body can carry before
+ * compaction kicks in, regardless of how cheap the provider claims the
+ * image tokens are.
  */
-export const WIRE_BYTE_TRIGGER = Math.floor(4.3 * 1024 * 1024);
+export const WIRE_BYTE_TRIGGER = 15 * 1024 * 1024;
 
 /**
  * When eviction fires, drop oldest messages until the wire payload reaches

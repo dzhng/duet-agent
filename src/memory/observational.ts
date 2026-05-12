@@ -423,12 +423,25 @@ export function createObservationalContextTransform(options: ObservationalContex
     );
 
     // Trigger condition: either budget exceeded under the current sticky
-    // horizon. Token budget protects context window cost on smaller models;
-    // byte budget protects gateway request-body caps. Eviction advances the
-    // horizon enough to satisfy both targets in one block so the next
-    // several turns grow back without retriggering.
-    const candidateTokens = estimateRawTokens(agentMessagesToRaw(retainedMessages));
+    // horizon. The token budget is the primary gate — it tracks what the
+    // provider actually bills for text + tool I/O. The byte budget is the
+    // image safety net: inline images carry hundreds of KB of base64
+    // payload at a bounded, provider-specific per-image token charge that
+    // the `ceil(bytes/4)` heuristic cannot estimate accurately, so a few
+    // large screenshots can blow past any reasonable wire size while the
+    // token estimate still looks fine. Eviction advances the horizon
+    // enough to satisfy both targets in one block so the next several
+    // turns grow back without retriggering.
+    //
+    // Token accounting uses `ceil(wireBytes / 4)`, the same heuristic the
+    // runner reports on `TurnContextUsageEvent.messages`. That charges
+    // `JSON.stringify` length for structured blocks (toolCall, toolResult,
+    // thinking), so heavy tool sessions trigger compaction at the same
+    // scale the provider bills — unlike `agentMessagesToRaw`, which
+    // collapses non-text blocks into tiny preview strings and lets the
+    // wire grow well past `effectiveContext` before tripping.
     const candidateBytes = calculateWireBytes(retainedMessages);
+    const candidateTokens = Math.ceil(candidateBytes / 4);
     const tokenTrigger = settings.observation.messageTokens;
     const tokenTarget = settings.observation.bufferActivation;
 
@@ -438,8 +451,8 @@ export function createObservationalContextTransform(options: ObservationalContex
         observableMessages,
         options.horizon.evictionHorizon,
         (candidate) => {
-          const tokens = estimateRawTokens(agentMessagesToRaw(candidate));
           const bytes = calculateWireBytes(candidate);
+          const tokens = Math.ceil(bytes / 4);
           return tokens <= tokenTarget && bytes <= WIRE_BYTE_TARGET;
         },
       );
@@ -629,7 +642,7 @@ function stripObservationalContextMessages(messages: AgentMessage[]): AgentMessa
 
 function isObservationalContextMessage(message: AgentMessage): boolean {
   if (message.role !== "user") return false;
-  const text = normalizeMessageContent(message).textPreview.trim();
+  const text = serializeMessageForObserver(message).textPreview.trim();
   // Context transforms inject durable memory as synthetic user reminders for the
   // actor. Observers must ignore those reminders so a tiny new exchange does not
   // re-observe the entire durable memory database or send it back to the memory
@@ -957,7 +970,7 @@ export function agentMessagesToRaw(messages: AgentMessage[]): RawMemoryMessage[]
 }
 
 export function agentMessageToRaw(message: AgentMessage): RawMemoryMessage | undefined {
-  const normalized = normalizeMessageContent(message);
+  const normalized = serializeMessageForObserver(message);
   if (normalized.textPreview.trim().length === 0) {
     return undefined;
   }
@@ -976,7 +989,7 @@ export function agentMessageToRaw(message: AgentMessage): RawMemoryMessage | und
 
 function stableRawMessageId(
   message: AgentMessage,
-  textPreview: string = normalizeMessageContent(message).textPreview,
+  textPreview: string = serializeMessageForObserver(message).textPreview,
 ): RawMemoryMessage["id"] {
   if (message.role === "assistant" && "responseId" in message && message.responseId) {
     return `msg_assistant_${message.responseId}`;
@@ -999,7 +1012,15 @@ function normalizeRole(role: string): RawMemoryMessage["role"] {
   return "system";
 }
 
-interface NormalizedMessageContent {
+/**
+ * Multimodal-preview projection of an `AgentMessage` used exclusively by the
+ * observer pipeline. The observer model reads `textPreview` as a transcript
+ * and the image blocks in `content` as inline attachments; structured
+ * provider blocks (`toolCall`, `thinking`, etc.) are flattened into compact
+ * `textPreview` snippets so the observer sees what was called and what came
+ * back without paying for the full serialized request body.
+ */
+interface ObserverMessagePreview {
   content: Array<TextContent | ImageContent>;
   textPreview: string;
 }
@@ -1010,12 +1031,44 @@ interface NormalizedMessageContent {
 // create context pressure even when the raw bytes are omitted from previews.
 const ESTIMATED_IMAGE_TOKENS = 1_600;
 
-function normalizeMessageContent(message: AgentMessage): NormalizedMessageContent {
+/**
+ * Per-block cap for tool-call arguments and tool-result text. Tool I/O is
+ * background context for the observer, not the subject of the observation,
+ * so each block is truncated rather than included verbatim. 1,500 chars
+ * (~375 tokens) is enough to recognize what was called and what came back
+ * while keeping any single tool round-trip from dominating the observer
+ * batch budget.
+ */
+const MAX_TOOL_PREVIEW_CHARS = 1_500;
+
+function truncateForObserver(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)} … [truncated]`;
+}
+
+/**
+ * Project an `AgentMessage` into the compact transcript the observer model
+ * consumes. Text and image blocks pass through (text in `textPreview`,
+ * image bytes inline in `content`); tool calls are flattened into short
+ * `[toolCall name(args)]` snippets, tool-result content is truncated and
+ * prefixed with the tool name, and thinking blocks are dropped (see
+ * {@link structuredBlockPreview}).
+ *
+ * Not a wire-faithful round-trip — the actor's request to the provider is
+ * built separately. This projection is observer-only, which is why
+ * truncation and tagging are safe here.
+ */
+function serializeMessageForObserver(message: AgentMessage): ObserverMessagePreview {
+  const isToolResult = message.role === "toolResult";
   const maybeContent = (message as { content?: unknown }).content;
+
   if (typeof maybeContent === "string") {
+    const text = isToolResult
+      ? truncateForObserver(maybeContent, MAX_TOOL_PREVIEW_CHARS)
+      : maybeContent;
     return {
-      content: [{ type: "text", text: maybeContent }],
-      textPreview: maybeContent,
+      content: [{ type: "text", text }],
+      textPreview: prefixToolResult(message, text),
     };
   }
   if (Array.isArray(maybeContent)) {
@@ -1023,8 +1076,11 @@ function normalizeMessageContent(message: AgentMessage): NormalizedMessageConten
     const previews: string[] = [];
     for (const part of maybeContent) {
       if (isTextContent(part)) {
-        content.push(part);
-        previews.push(part.text);
+        const text = isToolResult
+          ? truncateForObserver(part.text, MAX_TOOL_PREVIEW_CHARS)
+          : part.text;
+        content.push({ type: "text", text });
+        previews.push(text);
         continue;
       }
       if (isImageContent(part)) {
@@ -1032,12 +1088,12 @@ function normalizeMessageContent(message: AgentMessage): NormalizedMessageConten
         previews.push(imageContentPreview(part));
         continue;
       }
-      const preview = unsupportedContentPreview(part);
+      const preview = structuredBlockPreview(part);
       if (preview) previews.push(preview);
     }
     return {
       content,
-      textPreview: previews.join("\n"),
+      textPreview: prefixToolResult(message, previews.join("\n")),
     };
   }
   if ("summary" in message && typeof message.summary === "string") {
@@ -1047,6 +1103,18 @@ function normalizeMessageContent(message: AgentMessage): NormalizedMessageConten
     };
   }
   return { content: [], textPreview: "" };
+}
+
+/**
+ * Tag tool-result messages with their `toolName` so the observer can match
+ * results back to the tool that produced them when grouping observations.
+ * The tool-call site already names the tool inline; this keeps the result
+ * side symmetrical without relying on positional ordering.
+ */
+function prefixToolResult(message: AgentMessage, body: string): string {
+  if (message.role !== "toolResult") return body;
+  const errorTag = message.isError ? " (error)" : "";
+  return `[toolResult ${message.toolName}${errorTag}]\n${body}`;
 }
 
 function isTextContent(part: unknown): part is TextContent {
@@ -1119,12 +1187,34 @@ function stringField(record: Record<string, unknown>, field: string): string | u
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function unsupportedContentPreview(part: unknown): string | undefined {
+/**
+ * Render a non-text/image provider block as a compact tagged snippet for the
+ * observer transcript. Only `toolCall` blocks carry observable signal here —
+ * they're rendered as `name(truncated-args)` so the observer can ground
+ * observations in what the agent actually invoked. `thinking` blocks are
+ * dropped intentionally: the observer should record what was decided, not
+ * the assistant's intermediate reasoning, and rolling thinking into the
+ * transcript would only crowd the batch budget. Other unknown structured
+ * types fall back to a typed placeholder.
+ */
+function structuredBlockPreview(part: unknown): string | undefined {
   if (!part || typeof part !== "object" || !("type" in part)) {
     return undefined;
   }
   const record = part as Record<string, unknown>;
   const type = typeof record.type === "string" ? record.type : "unknown";
+  if (type === "thinking") return undefined;
+  if (type === "toolCall") {
+    const name = stringField(record, "name") ?? "unknown";
+    const args = record.arguments ?? {};
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(args);
+    } catch {
+      serialized = "{}";
+    }
+    return `[toolCall ${name}(${truncateForObserver(serialized, MAX_TOOL_PREVIEW_CHARS)})]`;
+  }
   const id = stringField(record, "id");
   const name = stringField(record, "name");
   return `[${[type, id, name].filter(Boolean).join(": ")}]`;
@@ -1151,14 +1241,7 @@ function inferPriority(observations: string): ObservationPriority {
   return "low";
 }
 
-function estimateRawTokens(messages: RawMemoryMessage[]): number {
-  return messages.reduce(
-    (total, message) => total + (message.estimatedTokens ?? estimateTokens(message.textPreview)),
-    0,
-  );
-}
-
-function estimateMessageTokens(message: NormalizedMessageContent): number {
+function estimateMessageTokens(message: ObserverMessagePreview): number {
   const imageTokens =
     message.content.filter((part) => part.type === "image").length * ESTIMATED_IMAGE_TOKENS;
   return estimateTokens(message.textPreview) + imageTokens;

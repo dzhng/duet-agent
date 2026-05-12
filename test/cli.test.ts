@@ -98,7 +98,7 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "haiku-4.5",
+      modelName: "gpt-5.4-mini",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
@@ -119,7 +119,7 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "haiku-4.5",
+      modelName: "gpt-5.4-mini",
       source: "inferred",
       envVar: "AI_GATEWAY_API_KEY",
       fromDotenv: false,
@@ -139,7 +139,7 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "haiku-4.5",
+      modelName: "gpt-5.4-mini",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
@@ -181,7 +181,7 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "haiku-4.5",
+      modelName: "gpt-5.4-mini",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
@@ -214,7 +214,7 @@ describe("CLI model inference", () => {
       source: "default",
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "haiku-4.5",
+      modelName: "gpt-5.4-mini",
       source: "default",
     });
   });

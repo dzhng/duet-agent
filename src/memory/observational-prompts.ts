@@ -69,9 +69,20 @@ const OBSERVER_EXTRACTION_INSTRUCTIONS = dedent`
   - Do not add end dates for vague references like "recently", "soon", "lately", or "a while ago".
   - Split observations that contain multiple time-sensitive events so each event can carry its own date.
 
+  TOOL CALLS AND TOOL RESULTS ARE CONTEXT, NOT THE SUBJECT
+
+  Messages tagged \`[toolCall name(args)]\` and \`[toolResult name]\` are background context, included so you can ground observations in what the agent actually did. They are not the subject of the observation, and may be truncated with "… [truncated]".
+
+  - Do NOT transcribe tool arguments, raw tool output, file listings, command output, or JSON payloads verbatim.
+  - Tool results that just restate ground truth (file contents, directory listings, grep output, package metadata) are NOT memory by themselves — the agent can re-read them next time. Record an observation only when the exchange produced something the agent could not trivially re-discover: a decision, a non-trivial hypothesis acted on, a blocker, a completion, or a user preference revealed during the work. Otherwise prefer hasMemory=false.
+  - Tool calls do not by themselves justify ✅. Apply the ✅ rules below: a read-only tool call (read_file, grep, ls, status check) is still routine work and stays 🟡, even when the tool succeeded.
+  - One observation should usually summarize an entire tool exchange, not enumerate every call. Use sub-bullets only when distinct results carry independent signal.
+  - If a tool result is truncated, do not invent the missing content. Note "(partial)" if the truncation matters.
+
   PRESERVE SPECIFICS
 
-  Capture user facts, preferences, goals, constraints, corrections, explicit decisions, project details, file paths, commands, tool results, unresolved tasks, and completed work.
+  Capture user facts, preferences, goals, constraints, corrections, explicit decisions, project details, file paths, commands, unresolved tasks, and completed work.
+  When a tool result reveals a concrete fact the agent acted on (a file path, a function name, a line number, a count, an error message), preserve that specific fact — not the surrounding output.
   Preserve unusual phrasing in quotes when the user's exact wording matters.
   Preserve names, handles, identifiers, quantities, counts, measurements, statistics, roles, and distinguishing attributes.
   For assistant-generated recommendations, summaries, code, or explanations that the user may ask about later, retain the details that make the output reconstructable.
@@ -85,13 +96,13 @@ export const OBSERVER_GUIDELINES = dedent`
   - Add 1 to 5 observations per exchange
   - Use terse language to save tokens. Sentences should be dense without unnecessary words
   - Do not add repetitive observations that have already been observed. Group repeated similar actions under a single parent with sub-bullets for new results
-  - If the agent calls tools, observe what was called, why, and what was learned
+  - If the agent calls tools, observe what was called, why, and what was learned — not the raw arguments or raw output. Only record the exchange when something durable came out of it (decision, blocker, completion, user signal).
   - When observing files with line numbers, include the line number if useful
-  - If the agent provides a detailed response, observe the contents so it could be repeated
+  - If the agent's response only restates re-readable ground truth, prefer hasMemory=false over writing a faithful transcript. Memory is for things the agent could not trivially re-discover.
   - Make sure each observation starts with a priority emoji (🔴, 🟡, 🟢) or a completion marker (✅)
   - Capture short and medium user messages nearly verbatim; summarize long messages but keep key quotes that carry intent
   - Default a user task request to 🟡. Only escalate to 🔴 when the request itself reveals a durable user fact, preference, or critical cross-session goal that goes beyond the immediate task
-  - Reserve ✅ for state-changing concrete completions: code shipped, file edited, command that mutated state, verified bug fix. Do NOT mark ✅ for read-only file inspections, lookups, or routine Q&A — those stay 🟡
+  - Reserve ✅ for state-changing concrete completions: code shipped, file edited, command that mutated state, verified bug fix. Do NOT mark ✅ for read-only file inspections, lookups, or routine Q&A — those stay 🟡. A decision or plan to do something later is NOT a completion: "agreed to refactor X", "we'll extract Y", "next step is Z" stay 🟡 (or 🔴 if the decision is durable cross-session). ✅ requires that the work has actually been performed in this exchange.
   - Do not use ✅ when the user defers, postpones, abandons, or changes their mind. Tag deferrals as 🟢. Tag content surfaced along the way as 🟡 only when it is grounded in measured/observed facts; otherwise 🟢
   - When the conversation is dominated by uncertainty, speculation, "maybe / might / not sure / no data yet" framing, or explicit deferral, the whole observation should stay at 🟢. Do not sneak in 🟡 lines just to elevate the priority
   - Treat ✅ as a memory signal that tells the assistant something is finished and should not be repeated unless new information changes it
@@ -112,7 +123,7 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
   return dedent`
     Use priority levels:
     - 🔴 High: durable user-identity facts (job, environment, relationships, identifiers), explicit user preferences, and unresolved critical decisions or blockers the user cares about across sessions. Do NOT use 🔴 for ordinary task requests.
-    - 🟡 Medium: routine work executed this session — tool results, file contents, code structure, agent hypotheses or reasoning, and ordinary task requests being performed without durable user-identity content. This is the default for in-session work.
+    - 🟡 Medium: in-session work that carries durable signal — decisions reached, hypotheses the agent committed to, blockers/errors that still gate progress, and ordinary task requests being performed. Do NOT use 🟡 just to record what the agent read; if the only content is "agent looked at X and X says Y", prefer hasMemory=false.
     - 🟢 Low: tentative, speculative, or uncertain observations ("maybe", "might be", unmeasured guesses), explicit deferrals or "no data yet" states, and incidental details whose future relevance is unclear. Use 🟢 freely and do not promote tentative or unresolved content to 🟡 to look helpful.
     - ✅ Completed: a state-changing artifact was produced — code shipped, file edited, command run that mutated state, or a verified bug fix. Do NOT use ✅ for read-only lookups, file inspections, or simple Q&A. Do NOT use ✅ when the user defers, postpones, or changes their mind.
 
@@ -125,9 +136,20 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
     Group observations by date, then list each with 24-hour time.
 
     hasMemory:
-    - true when the message history contains durable information worth remembering
-    - false when the exchange is only transient chatter, a greeting, or otherwise has no useful future context
-    - Tentative or low-priority detail still counts as durable memory. Prefer recording it as 🟢 over returning hasMemory=false.
+    - true when the message history contains durable information worth remembering: user preferences, user-identity facts, decisions taken, state-changing completions, blockers/errors that gate future work, or hard-won discoveries that took real investigation to produce.
+    - false when the exchange only restates ground truth the agent could trivially re-discover by re-running a tool — file listings, file contents quoted back, grep output, package.json dumps, status-quo code structure. Re-runnable facts are not memory. Recording them just bloats the durable store and the agent can read them fresh next time.
+    - Decisions ABOUT the ground truth ARE memory ("we agreed to refactor the duplicated auth checks into a middleware"); the ground truth that prompted the decision is not.
+    - Tool-result errors that block the user's work (build failures, failing tests, runtime errors the user is asking about) ARE memory while unresolved, because they carry forward into the next turn even though the agent could re-run the same tool.
+    - Tentative or low-priority signals about the user's preferences, plans, or constraints still count as durable memory; record them as 🟢. Tentative observations about ground truth do not.
+
+    Concrete examples of what is NOT memory (return hasMemory=false unless something durable ALSO appears in the exchange):
+    - "User asked to see / read / inspect FILE" — an inspection request is not a durable signal. The user can ask again next session.
+    - "Agent read FILE and the contents/structure are X" — re-readable.
+    - "Agent ran COMMAND and the output was X" — re-runnable.
+    - "Agent listed DIRECTORY and found these files" — re-runnable.
+    - "Agent grepped for PATTERN and found N matches" — re-runnable.
+    Recording any of the above by itself bloats the store with content the agent will fetch fresh anyway. Only record when the exchange ALSO produced a durable signal (a decision, a completion, an unresolved blocker, or a user preference revealed during the work).
+
     - Always call the structured output tool. Use hasMemory=false instead of skipping the tool call.
 
     observations:

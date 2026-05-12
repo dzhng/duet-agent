@@ -28,7 +28,7 @@ interface ModelDefinition {
 }
 
 export const DEFAULT_CLI_MODEL = "opus-4.7";
-export const DEFAULT_CLI_MEMORY_MODEL = "haiku-4.5";
+export const DEFAULT_CLI_MEMORY_MODEL = "gpt-5.4-mini";
 
 /**
  * Global provider preference for shorthand resolution. `duet-gateway` must
@@ -58,8 +58,8 @@ const MEMORY_MODEL_BY_PROVIDER: Record<ProviderName, string> = {
   "duet-gateway": DEFAULT_CLI_MEMORY_MODEL,
   "vercel-ai-gateway": DEFAULT_CLI_MEMORY_MODEL,
   openrouter: DEFAULT_CLI_MEMORY_MODEL,
-  anthropic: DEFAULT_CLI_MEMORY_MODEL,
-  openai: "gpt-5.4-mini",
+  anthropic: "haiku-4.5",
+  openai: DEFAULT_CLI_MEMORY_MODEL,
 };
 
 const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
