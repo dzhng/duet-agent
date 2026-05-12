@@ -5,7 +5,12 @@ import {
   type AgentWorkerInput,
   type AgentWorkerResult,
 } from "../src/turn-runner/turn-runner.js";
-import type { TurnEvent, TurnUsageEvent, TurnTokenUsage } from "../src/types/protocol.js";
+import type {
+  TurnEvent,
+  TurnStepEvent,
+  TurnUsageEvent,
+  TurnTokenUsage,
+} from "../src/types/protocol.js";
 import type { StateAgentHandle } from "../src/turn-runner/state-machine-controller.js";
 import { createOutreachStateMachine } from "./helpers/turn-runner-protocol.js";
 
@@ -123,6 +128,41 @@ describe("State-machine agent state events", () => {
         input: { path: "profile.md" },
       },
     });
+  });
+
+  test("tags state-agent step + usage events with their originating agent state", async () => {
+    const runner = new StateMachineOriginTurnRunner();
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+    await runner.start({ type: "start", mode: createOutreachStateMachine() });
+
+    await runner.turn({
+      type: "prompt",
+      message: "Continue.",
+      behavior: "follow_up",
+    });
+
+    const stepsWithOrigin = events.filter(
+      (event): event is TurnStepEvent => event.type === "step" && event.origin !== undefined,
+    );
+    expect(stepsWithOrigin.length).toBeGreaterThan(0);
+    for (const step of stepsWithOrigin) {
+      expect(step.origin).toEqual({
+        kind: "state_machine_agent",
+        state: "research_prospect",
+      });
+    }
+
+    const usageWithOrigin = events.filter(
+      (event): event is TurnUsageEvent => event.type === "usage" && event.origin !== undefined,
+    );
+    expect(usageWithOrigin.length).toBeGreaterThan(0);
+    for (const usage of usageWithOrigin) {
+      expect(usage.origin).toEqual({
+        kind: "state_machine_agent",
+        state: "research_prospect",
+      });
+    }
   });
 
   test("emits a usage event after each state-agent finish, monotonically advancing turn cost", async () => {
@@ -278,6 +318,104 @@ class StateMachineUsageTurnRunner extends TurnRunner {
         } finally {
           this.recordUsage(stubbedUsage);
           this.emitTurnUsage();
+        }
+      },
+      interrupt: () => undefined,
+      partialAssistantText: () => undefined,
+    };
+  }
+}
+
+/**
+ * Stub state-agent handle that emits both a step event and a usage event with
+ * a `state_machine_agent` origin, mirroring what the real
+ * `createStateAgentHandle` does after this change. Used to assert the runner's
+ * emit pipeline forwards the origin onto every event it produces, without
+ * standing up a live LLM.
+ */
+class StateMachineOriginTurnRunner extends TurnRunner {
+  private workerCalls = 0;
+
+  constructor() {
+    super({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+  }
+
+  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    this.workerCalls += 1;
+    if (this.workerCalls === 1) {
+      return {
+        control: {
+          type: "select_state_machine_state",
+          decision: { kind: "run_state", state: "research_prospect" },
+        },
+        outcome: {
+          type: "complete",
+          status: "completed",
+          result: "Selected research state.",
+          state: { ...input.state, status: "completed" },
+        },
+      };
+    }
+    return {
+      control: { type: "none" },
+      outcome: {
+        type: "complete",
+        status: "completed",
+        result: "Wrapped up.",
+        state: {
+          ...input.state,
+          status: "completed",
+          agent: { ...input.state.agent, status: "completed" },
+        },
+      },
+    };
+  }
+
+  protected override createStateAgentHandle(): StateAgentHandle {
+    const stubbedUsage: TurnTokenUsage = {
+      input: 1000,
+      output: 200,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 1200,
+      cost: { input: 0.2, output: 0.05, cacheRead: 0, cacheWrite: 0, total: 0.25 },
+    };
+    this.lastParentUsageSnapshot = {
+      effectiveContextWindow: 200_000,
+      contextWindowUsage: { systemPrompt: 100, messages: 200, localMemory: 0, globalMemory: 0 },
+      lastMessageUsage: {
+        input: 100,
+        output: 200,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 300,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+    const origin = { kind: "state_machine_agent" as const, state: "research_prospect" };
+    return {
+      prompt: async () => {
+        try {
+          this.emitAgentEvent(
+            {
+              type: "message_update",
+              message: { role: "assistant" } as never,
+              assistantMessageEvent: {
+                type: "text_end",
+                contentIndex: 0,
+                content: "stubbed state agent",
+                partial: { role: "assistant" } as never,
+              },
+            } satisfies AgentEvent,
+            origin,
+          );
+          return { type: "complete", result: "State agent finished." };
+        } finally {
+          this.recordUsage(stubbedUsage);
+          this.emitTurnUsage(origin);
         }
       },
       interrupt: () => undefined,

@@ -325,12 +325,16 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       // eslint-disable-next-line no-constant-condition
       while (true) {
         let pendingResumeSessionId: string | undefined;
+        let pendingReset = false;
         await runTui({
           session: activeSession,
           ...(activeHistory ? { history: activeHistory } : {}),
           ...(activeIsResume ? { isResume: true } : {}),
           onResumeRequest: (id: string) => {
             pendingResumeSessionId = id;
+          },
+          onResetRequest: () => {
+            pendingReset = true;
           },
           resumeHistoryMessages,
           modelName,
@@ -343,6 +347,18 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
           packageVersion: pkg.version,
           upgradeStatus$,
         });
+
+        if (pendingReset) {
+          // `/reset` from the slash dispatcher: drop the current session
+          // (flushing state.json) and start a fresh one. The new session
+          // boots with starters visible — same as launching `duet`
+          // without `--resume`.
+          await activeSession.dispose();
+          activeSession = manager.create(config.mode ? { mode: config.mode } : {});
+          activeHistory = undefined;
+          activeIsResume = false;
+          continue;
+        }
 
         if (!pendingResumeSessionId) break;
 

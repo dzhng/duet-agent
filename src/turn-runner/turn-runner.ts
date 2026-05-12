@@ -40,6 +40,7 @@ import type {
   TurnContextWindowUsage,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
+  TurnEventOrigin,
   TurnFollowUpQueueEntry,
   TurnInterruptCommand,
   TurnMode,
@@ -841,9 +842,13 @@ export class TurnRunner {
       return { type: "complete", result: assistantText(agent.state.messages) };
     };
 
+    const origin: TurnEventOrigin = {
+      kind: "state_machine_agent",
+      state: input.state.name,
+    };
     return {
       prompt: async () => {
-        unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event));
+        unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event, origin));
         try {
           await agent.prompt(input.prompt);
           return finish();
@@ -856,7 +861,7 @@ export class TurnRunner {
           // interrupt — so partial work still flows into the turn aggregate
           // and ticks the sidebar cost via the emitted `usage` event.
           this.recordUsage(usageFromMessages(agent.state.messages));
-          this.emitTurnUsage();
+          this.emitTurnUsage(origin);
           unsubscribe?.();
         }
       },
@@ -1550,12 +1555,12 @@ export class TurnRunner {
     this.turnUsage = addUsage(this.turnUsage, usage);
   }
 
-  protected emitAgentEvent(event: AgentEvent): void {
+  protected emitAgentEvent(event: AgentEvent, origin?: TurnEventOrigin): void {
     if (event.type === "message_start" && event.message.role === "user") {
       this.removeFollowUpPrompt(agentMessageText(event.message));
     }
     for (const turnEvent of agentEventToTurnEvents(event)) {
-      this.emit(turnEvent);
+      this.emit(origin ? { ...turnEvent, origin } : turnEvent);
     }
   }
 
@@ -1589,7 +1594,7 @@ export class TurnRunner {
    * parent worker always sets the snapshot before its terminal usage is
    * recorded.
    */
-  protected emitTurnUsage(): void {
+  protected emitTurnUsage(origin?: TurnEventOrigin): void {
     if (!this.turnUsage || !this.lastParentUsageSnapshot) return;
     this.emit({
       type: "usage",
@@ -1597,6 +1602,7 @@ export class TurnRunner {
       lastMessageUsage: this.lastParentUsageSnapshot.lastMessageUsage,
       effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
       contextWindowUsage: this.lastParentUsageSnapshot.contextWindowUsage,
+      ...(origin ? { origin } : {}),
     });
   }
 

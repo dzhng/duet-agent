@@ -101,6 +101,14 @@ export interface RunTuiInput {
    */
   onResumeRequest?: (sessionId: string) => void;
   /**
+   * Called when the user submits `/reset`. The outer dispatcher should
+   * dispose the current session, `manager.create({})`, and re-enter
+   * `runTui` with the fresh session and no replayed history. The TUI
+   * tears its own renderer down right after invoking this so the
+   * dispatcher's `runTui` promise resolves and the loop can rebuild.
+   */
+  onResetRequest?: () => void;
+  /**
    * Trailing user-turn exchanges to replay from prior history. Each
    * exchange is the user prompt plus the assistant blocks that followed
    * it. `0` disables replay; when unset, every block is replayed.
@@ -278,6 +286,10 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         copyController,
         transcriptWriter,
         appendBlock,
+        onReset: () => {
+          input.onResetRequest?.();
+          renderer.destroy();
+        },
       })
     ) {
       return;

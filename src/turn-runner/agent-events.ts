@@ -1,7 +1,7 @@
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
-import type { TurnEvent } from "../types/protocol.js";
+import type { TurnStepEvent } from "../types/protocol.js";
 
-export function agentEventToTurnEvents(event: AgentEvent): TurnEvent[] {
+export function agentEventToTurnEvents(event: AgentEvent): TurnStepEvent[] {
   switch (event.type) {
     case "message_update": {
       const update = event.assistantMessageEvent;

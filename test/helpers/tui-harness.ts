@@ -50,6 +50,8 @@ export interface TuiHarness {
   answerCalls: SessionAnswerInput[];
   /** Number of times `session.interrupt()` has been invoked. */
   interruptCalls: number;
+  /** Number of times the TUI fired its `onResetRequest` callback. */
+  resetRequestCalls: number;
   /**
    * Wait until either:
    *  - `session.answer` has been called at least `count` times (default 1), or
@@ -170,6 +172,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
   const promptCalls: SessionPromptInput[] = [];
   const answerCalls: SessionAnswerInput[] = [];
   let interruptCalls = 0;
+  let resetRequestCalls = 0;
   // Mirror every event the Session emits so `pushAskTerminal` can wait
   // until the runner's `ask` has actually flowed Runner → Session → TUI
   // before returning. `Session.emit` iterates handlers synchronously, so
@@ -222,6 +225,9 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     memoryModelName: "harness",
     upgradeStatus$,
     renderer,
+    onResetRequest: () => {
+      resetRequestCalls += 1;
+    },
   }).catch((error) => {
     tuiError = error;
   });
@@ -266,6 +272,9 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     answerCalls,
     get interruptCalls() {
       return interruptCalls;
+    },
+    get resetRequestCalls() {
+      return resetRequestCalls;
     },
     async waitForAnswer({ count = 1, timeoutMs = 1000 } = {}) {
       await waitForCount(() => answerCalls.length, count, timeoutMs, "waitForAnswer");

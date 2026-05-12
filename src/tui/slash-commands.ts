@@ -15,6 +15,13 @@ export interface SlashCommandContext {
   copyController: CopyController;
   transcriptWriter: TranscriptWriter;
   appendBlock(label: string | null, body: string, fg: string): void;
+  /**
+   * Invoked by `/reset` to ask the outer dispatcher to dispose the
+   * current session and re-enter `runTui` with a fresh one. The TUI
+   * tears its renderer down immediately after so the parent `while`
+   * loop in `cli/run.ts` wakes and performs the swap.
+   */
+  onReset(): void;
 }
 
 /**
@@ -47,6 +54,11 @@ export function tryDispatchSlashCommand(message: string, ctx: SlashCommandContex
   }
   if (message === "/feedback" || message.startsWith("/feedback ")) {
     void handleFeedbackSlashCommand(message, ctx);
+    return true;
+  }
+  if (message === "/reset") {
+    ctx.appendBlock("[reset]", "starting a new session…", COLORS.system);
+    ctx.onReset();
     return true;
   }
   return false;

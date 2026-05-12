@@ -75,6 +75,11 @@ export const BUILT_IN_SLASH_COMMANDS: readonly SkillAutocompleteItem[] = [
     description: "Send free-form feedback to the Duet team: /feedback <message>",
     group: "commands",
   },
+  {
+    name: "reset",
+    description: "Dispose the current session and start a fresh one",
+    group: "commands",
+  },
 ];
 
 /**

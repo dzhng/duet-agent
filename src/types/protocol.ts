@@ -475,7 +475,21 @@ export interface TurnStartedEvent {
 export interface TurnStepEvent {
   type: "step";
   step: TurnStep;
+  /**
+   * Set when the step originated from a state-machine agent state. Absent
+   * for steps produced by the parent turn runner. Subscribers use this
+   * to attribute steps to the correct agent without inferring from
+   * interleaving order.
+   */
+  origin?: TurnEventOrigin;
 }
+
+/**
+ * Identifies which agent produced an event. Today the only non-parent
+ * origin is a state-machine agent state; the `state` field is the
+ * `StateMachineAgentState.name` that was running when the event fired.
+ */
+export type TurnEventOrigin = { kind: "state_machine_agent"; state: string };
 
 export interface TurnTodosEvent {
   type: "todos";
@@ -608,6 +622,12 @@ export interface TurnUsageFields {
  */
 export interface TurnUsageEvent extends TurnUsageFields {
   type: "usage";
+  /**
+   * Set when this usage tick was emitted at a state-agent boundary.
+   * Absent for parent-driven ticks (worker finish, terminal aggregate)
+   * so consumers can split running cost by agent if they want to.
+   */
+  origin?: TurnEventOrigin;
 }
 
 /**
