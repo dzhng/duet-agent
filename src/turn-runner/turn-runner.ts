@@ -103,9 +103,26 @@ export interface AgentConfigInput {
   tools: AgentTool[];
 }
 
+/**
+ * Internal outcome of a single `runAgentWorker` call. Narrower than the
+ * public `TurnTerminalEvent`: a worker only produces `complete` or
+ * `interrupted`. `ask` is synthesized later from `control`; `sleep` is
+ * synthesized by the state-machine controller.
+ */
+export type AgentWorkerOutcome =
+  | {
+      type: "complete";
+      status: "completed" | "failed";
+      result?: string;
+      error?: string;
+      state: TurnState;
+    }
+  | { type: "interrupted"; state: TurnState };
+
 export interface AgentWorkerResult {
-  terminal: TurnTerminalEvent;
+  outcome: AgentWorkerOutcome;
   control: TurnRunnerControlResult;
+  parentUsage?: TurnTokenUsage;
 }
 
 /** Order matches `TurnContextWindowUsage` fields; indexes map to `scaled[0..3]`. */
@@ -768,10 +785,10 @@ export class TurnRunner {
         `,
         ...this.createTools(turnState.mode),
       });
-      this.setState(workerResult.terminal.state);
+      this.setState(workerResult.outcome.state);
       const result = await this.controllerResultFromWorkerResult(
         workerResult,
-        workerResult.terminal.state,
+        workerResult.outcome.state,
       );
       if (!result) {
         continue;
@@ -974,8 +991,8 @@ export class TurnRunner {
     });
 
     const result = await this.controllerResultFromWorkerResult(workerResult, input.state);
-    if (!result) return workerResult.terminal;
-    return this.driveStateMachineResult(result, workerResult.terminal.state);
+    if (!result) return this.outcomeToTerminal(workerResult.outcome);
+    return this.driveStateMachineResult(result, workerResult.outcome.state);
   }
 
   private async controllerResultFromWorkerResult(
@@ -1002,8 +1019,7 @@ export class TurnRunner {
       const firstState =
         workerResult.control.firstState ?? workerResult.control.definition.states[0]?.name ?? "";
       this.stateMachineController.startSession({
-        prompt:
-          workerResult.terminal.type === "complete" ? (workerResult.terminal.result ?? "") : "",
+        prompt: workerResult.outcome.type === "complete" ? (workerResult.outcome.result ?? "") : "",
         definition: workerResult.control.definition,
         currentState: firstState,
       });
@@ -1025,8 +1041,7 @@ export class TurnRunner {
       workerResult.control.decision.kind !== "fail"
     ) {
       this.stateMachineController.startSession({
-        prompt:
-          workerResult.terminal.type === "complete" ? (workerResult.terminal.result ?? "") : "",
+        prompt: workerResult.outcome.type === "complete" ? (workerResult.outcome.result ?? "") : "",
         definition: state.mode as Exclude<TurnMode, "agent" | "auto">,
         currentState: workerResult.control.decision.state,
       });
@@ -1104,9 +1119,9 @@ export class TurnRunner {
       images,
     });
     if (workerResult.control.type === "ask_user_question") {
-      return this.askUserQuestion(workerResult.terminal, workerResult.control);
+      return this.askUserQuestion(workerResult.outcome.state, workerResult.control);
     }
-    return workerResult.terminal;
+    return this.outcomeToTerminal(workerResult.outcome);
   }
 
   protected async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
@@ -1146,11 +1161,14 @@ export class TurnRunner {
 
     const interrupted = interruptedDuringPrompt ?? this.consumeInterruptedTerminal();
     if (interrupted) {
-      return { control: this.parentControlResult, terminal: interrupted };
+      return {
+        control: this.parentControlResult,
+        outcome: { type: "interrupted", state: interrupted.state },
+      };
     }
 
     const messages = agent.state.messages;
-    const usage = usageFromMessages(messages.slice(previousMessageCount));
+    const parentUsage = usageFromMessages(messages.slice(previousMessageCount));
     const status = agent.state.errorMessage ? "failed" : "completed";
     const live = this.state;
     const state = {
@@ -1171,14 +1189,14 @@ export class TurnRunner {
 
     return {
       control: this.parentControlResult,
-      terminal: {
+      outcome: {
         type: "complete",
         status,
         state,
         result: assistantText(messages),
         error: agent.state.errorMessage,
-        usage,
       },
+      parentUsage,
     };
   }
 
@@ -1192,12 +1210,12 @@ export class TurnRunner {
    * aggregate and emits a `usage` event so consumers see cost tick after
    * each parent agent boundary. Recording at the worker boundary (instead
    * of per `message_end`) keeps the same behavior when test harnesses
-   * stub `runAgentWorker` and supply `terminal.usage` directly without
+   * stub `runAgentWorker` and supply `parentUsage` directly without
    * running a real pi `Agent`.
    */
   private async runAgentWorkerWithUsage(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     const result = await this.runAgentWorker(input);
-    this.recordUsage(result.terminal.usage);
+    this.recordUsage(result.parentUsage);
     this.emitTurnUsage();
     return result;
   }
@@ -1468,13 +1486,32 @@ export class TurnRunner {
   }
 
   private askUserQuestion(
-    terminal: TurnTerminalEvent,
+    state: TurnState,
     control: Extract<TurnRunnerControlResult, { type: "ask_user_question" }>,
   ): TurnTerminalEvent {
     return {
       type: "ask",
       questions: control.questions,
-      state: { ...terminal.state, status: "waiting_for_human" },
+      state: { ...state, status: "waiting_for_human" },
+    };
+  }
+
+  /**
+   * Lifts the internal `AgentWorkerOutcome` shape into the public
+   * `TurnTerminalEvent` shape returned by `runTurnChain`. `runTurnChain`
+   * attaches `usage` / `effectiveContextWindow` / `contextWindowUsage`
+   * at the chain boundary, so this conversion intentionally omits them.
+   */
+  private outcomeToTerminal(outcome: AgentWorkerOutcome): TurnTerminalEvent {
+    if (outcome.type === "interrupted") {
+      return { type: "interrupted", state: outcome.state };
+    }
+    return {
+      type: "complete",
+      status: outcome.status,
+      state: outcome.state,
+      result: outcome.result,
+      error: outcome.error,
     };
   }
 

@@ -196,8 +196,8 @@ describe("TurnRunner protocol scenarios", () => {
     runner.worker = async (input, next) => {
       const result = await next();
       const usage = usageByWorker[workerIndex++]!;
-      result.terminal.usage = usage;
-      result.terminal.state.agent.messages = [
+      result.parentUsage = usage;
+      result.outcome.state.agent.messages = [
         ...input.state.agent.messages,
         createAssistantMessage({ text: `worker ${workerIndex}`, timestamp: Date.now() }),
       ];
@@ -714,7 +714,7 @@ describe("TurnRunner protocol scenarios", () => {
         runner.workerInputs.push(input);
         return {
           control: { type: "none" },
-          terminal: {
+          outcome: {
             type: "complete",
             status: "completed",
             result: "Research complete.",
@@ -1087,10 +1087,14 @@ describe("TurnRunner protocol scenarios", () => {
       calls += 1;
       if (calls === 2) {
         return {
-          control: { type: "none" },
-          terminal: {
-            type: "ask",
+          control: {
+            type: "ask_user_question",
             questions: [{ question: "Need detail?", options: [{ label: "Yes" }] }],
+          },
+          outcome: {
+            type: "complete",
+            status: "completed",
+            result: "",
             state: { ...input.state, status: "waiting_for_human" },
           },
         };

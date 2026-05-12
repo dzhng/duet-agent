@@ -72,7 +72,7 @@ export class TestTurnRunner extends TurnRunner {
 
     return {
       control,
-      terminal: {
+      outcome: {
         type: "complete",
         status: "completed",
         result: resultText,
@@ -104,15 +104,15 @@ export class TestTurnRunner extends TurnRunner {
         const result = this.worker
           ? await this.worker(workerInput, () => this.runDefaultWorker(workerInput))
           : await this.runDefaultWorker(workerInput);
-        this.recordUsage(result.terminal.usage);
+        this.recordUsage(result.parentUsage);
         if (result.control.type === "ask_user_question") {
           terminal = { type: "ask", questions: result.control.questions };
-        } else if (result.terminal.type !== "complete") {
-          terminal = { type: result.terminal.type } as StateAgentResult;
-        } else if (result.terminal.status === "failed") {
-          terminal = { type: "failed", error: result.terminal.error ?? "State agent failed." };
+        } else if (result.outcome.type === "interrupted") {
+          terminal = { type: "interrupted" };
+        } else if (result.outcome.status === "failed") {
+          terminal = { type: "failed", error: result.outcome.error ?? "State agent failed." };
         } else {
-          terminal = { type: "complete", result: result.terminal.result };
+          terminal = { type: "complete", result: result.outcome.result };
         }
         return terminal;
       },

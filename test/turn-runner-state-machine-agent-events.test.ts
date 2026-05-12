@@ -28,7 +28,7 @@ class StateMachineAgentEventTurnRunner extends TurnRunner {
           type: "select_state_machine_state",
           decision: { kind: "run_state", state: "research_prospect" },
         },
-        terminal: {
+        outcome: {
           type: "complete",
           status: "completed",
           result: "Selected research state.",
@@ -39,7 +39,7 @@ class StateMachineAgentEventTurnRunner extends TurnRunner {
 
     return {
       control: { type: "none" },
-      terminal: {
+      outcome: {
         type: "complete",
         status: "completed",
         result: "State-agent state complete.",
@@ -202,7 +202,7 @@ class StateMachineUsageTurnRunner extends TurnRunner {
           type: "select_state_machine_state",
           decision: { kind: "run_state", state: "research_prospect" },
         },
-        terminal: {
+        outcome: {
           type: "complete",
           status: "completed",
           result: "Selected research state.",
@@ -212,7 +212,7 @@ class StateMachineUsageTurnRunner extends TurnRunner {
     }
     return {
       control: { type: "none" },
-      terminal: {
+      outcome: {
         type: "complete",
         status: "completed",
         result: "Wrapped up.",
