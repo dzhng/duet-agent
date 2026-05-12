@@ -33,6 +33,15 @@ export interface LoadStoredMemoryOptions {
     settings: ObservationalMemorySettings;
     sessionId?: string;
   };
+  /**
+   * Invoked when the memory database at the configured path could not be
+   * opened and was renamed aside to start fresh. `backupPath` is the
+   * `<path>.corrupted-<iso-timestamp>` directory the prior contents now
+   * live under; `cause` is the underlying error that triggered
+   * quarantine. Callers typically surface a user-visible system event so
+   * the loss of prior memory is not silent.
+   */
+  onRecover?: (info: { backupPath: string; cause: unknown }) => void;
 }
 
 export async function loadStoredMemory(
@@ -45,7 +54,7 @@ export async function loadStoredMemory(
     return { db: undefined, embed: undefined, dispose: noop };
   }
 
-  const database = await openMemoryDatabase(resolveMemoryPath(memoryPath, cwd));
+  const database = await openMemoryDatabase(resolveMemoryPath(memoryPath, cwd), options.onRecover);
 
   // The backfill worker runs whenever the CLI is up. Observers and
   // reflectors write rows during turns; embeddings catch up in the
@@ -93,7 +102,10 @@ function defaultEmbeddingLogPath(): string {
   return join(homedir(), ".duet", "logs", "memory-backfill.log");
 }
 
-async function openMemoryDatabase(path: string): Promise<MemoryDatabase> {
+async function openMemoryDatabase(
+  path: string,
+  onRecover: LoadStoredMemoryOptions["onRecover"],
+): Promise<MemoryDatabase> {
   // Migrations double as the corruption probe: a failure inside
   // runMigrations propagates through openPGlite's try block, which
   // moves the directory aside and starts fresh rather than wedging
@@ -102,6 +114,7 @@ async function openMemoryDatabase(path: string): Promise<MemoryDatabase> {
     init: async (db) => {
       await runMigrations(db);
     },
+    ...(onRecover ? { onRecover } : {}),
   });
 }
 

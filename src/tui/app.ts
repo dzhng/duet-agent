@@ -250,11 +250,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       const relay = applyRelayCommand(message);
       if (relay.applied) {
         outgoing = relay.message;
-        appendBlock(
-          "[relay]",
-          "appended state-machine routing reminder to this turn",
-          COLORS.system,
-        );
       }
     }
     void input.session.prompt({ message: outgoing, behavior, images }).catch(reportError);

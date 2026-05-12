@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/vector";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,6 +116,39 @@ describe("Memory storage", () => {
         expect(bSnapshot.observations.map((o) => o.id)).toEqual([b1.id]);
 
         await persistence.dispose();
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  testIfDocker(
+    "invokes onRecover with the backup path and underlying cause when the data directory is unreadable",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
+      const memoryPath = join(tempDir, "memory.db");
+      // Mimic real-world corruption: a non-empty data directory that is
+      // missing PGlite's expected internal layout. `runMigrations`
+      // (running inside openPGlite's probe) will throw and trigger
+      // quarantine.
+      mkdirSync(memoryPath);
+      writeFileSync(join(memoryPath, "PG_VERSION"), "999\n", "utf8");
+      writeFileSync(join(memoryPath, "stray"), "garbage", "utf8");
+
+      const recoveries: Array<{ backupPath: string; cause: unknown }> = [];
+      try {
+        const persistence = await loadStoredMemory(memoryPath, tempDir, {
+          onRecover: (info) => {
+            recoveries.push(info);
+          },
+        });
+        expect(persistence.db).toBeDefined();
+        await persistence.dispose();
+
+        expect(recoveries).toHaveLength(1);
+        const [recovery] = recoveries;
+        expect(recovery?.backupPath.startsWith(`${memoryPath}.corrupted-`)).toBe(true);
+        expect(recovery?.cause).toBeInstanceOf(Error);
       } finally {
         await rm(tempDir, { recursive: true, force: true });
       }

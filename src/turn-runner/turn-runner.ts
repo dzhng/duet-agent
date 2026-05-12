@@ -1476,6 +1476,19 @@ export class TurnRunner {
           ),
           ...(this.config.sessionId !== undefined ? { sessionId: this.config.sessionId } : {}),
         },
+        // Surface quarantine recoveries to the UI. The directory is moved
+        // aside on the user's disk and a fresh database is opened in its
+        // place, so prior memories are gone from this session's recall
+        // until the user manually inspects the backup — without a system
+        // event the loss is silent.
+        onRecover: ({ backupPath, cause }) => {
+          const reason = cause instanceof Error ? cause.message || cause.name : String(cause);
+          this.emit({
+            type: "system",
+            level: "warn",
+            message: `memory.db could not be opened (${reason}); quarantined to ${backupPath} and starting fresh.`,
+          });
+        },
       },
     );
   }
