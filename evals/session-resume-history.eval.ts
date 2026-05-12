@@ -57,12 +57,13 @@ describe("session resume history", () => {
         expect(usageSnap!.effectiveContextWindow).toBeGreaterThan(0);
         expect(usageSnap!.usage.totalTokens).toBeGreaterThan(0);
         const cw = usageSnap!.contextWindowUsage;
-        // Single-message turn ("Do not call tools") so the running aggregate
-        // equals the lone parent message's totalTokens, and the breakdown
-        // sum (rescaled to that message) lines up.
-        expect(cw.systemPrompt + cw.messages + cw.localMemory + cw.globalMemory).toBe(
-          usageSnap!.usage.totalTokens,
-        );
+        // Breakdown rescales to the latest parent message's `totalTokens`,
+        // which is at most the running aggregate (the aggregate also folds
+        // in memory-observer work when it runs). The exact rescale math is
+        // covered by the `scaleContextWindowUsageToTotalTokens` unit tests.
+        const breakdownSum = cw.systemPrompt + cw.messages + cw.localMemory + cw.globalMemory;
+        expect(breakdownSum).toBeGreaterThan(0);
+        expect(breakdownSum).toBeLessThanOrEqual(usageSnap!.usage.totalTokens);
       } finally {
         await firstManager.dispose();
       }
@@ -213,18 +214,19 @@ function lastUsageFromEvents(events: TurnEvent[]): TurnUsageEvent | undefined {
 
 /**
  * Persisted `lastUsage` on `state.json` must match the last live `usage`
- * event from the same phase when any such events were recorded. The single
- * agent turn ("Do not call tools") produces one parent assistant message,
- * so the running aggregate equals that message's `totalTokens` and the
- * rescaled breakdown sums to the same number.
+ * event from the same phase exactly — same running aggregate, same
+ * effective window, same breakdown snapshot. The rescaled breakdown
+ * itself is exercised by `scaleContextWindowUsageToTotalTokens` unit
+ * tests; here we just check the disk vs event invariant.
  */
 function expectDiskUsageMatchesLastEvent(disk: SessionStateJson, events: TurnEvent[]): void {
   const fromDisk = disk.lastUsage;
   expect(fromDisk).toBeDefined();
-  const u = fromDisk!.usage;
-  expect(u.totalTokens).toBeGreaterThan(0);
+  expect(fromDisk!.usage.totalTokens).toBeGreaterThan(0);
   const seg = fromDisk!.contextWindowUsage;
-  expect(seg.systemPrompt + seg.messages + seg.localMemory + seg.globalMemory).toBe(u.totalTokens);
+  const segSum = seg.systemPrompt + seg.messages + seg.localMemory + seg.globalMemory;
+  expect(segSum).toBeGreaterThan(0);
+  expect(segSum).toBeLessThanOrEqual(fromDisk!.usage.totalTokens);
 
   const fromEvents = lastUsageFromEvents(events);
   if (!fromEvents) {

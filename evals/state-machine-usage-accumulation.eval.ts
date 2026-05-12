@@ -97,16 +97,19 @@ describe("state machine usage accumulation", () => {
         for (const u of usageEvents) {
           expect(u.effectiveContextWindow).toBe(lastUsage.effectiveContextWindow);
         }
-        // The parent's input occupancy only grows across a turn (more
-        // messages, never fewer). Distinct snapshot values therefore form a
-        // non-decreasing sequence per segment, and the number of distinct
-        // snapshots is bounded by the number of parent emissions (≤ the
-        // number of agent states + 1).
-        for (let i = 1; i < usageEvents.length; i++) {
-          const prev = usageEvents[i - 1]!.contextWindowUsage;
-          const curr = usageEvents[i]!.contextWindowUsage;
-          expect(curr.systemPrompt).toBeGreaterThanOrEqual(prev.systemPrompt);
-          expect(curr.messages).toBeGreaterThanOrEqual(prev.messages);
+        // Every emission's breakdown sums to the latest parent message's
+        // API-reported `totalTokens` (rescale denominator). That denominator
+        // is not monotonic across parent calls — cache hits and changing
+        // message stacks can shrink it — so we don't compare segments
+        // across emissions. What we can check: each snapshot is internally
+        // consistent (positive segments, sum bounded by the running
+        // aggregate) and the breakdown only changes when a new parent
+        // message_end fires.
+        for (const u of usageEvents) {
+          const cw = u.contextWindowUsage;
+          const sum = cw.systemPrompt + cw.messages + cw.localMemory + cw.globalMemory;
+          expect(sum).toBeGreaterThan(0);
+          expect(sum).toBeLessThanOrEqual(u.usage.totalTokens);
         }
         const distinctBars = new Set(usageEvents.map((u) => JSON.stringify(u.contextWindowUsage)));
         // 2 agent states + 1 terminal-selecting parent call ≤ 3 parent
