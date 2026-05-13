@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EmbeddingBackfillWorker } from "../src/memory/embedding-worker.js";
@@ -133,6 +133,143 @@ describe("EmbeddingBackfillWorker", () => {
       });
     },
   );
+
+  testIfDocker(
+    "does not hot-loop re-embedding the same id when its embedding row keeps disappearing",
+    async () => {
+      // Reproduces the production hot-loop: a row's embedding gets
+      // cascade-deleted between drains (e.g. the reflector deletes the
+      // parent observation and re-inserts it). The worker re-selects
+      // the same id every iteration, burning embedding-API calls on a
+      // row that immediately loses its embedding again. The per-id
+      // attempt cooldown caps re-embeds to once per `attemptCooldownMs`
+      // so a chronic churn turns into one call per cooldown instead of
+      // a tight loop.
+      await withSeededDb(async (session) => {
+        let embedCalls = 0;
+        const worker = new EmbeddingBackfillWorker({
+          session,
+          embed: async (inputs) => {
+            embedCalls++;
+            return {
+              embeddings: inputs.map(() => fillVector(3072, 1)),
+              model: "test-model",
+            };
+          },
+          // Drive ticks fast so the test can drive multiple drains in
+          // under a second instead of waiting for the production
+          // 10-second cadence. The cooldown stays much larger than the
+          // tick so a row whose embedding disappears is still skipped
+          // across drains.
+          idleSleepMs: 20,
+          attemptCooldownMs: 60_000,
+        });
+
+        worker.start();
+        // Wait for the first drain to land all three embeddings.
+        await waitFor(async () => (await embeddingCount(session)) === 3);
+        const callsAfterFirstDrain = embedCalls;
+
+        // Simulate the FK-cascade churn that happened in production:
+        // something deletes the embedding rows between worker drains.
+        // With the cooldown in place, subsequent drains within the
+        // cooldown window must NOT re-embed the same ids.
+        await session.withDb(async (db) => {
+          await db.exec(`DELETE FROM observation_embeddings`);
+        });
+
+        // Give the worker several ticks of opportunity to re-embed.
+        await sleep(200);
+        await worker.stop();
+
+        // Hot-loop bug: embed would be invoked again on each tick
+        // because selectBatch keeps returning the unembedded rows.
+        // Cooldown fix: no extra embed calls because each id was
+        // attempted recently.
+        expect(embedCalls).toBe(callsAfterFirstDrain);
+      });
+    },
+  );
+
+  testIfDocker(
+    "logs a sanitized, length-capped summary when the embed call returns an HTML body",
+    async () => {
+      const logDir = await mkdtemp(join(tmpdir(), "duet-emb-log-"));
+      const logPath = join(logDir, "backfill.log");
+      // Reproduce the production 404: a 50KB Next.js error page that
+      // the worker used to append verbatim to the log on every retry.
+      const htmlBody =
+        "<!DOCTYPE html><html><head><title>404</title></head><body>" +
+        "<h1>Not Found</h1>".repeat(2000) +
+        "</body></html>";
+      await withSeededDb(async (session) => {
+        const worker = new EmbeddingBackfillWorker({
+          session,
+          embed: async () => {
+            throw new Error(`Embedding endpoint returned 404: ${htmlBody}`);
+          },
+          logPath,
+          // Keep ticks fast and bypass the long error backoff so the
+          // worker writes exactly one failure line before we stop it.
+          idleSleepMs: 20,
+          errorSleepMs: 20,
+        });
+        worker.start();
+        await sleep(150);
+        await worker.stop();
+      });
+      const written = await readFile(logPath, "utf8");
+      await rm(logDir, { recursive: true, force: true });
+
+      // The raw error message is over 50KB. Each log line must stay
+      // well under 1KB so a chronic failure does not produce
+      // multi-megabyte log files.
+      const lines = written.split("\n").filter(Boolean);
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) {
+        expect(line.length).toBeLessThan(500);
+        // HTML tags must be stripped out so the log stays readable.
+        expect(line).not.toContain("<!DOCTYPE");
+        expect(line).not.toContain("</html>");
+        // pid prefix lets multi-CLI runs (which share the log file)
+        // be disambiguated when the lines interleave.
+        expect(line).toContain(`pid=${process.pid}`);
+      }
+    },
+  );
+
+  testIfDocker("caps log file size by rotating instead of appending forever", async () => {
+    const logDir = await mkdtemp(join(tmpdir(), "duet-emb-logcap-"));
+    const logPath = join(logDir, "backfill.log");
+    // Seed an oversize log file: 2 MB of prior content, well above
+    // the cap. The worker's next log line must rotate the file
+    // rather than append.
+    const seedSize = 2 * 1024 * 1024;
+    await writeFile(logPath, "x".repeat(seedSize), "utf8");
+    await withSeededDb(async (session) => {
+      const worker = new EmbeddingBackfillWorker({
+        session,
+        embed: async (inputs) => ({
+          embeddings: inputs.map(() => fillVector(3072, 1)),
+          model: "test-model",
+        }),
+        logPath,
+        logMaxBytes: 256 * 1024,
+        idleSleepMs: 20,
+      });
+      worker.start();
+      await waitFor(async () => (await embeddingCount(session)) === 3);
+      await worker.stop();
+    });
+    // After rotation the live log file should be smaller than the
+    // cap, and only contain the lines written after rotation.
+    const live = await stat(logPath);
+    expect(live.size).toBeLessThan(seedSize);
+    const liveContents = await readFile(logPath, "utf8");
+    expect(liveContents).toContain("Embedded");
+    expect(liveContents).not.toContain("xxxxxxxxxxxxxxxxxxxxxxxx");
+    await rm(logDir, { recursive: true, force: true });
+  });
 
   testIfDocker("survives an embed failure and continues on the next batch", async () => {
     await withSeededDb(async (session) => {
