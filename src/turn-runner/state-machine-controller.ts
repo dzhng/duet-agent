@@ -102,6 +102,29 @@ export class StateMachineController {
     return this.session;
   }
 
+  /**
+   * Mark the current terminal as having been surfaced to the parent
+   * runner. The turn runner sets this flag before kicking off the
+   * inline acknowledgment turn so the same `session.terminal` cannot
+   * be acknowledged twice — if the parent (mis)routes back into the
+   * controller during the acknowledgment turn and the controller
+   * re-records a terminal on this same session, the second drive will
+   * find the flag set and skip.
+   *
+   * Note that this flag is per-session: a new state machine created
+   * during the acknowledgment turn lives on a brand-new session built
+   * by `createStateMachineSession`, so it gets its own acknowledgment
+   * when it terminates.
+   */
+  markTerminalAcknowledged(): void {
+    if (!this.session?.terminal || this.session.terminalAcknowledged) return;
+    this.session = {
+      ...this.session,
+      terminalAcknowledged: true,
+      updatedAt: Date.now(),
+    };
+  }
+
   hasActiveWork(): boolean {
     return Boolean(this.activeRun);
   }

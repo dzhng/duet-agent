@@ -68,6 +68,7 @@ import {
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
   formatCarriedTodosReminder,
+  formatStateMachineTerminalAcknowledgmentPrompt,
   type RecallMemoryToolStorage,
   isTurnRunnerControlResult,
   type TurnRunnerControlResult,
@@ -82,6 +83,12 @@ import {
   type StateMachineExecutionResult,
 } from "./state-machine-controller.js";
 import { completeTurn, copyOptionalArray, createInitialTurnState } from "./turn-state.js";
+import {
+  DEFAULT_TRANSIENT_RETRY_POLICY,
+  lastMessageIsTransientFailure,
+  transientRetryDelayMs,
+  type TransientRetryPolicy,
+} from "./transient-error.js";
 import { addUsage, usageFromMessages } from "./usage-accounting.js";
 
 export type TurnEventHandler = (event: TurnEvent) => void;
@@ -757,7 +764,82 @@ export class TurnRunner {
     if (next.type === "interrupted" && this.activeStateWorkPrompt) {
       return this.activeStateWorkPrompt;
     }
+    if (next.type === "terminal") {
+      // Run the parent's terminal acknowledgment turn so the
+      // state-machine outcome is propagated back to the parent.
+      // `terminate: true` on the state-machine tools means the parent's
+      // prompt loop ends right after it selects a terminal (or a state
+      // that then errors at runtime) — without this pass the parent has
+      // no transcript entry for the outcome, cannot summarize it to the
+      // user, and cannot kick off a follow-up state machine in response.
+      const acknowledged = await this.runStateMachineTerminalAcknowledgment();
+      if (acknowledged) return acknowledged;
+      state = this.requireRunnerState();
+    }
     return this.controllerResultToTerminal(next, state);
+  }
+
+  /**
+   * Re-prompt the parent agent once after a state-machine terminal.
+   *
+   * The flag is per-session, so a fresh state machine created during
+   * the acknowledgment turn — which `createStateMachineSession` builds
+   * as a brand-new session object — will run its own acknowledgment
+   * when it terminates. The flag's only job is to prevent the same
+   * session.terminal from being re-acknowledged, which would otherwise
+   * happen if the parent (incorrectly) routes back into the controller
+   * on the already-terminal session and the controller re-records a
+   * terminal on it.
+   *
+   * Behavior:
+   * - Builds the acknowledgment prompt via
+   *   `formatStateMachineTerminalAcknowledgmentPrompt`. The prompt is
+   *   neutral with respect to "decided vs runtime failure" — the
+   *   parent's own transcript already shows whether it selected the
+   *   terminal, and `status`/`reason` carry the rest of the framing.
+   * - Runs one parent worker pass with full state-machine tool access
+   *   so the parent can either reply in plain text or call
+   *   `create_state_machine_definition` to start follow-up work.
+   * - On interruption, surfaces an `interrupted` terminal event for
+   *   the whole turn.
+   * - When the parent's reply carries a control action, drives that
+   *   control through the standard `driveStateMachineResult` path so
+   *   any newly-created state machine runs end-to-end and itself
+   *   produces a follow-up terminal (which also gets acknowledged via
+   *   its own session).
+   * - When the parent's reply is plain text, returns `undefined` so
+   *   the caller renders the original terminal (preserving
+   *   status/error/SM history) and the parent's natural-language
+   *   summary lands on the transcript as the final assistant message.
+   */
+  private async runStateMachineTerminalAcknowledgment(): Promise<TurnTerminalEvent | undefined> {
+    const session = this.stateMachineController.getSession();
+    if (!session?.terminal || session.terminalAcknowledged) return undefined;
+    this.stateMachineController.markTerminalAcknowledged();
+    const sessionForPrompt = this.stateMachineController.getSession();
+    if (!sessionForPrompt?.terminal) return undefined;
+    const acknowledgmentPrompt = formatStateMachineTerminalAcknowledgmentPrompt({
+      session: sessionForPrompt,
+    });
+    // `snapshotState` re-reads parentAgent messages directly, so this turn
+    // state includes the parent's transcript through the terminal-selecting
+    // tool call without a separate refresh step.
+    const turnState = this.snapshotState({ ...this.requireRunnerState(), status: "running" });
+    const workerResult = await this.runAgentWorkerWithUsage({
+      state: turnState,
+      prompt: acknowledgmentPrompt,
+      ...this.createTools(turnState.mode),
+    });
+    this.setState(workerResult.outcome.state);
+    if (workerResult.outcome.type === "interrupted") {
+      return { type: "interrupted", state: workerResult.outcome.state };
+    }
+    const followUp = await this.controllerResultFromWorkerResult(
+      workerResult,
+      workerResult.outcome.state,
+    );
+    if (followUp) return this.driveStateMachineResult(followUp, workerResult.outcome.state);
+    return undefined;
   }
 
   private async selectNextStateAfterCompletion(
@@ -851,6 +933,7 @@ export class TurnRunner {
         unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event, origin));
         try {
           await agent.prompt(input.prompt);
+          await this.retryTransientServerErrors(agent);
           return finish();
         } catch (error) {
           if (this.consumeInterruptedTerminal()) return { type: "interrupted" };
@@ -1156,6 +1239,7 @@ export class TurnRunner {
       if (this.tryRecoverFromContextOverflow(agent)) {
         await agent.continue();
       }
+      await this.retryTransientServerErrors(agent);
     } catch (error) {
       interruptedDuringPrompt = this.consumeInterruptedTerminal();
       if (!interruptedDuringPrompt) {
@@ -1298,6 +1382,51 @@ export class TurnRunner {
       message: `Context overflow: dropped ${dropped} older message${dropped === 1 ? "" : "s"} and retrying.`,
     });
     return true;
+  }
+
+  /**
+   * Retry transient upstream failures by popping the failed assistant
+   * message and continuing the same turn.
+   *
+   * Triggers only when the last assistant message has `stopReason: "error"`
+   * and the error text matches a known gateway 5xx or transport-fault
+   * pattern (see `transient-error.ts`). Context-overflow recoveries already
+   * ran upstream and are skipped here; 4xx errors and rate limits are
+   * intentionally not retried because the same payload would fail again.
+   *
+   * Up to `policy.maxAttempts - 1` `agent.continue()` retries run with
+   * exponential backoff + jitter. Each retry emits an informational
+   * `system` event so callers can show "retrying after upstream error" in
+   * the UI. As soon as the assistant message after a retry is no longer a
+   * transient failure (success or a different non-retryable error), the
+   * helper returns and lets the caller surface that outcome.
+   */
+  protected async retryTransientServerErrors(
+    agent: Agent,
+    policy: TransientRetryPolicy = DEFAULT_TRANSIENT_RETRY_POLICY,
+  ): Promise<void> {
+    for (let attempt = 1; attempt < policy.maxAttempts; attempt++) {
+      if (!agent.state.errorMessage) return;
+      if (!lastMessageIsTransientFailure(agent.state.messages)) return;
+      const failingMessage = agent.state.messages.at(-1);
+      const reason =
+        failingMessage?.role === "assistant" && failingMessage.errorMessage
+          ? failingMessage.errorMessage
+          : "Upstream error";
+      const delayMs = transientRetryDelayMs(attempt, policy);
+      this.emit({
+        type: "system",
+        level: "info",
+        message: `Upstream error (${truncateForSystemMessage(reason)}); retrying in ${Math.round(delayMs / 100) / 10}s (attempt ${attempt + 1}/${policy.maxAttempts}).`,
+      });
+      // pi-agent leaves the failure as the tail assistant message and
+      // keeps `errorMessage` set; popping it lets `agent.continue()`
+      // resume from the prior user/tool-result tail without sending the
+      // failure marker back to the provider.
+      agent.state.messages.pop();
+      await sleep(delayMs);
+      await agent.continue();
+    }
   }
 
   protected async updateMemoryAfterAgentRun(
@@ -1664,6 +1793,21 @@ export class TurnRunner {
     const userValue = this.config.effectiveContext ?? DEFAULT_EFFECTIVE_CONTEXT;
     return modelWindow !== undefined ? Math.min(userValue, modelWindow) : userValue;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Cap an upstream-error excerpt to a short, single-line form before emitting
+ * it as a `system` info message. Provider error payloads can be several
+ * kilobytes of JSON; clipping keeps the retry notice readable.
+ */
+function truncateForSystemMessage(message: string, limit = 160): string {
+  const flattened = message.replace(/\s+/g, " ").trim();
+  if (flattened.length <= limit) return flattened;
+  return `${flattened.slice(0, limit - 1)}…`;
 }
 
 /** Convert protocol-level prompt images into pi-ai `ImageContent` blocks. */

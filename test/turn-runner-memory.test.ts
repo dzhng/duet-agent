@@ -940,10 +940,13 @@ describe("TurnRunner memory", () => {
       { role: "user", content: [{ type: "text", text: "u2" }], timestamp: 3 },
       createAssistantMessage({ text: "a2", timestamp: 4 }),
     ];
+    // Pick a client-side error so neither the context-overflow path nor
+    // the transient-error retry path triggers. A 401 will not be retried
+    // because the same payload would fail again on a second attempt.
     runner.attemptMessages = [
       createAssistantMessage({
         stopReason: "error",
-        errorMessage: "Internal server error: please try again later.",
+        errorMessage: "401 Unauthorized: invalid API key",
         timestamp: 5,
       }),
     ];

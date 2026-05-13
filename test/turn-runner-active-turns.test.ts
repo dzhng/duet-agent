@@ -8,6 +8,22 @@ import { delay, waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 import { createStateMachineState, startTurn } from "./helpers/turn-runner-protocol.js";
 
+/**
+ * Feed a plain-text response for the parent's terminal acknowledgment
+ * turn, which fires once after every state-machine terminal so the
+ * parent can summarize the outcome to the user (and optionally start
+ * follow-up work). Most active-turns tests do not exercise the
+ * acknowledgment text itself; they just need the turn to settle so the
+ * outer `await turn` can resolve.
+ */
+async function ackTerminal(
+  runner: StreamingTurnRunner,
+  text = "Done — state machine completed.",
+): Promise<void> {
+  await waitFor(() => runner.pendingStreams.length === 1);
+  runner.completeNext(text);
+}
+
 class StreamingTurnRunner extends TurnRunner {
   readonly contexts: Context[] = [];
   readonly pendingStreams: ReturnType<typeof createAssistantMessageEventStream>[] = [];
@@ -454,6 +470,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, promptTerminal] = await Promise.all([turn, prompt]);
     expect(turnTerminal).toBe(promptTerminal);
@@ -495,6 +512,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, answerTerminal] = await Promise.all([turn, answer]);
     expect(turnTerminal).toBe(answerTerminal);
@@ -534,6 +552,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, steerTerminal] = await Promise.all([turn, steer]);
     expect(turnTerminal).toBe(steerTerminal);
@@ -574,6 +593,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, steerTerminal] = await Promise.all([turn, steer]);
     expect(turnTerminal).toBe(steerTerminal);
@@ -634,6 +654,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, firstSteerTerminal, secondSteerTerminal] = await Promise.all([
       turn,
@@ -806,6 +827,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, promptTerminal] = await Promise.all([turn, prompt]);
     expect(turnTerminal).toBe(promptTerminal);
@@ -950,6 +972,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, answerTerminal] = await Promise.all([turn, answer]);
     expect(turnTerminal).toBe(answerTerminal);
@@ -985,6 +1008,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
     await turn;
   });
 
@@ -1026,6 +1050,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
     await turn;
   });
 
@@ -1064,6 +1089,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, promptTerminal] = await Promise.all([turn, prompt]);
     expect(turnTerminal).toBe(promptTerminal);

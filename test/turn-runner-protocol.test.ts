@@ -635,6 +635,9 @@ describe("TurnRunner protocol scenarios", () => {
     const { runner, events } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
     await runner.start({ type: "start", state: turnState });
+    // 4 parent invocations: (1) initial state pick, (2) state-completed
+    // continuation, (3) terminal selection, (4) terminal acknowledgment
+    // turn (where the parent gets to summarize the outcome to the user).
     runner.controlResults.push(
       {
         type: "select_state_machine_state",
@@ -645,6 +648,7 @@ describe("TurnRunner protocol scenarios", () => {
         type: "select_state_machine_state",
         decision: { kind: "terminal", state: "meeting_scheduled" },
       },
+      { type: "none" },
     );
 
     const terminal = await runner.turn({
@@ -653,8 +657,13 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
-    expect(runner.workerInputs).toHaveLength(3);
+    expect(runner.workerInputs).toHaveLength(4);
     expect(runner.workerInputs[2]?.prompt).toContain('The state "research_prospect" finished.');
+    expect(runner.workerInputs[3]?.prompt).toContain(
+      'The state machine "conference_outreach" has reached a terminal state',
+    );
+    expect(runner.workerInputs[3]?.prompt).toContain("<status>completed</status>");
+    expect(runner.workerInputs[3]?.prompt).toContain("<state>meeting_scheduled</state>");
     expect(events.filter((event) => event.type === "state_machine")).toHaveLength(2);
     expect(terminal).toMatchObject({
       type: "complete",
@@ -664,6 +673,7 @@ describe("TurnRunner protocol scenarios", () => {
         stateMachine: {
           currentState: "meeting_scheduled",
           terminal: { state: "meeting_scheduled", status: "completed" },
+          terminalAcknowledged: true,
         },
       },
     });
@@ -759,19 +769,24 @@ describe("TurnRunner protocol scenarios", () => {
       timestamp: startedAt,
       state: "wait_before_retry",
     });
-    runner.controlResults.push({
-      type: "select_state_machine_state",
-      decision: { kind: "terminal", state: "meeting_scheduled" },
-    });
+    runner.controlResults.push(
+      {
+        type: "select_state_machine_state",
+        decision: { kind: "terminal", state: "meeting_scheduled" },
+      },
+      // Terminal acknowledgment turn: parent replies in plain text.
+      { type: "none" },
+    );
     await runner.start({ type: "start", state: turnState });
 
     const terminal = await runner.turn({
       type: "wake",
     });
 
-    expect(runner.workerInputs).toHaveLength(1);
+    expect(runner.workerInputs).toHaveLength(2);
     const parentPrompt = runner.workerInputs[0]?.prompt ?? "";
     expect(parentPrompt).toContain('The state "wait_before_retry" finished.');
+    expect(runner.workerInputs[1]?.prompt).toContain("has reached a terminal state");
     expect(parentPrompt).toContain("<elapsedMs>");
     expect(parentPrompt).toContain("<output>");
     const completed = terminal.state.stateMachine?.history.find(
@@ -1132,6 +1147,8 @@ describe("TurnRunner protocol scenarios", () => {
         type: "select_state_machine_state",
         decision: { kind: "terminal", state: "meeting_scheduled" },
       },
+      // Terminal acknowledgment turn.
+      { type: "none" },
     );
 
     const terminal = await runner.turn({
@@ -1141,7 +1158,7 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
-    expect(runner.workerInputs).toHaveLength(3);
+    expect(runner.workerInputs).toHaveLength(4);
     const answerText = runner.workerInputs[0]?.prompt ?? "";
     expect(answerText).toContain("Here are my answers to your questions.");
     expect(answerText).toContain("Ada Lovelace");

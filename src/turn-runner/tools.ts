@@ -9,6 +9,7 @@ import { Ajv } from "ajv";
 import dedent from "dedent";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
+import { toXML } from "../lib/xml.js";
 import type { TurnMode, TurnQuestion, TurnTodo } from "../types/protocol.js";
 import type {
   StateMachineSession,
@@ -821,6 +822,49 @@ function formatTodoWriteResult(todos: TurnTodo[]): string {
   return `${body}\n\n${reminder}`;
 }
 
+/**
+ * Build the prompt body delivered to the parent on its acknowledgment
+ * turn — the extra parent prompt run by the turn runner after every
+ * state-machine terminal so the parent gets to react in natural
+ * language (or take a follow-up control action).
+ *
+ * The framing is deliberately neutral on "decided vs runtime failure":
+ * the parent's own transcript already shows whether it selected the
+ * terminal (its preceding `select_state_machine_state` tool call) or
+ * whether the state machine ended on its own, and the terminal
+ * `status`/`reason` carry the rest of what the parent needs to phrase
+ * the reply. The prompt only has to steer the parent away from
+ * `select_state_machine_state` (the state machine has already ended)
+ * and toward either plain-text reply or
+ * `create_state_machine_definition` for follow-up work.
+ */
+export function formatStateMachineTerminalAcknowledgmentPrompt(input: {
+  session: StateMachineSession;
+}): string {
+  const { session } = input;
+  const terminal = session.terminal;
+  if (!terminal) {
+    throw new Error("formatStateMachineTerminalAcknowledgmentPrompt requires a terminal session.");
+  }
+  return dedent`
+    The state machine "${session.definition.name}" has reached a terminal state and is no longer running.
+
+    ${toXML({
+      state_machine_terminal: {
+        state: terminal.state,
+        status: terminal.status,
+        reason: terminal.reason ?? null,
+      },
+    })}
+
+    Respond now:
+    - If you want to start follow-up work (retry, remediation, next business process), call create_state_machine_definition.
+    - Otherwise reply to the user in plain text summarizing what happened and what you recommend next.
+
+    Do not call select_state_machine_state — there is no active state machine to advance.
+  `;
+}
+
 export function formatCarriedTodosReminder(todos: TurnTodo[] | undefined): string | undefined {
   if (!todos || todos.length === 0) return undefined;
   const openTodos = todos.filter(
@@ -864,6 +908,8 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
 
       Every definition must include at least one terminal state with status "completed" representing the happy-path exit (success). The runner automatically adds terminal states named "failed" (status "failed") and "cancelled" (status "cancelled") if you do not define them, so you always have escape hatches for unrecoverable failure and user cancellation without specifying boilerplate terminals. You may still define your own "failed" or "cancelled" states (with reasons or different names) to override or supplement the auto-injected ones.
 
+      Every terminal — both the ones you select via select_state_machine_state and the ones the runner records when a state fails at runtime — wakes you one more time with the terminal details so you can summarize the outcome to the user and optionally start follow-up work via another create_state_machine_definition call. Plan terminal states with that in mind: name them meaningfully and use the \`reason\` field, because both flow into the acknowledgment prompt the parent sees.
+
       Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.
     `,
     parameters: createDefinitionSchema,
@@ -893,6 +939,8 @@ function createSelectStateTool(
       Select the next state-machine state, terminal state, or failure outcome. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt.
 
       Carry forward what the orchestrator now knows. Each agent state runs in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — it only sees the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: the sub-agent has no way to read those findings.
+
+      Selecting a terminal state (or passing decision.kind: "fail") ends the state machine. You will then be woken once more for a terminal acknowledgment turn — the runner re-prompts you with the terminal details (state, status, reason) so you can reply to the user in plain text and, if appropriate, kick off a follow-up state machine via create_state_machine_definition. Do not call select_state_machine_state on that acknowledgment turn; the state machine is already terminal.
     `,
     parameters: selectStateSchema,
     async execute(_toolCallId, params) {
