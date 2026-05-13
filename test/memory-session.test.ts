@@ -62,41 +62,48 @@ describe("MemorySession", () => {
     }
   });
 
-  testIfDocker("multi-second op holds the lock for its full duration", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "duet-session-long-"));
-    const dataDir = join(dir, "memory.db");
-    const lockPath = join(dataDir, ".duet-open.lock");
-    const session = new MemorySession({
-      path: dataDir,
-      openOptions: { init: migrate },
-      idleCloseMs: 800,
-    });
-    try {
-      const startedAt = Date.now();
-      const pending = session.withDb(async () => {
-        await sleep(2_500);
-        return "done";
+  testIfDocker(
+    "multi-second op holds the lock for its full duration",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "duet-session-long-"));
+      const dataDir = join(dir, "memory.db");
+      const lockPath = join(dataDir, ".duet-open.lock");
+      const session = new MemorySession({
+        path: dataDir,
+        openOptions: { init: migrate },
+        idleCloseMs: 800,
       });
+      try {
+        const startedAt = Date.now();
+        const pending = session.withDb(async () => {
+          await sleep(2_500);
+          return "done";
+        });
 
-      // Lock must stay held throughout the in-flight op.
-      await sleep(1_500);
-      expect(existsSync(lockPath)).toBe(true);
-      expect(Date.now() - startedAt).toBeLessThan(2_500);
+        // Lock must stay held throughout the in-flight op.
+        await sleep(1_500);
+        expect(existsSync(lockPath)).toBe(true);
+        expect(Date.now() - startedAt).toBeLessThan(2_500);
 
-      const result = await pending;
-      expect(result).toBe("done");
+        const result = await pending;
+        expect(result).toBe("done");
 
-      // Idle timer only starts after the op resolves. The lock is
-      // still held immediately after resolution and only released
-      // ~idleCloseMs later.
-      expect(existsSync(lockPath)).toBe(true);
-      await sleep(1_400);
-      expect(existsSync(lockPath)).toBe(false);
-    } finally {
-      await session.dispose();
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
+        // Idle timer only starts after the op resolves. The lock is
+        // still held immediately after resolution and only released
+        // ~idleCloseMs later.
+        expect(existsSync(lockPath)).toBe(true);
+        await sleep(1_400);
+        expect(existsSync(lockPath)).toBe(false);
+      } finally {
+        await session.dispose();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    // 2.5s in-flight op + 1.5s mid-op wait + 1.4s post-resolve wait ~= 5.4s
+    // wall time, plus PGlite open/migrations on top. Default 5s timeout is
+    // too tight under CI load.
+    15_000,
+  );
 
   testIfDocker("burst: concurrent withDb calls share a single open", async () => {
     const dir = await mkdtemp(join(tmpdir(), "duet-session-burst-"));
