@@ -65,7 +65,12 @@ const MEMORY_MODEL_BY_PROVIDER: Record<ProviderName, string> = {
 const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   {
     shorthand: "opus-4.7",
-    aliases: ["claude-opus-4.7", "claude-opus-4-7", "anthropic/claude-opus-4.7"],
+    aliases: [
+      "claude-opus-4.7",
+      "claude-opus-4-7",
+      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4-7",
+    ],
     modelsByProvider: {
       "duet-gateway": "anthropic/claude-opus-4.7",
       "vercel-ai-gateway": "anthropic/claude-opus-4.7",
@@ -75,7 +80,12 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   },
   {
     shorthand: "sonnet-4.6",
-    aliases: ["claude-sonnet-4.6", "claude-sonnet-4-6", "anthropic/claude-sonnet-4.6"],
+    aliases: [
+      "claude-sonnet-4.6",
+      "claude-sonnet-4-6",
+      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-4-6",
+    ],
     modelsByProvider: {
       "duet-gateway": "anthropic/claude-sonnet-4.6",
       "vercel-ai-gateway": "anthropic/claude-sonnet-4.6",
@@ -85,7 +95,12 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   },
   {
     shorthand: "haiku-4.5",
-    aliases: ["claude-haiku-4.5", "claude-haiku-4-5", "anthropic/claude-haiku-4.5"],
+    aliases: [
+      "claude-haiku-4.5",
+      "claude-haiku-4-5",
+      "anthropic/claude-haiku-4.5",
+      "anthropic/claude-haiku-4-5",
+    ],
     modelsByProvider: {
       "duet-gateway": "anthropic/claude-haiku-4.5",
       "vercel-ai-gateway": "anthropic/claude-haiku-4.5",
@@ -95,7 +110,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   },
   {
     shorthand: "gpt-5.5",
-    aliases: ["openai/gpt-5.5"],
+    aliases: ["openai/gpt-5.5", "openai/gpt-5-5"],
     modelsByProvider: {
       "duet-gateway": "openai/gpt-5.5",
       "vercel-ai-gateway": "openai/gpt-5.5",
@@ -105,7 +120,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   },
   {
     shorthand: "gpt-5.4-mini",
-    aliases: ["openai/gpt-5.4-mini"],
+    aliases: ["openai/gpt-5.4-mini", "openai/gpt-5-4-mini"],
     modelsByProvider: {
       "duet-gateway": "openai/gpt-5.4-mini",
       "vercel-ai-gateway": "openai/gpt-5.4-mini",
