@@ -135,7 +135,7 @@ Observational memory, pi coding tools, and guardrails sit underneath every state
 
 ![Duet demo](./assets/demo.gif)
 
-_One prompt, a job that can run for weeks, months, or even years. That's what a relay is for._
+_One prompt, a job that can run for weeks, months, or even years. The power of state machines a.k.a. relays in duet._
 
 ## Other capabilities
 
