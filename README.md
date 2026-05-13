@@ -81,6 +81,8 @@ That's the whole vocabulary. Email, GitHub, Calendly, CRM — none of them need 
 > [!NOTE]
 > This is **not** Temporal. Not a deterministic DAG, not an exact-once runtime, not a workflow service. It's enough structure for an agent to make good process decisions, and hand operational guarantees off to external systems when they matter.
 
+![Duet demo](./assets/demo.gif)
+
 ## Architecture
 
 A realistic agent-routed relay: outbound conference outreach. The user prompt enters the `TurnRunner`, the runner agent picks the next state from prompt + history + available states, and the relay drives the business process until it hits a terminal state. The same definition can start in the middle — for example, the runner can skip straight to `wait_for_reply` if the user says "I already emailed them."
