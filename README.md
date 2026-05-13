@@ -348,6 +348,8 @@ duet login --skip-skill-sync      # skip the post-login default skill sync
 
 </details>
 
+<a id="cli-env-setup"></a>
+
 <details>
 <summary><b>CLI Env Setup</b> — bring your own provider keys</summary>
 

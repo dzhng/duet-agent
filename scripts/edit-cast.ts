@@ -1,15 +1,17 @@
 #!/usr/bin/env bun
-// Edit an asciinema v3 .cast file: drop a head window, cap idle gaps, optional speedup.
+// Edit an asciinema v3 .cast file: drop head/tail windows, cap idle gaps, optional speedup.
 //
 // Usage:
-//   bun scripts/edit-cast.ts <in.cast> <out.cast> [--drop-head 3] [--max-gap 0.5] [--speed 1.5]
+//   bun scripts/edit-cast.ts <in.cast> <out.cast> [--drop-head N] [--drop-tail N] [--max-gap S] [--speed X]
 
 import { readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const [inPath, outPath] = args;
 if (!inPath || !outPath) {
-  console.error("usage: edit-cast.ts <in> <out> [--drop-head N] [--max-gap S] [--speed X]");
+  console.error(
+    "usage: edit-cast.ts <in> <out> [--drop-head N] [--drop-tail N] [--max-gap S] [--speed X]",
+  );
   process.exit(1);
 }
 const flag = (name: string, def: number) => {
@@ -37,8 +39,8 @@ for (let i = 1; i < lines.length; i++) {
   let [delta, kind, data] = ev;
   absIn += delta;
 
-  if (!droppedHead && absIn < dropHead) continue; // skip event entirely
-  if (dropTail > 0 && absIn > tailCutoff) break; // stop once we cross tail cutoff
+  if (!droppedHead && absIn < dropHead) continue;
+  if (dropTail > 0 && absIn > tailCutoff) break;
   if (!droppedHead) {
     droppedHead = true;
     delta = 0; // first kept event starts at t=0
