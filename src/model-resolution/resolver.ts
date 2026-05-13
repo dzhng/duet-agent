@@ -1,6 +1,6 @@
 import { findEnvKeys, getModel, type Model } from "@earendil-works/pi-ai";
 
-import { isDuetGatewayModelName, resolveDuetGatewayModel } from "./duet-gateway.js";
+import { resolveDuetGatewayModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
   DEFAULT_CLI_MEMORY_MODEL,
@@ -13,6 +13,7 @@ import {
   PROVIDER_ORDER,
   type ProviderModelCandidate,
   type ProviderName,
+  resolveProviderShorthand,
 } from "./catalog.js";
 
 export { DEFAULT_CLI_MEMORY_MODEL, DEFAULT_CLI_MODEL } from "./catalog.js";
@@ -41,17 +42,20 @@ export function resolveModelName(model: string): Model<any> {
   if (separator === -1) {
     throw new Error("Models must use provider:modelId syntax");
   }
-  if (isDuetGatewayModelName(model)) {
-    const modelId = model.slice(separator + 1);
+  const rawProvider = model.slice(0, separator);
+  const modelId = model.slice(separator + 1);
+  const provider = resolveProviderShorthand(rawProvider) ?? rawProvider;
+  if (provider === "duet-gateway") {
     const resolved = resolveDuetGatewayModel(modelId);
     if (!resolved) {
       throw new Error(`Unknown duet-gateway model: ${modelId}`);
     }
     return resolved;
   }
-  const provider = model.slice(0, separator) as Parameters<typeof getModel>[0];
-  const modelId = model.slice(separator + 1) as Parameters<typeof getModel>[1];
-  return getModel(provider, modelId);
+  return getModel(
+    provider as Parameters<typeof getModel>[0],
+    modelId as Parameters<typeof getModel>[1],
+  );
 }
 
 function lookupProviderEnvVar(entry: {

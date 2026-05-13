@@ -284,6 +284,26 @@ describe("CLI model inference", () => {
     expect(resolveModelName("anthropic:claude-opus-4-7").id).toBe("claude-opus-4-7");
   });
 
+  test("provider shorthand in provider:modelId form canonicalizes the provider", () => {
+    clearModelEnv();
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+    process.env.OPENAI_API_KEY = "test-openai";
+
+    expect(resolveModelName("claude:claude-opus-4-7").id).toBe("claude-opus-4-7");
+    expect(resolveModelName("gpt:gpt-5.5").id).toBe("gpt-5.5");
+  });
+
+  test("duet provider shorthand resolves through the duet gateway", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+
+    const fromCanonical = resolveModelName("duet-gateway:anthropic/claude-opus-4.7");
+    const fromShorthand = resolveModelName("duet:anthropic/claude-opus-4.7");
+
+    expect(fromShorthand.id).toBe(fromCanonical.id);
+    expect(fromShorthand.baseUrl).toBe(fromCanonical.baseUrl);
+  });
+
   test("keeps explicitly provided memory model shorthands as app-facing names", () => {
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
