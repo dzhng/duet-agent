@@ -204,12 +204,12 @@ Only HTTP MCP is supported today; authentication is intentionally out of scope, 
 ## Install
 
 ```bash
-# CLI — Bun (fastest path, the CLI is Bun-native)
+# CLI — npm
+npm install -g @duetso/agent
+
+# CLI — Bun (the CLI is Bun-native)
 curl -fsSL https://bun.sh/install | bash
 bun add --global @duetso/agent
-
-# CLI — npm (works on any system with Node)
-npm install -g @duetso/agent
 
 # SDK
 npm install @duetso/agent
