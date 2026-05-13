@@ -205,7 +205,7 @@ describe("openPGliteWaitingForLock", () => {
       const db = await openPGliteWaitingForLock(
         dataDir,
         {
-          init: async (database: import("@electric-sql/pglite").PGlite) => {
+          init: async (database) => {
             await database.exec("CREATE TABLE observations (id TEXT PRIMARY KEY)");
           },
         },

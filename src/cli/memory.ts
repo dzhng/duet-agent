@@ -48,7 +48,7 @@ export async function runMemoryCommand(args: string[]): Promise<void> {
 
   let db: MemoryDb;
   try {
-    db = await MemoryDb.open(dbPath, waitBudgetMs === undefined ? {} : { waitBudgetMs });
+    db = await MemoryDb.open(dbPath, { waitBudgetMs });
   } catch (error) {
     if (error instanceof MemoryLockTimeoutError) {
       fail(
