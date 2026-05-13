@@ -635,7 +635,7 @@ export class TurnRunner {
 
   protected async prompt(command: TurnPromptCommand): Promise<TurnTerminalEvent> {
     const originalState = this.requireRunnerState();
-    const state: TurnState = { ...originalState, status: "running" };
+    const state = this.clearFinishedTodosAtTurnStart({ ...originalState, status: "running" });
     const resolvedPrompt = this.skillContext.resolveSlashSkillPrompt(command.message);
     const todoReminder = formatCarriedTodosReminder(state.todos);
     const prompt = todoReminder ? `${todoReminder}\n\n${resolvedPrompt}` : resolvedPrompt;
@@ -1028,6 +1028,23 @@ export class TurnRunner {
   private setTodos(todos: TurnTodo[]): void {
     if (!this.state) return;
     this.setState({ ...this.state, todos: [...todos] });
+  }
+
+  // When a new turn begins with a todo list whose items are all in terminal
+  // states (completed or failed), the list no longer reflects work in progress.
+  // Clear it so the user-visible todos panel resets and the next turn does not
+  // carry a stale reminder forward.
+  private clearFinishedTodosAtTurnStart(state: TurnState): TurnState {
+    const todos = state.todos;
+    if (!todos || todos.length === 0) return state;
+    const hasOpen = todos.some(
+      (todo) => todo.status === "pending" || todo.status === "in_progress",
+    );
+    if (hasOpen) return state;
+    const cleared: TurnState = { ...state, todos: [] };
+    this.setState(cleared);
+    this.emit({ type: "todos", todos: [] });
+    return cleared;
   }
 
   private requireStarted(): void {

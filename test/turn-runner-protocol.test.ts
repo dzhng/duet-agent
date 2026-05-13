@@ -64,8 +64,8 @@ describe("TurnRunner protocol scenarios", () => {
     expect(sentPrompt.endsWith("Continue the work.")).toBe(true);
   });
 
-  test("does not prepend a todo reminder when all carried todos are terminal", async () => {
-    const { runner } = createTurnRunner();
+  test("clears carried todos and emits an empty todos event when all are terminal", async () => {
+    const { runner, events } = createTurnRunner();
     await runner.start({
       type: "start",
       mode: "agent",
@@ -84,6 +84,9 @@ describe("TurnRunner protocol scenarios", () => {
 
     const sentPrompt = runner.workerInputs[0]?.prompt ?? "";
     expect(sentPrompt).toBe("Continue the work.");
+    const todosEvents = events.filter((event) => event.type === "todos");
+    expect(todosEvents).toHaveLength(1);
+    expect(todosEvents[0]).toMatchObject({ type: "todos", todos: [] });
   });
 
   test("asks the user structured questions from agent mode", async () => {
