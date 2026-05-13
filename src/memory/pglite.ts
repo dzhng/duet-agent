@@ -176,7 +176,12 @@ export async function pollAcquireOpenLock(dataDir: string, budgetMs: number): Pr
   while (true) {
     const result = tryAcquireOpenLock(dataDir);
     if ("lockPath" in result) return result.lockPath;
-    lastHolderPid = result.holderPid;
+    // Preserve the last *known* holder pid across retries: the
+    // stale-takeover subpath can momentarily report 0 when the file
+    // content is unparseable or the racer has already exited. We
+    // don't want that to clobber a real pid we observed earlier and
+    // surface "held by pid 0" in the eventual timeout error.
+    if (result.holderPid > 0) lastHolderPid = result.holderPid;
     const elapsed = Date.now() - start;
     if (elapsed >= budgetMs) {
       throw new MemoryLockTimeoutError(dataDir, lastHolderPid, budgetMs);
@@ -347,16 +352,16 @@ export function tryAcquireOpenLock(dataDir: string): TryAcquireOpenLockResult {
   }
   const recreated = createLockFile(lockPath);
   if (!recreated) {
-    // Another opener won the race after our stale-lock takeover. Report
-    // its pid (if live) so the caller can poll again.
+    // Another opener won the race after our stale-lock takeover. Even
+    // if the new holder has already exited by the time we read the
+    // file (which happens with bursts of short-lived openers churning
+    // through the same dataDir), we treat this as contention and let
+    // the caller re-poll — throwing here would abort an otherwise
+    // healthy session for what is effectively "try again in 50ms".
     const afterContents = tryReadFile(lockPath) ?? "";
     const after = Number.parseInt(afterContents.split("\n", 1)[0]?.trim() ?? "", 10);
-    if (Number.isFinite(after) && after > 0 && after !== process.pid && isProcessAlive(after)) {
-      return { holderPid: after };
-    }
-    throw new Error(
-      `Failed to acquire open lock at ${lockPath}: another opener won the race after the stale-lock takeover.`,
-    );
+    const reportedPid = Number.isFinite(after) && after > 0 ? after : 0;
+    return { holderPid: reportedPid };
   }
   heldLockPaths.add(recreated);
   return { lockPath: recreated };
