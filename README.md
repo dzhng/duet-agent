@@ -19,8 +19,6 @@ duet "prospect the VP Eng at Acme, send a first-touch email, and book a meeting 
 
 One `duet login` writes `DUET_API_KEY` to `~/.duet/.env` and unlocks frontier language models (Claude, GPT, Gemini), image and video models, and Firecrawl-powered web skills through the Duet AI Gateway. No separate provider billing. ([CLI Env Setup](#cli-env-setup) if you'd rather bring your own keys.)
 
-> _Demo: asciinema clip goes here — `duet login` → first prompt → relay advancing._
-
 ## Jobs that don't fit in one chat
 
 - **Long-running outreach and lifecycle work.** Prospect → email → wait 14 days → book → handoff. The relay sits in `wait_for_reply` for a week without a process alive.
