@@ -49,9 +49,9 @@ None of this makes Claude Code or Codex worse at what they do. It makes duet-age
 
 The defaults that follow from that:
 
-- **Memory is part of the runtime, not a slot.** The runner cannot run without it. Every pi-agent turn observes its own transcript, reflects when observations grow, and writes durable rows to PGlite before the next turn starts. There is no "did you remember to plug in memory?" path.
+- **Memory and compaction are the same primitive.** Observational memory _is_ how each turn's context survives into the next. The runner observes its own transcript, reflects when it grows, and writes durable rows to PGlite — no separate memory plugin, no separate compaction strategy, no "did you wire up memory?" path.
 - **Long-running processes are first-class — but the agent routes them.** Relays describe _available_ business states, not a fixed DAG. The runner agent picks the next state from the prompt, history, and current state. That's why you can start in the middle, skip ahead, or backtrack with a sentence.
-- **State lives on disk, not in a process.** A turn is a function of `TurnState`. Pause for a month, hand the state to a fresh container, keep going. No sticky workers, no warm pools, no "I lost the session" stories.
+- **State lives on disk, not in a process.** A turn is a pure function of `TurnState`, which makes the runner serverless-friendly by default. Pause for a month, wake a fresh container on cron, hand it the saved state, run one turn, persist, exit. No sticky workers, no warm pools, no "I lost the session" stories.
 - **One login, every frontier model.** `duet login` is the whole setup. Claude, GPT, Gemini, image, video, web — all behind one key, with default skills auto-synced and kept fresh.
 - **Open source.** No black box. If we made a wrong call about how memory ranks or how relays route, you can read the code and tell us we're wrong.
 
@@ -59,18 +59,11 @@ The defaults that follow from that:
 
 ### Memory, woven in
 
-Memory is observational, not transcript-stuffed. After each pi-agent run the runner observes the new transcript suffix, reflects when observations exceed a threshold, and writes both to a per-user PGlite store. The next turn's prompt prefix is a **frozen two-layer pack**:
+Memory and compaction are the same primitive: observational memory _is_ how context survives between turns. The runner observes its own transcript, reflects when observations grow, and writes durable rows to PGlite — text observations for messages and images alike, so screenshots and UI captures stay recallable on later turns without re-attaching bytes. Each turn's prompt prefix is a frozen two-layer pack (long-term cross-session memory + this session's compaction summary), rebuilt only at compaction events so the provider's prompt cache survives turn-over-turn. Anything that didn't make the pack stays reachable through `recall_memory` — hybrid retrieval over pgvector cosine similarity and tsvector keyword search, fused via Reciprocal Rank Fusion, with optional paraphrased query expansion. Embeddings run in a background worker so foreground turns never block.
 
-- **Long-term** — every other session's observations, ranked by `priority × recency × kind` and packed into ~7.5% of the effective context window.
-- **From this session** — the chronological compaction summary, bounded by a reflection trigger that fires before the model window does.
+### Relays: keep the agent working until the job is done
 
-The pack is rebuilt only at three compaction events, so the provider's prompt cache survives turn-over-turn. Anything that didn't make the pack is still reachable through `recall_memory`, which runs **hybrid retrieval** — pgvector cosine similarity plus tsvector keyword search, fused via Reciprocal Rank Fusion, with optional paraphrased query expansion. Embeddings flow through a background worker so foreground turns never block.
-
-Memory is **multimodal**. Screenshots, scans, and UI captures become text observations the agent can recall on later turns without re-attaching bytes.
-
-### Relays: agent-routed state machines
-
-A relay is a state machine, but the agent picks the transitions. Each state is one of five kinds:
+A relay is how duet-agent stays on task across hours, days, or months. Under the hood it's a state machine — but the runner agent, not a config file, picks the next transition every turn. Enough structure to route long work; not so much that the agent is locked into a path. Each state is one of five kinds:
 
 - **agent** — a sub-agent with a prompt, optional system prompt, and optional skill allowlist.
 - **script** — shell out to `bash`, `curl`, a CLI. Anything with an API is a script state.
@@ -86,13 +79,7 @@ flowchart LR
 That's the whole vocabulary. Email, GitHub, Calendly, CRM — none of them need first-class engine concepts; they're shell scripts. Relays can start in the middle ("I already emailed them, just wait for a reply") because the runner agent reads context, not a workflow ID.
 
 > [!NOTE]
-> This is **not** Temporal. Not a deterministic DAG, not an exact-once runtime, not a workflow service. It's enough structure for an agent to make good process decisions and hand operational guarantees off to external systems when they matter.
-
-### Built to outlive the process
-
-`TurnRunner` is stateless across process boundaries. `TurnState` is the only thing that has to survive, and durable observations live in PGlite. A fresh container — serverless invocation, new sandbox, different machine — resumes by handing the saved state back to `runner.start({ state })`. A relay waiting two weeks for a reply is a cron job, not a long-lived process.
-
----
+> This is **not** Temporal. Not a deterministic DAG, not an exact-once runtime, not a workflow service. It's enough structure for an agent to make good process decisions, and hand operational guarantees off to external systems when they matter.
 
 ## Architecture
 
@@ -215,9 +202,12 @@ Only HTTP MCP is supported today; authentication is intentionally out of scope, 
 ## Install
 
 ```bash
-# CLI (requires Bun)
+# CLI — Bun (fastest path, the CLI is Bun-native)
 curl -fsSL https://bun.sh/install | bash
 bun add --global @duetso/agent
+
+# CLI — npm (works on any system with Node)
+npm install -g @duetso/agent
 
 # SDK
 npm install @duetso/agent
@@ -329,24 +319,9 @@ Tool calls render with custom per-tool headers (e.g. `$ <command>`, `read <path>
 </details>
 
 <details>
-<summary><b>Copy & paste, diagnostics, image attachments</b></summary>
+<summary><b>Image attachments</b></summary>
 
-**Copy.** Drag with the mouse to highlight any text in the transcript. The bottom hint advertises the copy keystroke that actually reaches the TUI on your terminal (it appears only while a selection is active so the hint stays terse):
-
-- **Cmd+C** — macOS terminals that forward Cmd+C (Ghostty, kitty, recent iTerm2 with the right keybindings).
-- **Ctrl+Shift+C** — Linux/Windows terminals, and macOS terminals that own Cmd+C for their own UI (notably Warp). Cmd+Shift+C also works where forwarded.
-
-Copying writes via `pbcopy` / `wl-copy` / `xclip` / `xsel` / `clip.exe` and verifies the write through a readback. When no local CLI is available (e.g. SSH with no clipboard tool), the TUI falls back to OSC 52.
-
-Explicit copies:
-
-- `/copy` — most recent agent reply.
-- `/copy all` — full conversation, formatted `you:` / `agent:`.
-- `/copy <N>` — last N user/agent messages.
-
-**Diagnostics.** `/diag` toggles a diagnostic log inside the transcript. While on, every keypress and every drag-selection event prints a `[diag]` line with the exact name, modifier flags, raw sequence, and parser source the renderer received — plus a snapshot of the current selection state. Run `/diag` again to turn it off.
-
-**Image attachments.** The interactive TUI accepts image attachments (PNG, JPEG, GIF, WebP):
+The interactive TUI accepts image attachments (PNG, JPEG, GIF, WebP):
 
 - **Cmd+V / Ctrl+V** — paste from the clipboard. Requires a kitty-keyboard-aware terminal; falls back to `/paste` on others.
 - **`/paste`** — manual clipboard probe. Use this when your terminal swallows Cmd+V (Warp, macOS Terminal.app).
