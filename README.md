@@ -44,7 +44,6 @@ Both Claude Code and Codex are excellent at the _one-turn_ job: edit this file, 
 | **Long-running, multi-step workflows** | Background sessions; no native poll/wait/state-machine primitives                                                               | Transcript-driven; no native poll/wait/state-machine primitives            | **Relays: agent-routed state machines with five state kinds — `agent`, `script`, `poll`, `timer`, `terminal`. Wait days for a reply between turns.**                    |
 | **Models you can use**                 | Anthropic                                                                                                                       | OpenAI (Sign in with ChatGPT or API key)                                   | **Anthropic, OpenAI, OpenRouter, Vercel AI Gateway, Duet Gateway**                                                                                                      |
 | **License**                            | Proprietary (closed-source CLI)                                                                                                 | Apache-2.0                                                                 | **Apache-2.0**                                                                                                                                                          |
-| **MCP tools**                          | Yes                                                                                                                             | Yes                                                                        | Yes (HTTP transport)                                                                                                                                                    |
 
 None of this makes Claude Code or Codex worse at what they do. It makes duet-agent the right thing to reach for when the job is too long for one chat — when memory has to survive the session, when a process has to wait on an external signal, when a turn has to resume in a container that didn't exist when the work started.
 
@@ -136,7 +135,7 @@ Observational memory, pi coding tools, and guardrails sit underneath every state
 
 ![Duet demo](./assets/demo.gif)
 
-_Boot the TUI — old prompts from hours and days ago wait under "pick up the thread," each ready to resume with its saved memory and relay state._
+_One prompt, a job that can run for weeks, months, or even years. That's what a relay is for._
 
 ## Other capabilities
 
