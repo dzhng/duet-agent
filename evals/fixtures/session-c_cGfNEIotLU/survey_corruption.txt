@@ -1,0 +1,92 @@
+I have enough to write up the report. The DBs are PGlite (PostgreSQL), not SQLite, so `pragma integrity_check` doesn't apply — but I can give you the equivalent picture from the on-disk layout, the project's quarantine logic, and the actual smoking gun in `memory-backfill.log`.
+
+## (a) Corrupted DBs
+
+`~/.duet` contains **8 quarantined PGlite data directories** plus the live one. There is no SQLite file anywhere under `~/.duet` — `memory.db` is a PostgreSQL `dataDir` (PG_VERSION = 17, PGlite-flavored), so `sqlite3 … 'pragma integrity_check;'` is N/A and would fail with "file is not a database". The PG equivalents are `amcheck` / `pg_checksums`, neither of which PGlite exposes from the Node side.
+
+| Dir | Size | mtime |
+|---|---|---|
+| `memory.db` (live) | 39M | May 13 00:40 |
+| `memory.db.corrupted-2026-05-09T19-20-38-738Z` | 38M | May 10 02:20 |
+| `memory.db.corrupted-2026-05-09T19-24-02-963Z` | 37M | May 10 02:24 |
+| `memory.db.corrupted-2026-05-10T12-19-52-791Z` | 37M | May 10 19:19 |
+| `memory.db.corrupted-2026-05-12T06-27-52-278Z` | 71M | May 12 13:27 |
+| `memory.db.corrupted-2026-05-12T09-51-55-702Z` | 54M | May 12 16:51 |
+| `memory.db.corrupted-2026-05-12T10-16-27-286Z` | 38M | May 12 17:16 |
+| `memory.db.corrupted-2026-05-12T13-25-51-413Z` | 38M | May 12 20:25 |
+| `memory.db.corrupted-2026-05-12T14-22-48-232Z` | 38M | May 12 21:22 |
+
+These were renamed by `quarantineDataDirectory()` in `src/memory/pglite.ts`. Quarantine is triggered whenever `openAndProbe()` throws — which, given the design, almost always means **`runMigrations()` threw on open**, not heap‑level page corruption. Every quarantined dir still has its full `base/`, `pg_wal/`, `global/`, etc. on disk — they aren't structurally corrupt PG data directories; they're "PGlite couldn't get all the way through migration v1–v6 cleanly."
+
+No `*.journal`, `*.wal`, or `*.shm` SQLite sidecars exist. The PG WAL lives under `pg_wal/` inside each data dir (one `000000010000000000000001` segment in nearly every dir; the 2026‑05‑12 09:51 quarantine has two WAL segments, consistent with it being the biggest at 54M and getting further into a session before something forced quarantine).
+
+No stray `postmaster.pid` issue right now: live dir's pid file points at the current pglite process; quarantined dirs' pid files are also present but `clearStalePostmasterLock()` removes them on next open (`process.kill(pid, 0)` check).
+
+## (b) Schema
+
+Cannot run `\d` directly because PGlite is in-process only (no `psql` server you can connect to from the host, and you can't open a dir already held by the live agent without contention). The authoritative schema is in `src/memory/migrations.ts`, applied in order v1→v6:
+
+- `schema_version(version PK, applied_at BIGINT, description TEXT)`
+- `observations(id TEXT PK, created_at BIGINT, last_used_at BIGINT NOT NULL, session_id TEXT NULL, kind TEXT NOT NULL DEFAULT 'observation', observed_date TEXT, referenced_date TEXT, relative_date TEXT, time_of_day TEXT, priority TEXT, source_json TEXT, content TEXT, tags_json TEXT)`
+  - idx `idx_obs_session_id (session_id)`
+  - idx `idx_obs_kind_priority_lastused (kind, priority, last_used_at DESC)`
+  - GIN `idx_obs_content_fts on to_tsvector('english', content)`
+- `observation_embeddings(observation_id TEXT PK REFERENCES observations(id) ON DELETE CASCADE, model TEXT, vector vector(3072), created_at BIGINT)`
+  - No HNSW index at 3072 dims (pgvector cosine HNSW caps at 2000; brute-force scan is used by design at this corpus size).
+- Extension `vector` (loaded as a PGlite extension at construction in `pglite.ts`).
+
+Migration v5 is itself a self‑heal that dedupes `observations` rows whose `id` PK index went out of sync with the heap — direct evidence the project has seen heap/index divergence on these very dirs.
+
+## (c) Repo files that own DB writes / embedding writes
+
+- **DB open + quarantine** — `src/memory/pglite.ts` (`openPGlite`, `openAndProbe`, `quarantineDataDirectory`, `clearStalePostmasterLock`).
+- **Schema migrations** — `src/memory/migrations.ts` (`runMigrations`, all DDL/DML for v1–v6). This is the code that, when it throws, triggers quarantine.
+- **Observation writes** — `src/memory/storage.ts`:
+  - `appendObservation` → `upsertObservation` (single `INSERT … ON CONFLICT (id) DO UPDATE`).
+  - `replaceSessionObservations` (transaction: `DELETE FROM observations WHERE session_id = $1 AND NOT (id = ANY($2))` + upsert loop).
+  - `bumpLastUsed` (`UPDATE … WHERE id = ANY($2)`).
+- **Embedding writes** — `src/memory/embedding-worker.ts` (`EmbeddingBackfillWorker.persistBatch`): one transaction per 50‑row batch, `INSERT … ON CONFLICT (observation_id) DO UPDATE` into `observation_embeddings`. Selection is in `selectBatch` via `LEFT JOIN` for missing embeddings.
+- **Embedding network client** — `src/memory/embedding.ts` (Duet `/api/v1/embed` HTTP client, 3072‑dim; pure I/O, no DB writes).
+- **Reads** — `src/memory/recall.ts`, `src/memory/observational.ts`, `src/memory/observation-groups.ts`, `src/memory/loader.ts`, `src/memory/context-pack.ts`.
+
+## (d) Smoking gun(s)
+
+**1. Race between the background embedding worker and reflection's session‑scoped DELETE.** `~/.duet/logs/memory-backfill.log` shows a sustained burst starting `2026-05-12T17:34:12.922Z` and continuing through `17:41:50`:
+
+```
+Embedding batch failed: insert or update on table "observation_embeddings"
+  violates foreign key constraint "observation_embeddings_observation_id_fkey"
+```
+
+What's happening:
+
+1. `EmbeddingBackfillWorker.selectBatch()` reads candidate observation IDs (no embeddings yet) in one auto‑commit query.
+2. While the worker is off doing a 500ms+ HTTP round‑trip to the embedding endpoint, a reflection turn calls `replaceSessionObservations(db, sessionId, …)`, which does `DELETE FROM observations WHERE session_id = $1 AND NOT (id = ANY($2))`. That deletes some of the IDs the worker is about to embed.
+3. The worker's `persistBatch` transaction then does `INSERT INTO observation_embeddings (observation_id, …) VALUES …`. FK is checked on insert ⇒ `violates foreign key constraint`. The whole batch aborts.
+
+This is not heap corruption per se, but it is a real data‑integrity bug: the worker has no `SELECT … FOR UPDATE`, no re‑check against the live `observations` table inside the transaction, and no per‑row recovery — one missing parent kills the whole 50‑row batch, and the worker just sleeps 60s and retries the same set. New observations created in the meantime keep starving behind the failing batch.
+
+Likely fixes:
+
+- Filter inside the persist transaction: `INSERT INTO observation_embeddings (…) SELECT $1, $2, $3::vector, $4 WHERE EXISTS (SELECT 1 FROM observations WHERE id = $1)`, **or**
+- `LEFT JOIN VALUES (…) parent ON observations.id = parent.id` filter, **or**
+- Catch the FK error per row and continue, **or**
+- Issue `SELECT id FROM observations WHERE id = ANY($1) FOR SHARE` at the top of the txn and skip missing IDs.
+
+**2. Why the corrupted dirs pile up.** The `Aborted()`‑style errors that quarantine catches in `openAndProbe` are real, but the path is sensitive: any throw inside `runMigrations` (e.g. a migration that re‑hits the previously observed PK duplication, or a `DROP TABLE observation_embeddings` in v6 racing with anything else) renames the entire dir aside. Two reinforcing issues:
+
+- `runMigrations` opens its own implicit transactions per migration; nothing about open is single‑writer‑safe across concurrent agent processes. PGlite is single‑writer by design (one OS process holds the lock), but the codebase ships no advisory cross‑process check beyond `clearStalePostmasterLock`, which only checks the *recorded* PID is alive — if two `duet` processes race to start, the loser may corrupt before quarantine sees a healthy state. Worth verifying you never have two CLIs open.
+- The quarantine renames on **any** failure including an embedding‑extension load failure, a migration‑logic regression, or a transient WASM abort. Once renamed, all prior memory is gone from the agent's view (the `memory.db.corrupted-*` heap is fine but never re‑attached). That matches what you've been seeing in the 🔴 long‑term memory rollovers across May 9 → May 12.
+
+**3. WAL / durability config.** `postgresql.conf` in the data dir is the stock PGlite bundle (default `synchronous_commit = on`, default `fsync = on`, default `wal_level = replica`, `full_page_writes` default on, `shared_buffers = 128MB`). PGlite runs PG inside WASM with an emscripten‑filesystem `pg_wal`, which has a different durability profile than real PG (mid‑write abort can leave inconsistent pages); that's the architectural reason migration v5 had to exist at all. There's no explicit "missing WAL mode" — WAL is on — but WAL durability is only as strong as the underlying emscripten FS commits, which is the part PGlite cannot harden from JS.
+
+**4. Large BLOBs?** No — `observation_embeddings.vector` is `vector(3072)` (≈12 KB raw per row, less in pgvector storage) and `observations.content`/`*_json` are short text. None of the writes are blob‑sized. Embedding latency, not row size, is what widens the race window in (1).
+
+**5. Transaction handling around embeddings.** `persistBatch` wraps the entire 50‑row insert in one transaction — good for atomicity, bad for partial recovery: a single deleted parent row poisons 49 healthy candidates. Combine that with the worker's `ERROR_SLEEP_MS = 60_000` and you get exactly the every‑1‑minute cadence you see in the log. Suggest either smaller transactions (per‑row or per‑5‑rows), or pre‑filtering against `observations` inside the txn so deletions can't break the insert.
+
+### TL;DR
+
+- No SQLite anywhere; `~/.duet/memory.db` is a PGlite PG17 dataDir, 8 quarantined siblings from migration / open failures.
+- Schema lives in `src/memory/migrations.ts`; live ranking columns are `last_used_at`, embeddings are 3072‑dim with no ANN index by design.
+- DB writers: `src/memory/storage.ts` (observations) and `src/memory/embedding-worker.ts` (embeddings). DB opener / quarantiner: `src/memory/pglite.ts`.
+- **Smoking gun**: `embedding-worker` races against `replaceSessionObservations` — FK violations in `memory-backfill.log` from 17:34 onward today prove the worker selects rows that reflection deletes before the worker commits, killing whole 50‑row batches. Fix is to filter the insert against the live `observations` table inside the persist transaction or recover per‑row instead of aborting the batch.
