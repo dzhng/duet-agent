@@ -215,13 +215,12 @@ export class EmbeddingBackfillWorker {
     // future re-embedding pass match the deprecated tag and refresh
     // only the affected rows.
     //
-    // The `INSERT ... SELECT ... WHERE EXISTS` filter avoids a FK race:
-    // between `selectBatch` and `persistBatch` the reflector may have
-    // called `replaceSessionObservations`, which deletes the parent
-    // row. A bare `INSERT` would then abort the whole transaction with
-    // a foreign-key violation, losing every embedding in this batch.
-    // Skipping the missing parent inserts 0 rows for that observation
-    // and lets the surviving rows commit.
+    // No FK exists between `observation_embeddings` and `observations`
+    // (migration 7 dropped the cascade), so a bare INSERT is safe even
+    // if the parent row was deleted between `selectBatch` and here.
+    // Any resulting orphan embedding is harmless — the recall path
+    // JOINs back to `observations` and filters orphans out — and it
+    // survives a same-id reinsert without forcing a re-embed.
     await db.transaction(async (tx: Transaction) => {
       const now = Date.now();
       for (let index = 0; index < batch.length; index++) {
@@ -229,8 +228,7 @@ export class EmbeddingBackfillWorker {
         const vector = vectors[index]!;
         await tx.query(
           `INSERT INTO observation_embeddings (observation_id, model, vector, created_at)
-           SELECT $1, $2, $3::vector, $4
-           WHERE EXISTS (SELECT 1 FROM observations WHERE id = $1)
+           VALUES ($1, $2, $3::vector, $4)
            ON CONFLICT (observation_id) DO UPDATE SET
              model = EXCLUDED.model,
              vector = EXCLUDED.vector,

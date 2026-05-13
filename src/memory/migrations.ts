@@ -328,6 +328,45 @@ const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 7,
+    description: "drop FK cascade on observation_embeddings so embeddings survive parent churn",
+    up: async (tx) => {
+      // The original `REFERENCES observations(id) ON DELETE CASCADE`
+      // caused a hot-loop bug: the reflector's session-scoped
+      // delete-and-reinsert cycle would wipe every embedding for a
+      // session via cascade, and the backfill worker would then
+      // re-embed the same ids over and over (or, after the cooldown
+      // was added, leave them silently un-embedded for five minutes).
+      //
+      // Rebuild the table without the FK so an embedding row outlives
+      // a parent delete. Orphans are harmless: the recall path JOINs
+      // back to `observations` and naturally filters them out, and a
+      // future reinsert of the same id keeps its existing embedding
+      // until the worker refreshes it through the ON CONFLICT path.
+      //
+      // Data-preserving rebuild: create the new table under a temp
+      // name, copy every row across, drop the old table, then rename
+      // the new one into place. The PK constraint inherits the temp
+      // name (`observation_embeddings_new_pkey`); renaming it after
+      // the table rename would collide with the v6 PK that the DROP
+      // is about to remove.
+      await tx.exec(`
+        CREATE TABLE observation_embeddings_new (
+          observation_id TEXT PRIMARY KEY,
+          model TEXT NOT NULL,
+          vector vector(3072) NOT NULL,
+          created_at BIGINT NOT NULL
+        )
+      `);
+      await tx.exec(
+        `INSERT INTO observation_embeddings_new (observation_id, model, vector, created_at)
+         SELECT observation_id, model, vector, created_at FROM observation_embeddings`,
+      );
+      await tx.exec(`DROP TABLE observation_embeddings`);
+      await tx.exec(`ALTER TABLE observation_embeddings_new RENAME TO observation_embeddings`);
+    },
+  },
 ];
 
 export interface MigrationResult {

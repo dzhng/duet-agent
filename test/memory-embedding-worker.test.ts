@@ -94,14 +94,13 @@ describe("EmbeddingBackfillWorker", () => {
   });
 
   testIfDocker(
-    "persists surviving rows when a parent observation is deleted between select and persist",
+    "persists every embedded row even when a parent observation is deleted between select and persist",
     async () => {
-      // FK race: the reflector calls `replaceSessionObservations` mid-
-      // batch and deletes one of the rows the worker already selected.
-      // A bare INSERT into `observation_embeddings` would abort the
-      // whole transaction on FK violation, losing every embedding for
-      // this batch. The WHERE EXISTS filter must let surviving rows
-      // commit while the deleted parent is silently skipped.
+      // Migration 7 removed the FK between `observation_embeddings`
+      // and `observations`, so a mid-batch parent delete no longer
+      // aborts the INSERT. The orphan embedding is harmless — recall
+      // joins back to `observations` and filters it out — and it
+      // survives a future same-id reinsert without forcing a re-embed.
       await withSeededDb(async (session) => {
         const worker = new EmbeddingBackfillWorker({
           session,
@@ -120,16 +119,15 @@ describe("EmbeddingBackfillWorker", () => {
         });
 
         worker.start();
-        await waitFor(async () => {
-          const count = await embeddingCount(session);
-          // Two surviving parents (high + low); the deleted medium row
-          // is skipped by the WHERE EXISTS filter rather than aborting.
-          return count === 2;
-        });
+        await waitFor(async () => (await embeddingCount(session)) === 3);
         await worker.stop();
 
         const rows = await readEmbeddingRows(session);
-        expect(rows.map((row) => row.observation_id)).toEqual(["mem_high", "mem_low"]);
+        expect(rows.map((row) => row.observation_id).sort()).toEqual([
+          "mem_high",
+          "mem_low",
+          "mem_medium",
+        ]);
       });
     },
   );
@@ -270,6 +268,75 @@ describe("EmbeddingBackfillWorker", () => {
     expect(liveContents).not.toContain("xxxxxxxxxxxxxxxxxxxxxxxx");
     await rm(logDir, { recursive: true, force: true });
   });
+
+  testIfDocker(
+    "preserves an observation's embedding across a same-id delete and reinsert",
+    async () => {
+      // Production hot-loop root cause: the reflector deletes and
+      // re-inserts an observation under the same id (or session-scoped
+      // replace deletes the parent). Before migration 7 the
+      // observation_embeddings FK cascade wiped the embedding here,
+      // the worker re-selected the row, and the per-id cooldown
+      // blocked any successful re-embed for five minutes. With the
+      // FK dropped the embedding outlives the parent delete and is
+      // adopted by the reinserted parent unchanged.
+      await withSeededDb(async (session) => {
+        const worker = new EmbeddingBackfillWorker({
+          session,
+          embed: async (inputs) => ({
+            embeddings: inputs.map(() => fillVector(3072, 1)),
+            model: "test-model",
+          }),
+          idleSleepMs: 20,
+        });
+
+        worker.start();
+        // First drain: every seeded row gets an embedding and is
+        // recorded in the per-id cooldown map.
+        await waitFor(async () => (await embeddingCount(session)) === 3);
+
+        // Simulate the reflector churn: delete `mem_high` and
+        // reinsert the same id with the same content. With no FK on
+        // observation_embeddings.observation_id the prior embedding
+        // row stays around as an orphan, then is re-adopted by the
+        // reinserted parent.
+        await session.withDb(async (db) => {
+          await db.exec(`DELETE FROM observations WHERE id = 'mem_high'`);
+          await db.exec(`
+            INSERT INTO observations (
+              id, created_at, last_used_at, kind, observed_date, priority, source_json, content, tags_json
+            ) VALUES (
+              'mem_high', 2, 2, 'observation', '2026-05-04', 'high',
+              '{"kind":"system"}', 'High-priority memory.', '[]'
+            )
+          `);
+        });
+
+        // Give the worker tens of drains (idleSleepMs is 20 ms, so
+        // 500 ms = ~25 ticks). It must NOT pick the reinserted parent
+        // for re-embedding because the embedding row never vanished;
+        // a regression that drops the orphan would force the cooldown
+        // path and fail the assertion below.
+        await sleep(500);
+        await worker.stop();
+
+        // Both invariants must hold: the parent observation is
+        // present (we just reinserted it) AND its embedding row
+        // exists — the embedding survived the parent delete because
+        // there is no FK cascade after migration 7.
+        const parentCount = await session.withDb(async (db) => {
+          const result = await db.query<{ count: number }>(
+            `SELECT COUNT(*)::int AS count FROM observations WHERE id = 'mem_high'`,
+          );
+          return result?.rows[0]?.count ?? 0;
+        });
+        expect(parentCount).toBe(1);
+
+        const embeddingRows = await readEmbeddingRows(session);
+        expect(embeddingRows.map((row) => row.observation_id)).toContain("mem_high");
+      });
+    },
+  );
 
   testIfDocker("survives an embed failure and continues on the next batch", async () => {
     await withSeededDb(async (session) => {
