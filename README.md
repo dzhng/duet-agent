@@ -5,14 +5,15 @@
 [![Live at duet.so](https://img.shields.io/badge/Live%20at-duet.so-FF6B35?style=for-the-badge&logoColor=white)](https://duet.so)
 [![npm version](https://img.shields.io/npm/v/@duetso/agent.svg?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@duetso/agent)
 [![License](https://img.shields.io/npm/l/@duetso/agent.svg?style=for-the-badge&color=success)](LICENSE)
-[![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-black?style=for-the-badge)](https://bun.sh)
+[![CI](https://img.shields.io/github/actions/workflow/status/dzhng/duet-agent/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/dzhng/duet-agent/actions/workflows/ci.yml)
+[![Bun-native](https://img.shields.io/badge/Bun--native-black?style=for-the-badge&logo=bun&logoColor=white)](https://bun.sh)
 
 **The agent harness for jobs that outlive the chat.**
 
 How do you keep an agent working until the job is done? Most harnesses don't have an answer — the chat ends, the process dies, the context goes with it. duet-agent has three. A session can pause for minutes or months and pick up in a fresh sandbox without losing the thread.
 
 ```bash
-bun add --global @duetso/agent
+npm install -g @duetso/agent
 duet login
 duet "prospect the VP Eng at Acme, send a first-touch email, and book a meeting if they reply"
 ```
@@ -47,11 +48,8 @@ Both Claude Code and Codex are excellent at the _one-turn_ job: edit this file, 
 
 None of this makes Claude Code or Codex worse at what they do. It makes duet-agent the right thing to reach for when the job is too long for one chat — when memory has to survive the session, when a process has to wait on an external signal, when a turn has to resume in a container that didn't exist when the work started.
 
-The defaults that follow from that:
+Two things that don't get a section of their own below, but that follow from the same shape:
 
-- **Memory and compaction are the same primitive.** Observational memory _is_ how each turn's context survives into the next. The runner observes its own transcript, reflects when it grows, and writes durable rows to PGlite — no separate memory plugin, no separate compaction strategy, no "did you wire up memory?" path.
-- **Long-running processes are first-class — but the agent routes them.** Relays describe _available_ business states, not a fixed DAG. The runner agent picks the next state from the prompt, history, and current state. That's why you can start in the middle, skip ahead, or backtrack with a sentence.
-- **State lives on disk, not in a process.** A turn is a pure function of `TurnState`, which makes the runner serverless-friendly by default. Pause for a month, wake a fresh container on cron, hand it the saved state, run one turn, persist, exit. No sticky workers, no warm pools, no "I lost the session" stories.
 - **One login, every frontier model.** `duet login` is the whole setup. Claude, GPT, Gemini, image, video, web — all behind one key, with default skills auto-synced and kept fresh.
 - **Open source.** No black box. If we made a wrong call about how memory ranks or how relays route, you can read the code and tell us we're wrong.
 
@@ -81,7 +79,13 @@ That's the whole vocabulary. Email, GitHub, Calendly, CRM — none of them need 
 > [!NOTE]
 > This is **not** Temporal. Not a deterministic DAG, not an exact-once runtime, not a workflow service. It's enough structure for an agent to make good process decisions, and hand operational guarantees off to external systems when they matter.
 
-![Duet demo](./assets/demo.gif)
+### State on disk, serverless by default
+
+A turn is a pure function of `TurnState`. The runner owns it in process while a turn runs; persistence keeps it on disk between turns. Any process — the same shell tomorrow, a fresh sandbox, a serverless invocation, a different machine — can pick up where the last one left off by calling `runner.start({ state })`. There are no sticky workers, no warm pools, no session affinity to lose. Cron wakes the container, hands it the snapshot, runs one turn, persists, exits. That's the whole deployment model when you want one.
+
+### Three modes: agent, relay, auto
+
+The same runner handles both shapes of work. `agent` mode treats the prompt as a normal session — coding, research, review, one-off tasks. `state_machine` mode (surfaced as **relays** in the UI) routes the prompt into an agent-routed business process with durable waits and terminal outcomes. `auto` lets the runner classify the prompt and pick. One CLI, one SDK; the long jobs and the short ones use the same code path.
 
 ## Architecture
 
@@ -130,30 +134,11 @@ stateDiagram-v2
 
 Observational memory, pi coding tools, and guardrails sit underneath every state transition; they are not states themselves.
 
+![Duet demo](./assets/demo.gif)
+
+_Boot the TUI — old prompts from hours and days ago wait under "pick up the thread," each ready to resume with its saved memory and relay state._
+
 ## Other capabilities
-
-<details>
-<summary><b>Native interrupts</b></summary>
-
-Interrupt behavior comes from the underlying pi agent runtime. A user can send a message while a pi session is running, and the runtime can handle it as an interruption or as a follow-up. duet-agent does not add a second interrupt bus on top.
-
-</details>
-
-<details>
-<summary><b>Pi coding tools</b></summary>
-
-Sub-agents use the default tools from `@earendil-works/pi-coding-agent`: read, bash, edit, and write. The turn runner supplies a working directory and can restrict which skills are injected into a state-machine agent state; it does not wrap those tools in a second sandbox abstraction.
-
-</details>
-
-<details>
-<summary><b>Three execution modes</b> — <code>agent</code>, <code>state_machine</code>, <code>auto</code></summary>
-
-- `agent`: handle the prompt as a normal agent session. One-off tasks, coding requests, reviews, research, anything that can complete in the current session.
-- `state_machine`: route the prompt into an agent-routed relay (the underlying mode name is still `state_machine`). Long-running business processes with durable state, waits, and terminal business outcomes.
-- `auto`: let the turn runner classify the prompt and choose either `agent` or `state_machine`.
-
-</details>
 
 <details>
 <summary><b>Optional guardrails</b></summary>
@@ -198,6 +183,20 @@ await turnRunner.start({
 ```
 
 Only HTTP MCP is supported today; authentication is intentionally out of scope, so any credentials a server expects must travel in `headers`. Connection failures are logged and skipped so a single broken server cannot block session setup.
+
+</details>
+
+<details>
+<summary><b>Native interrupts</b></summary>
+
+Interrupt behavior comes from the underlying pi agent runtime. A user can send a message while a pi session is running, and the runtime can handle it as an interruption or as a follow-up. duet-agent does not add a second interrupt bus on top.
+
+</details>
+
+<details>
+<summary><b>Pi coding tools</b></summary>
+
+Sub-agents use the default tools from `@earendil-works/pi-coding-agent`: read, bash, edit, and write. The turn runner supplies a working directory and can restrict which skills are injected into a state-machine agent state; it does not wrap those tools in a second sandbox abstraction.
 
 </details>
 
