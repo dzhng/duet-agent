@@ -24,6 +24,13 @@ import type { PGlite, Transaction } from "@electric-sql/pglite";
  *   - Forward-only by design. A bad migration is fixed by writing the next
  *     migration, not by reverting. This matches gbrain's pattern after
  *     they hit "upgrade-wedge" bugs across six schema versions.
+ *   - Prefer drop-and-recreate over data-preserving rebuilds for the
+ *     embedding tables. Embeddings are cheap to regenerate (the backfill
+ *     worker repopulates lazily within minutes of CLI startup) and the
+ *     data-preserving path requires reading every existing row, which has
+ *     bitten us with PGlite TOAST corruption on `vector(3072)` columns
+ *     after heavy UPSERT load (see migration 7's comment). Observation
+ *     rows are the only data that genuinely needs in-place transforms.
  */
 export interface Migration {
   /** Monotonic version number. Migrations are applied strictly in ascending order. */
