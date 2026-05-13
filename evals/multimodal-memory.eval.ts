@@ -18,7 +18,7 @@ describe("multimodal memory", () => {
       const fixture = await createMemoryFixture();
       try {
         await updateObservationalMemory({
-          db: fixture.db,
+          session: fixture.session,
           memory: fixture.cache,
           sessionId: "session_eval",
           effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,

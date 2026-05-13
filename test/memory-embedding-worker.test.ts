@@ -1,19 +1,18 @@
 import { describe, expect } from "bun:test";
-import { PGlite } from "@electric-sql/pglite";
-import { vector } from "@electric-sql/pglite/vector";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EmbeddingBackfillWorker } from "../src/memory/embedding-worker.js";
 import { runMigrations } from "../src/memory/migrations.js";
+import { MemorySession } from "../src/memory/session.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 describe("EmbeddingBackfillWorker", () => {
   testIfDocker("embeds unembedded rows in priority order and persists them", async () => {
-    await withSeededDb(async (db) => {
+    await withSeededDb(async (session) => {
       const calls: string[][] = [];
       const worker = new EmbeddingBackfillWorker({
-        db,
+        session,
         embed: async (inputs) => {
           calls.push(inputs);
           // Deterministic stub: encode index into vector slot 0 so
@@ -30,10 +29,8 @@ describe("EmbeddingBackfillWorker", () => {
       // sleeps between batches; this gives it room to drain without
       // hard-coding a delay.
       await waitFor(async () => {
-        const result = await db.query<{ count: number }>(
-          `SELECT COUNT(*)::int AS count FROM observation_embeddings`,
-        );
-        return (result.rows[0]?.count ?? 0) === 3;
+        const count = await embeddingCount(session);
+        return count === 3;
       });
       await worker.stop();
 
@@ -46,31 +43,31 @@ describe("EmbeddingBackfillWorker", () => {
         "Low-priority memory.",
       ]);
 
-      const rows = await db.query<{ observation_id: string; model: string }>(
-        `SELECT observation_id, model FROM observation_embeddings ORDER BY observation_id`,
-      );
-      expect(rows.rows.map((row) => row.observation_id).sort()).toEqual([
+      const rows = await readEmbeddingRows(session);
+      expect(rows.map((row) => row.observation_id).sort()).toEqual([
         "mem_high",
         "mem_low",
         "mem_medium",
       ]);
-      expect(rows.rows.every((row) => row.model === "test-model")).toBe(true);
+      expect(rows.every((row) => row.model === "test-model")).toBe(true);
     });
   });
 
   testIfDocker("does not re-embed rows that already have embeddings", async () => {
-    await withSeededDb(async (db) => {
+    await withSeededDb(async (session) => {
       // Seed an embedding for one of the rows. A LEFT JOIN-based picker
       // must skip it on subsequent passes.
-      await db.query(
-        `INSERT INTO observation_embeddings (observation_id, model, vector, created_at)
-         VALUES ('mem_high', 'preexisting', $1, $2)`,
-        [`[${Array(3072).fill(0).join(",")}]`, Date.now()],
-      );
+      await session.withDb(async (db) => {
+        await db.query(
+          `INSERT INTO observation_embeddings (observation_id, model, vector, created_at)
+           VALUES ('mem_high', 'preexisting', $1, $2)`,
+          [`[${Array(3072).fill(0).join(",")}]`, Date.now()],
+        );
+      });
 
       const calls: string[][] = [];
       const worker = new EmbeddingBackfillWorker({
-        db,
+        session,
         embed: async (inputs) => {
           calls.push(inputs);
           return {
@@ -82,10 +79,8 @@ describe("EmbeddingBackfillWorker", () => {
 
       worker.start();
       await waitFor(async () => {
-        const result = await db.query<{ count: number }>(
-          `SELECT COUNT(*)::int AS count FROM observation_embeddings`,
-        );
-        return (result.rows[0]?.count ?? 0) === 3;
+        const count = await embeddingCount(session);
+        return count === 3;
       });
       await worker.stop();
 
@@ -107,14 +102,16 @@ describe("EmbeddingBackfillWorker", () => {
       // whole transaction on FK violation, losing every embedding for
       // this batch. The WHERE EXISTS filter must let surviving rows
       // commit while the deleted parent is silently skipped.
-      await withSeededDb(async (db) => {
+      await withSeededDb(async (session) => {
         const worker = new EmbeddingBackfillWorker({
-          db,
+          session,
           embed: async (inputs) => {
             // Delete one parent right when the embed call resolves so
             // the deletion lands between `selectBatch` and
             // `persistBatch`.
-            await db.query(`DELETE FROM observations WHERE id = 'mem_medium'`);
+            await session.withDb(async (db) => {
+              await db.query(`DELETE FROM observations WHERE id = 'mem_medium'`);
+            });
             return {
               embeddings: inputs.map(() => fillVector(3072, 1)),
               model: "test-model",
@@ -124,28 +121,24 @@ describe("EmbeddingBackfillWorker", () => {
 
         worker.start();
         await waitFor(async () => {
-          const result = await db.query<{ count: number }>(
-            `SELECT COUNT(*)::int AS count FROM observation_embeddings`,
-          );
+          const count = await embeddingCount(session);
           // Two surviving parents (high + low); the deleted medium row
           // is skipped by the WHERE EXISTS filter rather than aborting.
-          return (result.rows[0]?.count ?? 0) === 2;
+          return count === 2;
         });
         await worker.stop();
 
-        const rows = await db.query<{ observation_id: string }>(
-          `SELECT observation_id FROM observation_embeddings ORDER BY observation_id`,
-        );
-        expect(rows.rows.map((row) => row.observation_id)).toEqual(["mem_high", "mem_low"]);
+        const rows = await readEmbeddingRows(session);
+        expect(rows.map((row) => row.observation_id)).toEqual(["mem_high", "mem_low"]);
       });
     },
   );
 
   testIfDocker("survives an embed failure and continues on the next batch", async () => {
-    await withSeededDb(async (db) => {
+    await withSeededDb(async (session) => {
       let attempt = 0;
       const worker = new EmbeddingBackfillWorker({
-        db,
+        session,
         embed: async (inputs) => {
           attempt++;
           if (attempt === 1) throw new Error("simulated transient failure");
@@ -165,38 +158,63 @@ describe("EmbeddingBackfillWorker", () => {
 
       // Worker handled the failure internally; no unhandled rejection,
       // database still readable.
-      const rows = await db.query<{ count: number }>(
-        `SELECT COUNT(*)::int AS count FROM observation_embeddings`,
-      );
-      expect(typeof rows.rows[0]?.count).toBe("number");
+      const count = await embeddingCount(session);
+      expect(typeof count).toBe("number");
     });
   });
 });
 
-async function withSeededDb(fn: (db: PGlite) => Promise<void>): Promise<void> {
+async function withSeededDb(fn: (session: MemorySession) => Promise<void>): Promise<void> {
   const tempDir = await mkdtemp(join(tmpdir(), "duet-emb-worker-"));
-  const db = await PGlite.create({
-    dataDir: join(tempDir, "memory.db"),
-    extensions: { vector },
+  const session = new MemorySession({
+    path: join(tempDir, "memory.db"),
+    openOptions: {
+      init: async (db) => {
+        await runMigrations(db);
+      },
+    },
+    // The worker tick interval plus polling on embedding counts adds
+    // up — keep the handle warm so we are not paying the open cost
+    // between every probe.
+    idleCloseMs: 60_000,
   });
   try {
-    await runMigrations(db);
-    await db.exec(`
-      INSERT INTO observations (
-        id, created_at, last_used_at, kind, observed_date, priority, source_json, content, tags_json
-      ) VALUES
-        ('mem_low', 1, 1, 'observation', '2026-05-04', 'low',
-         '{"kind":"system"}', 'Low-priority memory.', '[]'),
-        ('mem_high', 2, 2, 'observation', '2026-05-04', 'high',
-         '{"kind":"system"}', 'High-priority memory.', '[]'),
-        ('mem_medium', 3, 3, 'observation', '2026-05-04', 'medium',
-         '{"kind":"system"}', 'Medium-priority memory.', '[]');
-    `);
-    await fn(db);
+    await session.withDb(async (db) => {
+      await db.exec(`
+        INSERT INTO observations (
+          id, created_at, last_used_at, kind, observed_date, priority, source_json, content, tags_json
+        ) VALUES
+          ('mem_low', 1, 1, 'observation', '2026-05-04', 'low',
+           '{"kind":"system"}', 'Low-priority memory.', '[]'),
+          ('mem_high', 2, 2, 'observation', '2026-05-04', 'high',
+           '{"kind":"system"}', 'High-priority memory.', '[]'),
+          ('mem_medium', 3, 3, 'observation', '2026-05-04', 'medium',
+           '{"kind":"system"}', 'Medium-priority memory.', '[]');
+      `);
+    });
+    await fn(session);
   } finally {
-    await db.close();
+    await session.dispose();
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+async function embeddingCount(session: MemorySession): Promise<number> {
+  const result = await session.withDb(async (db) =>
+    db.query<{ count: number }>(`SELECT COUNT(*)::int AS count FROM observation_embeddings`),
+  );
+  return result?.rows[0]?.count ?? 0;
+}
+
+async function readEmbeddingRows(
+  session: MemorySession,
+): Promise<{ observation_id: string; model: string }[]> {
+  const result = await session.withDb(async (db) =>
+    db.query<{ observation_id: string; model: string }>(
+      `SELECT observation_id, model FROM observation_embeddings ORDER BY observation_id`,
+    ),
+  );
+  return result?.rows ?? [];
 }
 
 async function waitFor(predicate: () => Promise<boolean>): Promise<void> {

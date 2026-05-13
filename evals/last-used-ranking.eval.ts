@@ -72,16 +72,18 @@ describe("last-used ranking", () => {
 
         // Backdate both so the only thing that can move them in the
         // ranking is a lastUsedAt bump from the observer pass.
-        await fixture.db.query(
-          "UPDATE observations SET created_at = $1, last_used_at = $1 WHERE id = ANY($2::text[])",
-          [seedTime, [kept.id, unused.id]],
-        );
+        await fixture.session.withDb(async (db) => {
+          await db.query(
+            "UPDATE observations SET created_at = $1, last_used_at = $1 WHERE id = ANY($2::text[])",
+            [seedTime, [kept.id, unused.id]],
+          );
+        });
 
         // Freeze the pack against the current session so the observer
         // sees both memories with their `[memory id: ...]` markers.
         const settings = resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT);
         await rebuildMemoryContextPack({
-          db: fixture.db,
+          session: fixture.session,
           cache: fixture.cache,
           settings,
           sessionId: "session_eval",
@@ -100,7 +102,7 @@ describe("last-used ranking", () => {
         ];
 
         await updateObservationalMemory({
-          db: fixture.db,
+          session: fixture.session,
           memory: fixture.cache,
           sessionId: "session_eval",
           effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
@@ -108,8 +110,8 @@ describe("last-used ranking", () => {
           messages,
         });
 
-        const refreshedKept = await fetchById(fixture.db, kept.id);
-        const refreshedUnused = await fetchById(fixture.db, unused.id);
+        const refreshedKept = await fetchById(fixture.session, kept.id);
+        const refreshedUnused = await fetchById(fixture.session, unused.id);
 
         // Kept marker should be bumped to roughly "now" (within the
         // duration of this test). Unused marker should still match its
@@ -124,7 +126,7 @@ describe("last-used ranking", () => {
         // priority+kind and only the kept marker bumped, this ordering
         // is the direct consequence of the lastUsedAt update.
         await rebuildMemoryContextPack({
-          db: fixture.db,
+          session: fixture.session,
           cache: fixture.cache,
           settings,
           sessionId: "session_eval",
@@ -143,14 +145,16 @@ describe("last-used ranking", () => {
 });
 
 async function fetchById(
-  db: Awaited<ReturnType<typeof createMemoryFixture>>["db"],
+  session: Awaited<ReturnType<typeof createMemoryFixture>>["session"],
   id: string,
 ): Promise<{ lastUsedAt: number; createdAt: number }> {
-  const result = await db.query<{ created_at: number; last_used_at: number }>(
-    "SELECT created_at, last_used_at FROM observations WHERE id = $1",
-    [id],
+  const result = await session.withDb(async (db) =>
+    db.query<{ created_at: number; last_used_at: number }>(
+      "SELECT created_at, last_used_at FROM observations WHERE id = $1",
+      [id],
+    ),
   );
-  const row = result.rows[0];
+  const row = result?.rows[0];
   if (!row) throw new Error(`No observation with id ${id}`);
   return { createdAt: row.created_at, lastUsedAt: row.last_used_at };
 }

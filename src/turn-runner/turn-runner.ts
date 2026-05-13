@@ -1159,7 +1159,7 @@ export class TurnRunner {
     const skills = this.skillContext.getSkills();
     const mcpTools = this.mcpRuntime?.tools ?? [];
     const recallStorage: RecallMemoryToolStorage = {
-      getDb: () => this.memoryPersistence?.db,
+      getSession: () => this.memoryPersistence?.session,
       embed: this.memoryPersistence?.embed,
       sessionId: this.config.sessionId,
       // Reuse the resolved memory model so recall_memory's optional
@@ -1456,10 +1456,10 @@ export class TurnRunner {
     if (this.config.memoryDbPath === undefined) {
       return;
     }
-    const db = this.memoryPersistence?.db;
-    if (!db) return;
+    const session = this.memoryPersistence?.session;
+    if (!session) return;
     const result = await updateObservationalMemory({
-      db,
+      session,
       memory: this.memory,
       sessionId: this.config.sessionId,
       effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
@@ -1481,10 +1481,11 @@ export class TurnRunner {
   }
 
   private async refreshMemoryContextPack(): Promise<void> {
-    if (!this.memoryPersistence?.db) return;
+    const session = this.memoryPersistence?.session;
+    if (!session) return;
     try {
       await rebuildMemoryContextPack({
-        db: this.memoryPersistence.db,
+        session,
         cache: this.memory,
         settings: resolveObservationalMemorySettings(
           this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
@@ -1635,6 +1636,13 @@ export class TurnRunner {
         // place, so prior memories are gone from this session's recall
         // until the user manually inspects the backup — without a system
         // event the loss is silent.
+        onWarn: (message) => {
+          // Cross-process lock contention: a concurrent duet CLI held the
+          // memory db's open-lock past our wait budget, so this op was
+          // skipped. Surface once per occurrence so the user knows recall
+          // and observer writes are degraded for this turn.
+          this.emit({ type: "system", level: "warn", message });
+        },
         onRecover: ({ backupPath, cause }) => {
           const reason = cause instanceof Error ? cause.message || cause.name : String(cause);
           this.emit({

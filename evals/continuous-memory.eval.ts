@@ -88,7 +88,7 @@ describe("continuous memory", () => {
         ];
 
         await updateObservationalMemory({
-          db: fixture.db,
+          session: fixture.session,
           memory: fixture.cache,
           sessionId: "session_eval",
           effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
@@ -97,7 +97,7 @@ describe("continuous memory", () => {
           onActivity: (event) => events.push(event),
         });
         await updateObservationalMemory({
-          db: fixture.db,
+          session: fixture.session,
           memory: fixture.cache,
           sessionId: "session_eval",
           effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
@@ -140,7 +140,7 @@ describe("continuous memory", () => {
 
         const injectedMemory = await snapshotObservationText(fixture);
         await updateObservationalMemory({
-          db: fixture.db,
+          session: fixture.session,
           memory: fixture.cache,
           sessionId: "session_eval",
           effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
@@ -209,7 +209,7 @@ describe("continuous memory", () => {
 
       try {
         await updateObservationalMemory({
-          db: fixture.db,
+          session: fixture.session,
           memory: fixture.cache,
           sessionId: "session_eval",
           effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,

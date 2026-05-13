@@ -28,7 +28,7 @@ import { generateStructuredOutput } from "../core/structured-output.js";
 import type { EmbedFn } from "../memory/embedding.js";
 import { recallMemory, reciprocalRankFusion, type RecallScope } from "../memory/recall.js";
 import type { Observation } from "../types/memory.js";
-import type { PGlite } from "@electric-sql/pglite";
+import type { MemorySession } from "../memory/session.js";
 import type { ActiveStateOutput } from "./state-machine-controller.js";
 import { readSkillInstructions } from "./skills.js";
 
@@ -451,12 +451,14 @@ interface TurnRunnerToolsInput {
 
 export interface RecallMemoryToolStorage {
   /**
-   * Returns the database backing the runner's durable memory, or undefined
-   * when memory persistence is disabled (one-shot tools, tests). The
-   * recall_memory tool no-ops when undefined so the model never sees a
-   * tool whose backing store is missing.
+   * Returns the memory session backing the runner's durable memory, or
+   * undefined when memory persistence is disabled (one-shot tools, tests).
+   * The recall_memory tool no-ops when undefined so the model never sees a
+   * tool whose backing store is missing. The session is fetched per call
+   * so recall sees the runner's current persistence handle even after a
+   * lazy load completes mid-session.
    */
-  getDb: () => PGlite | undefined;
+  getSession: () => MemorySession | undefined;
   /**
    * Embedding callable. Optional: when undefined or when calls fail,
    * recall falls back to keyword-only retrieval. Built once per runner
@@ -593,8 +595,8 @@ function createRecallMemoryTool(
     `,
     parameters: recallMemorySchema,
     async execute(_toolCallId, params) {
-      const db = storage.getDb();
-      if (!db) {
+      const session = storage.getSession();
+      if (!session) {
         return {
           content: [
             {
@@ -621,7 +623,7 @@ function createRecallMemoryTool(
       const runs = await Promise.all(
         queries.map((query) =>
           recallMemory({
-            db,
+            session,
             embed: storage.embed,
             query,
             // Over-fetch per run so the post-fusion top-K is drawn from

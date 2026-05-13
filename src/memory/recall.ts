@@ -1,6 +1,7 @@
 import type { PGlite } from "@electric-sql/pglite";
 import type { Observation, ObservationKind, ObservationPriority } from "../types/memory.js";
 import type { EmbedFn } from "./embedding.js";
+import type { MemorySession } from "./session.js";
 
 /**
  * Hybrid retrieval over the durable memory database.
@@ -37,7 +38,14 @@ const RRF_K = 60;
 export type RecallScope = "session" | "global" | "all";
 
 export interface RecallMemoryOptions {
-  db: PGlite;
+  /**
+   * Memory session that owns the PGlite handle and cross-process lock.
+   * The recall call wraps every query in a single `withDb` so keyword,
+   * vector, and hydration all run against the same open. When the lock
+   * cannot be acquired, recall returns an empty result instead of
+   * throwing so the tool surface degrades gracefully.
+   */
+  session: MemorySession;
   /**
    * Embedding callable. When omitted (or when it throws) the vector
    * path is skipped silently and recall falls back to keyword-only.
@@ -74,35 +82,32 @@ export async function recallMemory(options: RecallMemoryOptions): Promise<Recall
     return { observations: [], vectorSearchAttempted: false, vectorSearchSucceeded: false };
   }
 
-  const keywordHits = await keywordSearch(options.db, options.query, scope, options.sessionId);
+  const result = await options.session.withDb(async (db) => {
+    const keywordHits = await keywordSearch(db, options.query, scope, options.sessionId);
 
-  let vectorAttempted = false;
-  let vectorHits: ScoredHit[] = [];
-  if (options.embed) {
-    vectorAttempted = true;
-    try {
-      vectorHits = await vectorSearch(
-        options.db,
-        options.embed,
-        options.query,
-        scope,
-        options.sessionId,
-      );
-    } catch {
-      // Embedding unavailable, network blip, or empty index — drop
-      // back to keyword-only. Caller surfaces the degraded mode.
-      vectorHits = [];
+    let vectorAttempted = false;
+    let vectorHits: ScoredHit[] = [];
+    if (options.embed) {
+      vectorAttempted = true;
+      try {
+        vectorHits = await vectorSearch(db, options.embed, options.query, scope, options.sessionId);
+      } catch {
+        // Embedding unavailable, network blip, or empty index — drop
+        // back to keyword-only. Caller surfaces the degraded mode.
+        vectorHits = [];
+      }
     }
-  }
 
-  const fusedIds = reciprocalRankFusion([keywordHits, vectorHits]).slice(0, limit);
-  const observations = await hydrate(options.db, fusedIds);
+    const fusedIds = reciprocalRankFusion([keywordHits, vectorHits]).slice(0, limit);
+    const observations = await hydrate(db, fusedIds);
 
-  return {
-    observations,
-    vectorSearchAttempted: vectorAttempted,
-    vectorSearchSucceeded: vectorHits.length > 0,
-  };
+    return {
+      observations,
+      vectorSearchAttempted: vectorAttempted,
+      vectorSearchSucceeded: vectorHits.length > 0,
+    };
+  });
+  return result ?? { observations: [], vectorSearchAttempted: false, vectorSearchSucceeded: false };
 }
 
 interface ScoredHit {

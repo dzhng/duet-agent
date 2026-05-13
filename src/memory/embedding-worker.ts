@@ -1,7 +1,8 @@
-import type { PGlite } from "@electric-sql/pglite";
+import type { PGlite, Transaction } from "@electric-sql/pglite";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { EmbedFn } from "./embedding.js";
+import type { MemorySession } from "./session.js";
 
 /**
  * Background worker that fills missing embeddings while the CLI is
@@ -10,26 +11,27 @@ import type { EmbedFn } from "./embedding.js";
  * to the user immediately; the embedding lands within a few seconds in
  * the background, after which the row becomes hybrid-retrievable.
  *
- * Loop shape:
- *   1. Select up to BATCH_SIZE unembedded rows, prioritized by
- *      `priority DESC, created_at DESC` so high-signal recent
- *      observations become searchable first.
- *   2. Embed via the gateway client.
- *   3. Write the resulting vectors back.
- *   4. Sleep briefly between batches so the worker stays out of the
- *      runtime's way; sleep longer when idle (no work) or after an
- *      error (rate limit, transient network).
+ * Tick shape:
+ *   1. Acquire the memory session via one `withDb`. Inside that open,
+ *      drain unembedded rows in `BATCH_SIZE` chunks until a select
+ *      returns zero rows, then exit `withDb` so the cross-process lock
+ *      releases shortly after via the session's idle-close timer.
+ *   2. Sleep `IDLE_SLEEP_MS` between ticks. Long enough that a peer
+ *      duet CLI can acquire the lock between drains, short enough that
+ *      a newly-written observation becomes searchable within seconds.
+ *   3. On error (rate limit, transient network), back off for
+ *      `ERROR_SLEEP_MS` before retrying.
  *
  * Failure modes are local: any error inside the loop logs and resumes
  * after a backoff. The worker never throws to the caller.
  */
 const BATCH_SIZE = 50;
-const INTER_BATCH_SLEEP_MS = 500;
-const IDLE_SLEEP_MS = 30_000;
+const IDLE_SLEEP_MS = 10_000;
 const ERROR_SLEEP_MS = 60_000;
 
 export interface EmbeddingBackfillWorkerOptions {
-  db: PGlite;
+  /** Memory session owning the PGlite handle and cross-process lock. */
+  session: MemorySession;
   /** Embedding callable. Defaults to the gateway client; tests inject a stub. */
   embed: EmbedFn;
   /** Path to append progress lines to. Optional; when omitted the worker logs nothing. */
@@ -52,7 +54,11 @@ export class EmbeddingBackfillWorker {
     this.runningPromise = this.run(this.abortController.signal);
   }
 
-  /** Stop the loop and wait for the in-flight batch (if any) to settle. */
+  /**
+   * Stop the loop and wait for the in-flight tick (if any) to settle.
+   * Because each tick awaits a `session.withDb`, this transitively waits
+   * for any open the worker holds to drain and the lock to release.
+   */
   async stop(): Promise<void> {
     this.abortController?.abort();
     await this.runningPromise;
@@ -63,22 +69,28 @@ export class EmbeddingBackfillWorker {
   private async run(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
-        const batch = await this.selectBatch();
-        if (batch.length === 0) {
-          await sleep(IDLE_SLEEP_MS, signal);
-          continue;
-        }
-
-        const result = await this.options.embed(batch.map((row) => row.content));
-        if (result.embeddings.length !== batch.length) {
-          throw new Error(
-            `Embedding response length (${result.embeddings.length}) did not match batch size (${batch.length})`,
-          );
-        }
-
-        await this.persistBatch(batch, result.embeddings, result.model);
-        this.log(`Embedded ${batch.length} observations`);
-        await sleep(INTER_BATCH_SLEEP_MS, signal);
+        // One withDb per tick: drain everything that's currently
+        // outstanding while we hold the lock, then exit so the
+        // session can idle-close and another duet CLI can take a
+        // turn. A returned `undefined` means the lock could not be
+        // acquired in time — fall through to the idle sleep and
+        // retry the same tick later.
+        await this.options.session.withDb(async (db) => {
+          while (!signal.aborted) {
+            const batch = await this.selectBatch(db);
+            if (batch.length === 0) return;
+            const result = await this.options.embed(batch.map((row) => row.content));
+            if (result.embeddings.length !== batch.length) {
+              throw new Error(
+                `Embedding response length (${result.embeddings.length}) did not match batch size (${batch.length})`,
+              );
+            }
+            await this.persistBatch(db, batch, result.embeddings, result.model);
+            this.log(`Embedded ${batch.length} observations`);
+          }
+        });
+        if (signal.aborted) return;
+        await sleep(IDLE_SLEEP_MS, signal);
       } catch (error) {
         if (signal.aborted) return;
         const reason = error instanceof Error ? error.message : String(error);
@@ -88,12 +100,12 @@ export class EmbeddingBackfillWorker {
     }
   }
 
-  private async selectBatch(): Promise<{ id: string; content: string }[]> {
+  private async selectBatch(db: PGlite): Promise<{ id: string; content: string }[]> {
     // LEFT JOIN over the embeddings table is the cheapest way to pick
     // rows with no embedding yet. The composite index on
     // (kind, priority, created_at DESC) carries the ORDER BY without a
     // separate sort.
-    const result = await this.options.db.query<{ id: string; content: string }>(
+    const result = await db.query<{ id: string; content: string }>(
       `SELECT o.id, o.content
        FROM observations o
        LEFT JOIN observation_embeddings e ON e.observation_id = o.id
@@ -108,6 +120,7 @@ export class EmbeddingBackfillWorker {
   }
 
   private async persistBatch(
+    db: PGlite,
     batch: { id: string; content: string }[],
     vectors: number[][],
     model: string,
@@ -126,7 +139,7 @@ export class EmbeddingBackfillWorker {
     // a foreign-key violation, losing every embedding in this batch.
     // Skipping the missing parent inserts 0 rows for that observation
     // and lets the surviving rows commit.
-    await this.options.db.transaction(async (tx) => {
+    await db.transaction(async (tx: Transaction) => {
       const now = Date.now();
       for (let index = 0; index < batch.length; index++) {
         const row = batch[index]!;

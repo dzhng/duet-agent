@@ -47,44 +47,47 @@ export interface OpenPGliteOptions {
 }
 
 /**
- * Refcounted entry in the in-process open-handle map. Two concurrent
- * `openPGlite` calls on the same dataDir share one PGlite instance and
- * one cross-process file lock; each caller's `close()` decrements the
- * refcount, and the underlying handle + lock are released only when
- * the last caller closes.
- *
- * Without this, two concurrent opens both passed the stale-lock check
- * and both entered `PGlite.create` on a fresh dataDir, double-running
- * migrations and corrupting the directory. The next open then aborted
- * inside the wasm runtime and `quarantineDataDirectory` renamed the
- * directory aside — that was the user-visible "memory reset".
+ * Thrown when the cross-process open-lock could not be acquired within
+ * the caller's wait budget. `MemorySession` catches this and degrades
+ * gracefully (skips the op, warns once) so a second duet CLI does not
+ * crash when a long-running first CLI holds the memory db.
  */
-interface SharedHandle {
-  promise: Promise<PGlite>;
-  refs: number;
-  /** Once resolved, retained so close-wrappers can release the lock and tear down. */
-  db?: PGlite;
-  /** Path of the cross-process lock file held while the handle is open. */
-  lockPath?: string;
+export class MemoryLockTimeoutError extends Error {
+  readonly dataDir: string;
+  readonly holderPid: number;
+  readonly budgetMs: number;
+  constructor(dataDir: string, holderPid: number, budgetMs: number) {
+    super(
+      `Timed out after ${budgetMs}ms waiting for the memory db open-lock at ${dataDir} ` +
+        `(held by pid ${holderPid}).`,
+    );
+    this.name = "MemoryLockTimeoutError";
+    this.dataDir = dataDir;
+    this.holderPid = holderPid;
+    this.budgetMs = budgetMs;
+  }
 }
 
-const sharedHandles = new Map<string, SharedHandle>();
+export type TryAcquireOpenLockResult = { lockPath: string } | { holderPid: number };
+
+/**
+ * Process-global registry of open-lock files currently held by this
+ * process. Used by the exit handler to drop locks on crash so the next
+ * launch (and concurrent duet CLIs) are not blocked behind a stale
+ * lock pointing at a no-longer-living pid.
+ */
+const heldLockPaths = new Set<string>();
 
 let exitHandlerInstalled = false;
 function installExitCleanup(): void {
   if (exitHandlerInstalled) return;
   exitHandlerInstalled = true;
-  // Last-chance cleanup: if the process exits before every caller's
-  // `close()` runs, drop any locks we still hold so the next launch
-  // can open the database without tripping the stale-lock check.
   process.on("exit", () => {
-    for (const entry of sharedHandles.values()) {
-      if (entry.lockPath) {
-        try {
-          unlinkSync(entry.lockPath);
-        } catch {
-          // Best-effort on exit; nothing to do if the file is already gone.
-        }
+    for (const lockPath of heldLockPaths) {
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        // Best-effort on exit; nothing to do if the file is already gone.
       }
     }
   });
@@ -101,121 +104,51 @@ function installExitCleanup(): void {
  *      by running the init hook as a probe. The bad directory is renamed
  *      to `<path>.corrupted-<iso-timestamp>` so the user can recover it
  *      later, and a fresh database is opened in its place.
- *   3. Two opens racing on a fresh dataDir — historically both could pass
- *      the stale-lock check, both call `PGlite.create`, and both run the
- *      init hook concurrently, corrupting the dataDir. Now serialized by
- *      an in-process refcounted handle plus an `O_EXCL` lock file scoped
- *      to the dataDir.
+ *   3. A cross-process open-lock so two duet CLIs cannot both call
+ *      `PGlite.create` on the same fresh dataDir and corrupt each
+ *      other's migrations.
  *
- * Without (2) PGlite aborts with an opaque emscripten "Aborted()" error and
- * the agent is permanently wedged until the user manually deletes the data
- * directory.
+ * Throws synchronously-via-reject if the lock is held by a live foreign
+ * process. Callers that need to wait or degrade gracefully should use
+ * `MemorySession` instead, which polls `tryAcquireOpenLock`.
  */
 export async function openPGlite(path: string, options: OpenPGliteOptions = {}): Promise<PGlite> {
   installExitCleanup();
-  const key = resolvePath(path);
-
-  const existing = sharedHandles.get(key);
-  if (existing) {
-    existing.refs++;
-    try {
-      return await existing.promise;
-    } catch (error) {
-      decrementAndMaybeDelete(key);
-      throw error;
-    }
-  }
-
-  const entry: SharedHandle = {
-    promise: undefined as unknown as Promise<PGlite>,
-    refs: 1,
-  };
-  entry.promise = openWithLock(path, options, entry).then((db) =>
-    installRefcountedClose(db, key, entry),
-  );
-  sharedHandles.set(key, entry);
-
+  const lockPath = acquireOpenLock(path);
   try {
-    return await entry.promise;
+    const opened = await openPGliteHoldingLock(path, options, lockPath);
+    return installLockReleasingClose(opened.db, opened.lockPath);
   } catch (error) {
-    decrementAndMaybeDelete(key);
+    releaseOpenLock(lockPath);
     throw error;
   }
 }
 
 /**
- * Replace `close` on the underlying PGlite instance with refcounted
- * teardown. Each `openPGlite` call is paired with exactly one `close`;
- * the refcount equals the number of live opens. PGlite uses private
- * class fields internally, so a Proxy around the instance breaks every
- * method that touches one — method replacement preserves identity and
- * keeps private-field access working.
+ * Open the database assuming the caller already holds `lockPath` for
+ * the dataDir. On a quarantine recovery the directory is renamed
+ * aside, the old lockPath disappears with it, and this returns the
+ * freshly-reacquired lockPath. `MemorySession` uses this so its
+ * poll-acquire loop owns the lock lifecycle end-to-end.
  */
-function installRefcountedClose(db: PGlite, key: string, entry: SharedHandle): PGlite {
-  const originalClose = db.close.bind(db);
-  db.close = async () => {
-    const current = sharedHandles.get(key);
-    if (!current || current.refs <= 0) return;
-    current.refs--;
-    if (current.refs > 0) return;
-    sharedHandles.delete(key);
-    try {
-      await originalClose();
-    } finally {
-      if (entry.lockPath) {
-        bestEffortUnlink(entry.lockPath);
-        entry.lockPath = undefined;
-      }
-    }
-  };
-  return db;
-}
-
-function bestEffortUnlink(path: string): void {
-  try {
-    unlinkSync(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-}
-
-function decrementAndMaybeDelete(key: string): void {
-  const entry = sharedHandles.get(key);
-  if (!entry) return;
-  entry.refs--;
-  if (entry.refs > 0) return;
-  sharedHandles.delete(key);
-  if (entry.lockPath) {
-    try {
-      unlinkSync(entry.lockPath);
-    } catch {
-      // Lock may never have been created if we threw before acquireOpenLock returned.
-    }
-  }
-}
-
-async function openWithLock(
+export async function openPGliteHoldingLock(
   path: string,
   options: OpenPGliteOptions,
-  entry: SharedHandle,
-): Promise<PGlite> {
+  lockPath: string,
+): Promise<{ db: PGlite; lockPath: string }> {
+  installExitCleanup();
   mkdirSync(dirname(path), { recursive: true });
   clearStalePostmasterLock(path);
-  entry.lockPath = acquireOpenLock(path);
 
   try {
     const db = await openAndProbe(path, options.init);
-    entry.db = db;
-    return db;
+    return { db, lockPath };
   } catch (error) {
     if (!isExistingDirectory(path)) throw error;
 
     // Release the lock before renaming the directory aside — the lock
     // file lives inside that directory and would be moved with it.
-    if (entry.lockPath) {
-      bestEffortUnlink(entry.lockPath);
-      entry.lockPath = undefined;
-    }
+    releaseOpenLock(lockPath);
 
     const backupPath = quarantineDataDirectory(path);
     if (options.onRecover) {
@@ -228,11 +161,32 @@ async function openWithLock(
       );
     }
 
-    entry.lockPath = acquireOpenLock(path);
+    const fresh = acquireOpenLock(path);
     const db = await openAndProbe(path, options.init);
-    entry.db = db;
-    return db;
+    return { db, lockPath: fresh };
   }
+}
+
+/**
+ * Wrap `db.close` so the cross-process lock is released alongside the
+ * handle. PGlite uses private class fields internally, so a Proxy
+ * around the instance breaks every method that touches one — method
+ * replacement preserves identity and keeps private-field access
+ * working.
+ */
+function installLockReleasingClose(db: PGlite, lockPath: string): PGlite {
+  const originalClose = db.close.bind(db);
+  let released = false;
+  db.close = async () => {
+    if (released) return;
+    released = true;
+    try {
+      await originalClose();
+    } finally {
+      releaseOpenLock(lockPath);
+    }
+  };
+  return db;
 }
 
 async function openAndProbe(
@@ -265,8 +219,8 @@ async function openAndProbe(
  * on read failure. Used by the recovery tooling to read rows out of a
  * previously-quarantined `memory.db.corrupted-*` directory.
  *
- * Does not participate in the shared-handle / open-lock machinery; the
- * caller owns the returned instance and is responsible for `close()`.
+ * Does not participate in the open-lock machinery; the caller owns the
+ * returned instance and is responsible for `close()`.
  */
 export async function openForRecovery(path: string): Promise<PGlite> {
   clearStalePostmasterLock(path);
@@ -285,18 +239,86 @@ export function quarantineDataDirectory(path: string): string {
 }
 
 /**
- * Acquire an exclusive open-lock at `<dataDir>/.duet-open.lock`. Creates
- * `dataDir` if missing. The lock is created with `O_EXCL` so a parallel
- * acquirer either wins outright or sees `EEXIST`; on `EEXIST` we read
- * the pid line and only steal the lock if that pid is no longer alive.
- *
- * Throws with a clear message when the lock is held by a live foreign
- * process so the caller fails fast instead of double-opening the dataDir.
+ * Try once to acquire the cross-process open-lock at
+ * `<dataDir>/.duet-open.lock`. Returns `{ lockPath }` on success
+ * (including after a stale-pid takeover) or `{ holderPid }` when a live
+ * foreign process still holds the lock. Never throws on contention so
+ * callers can poll and retry without try/catch.
  */
-export function acquireOpenLock(dataDir: string): string {
+export function tryAcquireOpenLock(dataDir: string): TryAcquireOpenLockResult {
   mkdirSync(dataDir, { recursive: true });
   const lockPath = join(dataDir, OPEN_LOCK_FILE);
-  return createLockFile(lockPath) ?? stealStaleLock(dataDir, lockPath);
+
+  const created = createLockFile(lockPath);
+  if (created) {
+    heldLockPaths.add(created);
+    return { lockPath: created };
+  }
+
+  // Lock file existed. If a live foreign process owns it, report back
+  // without taking it; otherwise treat it as stale and steal it.
+  const contents = tryReadFile(lockPath) ?? "";
+  const firstLine = contents.split("\n", 1)[0]?.trim() ?? "";
+  const holderPid = Number.parseInt(firstLine, 10);
+  if (
+    Number.isFinite(holderPid) &&
+    holderPid > 0 &&
+    holderPid !== process.pid &&
+    isProcessAlive(holderPid)
+  ) {
+    return { holderPid };
+  }
+
+  // Stale (crashed prior run) or our own pid from a partially-cleaned
+  // failed open. Replace atomically — unlink-then-create-with-O_EXCL.
+  try {
+    unlinkSync(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const recreated = createLockFile(lockPath);
+  if (!recreated) {
+    // Another opener won the race after our stale-lock takeover. Report
+    // its pid (if live) so the caller can poll again.
+    const afterContents = tryReadFile(lockPath) ?? "";
+    const after = Number.parseInt(afterContents.split("\n", 1)[0]?.trim() ?? "", 10);
+    if (Number.isFinite(after) && after > 0 && after !== process.pid && isProcessAlive(after)) {
+      return { holderPid: after };
+    }
+    throw new Error(
+      `Failed to acquire open lock at ${lockPath}: another opener won the race after the stale-lock takeover.`,
+    );
+  }
+  heldLockPaths.add(recreated);
+  return { lockPath: recreated };
+}
+
+/**
+ * Acquire the cross-process open-lock, throwing if a live foreign
+ * process holds it. Used by `openPGlite` for the fast/strict path;
+ * polling callers should use `tryAcquireOpenLock` instead.
+ */
+export function acquireOpenLock(dataDir: string): string {
+  const result = tryAcquireOpenLock(dataDir);
+  if ("lockPath" in result) return result.lockPath;
+  throw new Error(
+    `PGlite data directory ${dataDir} is locked by another duet process (pid ${result.holderPid}). ` +
+      "Stop that process before opening the database.",
+  );
+}
+
+/**
+ * Release a lock previously returned by `tryAcquireOpenLock` /
+ * `acquireOpenLock`. Idempotent and safe to call if the file has
+ * already disappeared.
+ */
+export function releaseOpenLock(lockPath: string): void {
+  heldLockPaths.delete(lockPath);
+  try {
+    unlinkSync(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
 }
 
 function createLockFile(lockPath: string): string | undefined {
@@ -313,37 +335,6 @@ function createLockFile(lockPath: string): string | undefined {
     closeSync(fd);
   }
   return lockPath;
-}
-
-function stealStaleLock(dataDir: string, lockPath: string): string {
-  const contents = tryReadFile(lockPath) ?? "";
-  const firstLine = contents.split("\n", 1)[0]?.trim() ?? "";
-  const holderPid = Number.parseInt(firstLine, 10);
-  if (
-    Number.isFinite(holderPid) &&
-    holderPid > 0 &&
-    holderPid !== process.pid &&
-    isProcessAlive(holderPid)
-  ) {
-    throw new Error(
-      `PGlite data directory ${dataDir} is locked by another duet process (pid ${holderPid}). ` +
-        "Stop that process before opening the database.",
-    );
-  }
-  // Stale (crashed prior run) or our own pid from a partially-cleaned
-  // failed open. Replace atomically — unlink-then-create-with-O_EXCL.
-  try {
-    unlinkSync(lockPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  const created = createLockFile(lockPath);
-  if (!created) {
-    throw new Error(
-      `Failed to acquire open lock at ${lockPath}: another opener won the race after the stale-lock takeover.`,
-    );
-  }
-  return created;
 }
 
 /**
@@ -397,3 +388,10 @@ function isProcessAlive(pid: number): boolean {
     return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
+
+// Internal: lets tests reach into the held-lock registry to assert
+// exit cleanup behavior without exporting it on the public surface.
+export const __testing = {
+  heldLockPaths,
+  resolvePath,
+};

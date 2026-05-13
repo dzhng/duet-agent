@@ -1,6 +1,6 @@
-import type { PGlite } from "@electric-sql/pglite";
 import type { ObservationalMemorySettings } from "../types/memory.js";
 import { loadGlobalPack, loadLocalPack } from "./loader.js";
+import type { MemorySession } from "./session.js";
 import type { MemoryContextCache } from "./store.js";
 
 /**
@@ -23,27 +23,32 @@ import type { MemoryContextCache } from "./store.js";
  * memory bookkeeping.
  */
 export async function rebuildMemoryContextPack(options: {
-  db: PGlite | undefined;
+  session: MemorySession | undefined;
   cache: MemoryContextCache;
   settings: ObservationalMemorySettings;
   sessionId?: string;
 }): Promise<void> {
-  if (!options.db) return;
+  if (!options.session) return;
 
-  // Local layer skipped when the runner has no session id (one-shot
-  // tools, tests). Global layer always runs because the loader's
-  // `excludeSessionId` is optional and meaningful as undefined.
-  const [globalPack, localPack] = await Promise.all([
-    loadGlobalPack(options.db, {
-      ...(options.sessionId !== undefined ? { excludeSessionId: options.sessionId } : {}),
-      tokenBudget: options.settings.globalContextTokenBudget,
-      recencyHalfLifeMs: options.settings.recencyHalfLifeMs,
-      reflectionBias: options.settings.reflectionBias,
-    }),
-    options.sessionId !== undefined
-      ? loadLocalPack(options.db, { sessionId: options.sessionId })
-      : Promise.resolve([]),
-  ]);
+  // One withDb pins the open across the global+local pack queries so the
+  // cross-process lock is held just once for the rebuild, then released
+  // a couple seconds later when the idle-close timer fires.
+  await options.session.withDb(async (db) => {
+    // Local layer skipped when the runner has no session id (one-shot
+    // tools, tests). Global layer always runs because the loader's
+    // `excludeSessionId` is optional and meaningful as undefined.
+    const [globalPack, localPack] = await Promise.all([
+      loadGlobalPack(db, {
+        ...(options.sessionId !== undefined ? { excludeSessionId: options.sessionId } : {}),
+        tokenBudget: options.settings.globalContextTokenBudget,
+        recencyHalfLifeMs: options.settings.recencyHalfLifeMs,
+        reflectionBias: options.settings.reflectionBias,
+      }),
+      options.sessionId !== undefined
+        ? loadLocalPack(db, { sessionId: options.sessionId })
+        : Promise.resolve([]),
+    ]);
 
-  options.cache.setContextPack({ global: globalPack, local: localPack });
+    options.cache.setContextPack({ global: globalPack, local: localPack });
+  });
 }

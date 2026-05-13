@@ -12,12 +12,12 @@ import {
   type WireGuardHorizon,
 } from "../turn-runner/wire-shaping.js";
 import type { MemoryContextCache } from "./store.js";
+import type { MemorySession } from "./session.js";
 import {
   appendObservation,
   bumpLastUsed,
   readSessionObservations,
   replaceSessionObservations,
-  type MemoryDatabase,
 } from "./storage.js";
 import type {
   Observation,
@@ -340,8 +340,13 @@ export interface ObservationalContextTransformOptions {
 }
 
 export interface ObservationalMemoryUpdateOptions {
-  /** PGlite database that owns the durable memory rows. */
-  db: MemoryDatabase;
+  /**
+   * Memory session that owns the durable memory rows. The observer and
+   * reflector wrap each storage call in `session.withDb`, so the
+   * cross-process lock is held only for the duration of each query and
+   * a peer duet CLI can step in between writes.
+   */
+  session: MemorySession;
   /** Frozen context-pack cache; queried for the global memories the observer can attribute usage against. */
   memory: MemoryContextCache;
   /**
@@ -550,7 +555,7 @@ export async function updateObservationalMemory(
   // so the model can attribute usage back to specific cross-session
   // memories.
   const localSnapshot = options.sessionId
-    ? await readSessionObservations(options.db, options.sessionId)
+    ? await readSessionObservations(options.session, options.sessionId)
     : { observations: [], estimatedObservationTokens: 0 };
   const globalPack = options.memory.getContextPack().global;
   const unobservedMessages = getUnobservedMessageTail(rawMessages, localSnapshot.observations);
@@ -563,7 +568,7 @@ export async function updateObservationalMemory(
       message: "Observing conversation into memory...",
     });
     const { observation, usageBumped } = await activateObservations({
-      db: options.db,
+      session: options.session,
       messages: unobservedMessages,
       previousLocalObservations: localSnapshot.observations,
       attributableMemories: globalPack,
@@ -585,7 +590,7 @@ export async function updateObservationalMemory(
   }
 
   if (options.sessionId) {
-    const refreshed = await readSessionObservations(options.db, options.sessionId);
+    const refreshed = await readSessionObservations(options.session, options.sessionId);
     if (refreshed.estimatedObservationTokens >= settings.reflection.observationTokens) {
       emitMemoryActivity(options.onActivity, {
         phase: "reflection",
@@ -593,7 +598,7 @@ export async function updateObservationalMemory(
         message: "Reflecting memory observations...",
       });
       const reflections = await reflectObservations({
-        db: options.db,
+        session: options.session,
         sessionObservations: refreshed.observations,
         settings,
         sessionId: options.sessionId,
@@ -686,7 +691,7 @@ function isObservationalContextMessage(message: AgentMessage): boolean {
 }
 
 interface ActivateObservationsArgs {
-  db: MemoryDatabase;
+  session: MemorySession;
   messages: RawMemoryMessage[];
   /** Prior observations from the same session, used for dedupe context. */
   previousLocalObservations: Observation[];
@@ -719,7 +724,7 @@ async function activateObservations(
   // memory worth recording — a turn can lean on a prior memory even
   // when nothing new is durable.
   const usageBumped = await applyUsageBumps(
-    args.db,
+    args.session,
     args.attributableMemories,
     observations.usedObservationIds,
   );
@@ -731,7 +736,7 @@ async function activateObservations(
   }
 
   const range = `${args.messages[0]?.id ?? "unknown"}:${args.messages[args.messages.length - 1]?.id ?? "unknown"}`;
-  const observation = await appendObservation(args.db, {
+  const observation = await appendObservation(args.session, {
     kind: "observation",
     ...(args.sessionId !== undefined ? { sessionId: args.sessionId } : {}),
     observedDate: new Date().toISOString().slice(0, 10),
@@ -753,7 +758,7 @@ async function activateObservations(
  * defense.
  */
 async function applyUsageBumps(
-  db: MemoryDatabase,
+  session: MemorySession,
   candidates: Observation[],
   usedIds: string[] | undefined,
 ): Promise<Observation[]> {
@@ -764,7 +769,7 @@ async function applyUsageBumps(
     .filter((observation): observation is Observation => Boolean(observation));
   if (validated.length === 0) return [];
   await bumpLastUsed(
-    db,
+    session,
     validated.map((observation) => observation.id),
     Date.now(),
   );
@@ -772,7 +777,7 @@ async function applyUsageBumps(
 }
 
 interface ReflectObservationsArgs {
-  db: MemoryDatabase;
+  session: MemorySession;
   sessionObservations: Observation[];
   settings: ObservationalMemorySettings;
   sessionId: string;
@@ -783,7 +788,7 @@ interface ReflectObservationsArgs {
 async function reflectObservations(
   args: ReflectObservationsArgs,
 ): Promise<Observation[] | undefined> {
-  const { db, sessionObservations, settings, sessionId, model, onUsage } = args;
+  const { session, sessionObservations, settings, sessionId, model, onUsage } = args;
   const source = sessionObservations.map((observation) => observation.content).join("\n\n");
   const rendered = renderObservationGroupsForReflection(source) ?? source;
   const targetTokens = settings.reflection.bufferActivation;
@@ -831,7 +836,7 @@ async function reflectObservations(
   // replaced by the new reflection. Other sessions' rows in the
   // global pool are untouched, which is what makes cross-session
   // memory durable past a reflection event.
-  await replaceSessionObservations(db, sessionId, [reflected]);
+  await replaceSessionObservations(session, sessionId, [reflected]);
   return [reflected];
 }
 
