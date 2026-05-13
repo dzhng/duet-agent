@@ -3,6 +3,7 @@ import { findEnvKeys, getModel, type Model } from "@earendil-works/pi-ai";
 import { resolveDuetGatewayModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
+  canonicalizeProviderModelId,
   DEFAULT_CLI_MEMORY_MODEL,
   DEFAULT_CLI_MODEL,
   getModelCandidates,
@@ -43,8 +44,11 @@ export function resolveModelName(model: string): Model<any> {
     throw new Error("Models must use provider:modelId syntax");
   }
   const rawProvider = model.slice(0, separator);
-  const modelId = model.slice(separator + 1);
+  const rawModelId = model.slice(separator + 1);
   const provider = resolveProviderShorthand(rawProvider) ?? rawProvider;
+  const modelId = isKnownProvider(provider)
+    ? canonicalizeProviderModelId(provider, rawModelId)
+    : rawModelId;
   if (provider === "duet-gateway") {
     const resolved = resolveDuetGatewayModel(modelId);
     if (!resolved) {
@@ -56,6 +60,10 @@ export function resolveModelName(model: string): Model<any> {
     provider as Parameters<typeof getModel>[0],
     modelId as Parameters<typeof getModel>[1],
   );
+}
+
+function isKnownProvider(provider: string): provider is ProviderName {
+  return PROVIDER_ORDER.some((entry) => entry.provider === provider);
 }
 
 function lookupProviderEnvVar(entry: {

@@ -160,6 +160,18 @@ export function canonicalizeModelName(modelName: string): string {
   return findModelDefinition(modelName)?.shorthand ?? modelName;
 }
 
+/**
+ * Normalize a `provider:modelId` model id against catalog aliases so users can
+ * pass familiar variants like `claude-opus-4-7` even when the underlying
+ * provider catalog spells it `claude-opus-4.7`. Falls back to the input id
+ * when no alias matches so unknown ids reach the provider lookup unchanged.
+ */
+export function canonicalizeProviderModelId(provider: ProviderName, modelId: string): string {
+  const definition = findModelDefinition(modelId);
+  if (!definition) return modelId;
+  return definition.modelsByProvider[provider] ?? modelId;
+}
+
 function findModelDefinition(modelName: string): ModelDefinition | undefined {
   const normalized = modelName.toLowerCase();
   return MODEL_DEFINITIONS.find(

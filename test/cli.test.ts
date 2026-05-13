@@ -304,6 +304,39 @@ describe("CLI model inference", () => {
     expect(fromShorthand.baseUrl).toBe(fromCanonical.baseUrl);
   });
 
+  test("canonicalizes dashed model id aliases inside provider:modelId form", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+    process.env.AI_GATEWAY_API_KEY = "test-gateway";
+
+    // The duet gateway proxies vercel-ai-gateway's catalog, which spells the
+    // id with a dot. Users frequently type dashes; the alias table should
+    // bridge the gap on both providers.
+    expect(resolveModelName("duet:anthropic/claude-opus-4-7").id).toBe("anthropic/claude-opus-4.7");
+    expect(resolveModelName("vercel:anthropic/claude-sonnet-4-6").id).toBe(
+      "anthropic/claude-sonnet-4.6",
+    );
+  });
+
+  test("leaves provider:modelId untouched when the native id uses dashes", () => {
+    clearModelEnv();
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+
+    // Anthropic's own API uses dashes, so the dashed alias must map back to
+    // the dashed id rather than the gateway's dotted variant.
+    expect(resolveModelName("anthropic:claude-opus-4.7").id).toBe("claude-opus-4-7");
+    expect(resolveModelName("anthropic:claude-opus-4-7").id).toBe("claude-opus-4-7");
+  });
+
+  test("passes provider:modelId through unchanged when no alias matches", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+
+    // No catalog alias for this id, so the duet-gateway lookup falls through
+    // to the underlying vercel-ai-gateway model definition without rewriting.
+    expect(resolveModelName("duet:anthropic/claude-opus-4.7").id).toBe("anthropic/claude-opus-4.7");
+  });
+
   test("keeps explicitly provided memory model shorthands as app-facing names", () => {
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
