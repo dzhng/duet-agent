@@ -1,10 +1,11 @@
 import type { PGlite } from "@electric-sql/pglite";
 import {
+  DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS,
   MemoryLockTimeoutError,
   type OpenPGliteOptions,
   openPGliteHoldingLock,
+  pollAcquireOpenLock,
   releaseOpenLock,
-  tryAcquireOpenLock,
 } from "./pglite.js";
 
 /**
@@ -15,23 +16,6 @@ import {
  * sitting CLI permanently hold the lock against a second CLI.
  */
 const DEFAULT_IDLE_CLOSE_MS = 2_000;
-
-/**
- * Default total wall-time budget for waiting on the cross-process
- * open-lock. Generous enough to outlast a moderate write burst from a
- * concurrent duet CLI but bounded so a wedged peer cannot stall the
- * caller's turn indefinitely; on exhaustion `withDb` resolves to
- * `undefined` and the caller degrades gracefully.
- */
-const DEFAULT_LOCK_WAIT_BUDGET_MS = 30_000;
-
-/**
- * Exponential backoff schedule used while polling for the open-lock.
- * Doubles from 50ms up to a 1s ceiling so a peer that releases the
- * lock during an idle-close gap is picked up within ~50ms, while a
- * long-running peer does not produce a poll storm.
- */
-const POLL_BACKOFF_MS = [50, 100, 200, 400, 800, 1000];
 
 export interface MemorySessionOptions {
   /** Absolute path to the PGlite data directory. */
@@ -93,7 +77,7 @@ export class MemorySession {
     this.path = opts.path;
     this.openOptions = opts.openOptions;
     this.idleCloseMs = opts.idleCloseMs ?? DEFAULT_IDLE_CLOSE_MS;
-    this.lockWaitBudgetMs = opts.lockWaitBudgetMs ?? DEFAULT_LOCK_WAIT_BUDGET_MS;
+    this.lockWaitBudgetMs = opts.lockWaitBudgetMs ?? DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS;
     if (opts.onWarn) this.onWarn = opts.onWarn;
   }
 
@@ -175,27 +159,10 @@ export class MemorySession {
   }
 
   private async openWithPolling(): Promise<PGlite> {
-    const start = Date.now();
-    let attempt = 0;
-    let lastHolderPid = 0;
-    while (true) {
-      const result = tryAcquireOpenLock(this.path);
-      if ("lockPath" in result) {
-        const opened = await openPGliteHoldingLock(this.path, this.openOptions, result.lockPath);
-        this.lockPath = opened.lockPath;
-        return opened.db;
-      }
-      lastHolderPid = result.holderPid;
-      const elapsed = Date.now() - start;
-      if (elapsed >= this.lockWaitBudgetMs) {
-        throw new MemoryLockTimeoutError(this.path, lastHolderPid, this.lockWaitBudgetMs);
-      }
-      const base = POLL_BACKOFF_MS[Math.min(attempt, POLL_BACKOFF_MS.length - 1)] ?? 1000;
-      const remaining = this.lockWaitBudgetMs - elapsed;
-      const delay = Math.max(1, Math.min(base, remaining));
-      attempt++;
-      await sleep(delay);
-    }
+    const lockPath = await pollAcquireOpenLock(this.path, this.lockWaitBudgetMs);
+    const opened = await openPGliteHoldingLock(this.path, this.openOptions, lockPath);
+    this.lockPath = opened.lockPath;
+    return opened.db;
   }
 
   private scheduleIdleClose(): void {

@@ -169,13 +169,15 @@ export function printMemoryHelp(): void {
 duet memory — Browse, edit, and delete observational memories
 
 USAGE
-  duet memory [--db <path>]
+  duet memory [--db <path>] [--wait <seconds>]
 
 ALIASES
   duet memories
 
 OPTIONS
   --db <path>              Memory database path (default: ~/.duet/memory.db)
+  --wait <seconds>         Seconds to wait for the cross-process open-lock when a peer
+                           duet process is holding it (default: 30; 0 fails immediately)
   -h, --help               Show this help
 
 KEYS

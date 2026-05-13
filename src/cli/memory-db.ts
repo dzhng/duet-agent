@@ -1,6 +1,6 @@
 import type { PGlite } from "@electric-sql/pglite";
 import { runMigrations } from "../memory/migrations.js";
-import { openPGlite } from "../memory/pglite.js";
+import { DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS, openPGliteWaitingForLock } from "../memory/pglite.js";
 import type { Observation } from "../types/memory.js";
 
 /**
@@ -15,17 +15,29 @@ export class MemoryDb {
    * Open the memory database at `path`, creating the file and parent
    * directory if needed. The schema is shared with `memory/storage.ts` so
    * the runner and this CLI command stay in sync.
+   *
+   * `waitBudgetMs` controls how long to poll the cross-process open-lock when a peer duet
+   * process is holding it before throwing `MemoryLockTimeoutError`. Defaults to
+   * `DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS` so `duet memory` rides out brief contention with a
+   * concurrent runner session instead of failing on first try.
    */
-  static async open(path: string): Promise<MemoryDb> {
+  static async open(
+    path: string,
+    { waitBudgetMs = DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS }: { waitBudgetMs?: number } = {},
+  ): Promise<MemoryDb> {
     // Both the runner (`memory/storage.ts`) and this CLI command open the
     // same on-disk database, so both must apply migrations on open.
     // Whichever process touches the file first wins the upgrade race;
     // the other observes a no-op since `runMigrations` is idempotent.
-    const db = await openPGlite(path, {
-      init: async (instance) => {
-        await runMigrations(instance);
+    const db = await openPGliteWaitingForLock(
+      path,
+      {
+        init: async (instance) => {
+          await runMigrations(instance);
+        },
       },
-    });
+      waitBudgetMs,
+    );
     return new MemoryDb(db);
   }
 

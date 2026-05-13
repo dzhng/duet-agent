@@ -71,6 +71,21 @@ export class MemoryLockTimeoutError extends Error {
 export type TryAcquireOpenLockResult = { lockPath: string } | { holderPid: number };
 
 /**
+ * Default wall-time budget used by `openPGliteWaitingForLock` and the `duet memory` CLI when
+ * polling for the cross-process open-lock. Long enough to outlast a moderate burst of writes
+ * from a concurrent duet process but bounded so a wedged peer cannot stall the caller
+ * indefinitely.
+ */
+export const DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS = 30_000;
+
+/**
+ * Exponential backoff schedule used by `pollAcquireOpenLock`. Doubles from 50ms up to a 1s
+ * ceiling so a peer that releases the lock during an idle-close gap is picked up within ~50ms,
+ * while a long-running peer does not produce a poll storm.
+ */
+const POLL_BACKOFF_MS = [50, 100, 200, 400, 800, 1000];
+
+/**
  * Process-global registry of open-lock files currently held by this
  * process. Used by the exit handler to drop locks on crash so the next
  * launch (and concurrent duet CLIs) are not blocked behind a stale
@@ -122,6 +137,60 @@ export async function openPGlite(path: string, options: OpenPGliteOptions = {}):
     releaseOpenLock(lockPath);
     throw error;
   }
+}
+
+/**
+ * Like `openPGlite` but polls `tryAcquireOpenLock` up to `waitBudgetMs` (default
+ * `DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS`) before giving up, so a short-lived CLI does not crash
+ * when a peer duet process is briefly holding the open-lock. Used by the `duet memory`
+ * subcommand; the runner's hot path uses `MemorySession` instead so it can refcount opens
+ * across many ops. On budget exhaustion throws `MemoryLockTimeoutError` carrying the most
+ * recently observed holder pid so callers can render a useful message.
+ */
+export async function openPGliteWaitingForLock(
+  path: string,
+  options: OpenPGliteOptions = {},
+  waitBudgetMs: number = DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS,
+): Promise<PGlite> {
+  installExitCleanup();
+  const lockPath = await pollAcquireOpenLock(path, waitBudgetMs);
+  try {
+    const opened = await openPGliteHoldingLock(path, options, lockPath);
+    return installLockReleasingClose(opened.db, opened.lockPath);
+  } catch (error) {
+    releaseOpenLock(lockPath);
+    throw error;
+  }
+}
+
+/**
+ * Poll `tryAcquireOpenLock` with exponential backoff until either the lock is acquired or
+ * `budgetMs` has elapsed. Shared by `MemorySession` (per-op acquire) and the `duet memory`
+ * CLI (single acquire for the lifetime of the TUI). Throws `MemoryLockTimeoutError` with the
+ * most recently observed holder pid on exhaustion.
+ */
+export async function pollAcquireOpenLock(dataDir: string, budgetMs: number): Promise<string> {
+  const start = Date.now();
+  let attempt = 0;
+  let lastHolderPid = 0;
+  while (true) {
+    const result = tryAcquireOpenLock(dataDir);
+    if ("lockPath" in result) return result.lockPath;
+    lastHolderPid = result.holderPid;
+    const elapsed = Date.now() - start;
+    if (elapsed >= budgetMs) {
+      throw new MemoryLockTimeoutError(dataDir, lastHolderPid, budgetMs);
+    }
+    const base = POLL_BACKOFF_MS[Math.min(attempt, POLL_BACKOFF_MS.length - 1)] ?? 1000;
+    const remaining = budgetMs - elapsed;
+    const delay = Math.max(1, Math.min(base, remaining));
+    attempt++;
+    await sleep(delay);
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
