@@ -1394,18 +1394,30 @@ export class TurnRunner {
    * ran upstream and are skipped here; 4xx errors and rate limits are
    * intentionally not retried because the same payload would fail again.
    *
-   * Up to `policy.maxAttempts - 1` `agent.continue()` retries run with
-   * exponential backoff + jitter. Each retry emits an informational
-   * `system` event so callers can show "retrying after upstream error" in
-   * the UI. As soon as the assistant message after a retry is no longer a
-   * transient failure (success or a different non-retryable error), the
-   * helper returns and lets the caller surface that outcome.
+   * Each `agent.continue()` retry runs with exponential backoff + jitter.
+   * Each retry emits an informational `system` event so callers can show
+   * "retrying after upstream error" in the UI. The retry counter resets
+   * whenever the agent makes forward progress between failures — if
+   * `agent.continue()` appends a successful intermediate message before
+   * the next failure tail, the next failure is treated as a fresh
+   * sequence and gets the full retry budget. As soon as the assistant
+   * message after a retry is no longer a transient failure (success or
+   * a different non-retryable error), the helper returns and lets the
+   * caller surface that outcome.
+   *
+   * The loop has no explicit iteration cap because every iteration
+   * either reaches `maxAttempts` with no progress (terminates) or
+   * resets after real agent work (tool calls, tokens, bounded by
+   * pi-agent's own per-turn limits). A provider that can sustain
+   * infinite "progress + failure" cycles would already be billing the
+   * caller for real work each cycle — there is no free loop here.
    */
   protected async retryTransientServerErrors(
     agent: Agent,
     policy: TransientRetryPolicy = DEFAULT_TRANSIENT_RETRY_POLICY,
   ): Promise<void> {
-    for (let attempt = 1; attempt < policy.maxAttempts; attempt++) {
+    let attempt = 1;
+    while (attempt < policy.maxAttempts) {
       if (!agent.state.errorMessage) return;
       if (!lastMessageIsTransientFailure(agent.state.messages)) return;
       const failingMessage = agent.state.messages.at(-1);
@@ -1424,8 +1436,16 @@ export class TurnRunner {
       // resume from the prior user/tool-result tail without sending the
       // failure marker back to the provider.
       agent.state.messages.pop();
+      const lengthBeforeContinue = agent.state.messages.length;
       await sleep(delayMs);
       await agent.continue();
+      // If `continue()` appended more than just a new failure tail
+      // (i.e. at least one intermediate assistant or tool message
+      // landed before the agent failed again), the agent made real
+      // progress between failures. Reset so the next failure gets a
+      // fresh retry budget instead of inheriting the running count.
+      const messagesAppended = agent.state.messages.length - lengthBeforeContinue;
+      attempt = messagesAppended > 1 ? 1 : attempt + 1;
     }
   }
 

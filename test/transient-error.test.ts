@@ -1,11 +1,21 @@
 import { describe, expect, test } from "bun:test";
+import type { Agent, AgentMessage } from "@earendil-works/pi-agent-core";
+import { TurnRunner } from "../src/turn-runner/turn-runner.js";
+import type { TurnEvent } from "../src/types/protocol.js";
 import {
   DEFAULT_TRANSIENT_RETRY_POLICY,
   isTransientServerError,
   lastMessageIsTransientFailure,
   transientRetryDelayMs,
+  type TransientRetryPolicy,
 } from "../src/turn-runner/transient-error.js";
 import { createAssistantMessage } from "./helpers/messages.js";
+
+class RetryHarnessRunner extends TurnRunner {
+  async runRetryLoop(agent: Agent, policy?: TransientRetryPolicy): Promise<void> {
+    await this.retryTransientServerErrors(agent, policy);
+  }
+}
 
 const failureAssistant = (errorMessage: string) =>
   createAssistantMessage({ errorMessage, stopReason: "error" });
@@ -98,5 +108,148 @@ describe("transientRetryDelayMs", () => {
     const delay = transientRetryDelayMs(1, DEFAULT_TRANSIENT_RETRY_POLICY);
     expect(delay).toBeGreaterThanOrEqual(2_000);
     expect(delay).toBeLessThan(3_000);
+  });
+});
+
+describe("retryTransientServerErrors", () => {
+  /**
+   * Build a minimal Agent-shaped fixture that lets a test drive the
+   * sequence of messages each `agent.continue()` call appends.
+   *
+   * `continueImpls[i]` is invoked on the i-th continue call and
+   * receives the live messages array to mutate plus a function to set
+   * `agent.state.errorMessage` (mirrors how pi-agent records the tail
+   * error state for the retry loop to read).
+   */
+  function makeFakeAgent(
+    seedMessages: AgentMessage[],
+    initialError: string,
+    continueImpls: Array<
+      (messages: AgentMessage[], setError: (error: string | undefined) => void) => void
+    >,
+  ): Agent & { continueCalls: number } {
+    const state = { errorMessage: initialError as string | undefined, messages: [...seedMessages] };
+    let calls = 0;
+    const agent = {
+      state,
+      get continueCalls() {
+        return calls;
+      },
+      async continue() {
+        const impl = continueImpls[calls];
+        calls += 1;
+        if (!impl) throw new Error("Fake agent has no more continue() implementations queued.");
+        impl(state.messages, (error) => {
+          state.errorMessage = error;
+        });
+      },
+    };
+    return agent as unknown as Agent & { continueCalls: number };
+  }
+
+  function retryAttemptLabels(events: TurnEvent[]): string[] {
+    return events
+      .filter(
+        (event): event is Extract<TurnEvent, { type: "system" }> =>
+          event.type === "system" && event.message.startsWith("Upstream error"),
+      )
+      .map((event) => {
+        const match = /attempt (\d+)\/(\d+)/.exec(event.message);
+        return match ? `${match[1]}/${match[2]}` : event.message;
+      });
+  }
+
+  const fastPolicy: TransientRetryPolicy = {
+    maxAttempts: 3,
+    baseDelayMs: 0,
+    maxDelayMs: 0,
+  };
+
+  test("counter resets after the agent makes progress between failures", async () => {
+    const runner = new RetryHarnessRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+
+    const failure = (id: number) =>
+      createAssistantMessage({
+        stopReason: "error",
+        errorMessage: `500 Server Error #${id}`,
+        timestamp: id,
+      });
+
+    // Initial state: prompt() already failed once (the implicit "attempt 1/3"),
+    // and the failure is the tail of the transcript.
+    const agent = makeFakeAgent(
+      [{ role: "user", content: [{ type: "text", text: "go" }], timestamp: 0 }, failure(1)],
+      "500 Server Error #1",
+      [
+        // Retry #1: agent makes forward progress (one successful
+        // intermediate assistant message) and then fails again. This
+        // is the case the user reported: the second failure should
+        // reset the retry counter because the agent did real work in
+        // between.
+        (messages, setError) => {
+          messages.push(createAssistantMessage({ text: "made some progress", timestamp: 2 }));
+          messages.push(failure(3));
+          setError("500 Server Error #3");
+        },
+        // Retry #2: clean success — clears the error and the loop exits.
+        (messages, setError) => {
+          messages.push(createAssistantMessage({ text: "finally ok", timestamp: 4 }));
+          setError(undefined);
+        },
+      ],
+    );
+
+    await runner.runRetryLoop(agent, fastPolicy);
+
+    expect(agent.continueCalls).toBe(2);
+    // Both retry log lines should read "attempt 2/3": the first
+    // failure burned the implicit attempt 1, and the second failure
+    // resets to attempt 1 because the agent emitted an intermediate
+    // success between them.
+    expect(retryAttemptLabels(events)).toEqual(["2/3", "2/3"]);
+  });
+
+  test("counter keeps incrementing when continue() only emits another failure (no progress)", async () => {
+    const runner = new RetryHarnessRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+
+    const failure = (id: number) =>
+      createAssistantMessage({
+        stopReason: "error",
+        errorMessage: `500 Server Error #${id}`,
+        timestamp: id,
+      });
+
+    const agent = makeFakeAgent(
+      [{ role: "user", content: [{ type: "text", text: "go" }], timestamp: 0 }, failure(1)],
+      "500 Server Error #1",
+      [
+        // Retry #1: another failure, no intermediate progress.
+        (messages, setError) => {
+          messages.push(failure(2));
+          setError("500 Server Error #2");
+        },
+        // Retry #2: another failure, still no progress. The loop hits
+        // maxAttempts here and exits.
+        (messages, setError) => {
+          messages.push(failure(3));
+          setError("500 Server Error #3");
+        },
+      ],
+    );
+
+    await runner.runRetryLoop(agent, fastPolicy);
+
+    expect(agent.continueCalls).toBe(2);
+    expect(retryAttemptLabels(events)).toEqual(["2/3", "3/3"]);
   });
 });
