@@ -339,32 +339,30 @@ const MIGRATIONS: Migration[] = [
       // re-embed the same ids over and over (or, after the cooldown
       // was added, leave them silently un-embedded for five minutes).
       //
-      // Rebuild the table without the FK so an embedding row outlives
-      // a parent delete. Orphans are harmless: the recall path JOINs
-      // back to `observations` and naturally filters them out, and a
-      // future reinsert of the same id keeps its existing embedding
-      // until the worker refreshes it through the ON CONFLICT path.
+      // Drop the table and recreate it without the FK so an embedding
+      // row outlives a parent delete. Orphans are harmless: the
+      // recall path JOINs back to `observations` and naturally
+      // filters them out, and a future reinsert of the same id keeps
+      // its existing embedding until the worker refreshes it through
+      // the ON CONFLICT path.
       //
-      // Data-preserving rebuild: create the new table under a temp
-      // name, copy every row across, drop the old table, then rename
-      // the new one into place. The PK constraint inherits the temp
-      // name (`observation_embeddings_new_pkey`); renaming it after
-      // the table rename would collide with the v6 PK that the DROP
-      // is about to remove.
+      // We do not preserve the existing rows. An earlier draft of
+      // this migration tried `CREATE ... + INSERT SELECT * + DROP +
+      // RENAME`, but PGlite's TOAST storage of `vector(3072)` columns
+      // hit `missing chunk number 0 for toast value ...` on production
+      // databases that had been heavily UPSERTed by the worker. The
+      // backfill worker repopulates this table lazily within minutes
+      // of CLI startup, so dropping and rebuilding matches migration
+      // 6's precedent and sidesteps the toast read entirely.
+      await tx.exec(`DROP TABLE IF EXISTS observation_embeddings`);
       await tx.exec(`
-        CREATE TABLE observation_embeddings_new (
+        CREATE TABLE observation_embeddings (
           observation_id TEXT PRIMARY KEY,
           model TEXT NOT NULL,
           vector vector(3072) NOT NULL,
           created_at BIGINT NOT NULL
         )
       `);
-      await tx.exec(
-        `INSERT INTO observation_embeddings_new (observation_id, model, vector, created_at)
-         SELECT observation_id, model, vector, created_at FROM observation_embeddings`,
-      );
-      await tx.exec(`DROP TABLE observation_embeddings`);
-      await tx.exec(`ALTER TABLE observation_embeddings_new RENAME TO observation_embeddings`);
     },
   },
 ];
