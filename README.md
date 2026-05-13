@@ -72,16 +72,17 @@ Memory is **multimodal**. Screenshots, scans, and UI captures become text observ
 
 ### Relays: agent-routed state machines
 
-A relay is a state machine, but the agent picks the transitions. Each state is one of four kinds:
+A relay is a state machine, but the agent picks the transitions. Each state is one of five kinds:
 
 - **agent** — a sub-agent with a prompt, optional system prompt, and optional skill allowlist.
 - **script** — shell out to `bash`, `curl`, a CLI. Anything with an API is a script state.
-- **poll** — recurring check on an external signal (inbox, build status, webhook). Timer polls cover pure delays.
+- **poll** — recurring check on an external signal (inbox, build status, webhook).
+- **timer** — a pure delay until a wall-clock time, no script attached.
 - **terminal** — record a business outcome: `completed`, `cancelled`, `failed`.
 
 ```mermaid
 flowchart LR
-  A([agent]) --> S([script]) --> P([poll]) --> T([terminal])
+  A([agent]) --> S([script]) --> P([poll]) --> Tm([timer]) --> T([terminal])
 ```
 
 That's the whole vocabulary. Email, GitHub, Calendly, CRM — none of them need first-class engine concepts; they're shell scripts. Relays can start in the middle ("I already emailed them, just wait for a reply") because the runner agent reads context, not a workflow ID.
