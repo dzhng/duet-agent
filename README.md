@@ -1,11 +1,11 @@
+![duet-agent](assets/cover.png)
+
 # duet-agent
 
 [![Live at duet.so](https://img.shields.io/badge/Live%20at-duet.so-FF6B35?style=for-the-badge&logoColor=white)](https://duet.so)
 [![npm version](https://img.shields.io/npm/v/@duetso/agent.svg?style=for-the-badge&color=blue)](https://www.npmjs.com/package/@duetso/agent)
 [![License](https://img.shields.io/npm/l/@duetso/agent.svg?style=for-the-badge&color=success)](LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-black?style=for-the-badge)](https://bun.sh)
-
-![duet-agent](assets/cover.png)
 
 **The agent harness for jobs that outlive the chat.**
 
