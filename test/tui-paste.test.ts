@@ -112,17 +112,16 @@ describe("tui/paste", () => {
     expect(extractImagePathCandidates("look at https://example.com/cat.png")).toEqual([]);
     expect(extractImagePathCandidates("http://example.com/foo.jpg")).toEqual([]);
 
-    // macOS sometimes leaves an internal space unescaped when dragging a
-    // screenshot tempfile (`Screenshot\ 2026-05-14\ at\ 11.05.01 PM.png`).
-    // The mixed escaping must still produce a candidate so the auto-attach
-    // path gets a chance to resolve it.
-    expect(
-      extractImagePathCandidates(
-        "/var/folders/3p/T/TemporaryItems/NSIRD_x/Screenshot\\ 2026-05-14\\ at\\ 11.05.01 PM.png",
-      ),
-    ).toEqual([
-      "/var/folders/3p/T/TemporaryItems/NSIRD_x/Screenshot\\ 2026-05-14\\ at\\ 11.05.01 PM.png",
-    ]);
+    // Verbatim macOS screenshot-thumbnail drag strings, observed from two
+    // separate user sessions. Both produced the same partial-escape shape:
+    // every space inside the date is `\<space>`, but the space before
+    // `PM.png` is bare. Copied here unmodified so a regression in the regex
+    // fails the build against the exact bytes a real user typed.
+    const screenshotDragFirst = String.raw`/var/folders/3p/k21gnpt573b8yy45xvy27nd00000gn/T/TemporaryItems/NSIRD_screencaptureui_gXlH78/Screenshot\ 2026-05-14\ at\ 10.40.28 PM.png`;
+    expect(extractImagePathCandidates(screenshotDragFirst)).toEqual([screenshotDragFirst]);
+
+    const screenshotDragSecond = String.raw`/var/folders/3p/k21gnpt573b8yy45xvy27nd00000gn/T/TemporaryItems/NSIRD_screencaptureui_eIuZLn/Screenshot\ 2026-05-14\ at\ 11.05.01 PM.png`;
+    expect(extractImagePathCandidates(screenshotDragSecond)).toEqual([screenshotDragSecond]);
   });
 
   test("resolveExistingImagePath returns absolute path on disk, undefined when missing", () => {

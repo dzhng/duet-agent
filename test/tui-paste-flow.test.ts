@@ -157,6 +157,46 @@ describe("TUI paste flow", () => {
     expect(frame).not.toContain("[paste]");
   });
 
+  testIfDocker(
+    "verbatim macOS screenshot-thumbnail drag string auto-attaches via the typed path",
+    async () => {
+      // Production input observed verbatim from two real user sessions:
+      // every internal space inside the date portion is `\<space>` but the
+      // space before `PM.png` is bare. Earlier the regex required all-or-
+      // nothing escaping and refused this mixed shape; this test pins the
+      // exact bytes that hit the regression so it cannot drift again.
+      //
+      // The test is end-to-end: the literal screenshot path is typed into
+      // the real composer (the same `mockInput.typeText` real keystrokes
+      // hit), and we stage an actual PNG at the path the unescape pipeline
+      // produces so submit's `loadImageFromPath` reaches it the same way
+      // production would.
+      const dir = mkdtempSync(join(tmpdir(), "NSIRD_screencaptureui_test_"));
+      const onDiskName = "Screenshot 2026-05-14 at 11.05.01 PM.png";
+      const onDiskPath = join(dir, onDiskName);
+      writeFileSync(onDiskPath, PNG_HEADER);
+
+      // Mirror the macOS partial-escape: spaces inside the date escaped,
+      // space before `PM` bare.
+      const escapedName = String.raw`Screenshot\ 2026-05-14\ at\ 11.05.01 PM.png`;
+      const draggedString = `${dir}/${escapedName}`;
+
+      await harness.mockInput.typeText(draggedString);
+      harness.mockInput.pressEnter();
+      await harness.waitForPrompt();
+
+      expect(harness.promptCalls).toHaveLength(1);
+      // The dragged text rides along in the outgoing message.
+      expect(harness.promptCalls[0]!.message).toContain(draggedString);
+      // And the bytes were attached.
+      expect(harness.promptCalls[0]!.images).toHaveLength(1);
+      expect(harness.promptCalls[0]!.images![0]!.mimeType).toBe("image/png");
+      expect(harness.promptCalls[0]!.images![0]!.data).toBe(
+        Buffer.from(PNG_HEADER).toString("base64"),
+      );
+    },
+  );
+
   testIfDocker("URL-shaped text never triggers the auto-attach scan", async () => {
     // The regex must not match the path portion of http/https URLs.
     // Typing a URL in prose should never emit a `[paste]` diagnostic.
