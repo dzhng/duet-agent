@@ -17,6 +17,7 @@ duet --rpc \
   [--model <name> | --provider <name>] \
   [--memory-model <name>] \
   [--incognito] \
+  [--db <path>] \
   [--system-prompt <text>] [--system-prompt-file <path>] \
   [--no-system-prompt-files] \
   [--env-file <path>]
@@ -31,6 +32,8 @@ duet --rpc \
 - `--incognito` keeps observational memory in-process only. Without it the
   runner writes to its configured memory db (default `~/.duet/memory.db`)
   exactly like the TUI does.
+- `--db <path>` overrides the memory database file path. Defaults to
+  `~/.duet/memory.db`. Ignored when `--incognito` is set.
 - `--system-prompt-file` defaults to loading a repo-local `AGENTS.md` from
   `--workdir`. Pass `--no-system-prompt-files` to disable, or repeat
   `--system-prompt-file` for multiple files.

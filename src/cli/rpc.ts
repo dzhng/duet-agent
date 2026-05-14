@@ -76,6 +76,7 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
       ...(parsed.modelName ? { modelName: parsed.modelName } : {}),
       ...(parsed.memoryModelName ? { memoryModelName: parsed.memoryModelName } : {}),
       incognito: parsed.incognito,
+      ...(parsed.dbPath ? { dbPath: parsed.dbPath } : {}),
       workDir: parsed.workDir,
       ...(parsed.systemInstructions ? { systemInstructions: parsed.systemInstructions } : {}),
       ...(parsed.systemPromptFiles ? { systemPromptFiles: parsed.systemPromptFiles } : {}),
@@ -109,6 +110,12 @@ export interface ParsedRpcArgs {
   systemInstructions?: string;
   systemPromptFiles?: string[];
   envFilePath?: string;
+  /**
+   * Explicit memory database file path passed via `--db`. When omitted,
+   * `buildCliTurnConfig` falls back to the shared `~/.duet/memory.db`
+   * default so RPC mode persists memory just like the TUI/run path.
+   */
+  dbPath?: string;
   incognito: boolean;
   /** When true, skip the on-load default-skill sync. */
   noSkillSync: boolean;
@@ -128,6 +135,7 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
   let systemInstructions: string | undefined;
   let systemPromptFiles: string[] | undefined;
   let envFilePath: string | undefined;
+  let dbPath: string | undefined;
   let incognito = false;
   let noSkillSync = false;
 
@@ -170,6 +178,10 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         envFilePath = args[++i];
         break;
+      case "--db":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        dbPath = args[++i];
+        break;
       case "--no-skill-sync":
         noSkillSync = true;
         break;
@@ -207,6 +219,7 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
     ...(systemInstructions ? { systemInstructions } : {}),
     ...(systemPromptFiles ? { systemPromptFiles } : {}),
     ...(envFilePath ? { envFilePath } : {}),
+    ...(dbPath ? { dbPath } : {}),
     incognito,
     noSkillSync,
   };

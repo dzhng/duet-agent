@@ -593,6 +593,45 @@ describe("CLI resume command", () => {
       }),
     ).toContain("--incognito");
   });
+
+  test("preserves --db when an explicit memory db path was set", () => {
+    expect(
+      resumeCommand("session_123", {
+        workDir: "/repo",
+        dbPath: "/tmp/custom.db",
+      }),
+    ).toContain("--db /tmp/custom.db");
+  });
+});
+
+describe("CLI memory db resolution", () => {
+  test("defaults memoryDbPath to ~/.duet/memory.db when neither --db nor --incognito is set", () => {
+    clearModelEnv();
+    process.env.OPENAI_API_KEY = "test-openai";
+    const { config } = buildCliTurnConfig({ workDir: "/repo" }, EMPTY_DOTENV_KEYS);
+    expect(typeof config.memoryDbPath).toBe("string");
+    expect(config.memoryDbPath as string).toMatch(/\.duet\/memory\.db$/);
+  });
+
+  test("forwards --db verbatim", () => {
+    clearModelEnv();
+    process.env.OPENAI_API_KEY = "test-openai";
+    const { config } = buildCliTurnConfig(
+      { workDir: "/repo", dbPath: "/tmp/custom.db" },
+      EMPTY_DOTENV_KEYS,
+    );
+    expect(config.memoryDbPath).toBe("/tmp/custom.db");
+  });
+
+  test("--incognito wins over --db", () => {
+    clearModelEnv();
+    process.env.OPENAI_API_KEY = "test-openai";
+    const { config } = buildCliTurnConfig(
+      { workDir: "/repo", dbPath: "/tmp/custom.db", incognito: true },
+      EMPTY_DOTENV_KEYS,
+    );
+    expect(config.memoryDbPath).toBe(false);
+  });
 });
 
 describe("CLI render mode", () => {

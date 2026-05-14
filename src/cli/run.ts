@@ -12,7 +12,7 @@ import {
   resolveCliModel,
   type ModelResolution,
 } from "../model-resolution/resolver.js";
-import { SessionManager } from "../session/session-manager.js";
+import { DEFAULT_MEMORY_DB_PATH, SessionManager } from "../session/session-manager.js";
 import { runTui } from "../tui/app.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import { DEFAULT_RESUME_HISTORY_MESSAGES, printRunHelp } from "./help.js";
@@ -29,6 +29,12 @@ export interface CliTurnConfigInput {
   modelName?: string;
   memoryModelName?: string;
   incognito?: boolean;
+  /**
+   * Explicit memory database file path. When omitted, the config falls back
+   * to {@link DEFAULT_MEMORY_DB_PATH} (`~/.duet/memory.db`). Ignored when
+   * `incognito` is true, which forces `memoryDbPath: false`.
+   */
+  dbPath?: string;
   workDir: string;
   systemInstructions?: string;
   systemPromptFiles?: string[];
@@ -70,7 +76,7 @@ export function buildCliTurnConfig(
     config: {
       model: modelResolution.modelName,
       memoryModel: memoryModelResolution.modelName,
-      ...(input.incognito ? { memoryDbPath: false } : {}),
+      memoryDbPath: input.incognito ? false : (input.dbPath ?? DEFAULT_MEMORY_DB_PATH),
       cwd: input.workDir,
       ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),
       ...(input.systemPromptFiles ? { systemPromptFiles: input.systemPromptFiles } : {}),
@@ -99,6 +105,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   let resumeHistoryMessages = DEFAULT_RESUME_HISTORY_MESSAGES;
   let resumeHistoryMessagesExplicit = false;
   let envFilePath: string | undefined;
+  let dbPath: string | undefined;
   let incognito = false;
   let noAutoUpgrade = false;
   let noSkillSync = false;
@@ -157,6 +164,10 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       case "--env-file":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         envFilePath = args[++i];
+        break;
+      case "--db":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        dbPath = args[++i];
         break;
       case "--no-auto-upgrade":
         noAutoUpgrade = true;
@@ -254,6 +265,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       ...(modelName ? { modelName } : {}),
       ...(memoryModelName ? { memoryModelName } : {}),
       incognito,
+      ...(dbPath ? { dbPath } : {}),
       workDir,
       ...(systemInstructions ? { systemInstructions } : {}),
       ...(systemPromptFiles ? { systemPromptFiles } : {}),
@@ -396,6 +408,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         ...(memoryModelName ? { memoryModelName } : {}),
         workDir,
         incognito,
+        ...(dbPath ? { dbPath } : {}),
         ...(systemInstructions ? { systemInstructions } : {}),
         ...(systemPromptFiles ? { systemPromptFiles } : {}),
         ...(envFilePath ? { envFilePath } : {}),

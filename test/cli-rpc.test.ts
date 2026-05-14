@@ -90,6 +90,16 @@ describe("parseRpcArgs", () => {
     expect(parsed.noSkillSync).toBe(false);
   });
 
+  test("--db sets an explicit memory database path", () => {
+    const parsed = parseRpcArgs(["--db", "/tmp/custom.db"]);
+    expect(parsed.dbPath).toBe("/tmp/custom.db");
+  });
+
+  test("omitting --db leaves dbPath undefined so the default applies", () => {
+    const parsed = parseRpcArgs([]);
+    expect(parsed.dbPath).toBeUndefined();
+  });
+
   test("--no-skill-sync sets the skip-skill-sync flag", () => {
     const parsed = parseRpcArgs(["--no-skill-sync"]);
     expect(parsed.noSkillSync).toBe(true);

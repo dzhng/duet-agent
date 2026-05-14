@@ -37,6 +37,7 @@ OPTIONS
                             Accepts: duet, vercel, openrouter, anthropic, openai.
                             Mutually exclusive with --model / --memory-model.
   -i, --incognito          Keep memory in-process; do not read or write durable memory
+  --db <path>              Memory database path (default: ~/.duet/memory.db); ignored under --incognito
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
   --resume-history-messages <n>
