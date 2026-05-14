@@ -111,6 +111,18 @@ describe("tui/paste", () => {
     // URLs must not match their path component as if it were a local file.
     expect(extractImagePathCandidates("look at https://example.com/cat.png")).toEqual([]);
     expect(extractImagePathCandidates("http://example.com/foo.jpg")).toEqual([]);
+
+    // macOS sometimes leaves an internal space unescaped when dragging a
+    // screenshot tempfile (`Screenshot\ 2026-05-14\ at\ 11.05.01 PM.png`).
+    // The mixed escaping must still produce a candidate so the auto-attach
+    // path gets a chance to resolve it.
+    expect(
+      extractImagePathCandidates(
+        "/var/folders/3p/T/TemporaryItems/NSIRD_x/Screenshot\\ 2026-05-14\\ at\\ 11.05.01 PM.png",
+      ),
+    ).toEqual([
+      "/var/folders/3p/T/TemporaryItems/NSIRD_x/Screenshot\\ 2026-05-14\\ at\\ 11.05.01 PM.png",
+    ]);
   });
 
   test("resolveExistingImagePath returns absolute path on disk, undefined when missing", () => {

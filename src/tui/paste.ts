@@ -296,15 +296,16 @@ function normalizeFilePath(input: string): string | undefined {
 export function extractImagePathCandidates(text: string): string[] {
   if (!text) return [];
   const results: string[] = [];
-  // Match either a file:// URL or an absolute/home path. A backslash-escape
-  // sequence (\<char>) counts as part of the path so shell-escaped spaces in
-  // drag-and-drop paths do not terminate the match; unescaped whitespace
-  // does. The path must end in a supported image extension. The negative
-  // lookbehind on the absolute-path branch keeps URLs like
-  // `https://example.com/foo.png` from matching their path component as if
-  // it were a local file.
-  const pattern =
-    /(?:file:\/\/\S+|(?<![\w:/])(?:\/|~\/)(?:\\.|[^\s])+?)\.(?:png|jpe?g|gif|webp)\b/gi;
+  // Match either a file:// URL or an absolute/home path. The absolute-path
+  // branch allows any non-newline character so that drag-pastes with mixed
+  // escaping survive — macOS in particular has been observed to leave the
+  // last space of a screenshot path unescaped (`Screenshot\ 2026-05-14\ at\
+  // 11.05.01 PM.png`), which a stricter pattern would refuse. False-positive
+  // expansion across unrelated prose is benign: `resolveExistingImagePath`
+  // silently rejects candidates that do not point at a real file. The
+  // negative lookbehind keeps URLs like `https://example.com/foo.png` from
+  // matching their path component as if it were a local file.
+  const pattern = /(?:file:\/\/\S+|(?<![\w:/])(?:\/|~\/)[^\n]+?)\.(?:png|jpe?g|gif|webp)\b/gi;
   for (const match of text.matchAll(pattern)) {
     results.push(match[0]);
   }
