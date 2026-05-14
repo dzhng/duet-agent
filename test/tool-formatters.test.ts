@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   assembleToolBlock,
   formatToolBlock,
-  truncateToolText,
+  truncateReasoningBody,
 } from "../src/tui/tool-formatters.js";
 import { historyDisplayBlocks } from "../src/tui/history.js";
 
@@ -289,14 +289,14 @@ describe("tool formatters > unknown tools", () => {
   });
 });
 
-describe("truncateToolText", () => {
-  test("keeps short outputs verbatim", () => {
-    expect(truncateToolText("a\nb\nc")).toBe("a\nb\nc");
+describe("truncateReasoningBody", () => {
+  test("keeps short reasoning verbatim", () => {
+    expect(truncateReasoningBody("a\nb")).toBe("a\nb");
   });
 
-  test("trims long outputs and reports the omitted line count", () => {
-    const text = ["a", "b", "c", "d", "e"].join("\n");
-    expect(truncateToolText(text)).toBe("a\nb\nc\n… (+2 more lines)");
+  test("collapses long reasoning to a single head line plus tail count", () => {
+    const text = ["a", "b", "c", "d"].join("\n");
+    expect(truncateReasoningBody(text)).toBe("a\n… (+3 more lines)");
   });
 });
 

@@ -2,7 +2,7 @@ import { type CliRenderer, type ScrollBoxRenderable, TextRenderable } from "@ope
 import { formatElapsed, runningMarker, StatusController } from "./status-controller.js";
 import { SIDEBAR_WIDTH } from "./sidebar.js";
 import { COLORS } from "./theme.js";
-import { assembleToolBlock, formatToolBlock, truncateToolText } from "./tool-formatters.js";
+import { assembleToolBlock, formatToolBlock, truncateReasoningBody } from "./tool-formatters.js";
 import { TranscriptWriter } from "./transcript-writer.js";
 import type { TurnEvent, TurnStep, TurnTokenUsage } from "../types/protocol.js";
 
@@ -13,8 +13,9 @@ interface StreamingBlock {
   line: TextRenderable;
   label: string | null;
   body: string;
-  /** Cap rendered output to TOOL_RESULT_MAX_LINES for noisy streams (e.g. reasoning). */
-  truncate: boolean;
+  /** Optional truncation applied to the body before render. Used by
+   *  reasoning streams to keep the block to 3 visual lines (label + 2). */
+  truncate?: (text: string) => string;
 }
 
 /** Rendered tool-call row. Tool calls emit a `running` event followed by a
@@ -83,7 +84,7 @@ export class StepRenderer {
         "[reasoning]",
         step.delta,
         COLORS.reasoning,
-        true,
+        truncateReasoningBody,
       );
     } else if (step.type === "text") {
       this.opts.transcriptWriter.recordEntry("agent", step.text);
@@ -103,7 +104,7 @@ export class StepRenderer {
       if (trimmed) {
         this.opts.transcriptWriter.appendBlock(
           "[reasoning]",
-          truncateToolText(trimmed),
+          truncateReasoningBody(trimmed),
           COLORS.reasoning,
         );
       }
@@ -197,7 +198,7 @@ export class StepRenderer {
     label: string | null,
     delta: string,
     fg: string,
-    truncate = false,
+    truncate?: (text: string) => string,
   ): StreamingBlock {
     const next =
       block ??
@@ -294,25 +295,32 @@ export class StepRenderer {
   }
 
   // Width budget for a tool block: terminal width minus the fixed sidebar
-  // column and a small fudge for borders/padding. Recomputed per render so a
+  // column and the transcript chrome. The ScrollBox owns border (2) +
+  // padding (2) + a 1-column scrollbar gutter on the right, so the real
+  // content area is 5 columns narrower than the transcript pane. Off-by-one
+  // here causes pre-wrapped lines exactly at the cap to spill a single
+  // character onto a near-blank continuation row. Recomputed per render so a
   // resize after a tool block lands updates new blocks; existing blocks keep
   // the width they were rendered at, which is acceptable since the renderer
   // would otherwise re-wrap and could exceed the row cap.
   private toolBlockColumns(): number {
-    const transcriptColumnPadding = 4;
-    return Math.max(20, this.opts.renderer.terminalWidth - SIDEBAR_WIDTH - transcriptColumnPadding);
+    const transcriptChromeColumns = 5;
+    return Math.max(20, this.opts.renderer.terminalWidth - SIDEBAR_WIDTH - transcriptChromeColumns);
   }
 }
 
 function updateStreamingBlock(block: StreamingBlock): void {
-  const body = block.truncate ? truncateToolText(block.body) : block.body;
+  const body = block.truncate ? block.truncate(block.body) : block.body;
   block.line.content = block.label ? `${block.label}\n${body}` : body;
 }
 
 /**
  * Format the body of a memory phase event for display. Returns the empty
  * string when there are no observations or usage bumps to show, so the
- * caller can elide the block entirely.
+ * caller can elide the block entirely. The actual observation text is
+ * intentionally omitted from the transcript — the completion `message`
+ * ("Memory observation recorded. Bumped last-use on N prior memories.")
+ * is the only line shown under the `[memory:<phase>]` label.
  */
 export function formatMemoryEventBody(event: Extract<TurnEvent, { type: "memory" }>): string {
   const hasObservations = Boolean(event.observations && event.observations.length > 0);
@@ -322,9 +330,5 @@ export function formatMemoryEventBody(event: Extract<TurnEvent, { type: "memory"
   if (!hasObservations && !hasBumps) {
     return "";
   }
-  const sections: string[] = [event.message];
-  if (hasObservations) {
-    sections.push(event.observations!.map((observation) => observation.content).join("\n\n"));
-  }
-  return truncateToolText(sections.join("\n"));
+  return event.message;
 }

@@ -37,6 +37,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Skill } from "@earendil-works/pi-coding-agent";
+import type { Observation } from "../src/types/memory.js";
 import { Session, type SessionTurnRunner } from "../src/session/session.js";
 import { runTui } from "../src/tui/app.js";
 import type { SkillCollision } from "../src/turn-runner/skills.js";
@@ -648,6 +649,67 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         isError: true,
       },
     ];
+
+    // Reasoning block: stream 6 deltas then finalize with the full text so
+    // the 3-line cap on reasoning (label + up to 2 body lines) is visible.
+    const reasoningLines = [
+      "Considering whether to clamp the reasoning body to 3 visual lines.",
+      "The streaming path needs the same cap as the finalized path.",
+      "Memory observation bodies should drop the observation text entirely.",
+      "Only the completion message belongs under [memory:observation].",
+      "Bumps stay surfaced through the message, not through extra content.",
+      "This last line should fall into the '+N more lines' tail.",
+    ];
+    for (const line of reasoningLines) {
+      this.emit({ type: "step", step: { type: "reasoning_delta", delta: `${line}\n` } });
+      await this.sleep(120);
+      if (this.interrupted) return undefined;
+    }
+    this.emit({ type: "step", step: { type: "reasoning", text: reasoningLines.join("\n") } });
+    await this.sleep(200);
+
+    // Memory observation completion: payload includes observations and a
+    // usage-bumped list so the rendered body exercises the message-only path
+    // (observation text is intentionally omitted from the transcript).
+    this.emit({
+      type: "memory",
+      phase: "observation",
+      status: "running",
+      message: "Observing conversation into memory…",
+    });
+    await this.sleep(400);
+    if (this.interrupted) return undefined;
+    const now = Date.now();
+    const fakeObservation = (id: string, content: string, ageMs: number): Observation => ({
+      id,
+      createdAt: now - ageMs,
+      lastUsedAt: now - ageMs,
+      kind: "observation",
+      observedDate: new Date(now - ageMs).toISOString().slice(0, 10),
+      priority: "medium",
+      source: { kind: "agent" },
+      content,
+      tags: [],
+    });
+    this.emit({
+      type: "memory",
+      phase: "observation",
+      status: "completed",
+      message: "Memory observation recorded. Bumped last-use on 3 prior memories.",
+      observations: [
+        fakeObservation(
+          "obs_demo_1",
+          "User wants the TUI reasoning block capped at 3 lines and memory observation blocks to show only the completion message.",
+          0,
+        ),
+      ],
+      usageBumpedObservations: [
+        fakeObservation("obs_prior_1", "prior memory 1", 60_000),
+        fakeObservation("obs_prior_2", "prior memory 2", 120_000),
+        fakeObservation("obs_prior_3", "prior memory 3", 180_000),
+      ],
+    });
+    await this.sleep(200);
 
     for (const [index, fixture] of fixtures.entries()) {
       const toolCallId = `demo_${index}`;

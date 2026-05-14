@@ -58,18 +58,17 @@ export interface FormattedTool {
 }
 
 /**
- * Generic source-line cap used outside the tool-block pipeline — reasoning
- * blocks, streaming snippets, and memory traces — to keep noisy text from
- * dominating the transcript. Tool inputs and outputs go through
+ * Cap for reasoning blocks: paired with the `[reasoning]` label, keeps the
+ * entire rendered block to at most 3 visual lines (1 label + up to 2 body
+ * lines, where the last body line collapses overflow into a
+ * `… (+N more lines)` tail). Tool inputs and outputs go through
  * `assembleToolBlock`, which applies a width-aware visual clamp instead.
  */
-const TEXT_TRUNCATE_MAX_LINES = 3;
-
-export function truncateToolText(text: string): string {
+export function truncateReasoningBody(text: string): string {
   const lines = text.split("\n");
-  if (lines.length <= TEXT_TRUNCATE_MAX_LINES) return text;
-  const head = lines.slice(0, TEXT_TRUNCATE_MAX_LINES).join("\n");
-  const remaining = lines.length - TEXT_TRUNCATE_MAX_LINES;
+  if (lines.length <= 2) return text;
+  const head = lines[0];
+  const remaining = lines.length - 1;
   return `${head}\n… (+${remaining} more line${remaining === 1 ? "" : "s"})`;
 }
 
