@@ -1,6 +1,6 @@
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { toXML } from "../lib/xml.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnAgentFile } from "../types/protocol.js";
@@ -104,9 +104,14 @@ export class SkillContext {
     const fileNames = this.config.systemPromptFiles ?? ["AGENTS.md"];
     const resolved: TurnAgentFile[] = [];
     for (const fileName of fileNames) {
-      const path = join(cwd, fileName);
+      // Hosts like the chat-app agent-gateway pass an absolute path to a
+      // session-scoped system-prompt file that lives outside `cwd`. `join`
+      // would strip the leading slash and turn it into a non-existent path
+      // under `cwd`, silently dropping the layer, so honor absolute paths
+      // verbatim and only join when the caller passed a relative name.
+      const path = isAbsolute(fileName) ? fileName : join(cwd, fileName);
       if (existsSync(path)) {
-        resolved.push({ name: fileName, path });
+        resolved.push({ name: isAbsolute(fileName) ? basename(fileName) : fileName, path });
       }
     }
     return resolved;
