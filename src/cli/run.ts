@@ -221,11 +221,19 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   // while the TUI is already mounted. The TUI subscribes to upgradeStatus$
   // to render a live header line; the JSON path awaits the final status
   // and prints one summary line to stderr.
+  //
+  // Auto-upgrade is gated on having a TTY: non-interactive invocations
+  // (e.g. `duet <prompt>` exec'd by a sandbox terminal channel) often get
+  // their whole process tree torn down as soon as the command "finishes",
+  // which kills the detached npm child mid-rename and leaves the global
+  // node_modules tree in a partial state (`@duetso/.agent-<random>`
+  // staging dirs with no `agent` symlink).
+  const nonInteractive = !process.stdin.isTTY && !process.stdout.isTTY;
   const upgradeStatus$ = createUpgradeStatusStream();
   const upgradePromise = runAutoUpgrade({
     packageName: pkg.name,
     currentVersion: pkg.version,
-    disabled: noAutoUpgrade,
+    disabled: noAutoUpgrade || nonInteractive,
     onStatus: (status) => upgradeStatus$.publish(status),
   }).then((status) => {
     upgradeStatus$.complete(status);

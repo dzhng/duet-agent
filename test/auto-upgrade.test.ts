@@ -100,6 +100,31 @@ describe("describeUpgradeStatus", () => {
   });
 });
 
+describe("cleanStaleStagingDirs", () => {
+  testIfDocker("removes .agent-* staging dirs left behind by a killed install", () => {
+    const scopeDir = join(scratchHome!, "lib", "node_modules", "@duetso");
+    const agentDir = join(scopeDir, "agent");
+    const stagingA = join(scopeDir, ".agent-MtyTJGUn");
+    const stagingB = join(scopeDir, ".agent-xxxxxxxx");
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(stagingA, { recursive: true });
+    mkdirSync(stagingB, { recursive: true });
+    writeFileSync(join(stagingA, "package.json"), "{}");
+
+    __testing.cleanStaleStagingDirs(join(agentDir, "dist", "src", "cli.js"));
+
+    expect(existsSync(stagingA)).toBe(false);
+    expect(existsSync(stagingB)).toBe(false);
+    // The real `agent` install dir is preserved — we only sweep staging dirs.
+    expect(existsSync(agentDir)).toBe(true);
+  });
+
+  testIfDocker("is a no-op for source-checkout script paths", () => {
+    // No throw, no fs side effects.
+    __testing.cleanStaleStagingDirs("/Users/x/dev/duet-agent/src/cli.ts");
+  });
+});
+
 describe("runAutoUpgrade", () => {
   testIfDocker("emits checking → current when already on latest", async () => {
     const statuses: UpgradeStatus[] = [];

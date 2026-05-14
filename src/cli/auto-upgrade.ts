@@ -4,7 +4,9 @@ import {
   closeSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
+  rmSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
@@ -172,6 +174,16 @@ export async function runAutoUpgrade(input: RunAutoUpgradeInput): Promise<Upgrad
     return emit({ kind: "locked" });
   }
   try {
+    // Self-heal partial installs from a previous run before we either probe
+    // the registry or spawn a fresh install. npm's global install finalizes
+    // with two renames — `agent` → `.agent-<rand>` (old aside), then
+    // `.agent-<rand>` (new tmp) → `agent`. A SIGKILL between them (e.g. a
+    // sandbox tearing down the exec process tree) leaves the scope dir with
+    // a leftover `.agent-*` directory and no `agent`, so the next install
+    // fails with `ENOTEMPTY` and `duet` stays missing from $PATH. Sweep
+    // those stragglers while we hold the upgrade lock so concurrent CLIs do
+    // not race against us.
+    cleanStaleStagingDirs(scriptPath);
     emit({ kind: "checking" });
     const fetchLatest =
       input.fetchLatest ?? ((name: string) => fetchLatestPackageVersion(name, REGISTRY_TIMEOUT_MS));
@@ -340,6 +352,39 @@ function ensureDir(path: string): void {
   }
 }
 
+/**
+ * Remove leftover `.agent-<rand>` staging directories that a previously
+ * killed `npm install -g @duetso/agent` left behind in the @duetso scope
+ * dir. Safe to call repeatedly; missing entries are ignored. The scope dir
+ * is derived from `scriptPath` by walking up to the `@duetso/agent`
+ * segment, which `isLikelyGlobalInstall` already validated above.
+ */
+function cleanStaleStagingDirs(scriptPath: string): void {
+  const normalized = scriptPath.replace(/\\/g, "/");
+  const marker = "/@duetso/agent/";
+  const idx = normalized.indexOf(marker);
+  if (idx === -1) return;
+  // Use the original (non-normalized) path so Windows separators survive,
+  // even though duet only ships on POSIX today.
+  const scopeDir = scriptPath.slice(0, idx + "/@duetso".length);
+  let entries: string[];
+  try {
+    entries = readdirSync(scopeDir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith(".agent-")) continue;
+    const stagingPath = join(scopeDir, entry);
+    try {
+      rmSync(stagingPath, { recursive: true, force: true });
+      appendLog(`cleaned-staging path=${stagingPath}`);
+    } catch (error) {
+      appendLog(`cleaned-staging-error path=${stagingPath} error=${describeError(error)}`);
+    }
+  }
+}
+
 function appendLog(line: string): void {
   try {
     const { logPath } = upgradePaths();
@@ -407,4 +452,5 @@ export function defaultRunUpgrade(
 export const __testing = {
   upgradePaths,
   STALE_LOCK_MS,
+  cleanStaleStagingDirs,
 };
