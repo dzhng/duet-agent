@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import {
+  extractImagePathCandidates,
   looksLikeImageFilePath,
   mimeTypeFromExtension,
+  resolveExistingImagePath,
   sniffImageMimeType,
 } from "../src/tui/paste.js";
 
@@ -74,5 +80,51 @@ describe("tui/paste", () => {
     expect(looksLikeImageFilePath("file:///Users/me/Desktop/Frame%202147228872.png")).toBe(
       "/Users/me/Desktop/Frame 2147228872.png",
     );
+  });
+
+  test("extractImagePathCandidates picks image paths out of mixed text", () => {
+    expect(extractImagePathCandidates("")).toEqual([]);
+    expect(extractImagePathCandidates("no paths here")).toEqual([]);
+
+    // Bare absolute path inside a sentence.
+    expect(
+      extractImagePathCandidates("please look at /Users/me/Desktop/cat.png and tell me"),
+    ).toEqual(["/Users/me/Desktop/cat.png"]);
+
+    // Shell-escaped drag path (the macOS screenshot-thumbnail-drag case).
+    expect(
+      extractImagePathCandidates(
+        "/var/folders/3p/T/TemporaryItems/NSIRD_x/Screenshot\\ 2026-05-14\\ at\\ 10.40.png",
+      ),
+    ).toEqual([
+      "/var/folders/3p/T/TemporaryItems/NSIRD_x/Screenshot\\ 2026-05-14\\ at\\ 10.40.png",
+    ]);
+
+    // Multiple candidates, including a file:// URL and a ~/ path.
+    expect(
+      extractImagePathCandidates("compare file:///Users/me/a.png with ~/Pictures/b.jpg please"),
+    ).toEqual(["file:///Users/me/a.png", "~/Pictures/b.jpg"]);
+
+    // Unsupported extensions are ignored.
+    expect(extractImagePathCandidates("/Users/me/notes.txt")).toEqual([]);
+
+    // URLs must not match their path component as if it were a local file.
+    expect(extractImagePathCandidates("look at https://example.com/cat.png")).toEqual([]);
+    expect(extractImagePathCandidates("http://example.com/foo.jpg")).toEqual([]);
+  });
+
+  test("resolveExistingImagePath returns absolute path on disk, undefined when missing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "duet-resolve-"));
+    const real = join(dir, "real.png");
+    writeFileSync(real, "");
+
+    // Absolute path that exists → echoed back.
+    expect(resolveExistingImagePath("/nowhere", real)).toBe(real);
+
+    // Absolute path that does not exist → undefined (silent-miss gate).
+    expect(resolveExistingImagePath("/nowhere", join(dir, "ghost.png"))).toBeUndefined();
+
+    // Relative path resolves against cwd.
+    expect(resolveExistingImagePath(dir, "real.png")).toBe(real);
   });
 });

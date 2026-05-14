@@ -2,10 +2,12 @@ import { decodePasteBytes, type PasteEvent, type TextareaRenderable } from "@ope
 
 import {
   describeMacClipboardTypes,
+  extractImagePathCandidates,
   loadImageFromPath,
   looksLikeImageFilePath,
   type PendingImage,
   persistPastedImage,
+  resolveExistingImagePath,
   sniffImageMimeType,
   tryReadClipboardImage,
   tryReadClipboardText,
@@ -238,6 +240,74 @@ export class PasteController {
         `clipboard probe failed: ${error instanceof Error ? error.message : String(error)}`,
         COLORS.error,
       );
+    }
+  }
+
+  /**
+   * Scan a free-form message (the compose buffer at submit time) for
+   * image-shaped paths and silently attach any that resolve to a real file.
+   *
+   * This is the fallback for terminals that do not fire a bracketed-paste
+   * event when a file is dragged in — the textarea sees the path as typed
+   * characters, so `handlePasteEvent` never runs. By scanning on submit we
+   * still capture the bytes before ephemeral files (notably macOS
+   * `NSIRD_screencaptureui_*` screenshot tempfiles) disappear.
+   *
+   * Unlike the paste path, this method does not rewrite the message: callers
+   * already have the path text in their outgoing prompt, and replacing it
+   * after the user pressed Enter would feel like surgery on the message.
+   * Duplicate paths (already in the pending queue) are skipped. Paths that
+   * do not point at a file on disk are silently skipped so prose references
+   * to nonexistent paths do not produce noise; only files that exist but
+   * fail to load (unsupported format, too large, empty) surface a `[paste]`
+   * diagnostic.
+   */
+  async autoAttachFromMessage(message: string): Promise<void> {
+    const candidates = extractImagePathCandidates(message);
+    if (candidates.length === 0) return;
+    const alreadyAttached = new Set(this.pendingImages.map((p) => p.path));
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      // Normalize each extracted substring through the same shell-escape /
+      // file:// / quote handling the paste path uses, so `file://` URLs and
+      // `\ `-escaped drag paths resolve the same way here.
+      const normalized = looksLikeImageFilePath(candidate);
+      if (!normalized) continue;
+      // Silent miss: if nothing is on disk at that location, skip without
+      // emitting a `[paste]` diagnostic. Users often reference file paths in
+      // prose that have nothing to do with attachment intent; a missing file
+      // is not meaningful feedback for them. Errors are still surfaced below
+      // for files that exist but fail to load (unsupported format, too
+      // large, empty) — those are real attachment failures worth reporting.
+      const resolvedPath = resolveExistingImagePath(this.workDir, normalized);
+      if (!resolvedPath) continue;
+      if (seen.has(resolvedPath)) continue;
+      seen.add(resolvedPath);
+      if (alreadyAttached.has(resolvedPath)) continue;
+      try {
+        const pending = await loadImageFromPath({
+          cwd: this.workDir,
+          rawPath: normalized,
+          id: this.nextImageId,
+        });
+        alreadyAttached.add(pending.path);
+        this.nextImageId += 1;
+        this.pendingImages.push(pending);
+        this.appendBlock(
+          "[paste]",
+          `auto-attached ${pending.label} from ${pending.path}`,
+          COLORS.system,
+        );
+        this.statusController.setPendingImageCount(this.pendingImages.length);
+      } catch (error) {
+        this.appendBlock(
+          "[paste]",
+          `found ${resolvedPath} but could not attach it: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          COLORS.error,
+        );
+      }
     }
   }
 

@@ -108,4 +108,67 @@ describe("TUI paste flow", () => {
       expect(frame).toContain("Unsupported binary clipboard contents");
     },
   );
+
+  testIfDocker(
+    "typed image path auto-attaches on submit without rewriting the message",
+    async () => {
+      // Simulates drag-from-screenshot-thumbnail on terminals that
+      // synthesize keystrokes instead of firing a paste event: the path
+      // appears in the composer as typed text, and we expect submit to
+      // scan, load the bytes, and attach — without replacing the visible
+      // text in the outgoing message.
+      const dir = mkdtempSync(join(tmpdir(), "duet-tui-autoattach-"));
+      const file = join(dir, "typed.png");
+      writeFileSync(file, PNG_HEADER);
+
+      await harness.mockInput.typeText(`look at ${file}`);
+      harness.mockInput.pressEnter();
+      await harness.waitForPrompt();
+
+      expect(harness.promptCalls).toHaveLength(1);
+      // The path stays in the outgoing message — we promised not to rewrite.
+      expect(harness.promptCalls[0]!.message).toContain(file);
+      // But the bytes rode along as an attachment.
+      expect(harness.promptCalls[0]!.images).toHaveLength(1);
+      expect(harness.promptCalls[0]!.images![0]!.mimeType).toBe("image/png");
+      expect(harness.promptCalls[0]!.images![0]!.data).toBe(
+        Buffer.from(PNG_HEADER).toString("base64"),
+      );
+    },
+  );
+
+  testIfDocker("typed path to a missing image is silently skipped on submit", async () => {
+    // Silent-miss: typing an image-shaped path that does not exist on
+    // disk (prose reference, stale screenshot tempfile, misspelling)
+    // must not emit a `[paste]` diagnostic and must not block the turn.
+    const dir = mkdtempSync(join(tmpdir(), "duet-tui-autoattach-miss-"));
+    const missing = join(dir, "ghost.png");
+    // Intentionally do not write `missing`.
+
+    await harness.mockInput.typeText(`see ${missing} from yesterday`);
+    harness.mockInput.pressEnter();
+    await harness.waitForPrompt();
+
+    expect(harness.promptCalls).toHaveLength(1);
+    expect(harness.promptCalls[0]!.message).toContain(missing);
+    // No attachment queued, and no `[paste]` diagnostic in the transcript.
+    expect(harness.promptCalls[0]!.images ?? []).toHaveLength(0);
+    const frame = await harness.captureCharFrame();
+    expect(frame).not.toContain("[paste]");
+  });
+
+  testIfDocker("URL-shaped text never triggers the auto-attach scan", async () => {
+    // The regex must not match the path portion of http/https URLs.
+    // Typing a URL in prose should never emit a `[paste]` diagnostic.
+    await harness.mockInput.typeText(
+      "compare https://example.com/cat.png with http://example.org/dog.jpg",
+    );
+    harness.mockInput.pressEnter();
+    await harness.waitForPrompt();
+
+    expect(harness.promptCalls).toHaveLength(1);
+    expect(harness.promptCalls[0]!.images ?? []).toHaveLength(0);
+    const frame = await harness.captureCharFrame();
+    expect(frame).not.toContain("[paste]");
+  });
 });

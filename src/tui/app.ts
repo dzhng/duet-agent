@@ -280,7 +280,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // Shared dispatch for submit (follow_up) and Ctrl+Enter (steer): log the
   // user message + attachments, hand the prompt to the session, flip the
   // chrome to "running".
-  function dispatchTurn(message: string, behavior: "follow_up" | "steer"): void {
+  async function dispatchTurn(message: string, behavior: "follow_up" | "steer"): Promise<void> {
+    // Auto-attach any image-shaped paths the user typed or dragged into the
+    // compose buffer. Drag-from-screenshot-thumbnail on macOS is the
+    // motivating case: the terminal synthesizes keystrokes instead of firing
+    // a paste event, and the tempfile under `NSIRD_screencaptureui_*`
+    // disappears within seconds of the thumbnail dismissing. Scanning on
+    // submit captures the bytes before that race resolves badly.
+    await pasteController.autoAttachFromMessage(message).catch(reportError);
     const pending = pasteController.consume();
     appendUserBlock(message);
     if (pending.length > 0) {
@@ -316,7 +323,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const message = ui.inputField.plainText.trim();
     if (message.length === 0) return;
     ui.inputField.clear();
-    dispatchTurn(message, "steer");
+    void dispatchTurn(message, "steer").catch(reportError);
   }
 
   // Plain Enter: slash-style local commands → shared dispatch (which
@@ -340,7 +347,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     ) {
       return;
     }
-    dispatchTurn(message, "follow_up");
+    void dispatchTurn(message, "follow_up").catch(reportError);
   }
 
   installKeyHandlers({
