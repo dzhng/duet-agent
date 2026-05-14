@@ -9,6 +9,8 @@
  *   /observe <secs>            same, but as an observational memory phase
  *   /queue <a,b,c>             emit a follow-up queue with the given prompts
  *   /queue+observe <secs>      run an observation phase with a non-empty queue
+ *   /follow-up-demo            walk a three-prompt queue down to empty, replaying
+ *                              each delivered entry as a `you:` block
  *   /tools <secs>              emit one fake tool-call running → completed
  *   /tools-demo                run a batch of formatters with verbose data
  *   /banner-demo               demo the sticky "latest user message" banner
@@ -71,6 +73,8 @@ export const PLAYGROUND_MENU = [
   "  /reflect <secs>            same, but as a reflection memory phase",
   "  /queue <a,b,c>             emit a follow-up queue with the given prompts",
   "  /queue+observe <secs>      observation phase with a non-empty queue",
+  "  /follow-up-demo            walk a three-prompt queue down to empty,",
+  "                             replaying each delivered entry as a `you:` block",
   "  /tools <secs>              one fake tool-call running -> completed",
   "  /tools-demo                run a batch of formatters with verbose data",
   "  /banner-demo               demo the sticky 'latest user message' banner",
@@ -266,6 +270,10 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
     if (message.startsWith("/reflect")) {
       const secs = parseSeconds(message, 20);
       return this.runMemoryPhase("reflection", secs);
+    }
+
+    if (message.startsWith("/follow-up-demo")) {
+      return this.runFollowUpDemo();
     }
 
     if (message.startsWith("/queue+observe")) {
@@ -764,6 +772,37 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         },
       ],
     };
+  }
+
+  /**
+   * Walk a three-entry follow-up queue all the way down to empty, pausing
+   * between deliveries so the user can watch the lifecycle play out:
+   *
+   *   1. Initial emit populates the panel above the compose bar with all
+   *      three prompts; nothing is in the transcript yet.
+   *   2. Each subsequent emit drops the front entry — the session
+   *      subscription diffs the queues and replays the delivered prompt as
+   *      a real `you:` block in the transcript, while the panel shrinks.
+   *   3. The final empty emit drains the last entry, hiding the panel and
+   *      leaving three `you:` blocks behind in the transcript.
+   */
+  private async runFollowUpDemo(): Promise<TurnTerminalEvent> {
+    const prompts = [
+      { message: "draft the email" },
+      { message: "share a screenshot" },
+      { message: "check the analytics" },
+    ];
+    this.emit({ type: "follow_up_queue", prompts });
+    await this.sleep(1200);
+    if (this.interrupted) return this.interruptedTerminal();
+    this.emit({ type: "follow_up_queue", prompts: prompts.slice(1) });
+    await this.sleep(1200);
+    if (this.interrupted) return this.interruptedTerminal();
+    this.emit({ type: "follow_up_queue", prompts: prompts.slice(2) });
+    await this.sleep(1200);
+    if (this.interrupted) return this.interruptedTerminal();
+    this.emit({ type: "follow_up_queue", prompts: [] });
+    return this.complete("Follow-up queue drained.");
   }
 
   /**

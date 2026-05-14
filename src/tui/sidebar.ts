@@ -6,12 +6,7 @@ import {
   type TextChunk,
   TextRenderable,
 } from "@opentui/core";
-import type {
-  TurnContextWindowUsage,
-  TurnUsageEvent,
-  TurnFollowUpQueueEntry,
-  TurnTodo,
-} from "../types/protocol.js";
+import type { TurnContextWindowUsage, TurnUsageEvent, TurnTodo } from "../types/protocol.js";
 import type { StateMachineSession } from "../types/state-machine.js";
 import { COLORS } from "./theme.js";
 
@@ -52,18 +47,17 @@ const CONTEXT_SEGMENTS: ReadonlyArray<{
 ];
 
 /**
- * Right-hand sidebar that surfaces the runner's todos, queued follow-ups,
- * active state machine, and most recent context-window usage. Stacked
- * panels share width and bordering so the column has a consistent visual
- * rhythm.
+ * Right-hand sidebar that surfaces the runner's todos, active state
+ * machine, and most recent context-window usage. Stacked panels share
+ * width and bordering so the column has a consistent visual rhythm. The
+ * queued follow-ups list lives in the main column (above the compose bar)
+ * rather than here so it sits next to where the user types.
  */
 export interface Sidebar {
   /** Outer container; caller adds this to the root row. */
   readonly view: BoxRenderable;
   /** Replace the rendered todo list with the runner's current todos. */
   setTodos(todos: readonly TurnTodo[]): void;
-  /** Replace the rendered follow-up queue with the runner's pending entries. */
-  setFollowUpQueue(entries: readonly TurnFollowUpQueueEntry[]): void;
   /** Mirror the active state-machine pipeline; pass undefined to clear. */
   setStateMachine(session: StateMachineSession | undefined): void;
   /** Render the latest context-usage progress bar; pass undefined to clear. */
@@ -80,14 +74,7 @@ export interface Sidebar {
 export const SIDEBAR_WIDTH = 36;
 
 /**
- * Maximum body lines rendered inside the follow-ups panel. The panel never
- * grows past this height, so todos and the state machine keep their space
- * even when many follow-ups are queued.
- */
-const FOLLOW_UP_MAX_BODY_LINES = 3;
-
-/**
- * Empty-state copy for the three runtime panels. Doubles as the panel's
+ * Empty-state copy for the two runtime panels. Doubles as the panel's
  * initial body and the fallback the sidebar restores when the runner
  * reports an empty list. Phrased as a short "what this panel is" hint
  * rather than a placeholder like "(none)" so a brand-new session teaches
@@ -95,8 +82,6 @@ const FOLLOW_UP_MAX_BODY_LINES = 3;
  */
 const TODOS_EMPTY_HINT =
   "Empty for now. Fills with the agent's in-turn checklist while it works on a multi-step task.";
-const FOLLOW_UPS_EMPTY_HINT =
-  "Empty for now. Shift+Enter queues a message here; it's delivered when the current turn settles.";
 const RELAYS_EMPTY_HINT =
   "No relay running. Long-running prompts (outreach, dev lifecycle, triage) open one and run across sessions.";
 
@@ -111,12 +96,6 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
   });
 
   const { panel: todoPanel, body: todoBody } = createPanel(renderer, "todos", TODOS_EMPTY_HINT);
-  const { panel: followUpPanel, body: followUpBody } = createPanel(
-    renderer,
-    "follow-ups",
-    FOLLOW_UPS_EMPTY_HINT,
-    { maxBodyLines: FOLLOW_UP_MAX_BODY_LINES, grow: false },
-  );
   const { panel: smPanel, body: smBody } = createPanel(renderer, "relays", RELAYS_EMPTY_HINT);
 
   // The context panel is hand-rolled rather than going through createPanel
@@ -211,7 +190,6 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
   contextPanel.add(legendRow);
 
   view.add(todoPanel);
-  view.add(followUpPanel);
   view.add(smPanel);
   view.add(contextPanel);
 
@@ -227,29 +205,6 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
         .map((todo) => `${todoStatusGlyph(todo.status)} ${todo.content}`)
         .join("\n");
       todoBody.fg = COLORS.agent;
-    },
-    setFollowUpQueue(entries) {
-      if (entries.length === 0) {
-        followUpBody.content = FOLLOW_UPS_EMPTY_HINT;
-        followUpBody.fg = COLORS.hint;
-        return;
-      }
-      // Hard-cap to FOLLOW_UP_MAX_BODY_LINES so the panel never pushes the
-      // todos or state-machine panels off-screen. Each entry collapses to a
-      // single line; if more entries exist than fit, the last visible line
-      // becomes a "+N more" summary instead of a real entry.
-      const maxLines = FOLLOW_UP_MAX_BODY_LINES;
-      const showSummary = entries.length > maxLines;
-      const visibleCount = showSummary ? maxLines - 1 : entries.length;
-      const lines = entries.slice(0, visibleCount).map((entry, index) => {
-        const attachments = entry.images?.length ? ` 📎${entry.images.length}` : "";
-        return collapseToLine(`${index + 1}. ${entry.message}${attachments}`);
-      });
-      if (showSummary) {
-        lines.push(`+${entries.length - visibleCount} more`);
-      }
-      followUpBody.content = lines.join("\n");
-      followUpBody.fg = COLORS.agent;
     },
     setStateMachine(session) {
       if (!session) {
@@ -316,39 +271,18 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
   };
 }
 
-interface PanelOptions {
-  fixedHeight?: number;
-  /**
-   * Cap on body lines, used to derive the panel's `maxHeight` so the panel
-   * shrinks to fit short content but refuses to grow past the cap. Mutually
-   * exclusive with `fixedHeight`.
-   */
-  maxBodyLines?: number;
-  grow?: boolean;
-}
-
 function createPanel(
   renderer: CliRenderer,
   title: string,
   initialBody: string,
-  options: PanelOptions = {},
 ): { panel: BoxRenderable; body: TextRenderable } {
-  const grow = options.grow ?? true;
-  const compact = options.fixedHeight !== undefined || options.maxBodyLines !== undefined;
-  // Compact panels (fixed or capped height) drop top/bottom padding so the
-  // budget is spent on body lines rather than whitespace; border (2) + title
-  // (1) + body lines = total panel height.
-  const maxHeight = options.maxBodyLines !== undefined ? options.maxBodyLines + 3 : undefined;
   const panel = new BoxRenderable(renderer, {
     flexDirection: "column",
     border: true,
     borderColor: COLORS.border,
-    paddingLeft: 1,
-    paddingRight: 1,
-    padding: compact ? undefined : 1,
-    ...(options.fixedHeight ? { height: options.fixedHeight } : {}),
-    ...(maxHeight ? { maxHeight } : {}),
-    ...(grow ? { flexGrow: 1, flexShrink: 1 } : { flexShrink: 0 }),
+    padding: 1,
+    flexGrow: 1,
+    flexShrink: 1,
   });
   const titleNode = new TextRenderable(renderer, {
     content: title,
@@ -359,21 +293,12 @@ function createPanel(
   const body = new TextRenderable(renderer, {
     content: initialBody,
     fg: COLORS.hint,
-    flexGrow: grow ? 1 : 0,
+    flexGrow: 1,
     flexShrink: 1,
   });
   panel.add(titleNode);
   panel.add(body);
   return { panel, body };
-}
-
-// Inner text width = sidebar width (36) - border (2) - padding (2).
-const SIDEBAR_BODY_WIDTH = SIDEBAR_WIDTH - 4;
-
-function collapseToLine(text: string): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  if (flat.length <= SIDEBAR_BODY_WIDTH) return flat;
-  return `${flat.slice(0, Math.max(1, SIDEBAR_BODY_WIDTH - 1))}…`;
 }
 
 /**

@@ -56,6 +56,81 @@ describe("TUI submit + esc dispatch", () => {
     },
   );
 
+  testIfDocker(
+    "Enter mid-turn suppresses the transcript `you:` block until the runner drains the queue",
+    async () => {
+      // Pins the queue-time suppression invariant from `dispatchTurn`:
+      // when a follow-up is dispatched while a turn is already running,
+      // the message must reach `session.prompt` but must NOT be painted
+      // into the transcript as a `you:` block at submit time. The
+      // follow-up panel above the compose row owns surfacing the queued
+      // text; the transcript only gets the block when the runner later
+      // hands the entry to the agent (covered by the drain replay test).
+      await harness.mockInput.typeText("/working 30");
+      await harness.flush();
+      harness.mockInput.pressEnter();
+      await harness.waitForPrompt();
+
+      const distinctive = "queued-but-not-rendered-yet";
+      await harness.mockInput.typeText(distinctive);
+      await harness.flush();
+      harness.mockInput.pressEnter();
+      await harness.waitForPrompt({ count: 2 });
+
+      // The session received the prompt with the expected behavior…
+      expect(harness.promptCalls).toHaveLength(2);
+      expect(harness.promptCalls[1]!.message).toBe(distinctive);
+      expect(harness.promptCalls[1]!.behavior).toBe("follow_up");
+
+      // …but the transcript must not contain a `you:` block for it yet.
+      // The string is distinctive enough that any occurrence in the
+      // captured frame would have to come from a rendered transcript
+      // block, not from chrome text.
+      const frame = await harness.captureCharFrame();
+      expect(frame).not.toContain(distinctive);
+    },
+  );
+
+  testIfDocker(
+    "Runner draining the follow-up queue replays the suppressed `you:` block into the transcript",
+    async () => {
+      // Pins the drain-time replay invariant from `bindSessionToUi`:
+      // when a `follow_up_queue` event removes an entry that was present
+      // in the prior snapshot, the session subscription must render the
+      // delivered entry as a `you:` transcript block. This is the
+      // counterpart to the queue-time suppression above; together they
+      // guarantee every queued follow-up shows up exactly once, at the
+      // moment the runner actually consumes it.
+      await harness.mockInput.typeText("/working 30");
+      await harness.flush();
+      harness.mockInput.pressEnter();
+      await harness.waitForPrompt();
+
+      const distinctive = "drained-into-transcript";
+      await harness.mockInput.typeText(distinctive);
+      await harness.flush();
+      harness.mockInput.pressEnter();
+      await harness.waitForPrompt({ count: 2 });
+
+      let frame = await harness.captureCharFrame();
+      expect(frame).not.toContain(distinctive);
+
+      // Drive the queue lifecycle by hand: first surface the entry as
+      // queued, then drain it. The diff between the two snapshots is
+      // what the subscription uses to decide what to replay.
+      harness.runner.emitEvent({
+        type: "follow_up_queue",
+        prompts: [{ message: distinctive }],
+      });
+      await harness.flush();
+      harness.runner.emitEvent({ type: "follow_up_queue", prompts: [] });
+      await harness.flush();
+
+      frame = await harness.captureCharFrame();
+      expect(frame).toContain(distinctive);
+    },
+  );
+
   testIfDocker("Enter mid-turn enqueues a follow-up via a second session.prompt", async () => {
     // /working 30 keeps the runner busy long enough for a second submit to
     // land while the first turn is still in flight.

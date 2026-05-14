@@ -32,7 +32,7 @@ export interface LayoutRefs {
   root: BoxRenderable;
   /** Main column: transcript, status, hint, pickers, input. */
   layout: BoxRenderable;
-  /** Right-side panel with todos, follow-up queue, state machine, and context usage. */
+  /** Right-side panel with todos, state machine, and context usage. */
   sidebar: SidebarHandle;
   /** Sticky banner at the top of the main column that surfaces the most
    *  recent user message so it stays visible as the transcript scrolls. */
@@ -70,6 +70,13 @@ export interface LayoutRefs {
   questionSpacer: TextRenderable;
   /** Fixed pool of selectable rows for the active question's options. */
   questionRows: TextRenderable[];
+  /** Compose-row-adjacent panel that lists queued follow-ups. Sits above
+   *  {@link inputBox} so the user can see what's about to be delivered
+   *  next to where they type. Hidden whenever the queue is empty; entries
+   *  enter the transcript only when the runner drains them. */
+  followUpPanel: BoxRenderable;
+  /** Body of {@link followUpPanel}; driven by the session subscription. */
+  followUpPanelBody: TextRenderable;
   /** Bordered row containing the prompt sigil and the input textarea. */
   inputBox: BoxRenderable;
   /** Leading "> " sigil rendered before the textarea; excluded from drag-select. */
@@ -268,6 +275,45 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
     fileAutocompletePanel.add(row);
   }
 
+  // Follow-ups panel sits directly above the input box. It is hidden
+  // until at least one follow-up is queued. A body cap (three visible
+  // rows + "+N more" summary on the third when the queue exceeds the
+  // cap) keeps the panel from pushing the compose row off-screen when a
+  // long queue piles up. Entries are not echoed into the transcript at
+  // queue time; the session subscription renders the `you:` block only
+  // when the runner drains the entry and delivers it to the agent.
+  const followUpPanel = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    border: true,
+    borderColor: COLORS.border,
+    paddingLeft: 1,
+    paddingRight: 1,
+    flexShrink: 0,
+    // Border (2) + title row (1) + body cap (3) = 6 cells. Matches the
+    // "+N more" summary the session subscription emits on overflow.
+    maxHeight: 6,
+  });
+  followUpPanel.visible = false;
+  const followUpPanelTitle = new TextRenderable(renderer, {
+    content: "follow-ups",
+    fg: COLORS.status,
+    height: 1,
+    flexShrink: 0,
+    selectable: false,
+  });
+  const followUpPanelBody = new TextRenderable(renderer, {
+    content: "",
+    fg: COLORS.agent,
+    // `none` so each \n-separated entry occupies exactly one visual line;
+    // long entries that overflow horizontally are clipped by the panel
+    // border rather than wrapping and pushing later entries past the cap.
+    wrapMode: "none",
+    flexShrink: 0,
+    selectable: false,
+  });
+  followUpPanel.add(followUpPanelTitle);
+  followUpPanel.add(followUpPanelBody);
+
   const questionPanel = new BoxRenderable(renderer, {
     flexDirection: "column",
     border: true,
@@ -348,6 +394,7 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
   layout.add(skillAutocompletePanel);
   layout.add(fileAutocompletePanel);
   layout.add(questionPanel);
+  layout.add(followUpPanel);
   layout.add(inputBox);
   root.add(layout);
   root.add(sidebar.view);
@@ -375,6 +422,8 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
     questionTitle,
     questionSpacer,
     questionRows,
+    followUpPanel,
+    followUpPanelBody,
     inputBox,
     prompt,
     inputField,

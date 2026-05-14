@@ -264,11 +264,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   const unsubscribe = bindSessionToUi({
     session: input.session,
     sidebar: ui.sidebar,
+    followUpPanel: ui.followUpPanel,
+    followUpPanelBody: ui.followUpPanelBody,
     stepRenderer,
     statusController,
     questionPicker,
     appendLine,
     appendBlock,
+    appendUserBlock,
   });
 
   // Esc cancels the in-flight turn; idle Esc is a no-op (Ctrl+C quits).
@@ -289,10 +292,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // submit captures the bytes before that race resolves badly.
     await pasteController.autoAttachFromMessage(message).catch(reportError);
     const pending = pasteController.consume();
-    appendUserBlock(message);
-    if (pending.length > 0) {
-      const lines = pending.map((p) => `📎 ${p.label}: ${p.path}`).join("\n");
-      appendBlock(null, lines, COLORS.hint);
+    // Suppress the transcript `you:` block for follow-ups that are about
+    // to be queued behind an in-flight turn: the runner will keep them in
+    // `state.followUpQueue` until the active work settles, and the
+    // follow-up panel above the compose row already surfaces them. The
+    // session subscription emits the deferred `you:` block when the
+    // runner drains the entry and delivers it to the agent. Steer
+    // messages skip the queue entirely, so they always render here.
+    const queued = behavior === "follow_up" && statusController.isRunning();
+    if (!queued) {
+      appendUserBlock(message);
+      if (pending.length > 0) {
+        const lines = pending.map((p) => `📎 ${p.label}: ${p.path}`).join("\n");
+        appendBlock(null, lines, COLORS.hint);
+      }
     }
     const images = pending.map((p) => p.attachment);
     // Treat typed message as a flush so collected partial answers are not
