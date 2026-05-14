@@ -5,6 +5,15 @@ import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
 import { DEFAULT_BASH_TIMEOUT_SECONDS } from "./tools.js";
 
+function cwdSystemPrompt(cwd: string): string {
+  return dedent`
+    <cwd>
+    Current working directory: ${cwd}.
+    Before responding to a request that touches files, code, or project state, spend a tool call or two exploring this directory (e.g. \`ls\`, \`rg\`, \`read\`) so your answer reflects what is actually here rather than assumptions. Skip exploration only for requests that are clearly unrelated to the workspace.
+    </cwd>
+  `;
+}
+
 function currentDateSystemPrompt(): string {
   // Day-level resolution keeps the prompt stable for the whole UTC day so prompt
   // caching is not invalidated on every turn. Agents that need finer-grained
@@ -90,6 +99,7 @@ export function createStateMachineSystemPromptLayer(input: {
 function createBaseSystemPrompt(config: TurnRunnerConfig, skills: readonly Skill[]): string {
   return [
     config.systemInstructions,
+    cwdSystemPrompt(config.cwd ?? process.cwd()),
     currentDateSystemPrompt(),
     TOOL_EXECUTION_SYSTEM_PROMPT,
     createSkillsSystemPrompt(skills),
