@@ -140,13 +140,59 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const transcriptWriter = new TranscriptWriter(renderer, ui.transcript, {
     getLastSelectionText: () => lastSelectionText,
-    onBufferDestroyed: () => statusController.shutdown(),
+    onBufferDestroyed: () => {
+      statusController.shutdown();
+      clearInterval(bannerWatcher);
+    },
   });
+
+  // Record + render a user-attributed transcript block. Centralized so every
+  // code path that shows a `you:` block also refreshes the banner anchor
+  // and body. Returns the rendered lines so callers that want to group
+  // trailing rows (e.g. attachment summaries) with the user block can do so.
+  function appendUserBlock(message: string) {
+    transcriptWriter.recordEntry("user", message);
+    const lines = transcriptWriter.appendBlock("you:", message, COLORS.user);
+    transcriptWriter.setLatestUserBlock(lines);
+    ui.latestUserBannerText.content = clampBannerBody(message);
+    refreshLatestUserBannerVisibility();
+    return lines;
+  }
+
   const appendLine = (content: string, fg: string) => transcriptWriter.appendLine(content, fg);
   const appendBlock = (label: string | null, body: string, fg: string) =>
     transcriptWriter.appendBlock(label, body, fg);
   const recordTranscriptEntry = (kind: TranscriptEntry["kind"], text: string) =>
     transcriptWriter.recordEntry(kind, text);
+
+  // Show the sticky banner only when the latest `you:` block has scrolled
+  // off the top of the transcript viewport (i.e. the user scrolled the
+  // transcript down past their last message). When the block is still on
+  // screen or sits below the viewport (user scrolled up to read earlier
+  // history), the banner stays hidden. OpenTUI's `Renderable#y` getter
+  // walks the parent chain and already folds in `content.translateY =
+  // -scrollTop`, so child `screenY` values are in the same root-cumulative
+  // coordinate space as `viewport.screenY`; comparing against `scrollTop`
+  // (content-space) would mix coordinate systems.
+  function refreshLatestUserBannerVisibility(): void {
+    const lines = transcriptWriter.getLatestUserBlock();
+    if (lines.length === 0) {
+      ui.latestUserBanner.visible = false;
+      return;
+    }
+    const last = lines[lines.length - 1]!;
+    const viewTop = ui.transcript.viewport.screenY;
+    const scrolledAboveViewport = last.screenY + last.height <= viewTop;
+    ui.latestUserBanner.visible = scrolledAboveViewport;
+  }
+
+  // Yoga lays out children asynchronously and ScrollBoxRenderable does not
+  // emit a scroll event, so poll on a short interval to keep the banner in
+  // sync with both new content (which shifts the sticky-bottom view) and
+  // manual scrolling. 100 ms is fast enough to feel responsive while staying
+  // well below the per-frame cost; the visibility check is just a handful
+  // of property reads.
+  const bannerWatcher = setInterval(refreshLatestUserBannerVisibility, 100);
 
   const statusController = new StatusController({
     renderer,
@@ -199,6 +245,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     transcriptWriter,
     statusController,
     appendBlock,
+    appendUserBlock,
     recordTranscriptEntry,
     reportError,
     onPickerEscapeClose: setEscapeSuppress,
@@ -235,8 +282,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // chrome to "running".
   function dispatchTurn(message: string, behavior: "follow_up" | "steer"): void {
     const pending = pasteController.consume();
-    recordTranscriptEntry("user", message);
-    appendBlock("you:", message, COLORS.user);
+    appendUserBlock(message);
     if (pending.length > 0) {
       const lines = pending.map((p) => `📎 ${p.label}: ${p.path}`).join("\n");
       appendBlock(null, lines, COLORS.hint);
@@ -347,7 +393,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   });
 
   replayResumeHistory(
-    { appendLine, appendBlock, recordTranscriptEntry },
+    {
+      appendLine,
+      appendBlock,
+      recordTranscriptEntry,
+      setLatestUserBlock: (lines) => transcriptWriter.setLatestUserBlock(lines),
+    },
     { history: input.history, resumeHistoryMessages: input.resumeHistoryMessages },
   );
 
@@ -356,8 +407,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     initialPrompt: input.initialPrompt,
     statusController,
     stepRenderer,
-    appendBlock,
-    recordTranscriptEntry,
+    appendUserBlock,
     reportError,
   });
 
@@ -369,6 +419,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     statusController.shutdown();
   });
 
+  clearInterval(bannerWatcher);
   unsubscribe();
   return statusController.lastTerminal();
+}
+
+/**
+ * Clamp the body of the sticky "latest user message" banner so it does not
+ * dominate the screen for long pastes. We keep at most {@link BANNER_MAX_LINES}
+ * raw lines and append an ellipsis when more was trimmed; the banner itself
+ * soft-wraps so visual height may still exceed the raw line count.
+ */
+const BANNER_MAX_LINES = 3;
+function clampBannerBody(text: string): string {
+  const lines = text.split("\n");
+  if (lines.length <= BANNER_MAX_LINES) return text;
+  return `${lines.slice(0, BANNER_MAX_LINES).join("\n")}…`;
 }

@@ -34,6 +34,12 @@ export interface LayoutRefs {
   layout: BoxRenderable;
   /** Right-side panel with todos, follow-up queue, state machine, and context usage. */
   sidebar: SidebarHandle;
+  /** Sticky banner at the top of the main column that surfaces the most
+   *  recent user message so it stays visible as the transcript scrolls. */
+  latestUserBanner: BoxRenderable;
+  /** Body text of {@link latestUserBanner}; updated by app.ts whenever a
+   *  user message is recorded. */
+  latestUserBannerText: TextRenderable;
   /** Scrollable transcript that pins to the bottom while the user has not manually scrolled. */
   transcript: ScrollBoxRenderable;
   /** Single-line working-status row below the transcript (spinner, elapsed, queue size). */
@@ -100,6 +106,47 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
 
   const sidebar = createSidebar(renderer);
 
+  // Sticky banner that mirrors the most recent user message above the
+  // transcript. Hidden until the first user message lands; app.ts sets
+  // the body text whenever a user block is recorded and a short-interval
+  // watcher toggles `visible` based on whether that block has scrolled
+  // above the transcript viewport.
+  // The banner sits directly above the transcript inside the shared
+  // bordered frame below. The frame's `padding: 1` already gives it equal
+  // 1-row gaps above the banner text and below the transcript content;
+  // this `paddingBottom: 1` adds a matching 1-row gap between the banner
+  // text and the transcript content so the banner is symmetrically inset
+  // rather than glued to the scrolling area.
+  const latestUserBanner = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    paddingBottom: 1,
+    flexShrink: 0,
+  });
+  latestUserBanner.visible = false;
+  const latestUserBannerText = new TextRenderable(renderer, {
+    content: "",
+    fg: COLORS.user,
+    wrapMode: "word",
+    flexShrink: 0,
+    selectable: false,
+  });
+  latestUserBanner.add(latestUserBannerText);
+
+  // Shared bordered frame around the banner and the transcript so they
+  // read as one main-content surface. The border/padding live here rather
+  // than on the transcript so the banner inherits the same chrome.
+  // `toolBlockColumns()` in step-renderer.ts assumes a 5-column transcript
+  // chrome budget (2 border + 2 padding + 1 scrollbar gutter); keep this
+  // wrapper's border+padding aligned with that math.
+  const transcriptFrame = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    flexGrow: 1,
+    flexShrink: 1,
+    border: true,
+    borderColor: COLORS.border,
+    padding: 1,
+  });
+
   const transcript = new ScrollBoxRenderable(renderer, {
     flexGrow: 1,
     flexShrink: 1,
@@ -111,9 +158,6 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
     // down while the user is reading history.
     stickyScroll: true,
     stickyStart: "bottom",
-    border: true,
-    borderColor: COLORS.border,
-    padding: 1,
   });
   // Keep keyboard focus pinned to the composer. ScrollBoxRenderable is
   // focusable by default, so a mouse click on the transcript would steal
@@ -296,7 +340,9 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
   inputBox.add(prompt);
   inputBox.add(inputField);
 
-  layout.add(transcript);
+  transcriptFrame.add(latestUserBanner);
+  transcriptFrame.add(transcript);
+  layout.add(transcriptFrame);
   layout.add(status);
   layout.add(hint);
   layout.add(skillAutocompletePanel);
@@ -312,6 +358,8 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
     root,
     layout,
     sidebar,
+    latestUserBanner,
+    latestUserBannerText,
     transcript,
     status,
     hint,

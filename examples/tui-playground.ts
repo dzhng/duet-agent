@@ -11,6 +11,7 @@
  *   /queue+observe <secs>      run an observation phase with a non-empty queue
  *   /tools <secs>              emit one fake tool-call running → completed
  *   /tools-demo                run a batch of formatters with verbose data
+ *   /banner-demo               demo the sticky "latest user message" banner
  *   /ask                       emit an `ask` terminal with three questions
  *                              (single-select, multi-select, single-select).
  *                              Up/Down moves the highlight (and live-records
@@ -72,6 +73,8 @@ export const PLAYGROUND_MENU = [
   "  /queue+observe <secs>      observation phase with a non-empty queue",
   "  /tools <secs>              one fake tool-call running -> completed",
   "  /tools-demo                run a batch of formatters with verbose data",
+  "  /banner-demo               demo the sticky 'latest user message' banner",
+  "                             (re-run with a multi-line paste to see the clamp)",
   "  /ask                       ask three questions (single, multi, single).",
   "                             ↑/↓ move highlight (single-select live-records);",
   "                             Space/Enter advance, or toggle on multi-select;",
@@ -221,6 +224,10 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
     if (message.startsWith("/tools-demo")) {
       const askTerminal = await this.runToolsDemo();
       return askTerminal ?? this.complete("Tools demo finished.");
+    }
+
+    if (message.startsWith("/banner-demo")) {
+      return this.runBannerDemo();
     }
 
     if (message.startsWith("/tools")) {
@@ -757,6 +764,54 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         },
       ],
     };
+  }
+
+  /**
+   * Walk the user through the sticky "latest user message" banner that
+   * appears above the transcript only when the most recent `you:` block
+   * has scrolled out of the viewport. This scenario streams a long-ish
+   * agent reply so the user's `/banner-demo` block visibly scrolls off
+   * the top, which is the exact condition that reveals the banner; the
+   * narration also points them at the other ways to trigger it.
+   */
+  private async runBannerDemo(): Promise<TurnTerminalEvent> {
+    const lines = [
+      "The bordered row at the top of the screen pins your latest message,",
+      "but only when that message is no longer visible in the transcript.",
+      "",
+      "Watch what happens as this reply streams: once `you: /banner-demo`",
+      "scrolls past the top edge of the transcript, the banner appears.",
+      "Scroll the transcript back down with the mouse wheel or PageDown",
+      "until the original `you:` block is on screen and the banner hides",
+      "itself again.",
+      "",
+      "Other ways to exercise it:",
+      "  1. Send a short prompt - the banner stays hidden because the",
+      "     block is still visible right above the input.",
+      "  2. Send a multi-line paste (Shift+Enter to add newlines) - the",
+      "     banner body clamps to 3 lines with an ellipsis when it shows.",
+      "  3. Run /working 8 and scroll up while the agent streams - the",
+      "     banner pops in as soon as your prompt scrolls off the top.",
+      "  4. Run /ask, accept with a typed flush message - the flush is",
+      "     recorded as a `you:` block that the banner tracks.",
+      "",
+      "(Padding follows so this reply is tall enough to push the original",
+      "`you: /banner-demo` block off the top of the transcript on most",
+      "terminal sizes; resize smaller if it's still visible.)",
+      ...Array.from(
+        { length: 20 },
+        (_, i) =>
+          `  line ${String(i + 1).padStart(2, " ")} of padding to force the prompt off screen.`,
+      ),
+    ];
+    const summary = lines.join("\n");
+    for (const chunk of summary.match(/.{1,40}/g) ?? []) {
+      this.emit({ type: "step", step: { type: "text_delta", delta: chunk } });
+      await this.sleep(30);
+      if (this.interrupted) return this.interruptedTerminal();
+    }
+    this.emit({ type: "step", step: { type: "text", text: summary } });
+    return this.complete(summary);
   }
 
   private async runMemoryPhase(

@@ -16,7 +16,6 @@ import {
 } from "./autocomplete.js";
 import type { Session } from "../session/session.js";
 import { COLORS } from "./theme.js";
-import type { TranscriptEntryKind } from "./transcript-log.js";
 import type { TurnPromptImage, TurnQuestion } from "../types/protocol.js";
 
 const QUESTION_OPTION_LIMIT = AUTOCOMPLETE_LIMITS.questionOption;
@@ -42,13 +41,10 @@ export interface QuestionPickerOptions {
    *  global escape-to-exit handler suppresses the next Escape it sees and
    *  doesn't double-handle the keystroke. */
   onEscapeClose: () => void;
-  /** Append a bordered transcript block (label + body). Used for the
-   *  `you:` echo when the user confirms an answer, mirroring how free-form
-   *  prompts render. */
-  appendBlock: (label: string | null, body: string, color: string) => void;
-  /** Mirror committed answers into the in-memory transcript log so /copy
-   *  and resume snapshots include them in order. */
-  recordTranscriptEntry: (kind: TranscriptEntryKind, text: string) => void;
+  /** Render the `you:` echo when the user confirms an answer (mirroring
+   *  how free-form prompts render), record it in the transcript log, and
+   *  refresh the sticky latest-user-message banner. */
+  appendUserBlock: (message: string) => void;
   /** Surface a dispatch failure (rejected `session.answer` promise) the
    *  same way the rest of runTui does. */
   reportError: (error: unknown) => void;
@@ -367,8 +363,7 @@ export class QuestionPicker {
     const accumulatedForActive = this.accumulatedAnswers[question.question] ?? [];
     const transcriptText = this.describeAnswerLabels(question, accumulatedForActive);
     if (transcriptText) {
-      this.opts.recordTranscriptEntry("user", transcriptText);
-      this.opts.appendBlock("you:", transcriptText, COLORS.user);
+      this.opts.appendUserBlock(transcriptText);
     }
 
     if (this.activeIndex < this.pendingQuestions.length - 1) {

@@ -1,16 +1,13 @@
 import type { Session } from "../session/session.js";
-import type { TranscriptEntry } from "./transcript-log.js";
 import type { StatusController } from "./status-controller.js";
 import type { StepRenderer } from "./step-renderer.js";
-import { COLORS } from "./theme.js";
 
 export interface BootstrapInitialPromptDeps {
   session: Session;
   initialPrompt?: string;
   statusController: StatusController;
   stepRenderer: StepRenderer;
-  appendBlock(label: string | null, body: string, fg: string): void;
-  recordTranscriptEntry(kind: TranscriptEntry["kind"], text: string): void;
+  appendUserBlock(message: string): void;
   reportError(error: unknown): void;
 }
 
@@ -24,18 +21,10 @@ export interface BootstrapInitialPromptDeps {
  * when the next wake will fire.
  */
 export function bootstrapInitialPrompt(deps: BootstrapInitialPromptDeps): void {
-  const {
-    session,
-    initialPrompt,
-    statusController,
-    stepRenderer,
-    appendBlock,
-    recordTranscriptEntry,
-    reportError,
-  } = deps;
+  const { session, initialPrompt, statusController, stepRenderer, appendUserBlock, reportError } =
+    deps;
   if (initialPrompt) {
-    recordTranscriptEntry("user", initialPrompt);
-    appendBlock("you:", initialPrompt, COLORS.user);
+    appendUserBlock(initialPrompt);
     void session.prompt({ message: initialPrompt, behavior: "follow_up" }).catch(reportError);
     statusController.markRunning();
     return;
