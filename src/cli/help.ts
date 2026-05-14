@@ -47,6 +47,7 @@ OPTIONS
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
   --env-file <path>        Shared env file to load after <workdir>/.env (default: ${DEFAULT_DUET_ENV_FILE})
   --no-auto-upgrade         Skip the auto-upgrade probe for this run (also: DUET_NO_AUTO_UPGRADE=1)
+  --no-skill-sync           Skip the on-load default-skill sync
   --rpc                     Bare turn-runner control surface. Reads newline-delimited TurnRunnerCommand
                             JSON from stdin and writes TurnEvent JSON to stdout. The first command must
                             be "start"; the process exits after the single turn reaches its terminal

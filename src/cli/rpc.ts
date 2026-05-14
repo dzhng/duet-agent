@@ -6,7 +6,9 @@ import {
   PROVIDER_SHORTHANDS,
   resolveProviderShorthand,
 } from "../model-resolution/catalog.js";
+import { maybeAutoSyncDefaultSkills } from "../lib/sync-skills.js";
 import { TurnRunner } from "../turn-runner/turn-runner.js";
+import { describeUpgradeStatus, runAutoUpgrade } from "./auto-upgrade.js";
 import type {
   TurnEditFollowUpQueueCommand,
   TurnInterruptCommand,
@@ -54,6 +56,28 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
   const dotenvKeys = loadCliEnvFiles(parsed.workDir, parsed.envFilePath);
   shimDuetApiKeyToAiGateway();
 
+  // Mirror the run-command boot sequence: probe the registry for a newer
+  // package version and (if newer) run the package manager in-process before
+  // the runner takes over. RPC has no TUI to stream live status into, so we
+  // simply await the final status and emit a single human-readable line on
+  // stderr, matching the one-shot path in `runRunCommand`.
+  const upgradeStatus = await runAutoUpgrade({
+    packageName: pkg.name,
+    currentVersion: pkg.version,
+    disabled: parsed.noAutoUpgrade,
+  });
+  const upgradeNotice = describeUpgradeStatus(pkg.name, upgradeStatus);
+  if (upgradeNotice) process.stderr.write(`${upgradeNotice}\n`);
+
+  // Refresh gateway-managed default skills when the user has previously
+  // opted in via `duet login`. Skipped when the caller passes
+  // --no-skill-sync (e.g. a sandbox host that already manages its own skill
+  // bundle). Conditional GET keeps the steady-state cost to a single 304
+  // round-trip.
+  if (process.env.DUET_API_KEY && !parsed.noSkillSync) {
+    await maybeAutoSyncDefaultSkills({ apiKey: process.env.DUET_API_KEY });
+  }
+
   const { config } = buildCliTurnConfig(
     {
       ...(parsed.modelName ? { modelName: parsed.modelName } : {}),
@@ -93,6 +117,10 @@ export interface ParsedRpcArgs {
   systemPromptFiles?: string[];
   envFilePath?: string;
   incognito: boolean;
+  /** When true, skip the on-load default-skill sync. */
+  noSkillSync: boolean;
+  /** When true, skip the on-load auto-upgrade probe. */
+  noAutoUpgrade: boolean;
 }
 
 /**
@@ -110,6 +138,8 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
   let systemPromptFiles: string[] | undefined;
   let envFilePath: string | undefined;
   let incognito = false;
+  let noSkillSync = false;
+  let noAutoUpgrade = false;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -150,6 +180,12 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         envFilePath = args[++i];
         break;
+      case "--no-skill-sync":
+        noSkillSync = true;
+        break;
+      case "--no-auto-upgrade":
+        noAutoUpgrade = true;
+        break;
       case "--rpc":
         // The dispatcher in cli.ts passes the full argv through; swallow the
         // routing flag here so it does not look like an unknown option.
@@ -180,6 +216,8 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
     ...(systemPromptFiles ? { systemPromptFiles } : {}),
     ...(envFilePath ? { envFilePath } : {}),
     incognito,
+    noSkillSync,
+    noAutoUpgrade,
   };
 }
 

@@ -101,6 +101,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   let envFilePath: string | undefined;
   let incognito = false;
   let noAutoUpgrade = false;
+  let noSkillSync = false;
   const promptParts: string[] = [];
   const interactive = isInteractive();
 
@@ -159,6 +160,9 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         break;
       case "--no-auto-upgrade":
         noAutoUpgrade = true;
+        break;
+      case "--no-skill-sync":
+        noSkillSync = true;
         break;
       case "--version":
       case "-v":
@@ -233,7 +237,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   // in with --skip-skill-sync leaves no hash, so this stays a no-op until
   // the user explicitly syncs at least once. The conditional GET hits 304
   // in steady state, so the cost is one cheap round-trip.
-  if (process.env.DUET_API_KEY) {
+  if (process.env.DUET_API_KEY && !noSkillSync) {
     await maybeAutoSyncDefaultSkills({ apiKey: process.env.DUET_API_KEY });
   }
 

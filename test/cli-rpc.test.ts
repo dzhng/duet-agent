@@ -87,6 +87,18 @@ describe("parseRpcArgs", () => {
     expect(parsed.systemPromptFiles).toEqual(["A.md", "B.md"]);
     expect(parsed.envFilePath).toBe("/etc/duet/env");
     expect(parsed.incognito).toBe(true);
+    expect(parsed.noSkillSync).toBe(false);
+    expect(parsed.noAutoUpgrade).toBe(false);
+  });
+
+  test("--no-skill-sync sets the skip-skill-sync flag", () => {
+    const parsed = parseRpcArgs(["--no-skill-sync"]);
+    expect(parsed.noSkillSync).toBe(true);
+  });
+
+  test("--no-auto-upgrade sets the skip-auto-upgrade flag", () => {
+    const parsed = parseRpcArgs(["--no-auto-upgrade"]);
+    expect(parsed.noAutoUpgrade).toBe(true);
   });
 
   test("--no-system-prompt-files resets the system prompt file list", () => {
