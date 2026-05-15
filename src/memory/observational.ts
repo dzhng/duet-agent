@@ -6,6 +6,8 @@ import { generateStructuredOutput } from "../core/structured-output.js";
 import {
   applyEvictionHorizon,
   calculateWireBytes,
+  calculateWireTokens,
+  IMAGE_WIRE_TOKEN_ESTIMATE,
   findEvictionHorizon,
   WIRE_BYTE_TARGET,
   WIRE_BYTE_TRIGGER,
@@ -476,7 +478,7 @@ export function createObservationalContextTransform(options: ObservationalContex
     // collapses non-text blocks into tiny preview strings and lets the
     // wire grow well past `effectiveContext` before tripping.
     const candidateBytes = calculateWireBytes(retainedMessages);
-    const candidateTokens = Math.ceil(candidateBytes / 4);
+    const candidateTokens = calculateWireTokens(retainedMessages);
     const tokenTrigger = settings.observation.messageTokens;
     const tokenTarget = settings.observation.bufferActivation;
 
@@ -487,7 +489,7 @@ export function createObservationalContextTransform(options: ObservationalContex
         options.horizon.evictionHorizon,
         (candidate) => {
           const bytes = calculateWireBytes(candidate);
-          const tokens = Math.ceil(bytes / 4);
+          const tokens = calculateWireTokens(candidate);
           return tokens <= tokenTarget && bytes <= WIRE_BYTE_TARGET;
         },
       );
@@ -1148,12 +1150,6 @@ interface ObserverMessagePreview {
   textPreview: string;
 }
 
-// Conservative cross-provider fallback when image dimensions are unavailable.
-// Claude's standard vision models cap near 1,568 tokens per image, while OpenAI
-// high-detail images can grow by 512px tiles; use a rounded budget so images
-// create context pressure even when the raw bytes are omitted from previews.
-const ESTIMATED_IMAGE_TOKENS = 1_600;
-
 /**
  * Per-block cap for tool-call arguments and tool-result text. Tool I/O is
  * background context for the observer, not the subject of the observation,
@@ -1366,7 +1362,7 @@ function inferPriority(observations: string): ObservationPriority {
 
 function estimateMessageTokens(message: ObserverMessagePreview): number {
   const imageTokens =
-    message.content.filter((part) => part.type === "image").length * ESTIMATED_IMAGE_TOKENS;
+    message.content.filter((part) => part.type === "image").length * IMAGE_WIRE_TOKEN_ESTIMATE;
   return estimateTokens(message.textPreview) + imageTokens;
 }
 

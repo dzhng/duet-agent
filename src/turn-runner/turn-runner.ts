@@ -59,7 +59,7 @@ import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
 import { createStateMachineSystemPromptLayer } from "./prompts.js";
 import {
   applyEvictionHorizon,
-  calculateWireBytes,
+  calculateWireTokens,
   createInitialHorizon,
   findEvictionHorizon,
   type WireGuardHorizon,
@@ -1796,13 +1796,13 @@ export class TurnRunner {
    * packs use the same `ceil(chars/4)` heuristic as the memory pipeline so
    * compaction triggers stay on the same scale as `MEMORY_BUDGET_RATIOS`.
    *
-   * The message tail uses {@link calculateWireBytes} over the
+   * The message tail uses {@link calculateWireTokens} over the
    * post-eviction slice — the same slice the provider tokenized — so
    * messages already dropped by wire-shaping stop counting against the
    * `messages` segment instead of inflating it from the runner's full
-   * retained transcript. Text and image blocks match the eviction guard,
-   * and structured blocks (`toolCall`, thinking, etc.) contribute a
-   * `JSON.stringify` length like the serialized request body.
+   * retained transcript. Text and structured blocks (`toolCall`, thinking,
+   * etc.) use `ceil(chars/4)`, and image blocks contribute a fixed
+   * per-image estimate rather than their base64 byte length.
    *
    * `emitParentAgentEvent` rescales all four segments with
    * {@link scaleContextWindowUsageToTotalTokens} so the emitted breakdown
@@ -1815,7 +1815,7 @@ export class TurnRunner {
       agent.state.messages,
       this.wireGuardHorizon.evictionHorizon,
     );
-    const messageWireTokens = Math.max(0, Math.ceil(calculateWireBytes(dispatched) / 4));
+    const messageWireTokens = calculateWireTokens(dispatched);
     return {
       systemPrompt: estimateTokens(agent.state.systemPrompt),
       messages: messageWireTokens,

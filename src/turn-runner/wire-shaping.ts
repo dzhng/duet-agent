@@ -28,6 +28,21 @@ export const WIRE_BYTE_TRIGGER = 15 * 1024 * 1024;
 export const WIRE_BYTE_TARGET = Math.floor(WIRE_BYTE_TRIGGER * 0.8);
 
 /**
+ * Conservative cross-provider charge for one inline image on the wire.
+ * Claude vision tops out near 1,568 tokens per image and OpenAI high-detail
+ * images grow by 512px tiles, so 1,600 is a rounded estimate that creates
+ * real context pressure without inflating with the base64 payload size.
+ *
+ * The base64 byte length of an image is meaningless as a token signal:
+ * `ceil(bytes/4)` over a 2 MB inline image scores ~500K "tokens" while the
+ * provider only bills a few thousand. That mismatch tripped the
+ * `messageTokens` eviction gate on image-heavy turns and evicted earlier
+ * user messages from the wire (see the thread-context-loss eval). Image
+ * payload size is bounded separately by {@link WIRE_BYTE_TRIGGER}.
+ */
+export const IMAGE_WIRE_TOKEN_ESTIMATE = 1_600;
+
+/**
  * Eviction will not trim below this many recent messages. The latest user
  * message is the actor's current prompt and must always survive; any
  * deeper budget shortfall is absorbed by the durable observation memory
@@ -121,6 +136,41 @@ function calculateMessageBytes(msg: AgentMessage): number {
 export function calculateWireBytes(messages: AgentMessage[]): number {
   let total = 0;
   for (const msg of messages) total += calculateMessageBytes(msg);
+  return total;
+}
+
+/**
+ * Token-side companion to {@link calculateWireBytes}. Text and structured
+ * blocks use the same `ceil(chars/4)` heuristic the memory pipeline uses
+ * elsewhere, but image blocks contribute a fixed
+ * {@link IMAGE_WIRE_TOKEN_ESTIMATE} regardless of base64 size — the
+ * provider's per-image charge is bounded and unrelated to payload bytes.
+ * This is the value the eviction gate and the context-window usage bar
+ * should compare against `messageTokens`; the byte-size safety net is
+ * handled separately by {@link WIRE_BYTE_TRIGGER}.
+ */
+function calculateMessageTokens(msg: AgentMessage): number {
+  const content = (msg as { content?: unknown }).content;
+  if (typeof content === "string") return Math.ceil(content.length / 4);
+  if (!Array.isArray(content)) return 0;
+  let total = 0;
+  for (const block of content) {
+    if (isImageBlock(block)) total += IMAGE_WIRE_TOKEN_ESTIMATE;
+    else if (isTextBlock(block)) total += Math.ceil(block.text.length / 4);
+    else if (block && typeof block === "object") {
+      try {
+        total += Math.ceil(JSON.stringify(block).length / 4);
+      } catch {
+        total += 64;
+      }
+    }
+  }
+  return total;
+}
+
+export function calculateWireTokens(messages: AgentMessage[]): number {
+  let total = 0;
+  for (const msg of messages) total += calculateMessageTokens(msg);
   return total;
 }
 
