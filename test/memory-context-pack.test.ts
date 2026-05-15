@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { PGlite } from "@electric-sql/pglite";
-import { vector } from "@electric-sql/pglite/vector";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +8,7 @@ import {
   DEFAULT_EFFECTIVE_CONTEXT,
   resolveObservationalMemorySettings,
 } from "../src/memory/observational.js";
+import { MemorySession } from "../src/memory/session.js";
 import { MemoryContextCache } from "../src/memory/store.js";
 import { appendObservation } from "../src/memory/storage.js";
 import type { Observation } from "../src/types/memory.js";
@@ -52,11 +51,11 @@ describe("Memory context pack", () => {
   testIfDocker(
     "appending observations to the database does not mutate the frozen pack",
     async () => {
-      await withSeededDb(async (db) => {
+      await withSeededDb(async (session) => {
         const cache = new MemoryContextCache();
         cache.setContextPack({ global: [], local: [] });
 
-        await appendObservation(db, {
+        await appendObservation(session, {
           sessionId: "session_current",
           kind: "observation",
           observedDate: "2026-05-09",
@@ -74,12 +73,12 @@ describe("Memory context pack", () => {
   );
 
   testIfDocker("rebuildMemoryContextPack assembles global + local from the database", async () => {
-    await withSeededDb(async (db) => {
+    await withSeededDb(async (session) => {
       const cache = new MemoryContextCache();
       const settings = resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT);
 
       await rebuildMemoryContextPack({
-        db,
+        session,
         cache,
         settings,
         sessionId: "session_current",
@@ -98,11 +97,11 @@ describe("Memory context pack", () => {
   });
 
   testIfDocker("rebuildMemoryContextPack with no sessionId leaves local empty", async () => {
-    await withSeededDb(async (db) => {
+    await withSeededDb(async (session) => {
       const cache = new MemoryContextCache();
       const settings = resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT);
 
-      await rebuildMemoryContextPack({ db, cache, settings });
+      await rebuildMemoryContextPack({ session, cache, settings });
 
       const pack = cache.getContextPack();
       expect(pack.local).toEqual([]);
@@ -112,26 +111,35 @@ describe("Memory context pack", () => {
   });
 });
 
-async function withSeededDb(fn: (db: PGlite) => Promise<void>): Promise<void> {
+async function withSeededDb(fn: (session: MemorySession) => Promise<void>): Promise<void> {
   const tempDir = await mkdtemp(join(tmpdir(), "duet-context-pack-"));
-  const db = await PGlite.create({
-    dataDir: join(tempDir, "memory.db"),
-    extensions: { vector },
+  const session = new MemorySession({
+    path: join(tempDir, "memory.db"),
+    openOptions: {
+      init: async (db) => {
+        await runMigrations(db);
+      },
+    },
+    // Tests run several ops back-to-back; keep the handle open across
+    // them so the open cost is paid once per test rather than between
+    // each helper call.
+    idleCloseMs: 60_000,
   });
   try {
-    await runMigrations(db);
-    await db.exec(`
-      INSERT INTO observations (
-        id, created_at, last_used_at, session_id, kind, observed_date, priority, source_json, content, tags_json
-      ) VALUES
-        ('mem_current', 1, 1, 'session_current', 'observation', '2026-05-09', 'high',
-         '{"kind":"system"}', 'Belongs to the current session.', '[]'),
-        ('mem_other_session', 2, 2, 'session_a', 'reflection', '2026-05-09', 'high',
-         '{"kind":"system"}', 'Belongs to another session.', '[]');
-    `);
-    await fn(db);
+    await session.withDb(async (db) => {
+      await db.exec(`
+        INSERT INTO observations (
+          id, created_at, last_used_at, session_id, kind, observed_date, priority, source_json, content, tags_json
+        ) VALUES
+          ('mem_current', 1, 1, 'session_current', 'observation', '2026-05-09', 'high',
+           '{"kind":"system"}', 'Belongs to the current session.', '[]'),
+          ('mem_other_session', 2, 2, 'session_a', 'reflection', '2026-05-09', 'high',
+           '{"kind":"system"}', 'Belongs to another session.', '[]');
+      `);
+    });
+    await fn(session);
   } finally {
-    await db.close();
+    await session.dispose();
     await rm(tempDir, { recursive: true, force: true });
   }
 }

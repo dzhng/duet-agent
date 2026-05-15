@@ -284,6 +284,59 @@ describe("CLI model inference", () => {
     expect(resolveModelName("anthropic:claude-opus-4-7").id).toBe("claude-opus-4-7");
   });
 
+  test("provider shorthand in provider:modelId form canonicalizes the provider", () => {
+    clearModelEnv();
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+    process.env.OPENAI_API_KEY = "test-openai";
+
+    expect(resolveModelName("claude:claude-opus-4-7").id).toBe("claude-opus-4-7");
+    expect(resolveModelName("gpt:gpt-5.5").id).toBe("gpt-5.5");
+  });
+
+  test("duet provider shorthand resolves through the duet gateway", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+
+    const fromCanonical = resolveModelName("duet-gateway:anthropic/claude-opus-4.7");
+    const fromShorthand = resolveModelName("duet:anthropic/claude-opus-4.7");
+
+    expect(fromShorthand.id).toBe(fromCanonical.id);
+    expect(fromShorthand.baseUrl).toBe(fromCanonical.baseUrl);
+  });
+
+  test("canonicalizes dashed model id aliases inside provider:modelId form", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+    process.env.AI_GATEWAY_API_KEY = "test-gateway";
+
+    // The duet gateway proxies vercel-ai-gateway's catalog, which spells the
+    // id with a dot. Users frequently type dashes; the alias table should
+    // bridge the gap on both providers.
+    expect(resolveModelName("duet:anthropic/claude-opus-4-7").id).toBe("anthropic/claude-opus-4.7");
+    expect(resolveModelName("vercel:anthropic/claude-sonnet-4-6").id).toBe(
+      "anthropic/claude-sonnet-4.6",
+    );
+  });
+
+  test("leaves provider:modelId untouched when the native id uses dashes", () => {
+    clearModelEnv();
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+
+    // Anthropic's own API uses dashes, so the dashed alias must map back to
+    // the dashed id rather than the gateway's dotted variant.
+    expect(resolveModelName("anthropic:claude-opus-4.7").id).toBe("claude-opus-4-7");
+    expect(resolveModelName("anthropic:claude-opus-4-7").id).toBe("claude-opus-4-7");
+  });
+
+  test("passes provider:modelId through unchanged when no alias matches", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+
+    // No catalog alias for this id, so the duet-gateway lookup falls through
+    // to the underlying vercel-ai-gateway model definition without rewriting.
+    expect(resolveModelName("duet:anthropic/claude-opus-4.7").id).toBe("anthropic/claude-opus-4.7");
+  });
+
   test("keeps explicitly provided memory model shorthands as app-facing names", () => {
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
@@ -539,6 +592,45 @@ describe("CLI resume command", () => {
         incognito: true,
       }),
     ).toContain("--incognito");
+  });
+
+  test("preserves --db when an explicit memory db path was set", () => {
+    expect(
+      resumeCommand("session_123", {
+        workDir: "/repo",
+        dbPath: "/tmp/custom.db",
+      }),
+    ).toContain("--db /tmp/custom.db");
+  });
+});
+
+describe("CLI memory db resolution", () => {
+  test("defaults memoryDbPath to ~/.duet/memory.db when neither --db nor --incognito is set", () => {
+    clearModelEnv();
+    process.env.OPENAI_API_KEY = "test-openai";
+    const { config } = buildCliTurnConfig({ workDir: "/repo" }, EMPTY_DOTENV_KEYS);
+    expect(typeof config.memoryDbPath).toBe("string");
+    expect(config.memoryDbPath as string).toMatch(/\.duet\/memory\.db$/);
+  });
+
+  test("forwards --db verbatim", () => {
+    clearModelEnv();
+    process.env.OPENAI_API_KEY = "test-openai";
+    const { config } = buildCliTurnConfig(
+      { workDir: "/repo", dbPath: "/tmp/custom.db" },
+      EMPTY_DOTENV_KEYS,
+    );
+    expect(config.memoryDbPath).toBe("/tmp/custom.db");
+  });
+
+  test("--incognito wins over --db", () => {
+    clearModelEnv();
+    process.env.OPENAI_API_KEY = "test-openai";
+    const { config } = buildCliTurnConfig(
+      { workDir: "/repo", dbPath: "/tmp/custom.db", incognito: true },
+      EMPTY_DOTENV_KEYS,
+    );
+    expect(config.memoryDbPath).toBe(false);
   });
 });
 

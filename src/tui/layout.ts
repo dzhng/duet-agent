@@ -5,7 +5,8 @@ import {
   TextRenderable,
   TextareaRenderable,
 } from "@opentui/core";
-import { AUTOCOMPLETE_LIMITS, BUILT_IN_SLASH_COMMANDS } from "./autocomplete.js";
+import { AUTOCOMPLETE_LIMITS } from "./autocomplete.js";
+import { BUILT_IN_SLASH_COMMAND_ITEMS } from "./slash-commands.js";
 import { createSidebar } from "./sidebar.js";
 import { COLORS, HINT_IDLE } from "./theme.js";
 
@@ -31,8 +32,14 @@ export interface LayoutRefs {
   root: BoxRenderable;
   /** Main column: transcript, status, hint, pickers, input. */
   layout: BoxRenderable;
-  /** Right-side panel with todos, follow-up queue, state machine, and context usage. */
+  /** Right-side panel with todos, state machine, and context usage. */
   sidebar: SidebarHandle;
+  /** Sticky banner at the top of the main column that surfaces the most
+   *  recent user message so it stays visible as the transcript scrolls. */
+  latestUserBanner: BoxRenderable;
+  /** Body text of {@link latestUserBanner}; updated by app.ts whenever a
+   *  user message is recorded. */
+  latestUserBannerText: TextRenderable;
   /** Scrollable transcript that pins to the bottom while the user has not manually scrolled. */
   transcript: ScrollBoxRenderable;
   /** Single-line working-status row below the transcript (spinner, elapsed, queue size). */
@@ -70,6 +77,13 @@ export interface LayoutRefs {
   questionSpacer: TextRenderable;
   /** Fixed pool of selectable rows for the active question's options. */
   questionRows: TextRenderable[];
+  /** Compose-row-adjacent panel that lists queued follow-ups. Sits above
+   *  {@link inputBox} so the user can see what's about to be delivered
+   *  next to where they type. Hidden whenever the queue is empty; entries
+   *  enter the transcript only when the runner drains them. */
+  followUpPanel: BoxRenderable;
+  /** Body of {@link followUpPanel}; driven by the session subscription. */
+  followUpPanelBody: TextRenderable;
   /** Bordered row containing the prompt sigil and the input textarea. */
   inputBox: BoxRenderable;
   /** Leading "> " sigil rendered before the textarea; excluded from drag-select. */
@@ -106,6 +120,47 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
 
   const sidebar = createSidebar(renderer);
 
+  // Sticky banner that mirrors the most recent user message above the
+  // transcript. Hidden until the first user message lands; app.ts sets
+  // the body text whenever a user block is recorded and a short-interval
+  // watcher toggles `visible` based on whether that block has scrolled
+  // above the transcript viewport.
+  // The banner sits directly above the transcript inside the shared
+  // bordered frame below. The frame's `padding: 1` already gives it equal
+  // 1-row gaps above the banner text and below the transcript content;
+  // this `paddingBottom: 1` adds a matching 1-row gap between the banner
+  // text and the transcript content so the banner is symmetrically inset
+  // rather than glued to the scrolling area.
+  const latestUserBanner = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    paddingBottom: 1,
+    flexShrink: 0,
+  });
+  latestUserBanner.visible = false;
+  const latestUserBannerText = new TextRenderable(renderer, {
+    content: "",
+    fg: COLORS.user,
+    wrapMode: "word",
+    flexShrink: 0,
+    selectable: false,
+  });
+  latestUserBanner.add(latestUserBannerText);
+
+  // Shared bordered frame around the banner and the transcript so they
+  // read as one main-content surface. The border/padding live here rather
+  // than on the transcript so the banner inherits the same chrome.
+  // `toolBlockColumns()` in step-renderer.ts assumes a 5-column transcript
+  // chrome budget (2 border + 2 padding + 1 scrollbar gutter); keep this
+  // wrapper's border+padding aligned with that math.
+  const transcriptFrame = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    flexGrow: 1,
+    flexShrink: 1,
+    border: true,
+    borderColor: COLORS.border,
+    padding: 1,
+  });
+
   const transcript = new ScrollBoxRenderable(renderer, {
     flexGrow: 1,
     flexShrink: 1,
@@ -117,10 +172,15 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
     // down while the user is reading history.
     stickyScroll: true,
     stickyStart: "bottom",
-    border: true,
-    borderColor: COLORS.border,
-    padding: 1,
   });
+  // Keep keyboard focus pinned to the composer. ScrollBoxRenderable is
+  // focusable by default, so a mouse click on the transcript would steal
+  // focus from the textarea and break starter-row arrow navigation, paste
+  // keystroke handling, and drag-drop image attach — all of which are wired
+  // up through inputField.onKeyDown / onPaste. Wheel scrolling, sticky
+  // pinning, and drag-select selection do not require focus, so disabling
+  // it here costs nothing.
+  transcript.focusable = false;
 
   // Status and hint chrome are excluded from drag-select so a highlight that
   // sweeps the bottom of the screen does not pull the spinner / hint text
@@ -189,7 +249,7 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
       selectable: false,
     });
   const commandHeader = makeHeaderRow("commands");
-  const commandRows = Array.from({ length: BUILT_IN_SLASH_COMMANDS.length }, makeItemRow);
+  const commandRows = Array.from({ length: BUILT_IN_SLASH_COMMAND_ITEMS.length }, makeItemRow);
   const skillHeader = makeHeaderRow("skills");
   const skillRows = Array.from({ length: SKILL_AUTOCOMPLETE_LIMIT }, makeItemRow);
   skillAutocompletePanel.add(commandHeader);
@@ -230,6 +290,45 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
   for (const row of fileAutocompleteRows) {
     fileAutocompletePanel.add(row);
   }
+
+  // Follow-ups panel sits directly above the input box. It is hidden
+  // until at least one follow-up is queued. A body cap (three visible
+  // rows + "+N more" summary on the third when the queue exceeds the
+  // cap) keeps the panel from pushing the compose row off-screen when a
+  // long queue piles up. Entries are not echoed into the transcript at
+  // queue time; the session subscription renders the `you:` block only
+  // when the runner drains the entry and delivers it to the agent.
+  const followUpPanel = new BoxRenderable(renderer, {
+    flexDirection: "column",
+    border: true,
+    borderColor: COLORS.border,
+    paddingLeft: 1,
+    paddingRight: 1,
+    flexShrink: 0,
+    // Border (2) + title row (1) + body cap (3) = 6 cells. Matches the
+    // "+N more" summary the session subscription emits on overflow.
+    maxHeight: 6,
+  });
+  followUpPanel.visible = false;
+  const followUpPanelTitle = new TextRenderable(renderer, {
+    content: "follow-ups",
+    fg: COLORS.status,
+    height: 1,
+    flexShrink: 0,
+    selectable: false,
+  });
+  const followUpPanelBody = new TextRenderable(renderer, {
+    content: "",
+    fg: COLORS.agent,
+    // `none` so each \n-separated entry occupies exactly one visual line;
+    // long entries that overflow horizontally are clipped by the panel
+    // border rather than wrapping and pushing later entries past the cap.
+    wrapMode: "none",
+    flexShrink: 0,
+    selectable: false,
+  });
+  followUpPanel.add(followUpPanelTitle);
+  followUpPanel.add(followUpPanelBody);
 
   const questionPanel = new BoxRenderable(renderer, {
     flexDirection: "column",
@@ -303,13 +402,16 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
   inputBox.add(prompt);
   inputBox.add(inputField);
 
-  layout.add(transcript);
+  transcriptFrame.add(latestUserBanner);
+  transcriptFrame.add(transcript);
+  layout.add(transcriptFrame);
   layout.add(status);
   layout.add(hint);
   layout.add(dinoPanel);
   layout.add(skillAutocompletePanel);
   layout.add(fileAutocompletePanel);
   layout.add(questionPanel);
+  layout.add(followUpPanel);
   layout.add(inputBox);
   root.add(layout);
   root.add(sidebar.view);
@@ -320,6 +422,8 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
     root,
     layout,
     sidebar,
+    latestUserBanner,
+    latestUserBannerText,
     transcript,
     status,
     hint,
@@ -336,6 +440,8 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
     questionTitle,
     questionSpacer,
     questionRows,
+    followUpPanel,
+    followUpPanelBody,
     inputBox,
     prompt,
     inputField,

@@ -6,18 +6,20 @@ import { generateStructuredOutput } from "../core/structured-output.js";
 import {
   applyEvictionHorizon,
   calculateWireBytes,
+  calculateWireTokens,
+  IMAGE_WIRE_TOKEN_ESTIMATE,
   findEvictionHorizon,
   WIRE_BYTE_TARGET,
   WIRE_BYTE_TRIGGER,
   type WireGuardHorizon,
 } from "../turn-runner/wire-shaping.js";
 import type { MemoryContextCache } from "./store.js";
+import type { MemorySession } from "./session.js";
 import {
   appendObservation,
   bumpLastUsed,
   readSessionObservations,
   replaceSessionObservations,
-  type MemoryDatabase,
 } from "./storage.js";
 import type {
   Observation,
@@ -34,6 +36,10 @@ import {
   wrapInObservationGroup,
 } from "./observation-groups.js";
 import {
+  GLOBAL_OBSERVATIONS_HEADING,
+  GLOBAL_OBSERVATIONS_HINT,
+  LOCAL_OBSERVATIONS_HEADING,
+  LOCAL_OBSERVATIONS_HINT,
   OBSERVATION_CONTEXT_INSTRUCTIONS,
   OBSERVATION_CONTEXT_PROMPT,
   OBSERVATION_CONTINUATION_HINT,
@@ -340,8 +346,13 @@ export interface ObservationalContextTransformOptions {
 }
 
 export interface ObservationalMemoryUpdateOptions {
-  /** PGlite database that owns the durable memory rows. */
-  db: MemoryDatabase;
+  /**
+   * Memory session that owns the durable memory rows. The observer and
+   * reflector wrap each storage call in `session.withDb`, so the
+   * cross-process lock is held only for the duration of each query and
+   * a peer duet CLI can step in between writes.
+   */
+  session: MemorySession;
   /** Frozen context-pack cache; queried for the global memories the observer can attribute usage against. */
   memory: MemoryContextCache;
   /**
@@ -460,14 +471,14 @@ export function createObservationalContextTransform(options: ObservationalContex
     // turns grow back without retriggering.
     //
     // Token accounting uses `ceil(wireBytes / 4)`, the same heuristic the
-    // runner reports on `TurnUsageFields.contextWindowUsage.messages`. That charges
+    // runner reports on `TurnUsageFields.contextWindowUsage.messages`.
     // `JSON.stringify` length for structured blocks (toolCall, toolResult,
     // thinking), so heavy tool sessions trigger compaction at the same
     // scale the provider bills — unlike `agentMessagesToRaw`, which
     // collapses non-text blocks into tiny preview strings and lets the
     // wire grow well past `effectiveContext` before tripping.
     const candidateBytes = calculateWireBytes(retainedMessages);
-    const candidateTokens = Math.ceil(candidateBytes / 4);
+    const candidateTokens = calculateWireTokens(retainedMessages);
     const tokenTrigger = settings.observation.messageTokens;
     const tokenTarget = settings.observation.bufferActivation;
 
@@ -478,7 +489,7 @@ export function createObservationalContextTransform(options: ObservationalContex
         options.horizon.evictionHorizon,
         (candidate) => {
           const bytes = calculateWireBytes(candidate);
-          const tokens = Math.ceil(bytes / 4);
+          const tokens = calculateWireTokens(candidate);
           return tokens <= tokenTarget && bytes <= WIRE_BYTE_TARGET;
         },
       );
@@ -522,16 +533,22 @@ function renderContextPack(pack: { global: Observation[]; local: Observation[] }
   if (pack.global.length > 0) {
     sections.push(
       [
-        "### Long-term memory (cross-session)",
+        "<global_observations>",
+        GLOBAL_OBSERVATIONS_HEADING,
+        GLOBAL_OBSERVATIONS_HINT,
         pack.global.map((observation) => observation.content).join("\n\n"),
+        "</global_observations>",
       ].join("\n\n"),
     );
   }
   if (pack.local.length > 0) {
     sections.push(
       [
-        "### From this session",
+        "<local_observations>",
+        LOCAL_OBSERVATIONS_HEADING,
+        LOCAL_OBSERVATIONS_HINT,
         pack.local.map((observation) => observation.content).join("\n\n"),
+        "</local_observations>",
       ].join("\n\n"),
     );
   }
@@ -550,7 +567,7 @@ export async function updateObservationalMemory(
   // so the model can attribute usage back to specific cross-session
   // memories.
   const localSnapshot = options.sessionId
-    ? await readSessionObservations(options.db, options.sessionId)
+    ? await readSessionObservations(options.session, options.sessionId)
     : { observations: [], estimatedObservationTokens: 0 };
   const globalPack = options.memory.getContextPack().global;
   const unobservedMessages = getUnobservedMessageTail(rawMessages, localSnapshot.observations);
@@ -563,7 +580,7 @@ export async function updateObservationalMemory(
       message: "Observing conversation into memory...",
     });
     const { observation, usageBumped } = await activateObservations({
-      db: options.db,
+      session: options.session,
       messages: unobservedMessages,
       previousLocalObservations: localSnapshot.observations,
       attributableMemories: globalPack,
@@ -575,17 +592,23 @@ export async function updateObservationalMemory(
     if (observation) {
       result.observations.push(observation);
     }
-    emitMemoryActivity(options.onActivity, {
-      phase: "observation",
-      status: "completed",
-      message: buildObservationCompletedMessage(observation, usageBumped.length),
-      ...(observation ? { observations: [observation] } : {}),
-      ...(usageBumped.length > 0 ? { usageBumpedObservations: usageBumped } : {}),
-    });
+    // Only surface a completion event when something actually changed in
+    // memory. If activation produced no new observation and bumped no prior
+    // memories, suppress the completed event entirely so the TUI does not
+    // render an empty `[memory:observation]` section.
+    if (observation || usageBumped.length > 0) {
+      emitMemoryActivity(options.onActivity, {
+        phase: "observation",
+        status: "completed",
+        message: buildObservationCompletedMessage(observation, usageBumped.length),
+        ...(observation ? { observations: [observation] } : {}),
+        ...(usageBumped.length > 0 ? { usageBumpedObservations: usageBumped } : {}),
+      });
+    }
   }
 
   if (options.sessionId) {
-    const refreshed = await readSessionObservations(options.db, options.sessionId);
+    const refreshed = await readSessionObservations(options.session, options.sessionId);
     if (refreshed.estimatedObservationTokens >= settings.reflection.observationTokens) {
       emitMemoryActivity(options.onActivity, {
         phase: "reflection",
@@ -593,7 +616,7 @@ export async function updateObservationalMemory(
         message: "Reflecting memory observations...",
       });
       const reflections = await reflectObservations({
-        db: options.db,
+        session: options.session,
         sessionObservations: refreshed.observations,
         settings,
         sessionId: options.sessionId,
@@ -633,9 +656,7 @@ function buildObservationCompletedMessage(
   const base = observation ? "Memory observation recorded." : "Memory observation complete.";
   if (usageBumpedCount <= 0) return base;
   const noun = usageBumpedCount === 1 ? "memory" : "memories";
-  // Surface the count for now; consumers can later render the full
-  // observation contents from `usageBumpedObservations` on the event.
-  return `${base} Bumped last-use on ${usageBumpedCount} prior ${noun}.`;
+  return `${base} Reinforced ${usageBumpedCount} prior ${noun}.`;
 }
 
 function emitMemoryActivity(
@@ -686,7 +707,7 @@ function isObservationalContextMessage(message: AgentMessage): boolean {
 }
 
 interface ActivateObservationsArgs {
-  db: MemoryDatabase;
+  session: MemorySession;
   messages: RawMemoryMessage[];
   /** Prior observations from the same session, used for dedupe context. */
   previousLocalObservations: Observation[];
@@ -719,7 +740,7 @@ async function activateObservations(
   // memory worth recording — a turn can lean on a prior memory even
   // when nothing new is durable.
   const usageBumped = await applyUsageBumps(
-    args.db,
+    args.session,
     args.attributableMemories,
     observations.usedObservationIds,
   );
@@ -731,7 +752,7 @@ async function activateObservations(
   }
 
   const range = `${args.messages[0]?.id ?? "unknown"}:${args.messages[args.messages.length - 1]?.id ?? "unknown"}`;
-  const observation = await appendObservation(args.db, {
+  const observation = await appendObservation(args.session, {
     kind: "observation",
     ...(args.sessionId !== undefined ? { sessionId: args.sessionId } : {}),
     observedDate: new Date().toISOString().slice(0, 10),
@@ -753,7 +774,7 @@ async function activateObservations(
  * defense.
  */
 async function applyUsageBumps(
-  db: MemoryDatabase,
+  session: MemorySession,
   candidates: Observation[],
   usedIds: string[] | undefined,
 ): Promise<Observation[]> {
@@ -764,7 +785,7 @@ async function applyUsageBumps(
     .filter((observation): observation is Observation => Boolean(observation));
   if (validated.length === 0) return [];
   await bumpLastUsed(
-    db,
+    session,
     validated.map((observation) => observation.id),
     Date.now(),
   );
@@ -772,7 +793,7 @@ async function applyUsageBumps(
 }
 
 interface ReflectObservationsArgs {
-  db: MemoryDatabase;
+  session: MemorySession;
   sessionObservations: Observation[];
   settings: ObservationalMemorySettings;
   sessionId: string;
@@ -783,7 +804,7 @@ interface ReflectObservationsArgs {
 async function reflectObservations(
   args: ReflectObservationsArgs,
 ): Promise<Observation[] | undefined> {
-  const { db, sessionObservations, settings, sessionId, model, onUsage } = args;
+  const { session, sessionObservations, settings, sessionId, model, onUsage } = args;
   const source = sessionObservations.map((observation) => observation.content).join("\n\n");
   const rendered = renderObservationGroupsForReflection(source) ?? source;
   const targetTokens = settings.reflection.bufferActivation;
@@ -831,7 +852,7 @@ async function reflectObservations(
   // replaced by the new reflection. Other sessions' rows in the
   // global pool are untouched, which is what makes cross-session
   // memory durable past a reflection event.
-  await replaceSessionObservations(db, sessionId, [reflected]);
+  await replaceSessionObservations(session, sessionId, [reflected]);
   return [reflected];
 }
 
@@ -1133,12 +1154,6 @@ interface ObserverMessagePreview {
   textPreview: string;
 }
 
-// Conservative cross-provider fallback when image dimensions are unavailable.
-// Claude's standard vision models cap near 1,568 tokens per image, while OpenAI
-// high-detail images can grow by 512px tiles; use a rounded budget so images
-// create context pressure even when the raw bytes are omitted from previews.
-const ESTIMATED_IMAGE_TOKENS = 1_600;
-
 /**
  * Per-block cap for tool-call arguments and tool-result text. Tool I/O is
  * background context for the observer, not the subject of the observation,
@@ -1351,7 +1366,7 @@ function inferPriority(observations: string): ObservationPriority {
 
 function estimateMessageTokens(message: ObserverMessagePreview): number {
   const imageTokens =
-    message.content.filter((part) => part.type === "image").length * ESTIMATED_IMAGE_TOKENS;
+    message.content.filter((part) => part.type === "image").length * IMAGE_WIRE_TOKEN_ESTIMATE;
   return estimateTokens(message.textPreview) + imageTokens;
 }
 

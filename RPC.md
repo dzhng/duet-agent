@@ -3,7 +3,9 @@
 `duet --rpc` is a bare turn-runner control surface for other coding agents and
 automation. It reads newline-delimited JSON `TurnRunnerCommand` values from
 stdin and writes newline-delimited `TurnEvent` values to stdout. Each process
-runs exactly one turn and exits.
+drives one turn chain and exits once the chain's single terminal event has
+been written; the runner is the source of truth for how individual commands
+compose into that chain.
 
 The wire schema is `src/types/protocol.ts`. Treat that file as the source of
 truth; this document explains the lifecycle and the few things the transport
@@ -17,6 +19,7 @@ duet --rpc \
   [--model <name> | --provider <name>] \
   [--memory-model <name>] \
   [--incognito] \
+  [--db <path>] \
   [--system-prompt <text>] [--system-prompt-file <path>] \
   [--no-system-prompt-files] \
   [--env-file <path>]
@@ -31,6 +34,8 @@ duet --rpc \
 - `--incognito` keeps observational memory in-process only. Without it the
   runner writes to its configured memory db (default `~/.duet/memory.db`)
   exactly like the TUI does.
+- `--db <path>` overrides the memory database file path. Defaults to
+  `~/.duet/memory.db`. Ignored when `--incognito` is set.
 - `--system-prompt-file` defaults to loading a repo-local `AGENTS.md` from
   `--workdir`. Pass `--no-system-prompt-files` to disable, or repeat
   `--system-prompt-file` for multiple files.
@@ -46,7 +51,9 @@ The process writes a one-line banner to **stderr** on start:
 ```
 
 Use it for version-skew detection; consumers should ignore stderr otherwise.
-Fatal errors are also written to stderr as `Fatal: <message>\n` and exit 1.
+Fatal CLI errors (bad flags, unknown options) are written to stderr as
+`Fatal: <message>\n` and exit 1. Runtime protocol errors are emitted as
+`system` events on stdout instead — see the Error model section.
 
 ## Wire format
 
@@ -58,23 +65,30 @@ There is no framing beyond newlines. Embedded `\n` characters inside a JSON
 string are valid; just do not pretty-print the JSON — keep each command on a
 single line.
 
-## Lifecycle (one turn per process)
+## Lifecycle (one terminal per process)
 
 1. The caller sends a `start` command. This is **setup, not a turn**: the
    runner loads memory and skills, hydrates from `start.state` if provided,
    and emits a single `turn_started` event with the initial `TurnState`.
-2. The caller sends exactly one turn-driving command — `prompt`, `answer`,
-   or `wake` — to actually run the turn.
+2. The caller sends a turn-driving command — `prompt`, `answer`, or `wake`
+   — to launch the turn chain.
 3. The runner streams any number of during-turn events
    (`step`, `todos`, `follow_up_queue`, `state_machine`, `memory`,
    `usage`, `system`).
-4. The turn ends with exactly one terminal event:
+4. The caller may send additional `prompt` / `answer` / `wake` commands while
+   the chain is in flight. The runner queues them onto the active chain
+   (`"steer"` routes through the running pi agent as a steering message;
+   `"follow_up"` joins the follow-up queue and becomes the next pi-turn).
+   The chain still emits **exactly one** terminal event covering all of
+   them. A `wake` sent while the session is not sleeping is a benign no-op.
+5. The turn chain ends with exactly one terminal event:
    `complete`, `ask`, `interrupted`, or `sleep`. Every terminal event carries
    the next `TurnState` snapshot, and — whenever any LLM work ran this turn —
    the same `usage` / `effectiveContextWindow` / `contextWindowUsage` payload
    as the last `usage` during-event, so a consumer that ignored during-events
    can still recover the final aggregate from one terminal payload.
-5. The process exits cleanly once the terminal event has been written.
+6. The process exits cleanly once the terminal event has been written.
+   Stdin lines that arrive after the terminal event are ignored.
 
 ```
 caller → {"type":"start"}
@@ -88,9 +102,9 @@ duet   ← {"type":"complete", "status":"completed", "state": {...}, ...}
 
 ### Multi-turn driving
 
-RPC runs **one turn per process**. To run another turn, spawn a fresh
-`duet --rpc` process and replay the previous terminal event's `state` into
-the next `start` command:
+RPC runs **one terminal per process**. To start a fresh turn chain, spawn a
+new `duet --rpc` process and replay the previous terminal event's `state`
+into the next `start` command:
 
 ```jsonc
 { "type": "start", "state": <last terminal event's state> }
@@ -123,13 +137,14 @@ Every `prompt` command must set `behavior`:
 - `"steer"` — deliver as an interruption/steering message to the running pi
   agent. Use this when the user types a follow-up while work is happening,
   e.g. "actually, skip the migration step."
-- `"follow_up"` — queue the prompt until the active turn settles, then
-  deliver it as the next user turn.
+- `"follow_up"` — queue the prompt until the active pi-turn settles, then
+  deliver it as the next user turn within the same chain.
 
-In a single-turn-per-process model you will normally send the first prompt
-with either behavior and let the turn run to completion. `"steer"` matters
-when you are sending a second `prompt` mid-turn (allowed in the same way
-`interrupt` is — the runner decides routing).
+The first turn-driving command of the chain can use either behavior; the
+runner treats both as the initial user turn. `"steer"` versus `"follow_up"`
+matters for any extra `prompt` commands sent mid-chain — `steer` interrupts
+the running pi-agent, `follow_up` queues behind it. Either way the chain
+still emits exactly one terminal event.
 
 ## Multimodal prompts
 
@@ -194,16 +209,27 @@ consumer typically renders or reacts to:
 
 ## Error model
 
-- Malformed stdin lines (invalid JSON, missing `type` field) exit 1 with a
-  `Fatal:` message on stderr before any turn runs.
-- Sending a non-`start` first command, two `start` commands, or two
-  turn-driving commands also exits 1.
+`duet --rpc` owns process lifetime: the only ways the process ends are a
+terminal event for the in-flight chain or stdin closing. Soft protocol
+errors do **not** kill the process — they are emitted as `system` events on
+stdout so the host can observe them without losing an in-flight turn.
+
+- Malformed stdin lines (invalid JSON, missing `type` field) emit a
+  `{ "type": "system", "level": "error", "message": "Invalid RPC command
+JSON: ..." }` event and are skipped. The loop keeps reading.
+- A command sent before `start`, a duplicate `start`, or an unknown command
+  type also emit a `system` event with `level: "error"` and are ignored.
+  The runner stays available for the next valid command.
 - Runtime errors during a turn (model failures, tool errors) come back as a
   `complete` terminal event with `status: "failed"` and `error: "..."`. The
   process still exits 0 in that case because the protocol completed cleanly;
   inspect the terminal event to surface the failure.
-- Closing stdin before the turn-driving command arrives is a clean exit
+- Closing stdin before a turn-driving command arrives is a clean exit
   (exit 0, no terminal event).
+- Fatal CLI errors that happen before the loop starts — bad flags, unknown
+  options, missing required argument values — still write `Fatal: ...` to
+  stderr and exit 1, because there is no protocol stream to surface them on
+  yet.
 
 ## Minimal example
 

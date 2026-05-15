@@ -1,7 +1,6 @@
 import { getModel, type Model } from "@earendil-works/pi-ai";
 import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
 
-const PROVIDER_PREFIX = "duet-gateway";
 const GATEWAY_PATH = "/api/v1/ai-gateway";
 
 /**
@@ -20,12 +19,7 @@ const GATEWAY_PATH = "/api/v1/ai-gateway";
  * startup so users only need to set the duet token.
  */
 
-export const DUET_GATEWAY_PROVIDER = PROVIDER_PREFIX;
 export const DUET_GATEWAY_API_KEY_ENV = "DUET_API_KEY";
-
-export function isDuetGatewayModelName(modelName: string): boolean {
-  return modelName.startsWith(`${PROVIDER_PREFIX}:`);
-}
 
 export function getDuetGatewayBaseUrl(): string {
   return `${resolveDuetAppBaseUrl()}${GATEWAY_PATH}`;

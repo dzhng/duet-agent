@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { TextRenderable } from "@opentui/core";
 import type { TranscriptEntry } from "./transcript-log.js";
 import {
   type HistoryBlockKind,
@@ -14,8 +15,11 @@ import { COLORS } from "./theme.js";
  */
 export interface HistoryReplayDeps {
   appendLine(content: string, fg: string): void;
-  appendBlock(label: string | null, body: string, fg: string): void;
+  appendBlock(label: string | null, body: string, fg: string): TextRenderable[];
   recordTranscriptEntry(kind: TranscriptEntry["kind"], text: string): void;
+  /** Capture the rendered lines of the most recently replayed user block
+   *  so the sticky banner watcher can track its viewport visibility. */
+  setLatestUserBlock(lines: readonly TextRenderable[]): void;
 }
 
 /**
@@ -48,7 +52,8 @@ export function replayResumeHistory(deps: HistoryReplayDeps, input: HistoryRepla
       );
     }
     for (const block of limited.blocks) {
-      deps.appendBlock(null, block.content, colorForHistoryBlock(block.kind));
+      const lines = deps.appendBlock(null, block.content, colorForHistoryBlock(block.kind));
+      if (block.kind === "user") deps.setLatestUserBlock(lines);
     }
   }
 

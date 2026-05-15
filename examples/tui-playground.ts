@@ -9,8 +9,11 @@
  *   /observe <secs>            same, but as an observational memory phase
  *   /queue <a,b,c>             emit a follow-up queue with the given prompts
  *   /queue+observe <secs>      run an observation phase with a non-empty queue
+ *   /follow-up-demo            walk a three-prompt queue down to empty, replaying
+ *                              each delivered entry as a `you:` block
  *   /tools <secs>              emit one fake tool-call running → completed
  *   /tools-demo                run a batch of formatters with verbose data
+ *   /banner-demo               demo the sticky "latest user message" banner
  *   /ask                       emit an `ask` terminal with three questions
  *                              (single-select, multi-select, single-select).
  *                              Up/Down moves the highlight (and live-records
@@ -37,6 +40,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Skill } from "@earendil-works/pi-coding-agent";
+import type { Observation } from "../src/types/memory.js";
 import { Session, type SessionTurnRunner } from "../src/session/session.js";
 import { runTui } from "../src/tui/app.js";
 import type { SkillCollision } from "../src/turn-runner/skills.js";
@@ -69,8 +73,12 @@ export const PLAYGROUND_MENU = [
   "  /reflect <secs>            same, but as a reflection memory phase",
   "  /queue <a,b,c>             emit a follow-up queue with the given prompts",
   "  /queue+observe <secs>      observation phase with a non-empty queue",
+  "  /follow-up-demo            walk a three-prompt queue down to empty,",
+  "                             replaying each delivered entry as a `you:` block",
   "  /tools <secs>              one fake tool-call running -> completed",
   "  /tools-demo                run a batch of formatters with verbose data",
+  "  /banner-demo               demo the sticky 'latest user message' banner",
+  "                             (re-run with a multi-line paste to see the clamp)",
   "  /ask                       ask three questions (single, multi, single).",
   "                             ↑/↓ move highlight (single-select live-records);",
   "                             Space/Enter advance, or toggle on multi-select;",
@@ -146,7 +154,7 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
   }
 
   editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void {
-    this.emit({ type: "follow_up_queue", prompts: command.prompts });
+    this.emit({ type: "follow_up_queue", followUpQueue: command.prompts });
   }
 
   getState(): TurnState | undefined {
@@ -222,6 +230,10 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       return askTerminal ?? this.complete("Tools demo finished.");
     }
 
+    if (message.startsWith("/banner-demo")) {
+      return this.runBannerDemo();
+    }
+
     if (message.startsWith("/tools")) {
       const secs = parseSeconds(message, 4);
       this.emit({
@@ -260,18 +272,22 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       return this.runMemoryPhase("reflection", secs);
     }
 
+    if (message.startsWith("/follow-up-demo")) {
+      return this.runFollowUpDemo();
+    }
+
     if (message.startsWith("/queue+observe")) {
       const secs = parseSeconds(message, 30);
       this.emit({
         type: "follow_up_queue",
-        prompts: [
+        followUpQueue: [
           { message: "draft release notes" },
           { message: "ping reviewers" },
           { message: "merge once green" },
         ],
       });
       const terminal = await this.runMemoryPhase("observation", secs);
-      this.emit({ type: "follow_up_queue", prompts: [] });
+      this.emit({ type: "follow_up_queue", followUpQueue: [] });
       return terminal;
     }
 
@@ -286,11 +302,11 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
           : ["follow-up one", "follow-up two", "follow-up three"];
       this.emit({
         type: "follow_up_queue",
-        prompts: messages.map((m) => ({ message: m })),
+        followUpQueue: messages.map((m) => ({ message: m })),
       });
       await this.sleep(2000);
       if (this.interrupted) return this.interruptedTerminal();
-      this.emit({ type: "follow_up_queue", prompts: [] });
+      this.emit({ type: "follow_up_queue", followUpQueue: [] });
       return this.complete(`Queued ${messages.length} follow-ups.`);
     }
 
@@ -367,15 +383,10 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       };
       cost.total = cost.input + cost.output + cost.cacheRead + cost.cacheWrite;
 
+      const usage = { input, output, cacheRead, cacheWrite, totalTokens: total, cost };
       this.emitUsage({
-        usage: {
-          input,
-          output,
-          cacheRead,
-          cacheWrite,
-          totalTokens: total,
-          cost,
-        },
+        turnUsage: usage,
+        lastMessageUsage: usage,
         effectiveContextWindow: cap,
         contextWindowUsage: { systemPrompt, messages, localMemory, globalMemory },
       });
@@ -543,31 +554,93 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         input: {
           definition: {
             name: "release-pipeline",
+            prompt: "Cut a release once verify passes and CI is green.",
             states: [
-              { name: "verify", kind: "agent" },
-              { name: "wait-for-ci", kind: "poll", intervalMs: 60_000 },
-              { name: "publish", kind: "agent" },
-              { name: "announce", kind: "agent" },
+              {
+                name: "verify",
+                kind: "agent",
+                when: "start of the release",
+                prompt: "Run pre-publish checks: typecheck, lint, and the docker test suite.",
+              },
+              {
+                name: "prebuild",
+                kind: "script",
+                when: "after verify",
+                command: "bun run build && bun run check-types",
+              },
+              {
+                name: "wait-for-ci",
+                kind: "poll",
+                intervalMs: 15 * 60_000,
+                command: "gh run list --limit 1 --json status,conclusion",
+              },
+              {
+                name: "cooldown",
+                kind: "timer",
+                wakeAt: Date.UTC(2026, 4, 13, 18, 30),
+              },
+              {
+                name: "publish",
+                kind: "agent",
+                prompt: "Publish the package and push the tag once CI is green.",
+              },
+              {
+                name: "done",
+                kind: "terminal",
+                status: "completed",
+                reason: "release published",
+              },
             ],
           },
+          firstState: "verify",
         },
-        output: "state machine registered",
+        // create_state_machine_definition echoes the full definition back; the
+        // formatter suppresses it because the roster body covers the same data.
+        output: JSON.stringify({ type: "create_state_machine_definition", ok: true }, null, 2),
       },
       {
         toolName: "select_state_machine_state",
         input: {
           decision: {
-            kind: "transition",
+            kind: "run_state",
             state: "wait-for-ci",
             reason: "verify completed; CI workflow dispatched, polling for green checks",
+            input: { runId: "12345" },
           },
         },
-        output: "moved to wait-for-ci",
+        output: JSON.stringify({ type: "select_state_machine_state", ok: true }, null, 2),
+      },
+      {
+        toolName: "select_state_machine_state",
+        input: {
+          decision: {
+            kind: "terminal",
+            state: "done",
+            reason: "all states completed successfully",
+          },
+        },
+        output: JSON.stringify({ type: "select_state_machine_state", ok: true }, null, 2),
       },
       {
         toolName: "get_current_state_machine_state",
         input: {},
-        output: "current: wait-for-ci\nwakeAt: 2026-05-09T18:30:00Z\nattempts: 2",
+        output: JSON.stringify(
+          {
+            currentState: "wait-for-ci",
+            currentInput: { runId: "12345" },
+            progress: { verify: 1, prebuild: 1, "wait-for-ci": 3 },
+            historyCount: 7,
+            history: [
+              { type: "state_entered", state: "verify" },
+              { type: "state_completed", state: "verify", status: "ok" },
+              { type: "state_entered", state: "prebuild" },
+              { type: "state_completed", state: "prebuild", status: "ok" },
+              { type: "state_entered", state: "wait-for-ci" },
+            ],
+          },
+          null,
+          2,
+        ),
       },
       {
         toolName: "mystery_tool",
@@ -591,6 +664,67 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         isError: true,
       },
     ];
+
+    // Reasoning block: stream 6 deltas then finalize with the full text so
+    // the 3-line cap on reasoning (label + up to 2 body lines) is visible.
+    const reasoningLines = [
+      "Considering whether to clamp the reasoning body to 3 visual lines.",
+      "The streaming path needs the same cap as the finalized path.",
+      "Memory observation bodies should drop the observation text entirely.",
+      "Only the completion message belongs under [memory:observation].",
+      "Bumps stay surfaced through the message, not through extra content.",
+      "This last line should fall into the '+N more lines' tail.",
+    ];
+    for (const line of reasoningLines) {
+      this.emit({ type: "step", step: { type: "reasoning_delta", delta: `${line}\n` } });
+      await this.sleep(120);
+      if (this.interrupted) return undefined;
+    }
+    this.emit({ type: "step", step: { type: "reasoning", text: reasoningLines.join("\n") } });
+    await this.sleep(200);
+
+    // Memory observation completion: payload includes observations and a
+    // usage-bumped list so the rendered body exercises the message-only path
+    // (observation text is intentionally omitted from the transcript).
+    this.emit({
+      type: "memory",
+      phase: "observation",
+      status: "running",
+      message: "Observing conversation into memory…",
+    });
+    await this.sleep(400);
+    if (this.interrupted) return undefined;
+    const now = Date.now();
+    const fakeObservation = (id: string, content: string, ageMs: number): Observation => ({
+      id,
+      createdAt: now - ageMs,
+      lastUsedAt: now - ageMs,
+      kind: "observation",
+      observedDate: new Date(now - ageMs).toISOString().slice(0, 10),
+      priority: "medium",
+      source: { kind: "agent" },
+      content,
+      tags: [],
+    });
+    this.emit({
+      type: "memory",
+      phase: "observation",
+      status: "completed",
+      message: "Memory observation recorded. Reinforced 3 prior memories.",
+      observations: [
+        fakeObservation(
+          "obs_demo_1",
+          "User wants the TUI reasoning block capped at 3 lines and memory observation blocks to show only the completion message.",
+          0,
+        ),
+      ],
+      usageBumpedObservations: [
+        fakeObservation("obs_prior_1", "prior memory 1", 60_000),
+        fakeObservation("obs_prior_2", "prior memory 2", 120_000),
+        fakeObservation("obs_prior_3", "prior memory 3", 180_000),
+      ],
+    });
+    await this.sleep(200);
 
     for (const [index, fixture] of fixtures.entries()) {
       const toolCallId = `demo_${index}`;
@@ -638,6 +772,85 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         },
       ],
     };
+  }
+
+  /**
+   * Walk a three-entry follow-up queue all the way down to empty, pausing
+   * between deliveries so the user can watch the lifecycle play out:
+   *
+   *   1. Initial emit populates the panel above the compose bar with all
+   *      three prompts; nothing is in the transcript yet.
+   *   2. Each subsequent emit drops the front entry — the session
+   *      subscription diffs the queues and replays the delivered prompt as
+   *      a real `you:` block in the transcript, while the panel shrinks.
+   *   3. The final empty emit drains the last entry, hiding the panel and
+   *      leaving three `you:` blocks behind in the transcript.
+   */
+  private async runFollowUpDemo(): Promise<TurnTerminalEvent> {
+    const prompts = [
+      { message: "draft the email" },
+      { message: "share a screenshot" },
+      { message: "check the analytics" },
+    ];
+    this.emit({ type: "follow_up_queue", followUpQueue: prompts });
+    await this.sleep(1200);
+    if (this.interrupted) return this.interruptedTerminal();
+    this.emit({ type: "follow_up_queue", followUpQueue: prompts.slice(1) });
+    await this.sleep(1200);
+    if (this.interrupted) return this.interruptedTerminal();
+    this.emit({ type: "follow_up_queue", followUpQueue: prompts.slice(2) });
+    await this.sleep(1200);
+    if (this.interrupted) return this.interruptedTerminal();
+    this.emit({ type: "follow_up_queue", followUpQueue: [] });
+    return this.complete("Follow-up queue drained.");
+  }
+
+  /**
+   * Walk the user through the sticky "latest user message" banner that
+   * appears above the transcript only when the most recent `you:` block
+   * has scrolled out of the viewport. This scenario streams a long-ish
+   * agent reply so the user's `/banner-demo` block visibly scrolls off
+   * the top, which is the exact condition that reveals the banner; the
+   * narration also points them at the other ways to trigger it.
+   */
+  private async runBannerDemo(): Promise<TurnTerminalEvent> {
+    const lines = [
+      "The bordered row at the top of the screen pins your latest message,",
+      "but only when that message is no longer visible in the transcript.",
+      "",
+      "Watch what happens as this reply streams: once `you: /banner-demo`",
+      "scrolls past the top edge of the transcript, the banner appears.",
+      "Scroll the transcript back down with the mouse wheel or PageDown",
+      "until the original `you:` block is on screen and the banner hides",
+      "itself again.",
+      "",
+      "Other ways to exercise it:",
+      "  1. Send a short prompt - the banner stays hidden because the",
+      "     block is still visible right above the input.",
+      "  2. Send a multi-line paste (Shift+Enter to add newlines) - the",
+      "     banner body clamps to 3 lines with an ellipsis when it shows.",
+      "  3. Run /working 8 and scroll up while the agent streams - the",
+      "     banner pops in as soon as your prompt scrolls off the top.",
+      "  4. Run /ask, accept with a typed flush message - the flush is",
+      "     recorded as a `you:` block that the banner tracks.",
+      "",
+      "(Padding follows so this reply is tall enough to push the original",
+      "`you: /banner-demo` block off the top of the transcript on most",
+      "terminal sizes; resize smaller if it's still visible.)",
+      ...Array.from(
+        { length: 20 },
+        (_, i) =>
+          `  line ${String(i + 1).padStart(2, " ")} of padding to force the prompt off screen.`,
+      ),
+    ];
+    const summary = lines.join("\n");
+    for (const chunk of summary.match(/.{1,40}/g) ?? []) {
+      this.emit({ type: "step", step: { type: "text_delta", delta: chunk } });
+      await this.sleep(30);
+      if (this.interrupted) return this.interruptedTerminal();
+    }
+    this.emit({ type: "step", step: { type: "text", text: summary } });
+    return this.complete(summary);
   }
 
   private async runMemoryPhase(

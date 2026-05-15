@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   assembleToolBlock,
   formatToolBlock,
-  truncateToolText,
+  truncateReasoningBody,
 } from "../src/tui/tool-formatters.js";
 import { historyDisplayBlocks } from "../src/tui/history.js";
 
@@ -152,6 +152,129 @@ describe("tool formatters > todo_write", () => {
   });
 });
 
+describe("tool formatters > state machine", () => {
+  test("create_state_machine_definition renders a per-state roster", () => {
+    const formatted = formatToolBlock({
+      toolName: "create_state_machine_definition",
+      status: "completed",
+      input: {
+        definition: {
+          name: "release-pipeline",
+          states: [
+            { name: "verify", kind: "agent", prompt: "Run pre-publish checks." },
+            { name: "wait-for-ci", kind: "poll", intervalMs: 900_000, command: "gh run list" },
+            { name: "done", kind: "terminal", status: "completed", reason: "shipped" },
+          ],
+        },
+        firstState: "verify",
+      },
+      output: [{ type: "text", text: "echoed definition" }],
+      mode: "live",
+    });
+    expect(formatted.header).toBe("relay defined: release-pipeline");
+    expect(formatted.body).toContain("firstState: verify");
+    expect(formatted.body).toContain("◆ verify");
+    expect(formatted.body).toContain("⟳ wait-for-ci");
+    expect(formatted.body).toContain("every 15m");
+    expect(formatted.body).toContain("■ done");
+    expect(formatted.body).toContain("completed — shipped");
+    // The roster body already shows everything; the result echo is suppressed.
+    expect(formatted.result).toBeUndefined();
+    expect(formatted.clamp).toBe(false);
+  });
+
+  test("select_state_machine_state renders verb, target, reason, and input", () => {
+    const formatted = formatToolBlock({
+      toolName: "select_state_machine_state",
+      status: "completed",
+      input: {
+        decision: {
+          kind: "run_state",
+          state: "wait-for-ci",
+          reason: "verify completed; polling CI",
+          input: { runId: "12345" },
+        },
+      },
+      output: [{ type: "text", text: "echo" }],
+      mode: "live",
+    });
+    expect(formatted.header).toBe("→ run: wait-for-ci");
+    expect(formatted.body).toContain("reason: verify completed; polling CI");
+    expect(formatted.body).toContain("input:");
+    expect(formatted.body).toContain("runId");
+    expect(formatted.result).toBeUndefined();
+  });
+
+  test("select_state_machine_state maps terminal and fail kinds to friendly verbs", () => {
+    const finalize = formatToolBlock({
+      toolName: "select_state_machine_state",
+      status: "completed",
+      input: { decision: { kind: "terminal", state: "done" } },
+      mode: "live",
+    });
+    expect(finalize.header).toBe("→ finalize: done");
+
+    const fail = formatToolBlock({
+      toolName: "select_state_machine_state",
+      status: "completed",
+      input: { decision: { kind: "fail", reason: "unrecoverable" } },
+      mode: "live",
+    });
+    expect(fail.header).toBe("→ fail");
+    expect(fail.body).toContain("reason: unrecoverable");
+  });
+
+  test("get_current_state_machine_state parses the JSON result", () => {
+    const formatted = formatToolBlock({
+      toolName: "get_current_state_machine_state",
+      status: "completed",
+      input: {},
+      output: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            currentState: "wait-for-ci",
+            progress: { verify: 1, "wait-for-ci": 2 },
+            historyCount: 5,
+            history: [
+              { type: "state_entered", state: "verify" },
+              { type: "state_completed", state: "verify", status: "ok" },
+              { type: "state_entered", state: "wait-for-ci" },
+            ],
+          }),
+        },
+      ],
+      mode: "live",
+    });
+    expect(formatted.header).toBe("relay status — current: wait-for-ci");
+    expect(formatted.body).toContain("progress: verify=1 wait-for-ci=2");
+    expect(formatted.body).toContain("history (+2 earlier):");
+    expect(formatted.body).toContain("state_completed verify (ok)");
+    expect(formatted.result).toBeUndefined();
+  });
+
+  test("get_current_state_machine_state reports terminal status when present", () => {
+    const formatted = formatToolBlock({
+      toolName: "get_current_state_machine_state",
+      status: "completed",
+      input: {},
+      output: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            terminal: { status: "completed", reason: "release published" },
+            historyCount: 0,
+            history: [],
+          }),
+        },
+      ],
+      mode: "live",
+    });
+    expect(formatted.header).toBe("relay status — terminal: completed");
+    expect(formatted.body).toContain("reason: release published");
+  });
+});
+
 describe("tool formatters > unknown tools", () => {
   test("falls back to a generic [tool name] block with compact JSON input", () => {
     const formatted = formatToolBlock({
@@ -166,14 +289,14 @@ describe("tool formatters > unknown tools", () => {
   });
 });
 
-describe("truncateToolText", () => {
-  test("keeps short outputs verbatim", () => {
-    expect(truncateToolText("a\nb\nc")).toBe("a\nb\nc");
+describe("truncateReasoningBody", () => {
+  test("keeps short reasoning verbatim", () => {
+    expect(truncateReasoningBody("a\nb")).toBe("a\nb");
   });
 
-  test("trims long outputs and reports the omitted line count", () => {
-    const text = ["a", "b", "c", "d", "e"].join("\n");
-    expect(truncateToolText(text)).toBe("a\nb\nc\n… (+2 more lines)");
+  test("collapses long reasoning to a single head line plus tail count", () => {
+    const text = ["a", "b", "c", "d"].join("\n");
+    expect(truncateReasoningBody(text)).toBe("a\n… (+3 more lines)");
   });
 });
 

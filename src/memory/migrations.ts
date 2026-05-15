@@ -24,6 +24,13 @@ import type { PGlite, Transaction } from "@electric-sql/pglite";
  *   - Forward-only by design. A bad migration is fixed by writing the next
  *     migration, not by reverting. This matches gbrain's pattern after
  *     they hit "upgrade-wedge" bugs across six schema versions.
+ *   - Prefer drop-and-recreate over data-preserving rebuilds for the
+ *     embedding tables. Embeddings are cheap to regenerate (the backfill
+ *     worker repopulates lazily within minutes of CLI startup) and the
+ *     data-preserving path requires reading every existing row, which has
+ *     bitten us with PGlite TOAST corruption on `vector(3072)` columns
+ *     after heavy UPSERT load (see migration 7's comment). Observation
+ *     rows are the only data that genuinely needs in-place transforms.
  */
 export interface Migration {
   /** Monotonic version number. Migrations are applied strictly in ascending order. */
@@ -321,6 +328,43 @@ const MIGRATIONS: Migration[] = [
       await tx.exec(`
         CREATE TABLE observation_embeddings (
           observation_id TEXT PRIMARY KEY REFERENCES observations(id) ON DELETE CASCADE,
+          model TEXT NOT NULL,
+          vector vector(3072) NOT NULL,
+          created_at BIGINT NOT NULL
+        )
+      `);
+    },
+  },
+  {
+    version: 7,
+    description: "drop FK cascade on observation_embeddings so embeddings survive parent churn",
+    up: async (tx) => {
+      // The original `REFERENCES observations(id) ON DELETE CASCADE`
+      // caused a hot-loop bug: the reflector's session-scoped
+      // delete-and-reinsert cycle would wipe every embedding for a
+      // session via cascade, and the backfill worker would then
+      // re-embed the same ids over and over (or, after the cooldown
+      // was added, leave them silently un-embedded for five minutes).
+      //
+      // Drop the table and recreate it without the FK so an embedding
+      // row outlives a parent delete. Orphans are harmless: the
+      // recall path JOINs back to `observations` and naturally
+      // filters them out, and a future reinsert of the same id keeps
+      // its existing embedding until the worker refreshes it through
+      // the ON CONFLICT path.
+      //
+      // We do not preserve the existing rows. An earlier draft of
+      // this migration tried `CREATE ... + INSERT SELECT * + DROP +
+      // RENAME`, but PGlite's TOAST storage of `vector(3072)` columns
+      // hit `missing chunk number 0 for toast value ...` on production
+      // databases that had been heavily UPSERTed by the worker. The
+      // backfill worker repopulates this table lazily within minutes
+      // of CLI startup, so dropping and rebuilding matches migration
+      // 6's precedent and sidesteps the toast read entirely.
+      await tx.exec(`DROP TABLE IF EXISTS observation_embeddings`);
+      await tx.exec(`
+        CREATE TABLE observation_embeddings (
+          observation_id TEXT PRIMARY KEY,
           model TEXT NOT NULL,
           vector vector(3072) NOT NULL,
           created_at BIGINT NOT NULL

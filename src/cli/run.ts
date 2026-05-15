@@ -12,7 +12,7 @@ import {
   resolveCliModel,
   type ModelResolution,
 } from "../model-resolution/resolver.js";
-import { SessionManager } from "../session/session-manager.js";
+import { DEFAULT_MEMORY_DB_PATH, SessionManager } from "../session/session-manager.js";
 import { runTui } from "../tui/app.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import { DEFAULT_RESUME_HISTORY_MESSAGES, printRunHelp } from "./help.js";
@@ -29,6 +29,12 @@ export interface CliTurnConfigInput {
   modelName?: string;
   memoryModelName?: string;
   incognito?: boolean;
+  /**
+   * Explicit memory database file path. When omitted, the config falls back
+   * to {@link DEFAULT_MEMORY_DB_PATH} (`~/.duet/memory.db`). Ignored when
+   * `incognito` is true, which forces `memoryDbPath: false`.
+   */
+  dbPath?: string;
   workDir: string;
   systemInstructions?: string;
   systemPromptFiles?: string[];
@@ -70,7 +76,7 @@ export function buildCliTurnConfig(
     config: {
       model: modelResolution.modelName,
       memoryModel: memoryModelResolution.modelName,
-      ...(input.incognito ? { memoryDbPath: false } : {}),
+      memoryDbPath: input.incognito ? false : (input.dbPath ?? DEFAULT_MEMORY_DB_PATH),
       cwd: input.workDir,
       ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),
       ...(input.systemPromptFiles ? { systemPromptFiles: input.systemPromptFiles } : {}),
@@ -99,8 +105,10 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   let resumeHistoryMessages = DEFAULT_RESUME_HISTORY_MESSAGES;
   let resumeHistoryMessagesExplicit = false;
   let envFilePath: string | undefined;
+  let dbPath: string | undefined;
   let incognito = false;
   let noAutoUpgrade = false;
+  let noSkillSync = false;
   const promptParts: string[] = [];
   const interactive = isInteractive();
 
@@ -157,8 +165,15 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         envFilePath = args[++i];
         break;
+      case "--db":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        dbPath = args[++i];
+        break;
       case "--no-auto-upgrade":
         noAutoUpgrade = true;
+        break;
+      case "--no-skill-sync":
+        noSkillSync = true;
         break;
       case "--version":
       case "-v":
@@ -217,11 +232,19 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   // while the TUI is already mounted. The TUI subscribes to upgradeStatus$
   // to render a live header line; the JSON path awaits the final status
   // and prints one summary line to stderr.
+  //
+  // Auto-upgrade is gated on having a TTY: non-interactive invocations
+  // (e.g. `duet <prompt>` exec'd by a sandbox terminal channel) often get
+  // their whole process tree torn down as soon as the command "finishes",
+  // which kills the detached npm child mid-rename and leaves the global
+  // node_modules tree in a partial state (`@duetso/.agent-<random>`
+  // staging dirs with no `agent` symlink).
+  const nonInteractive = !process.stdin.isTTY && !process.stdout.isTTY;
   const upgradeStatus$ = createUpgradeStatusStream();
   const upgradePromise = runAutoUpgrade({
     packageName: pkg.name,
     currentVersion: pkg.version,
-    disabled: noAutoUpgrade,
+    disabled: noAutoUpgrade || nonInteractive,
     onStatus: (status) => upgradeStatus$.publish(status),
   }).then((status) => {
     upgradeStatus$.complete(status);
@@ -233,7 +256,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   // in with --skip-skill-sync leaves no hash, so this stays a no-op until
   // the user explicitly syncs at least once. The conditional GET hits 304
   // in steady state, so the cost is one cheap round-trip.
-  if (process.env.DUET_API_KEY) {
+  if (process.env.DUET_API_KEY && !noSkillSync) {
     await maybeAutoSyncDefaultSkills({ apiKey: process.env.DUET_API_KEY });
   }
 
@@ -242,6 +265,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       ...(modelName ? { modelName } : {}),
       ...(memoryModelName ? { memoryModelName } : {}),
       incognito,
+      ...(dbPath ? { dbPath } : {}),
       workDir,
       ...(systemInstructions ? { systemInstructions } : {}),
       ...(systemPromptFiles ? { systemPromptFiles } : {}),
@@ -325,12 +349,16 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       // eslint-disable-next-line no-constant-condition
       while (true) {
         let pendingResumeSessionId: string | undefined;
+        let pendingReset = false;
         await runTui({
           session: activeSession,
           ...(activeHistory ? { history: activeHistory } : {}),
           ...(activeIsResume ? { isResume: true } : {}),
           onResumeRequest: (id: string) => {
             pendingResumeSessionId = id;
+          },
+          onResetRequest: () => {
+            pendingReset = true;
           },
           resumeHistoryMessages,
           modelName,
@@ -343,6 +371,18 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
           packageVersion: pkg.version,
           upgradeStatus$,
         });
+
+        if (pendingReset) {
+          // `/reset` from the slash dispatcher: drop the current session
+          // (flushing state.json) and start a fresh one. The new session
+          // boots with starters visible — same as launching `duet`
+          // without `--resume`.
+          await activeSession.dispose();
+          activeSession = manager.create(config.mode ? { mode: config.mode } : {});
+          activeHistory = undefined;
+          activeIsResume = false;
+          continue;
+        }
 
         if (!pendingResumeSessionId) break;
 
@@ -368,6 +408,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         ...(memoryModelName ? { memoryModelName } : {}),
         workDir,
         incognito,
+        ...(dbPath ? { dbPath } : {}),
         ...(systemInstructions ? { systemInstructions } : {}),
         ...(systemPromptFiles ? { systemPromptFiles } : {}),
         ...(envFilePath ? { envFilePath } : {}),

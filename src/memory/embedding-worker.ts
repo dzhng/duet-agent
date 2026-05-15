@@ -1,7 +1,8 @@
-import type { PGlite } from "@electric-sql/pglite";
-import { appendFileSync, mkdirSync } from "node:fs";
+import type { PGlite, Transaction } from "@electric-sql/pglite";
+import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import type { EmbedFn } from "./embedding.js";
+import type { MemorySession } from "./session.js";
 
 /**
  * Background worker that fills missing embeddings while the CLI is
@@ -10,39 +11,95 @@ import type { EmbedFn } from "./embedding.js";
  * to the user immediately; the embedding lands within a few seconds in
  * the background, after which the row becomes hybrid-retrievable.
  *
- * Loop shape:
- *   1. Select up to BATCH_SIZE unembedded rows, prioritized by
- *      `priority DESC, created_at DESC` so high-signal recent
- *      observations become searchable first.
- *   2. Embed via the gateway client.
- *   3. Write the resulting vectors back.
- *   4. Sleep briefly between batches so the worker stays out of the
- *      runtime's way; sleep longer when idle (no work) or after an
- *      error (rate limit, transient network).
+ * Tick shape:
+ *   1. Acquire the memory session via one `withDb`. Inside that open,
+ *      drain unembedded rows in `BATCH_SIZE` chunks until a select
+ *      returns zero rows, then exit `withDb` so the cross-process lock
+ *      releases shortly after via the session's idle-close timer.
+ *   2. Sleep `IDLE_SLEEP_MS` between ticks. Long enough that a peer
+ *      duet CLI can acquire the lock between drains, short enough that
+ *      a newly-written observation becomes searchable within seconds.
+ *   3. On error (rate limit, transient network), back off for
+ *      `ERROR_SLEEP_MS` before retrying.
  *
  * Failure modes are local: any error inside the loop logs and resumes
  * after a backoff. The worker never throws to the caller.
  */
 const BATCH_SIZE = 50;
-const INTER_BATCH_SLEEP_MS = 500;
-const IDLE_SLEEP_MS = 30_000;
-const ERROR_SLEEP_MS = 60_000;
+const DEFAULT_IDLE_SLEEP_MS = 10_000;
+const DEFAULT_ERROR_SLEEP_MS = 60_000;
+// Cap how often a single observation may be re-embedded. The production
+// memory store can churn rows (the reflector deletes and re-inserts a
+// session's observations, which cascade-deletes their embeddings). If
+// the embedding row vanishes between drains we should re-embed at
+// most once per cooldown rather than running an unbounded hot loop
+// over the same ids.
+const DEFAULT_ATTEMPT_COOLDOWN_MS = 5 * 60_000;
+// Snippet length for embedding-failure log lines. The remote endpoint
+// occasionally responds with a full HTML page when misrouted (404 from
+// the marketing site) and dumping the whole body fills the log with
+// tens of kilobytes per failure.
+const ERROR_BODY_LOG_MAX = 200;
 
 export interface EmbeddingBackfillWorkerOptions {
-  db: PGlite;
+  /** Memory session owning the PGlite handle and cross-process lock. */
+  session: MemorySession;
   /** Embedding callable. Defaults to the gateway client; tests inject a stub. */
   embed: EmbedFn;
   /** Path to append progress lines to. Optional; when omitted the worker logs nothing. */
   logPath?: string;
+  /**
+   * Idle delay between outer drain ticks in milliseconds. Defaults to
+   * 10s, which gives a peer duet CLI room to acquire the lock between
+   * drains. Tests override this to drive several ticks per second.
+   */
+  idleSleepMs?: number;
+  /**
+   * Backoff after a failed drain in milliseconds. Defaults to 60s.
+   * Tests override this so a transient-error case does not block the
+   * suite for a full minute.
+   */
+  errorSleepMs?: number;
+  /**
+   * Minimum time between re-embed attempts for the same observation
+   * id, in milliseconds. Defaults to 5 minutes. Caps unbounded
+   * re-embedding when something (typically the reflector's
+   * delete-and-reinsert cycle) keeps wiping a row's embedding behind
+   * the worker's back.
+   */
+  attemptCooldownMs?: number;
+  /**
+   * Maximum size of the live log file in bytes before it is rotated
+   * to `<logPath>.1` (replacing any prior rotation). Defaults to 1 MB.
+   * Each call to `log` checks the current size first and rotates
+   * before appending, so a chronic failure cannot grow the log without
+   * bound.
+   */
+  logMaxBytes?: number;
 }
+
+const DEFAULT_LOG_MAX_BYTES = 1024 * 1024;
 
 export class EmbeddingBackfillWorker {
   private readonly options: EmbeddingBackfillWorkerOptions;
+  private readonly idleSleepMs: number;
+  private readonly errorSleepMs: number;
+  private readonly attemptCooldownMs: number;
+  private readonly logMaxBytes: number;
+  // Per-id record of the last attempt timestamp. selectBatch filters
+  // out ids attempted within the cooldown, breaking the hot loop when
+  // a row's embedding keeps disappearing between drains. Entries are
+  // purged lazily as they expire.
+  private readonly recentAttempts = new Map<string, number>();
   private abortController?: AbortController;
   private runningPromise?: Promise<void>;
 
   constructor(options: EmbeddingBackfillWorkerOptions) {
     this.options = options;
+    this.idleSleepMs = options.idleSleepMs ?? DEFAULT_IDLE_SLEEP_MS;
+    this.errorSleepMs = options.errorSleepMs ?? DEFAULT_ERROR_SLEEP_MS;
+    this.attemptCooldownMs = options.attemptCooldownMs ?? DEFAULT_ATTEMPT_COOLDOWN_MS;
+    this.logMaxBytes = options.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES;
   }
 
   /** Start the background loop. Idempotent — a second call is a no-op. */
@@ -52,7 +109,11 @@ export class EmbeddingBackfillWorker {
     this.runningPromise = this.run(this.abortController.signal);
   }
 
-  /** Stop the loop and wait for the in-flight batch (if any) to settle. */
+  /**
+   * Stop the loop and wait for the in-flight tick (if any) to settle.
+   * Because each tick awaits a `session.withDb`, this transitively waits
+   * for any open the worker holds to drain and the lock to release.
+   */
   async stop(): Promise<void> {
     this.abortController?.abort();
     await this.runningPromise;
@@ -63,51 +124,86 @@ export class EmbeddingBackfillWorker {
   private async run(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
-        const batch = await this.selectBatch();
-        if (batch.length === 0) {
-          await sleep(IDLE_SLEEP_MS, signal);
-          continue;
-        }
-
-        const result = await this.options.embed(batch.map((row) => row.content));
-        if (result.embeddings.length !== batch.length) {
-          throw new Error(
-            `Embedding response length (${result.embeddings.length}) did not match batch size (${batch.length})`,
-          );
-        }
-
-        await this.persistBatch(batch, result.embeddings, result.model);
-        this.log(`Embedded ${batch.length} observations`);
-        await sleep(INTER_BATCH_SLEEP_MS, signal);
+        // One withDb per tick: drain everything that's currently
+        // outstanding while we hold the lock, then exit so the
+        // session can idle-close and another duet CLI can take a
+        // turn. A returned `undefined` means the lock could not be
+        // acquired in time — fall through to the idle sleep and
+        // retry the same tick later.
+        await this.options.session.withDb(async (db) => {
+          while (!signal.aborted) {
+            const batch = await this.selectBatch(db);
+            if (batch.length === 0) return;
+            // Stamp the attempt before we await the embedding so a
+            // failure mid-call still counts as an attempt and the same
+            // ids do not get retried in a tight loop on the next drain.
+            const attemptAt = Date.now();
+            for (const row of batch) this.recentAttempts.set(row.id, attemptAt);
+            const result = await this.options.embed(batch.map((row) => row.content));
+            if (result.embeddings.length !== batch.length) {
+              throw new Error(
+                `Embedding response length (${result.embeddings.length}) did not match batch size (${batch.length})`,
+              );
+            }
+            await this.persistBatch(db, batch, result.embeddings, result.model);
+            this.log(`Embedded ${batch.length} observations`);
+          }
+        });
+        if (signal.aborted) return;
+        await sleep(this.idleSleepMs, signal);
       } catch (error) {
         if (signal.aborted) return;
-        const reason = error instanceof Error ? error.message : String(error);
-        this.log(`Embedding batch failed: ${reason}`);
-        await sleep(ERROR_SLEEP_MS, signal);
+        this.log(`Embedding batch failed: ${summarizeError(error)}`);
+        await sleep(this.errorSleepMs, signal);
       }
     }
   }
 
-  private async selectBatch(): Promise<{ id: string; content: string }[]> {
+  private async selectBatch(db: PGlite): Promise<{ id: string; content: string }[]> {
     // LEFT JOIN over the embeddings table is the cheapest way to pick
     // rows with no embedding yet. The composite index on
     // (kind, priority, created_at DESC) carries the ORDER BY without a
     // separate sort.
-    const result = await this.options.db.query<{ id: string; content: string }>(
+    //
+    // The exclusion list comes from `recentAttempts` and caps how
+    // often the worker may retry the same id, even if its embedding
+    // row keeps being cascade-deleted between drains.
+    const excludedIds = this.collectCooledIds();
+    const result = await db.query<{ id: string; content: string }>(
       `SELECT o.id, o.content
        FROM observations o
        LEFT JOIN observation_embeddings e ON e.observation_id = o.id
        WHERE e.observation_id IS NULL
+         AND NOT (o.id = ANY($2::text[]))
        ORDER BY
          CASE o.priority WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC,
          o.created_at DESC
        LIMIT $1`,
-      [BATCH_SIZE],
+      [BATCH_SIZE, excludedIds],
     );
     return result.rows;
   }
 
+  /**
+   * Return the ids currently inside the attempt-cooldown window and
+   * forget anything older so the map cannot grow unbounded.
+   */
+  private collectCooledIds(): string[] {
+    const now = Date.now();
+    const cutoff = now - this.attemptCooldownMs;
+    const active: string[] = [];
+    for (const [id, at] of this.recentAttempts) {
+      if (at < cutoff) {
+        this.recentAttempts.delete(id);
+        continue;
+      }
+      active.push(id);
+    }
+    return active;
+  }
+
   private async persistBatch(
+    db: PGlite,
     batch: { id: string; content: string }[],
     vectors: number[][],
     model: string,
@@ -118,14 +214,21 @@ export class EmbeddingBackfillWorker {
     // server reported for this batch; storing it verbatim lets a
     // future re-embedding pass match the deprecated tag and refresh
     // only the affected rows.
-    await this.options.db.transaction(async (tx) => {
+    //
+    // No FK exists between `observation_embeddings` and `observations`
+    // (migration 7 dropped the cascade), so a bare INSERT is safe even
+    // if the parent row was deleted between `selectBatch` and here.
+    // Any resulting orphan embedding is harmless — the recall path
+    // JOINs back to `observations` and filters orphans out — and it
+    // survives a same-id reinsert without forcing a re-embed.
+    await db.transaction(async (tx: Transaction) => {
       const now = Date.now();
       for (let index = 0; index < batch.length; index++) {
         const row = batch[index]!;
         const vector = vectors[index]!;
         await tx.query(
           `INSERT INTO observation_embeddings (observation_id, model, vector, created_at)
-           VALUES ($1, $2, $3, $4)
+           VALUES ($1, $2, $3::vector, $4)
            ON CONFLICT (observation_id) DO UPDATE SET
              model = EXCLUDED.model,
              vector = EXCLUDED.vector,
@@ -137,10 +240,31 @@ export class EmbeddingBackfillWorker {
   }
 
   private log(message: string): void {
-    if (!this.options.logPath) return;
+    const logPath = this.options.logPath;
+    if (!logPath) return;
     try {
-      mkdirSync(dirname(this.options.logPath), { recursive: true });
-      appendFileSync(this.options.logPath, `[${new Date().toISOString()}] ${message}\n`, "utf8");
+      mkdirSync(dirname(logPath), { recursive: true });
+      // Rotate before appending so the live file never exceeds the
+      // cap by more than one line. The single `.1` rotation keeps the
+      // most recent overflow available for post-mortem without
+      // accumulating an unbounded ring of files.
+      try {
+        if (statSync(logPath).size >= this.logMaxBytes) {
+          renameSync(logPath, `${logPath}.1`);
+        }
+      } catch {
+        // No existing file or stat failed; appendFileSync will create.
+      }
+      // Include the pid so multi-CLI runs (which share the log file
+      // via the same HOME-backed `.duet/logs/` path) can be
+      // disambiguated. Each appendFileSync call writes a single line
+      // well under PIPE_BUF, so O_APPEND keeps lines from different
+      // processes intact even when they interleave.
+      appendFileSync(
+        logPath,
+        `[${new Date().toISOString()} pid=${process.pid}] ${message}\n`,
+        "utf8",
+      );
     } catch {
       // Logging is best-effort; failures here must not bring the worker
       // down. The next batch's logs will retry the directory create.
@@ -155,6 +279,22 @@ export class EmbeddingBackfillWorker {
  */
 function formatVector(values: number[]): string {
   return `[${values.join(",")}]`;
+}
+
+/**
+ * Render an error for the worker log without dumping multi-kilobyte
+ * HTML bodies. The embedding endpoint can respond with a full Next.js
+ * 404 page (over 50KB) when misrouted, and the raw message would
+ * otherwise be appended verbatim on every retry.
+ */
+function summarizeError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const collapsed = raw
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (collapsed.length <= ERROR_BODY_LOG_MAX) return collapsed;
+  return `${collapsed.slice(0, ERROR_BODY_LOG_MAX)}… (truncated ${collapsed.length - ERROR_BODY_LOG_MAX} chars)`;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

@@ -1,19 +1,37 @@
+import type { BoxRenderable, TextRenderable } from "@opentui/core";
 import type { Session } from "../session/session.js";
-import type { TurnEvent } from "../types/protocol.js";
+import type { TurnEvent, TurnFollowUpQueueEntry } from "../types/protocol.js";
 import type { QuestionPicker } from "./question-picker.js";
 import type { Sidebar } from "./sidebar.js";
 import type { StatusController } from "./status-controller.js";
 import type { StepRenderer } from "./step-renderer.js";
 import { COLORS } from "./theme.js";
 
+/**
+ * Maximum entry rows rendered in the follow-up panel body. When the queue
+ * exceeds this, the last visible row collapses to a `+N more` summary so
+ * the panel never grows past its `maxHeight` in layout.ts.
+ */
+const FOLLOW_UP_MAX_VISIBLE = 3;
+
 export interface SessionSubscriptionDeps {
   session: Session;
   sidebar: Sidebar;
+  /** Compose-row-adjacent follow-up panel; hidden when the queue is empty. */
+  followUpPanel: BoxRenderable;
+  /** Body of {@link followUpPanel}; rewritten on every queue change. */
+  followUpPanelBody: TextRenderable;
   stepRenderer: StepRenderer;
   statusController: StatusController;
   questionPicker: QuestionPicker;
   appendLine(content: string, fg: string): void;
   appendBlock(label: string | null, body: string, fg: string): void;
+  /**
+   * Render a `you:` block for a follow-up that the runner just delivered.
+   * dispatchTurn suppresses the user block at queue time when a turn is
+   * already running; this callback fires it later when the queue shrinks.
+   */
+  appendUserBlock(message: string): void;
 }
 
 /**
@@ -24,14 +42,14 @@ export function refreshSidebarFromSession(deps: { session: Session; sidebar: Sid
   const { session, sidebar } = deps;
   const state = session.getState();
   sidebar.setTodos(state?.todos ?? []);
-  sidebar.setFollowUpQueue(state?.followUpQueue ?? []);
   sidebar.setStateMachine(state?.stateMachine);
   const snap = session.getLastUsage();
   sidebar.setUsage(
     snap
       ? {
           type: "usage",
-          usage: snap.usage,
+          turnUsage: snap.turnUsage,
+          lastMessageUsage: snap.lastMessageUsage,
           effectiveContextWindow: snap.effectiveContextWindow,
           contextWindowUsage: snap.contextWindowUsage,
         }
@@ -50,21 +68,46 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
   const {
     session,
     sidebar,
+    followUpPanel,
+    followUpPanelBody,
     stepRenderer,
     statusController,
     questionPicker,
     appendLine,
     appendBlock,
+    appendUserBlock,
   } = deps;
   const refreshSidebar = () => refreshSidebarFromSession({ session, sidebar });
+
+  // Seed the queue snapshot from the session's hydrated state so a resumed
+  // session that already has persisted follow-ups does not falsely treat
+  // them as "delivered" the moment the first event arrives.
+  let previousQueue: TurnFollowUpQueueEntry[] = [...(session.getState()?.followUpQueue ?? [])];
+  renderFollowUpPanel(previousQueue, followUpPanel, followUpPanelBody);
+
   return session.subscribe((event: TurnEvent) => {
     refreshSidebar();
     if (event.type === "step") {
       stepRenderer.renderStep(event.step);
     } else if (event.type === "follow_up_queue") {
-      // Mirror the count into the working-status line so the user can see
-      // queued prompts at a glance without scrolling the sidebar.
-      statusController.setQueuedFollowUps(event.prompts.length);
+      // Render the new queue snapshot, mirror the count into the status
+      // line, and replay any entries the runner just delivered (entries
+      // present in the prior snapshot but absent from the new one) as
+      // proper `you:` transcript blocks.
+      const next = event.followUpQueue;
+      for (const delivered of diffRemovedEntries(previousQueue, next)) {
+        appendUserBlock(delivered.message);
+        if (delivered.images?.length) {
+          appendBlock(
+            null,
+            `📎 ${delivered.images.length} image attachment${delivered.images.length === 1 ? "" : "s"}`,
+            COLORS.hint,
+          );
+        }
+      }
+      previousQueue = [...next];
+      renderFollowUpPanel(next, followUpPanel, followUpPanelBody);
+      statusController.setQueuedFollowUps(next.length);
     } else if (event.type === "memory") {
       stepRenderer.renderMemoryStatus(event);
     } else if (event.type === "system") {
@@ -73,25 +116,80 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
     } else if (event.type === "ask") {
       appendBlock("[question]", event.questions.map((q) => q.question).join("\n"), COLORS.system);
       questionPicker.show(event.questions);
-      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderUsage(event.turnUsage);
       stepRenderer.renderTurnElapsed();
       statusController.markIdle(event);
     } else if (event.type === "complete") {
       if (event.error) {
         appendBlock("[error]", event.error, COLORS.error);
       }
-      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderUsage(event.turnUsage);
       stepRenderer.renderTurnElapsed();
       statusController.markIdle(event);
     } else if (event.type === "interrupted") {
       appendLine("[interrupted]", COLORS.system);
-      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderUsage(event.turnUsage);
       stepRenderer.renderTurnElapsed();
       statusController.markIdle(event);
     } else if (event.type === "sleep") {
-      stepRenderer.renderUsage(event.usage);
+      stepRenderer.renderUsage(event.turnUsage);
       stepRenderer.renderSleeping(event.wakeAt);
       statusController.markIdle(event);
     }
   });
+}
+
+/**
+ * Project the runner's follow-up queue onto the compose-row panel. Entries
+ * are formatted as `"N. <message>"` with an `📎N` suffix when the entry
+ * carries image attachments, and the panel hides itself entirely when the
+ * queue is empty so the compose row stays flush with the transcript.
+ */
+function renderFollowUpPanel(
+  entries: readonly TurnFollowUpQueueEntry[],
+  panel: BoxRenderable,
+  body: TextRenderable,
+): void {
+  if (entries.length === 0) {
+    panel.visible = false;
+    body.content = "";
+    return;
+  }
+  const showSummary = entries.length > FOLLOW_UP_MAX_VISIBLE;
+  const visibleCount = showSummary ? FOLLOW_UP_MAX_VISIBLE - 1 : entries.length;
+  const lines = entries.slice(0, visibleCount).map((entry, index) => {
+    const attachments = entry.images?.length ? ` 📎${entry.images.length}` : "";
+    return `${index + 1}. ${entry.message}${attachments}`.replace(/\s+/g, " ").trim();
+  });
+  if (showSummary) {
+    lines.push(`+${entries.length - visibleCount} more`);
+  }
+  body.content = lines.join("\n");
+  panel.visible = true;
+}
+
+/**
+ * Returns the entries that were in `prev` but are no longer in `next`,
+ * treating the lists as message-text multisets. Used to detect deliveries
+ * (queue → drain) so the corresponding `you:` blocks can be rendered into
+ * the transcript at the point the runner actually hands them to the agent.
+ */
+function diffRemovedEntries(
+  prev: readonly TurnFollowUpQueueEntry[],
+  next: readonly TurnFollowUpQueueEntry[],
+): TurnFollowUpQueueEntry[] {
+  const remaining = new Map<string, number>();
+  for (const entry of next) {
+    remaining.set(entry.message, (remaining.get(entry.message) ?? 0) + 1);
+  }
+  const removed: TurnFollowUpQueueEntry[] = [];
+  for (const entry of prev) {
+    const count = remaining.get(entry.message) ?? 0;
+    if (count > 0) {
+      remaining.set(entry.message, count - 1);
+    } else {
+      removed.push(entry);
+    }
+  }
+  return removed;
 }

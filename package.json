@@ -1,6 +1,6 @@
 {
   "name": "@duetso/agent",
-  "version": "0.1.84",
+  "version": "0.1.132",
   "description": "An opinionated full-stack agent turn runner with native memories, interrupts, and multi-agent orchestration",
   "keywords": [
     "agent",
@@ -62,6 +62,7 @@
     "@electric-sql/pglite": "^0.4.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentui/core": "^0.2.5",
+    "@vscode/ripgrep": "^1.18.0",
     "ajv": "^8.20.0",
     "dedent": "^1.7.2",
     "dotenv": "^17.4.2",

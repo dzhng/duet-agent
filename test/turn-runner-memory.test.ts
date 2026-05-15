@@ -162,12 +162,25 @@ class UsageTrackingTurnRunner extends TurnRunner {
  * `{ global: [], local: [] }` when no pack has been frozen.
  */
 class UsageEventTurnRunner extends TurnRunner {
+  /** Messages pushed onto `agent.state.messages` at creation time. */
+  seedMessages: AgentMessage[] = [];
+
   effectiveContextWindowForTest(): number {
     return this.effectiveContextWindow();
   }
 
   requireParentAgentForTest(): Agent {
     return this.requireParentAgent();
+  }
+
+  /** Advance the sticky wire-eviction horizon for tests. */
+  setEvictionHorizonForTest(horizon: number): void {
+    this.wireGuardHorizon.evictionHorizon = horizon;
+  }
+
+  /** Recompute the per-segment context-usage breakdown directly. */
+  estimateContextWindowUsageForTest() {
+    return this.estimateContextWindowUsage();
   }
 
   /**
@@ -193,6 +206,9 @@ class UsageEventTurnRunner extends TurnRunner {
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
     const agent = super.createAgent(input, onControlResult);
+    if (this.seedMessages.length > 0) {
+      agent.state.messages.push(...this.seedMessages);
+    }
     agent.streamFn = () => {
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
@@ -704,7 +720,7 @@ describe("TurnRunner memory", () => {
       await startTurn(runner, { mode: "agent", prompt: "Check usage." })
     ).turn;
 
-    expect(terminal.usage).toEqual({
+    expect(terminal.turnUsage).toEqual({
       input: 16,
       output: 20,
       totalTokens: 36,
@@ -712,7 +728,7 @@ describe("TurnRunner memory", () => {
       cacheWrite: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.18 },
     });
-    expect(events.at(-1)).toMatchObject({ usage: terminal.usage });
+    expect(events.at(-1)).toMatchObject({ turnUsage: terminal.turnUsage });
   });
 
   test("memory output budget retries once when over budget", async () => {
@@ -924,10 +940,13 @@ describe("TurnRunner memory", () => {
       { role: "user", content: [{ type: "text", text: "u2" }], timestamp: 3 },
       createAssistantMessage({ text: "a2", timestamp: 4 }),
     ];
+    // Pick a client-side error so neither the context-overflow path nor
+    // the transient-error retry path triggers. A 401 will not be retried
+    // because the same payload would fail again on a second attempt.
     runner.attemptMessages = [
       createAssistantMessage({
         stopReason: "error",
-        errorMessage: "Internal server error: please try again later.",
+        errorMessage: "401 Unauthorized: invalid API key",
         timestamp: 5,
       }),
     ];
@@ -994,12 +1013,11 @@ describe("TurnRunner memory", () => {
     expect(breakdown.localMemory).toBeGreaterThan(0);
     expect(breakdown.globalMemory).toBeGreaterThan(0);
 
-    // The stub turn produces exactly one parent assistant message, so the
-    // running aggregate equals that single message's `totalTokens` and the
-    // breakdown (rescaled to that message's total) sums to the same value.
+    // The breakdown is rescaled to the latest parent message's
+    // `totalTokens`, so its segments sum exactly to `lastMessageUsage.totalTokens`.
     const total =
       breakdown.systemPrompt + breakdown.messages + breakdown.localMemory + breakdown.globalMemory;
-    expect(total).toBe(usageEvent!.usage.totalTokens);
+    expect(total).toBe(usageEvent!.lastMessageUsage.totalTokens);
 
     // The two global rows together should contribute more tokens than
     // the single local row, since their combined content is longer.
@@ -1017,6 +1035,108 @@ describe("TurnRunner memory", () => {
       0,
     );
     expect(expectedGlobalRaw).toBeGreaterThan(expectedLocalRaw);
+  });
+
+  test("usage event from a recovered overflow turn reflects the post-eviction message tail end-to-end", async () => {
+    // Integration shape: a real provider context-overflow on the first
+    // attempt advances `wireGuardHorizon` past the oldest seeded
+    // messages; the second attempt succeeds and emits a `usage` event
+    // whose `contextWindowUsage.messages` segment must reflect only
+    // the surviving tail, not the runner-retained full transcript.
+    const runner = new OverflowRecoveryTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    const huge = "x".repeat(10_000);
+    const tiny = "kept";
+    runner.seedMessages = [
+      { role: "user", content: [{ type: "text", text: huge }], timestamp: 1 },
+      createAssistantMessage({ text: huge, timestamp: 2 }),
+      { role: "user", content: [{ type: "text", text: tiny }], timestamp: 1000 },
+      createAssistantMessage({ text: tiny, timestamp: 1001 }),
+    ];
+    // First attempt overflows; second attempt succeeds and carries a
+    // known totalTokens so the scaled bar segments are predictable.
+    runner.attemptMessages = [
+      createAssistantMessage({
+        stopReason: "error",
+        errorMessage: "prompt is too long: 999999 tokens > 200000 maximum",
+        timestamp: 5,
+      }),
+      createAssistantMessage({
+        text: "recovered",
+        timestamp: 6,
+        usage: { input: 1500, output: 0, totalTokens: 1500 },
+      }),
+    ];
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+
+    const terminal = await (await startTurn(runner, { mode: "agent", prompt: "recover" })).turn;
+    expect(terminal.type).toBe("complete");
+    if (terminal.type !== "complete") throw new Error("expected complete terminal");
+    expect(terminal.status).toBe("completed");
+
+    // Eviction horizon advanced past the huge prefix on retry.
+    expect(runner.getEvictionHorizon()).toBeGreaterThan(0);
+
+    const usageEvent = events.find(
+      (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
+    );
+    expect(usageEvent).toBeDefined();
+    const breakdown = usageEvent!.contextWindowUsage;
+
+    // Pre-eviction the huge prefix would dominate: with raw
+    // messages ≈ 5000 tokens against systemPrompt ≈ 1500-2000 tokens
+    // and totalTokens=1500, scaled messages would land near ~1100.
+    // Post-eviction the tail is ~50 chars total, so scaled messages
+    // collapses well under 200. Using 300 as the upper bound keeps
+    // headroom for system-prompt drift without letting a pre-eviction
+    // regression slip through.
+    expect(breakdown.messages).toBeLessThan(300);
+    // System prompt must remain a non-trivial share of the bar after
+    // eviction — the bug we are guarding against collapsed it to
+    // ~600 against a 53k totalTokens, i.e. ~1% of total. With a 1500
+    // totalTokens cap, a healthy systemPrompt segment lands above 100.
+    expect(breakdown.systemPrompt).toBeGreaterThan(100);
+    // Segments sum exactly to lastMessageUsage.totalTokens.
+    expect(
+      breakdown.systemPrompt + breakdown.messages + breakdown.localMemory + breakdown.globalMemory,
+    ).toBe(usageEvent!.lastMessageUsage.totalTokens);
+  });
+
+  test("contextWindowUsage messages segment excludes bytes dropped by the wire-eviction horizon", async () => {
+    const runner = new UsageEventTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    const longText = "x".repeat(4000);
+    runner.seedMessages = [
+      { role: "user", content: [{ type: "text", text: `pre-eviction ${longText}` }], timestamp: 1 },
+      createAssistantMessage({ text: `pre-eviction reply ${longText}`, timestamp: 2 }),
+      { role: "user", content: [{ type: "text", text: `kept ${longText}` }], timestamp: 1000 },
+      createAssistantMessage({ text: `kept reply ${longText}`, timestamp: 1001 }),
+    ];
+
+    const { turn } = await startTurn(runner, { mode: "agent", prompt: "ping" });
+    await turn;
+
+    const before = runner.estimateContextWindowUsageForTest();
+
+    // Advance the horizon past the first two seeded messages. The
+    // dispatched slice loses those bytes; the runner's retained
+    // transcript still contains them.
+    runner.setEvictionHorizonForTest(2);
+    const after = runner.estimateContextWindowUsageForTest();
+
+    expect(after.messages).toBeLessThan(before.messages);
+    // The two dropped messages each contained ~4000 chars of text, so
+    // the difference should be at least ~1000 tokens (4 chars/token).
+    expect(before.messages - after.messages).toBeGreaterThan(1000);
+    // System prompt and memory packs are unaffected by the horizon.
+    expect(after.systemPrompt).toBe(before.systemPrompt);
+    expect(after.localMemory).toBe(before.localMemory);
+    expect(after.globalMemory).toBe(before.globalMemory);
   });
 });
 

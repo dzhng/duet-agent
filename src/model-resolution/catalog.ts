@@ -65,7 +65,12 @@ const MEMORY_MODEL_BY_PROVIDER: Record<ProviderName, string> = {
 const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   {
     shorthand: "opus-4.7",
-    aliases: ["claude-opus-4.7", "claude-opus-4-7"],
+    aliases: [
+      "claude-opus-4.7",
+      "claude-opus-4-7",
+      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4-7",
+    ],
     modelsByProvider: {
       "duet-gateway": "anthropic/claude-opus-4.7",
       "vercel-ai-gateway": "anthropic/claude-opus-4.7",
@@ -75,7 +80,12 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   },
   {
     shorthand: "sonnet-4.6",
-    aliases: ["claude-sonnet-4.6", "claude-sonnet-4-6"],
+    aliases: [
+      "claude-sonnet-4.6",
+      "claude-sonnet-4-6",
+      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-sonnet-4-6",
+    ],
     modelsByProvider: {
       "duet-gateway": "anthropic/claude-sonnet-4.6",
       "vercel-ai-gateway": "anthropic/claude-sonnet-4.6",
@@ -85,7 +95,12 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   },
   {
     shorthand: "haiku-4.5",
-    aliases: ["claude-haiku-4.5", "claude-haiku-4-5"],
+    aliases: [
+      "claude-haiku-4.5",
+      "claude-haiku-4-5",
+      "anthropic/claude-haiku-4.5",
+      "anthropic/claude-haiku-4-5",
+    ],
     modelsByProvider: {
       "duet-gateway": "anthropic/claude-haiku-4.5",
       "vercel-ai-gateway": "anthropic/claude-haiku-4.5",
@@ -95,7 +110,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   },
   {
     shorthand: "gpt-5.5",
-    aliases: [],
+    aliases: ["openai/gpt-5.5", "openai/gpt-5-5"],
     modelsByProvider: {
       "duet-gateway": "openai/gpt-5.5",
       "vercel-ai-gateway": "openai/gpt-5.5",
@@ -105,7 +120,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   },
   {
     shorthand: "gpt-5.4-mini",
-    aliases: [],
+    aliases: ["openai/gpt-5.4-mini", "openai/gpt-5-4-mini"],
     modelsByProvider: {
       "duet-gateway": "openai/gpt-5.4-mini",
       "vercel-ai-gateway": "openai/gpt-5.4-mini",
@@ -143,6 +158,18 @@ export function isKnownShorthand(modelName: string): boolean {
 
 export function canonicalizeModelName(modelName: string): string {
   return findModelDefinition(modelName)?.shorthand ?? modelName;
+}
+
+/**
+ * Normalize a `provider:modelId` model id against catalog aliases so users can
+ * pass familiar variants like `claude-opus-4-7` even when the underlying
+ * provider catalog spells it `claude-opus-4.7`. Falls back to the input id
+ * when no alias matches so unknown ids reach the provider lookup unchanged.
+ */
+export function canonicalizeProviderModelId(provider: ProviderName, modelId: string): string {
+  const definition = findModelDefinition(modelId);
+  if (!definition) return modelId;
+  return definition.modelsByProvider[provider] ?? modelId;
 }
 
 function findModelDefinition(modelName: string): ModelDefinition | undefined {

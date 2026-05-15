@@ -1,11 +1,20 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 
 import { afterEach, beforeEach, describe, expect } from "bun:test";
 
 import { EventEmitter } from "node:events";
-import { Readable } from "node:stream";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import {
   __testing,
@@ -97,6 +106,31 @@ describe("describeUpgradeStatus", () => {
     expect(
       describeUpgradeStatus("@duetso/agent", { kind: "skipped", reason: "disabled" }),
     ).toBeUndefined();
+  });
+});
+
+describe("cleanStaleStagingDirs", () => {
+  testIfDocker("removes .agent-* staging dirs left behind by a killed install", () => {
+    const scopeDir = join(scratchHome!, "lib", "node_modules", "@duetso");
+    const agentDir = join(scopeDir, "agent");
+    const stagingA = join(scopeDir, ".agent-MtyTJGUn");
+    const stagingB = join(scopeDir, ".agent-xxxxxxxx");
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(stagingA, { recursive: true });
+    mkdirSync(stagingB, { recursive: true });
+    writeFileSync(join(stagingA, "package.json"), "{}");
+
+    __testing.cleanStaleStagingDirs(join(agentDir, "dist", "src", "cli.js"));
+
+    expect(existsSync(stagingA)).toBe(false);
+    expect(existsSync(stagingB)).toBe(false);
+    // The real `agent` install dir is preserved — we only sweep staging dirs.
+    expect(existsSync(agentDir)).toBe(true);
+  });
+
+  testIfDocker("is a no-op for source-checkout script paths", () => {
+    // No throw, no fs side effects.
+    __testing.cleanStaleStagingDirs("/Users/x/dev/duet-agent/src/cli.ts");
   });
 });
 
@@ -227,24 +261,19 @@ describe("runAutoUpgrade", () => {
 });
 
 interface FakeChild extends EventEmitter {
-  stderr: Readable & { unref(): void };
   unref(): void;
 }
 
-function buildFakeChild(
-  trackUnref: { child: () => void; stderr: () => void } = { child: () => {}, stderr: () => {} },
-): FakeChild {
-  const stderr = Object.assign(new Readable({ read() {} }), { unref: trackUnref.stderr });
-  return Object.assign(new EventEmitter(), { stderr, unref: trackUnref.child }) as FakeChild;
+function buildFakeChild(onUnref: () => void = () => {}): FakeChild {
+  return Object.assign(new EventEmitter(), { unref: onUnref }) as FakeChild;
 }
 
 describe("defaultRunUpgrade spawn contract", () => {
   testIfDocker(
-    "spawns the package manager detached and unrefs the child so the parent can exit",
+    "spawns the package manager detached with stderr redirected to a log file so the install survives the parent exit",
     async () => {
       let capturedOptions: SpawnOptions | undefined;
       let unrefCalls = 0;
-      let stderrUnrefCalls = 0;
 
       const fakeSpawn = (
         _command: string,
@@ -252,17 +281,10 @@ describe("defaultRunUpgrade spawn contract", () => {
         options: SpawnOptions,
       ): ChildProcess => {
         capturedOptions = options;
-        const child = buildFakeChild({
-          child: () => {
-            unrefCalls += 1;
-          },
-          stderr: () => {
-            stderrUnrefCalls += 1;
-          },
+        const child = buildFakeChild(() => {
+          unrefCalls += 1;
         });
-        // Resolve immediately so the test does not hang.
         queueMicrotask(() => {
-          child.stderr.push(null);
           child.emit("exit", 0);
         });
         return child as unknown as ChildProcess;
@@ -274,36 +296,100 @@ describe("defaultRunUpgrade spawn contract", () => {
       );
       expect(result).toEqual({ ok: true });
       expect(capturedOptions?.detached).toBe(true);
-      // stdio must keep stderr pipe so we can capture install errors, while
-      // stdin/stdout are dropped so the install does not bid for the TTY.
-      expect(capturedOptions?.stdio).toEqual(["ignore", "ignore", "pipe"]);
+      // stdin/stdout are dropped so the install does not bid for the TTY,
+      // and stderr is an inherited file descriptor (a number) rather than
+      // a pipe — a pipe's read end would close when the parent exits,
+      // delivering SIGPIPE to npm on the next stderr write.
+      const stdio = capturedOptions?.stdio as readonly unknown[];
+      expect(stdio[0]).toBe("ignore");
+      expect(stdio[1]).toBe("ignore");
+      expect(typeof stdio[2]).toBe("number");
       expect(unrefCalls).toBe(1);
-      expect(stderrUnrefCalls).toBe(1);
     },
   );
 
   testIfDocker("surfaces stderr from a failed install", async () => {
-    const fakeSpawn = (_command: string, _args: string[], _options: SpawnOptions): ChildProcess => {
+    const fakeSpawn = (_command: string, _args: string[], options: SpawnOptions): ChildProcess => {
+      // Mimic the real spawn contract: the package manager would write to
+      // the inherited stderr fd. We do the same so the runner can read it
+      // back after the failure exit.
+      const stdio = options.stdio as readonly unknown[];
+      const errFd = stdio[2] as number;
+      writeSync(errFd, "npm ERR! permission denied\n");
       const child = buildFakeChild();
       queueMicrotask(() => {
-        child.stderr.push("npm ERR! permission denied\n");
-        child.stderr.push(null);
         child.emit("exit", 1);
       });
       return child as unknown as ChildProcess;
     };
 
     const result = await defaultRunUpgrade(["npm", "install", "--global", "x"], fakeSpawn);
-    expect(result).toEqual({ ok: false, stderr: "npm ERR! permission denied" });
+    expect(result.ok).toBe(false);
+    expect(result.stderr).toBe("npm ERR! permission denied");
   });
 
   testIfDocker(
-    "PACKAGE_MANAGER_SPAWN_OPTIONS is the single source of truth for the spawn contract",
+    "PACKAGE_MANAGER_SPAWN_OPTIONS is the single source of truth for the detached contract",
     () => {
       expect(PACKAGE_MANAGER_SPAWN_OPTIONS.detached).toBe(true);
-      expect(PACKAGE_MANAGER_SPAWN_OPTIONS.stdio).toEqual(["ignore", "ignore", "pipe"]);
     },
   );
+});
+
+describe("defaultRunUpgrade survives parent exit", () => {
+  // Regression: when the package manager's stderr was wired to a parent-
+  // owned pipe, a Ctrl+C on the duet CLI closed the pipe's read end and
+  // SIGPIPE killed npm mid-install, leaving `duet` missing from $PATH.
+  // Here we spawn a tiny parent process that starts a long-running fake
+  // "install" via defaultRunUpgrade, then kills the parent shortly after
+  // — and verify the install still completes after the parent is gone.
+  testIfDocker("a fake install finishes even after the parent process is killed", async () => {
+    const workDir = mkdtempSync(join(tmpdir(), "duet-upgrade-survive-"));
+    try {
+      const markerPath = join(workDir, "install-done");
+      const installScript = join(workDir, "fake-install.sh");
+      // Mimic npm: write to stderr repeatedly across a window long enough
+      // that the parent is guaranteed to have exited mid-run.
+      writeFileSync(
+        installScript,
+        `#!/bin/sh
+for i in $(seq 1 30); do
+  echo "fake install tick $i" 1>&2
+  sleep 0.1
+done
+echo ok > ${JSON.stringify(markerPath)}
+`,
+      );
+      chmodSync(installScript, 0o755);
+
+      const parentScript = join(workDir, "parent.mjs");
+      const repoRoot = join(import.meta.dir, "..");
+      writeFileSync(
+        parentScript,
+        `import { defaultRunUpgrade } from ${JSON.stringify(join(repoRoot, "src/cli/auto-upgrade.ts"))};
+process.env.HOME = ${JSON.stringify(workDir)};
+defaultRunUpgrade([${JSON.stringify(installScript)}]).catch(() => {});
+setTimeout(() => process.exit(130), 200);
+`,
+      );
+
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(process.execPath, [parentScript], { stdio: "ignore" });
+        child.once("exit", () => resolve());
+        child.once("error", reject);
+      });
+
+      // Parent has exited; give the detached "install" room to finish.
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        if (existsSync(markerPath)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(existsSync(markerPath)).toBe(true);
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("createUpgradeStatusStream", () => {

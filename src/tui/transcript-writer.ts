@@ -29,6 +29,12 @@ export class TranscriptWriter {
   private hasRenderedAnyBlock = false;
   private keyDiagnostics = false;
   private readonly log: TranscriptEntry[] = [];
+  // Rendered lines of the most recent `you:` block in the transcript.
+  // Consulted by the sticky user-message banner watcher to decide whether
+  // the block is still visible in the scroll viewport; the lines stay
+  // valid until the next user block is appended (their layout y/height
+  // are updated by Yoga as more content is added below them).
+  private latestUserBlock: readonly TextRenderable[] = [];
 
   constructor(
     private readonly renderer: CliRenderer,
@@ -40,28 +46,39 @@ export class TranscriptWriter {
 
   /** Append a single line. Empty content is ignored so callers can guard with
    *  raw input without producing blank rows; use `addLine` instead when a
-   *  spacer is wanted and a renderable handle is needed. */
-  appendLine(content: string, fg: string): void {
-    if (!content) return;
-    if (this.destroyed) return;
+   *  spacer is wanted and a renderable handle is needed. Returns the
+   *  rendered renderable when one was created, so callers that need to
+   *  later inspect layout (e.g. the sticky user-message banner) can keep a
+   *  handle to it. */
+  appendLine(content: string, fg: string): TextRenderable | undefined {
+    if (!content) return undefined;
+    if (this.destroyed) return undefined;
     try {
       const line = new TextRenderable(this.renderer, { content, fg });
       this.transcript.add(line);
+      return line;
     } catch (error) {
       if (isTextBufferDestroyedError(error)) {
         this.handleBufferDestroyed();
-        return;
+        return undefined;
       }
       throw error;
     }
   }
 
   /** Append a labelled block. `beginBlock()` inserts a blank separator before
-   *  every block except the first so distinct steps stay visually distinct. */
-  appendBlock(label: string | null, body: string, fg: string): void {
+   *  every block except the first so distinct steps stay visually distinct.
+   *  Returns the rendered body lines (no leading spacer) so callers can
+   *  track their layout position; empty lines are dropped by appendLine. */
+  appendBlock(label: string | null, body: string, fg: string): TextRenderable[] {
     this.beginBlock();
     const text = label ? `${label}\n${body}` : body;
-    for (const line of text.split("\n")) this.appendLine(line, fg);
+    const lines: TextRenderable[] = [];
+    for (const part of text.split("\n")) {
+      const line = this.appendLine(part, fg);
+      if (line) lines.push(line);
+    }
+    return lines;
   }
 
   beginBlock(): void {
@@ -91,6 +108,18 @@ export class TranscriptWriter {
 
   entries(): readonly TranscriptEntry[] {
     return this.log;
+  }
+
+  /** Remember which rendered lines make up the most recent user block.
+   *  Callers pass the array returned by {@link appendBlock} so the banner
+   *  watcher can read live `y` / `height` values without re-traversing the
+   *  transcript tree. */
+  setLatestUserBlock(lines: readonly TextRenderable[]): void {
+    this.latestUserBlock = lines;
+  }
+
+  getLatestUserBlock(): readonly TextRenderable[] {
+    return this.latestUserBlock;
   }
 
   // ---- teardown ------------------------------------------------------------

@@ -194,6 +194,24 @@ export interface StateMachineSession {
   history: StateMachineSessionEvent[];
   /** Present only after a session reaches a named terminal state. */
   terminal?: StateMachineTerminalResult;
+  /**
+   * Set once the parent runner has run its acknowledgment turn for the
+   * current `terminal`. The state-machine tools end the parent's
+   * prompt loop with `terminate: true`, so a turn that drives the
+   * state machine to a terminal status leaves the parent's transcript
+   * without any natural acknowledgment of the outcome — the turn
+   * runner closes that gap by running one final parent prompt as soon
+   * as a terminal is recorded (see `runStateMachineTerminalAcknowledgment`
+   * in turn-runner.ts).
+   *
+   * The flag is per-session: it prevents the same `session.terminal`
+   * from being re-acknowledged if the parent re-routes back into the
+   * controller during the acknowledgment turn. A new state machine
+   * created during the acknowledgment turn lives on a fresh session
+   * built by `createStateMachineSession` and gets its own
+   * acknowledgment when it terminates.
+   */
+  terminalAcknowledged?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -219,6 +237,13 @@ export interface StateMachineStateProgress {
   sleeps: number;
   /** Scheduled wake time from the latest sleep, cleared when the state runs again. */
   nextWakeAt?: number;
+  /**
+   * Timestamp of the latest `state_started` for this state. Mirrors what
+   * `history` records so elapsed-time checks (e.g. poll `timeoutMs`)
+   * keep working even after old `state_started` entries fall off the
+   * capped history.
+   */
+  startedAt?: number;
 }
 
 export interface StateMachineBaseState {

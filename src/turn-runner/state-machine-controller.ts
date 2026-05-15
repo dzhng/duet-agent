@@ -86,6 +86,14 @@ export interface StateMachineControllerConfig {
   cwd: string;
   /** Builds a fresh transient state-agent handle for one agent state execution. */
   createStateAgent(input: { state: StateMachineAgentState; prompt: string }): StateAgentHandle;
+  /**
+   * Notified whenever the controller has updated `session` and the new
+   * snapshot is worth broadcasting (state started, terminal reached).
+   * The turn runner uses this to emit `state_machine` protocol events
+   * carrying the full session, so UIs see fresh progress and current
+   * state before the new state begins executing.
+   */
+  onSessionChanged?(session: StateMachineSession): void;
 }
 
 export class StateMachineController {
@@ -100,6 +108,29 @@ export class StateMachineController {
 
   getSession(): StateMachineSession | undefined {
     return this.session;
+  }
+
+  /**
+   * Mark the current terminal as having been surfaced to the parent
+   * runner. The turn runner sets this flag before kicking off the
+   * inline acknowledgment turn so the same `session.terminal` cannot
+   * be acknowledged twice — if the parent (mis)routes back into the
+   * controller during the acknowledgment turn and the controller
+   * re-records a terminal on this same session, the second drive will
+   * find the flag set and skip.
+   *
+   * Note that this flag is per-session: a new state machine created
+   * during the acknowledgment turn lives on a brand-new session built
+   * by `createStateMachineSession`, so it gets its own acknowledgment
+   * when it terminates.
+   */
+  markTerminalAcknowledged(): void {
+    if (!this.session?.terminal || this.session.terminalAcknowledged) return;
+    this.session = {
+      ...this.session,
+      terminalAcknowledged: true,
+      updatedAt: Date.now(),
+    };
   }
 
   hasActiveWork(): boolean {
@@ -193,6 +224,7 @@ export class StateMachineController {
       effectiveState,
       decision.kind === "run_state" ? decision.input : undefined,
     );
+    this.config.onSessionChanged?.(this.session);
     switch (effectiveState.kind) {
       case "agent":
         return this.runAgentState(effectiveState);

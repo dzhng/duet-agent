@@ -468,6 +468,92 @@ describe("RPC CLI mode", () => {
   );
 
   testIfDocker(
+    "drives a multi-command chain (prompt → prompt → wake → prompt → prompt) and emits one terminal",
+    async () => {
+      // The RPC loop must forward every prompt/answer/wake into the runner
+      // while the turn is in flight. The runner queues them onto the active
+      // chain, drops the queued wake because the session is not sleeping,
+      // and emits exactly one terminal that reflects the entire chain.
+      const workDir = await mkdtemp(join(tmpdir(), "duet-rpc-multi-cmd-"));
+      try {
+        const session = await runRpcSessionStreaming(
+          ["--workdir", workDir, "--incognito", "--model", model],
+          async ({ send, events }) => {
+            await send({ type: "start" });
+            await send({
+              type: "prompt",
+              message: dedent`
+                I will hand you a list of marker phrases as separate follow-ups.
+                Wait until I tell you I am done sending markers, then reply with
+                a single line of the exact form:
+                MARKERS=<marker1> <marker2> <marker3> <marker4>
+                in the order I sent them. Do not reply before I send the
+                "done" message. The first marker is ALPHA-1.
+              `,
+              behavior: "follow_up",
+            });
+            // Wait until the parent agent has started streaming a response
+            // so the upcoming follow-ups land while a turn is in flight.
+            for await (const event of events) {
+              if (event.type === "step") break;
+            }
+            await send({
+              type: "prompt",
+              message: "Second marker: BRAVO-2.",
+              behavior: "follow_up",
+            });
+            // A wake in the middle of a non-sleeping turn must be a benign
+            // no-op: it gets enqueued, the drain skips it because the state
+            // is not sleeping, and the surrounding follow-ups still drive a
+            // single terminal.
+            await send({ type: "wake" });
+            await send({
+              type: "prompt",
+              message: "Third marker: CHARLIE-3.",
+              behavior: "follow_up",
+            });
+            await send({
+              type: "prompt",
+              message: "Fourth marker: DELTA-4. I am done sending markers; reply now.",
+              behavior: "follow_up",
+            });
+          },
+        );
+        expect(session.exitCode).toBe(0);
+        // Exactly one terminal event for the entire chain.
+        const terminals = session.events.filter(
+          (event) =>
+            event.type === "complete" ||
+            event.type === "ask" ||
+            event.type === "interrupted" ||
+            event.type === "sleep",
+        );
+        expect(terminals).toHaveLength(1);
+        const terminal = expectTerminal(session.events);
+        expect(terminal.type).toBe("complete");
+        const text = terminalResult(terminal);
+        const judgment = await judge({
+          model,
+          prompt: dedent`
+            The model received four marker phrases (ALPHA-1, BRAVO-2,
+            CHARLIE-3, DELTA-4) as four separate follow-up prompts on the same
+            turn, plus one no-op wake command, and was told to reply only
+            after the fourth marker with a single line
+            "MARKERS=ALPHA-1 BRAVO-2 CHARLIE-3 DELTA-4". A valid answer
+            contains all four markers in the requested order. Treat as
+            invalid if any marker is missing or the order is wrong.
+          `,
+          value: { reply: text },
+        });
+        expect(judgment.valid, judgment.reason).toBe(true);
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    },
+    300_000,
+  );
+
+  testIfDocker(
     "emits an ask terminal, then resumes via an answer command in a fresh process",
     async () => {
       const workDir = await mkdtemp(join(tmpdir(), "duet-rpc-ask-"));

@@ -25,6 +25,7 @@ export interface TuiControllerDeps {
   transcriptWriter: TranscriptWriter;
   statusController: StatusController;
   appendBlock(label: string | null, body: string, fg: string): void;
+  appendUserBlock(message: string): void;
   recordTranscriptEntry(kind: TranscriptEntry["kind"], text: string): void;
   reportError(error: unknown): void;
   onPickerEscapeClose(): void;
@@ -59,8 +60,7 @@ export function createTuiControllers(deps: TuiControllerDeps): TuiControllers {
     inputField: deps.ui.inputField,
     session: deps.session,
     onEscapeClose: deps.onPickerEscapeClose,
-    appendBlock: deps.appendBlock,
-    recordTranscriptEntry: deps.recordTranscriptEntry,
+    appendUserBlock: deps.appendUserBlock,
     reportError: deps.reportError,
     markRunning: () => deps.statusController.markRunning(),
     isRunning: () => deps.statusController.isRunning(),

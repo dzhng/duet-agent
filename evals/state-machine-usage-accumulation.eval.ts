@@ -72,23 +72,37 @@ describe("state machine usage accumulation", () => {
         expect(usageEvents.length).toBeGreaterThanOrEqual(2);
 
         for (let i = 1; i < usageEvents.length; i++) {
-          expect(usageEvents[i]!.usage.cost.total).toBeGreaterThanOrEqual(
-            usageEvents[i - 1]!.usage.cost.total,
+          expect(usageEvents[i]!.turnUsage.cost.total).toBeGreaterThanOrEqual(
+            usageEvents[i - 1]!.turnUsage.cost.total,
           );
-          expect(usageEvents[i]!.usage.totalTokens).toBeGreaterThanOrEqual(
-            usageEvents[i - 1]!.usage.totalTokens,
+          expect(usageEvents[i]!.turnUsage.totalTokens).toBeGreaterThanOrEqual(
+            usageEvents[i - 1]!.turnUsage.totalTokens,
           );
         }
 
+        // `lastMessageUsage` is a single-message snapshot (the latest parent
+        // `message_end`), not a running aggregate. It's positive on every
+        // emission and bounded above by the running turn aggregate, which
+        // also folds in state-agent calls.
+        for (const u of usageEvents) {
+          expect(u.lastMessageUsage.totalTokens).toBeGreaterThan(0);
+          expect(u.lastMessageUsage.cost.total).toBeGreaterThanOrEqual(0);
+          expect(u.lastMessageUsage.totalTokens).toBeLessThanOrEqual(u.turnUsage.totalTokens);
+          expect(u.lastMessageUsage.cost.total).toBeLessThanOrEqual(u.turnUsage.cost.total);
+        }
+
         const lastUsage = usageEvents.at(-1)!;
-        expect(terminal.usage).toBeDefined();
-        expect(terminal.usage!.cost.total).toBeCloseTo(lastUsage.usage.cost.total, 6);
-        expect(terminal.usage!.totalTokens).toBe(lastUsage.usage.totalTokens);
+        expect(terminal.turnUsage).toBeDefined();
+        expect(terminal.turnUsage!.cost.total).toBeCloseTo(lastUsage.turnUsage.cost.total, 6);
+        expect(terminal.turnUsage!.totalTokens).toBe(lastUsage.turnUsage.totalTokens);
 
         expect(terminal.effectiveContextWindow).toBe(lastUsage.effectiveContextWindow);
         expect(terminal.contextWindowUsage).toEqual(lastUsage.contextWindowUsage);
+        expect(terminal.lastMessageUsage).toBeDefined();
+        expect(terminal.lastMessageUsage).toEqual(lastUsage.lastMessageUsage);
+        expect(terminal.lastMessageUsage!.totalTokens).toBe(lastUsage.lastMessageUsage.totalTokens);
 
-        expect(session.getSessionCostUsd()).toBeCloseTo(terminal.usage!.cost.total, 6);
+        expect(session.getSessionCostUsd()).toBeCloseTo(terminal.turnUsage!.cost.total, 6);
 
         // The parent's `effectiveContextWindow` is a config-derived clamp,
         // so every emission in a single turn must agree on it. State-agent
@@ -109,12 +123,19 @@ describe("state machine usage accumulation", () => {
           const cw = u.contextWindowUsage;
           const sum = cw.systemPrompt + cw.messages + cw.localMemory + cw.globalMemory;
           expect(sum).toBeGreaterThan(0);
-          expect(sum).toBeLessThanOrEqual(u.usage.totalTokens);
+          // Breakdown is rescaled to `lastMessageUsage.totalTokens`, so the
+          // four segments sum exactly to that (not to the turn aggregate,
+          // which folds in every state-agent call).
+          expect(sum).toBe(u.lastMessageUsage.totalTokens);
         }
         const distinctBars = new Set(usageEvents.map((u) => JSON.stringify(u.contextWindowUsage)));
         // 2 agent states + 1 terminal-selecting parent call ≤ 3 parent
         // emissions; state-agent ticks in between reuse the prior snapshot.
         expect(distinctBars.size).toBeLessThanOrEqual(3);
+        // `lastMessageUsage` is snapshotted from the same parent emission,
+        // so its distinct values match the bar's distinct values exactly.
+        const distinctLast = new Set(usageEvents.map((u) => JSON.stringify(u.lastMessageUsage)));
+        expect(distinctLast.size).toBe(distinctBars.size);
       } finally {
         await manager.dispose();
       }

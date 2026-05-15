@@ -121,7 +121,7 @@ describe("TUI streaming surface", () => {
       status: "completed",
       result: "ok",
       state: { ...INITIAL_STATE, status: "completed" },
-      usage: {
+      turnUsage: {
         input: 12345,
         output: 678,
         cacheRead: 0,

@@ -4,6 +4,7 @@ import type {
   TurnEditFollowUpQueueCommand,
   TurnInterruptCommand,
   TurnRunnerCommand,
+  TurnSystemEvent,
   TurnTerminalEvent,
 } from "../src/types/protocol.js";
 
@@ -24,6 +25,19 @@ interface RecordedRunner extends RpcRunner {
   interrupts: TurnInterruptCommand[];
   editQueues: TurnEditFollowUpQueueCommand[];
   resolveTurn: (terminal: TurnTerminalEvent) => void;
+}
+
+/**
+ * Capture the {@link TurnSystemEvent}s the dispatch loop emits for soft
+ * protocol errors (malformed commands, premature commands before start,
+ * unknown command types). Used in lieu of the older fatal-exit assertions.
+ */
+function buildEventSink(): {
+  emit: (event: TurnSystemEvent) => void;
+  events: TurnSystemEvent[];
+} {
+  const events: TurnSystemEvent[] = [];
+  return { events, emit: (event) => events.push(event) };
 }
 
 /**
@@ -87,6 +101,28 @@ describe("parseRpcArgs", () => {
     expect(parsed.systemPromptFiles).toEqual(["A.md", "B.md"]);
     expect(parsed.envFilePath).toBe("/etc/duet/env");
     expect(parsed.incognito).toBe(true);
+    expect(parsed.noSkillSync).toBe(false);
+  });
+
+  test("--db sets an explicit memory database path", () => {
+    const parsed = parseRpcArgs(["--db", "/tmp/custom.db"]);
+    expect(parsed.dbPath).toBe("/tmp/custom.db");
+  });
+
+  test("omitting --db leaves dbPath undefined so the default applies", () => {
+    const parsed = parseRpcArgs([]);
+    expect(parsed.dbPath).toBeUndefined();
+  });
+
+  test("--no-skill-sync sets the skip-skill-sync flag", () => {
+    const parsed = parseRpcArgs(["--no-skill-sync"]);
+    expect(parsed.noSkillSync).toBe(true);
+  });
+
+  test("--no-auto-upgrade is accepted as a no-op", () => {
+    // RPC mode never auto-upgrades; the flag is tolerated for host scripts
+    // that forward run-mode flags into `--rpc` invocations.
+    expect(() => parseRpcArgs(["--no-auto-upgrade"])).not.toThrow();
   });
 
   test("--no-system-prompt-files resets the system prompt file list", () => {
@@ -138,42 +174,41 @@ function stubProcessExit() {
 }
 
 describe("parseRpcCommandLine", () => {
-  test("returns undefined for blank/whitespace lines so the iterator can skip them", () => {
-    expect(parseRpcCommandLine("")).toBeUndefined();
-    expect(parseRpcCommandLine("   \t  ")).toBeUndefined();
+  test("returns a skip result for blank/whitespace lines so the iterator can skip them", () => {
+    expect(parseRpcCommandLine("")).toEqual({ kind: "skip" });
+    expect(parseRpcCommandLine("   \t  ")).toEqual({ kind: "skip" });
   });
 
   test("parses a well-formed JSON command", () => {
-    const parsed = parseRpcCommandLine('{"type":"start"}');
-    expect(parsed).toEqual({ type: "start" });
+    expect(parseRpcCommandLine('{"type":"start"}')).toEqual({
+      kind: "command",
+      command: { type: "start" },
+    });
   });
 
-  test("rejects malformed JSON", () => {
-    const exitSpy = stubProcessExit();
-    try {
-      expect(() => parseRpcCommandLine("{not json")).toThrow();
-    } finally {
-      exitSpy.mockRestore();
-    }
+  test("reports malformed JSON as an error result instead of exiting", () => {
+    const result = parseRpcCommandLine("{not json");
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") throw new Error("unreachable");
+    expect(result.message).toMatch(/Invalid RPC command JSON/);
   });
 
-  test("rejects valid JSON without a string `type` field", () => {
-    const exitSpy = stubProcessExit();
-    try {
-      expect(() => parseRpcCommandLine('{"foo":"bar"}')).toThrow();
-      expect(() => parseRpcCommandLine('"plain string"')).toThrow();
-    } finally {
-      exitSpy.mockRestore();
-    }
+  test("reports JSON without a string `type` field as an error result", () => {
+    const missingType = parseRpcCommandLine('{"foo":"bar"}');
+    expect(missingType.kind).toBe("error");
+    const plainString = parseRpcCommandLine('"plain string"');
+    expect(plainString.kind).toBe("error");
   });
 });
 
 describe("driveRpcLoop", () => {
   test("returns cleanly when stdin closes before any command arrives", async () => {
     const runner = buildRunner();
-    await driveRpcLoop(runner, commandStream([]));
+    const sink = buildEventSink();
+    await driveRpcLoop(runner, commandStream([]), { emit: sink.emit });
     expect(runner.starts).toHaveLength(0);
     expect(runner.turns).toHaveLength(0);
+    expect(sink.events).toEqual([]);
   });
 
   test("forwards a start command, drives a turn, and resolves on terminal", async () => {
@@ -196,20 +231,36 @@ describe("driveRpcLoop", () => {
     expect(runner.turns).toEqual([{ type: "prompt", message: "hi", behavior: "follow_up" }]);
   });
 
-  test("aborts when the first command is not start", async () => {
-    const exitSpy = stubProcessExit();
-    try {
-      const runner = buildRunner();
-      await expect(
-        driveRpcLoop(
-          runner,
-          commandStream([{ type: "prompt", message: "hi", behavior: "follow_up" }]),
-        ),
-      ).rejects.toThrow();
-      expect(runner.starts).toHaveLength(0);
-    } finally {
-      exitSpy.mockRestore();
-    }
+  test("emits a soft error and keeps waiting when the first command is not start", async () => {
+    // The loop surfaces pre-start protocol violations as TurnSystemEvent
+    // errors and keeps reading; only a terminal event or stdin EOF ends
+    // the process, so a stray buffered command cannot kill the session.
+    const runner = buildRunner();
+    const sink = buildEventSink();
+    const terminal: TurnTerminalEvent = {
+      type: "complete",
+      status: "completed",
+      state: {} as never,
+    };
+    const loop = driveRpcLoop(
+      runner,
+      commandStream([
+        { type: "prompt", message: "too early", behavior: "follow_up" },
+        { type: "start" },
+        { type: "prompt", message: "after start", behavior: "follow_up" },
+      ]),
+      { emit: sink.emit },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    runner.resolveTurn(terminal);
+    await loop;
+    expect(runner.starts).toEqual([{ type: "start" }]);
+    expect(runner.turns).toEqual([
+      { type: "prompt", message: "after start", behavior: "follow_up" },
+    ]);
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]).toMatchObject({ type: "system", level: "error" });
+    expect(sink.events[0]?.message).toMatch(/start/i);
   });
 
   test("routes interrupt and edit_follow_up_queue mid-turn into the runner", async () => {
@@ -241,39 +292,81 @@ describe("driveRpcLoop", () => {
     await loop;
   });
 
-  test("rejects a second start command", async () => {
-    const exitSpy = stubProcessExit();
-    try {
-      const runner = buildRunner();
-      await expect(
-        driveRpcLoop(runner, commandStream([{ type: "start" }, { type: "start" }])),
-      ).rejects.toThrow();
-    } finally {
-      exitSpy.mockRestore();
-    }
+  test("emits a soft error and continues when a second start arrives", async () => {
+    const runner = buildRunner();
+    const sink = buildEventSink();
+    const terminal: TurnTerminalEvent = {
+      type: "complete",
+      status: "completed",
+      state: {} as never,
+    };
+    const loop = driveRpcLoop(
+      runner,
+      commandStream([
+        { type: "start" },
+        { type: "start" },
+        { type: "prompt", message: "hi", behavior: "follow_up" },
+      ]),
+      { emit: sink.emit },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    runner.resolveTurn(terminal);
+    await loop;
+    expect(runner.starts).toHaveLength(1);
+    expect(runner.turns).toEqual([{ type: "prompt", message: "hi", behavior: "follow_up" }]);
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]?.message).toMatch(/already started/i);
   });
 
-  test("rejects extra turn-driving commands sent mid-turn", async () => {
-    const exitSpy = stubProcessExit();
-    try {
-      const runner = buildRunner();
-      const firstPrompt = {
-        type: "prompt" as const,
-        message: "first",
-        behavior: "follow_up" as const,
-      };
-      const loopPromise = driveRpcLoop(
-        runner,
-        commandStream([
-          { type: "start" },
-          firstPrompt,
-          { type: "prompt", message: "second", behavior: "steer" },
-        ]),
-      );
-      await expect(loopPromise).rejects.toThrow();
-      expect(runner.turns).toEqual([firstPrompt]);
-    } finally {
-      exitSpy.mockRestore();
-    }
+  test("emits a soft error and continues when an unknown command type arrives", async () => {
+    const runner = buildRunner();
+    const sink = buildEventSink();
+    const terminal: TurnTerminalEvent = {
+      type: "complete",
+      status: "completed",
+      state: {} as never,
+    };
+    const loop = driveRpcLoop(
+      runner,
+      commandStream([
+        { type: "start" },
+        { type: "bogus" } as unknown as TurnRunnerCommand,
+        { type: "prompt", message: "hi", behavior: "follow_up" },
+      ]),
+      { emit: sink.emit },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    runner.resolveTurn(terminal);
+    await loop;
+    expect(runner.turns).toEqual([{ type: "prompt", message: "hi", behavior: "follow_up" }]);
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]?.message).toMatch(/Unknown RPC command type/i);
+  });
+
+  test("forwards extra prompt/answer/wake commands mid-turn so the runner can queue them", async () => {
+    // The runner is the source of truth for command sequencing: repeated
+    // turn() calls extend or queue behind the active chain and the chain
+    // emits exactly one terminal. The RPC loop must not pre-empt that
+    // contract by rejecting additional turn-driving commands.
+    const runner = buildRunner();
+    const terminal: TurnTerminalEvent = {
+      type: "complete",
+      status: "completed",
+      state: {} as never,
+    };
+    const first = { type: "prompt" as const, message: "one", behavior: "follow_up" as const };
+    const second = { type: "prompt" as const, message: "two", behavior: "follow_up" as const };
+    const wake = { type: "wake" as const };
+    const third = { type: "prompt" as const, message: "three", behavior: "steer" as const };
+    const fourth = { type: "prompt" as const, message: "four", behavior: "follow_up" as const };
+    const loop = driveRpcLoop(
+      runner,
+      commandStream([{ type: "start" }, first, second, wake, third, fourth]),
+    );
+    // Let the loop drain stdin before the turn resolves.
+    for (let i = 0; i < 6; i++) await new Promise((resolve) => setImmediate(resolve));
+    expect(runner.turns).toEqual([first, second, wake, third, fourth]);
+    runner.resolveTurn(terminal);
+    await loop;
   });
 });

@@ -1,12 +1,17 @@
 import { describe, expect } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearStalePostmasterLock,
+  MemoryLockTimeoutError,
   openPGlite,
+  openPGliteWaitingForLock,
   quarantineDataDirectory,
+  releaseOpenLock,
+  tryAcquireOpenLock,
 } from "../src/memory/pglite.js";
 
 import { testIfDocker } from "./helpers/docker-only.js";
@@ -180,4 +185,75 @@ describe("openPGlite", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+});
+
+describe("openPGliteWaitingForLock", () => {
+  testIfDocker("waits past a transient peer holding the open-lock", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+    try {
+      const dataDir = join(tempDir, "memory.db");
+      mkdirSync(dataDir, { recursive: true });
+
+      // Simulate a peer duet process by holding the open-lock ourselves under
+      // the current pid, then releasing it after a brief delay. The polling
+      // open must see the lock vanish and acquire on a retry.
+      const peer = tryAcquireOpenLock(dataDir);
+      if (!("lockPath" in peer)) throw new Error("expected to acquire peer lock");
+      const peerLockPath = peer.lockPath;
+      setTimeout(() => releaseOpenLock(peerLockPath), 250);
+
+      const db = await openPGliteWaitingForLock(
+        dataDir,
+        {
+          init: async (database) => {
+            await database.exec("CREATE TABLE observations (id TEXT PRIMARY KEY)");
+          },
+        },
+        5_000,
+      );
+      const result = await db.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM observations",
+      );
+      expect(result.rows[0]?.count).toBe("0");
+      await db.close();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker(
+    "throws MemoryLockTimeoutError when the budget elapses with a live holder",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+      // A live foreign pid is required to exercise the wait-then-timeout path:
+      // `tryAcquireOpenLock` treats a lock file holding the current process's
+      // pid as stale and steals it, so a same-process "peer" can't reproduce
+      // contention here.
+      const child = spawn("sh", ["-c", "sleep 30"], { stdio: "ignore" });
+      const childPid = child.pid;
+      if (childPid === undefined) throw new Error("spawn returned no pid");
+      try {
+        const dataDir = join(tempDir, "memory.db");
+        mkdirSync(dataDir, { recursive: true });
+        const lockPath = join(dataDir, ".duet-open.lock");
+        writeFileSync(lockPath, `${childPid}\n`, "utf8");
+
+        let caught: unknown;
+        try {
+          await openPGliteWaitingForLock(dataDir, {}, 150);
+        } catch (error) {
+          caught = error;
+        }
+        expect(caught).toBeInstanceOf(MemoryLockTimeoutError);
+        const err = caught as MemoryLockTimeoutError;
+        expect(err.holderPid).toBe(childPid);
+        expect(err.budgetMs).toBe(150);
+
+        rmSync(lockPath, { force: true });
+      } finally {
+        child.kill();
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

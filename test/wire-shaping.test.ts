@@ -4,8 +4,10 @@ import { describe, expect, test } from "bun:test";
 import {
   applyEvictionHorizon,
   calculateWireBytes,
+  calculateWireTokens,
   createInitialHorizon,
   findEvictionHorizon,
+  IMAGE_WIRE_TOKEN_ESTIMATE,
 } from "../src/turn-runner/wire-shaping.js";
 
 function userText(text: string, timestamp: number): AgentMessage {
@@ -123,6 +125,73 @@ describe("calculateWireBytes", () => {
   test("sums UTF-16 length for text blocks", () => {
     const messages = [userText("x".repeat(500), 1)];
     expect(calculateWireBytes(messages)).toBe(500);
+  });
+
+  test("counts thinking text and signature via the JSON.stringify fallback", () => {
+    // Reasoning-heavy sessions can carry hundreds of thinking blocks where
+    // the opaque `thinkingSignature` dominates wire size, so the catch-all
+    // path must include it. Asserted as a lower bound (text + signature
+    // lengths) plus the JSON envelope on top.
+    const thinking = "y".repeat(200);
+    const signature = "s".repeat(1500);
+    const messages = [
+      {
+        role: "assistant",
+        content: [{ type: "thinking", thinking, thinkingSignature: signature }],
+        timestamp: 1,
+      } as unknown as AgentMessage,
+    ];
+    const bytes = calculateWireBytes(messages);
+    expect(bytes).toBeGreaterThanOrEqual(thinking.length + signature.length);
+    expect(bytes).toBeLessThan(thinking.length + signature.length + 100);
+  });
+});
+
+describe("calculateWireTokens", () => {
+  test("charges a fixed per-image estimate regardless of base64 size", () => {
+    // The whole point of the wire-token path: a 2 MB inline image must not
+    // score ~500K tokens by `ceil(bytes/4)`. If a regression re-routes
+    // images through the byte length, this test catches it.
+    const small: AgentMessage = {
+      role: "user",
+      content: [{ type: "image", data: "A".repeat(64) }],
+      timestamp: 1,
+    } as AgentMessage;
+    const huge: AgentMessage = {
+      role: "user",
+      content: [{ type: "image", data: "A".repeat(2 * 1024 * 1024) }],
+      timestamp: 2,
+    } as AgentMessage;
+    expect(calculateWireTokens([small])).toBe(IMAGE_WIRE_TOKEN_ESTIMATE);
+    expect(calculateWireTokens([huge])).toBe(IMAGE_WIRE_TOKEN_ESTIMATE);
+  });
+
+  test("uses ceil(chars/4) for text blocks", () => {
+    const messages = [userText("x".repeat(401), 1)];
+    expect(calculateWireTokens(messages)).toBe(Math.ceil(401 / 4));
+  });
+
+  test("sums image, text, and structured contributions across messages", () => {
+    const messages: AgentMessage[] = [
+      userText("hello world", 1),
+      {
+        role: "user",
+        content: [{ type: "image", data: "A".repeat(10_000) }],
+        timestamp: 2,
+      } as AgentMessage,
+      assistantToolCall("toolu_1", 3),
+    ];
+    const textTokens = Math.ceil("hello world".length / 4);
+    const structuredJson = JSON.stringify({
+      type: "toolCall",
+      id: "toolu_1",
+      name: "bash",
+      arguments: {},
+    });
+    const structuredTokens = Math.ceil(structuredJson.length / 4);
+    expect(calculateWireTokens(messages)).toBe(
+      textTokens + IMAGE_WIRE_TOKEN_ESTIMATE + structuredTokens,
+    );
   });
 });
 

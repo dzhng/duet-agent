@@ -10,6 +10,7 @@ export interface ResumeCommandInput {
   memoryModelName?: string;
   workDir: string;
   incognito?: boolean;
+  dbPath?: string;
   systemInstructions?: string;
   systemPromptFiles?: string[];
   envFilePath?: string;
@@ -38,6 +39,9 @@ export function resumeCommand(sessionId: string, input: ResumeCommandInput): str
   }
   if (input.incognito) {
     command.push("--incognito");
+  }
+  if (input.dbPath) {
+    command.push("--db", shellQuote(input.dbPath));
   }
   if (input.systemInstructions) {
     command.push("--system-prompt", shellQuote(input.systemInstructions));

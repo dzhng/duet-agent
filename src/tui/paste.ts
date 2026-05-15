@@ -271,6 +271,60 @@ function normalizeFilePath(input: string): string | undefined {
   return value;
 }
 
+/**
+ * Scan a free-form string (typically the compose buffer at submit time) for
+ * substrings that look like image file paths, without requiring the whole
+ * string to be a single path.
+ *
+ * Motivation: macOS terminals do not fire a bracketed-paste event when a user
+ * drags a file in — they synthesize keystrokes that type the path one
+ * character at a time. The textarea sees plain typing, so `handlePasteEvent`
+ * never runs and `looksLikeImageFilePath` never gets a shot. To still
+ * auto-attach in that case, we scan the buffer on submit for image-shaped
+ * substrings.
+ *
+ * Recognized shapes mirror `looksLikeImageFilePath`:
+ *   • absolute paths starting with `/` or `~/`
+ *   • shell-escaped paths (backslash before space/paren/quote/etc.)
+ *   • `file://` URLs with percent-encoding
+ *
+ * Unescaped whitespace terminates a candidate, so a sentence like
+ * `look at /tmp/a.png and /tmp/b.jpg` yields two candidates. Returned strings
+ * are the raw matches; callers feed them through `loadImageFromPath`, which
+ * unescapes and resolves them the same way the paste path does.
+ */
+export function extractImagePathCandidates(text: string): string[] {
+  if (!text) return [];
+  const results: string[] = [];
+  // Match either a file:// URL or an absolute/home path. The absolute-path
+  // branch allows any non-newline character so that drag-pastes with mixed
+  // escaping survive — macOS in particular has been observed to leave the
+  // last space of a screenshot path unescaped (`Screenshot\ 2026-05-14\ at\
+  // 11.05.01 PM.png`), which a stricter pattern would refuse. False-positive
+  // expansion across unrelated prose is benign: `resolveExistingImagePath`
+  // silently rejects candidates that do not point at a real file. The
+  // negative lookbehind keeps URLs like `https://example.com/foo.png` from
+  // matching their path component as if it were a local file.
+  const pattern = /(?:file:\/\/\S+|(?<![\w:/])(?:\/|~\/)[^\n]+?)\.(?:png|jpe?g|gif|webp)\b/gi;
+  for (const match of text.matchAll(pattern)) {
+    results.push(match[0]);
+  }
+  return results;
+}
+
+/**
+ * Resolve a raw image path (after `looksLikeImageFilePath` normalization)
+ * to its absolute form on disk, or return `undefined` when no file exists
+ * there. Used for silent pre-checks on the auto-attach path so that path
+ * strings typed in prose (`"see /tmp/foo.png from yesterday"`) do not
+ * emit a noisy `[paste]` diagnostic when the file is not actually present.
+ */
+export function resolveExistingImagePath(cwd: string, rawPath: string): string | undefined {
+  const expanded = expandUserPath(rawPath);
+  const absolute = isAbsolute(expanded) ? expanded : resolve(cwd, expanded);
+  return existsSync(absolute) ? absolute : undefined;
+}
+
 function expandUserPath(input: string): string {
   if (input.startsWith("~/")) return resolve(homedir(), input.slice(2));
   if (input === "~") return homedir();

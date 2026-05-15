@@ -3,6 +3,7 @@ import type {
   StateMachinePollState,
   StateMachineProgress,
   StateMachineSession,
+  StateMachineSessionEvent,
   StateMachineStateProgress,
   StateMachineState,
   StateMachineTimerState,
@@ -10,6 +11,27 @@ import type {
 import { INTERRUPTED_STATE_MACHINE_STATE as INTERRUPTED_STATE } from "../types/state-machine.js";
 import type { TurnQuestion } from "../types/protocol.js";
 import type { StateMachineRunnerDecision } from "./tools.js";
+
+/**
+ * Hard cap on retained `StateMachineSession.history` entries. Long-lived
+ * relays (poll loops, follow-up cadences) can otherwise grow history
+ * unboundedly, which bloats every emitted `state_machine` event payload
+ * and every persisted session snapshot. The cap keeps the most recent
+ * transitions — what UIs and debuggers actually look at — and drops
+ * the oldest. The starting `state_machine_started` marker can fall off
+ * with the rest; consumers must not rely on its presence.
+ */
+export const STATE_MACHINE_HISTORY_LIMIT = 100;
+
+function appendHistory(
+  history: StateMachineSessionEvent[],
+  ...events: StateMachineSessionEvent[]
+): StateMachineSessionEvent[] {
+  const combined = [...history, ...events];
+  return combined.length > STATE_MACHINE_HISTORY_LIMIT
+    ? combined.slice(combined.length - STATE_MACHINE_HISTORY_LIMIT)
+    : combined;
+}
 
 export function createStateMachineSession(
   prompt: string,
@@ -57,7 +79,11 @@ export function recordRunnerDecision(
 ): StateMachineSession {
   return {
     ...stateMachine,
-    history: [...stateMachine.history, { type: "runner_decided", timestamp: Date.now(), decision }],
+    history: appendHistory(stateMachine.history, {
+      type: "runner_decided",
+      timestamp: Date.now(),
+      decision,
+    }),
     updatedAt: Date.now(),
   };
 }
@@ -83,17 +109,15 @@ export function recordStateStarted(
       (entry) => ({
         ...entry,
         runs: entry.runs + 1,
+        startedAt: now,
       }),
     ),
-    history: [
-      ...stateMachine.history,
-      {
-        type: "state_started",
-        timestamp: now,
-        state: state.name,
-        input,
-      },
-    ],
+    history: appendHistory(stateMachine.history, {
+      type: "state_started",
+      timestamp: now,
+      state: state.name,
+      input,
+    }),
     updatedAt: now,
   };
 }
@@ -111,7 +135,12 @@ export function recordStateCompleted(
       ...entry,
       nextWakeAt: undefined,
     })),
-    history: [...stateMachine.history, { type: "state_completed", timestamp: now, state, output }],
+    history: appendHistory(stateMachine.history, {
+      type: "state_completed",
+      timestamp: now,
+      state,
+      output,
+    }),
     updatedAt: now,
   };
 }
@@ -137,14 +166,8 @@ export function elapsedSinceStateStarted(
   stateMachine: StateMachineSession | undefined,
   state: string,
 ): number {
-  const history = stateMachine?.history ?? [];
-  for (let index = history.length - 1; index >= 0; index--) {
-    const event = history[index];
-    if (event.type === "state_started" && event.state === state) {
-      return Math.max(0, Date.now() - event.timestamp);
-    }
-  }
-  return 0;
+  const startedAt = stateMachine?.progress?.states[state]?.startedAt;
+  return startedAt === undefined ? 0 : Math.max(0, Date.now() - startedAt);
 }
 
 export function recordStateFailed(
@@ -162,11 +185,11 @@ export function recordStateFailed(
       ...entry,
       nextWakeAt: undefined,
     })),
-    history: [
-      ...stateMachine.history,
+    history: appendHistory(
+      stateMachine.history,
       { type: "state_failed", timestamp: now, state, error },
       { type: "state_machine_completed" as const, timestamp: now, terminal },
-    ],
+    ),
     updatedAt: now,
   };
 }
@@ -187,16 +210,13 @@ export function recordStateInterrupted(
       ...entry,
       nextWakeAt: undefined,
     })),
-    history: [
-      ...stateMachine.history,
-      {
-        type: "state_interrupted" as const,
-        timestamp: now,
-        state,
-        reason,
-        output,
-      },
-    ],
+    history: appendHistory(stateMachine.history, {
+      type: "state_interrupted" as const,
+      timestamp: now,
+      state,
+      reason,
+      output,
+    }),
     updatedAt: now,
   };
 }
@@ -209,10 +229,12 @@ export function recordStateAskedUser(
   const now = Date.now();
   return {
     ...stateMachine,
-    history: [
-      ...stateMachine.history,
-      { type: "state_asked_user" as const, timestamp: now, state, questions },
-    ],
+    history: appendHistory(stateMachine.history, {
+      type: "state_asked_user" as const,
+      timestamp: now,
+      state,
+      questions,
+    }),
     updatedAt: now,
   };
 }
@@ -225,10 +247,11 @@ export function recordStateMachineCompleted(
   return {
     ...stateMachine,
     terminal,
-    history: [
-      ...stateMachine.history,
-      { type: "state_machine_completed" as const, timestamp: now, terminal },
-    ],
+    history: appendHistory(stateMachine.history, {
+      type: "state_machine_completed" as const,
+      timestamp: now,
+      terminal,
+    }),
     updatedAt: now,
   };
 }
@@ -258,6 +281,7 @@ function normalizeStateProgress(
     runs: entry?.runs ?? 0,
     sleeps: entry?.sleeps ?? 0,
     nextWakeAt: entry?.nextWakeAt,
+    startedAt: entry?.startedAt,
   };
 }
 

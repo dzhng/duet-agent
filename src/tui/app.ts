@@ -17,6 +17,7 @@ import { bindSessionToUi } from "./session-subscription.js";
 import { StarterSection } from "./starter-section.js";
 import { StatusController } from "./status-controller.js";
 import { StepRenderer } from "./step-renderer.js";
+import { applyRelayCommand } from "./relay-command.js";
 import { tryDispatchSlashCommand } from "./slash-commands.js";
 import { COLORS } from "./theme.js";
 import { TranscriptWriter } from "./transcript-writer.js";
@@ -101,6 +102,14 @@ export interface RunTuiInput {
    */
   onResumeRequest?: (sessionId: string) => void;
   /**
+   * Called when the user submits `/reset`. The outer dispatcher should
+   * dispose the current session, `manager.create({})`, and re-enter
+   * `runTui` with the fresh session and no replayed history. The TUI
+   * tears its own renderer down right after invoking this so the
+   * dispatcher's `runTui` promise resolves and the loop can rebuild.
+   */
+  onResetRequest?: () => void;
+  /**
    * Trailing user-turn exchanges to replay from prior history. Each
    * exchange is the user prompt plus the assistant blocks that followed
    * it. `0` disables replay; when unset, every block is replayed.
@@ -132,13 +141,59 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const transcriptWriter = new TranscriptWriter(renderer, ui.transcript, {
     getLastSelectionText: () => lastSelectionText,
-    onBufferDestroyed: () => statusController.shutdown(),
+    onBufferDestroyed: () => {
+      statusController.shutdown();
+      clearInterval(bannerWatcher);
+    },
   });
+
+  // Record + render a user-attributed transcript block. Centralized so every
+  // code path that shows a `you:` block also refreshes the banner anchor
+  // and body. Returns the rendered lines so callers that want to group
+  // trailing rows (e.g. attachment summaries) with the user block can do so.
+  function appendUserBlock(message: string) {
+    transcriptWriter.recordEntry("user", message);
+    const lines = transcriptWriter.appendBlock("you:", message, COLORS.user);
+    transcriptWriter.setLatestUserBlock(lines);
+    ui.latestUserBannerText.content = clampBannerBody(message);
+    refreshLatestUserBannerVisibility();
+    return lines;
+  }
+
   const appendLine = (content: string, fg: string) => transcriptWriter.appendLine(content, fg);
   const appendBlock = (label: string | null, body: string, fg: string) =>
     transcriptWriter.appendBlock(label, body, fg);
   const recordTranscriptEntry = (kind: TranscriptEntry["kind"], text: string) =>
     transcriptWriter.recordEntry(kind, text);
+
+  // Show the sticky banner only when the latest `you:` block has scrolled
+  // off the top of the transcript viewport (i.e. the user scrolled the
+  // transcript down past their last message). When the block is still on
+  // screen or sits below the viewport (user scrolled up to read earlier
+  // history), the banner stays hidden. OpenTUI's `Renderable#y` getter
+  // walks the parent chain and already folds in `content.translateY =
+  // -scrollTop`, so child `screenY` values are in the same root-cumulative
+  // coordinate space as `viewport.screenY`; comparing against `scrollTop`
+  // (content-space) would mix coordinate systems.
+  function refreshLatestUserBannerVisibility(): void {
+    const lines = transcriptWriter.getLatestUserBlock();
+    if (lines.length === 0) {
+      ui.latestUserBanner.visible = false;
+      return;
+    }
+    const last = lines[lines.length - 1]!;
+    const viewTop = ui.transcript.viewport.screenY;
+    const scrolledAboveViewport = last.screenY + last.height <= viewTop;
+    ui.latestUserBanner.visible = scrolledAboveViewport;
+  }
+
+  // Yoga lays out children asynchronously and ScrollBoxRenderable does not
+  // emit a scroll event, so poll on a short interval to keep the banner in
+  // sync with both new content (which shifts the sticky-bottom view) and
+  // manual scrolling. 100 ms is fast enough to feel responsive while staying
+  // well below the per-frame cost; the visibility check is just a handful
+  // of property reads.
+  const bannerWatcher = setInterval(refreshLatestUserBannerVisibility, 100);
 
   const statusController = new StatusController({
     renderer,
@@ -202,6 +257,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     transcriptWriter,
     statusController,
     appendBlock,
+    appendUserBlock,
     recordTranscriptEntry,
     reportError,
     onPickerEscapeClose: setEscapeSuppress,
@@ -220,11 +276,14 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   const unsubscribe = bindSessionToUi({
     session: input.session,
     sidebar: ui.sidebar,
+    followUpPanel: ui.followUpPanel,
+    followUpPanelBody: ui.followUpPanelBody,
     stepRenderer,
     statusController,
     questionPicker,
     appendLine,
     appendBlock,
+    appendUserBlock,
   });
 
   // Esc cancels the in-flight turn; idle Esc is a no-op (Ctrl+C quits).
@@ -236,13 +295,29 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // Shared dispatch for submit (follow_up) and Ctrl+Enter (steer): log the
   // user message + attachments, hand the prompt to the session, flip the
   // chrome to "running".
-  function dispatchTurn(message: string, behavior: "follow_up" | "steer"): void {
+  async function dispatchTurn(message: string, behavior: "follow_up" | "steer"): Promise<void> {
+    // Auto-attach any image-shaped paths the user typed or dragged into the
+    // compose buffer. Drag-from-screenshot-thumbnail on macOS is the
+    // motivating case: the terminal synthesizes keystrokes instead of firing
+    // a paste event, and the tempfile under `NSIRD_screencaptureui_*`
+    // disappears within seconds of the thumbnail dismissing. Scanning on
+    // submit captures the bytes before that race resolves badly.
+    await pasteController.autoAttachFromMessage(message).catch(reportError);
     const pending = pasteController.consume();
-    recordTranscriptEntry("user", message);
-    appendBlock("you:", message, COLORS.user);
-    if (pending.length > 0) {
-      const lines = pending.map((p) => `📎 ${p.label}: ${p.path}`).join("\n");
-      appendBlock(null, lines, COLORS.hint);
+    // Suppress the transcript `you:` block for follow-ups that are about
+    // to be queued behind an in-flight turn: the runner will keep them in
+    // `state.followUpQueue` until the active work settles, and the
+    // follow-up panel above the compose row already surfaces them. The
+    // session subscription emits the deferred `you:` block when the
+    // runner drains the entry and delivers it to the agent. Steer
+    // messages skip the queue entirely, so they always render here.
+    const queued = behavior === "follow_up" && statusController.isRunning();
+    if (!queued) {
+      appendUserBlock(message);
+      if (pending.length > 0) {
+        const lines = pending.map((p) => `📎 ${p.label}: ${p.path}`).join("\n");
+        appendBlock(null, lines, COLORS.hint);
+      }
     }
     const images = pending.map((p) => p.attachment);
     // Treat typed message as a flush so collected partial answers are not
@@ -251,7 +326,19 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       questionPicker.flushWithMessage(message, images);
       return;
     }
-    void input.session.prompt({ message, behavior, images }).catch(reportError);
+    // `/relay` is an inline token, not a standalone command: when the session
+    // can route to state-machine tools we strip every `/relay` token and
+    // append a system reminder that primes the routing tools. In `agent`
+    // mode the runner has no state-machine tools, so the token is left in
+    // the message verbatim and the picker hides the command entirely.
+    let outgoing = message;
+    if (input.session.config.mode !== "agent") {
+      const relay = applyRelayCommand(message);
+      if (relay.applied) {
+        outgoing = relay.message;
+      }
+    }
+    void input.session.prompt({ message: outgoing, behavior, images }).catch(reportError);
     if (!statusController.isRunning()) statusController.markRunning();
   }
 
@@ -261,7 +348,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     const message = ui.inputField.plainText.trim();
     if (message.length === 0) return;
     ui.inputField.clear();
-    dispatchTurn(message, "steer");
+    void dispatchTurn(message, "steer").catch(reportError);
   }
 
   // Plain Enter: slash-style local commands → shared dispatch (which
@@ -277,11 +364,15 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
         copyController,
         transcriptWriter,
         appendBlock,
+        onReset: () => {
+          input.onResetRequest?.();
+          renderer.destroy();
+        },
       })
     ) {
       return;
     }
-    dispatchTurn(message, "follow_up");
+    void dispatchTurn(message, "follow_up").catch(reportError);
   }
 
   installKeyHandlers({
@@ -336,7 +427,12 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   });
 
   replayResumeHistory(
-    { appendLine, appendBlock, recordTranscriptEntry },
+    {
+      appendLine,
+      appendBlock,
+      recordTranscriptEntry,
+      setLatestUserBlock: (lines) => transcriptWriter.setLatestUserBlock(lines),
+    },
     { history: input.history, resumeHistoryMessages: input.resumeHistoryMessages },
   );
 
@@ -345,8 +441,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     initialPrompt: input.initialPrompt,
     statusController,
     stepRenderer,
-    appendBlock,
-    recordTranscriptEntry,
+    appendUserBlock,
     reportError,
   });
 
@@ -360,6 +455,20 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     dinoPanel.destroy();
   });
 
+  clearInterval(bannerWatcher);
   unsubscribe();
   return statusController.lastTerminal();
+}
+
+/**
+ * Clamp the body of the sticky "latest user message" banner so it does not
+ * dominate the screen for long pastes. We keep at most {@link BANNER_MAX_LINES}
+ * raw lines and append an ellipsis when more was trimmed; the banner itself
+ * soft-wraps so visual height may still exceed the raw line count.
+ */
+const BANNER_MAX_LINES = 3;
+function clampBannerBody(text: string): string {
+  const lines = text.split("\n");
+  if (lines.length <= BANNER_MAX_LINES) return text;
+  return `${lines.slice(0, BANNER_MAX_LINES).join("\n")}…`;
 }

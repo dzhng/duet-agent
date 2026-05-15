@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { PGlite } from "@electric-sql/pglite";
-import { vector } from "@electric-sql/pglite/vector";
+import type { PGlite } from "@electric-sql/pglite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMigrations } from "../src/memory/migrations.js";
 import { recallMemory, reciprocalRankFusion } from "../src/memory/recall.js";
+import { MemorySession } from "../src/memory/session.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 describe("recall_memory", () => {
@@ -45,9 +45,9 @@ describe("recall_memory", () => {
 
   describe("recallMemory", () => {
     testIfDocker("returns keyword-only results when no embedding client is provided", async () => {
-      await withSeededDb(async (db) => {
+      await withSeededDb(async (session) => {
         const result = await recallMemory({
-          db,
+          session,
           query: "wire-byte",
           scope: "all",
         });
@@ -58,9 +58,9 @@ describe("recall_memory", () => {
     });
 
     testIfDocker("falls back to keyword-only when the embed callable throws", async () => {
-      await withSeededDb(async (db) => {
+      await withSeededDb(async (session) => {
         const result = await recallMemory({
-          db,
+          session,
           embed: async () => {
             throw new Error("simulated outage");
           },
@@ -78,9 +78,9 @@ describe("recall_memory", () => {
     });
 
     testIfDocker("scope=session restricts to the given session", async () => {
-      await withSeededDb(async (db) => {
+      await withSeededDb(async (session) => {
         const result = await recallMemory({
-          db,
+          session,
           query: "memory",
           scope: "session",
           sessionId: "session_local",
@@ -94,9 +94,9 @@ describe("recall_memory", () => {
     testIfDocker(
       "scope=global excludes the current session and includes legacy NULL rows",
       async () => {
-        await withSeededDb(async (db) => {
+        await withSeededDb(async (session) => {
           const result = await recallMemory({
-            db,
+            session,
             query: "memory",
             scope: "global",
             sessionId: "session_local",
@@ -113,16 +113,16 @@ describe("recall_memory", () => {
     testIfDocker(
       "fuses keyword and vector results when an embedding client is provided",
       async () => {
-        await withSeededDb(async (db) => {
+        await withSeededDb(async (session) => {
           // Seed embeddings so the vector path returns rows. Each
           // embedding is a one-hot 3072-dim vector keyed off the
           // observation id so the test can predict cosine similarity:
           // mem_wire_budget gets a vector that exactly matches the
           // query embedding the stub returns.
-          await seedEmbeddings(db);
+          await session.withDb((db) => seedEmbeddings(db));
 
           const result = await recallMemory({
-            db,
+            session,
             embed: async () => ({ embeddings: [oneHotVector(0)], model: "test-model" }),
             query: "anything",
             scope: "all",
@@ -141,32 +141,41 @@ describe("recall_memory", () => {
   });
 });
 
-async function withSeededDb(fn: (db: PGlite) => Promise<void>): Promise<void> {
+async function withSeededDb(fn: (session: MemorySession) => Promise<void>): Promise<void> {
   const tempDir = await mkdtemp(join(tmpdir(), "duet-recall-"));
-  const db = await PGlite.create({
-    dataDir: join(tempDir, "memory.db"),
-    extensions: { vector },
+  const session = new MemorySession({
+    path: join(tempDir, "memory.db"),
+    openOptions: {
+      init: async (db) => {
+        await runMigrations(db);
+      },
+    },
+    // Hold the handle open across the test body so recall + embedding
+    // seeding run on the same open. Production's 2s default would
+    // churn the handle between every helper call.
+    idleCloseMs: 60_000,
   });
   try {
-    await runMigrations(db);
-    await db.exec(`
-      INSERT INTO observations (
-        id, created_at, last_used_at, session_id, kind, observed_date, priority, source_json, content, tags_json
-      ) VALUES
-        ('mem_local_today', 1, 1, 'session_local', 'observation', '2026-05-09', 'medium',
-         '{"kind":"system"}', 'Started writing recall memory tests today.', '[]'),
-        ('mem_local_yesterday', 2, 2, 'session_local', 'reflection', '2026-05-08', 'high',
-         '{"kind":"system"}', 'Local session memory landed yesterday.', '[]'),
-        ('mem_wire_budget', 3, 3, 'session_a', 'reflection', '2026-05-07', 'high',
-         '{"kind":"system"}', 'Wire-byte budget cap on the proxy is 4.5 MiB.', '[]'),
-        ('mem_state_machine', 4, 4, 'session_b', 'observation', '2026-05-06', 'medium',
-         '{"kind":"system"}', 'State machine routing handles recurring tasks.', '[]'),
-        ('mem_legacy_null_session', 5, 5, NULL, 'reflection', '2026-04-15', 'high',
-         '{"kind":"system"}', 'Legacy memory predating session id tracking.', '[]');
-    `);
-    await fn(db);
+    await session.withDb(async (db) => {
+      await db.exec(`
+        INSERT INTO observations (
+          id, created_at, last_used_at, session_id, kind, observed_date, priority, source_json, content, tags_json
+        ) VALUES
+          ('mem_local_today', 1, 1, 'session_local', 'observation', '2026-05-09', 'medium',
+           '{"kind":"system"}', 'Started writing recall memory tests today.', '[]'),
+          ('mem_local_yesterday', 2, 2, 'session_local', 'reflection', '2026-05-08', 'high',
+           '{"kind":"system"}', 'Local session memory landed yesterday.', '[]'),
+          ('mem_wire_budget', 3, 3, 'session_a', 'reflection', '2026-05-07', 'high',
+           '{"kind":"system"}', 'Wire-byte budget cap on the proxy is 4.5 MiB.', '[]'),
+          ('mem_state_machine', 4, 4, 'session_b', 'observation', '2026-05-06', 'medium',
+           '{"kind":"system"}', 'State machine routing handles recurring tasks.', '[]'),
+          ('mem_legacy_null_session', 5, 5, NULL, 'reflection', '2026-04-15', 'high',
+           '{"kind":"system"}', 'Legacy memory predating session id tracking.', '[]');
+      `);
+    });
+    await fn(session);
   } finally {
-    await db.close();
+    await session.dispose();
     await rm(tempDir, { recursive: true, force: true });
   }
 }

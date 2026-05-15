@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/vector";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,13 +17,13 @@ import { testIfDocker } from "./helpers/docker-only.js";
 describe("Memory storage", () => {
   test("returns a no-op handle without a configured path", async () => {
     const persistence = await loadStoredMemory(undefined, process.cwd());
-    expect(persistence.db).toBeUndefined();
+    expect(persistence.session).toBeUndefined();
     await persistence.dispose();
   });
 
   test("returns a no-op handle when storage is explicitly disabled", async () => {
     const persistence = await loadStoredMemory(false, process.cwd());
-    expect(persistence.db).toBeUndefined();
+    expect(persistence.session).toBeUndefined();
     await persistence.dispose();
   });
 
@@ -32,8 +33,11 @@ describe("Memory storage", () => {
 
     try {
       const persistence = await loadStoredMemory(memoryPath, tempDir);
-      expect(persistence.db).toBeDefined();
-      await appendObservation(persistence.db!, observationInput("Created database.", "session_a"));
+      expect(persistence.session).toBeDefined();
+      await appendObservation(
+        persistence.session!,
+        observationInput("Created database.", "session_a"),
+      );
       await persistence.dispose();
 
       expect(await readObservationContents(memoryPath)).toEqual(["Created database."]);
@@ -50,7 +54,7 @@ describe("Memory storage", () => {
 
     try {
       const persistence = await loadStoredMemory(memoryPath, tempDir);
-      const snapshot = await readSessionObservations(persistence.db!, "session_seed");
+      const snapshot = await readSessionObservations(persistence.session!, "session_seed");
       await persistence.dispose();
 
       expect(snapshot.observations).toEqual([
@@ -84,15 +88,22 @@ describe("Memory storage", () => {
 
       try {
         const persistence = await loadStoredMemory(memoryPath, tempDir);
-        const db = persistence.db!;
+        const session = persistence.session!;
 
         // Seed two sessions with one row each. Reflection in session_a
         // must not affect session_b's row.
-        const a1 = await appendObservation(db, observationInput("session a row 1", "session_a"));
-        const a2 = await appendObservation(db, observationInput("session a row 2", "session_a"));
-        const b1 = await appendObservation(db, observationInput("session b row", "session_b"));
+        const a1 = await appendObservation(
+          session,
+          observationInput("session a row 1", "session_a"),
+        );
+        const a2 = await appendObservation(
+          session,
+          observationInput("session a row 2", "session_a"),
+        );
+        const b1 = await appendObservation(session, observationInput("session b row", "session_b"));
+        if (!a1 || !a2 || !b1) throw new Error("seed observations should not be skipped");
 
-        await replaceSessionObservations(db, "session_a", [
+        await replaceSessionObservations(session, "session_a", [
           // Keep a1 (under its existing id), drop a2 entirely, append a fresh reflection.
           a1,
           {
@@ -105,16 +116,49 @@ describe("Memory storage", () => {
           },
         ]);
 
-        const aSnapshot = await readSessionObservations(db, "session_a");
+        const aSnapshot = await readSessionObservations(session, "session_a");
         expect(aSnapshot.observations.map((o) => o.content)).toEqual([
           "session a row 1",
           "session a reflection",
         ]);
 
-        const bSnapshot = await readSessionObservations(db, "session_b");
+        const bSnapshot = await readSessionObservations(session, "session_b");
         expect(bSnapshot.observations.map((o) => o.id)).toEqual([b1.id]);
 
         await persistence.dispose();
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  testIfDocker(
+    "invokes onRecover with the backup path and underlying cause when the data directory is unreadable",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
+      const memoryPath = join(tempDir, "memory.db");
+      // Mimic real-world corruption: a non-empty data directory that is
+      // missing PGlite's expected internal layout. `runMigrations`
+      // (running inside openPGlite's probe) will throw and trigger
+      // quarantine.
+      mkdirSync(memoryPath);
+      writeFileSync(join(memoryPath, "PG_VERSION"), "999\n", "utf8");
+      writeFileSync(join(memoryPath, "stray"), "garbage", "utf8");
+
+      const recoveries: Array<{ backupPath: string; cause: unknown }> = [];
+      try {
+        const persistence = await loadStoredMemory(memoryPath, tempDir, {
+          onRecover: (info) => {
+            recoveries.push(info);
+          },
+        });
+        expect(persistence.session).toBeDefined();
+        await persistence.dispose();
+
+        expect(recoveries).toHaveLength(1);
+        const [recovery] = recoveries;
+        expect(recovery?.backupPath.startsWith(`${memoryPath}.corrupted-`)).toBe(true);
+        expect(recovery?.cause).toBeInstanceOf(Error);
       } finally {
         await rm(tempDir, { recursive: true, force: true });
       }
@@ -127,8 +171,8 @@ describe("Memory storage", () => {
 
     try {
       const persistence = await loadStoredMemory(memoryPath, tempDir);
-      const db = persistence.db!;
-      await appendObservation(db, observationInput("Before dispose.", "session_a"));
+      const session = persistence.session!;
+      await appendObservation(session, observationInput("Before dispose.", "session_a"));
       await persistence.dispose();
 
       // Reopen with a fresh handle to confirm only the pre-dispose row landed on disk.

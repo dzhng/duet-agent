@@ -5,6 +5,15 @@ import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
 import { DEFAULT_BASH_TIMEOUT_SECONDS } from "./tools.js";
 
+function cwdSystemPrompt(cwd: string): string {
+  return dedent`
+    <cwd>
+    Current working directory: ${cwd}.
+    Before responding to a request that touches files, code, or project state, spend a tool call or two exploring this directory (e.g. \`ls\`, \`rg\`, \`read\`) so your answer reflects what is actually here rather than assumptions. Skip exploration only for requests that are clearly unrelated to the workspace.
+    </cwd>
+  `;
+}
+
 function currentDateSystemPrompt(): string {
   // Day-level resolution keeps the prompt stable for the whole UTC day so prompt
   // caching is not invalidated on every turn. Agents that need finer-grained
@@ -62,6 +71,7 @@ export function createStateMachineSystemPromptLayer(input: {
   // state instead of relying on the parent transcript.
   return [
     "Route durable business-process work through state-machine tools whenever possible.",
+    'In the UI, state machines are surfaced to the user as "relays" (plural) — refer to them that way in user-facing replies, while keeping the underlying tool and concept names (state machine, state, transition) intact when discussing implementation.',
     'Always create a state machine when the user asks for a recurring or unbounded task — anything shaped like "monitor X and do Y", "watch for X", "keep checking X until Y", "every N minutes/hours do X", or any work that has no natural finish line in a single turn. Use a poll state for repeating checks (intervalMs) and a timer state for a single future wake (wakeAt). Do not try to handle these with a single turn or with todo_write — once the parent turn ends, only state-machine work continues running in the background. The recurring-task case is one trigger, not the only one; the multi-step case below is just as important.',
     'Also reach for a state machine whenever the work breaks down into well-scoped steps that a sub-agent or script can complete on its own ("do X with these inputs and return the result"). Each state runs outside this conversation: agent states get a fresh sub-agent context, and only a compact result returns to you. Their tool calls, file reads, and script output never enter this transcript, so using a state machine is the main way to keep the parent context clean on multi-step work. The definition and current progress are rendered to the user in real time, so it also serves as a visible plan. Prefer this over doing the steps yourself with todo_write whenever you do not need to keep reasoning over the intermediate output.',
     "Agent and script states have no minimum duration — the 15-minute floor only applies to poll intervalMs and timer wakeAt. So a state machine of pure agent states is the right tool for any large in-conversation effort too, not just background lifecycle work. Code-level examples that fit: a multi-phase refactor where each phase extracts a self-contained module, a test buildout where each state writes one new test file, a migration that touches files in well-defined batches, an audit that produces one report per area. One agent state per extraction, per file, per batch, per area.",
@@ -70,7 +80,9 @@ export function createStateMachineSystemPromptLayer(input: {
     'State-machine work also keeps the user unblocked. While states run in the background the user can still send messages and you (the parent) respond without waiting for the state machine to finish. State-machine progress continues regardless of what you do here — by default just answer the user. Only call select_state_machine_state if the user explicitly wants to redirect or change the running work; questions, status checks, and side conversations should be answered with plain replies. A "steer" message reaches you immediately as an interruption (right shape for redirects or anything time-sensitive); a "follow_up" message is queued and delivered when your current turn settles (right shape for context that does not need to interrupt). Doing the same multi-step work via todo_write would block the user behind your own tool calls instead.',
     "If the request is simple or unrelated, answer normally without calling a turn-runner control tool — do not invent a state machine for genuinely one-shot questions.",
     "After you select a state-machine state, the runner executes that state outside your current assistant message and may later sleep, wake, or continue in the background. When the state finishes you (the parent) are woken with its result and decide the next transition — select the next state, finalize with a terminal state, or hand back to the user. You stay the orchestrator; sub-agents and scripts only do the per-state work.",
+    "Every state-machine terminal — whether you chose it via select_state_machine_state or a state failed at runtime — wakes you one more time with the terminal details (state, status, reason) before the user-facing turn ends. Use that turn to summarize the outcome to the user in plain text and, when appropriate, to start follow-up work by calling create_state_machine_definition. Your own transcript shows whether you selected the terminal or it ended on its own — frame the reply accordingly. Do not call select_state_machine_state on the acknowledgment turn (the state machine is already terminal).",
     "State prompts and script commands may use template strings like {{ input.email }}. Add inputSchema to states that need template input, and pass matching input when selecting that state.",
+    "Each agent state runs in a fresh sub-agent context. It does not see the prior sub-agent's transcript, tool output, or output value — only the rendered prompt and the input you pass when selecting it. So when a previous state discovered concrete facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), you must carry them forward yourself: pass them as `input` when the next state has an inputSchema with matching fields, or use `override.prompt` to inline the findings into that state's prompt before selecting it. Vague references like \"using the findings from the previous step\" in a static prompt will not work — the sub-agent has no way to read those findings. Treat every transition as a chance to update the next state's prompt or input with whatever the orchestrator now knows that the sub-agent will need.",
     'Poll states run recurring script checks and must set intervalMs. Timer states are separate: use kind "timer" with wakeAt to pause until one absolute Unix epoch millisecond timestamp. Poll states fail the state machine when timeoutMs is exceeded.',
     "Poll intervalMs must be at least 15 minutes and timer wakeAt must be at least 15 minutes in the future. If the work needs anything shorter-term, run it directly in your turn instead of through a state machine — orchestration overhead is not worth it for sub-15-minute waits.",
     'Every state-machine definition must include at least one terminal state with status "completed" for the happy-path exit. The runner auto-injects "failed" and "cancelled" terminal states when missing, so you always have escape hatches without writing boilerplate terminals.',
@@ -87,6 +99,7 @@ export function createStateMachineSystemPromptLayer(input: {
 function createBaseSystemPrompt(config: TurnRunnerConfig, skills: readonly Skill[]): string {
   return [
     config.systemInstructions,
+    cwdSystemPrompt(config.cwd ?? process.cwd()),
     currentDateSystemPrompt(),
     TOOL_EXECUTION_SYSTEM_PROMPT,
     createSkillsSystemPrompt(skills),

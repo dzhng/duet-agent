@@ -68,7 +68,7 @@ describe("observer usedObservationIds", () => {
         });
 
         await rebuildMemoryContextPack({
-          db: fixture.db,
+          session: fixture.session,
           cache: fixture.cache,
           settings,
           sessionId: "session_eval",
@@ -87,13 +87,15 @@ describe("observer usedObservationIds", () => {
         ];
 
         const seedTime = Date.now() - 24 * 60 * 60 * 1000;
-        await fixture.db.query(
-          "UPDATE observations SET created_at = $1, last_used_at = $1 WHERE id = ANY($2::text[])",
-          [seedTime, [deployCmd.id, cat.id, breakfast.id]],
-        );
+        await fixture.session.withDb(async (db) => {
+          await db.query(
+            "UPDATE observations SET created_at = $1, last_used_at = $1 WHERE id = ANY($2::text[])",
+            [seedTime, [deployCmd.id, cat.id, breakfast.id]],
+          );
+        });
 
         await updateObservationalMemory({
-          db: fixture.db,
+          session: fixture.session,
           memory: fixture.cache,
           sessionId: "session_eval",
           effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
@@ -101,7 +103,7 @@ describe("observer usedObservationIds", () => {
           messages,
         });
 
-        const rows = await readLastUsed(fixture.db, [deployCmd.id, cat.id, breakfast.id]);
+        const rows = await readLastUsed(fixture.session, [deployCmd.id, cat.id, breakfast.id]);
 
         // The deploy command is the only memory the assistant could
         // have leaned on. lastUsedAt advanced means the observer
@@ -142,7 +144,7 @@ describe("observer usedObservationIds", () => {
         });
 
         await rebuildMemoryContextPack({
-          db: fixture.db,
+          session: fixture.session,
           cache: fixture.cache,
           settings,
           sessionId: "session_eval",
@@ -163,13 +165,15 @@ describe("observer usedObservationIds", () => {
         ];
 
         const seedTime = Date.now() - 24 * 60 * 60 * 1000;
-        await fixture.db.query(
-          "UPDATE observations SET created_at = $1, last_used_at = $1 WHERE id = ANY($2::text[])",
-          [seedTime, [cat.id, breakfast.id]],
-        );
+        await fixture.session.withDb(async (db) => {
+          await db.query(
+            "UPDATE observations SET created_at = $1, last_used_at = $1 WHERE id = ANY($2::text[])",
+            [seedTime, [cat.id, breakfast.id]],
+          );
+        });
 
         await updateObservationalMemory({
-          db: fixture.db,
+          session: fixture.session,
           memory: fixture.cache,
           sessionId: "session_eval",
           effectiveContext: DEFAULT_EFFECTIVE_CONTEXT,
@@ -177,7 +181,7 @@ describe("observer usedObservationIds", () => {
           messages,
         });
 
-        const rows = await readLastUsed(fixture.db, [cat.id, breakfast.id]);
+        const rows = await readLastUsed(fixture.session, [cat.id, breakfast.id]);
 
         // Neither memory was used; both timestamps must stay at the
         // seeded backdate. A bump would mean the observer hallucinated
@@ -194,15 +198,17 @@ describe("observer usedObservationIds", () => {
 });
 
 async function readLastUsed(
-  db: Awaited<ReturnType<typeof createMemoryFixture>>["db"],
+  session: Awaited<ReturnType<typeof createMemoryFixture>>["session"],
   ids: string[],
 ): Promise<Record<string, number>> {
-  const result = await db.query<{ id: string; last_used_at: number }>(
-    "SELECT id, last_used_at FROM observations WHERE id = ANY($1::text[])",
-    [ids],
+  const result = await session.withDb(async (db) =>
+    db.query<{ id: string; last_used_at: number }>(
+      "SELECT id, last_used_at FROM observations WHERE id = ANY($1::text[])",
+      [ids],
+    ),
   );
   const out: Record<string, number> = {};
-  for (const row of result.rows) {
+  for (const row of result?.rows ?? []) {
     out[row.id] = row.last_used_at;
   }
   return out;

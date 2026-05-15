@@ -141,14 +141,20 @@ export class Session {
    */
   private lastUsage?: TurnUsageFields;
   /**
-   * Cumulative USD across this session. Advances from every `usage` event,
-   * which always carries the running turn aggregate; `currentTurnCost` tracks
-   * how much of `sessionCostUsd` has been credited to the active turn so a
-   * subsequent `usage` event from the same turn only contributes its delta.
+   * Cost of every turn that has reached a terminal event so far, in USD.
+   * Credited once per turn from `terminal.turnUsage.cost.total` and persisted
+   * to `state.json`. The in-flight turn's running cost is tracked separately
+   * in `liveTurnCostUsd` and folded in only at display time, so a crash
+   * mid-turn drops the unfinished turn's partial cost on resume rather than
+   * persisting a moving target.
    */
   private sessionCostUsd = 0;
-  /** Aggregate cost already credited to the active turn from prior `usage` events. */
-  private currentTurnCost = 0;
+  /**
+   * Running cost of the active turn, in USD, mirrored from each `usage`
+   * event's `turnUsage.cost.total`. Cleared when the terminal event credits
+   * the final total to `sessionCostUsd`. Display-only and never persisted.
+   */
+  private liveTurnCostUsd = 0;
 
   constructor(
     readonly config: TurnRunnerConfig,
@@ -306,9 +312,14 @@ export class Session {
     return this.lastUsage;
   }
 
-  /** Cumulative session cost in USD; advances on every `usage` event. */
+  /**
+   * Cumulative session cost in USD for display: completed turns plus the
+   * in-flight turn's running total. The persisted value only includes
+   * completed turns; the in-flight portion is folded in at read time so the
+   * sidebar still ticks mid-turn without mutating the persisted total.
+   */
   getSessionCostUsd(): number {
-    return this.sessionCostUsd;
+    return this.sessionCostUsd + this.liveTurnCostUsd;
   }
 
   /**
@@ -377,13 +388,7 @@ export class Session {
   }
 
   private async handleTurnEvent(event: TurnEvent): Promise<void> {
-    if (event.type === "turn_started") {
-      // Each new turn starts a fresh delta window for `applyUsageEvent`.
-      // Without this reset, a `usage` event from a new turn carrying a
-      // smaller cumulative cost than the prior turn's final aggregate would
-      // be treated as a refund.
-      this.currentTurnCost = 0;
-    } else if (event.type === "usage") {
+    if (event.type === "usage") {
       this.applyUsageEvent(event);
       void this.persistLatestState();
     }
@@ -391,7 +396,7 @@ export class Session {
     if (isTerminalEvent(event)) {
       emitted = this.normalizeTerminalEvent(event);
       this.lastTerminal = emitted;
-      this.applyTerminalUsage(emitted);
+      this.commitTerminalCost(emitted);
       await this.writeStoredEnvelope(emitted.state);
       if (emitted.type === "sleep") {
         this.scheduleWake(emitted);
@@ -404,42 +409,49 @@ export class Session {
   }
 
   /**
-   * Treat `event.usage.cost.total` as the running turn aggregate and credit
-   * only the delta beyond what was already counted for this turn. The runner
-   * guarantees `usage` events are monotonic-non-decreasing within a turn,
-   * so the delta is always `>= 0`; we no-op when there's nothing to add.
+   * Mirror the running turn aggregate into `lastUsage` (for the context bar)
+   * and `liveTurnCostUsd` (for the mid-turn cost display). The persisted
+   * `sessionCostUsd` is left alone until the terminal event credits the
+   * final total, so partial cost from an interrupted turn does not survive
+   * a crash.
    */
   private applyUsageEvent(event: TurnUsageEvent): void {
     this.lastUsage = {
-      usage: event.usage,
+      turnUsage: event.turnUsage,
+      lastMessageUsage: event.lastMessageUsage,
       effectiveContextWindow: event.effectiveContextWindow,
       contextWindowUsage: event.contextWindowUsage,
     };
-    const total = event.usage?.cost?.total;
-    if (typeof total !== "number" || !Number.isFinite(total)) return;
-    const delta = total - this.currentTurnCost;
-    if (delta <= 0) return;
-    this.sessionCostUsd += delta;
-    this.currentTurnCost = total;
+    this.liveTurnCostUsd = event.turnUsage.cost.total;
   }
 
   /**
-   * Terminal events carry the same `TurnUsageFields` shape as `usage` events.
-   * In practice the runner already emitted a `usage` event covering the same
-   * aggregate before terminal landed, so this only fires when a terminal slips
-   * past without a preceding `usage` event (e.g. an abrupt error). The
-   * delta-vs-`currentTurnCost` guard makes a redundant terminal a no-op.
+   * Credit the finished turn's full cost to the persisted `sessionCostUsd`
+   * and clear the in-flight tracker. Also refresh `lastUsage` from the
+   * terminal when it carries the usage bundle, so the sidebar's context bar
+   * reflects the final per-turn aggregate even if no preceding `usage` event
+   * arrived (e.g. an abrupt error path).
    */
-  private applyTerminalUsage(terminal: TurnTerminalEvent): void {
-    if (!terminal.usage || !terminal.effectiveContextWindow || !terminal.contextWindowUsage) {
-      return;
+  private commitTerminalCost(terminal: TurnTerminalEvent): void {
+    // `TurnTerminalBaseEvent extends Partial<TurnUsageFields>`, so each
+    // field is independently optional in the type system even though the
+    // runner attaches the bundle atomically. Check every field so the
+    // narrowing is honest and the consumer doesn't need non-null asserts.
+    if (
+      terminal.turnUsage &&
+      terminal.lastMessageUsage &&
+      terminal.effectiveContextWindow &&
+      terminal.contextWindowUsage
+    ) {
+      this.lastUsage = {
+        turnUsage: terminal.turnUsage,
+        lastMessageUsage: terminal.lastMessageUsage,
+        effectiveContextWindow: terminal.effectiveContextWindow,
+        contextWindowUsage: terminal.contextWindowUsage,
+      };
+      this.sessionCostUsd += terminal.turnUsage.cost.total;
     }
-    this.applyUsageEvent({
-      type: "usage",
-      usage: terminal.usage,
-      effectiveContextWindow: terminal.effectiveContextWindow,
-      contextWindowUsage: terminal.contextWindowUsage,
-    });
+    this.liveTurnCostUsd = 0;
   }
 
   private applyPersistedTelemetryFields(
@@ -573,17 +585,14 @@ export class Session {
     try {
       const content = await readFile(this.sessionFilePath(), "utf-8");
       const stored = JSON.parse(content) as StoredSessionFile;
-      const rawState = stored.state;
-      if (!rawState) {
-        return {
-          lastUsage: stored.lastUsage,
-          sessionCostUsd: stored.sessionCostUsd,
-        };
-      }
-
+      // Old session files predate `lastMessageUsage`; skip the snapshot
+      // when that required field is missing so the sidebar doesn't read
+      // off an undefined. The bar repopulates on the first turn after
+      // resume; no migration here.
+      const lastUsage = stored.lastUsage?.lastMessageUsage ? stored.lastUsage : undefined;
       return {
-        state: rawState,
-        lastUsage: stored.lastUsage,
+        ...(stored.state ? { state: stored.state } : {}),
+        lastUsage,
         sessionCostUsd: stored.sessionCostUsd,
       };
     } catch (error) {

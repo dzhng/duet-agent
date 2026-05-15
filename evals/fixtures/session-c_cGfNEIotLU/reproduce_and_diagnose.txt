@@ -1,0 +1,38 @@
+## Reproduction results
+
+Repro script: `/tmp/repro-memory-corruption.ts`
+Run command: `bun run /tmp/repro-memory-corruption.ts` (from `/Users/david/dev/duet-agent`)
+
+It drives the four hypotheses against the real `src/memory/storage.ts` API (`loadStoredMemory` → `appendObservation` → reopen probe) on a temp PGlite directory per scenario, with a stub embed function so the backfill worker is exercised end‑to‑end.
+
+### Findings
+
+| # | Hypothesis | Outcome | Evidence |
+|---|---|---|---|
+| 1 | Oversized / invalid embedding BLOBs (wrong dim, NaN) | **not the trigger** | Worker‑side `INSERT` into `observation_embeddings` fails locally but is caught by the worker's `try/catch` and backed off. Reopen + `runMigrations` probe succeeds; no quarantine fires. |
+| 2 | Concurrent writers without locking | **confirmed risk** | Two `loadStoredMemory` calls on the same `dataDir` both fulfill. `clearStalePostmasterLock` only handles *stale* pids — it does not block a live PGlite from racing a sibling. |
+| 3 | Crash / SIGKILL mid‑transaction | **not the trigger** | Child process killed inside a 5000‑row `db.transaction(...)`. Parent reopens cleanly; no quarantine required. PGlite's WAL/replay handles abrupt termination. |
+| 4 | Schema‑migration race | **confirmed root cause** | Two parallel `loadStoredMemory` calls on a fresh dir both fulfill, then the next reopen throws an opaque emscripten `Aborted()` (logged as `[object Object]`) and `openPGlite` has to **quarantine the directory** as `memory.corrupted-2026-05-12T17-44-24-148Z`. This is exactly the production‑observed wedge → quarantine sequence. |
+
+### Confirmed root cause
+
+The corruption is **not** embedding‑related. It is a process‑level concurrency bug in `src/memory/pglite.ts`:
+
+- `clearStalePostmasterLock` only deletes the lock when its pid is dead, and the lock check happens *before* `PGlite.create`.
+- Two processes (or two `loadStoredMemory` calls in one process) that hit `openPGlite` before either has written `postmaster.pid` both proceed into `PGlite.create` against the same `dataDir`.
+- Migration v3 (`CREATE EXTENSION vector`, `CREATE TABLE observation_embeddings`, HNSW index) and migration v? (3072‑dim rebuild) run twice against the same files — the second writer corrupts the on‑disk state.
+- Next startup probes via `runMigrations` and PGlite aborts; `openPGlite` catches it and renames the directory aside, which is the user‑visible "memory was reset" symptom.
+
+The embedding worker is downstream of the corrupted state, not the cause of it — which is why scenario 1 stayed green and scenario 4 went red even with no embed function configured.
+
+### Minimal repro command
+
+```
+bun run /tmp/repro-memory-corruption.ts
+```
+
+Within that script, the single‑shot minimal case is `scenario4_migrationRace`: open the same fresh data dir twice in parallel, dispose both, reopen — the third open quarantines.
+
+### Suggested fix direction (not applied)
+
+Serialize `openPGlite` on `dataDir` at the process level (an in‑process `Map<path, Promise<PGlite>>`) and add a real cross‑process file lock (`flock`/`O_EXCL` sentinel) before `PGlite.create`, so the second opener either reuses the live handle or fails fast with a clear message — instead of silently double‑migrating.

@@ -154,6 +154,22 @@ describe("TUI slash commands", () => {
     },
   );
 
+  testIfDocker("/reset fires the host reset callback and never dispatches a prompt", async () => {
+    const promptsBefore = harness.promptCalls.length;
+    await harness.mockInput.typeText("/reset");
+    await harness.flush();
+    // Slash autocomplete may pop open on the leading `/`; close it so
+    // Enter triggers `submit` instead of completing a row.
+    harness.mockInput.pressEscape();
+    await harness.flush();
+    harness.mockInput.pressEnter();
+    await harness.flush();
+
+    expect(harness.resetRequestCalls).toBe(1);
+    // /reset is a local slash command — it must never reach the runner.
+    expect(harness.promptCalls.length).toBe(promptsBefore);
+  });
+
   testIfDocker(
     "/image <abs-path> inserts a placeholder and submit forwards the attachment",
     async () => {

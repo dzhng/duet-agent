@@ -8,6 +8,22 @@ import { delay, waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 import { createStateMachineState, startTurn } from "./helpers/turn-runner-protocol.js";
 
+/**
+ * Feed a plain-text response for the parent's terminal acknowledgment
+ * turn, which fires once after every state-machine terminal so the
+ * parent can summarize the outcome to the user (and optionally start
+ * follow-up work). Most active-turns tests do not exercise the
+ * acknowledgment text itself; they just need the turn to settle so the
+ * outer `await turn` can resolve.
+ */
+async function ackTerminal(
+  runner: StreamingTurnRunner,
+  text = "Done — state machine completed.",
+): Promise<void> {
+  await waitFor(() => runner.pendingStreams.length === 1);
+  runner.completeNext(text);
+}
+
 class StreamingTurnRunner extends TurnRunner {
   readonly contexts: Context[] = [];
   readonly pendingStreams: ReturnType<typeof createAssistantMessageEventStream>[] = [];
@@ -400,11 +416,56 @@ describe("TurnRunner active turns", () => {
     expect(trailingIndex).toBeGreaterThan(xmlIndex);
   });
 
-  test("queued wake rebases onto latest state and no-ops when no longer sleeping on a poll", async () => {
+  test("chain of prompt → prompt → wake → prompt → prompt emits exactly one terminal", async () => {
+    // Mirrors what the RPC loop must forward into the runner: several
+    // turn-driving commands arrive while the chain is in flight, including
+    // a no-op wake. The runner queues them onto the active chain and emits
+    // a single terminal whose state reflects all four prompts.
+    const { runner, events } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "first" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const second = runner.turn({ type: "prompt", message: "second", behavior: "follow_up" });
+    await waitFor(() => followUpQueueEvents(events).some((queue) => queue.includes("second")));
+    const wake = runner.turn({ type: "wake" });
+    const third = runner.turn({ type: "prompt", message: "third", behavior: "follow_up" });
+    await waitFor(() => followUpQueueEvents(events).some((queue) => queue.includes("third")));
+    const fourth = runner.turn({ type: "prompt", message: "fourth", behavior: "follow_up" });
+    await waitFor(() => followUpQueueEvents(events).some((queue) => queue.includes("fourth")));
+
+    // The parent agent runs one pi-agent turn per consumed follow-up.
+    runner.completeNext("first response");
+    for (const reply of ["second response", "third response", "final response"]) {
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext(reply);
+    }
+
+    const [a, b, c, d, e] = await Promise.all([first, second, wake, third, fourth]);
+    expect(a).toBe(b);
+    expect(a).toBe(c);
+    expect(a).toBe(d);
+    expect(a).toBe(e);
+    expect(terminalEvents(events)).toHaveLength(1);
+    expect(a).toMatchObject({ type: "complete", status: "completed" });
+    expect(a.type === "complete" ? a.result : undefined).toBe("final response");
+    const texts = messageTexts(a.state);
+    expect(texts).toContain("first");
+    expect(texts).toContain("second");
+    expect(texts).toContain("third");
+    expect(texts).toContain("fourth");
+    // The queued wake on a non-sleeping session must not leak a
+    // "Nothing to wake." terminal into the chain.
+    expect(a.type === "complete" ? a.result : undefined).not.toBe("Nothing to wake.");
+  });
+
+  test("queued wake behind a prompt is dropped instead of clobbering the prompt's terminal", async () => {
     const { runner, events } = createStreamingRunner();
     const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "finish work" });
     await waitFor(() => runner.pendingStreams.length === 1);
 
+    // Queue a wake mid-turn. The session is not sleeping, so the wake has
+    // no work to do; it must not replace the prompt's terminal with a
+    // "Nothing to wake." completion.
     const wake = runner.turn({
       type: "wake",
     });
@@ -417,7 +478,7 @@ describe("TurnRunner active turns", () => {
     expect(wakeTerminal).toMatchObject({
       type: "complete",
       status: "completed",
-      result: "Nothing to wake.",
+      result: "done",
     });
   });
 
@@ -434,7 +495,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "script_step",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "script_step",
       ),
     );
 
@@ -454,6 +516,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, promptTerminal] = await Promise.all([turn, prompt]);
     expect(turnTerminal).toBe(promptTerminal);
@@ -474,7 +537,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "script_step",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "script_step",
       ),
     );
 
@@ -495,6 +559,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, answerTerminal] = await Promise.all([turn, answer]);
     expect(turnTerminal).toBe(answerTerminal);
@@ -514,7 +579,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "script_step",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "script_step",
       ),
     );
 
@@ -534,6 +600,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, steerTerminal] = await Promise.all([turn, steer]);
     expect(turnTerminal).toBe(steerTerminal);
@@ -553,7 +620,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "script_step",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "script_step",
       ),
     );
 
@@ -574,6 +642,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, steerTerminal] = await Promise.all([turn, steer]);
     expect(turnTerminal).toBe(steerTerminal);
@@ -600,7 +669,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "script_step",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "script_step",
       ),
     );
 
@@ -634,6 +704,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, firstSteerTerminal, secondSteerTerminal] = await Promise.all([
       turn,
@@ -657,7 +728,10 @@ describe("TurnRunner active turns", () => {
       decision: { kind: "run_state", state: "poll_reply" },
     });
     await waitFor(() =>
-      events.some((event) => event.type === "state_machine" && event.currentState === "poll_reply"),
+      events.some(
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "poll_reply",
+      ),
     );
 
     const prompt = runner.turn({
@@ -686,7 +760,10 @@ describe("TurnRunner active turns", () => {
       decision: { kind: "run_state", state: "poll_reply" },
     });
     await waitFor(() =>
-      events.some((event) => event.type === "state_machine" && event.currentState === "poll_reply"),
+      events.some(
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "poll_reply",
+      ),
     );
 
     const steer = runner.turn({
@@ -740,7 +817,10 @@ describe("TurnRunner active turns", () => {
       decision: { kind: "run_state", state: "poll_reply" },
     });
     await waitFor(() =>
-      events.some((event) => event.type === "state_machine" && event.currentState === "poll_reply"),
+      events.some(
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "poll_reply",
+      ),
     );
 
     const firstPrompt = runner.turn({
@@ -786,7 +866,10 @@ describe("TurnRunner active turns", () => {
       decision: { kind: "run_state", state: "poll_reply" },
     });
     await waitFor(() =>
-      events.some((event) => event.type === "state_machine" && event.currentState === "poll_reply"),
+      events.some(
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "poll_reply",
+      ),
     );
 
     const prompt = runner.turn({
@@ -806,6 +889,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, promptTerminal] = await Promise.all([turn, prompt]);
     expect(turnTerminal).toBe(promptTerminal);
@@ -930,7 +1014,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "state_agent",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "state_agent",
       ),
     );
     await waitFor(() => runner.pendingStreams.length === 1);
@@ -950,6 +1035,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, answerTerminal] = await Promise.all([turn, answer]);
     expect(turnTerminal).toBe(answerTerminal);
@@ -969,7 +1055,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "state_agent",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "state_agent",
       ),
     );
     await waitFor(() => runner.getState()?.stateMachine?.currentState === "state_agent");
@@ -985,6 +1072,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
     await turn;
   });
 
@@ -1026,6 +1114,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
     await turn;
   });
 
@@ -1042,7 +1131,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "state_agent",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "state_agent",
       ),
     );
     await waitFor(() => runner.pendingStreams.length === 1);
@@ -1064,6 +1154,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNextToolCall("select_state_machine_state", {
       decision: { kind: "terminal", state: "done" },
     });
+    await ackTerminal(runner);
 
     const [turnTerminal, promptTerminal] = await Promise.all([turn, prompt]);
     expect(turnTerminal).toBe(promptTerminal);
@@ -1094,7 +1185,7 @@ function followUpQueueEvents(events: TurnEvent[]): string[][] {
       (event): event is Extract<TurnEvent, { type: "follow_up_queue" }> =>
         event.type === "follow_up_queue",
     )
-    .map((event) => event.prompts.map((entry) => entry.message));
+    .map((event) => event.followUpQueue.map((entry) => entry.message));
 }
 
 function messageTexts(state: TurnState): string[] {

@@ -55,15 +55,15 @@ describe("session resume history", () => {
         const usageSnap = firstSession.getLastUsage();
         expect(usageSnap).toBeDefined();
         expect(usageSnap!.effectiveContextWindow).toBeGreaterThan(0);
-        expect(usageSnap!.usage.totalTokens).toBeGreaterThan(0);
+        expect(usageSnap!.turnUsage.totalTokens).toBeGreaterThan(0);
+        expect(usageSnap!.lastMessageUsage.totalTokens).toBeGreaterThan(0);
+        // The breakdown rescales to `lastMessageUsage.totalTokens`, so its
+        // four segments sum exactly to that. The turn aggregate may be
+        // larger (it folds in memory-observer work when it runs).
         const cw = usageSnap!.contextWindowUsage;
-        // Breakdown rescales to the latest parent message's `totalTokens`,
-        // which is at most the running aggregate (the aggregate also folds
-        // in memory-observer work when it runs). The exact rescale math is
-        // covered by the `scaleContextWindowUsageToTotalTokens` unit tests.
         const breakdownSum = cw.systemPrompt + cw.messages + cw.localMemory + cw.globalMemory;
-        expect(breakdownSum).toBeGreaterThan(0);
-        expect(breakdownSum).toBeLessThanOrEqual(usageSnap!.usage.totalTokens);
+        expect(breakdownSum).toBe(usageSnap!.lastMessageUsage.totalTokens);
+        expect(breakdownSum).toBeLessThanOrEqual(usageSnap!.turnUsage.totalTokens);
       } finally {
         await firstManager.dispose();
       }
@@ -75,7 +75,11 @@ describe("session resume history", () => {
       expectDiskUsageMatchesLastEvent(diskAfterFirst, firstEvents);
 
       const firstDiskUsage = diskAfterFirst.lastUsage as TurnUsageFields;
-      expect(firstDiskUsage.usage.totalTokens).toBeGreaterThan(0);
+      expect(firstDiskUsage.turnUsage.totalTokens).toBeGreaterThan(0);
+      expect(firstDiskUsage.lastMessageUsage.totalTokens).toBeGreaterThan(0);
+      expect(firstDiskUsage.lastMessageUsage.totalTokens).toBeLessThanOrEqual(
+        firstDiskUsage.turnUsage.totalTokens,
+      );
 
       let secondTerminal: TurnTerminalEvent;
       const secondEvents: TurnEvent[] = [];
@@ -127,14 +131,24 @@ describe("session resume history", () => {
 
       const secondDiskUsage = diskFinal.lastUsage as TurnUsageFields;
       // Each turn resets the runner's running aggregate, so the per-turn
-      // `usage.totalTokens` is independent across turns; what's monotonic is
-      // the persisted cumulative cost on disk, asserted above.
-      expect(secondDiskUsage.usage.totalTokens).toBeGreaterThan(0);
+      // `turnUsage.totalTokens` is independent across turns; what's monotonic
+      // is the persisted cumulative cost on disk, asserted above.
+      expect(secondDiskUsage.turnUsage.totalTokens).toBeGreaterThan(0);
+      expect(secondDiskUsage.lastMessageUsage.totalTokens).toBeGreaterThan(0);
+      expect(secondDiskUsage.lastMessageUsage.totalTokens).toBeLessThanOrEqual(
+        secondDiskUsage.turnUsage.totalTokens,
+      );
 
       // The persisted snapshot is the last `usage` event of the latest turn,
-      // which in turn always matches the terminal's running aggregate.
-      if (secondTerminal.usage?.totalTokens != null) {
-        expect(secondDiskUsage.usage.totalTokens).toBe(secondTerminal.usage.totalTokens);
+      // which in turn always matches the terminal's running aggregate and
+      // its parent-message snapshot.
+      if (secondTerminal.turnUsage?.totalTokens != null) {
+        expect(secondDiskUsage.turnUsage.totalTokens).toBe(secondTerminal.turnUsage.totalTokens);
+      }
+      if (secondTerminal.lastMessageUsage?.totalTokens != null) {
+        expect(secondDiskUsage.lastMessageUsage.totalTokens).toBe(
+          secondTerminal.lastMessageUsage.totalTokens,
+        );
       }
 
       // The resumed turn has strictly more conversation than the first, so
@@ -188,7 +202,7 @@ async function readSessionStateJson(
 }
 
 function terminalUsageCostUsd(terminal: TurnTerminalEvent): number {
-  const t = terminal.usage?.cost?.total;
+  const t = terminal.turnUsage?.cost?.total;
   if (typeof t !== "number" || !Number.isFinite(t)) {
     return Number.NaN;
   }
@@ -224,18 +238,19 @@ function lastUsageFromEvents(events: TurnEvent[]): TurnUsageEvent | undefined {
 function expectDiskUsageMatchesLastEvent(disk: SessionStateJson, events: TurnEvent[]): void {
   const fromDisk = disk.lastUsage;
   expect(fromDisk).toBeDefined();
-  expect(fromDisk!.usage.totalTokens).toBeGreaterThan(0);
+  expect(fromDisk!.turnUsage.totalTokens).toBeGreaterThan(0);
+  expect(fromDisk!.lastMessageUsage.totalTokens).toBeGreaterThan(0);
   const seg = fromDisk!.contextWindowUsage;
   const segSum = seg.systemPrompt + seg.messages + seg.localMemory + seg.globalMemory;
-  expect(segSum).toBeGreaterThan(0);
-  expect(segSum).toBeLessThanOrEqual(fromDisk!.usage.totalTokens);
+  expect(segSum).toBe(fromDisk!.lastMessageUsage.totalTokens);
 
   const fromEvents = lastUsageFromEvents(events);
   if (!fromEvents) {
     throw new Error("expected at least one usage event in this phase");
   }
 
-  expect(fromDisk!.usage).toEqual(fromEvents.usage);
+  expect(fromDisk!.turnUsage).toEqual(fromEvents.turnUsage);
+  expect(fromDisk!.lastMessageUsage).toEqual(fromEvents.lastMessageUsage);
   expect(fromDisk!.effectiveContextWindow).toBe(fromEvents.effectiveContextWindow);
   expect(fromDisk!.contextWindowUsage).toEqual(fromEvents.contextWindowUsage);
 }

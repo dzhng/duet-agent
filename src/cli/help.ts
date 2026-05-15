@@ -37,6 +37,7 @@ OPTIONS
                             Accepts: duet, vercel, openrouter, anthropic, openai.
                             Mutually exclusive with --model / --memory-model.
   -i, --incognito          Keep memory in-process; do not read or write durable memory
+  --db <path>              Memory database path (default: ~/.duet/memory.db); ignored under --incognito
   -w, --workdir <path>     Working directory (default: cwd)
   -r, --resume <id>        Resume a saved session
   --resume-history-messages <n>
@@ -47,6 +48,7 @@ OPTIONS
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
   --env-file <path>        Shared env file to load after <workdir>/.env (default: ${DEFAULT_DUET_ENV_FILE})
   --no-auto-upgrade         Skip the auto-upgrade probe for this run (also: DUET_NO_AUTO_UPGRADE=1)
+  --no-skill-sync           Skip the on-load default-skill sync
   --rpc                     Bare turn-runner control surface. Reads newline-delimited TurnRunnerCommand
                             JSON from stdin and writes TurnEvent JSON to stdout. The first command must
                             be "start"; the process exits after the single turn reaches its terminal
@@ -169,13 +171,15 @@ export function printMemoryHelp(): void {
 duet memory — Browse, edit, and delete observational memories
 
 USAGE
-  duet memory [--db <path>]
+  duet memory [--db <path>] [--wait <seconds>]
 
 ALIASES
   duet memories
 
 OPTIONS
   --db <path>              Memory database path (default: ~/.duet/memory.db)
+  --wait <seconds>         Seconds to wait for the cross-process open-lock when a peer
+                           duet process is holding it (default: 30; 0 fails immediately)
   -h, --help               Show this help
 
 KEYS

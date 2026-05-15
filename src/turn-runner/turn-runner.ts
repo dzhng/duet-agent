@@ -40,6 +40,7 @@ import type {
   TurnContextWindowUsage,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
+  TurnEventOrigin,
   TurnFollowUpQueueEntry,
   TurnInterruptCommand,
   TurnMode,
@@ -58,7 +59,7 @@ import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
 import { createStateMachineSystemPromptLayer } from "./prompts.js";
 import {
   applyEvictionHorizon,
-  calculateWireBytes,
+  calculateWireTokens,
   createInitialHorizon,
   findEvictionHorizon,
   type WireGuardHorizon,
@@ -67,6 +68,7 @@ import {
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
   formatCarriedTodosReminder,
+  formatStateMachineTerminalAcknowledgmentPrompt,
   type RecallMemoryToolStorage,
   isTurnRunnerControlResult,
   type TurnRunnerControlResult,
@@ -81,6 +83,12 @@ import {
   type StateMachineExecutionResult,
 } from "./state-machine-controller.js";
 import { completeTurn, copyOptionalArray, createInitialTurnState } from "./turn-state.js";
+import {
+  DEFAULT_TRANSIENT_RETRY_POLICY,
+  lastMessageIsTransientFailure,
+  transientRetryDelayMs,
+  type TransientRetryPolicy,
+} from "./transient-error.js";
 import { addUsage, usageFromMessages } from "./usage-accounting.js";
 
 export type TurnEventHandler = (event: TurnEvent) => void;
@@ -251,6 +259,7 @@ export class TurnRunner {
   protected lastParentUsageSnapshot?: {
     effectiveContextWindow: number;
     contextWindowUsage: TurnContextWindowUsage;
+    lastMessageUsage: TurnTokenUsage;
   };
   /** Ensures persisted memory hydrates once before the first turn that needs it. */
   private memoryLoaded = false;
@@ -263,6 +272,7 @@ export class TurnRunner {
     this.stateMachineController = new StateMachineController({
       cwd: config.cwd ?? process.cwd(),
       createStateAgent: (input) => this.createStateAgentHandle(input),
+      onSessionChanged: (session) => this.emit({ type: "state_machine", stateMachine: session }),
     });
   }
 
@@ -350,11 +360,12 @@ export class TurnRunner {
       if (this.turnUsage) {
         terminal = {
           ...terminal,
-          usage: this.turnUsage,
+          turnUsage: this.turnUsage,
           ...(this.lastParentUsageSnapshot
             ? {
                 effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
                 contextWindowUsage: this.lastParentUsageSnapshot.contextWindowUsage,
+                lastMessageUsage: this.lastParentUsageSnapshot.lastMessageUsage,
               }
             : {}),
         };
@@ -476,6 +487,16 @@ export class TurnRunner {
         followUpQueue: this.getFollowUpQueue(),
         queuedCommands: this.getQueuedCommands(),
       });
+      // A wake only has work to do when the runner is currently sleeping on
+      // a scheduled state. If the session moved on (the prior queued
+      // command already drove the state machine, or the session was never
+      // sleeping to begin with), running wake here would emit a
+      // "Nothing to wake." terminal that clobbers the real terminal from
+      // the previous command in this drain chain. Skipping the queued wake
+      // keeps the meaningful terminal as the single emitted event.
+      if (queued.type === "wake" && latest.state.status !== "sleeping") {
+        continue;
+      }
       latest = await this.executeTurnCommand(queued);
     }
     return latest;
@@ -580,7 +601,7 @@ export class TurnRunner {
   }
 
   private emitFollowUpQueue(): void {
-    this.emit({ type: "follow_up_queue", prompts: this.getFollowUpQueue() });
+    this.emit({ type: "follow_up_queue", followUpQueue: this.getFollowUpQueue() });
   }
 
   interrupt(_command: TurnInterruptCommand): void {
@@ -625,7 +646,7 @@ export class TurnRunner {
 
   protected async prompt(command: TurnPromptCommand): Promise<TurnTerminalEvent> {
     const originalState = this.requireRunnerState();
-    const state: TurnState = { ...originalState, status: "running" };
+    const state = this.clearFinishedTodosAtTurnStart({ ...originalState, status: "running" });
     const resolvedPrompt = this.skillContext.resolveSlashSkillPrompt(command.message);
     const todoReminder = formatCarriedTodosReminder(state.todos);
     const prompt = todoReminder ? `${todoReminder}\n\n${resolvedPrompt}` : resolvedPrompt;
@@ -754,7 +775,82 @@ export class TurnRunner {
     if (next.type === "interrupted" && this.activeStateWorkPrompt) {
       return this.activeStateWorkPrompt;
     }
+    if (next.type === "terminal") {
+      // Run the parent's terminal acknowledgment turn so the
+      // state-machine outcome is propagated back to the parent.
+      // `terminate: true` on the state-machine tools means the parent's
+      // prompt loop ends right after it selects a terminal (or a state
+      // that then errors at runtime) — without this pass the parent has
+      // no transcript entry for the outcome, cannot summarize it to the
+      // user, and cannot kick off a follow-up state machine in response.
+      const acknowledged = await this.runStateMachineTerminalAcknowledgment();
+      if (acknowledged) return acknowledged;
+      state = this.requireRunnerState();
+    }
     return this.controllerResultToTerminal(next, state);
+  }
+
+  /**
+   * Re-prompt the parent agent once after a state-machine terminal.
+   *
+   * The flag is per-session, so a fresh state machine created during
+   * the acknowledgment turn — which `createStateMachineSession` builds
+   * as a brand-new session object — will run its own acknowledgment
+   * when it terminates. The flag's only job is to prevent the same
+   * session.terminal from being re-acknowledged, which would otherwise
+   * happen if the parent (incorrectly) routes back into the controller
+   * on the already-terminal session and the controller re-records a
+   * terminal on it.
+   *
+   * Behavior:
+   * - Builds the acknowledgment prompt via
+   *   `formatStateMachineTerminalAcknowledgmentPrompt`. The prompt is
+   *   neutral with respect to "decided vs runtime failure" — the
+   *   parent's own transcript already shows whether it selected the
+   *   terminal, and `status`/`reason` carry the rest of the framing.
+   * - Runs one parent worker pass with full state-machine tool access
+   *   so the parent can either reply in plain text or call
+   *   `create_state_machine_definition` to start follow-up work.
+   * - On interruption, surfaces an `interrupted` terminal event for
+   *   the whole turn.
+   * - When the parent's reply carries a control action, drives that
+   *   control through the standard `driveStateMachineResult` path so
+   *   any newly-created state machine runs end-to-end and itself
+   *   produces a follow-up terminal (which also gets acknowledged via
+   *   its own session).
+   * - When the parent's reply is plain text, returns `undefined` so
+   *   the caller renders the original terminal (preserving
+   *   status/error/SM history) and the parent's natural-language
+   *   summary lands on the transcript as the final assistant message.
+   */
+  private async runStateMachineTerminalAcknowledgment(): Promise<TurnTerminalEvent | undefined> {
+    const session = this.stateMachineController.getSession();
+    if (!session?.terminal || session.terminalAcknowledged) return undefined;
+    this.stateMachineController.markTerminalAcknowledged();
+    const sessionForPrompt = this.stateMachineController.getSession();
+    if (!sessionForPrompt?.terminal) return undefined;
+    const acknowledgmentPrompt = formatStateMachineTerminalAcknowledgmentPrompt({
+      session: sessionForPrompt,
+    });
+    // `snapshotState` re-reads parentAgent messages directly, so this turn
+    // state includes the parent's transcript through the terminal-selecting
+    // tool call without a separate refresh step.
+    const turnState = this.snapshotState({ ...this.requireRunnerState(), status: "running" });
+    const workerResult = await this.runAgentWorkerWithUsage({
+      state: turnState,
+      prompt: acknowledgmentPrompt,
+      ...this.createTools(turnState.mode),
+    });
+    this.setState(workerResult.outcome.state);
+    if (workerResult.outcome.type === "interrupted") {
+      return { type: "interrupted", state: workerResult.outcome.state };
+    }
+    const followUp = await this.controllerResultFromWorkerResult(
+      workerResult,
+      workerResult.outcome.state,
+    );
+    if (followUp) return this.driveStateMachineResult(followUp, workerResult.outcome.state);
+    return undefined;
   }
 
   private async selectNextStateAfterCompletion(
@@ -839,11 +935,16 @@ export class TurnRunner {
       return { type: "complete", result: assistantText(agent.state.messages) };
     };
 
+    const origin: TurnEventOrigin = {
+      kind: "state_machine_agent",
+      state: input.state.name,
+    };
     return {
       prompt: async () => {
-        unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event));
+        unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event, origin));
         try {
           await agent.prompt(input.prompt);
+          await this.retryTransientServerErrors(agent);
           return finish();
         } catch (error) {
           if (this.consumeInterruptedTerminal()) return { type: "interrupted" };
@@ -854,7 +955,7 @@ export class TurnRunner {
           // interrupt — so partial work still flows into the turn aggregate
           // and ticks the sidebar cost via the emitted `usage` event.
           this.recordUsage(usageFromMessages(agent.state.messages));
-          this.emitTurnUsage();
+          this.emitTurnUsage(origin);
           unsubscribe?.();
         }
       },
@@ -940,6 +1041,23 @@ export class TurnRunner {
     this.setState({ ...this.state, todos: [...todos] });
   }
 
+  // When a new turn begins with a todo list whose items are all in terminal
+  // states (completed or failed), the list no longer reflects work in progress.
+  // Clear it so the user-visible todos panel resets and the next turn does not
+  // carry a stale reminder forward.
+  private clearFinishedTodosAtTurnStart(state: TurnState): TurnState {
+    const todos = state.todos;
+    if (!todos || todos.length === 0) return state;
+    const hasOpen = todos.some(
+      (todo) => todo.status === "pending" || todo.status === "in_progress",
+    );
+    if (hasOpen) return state;
+    const cleared: TurnState = { ...state, todos: [] };
+    this.setState(cleared);
+    this.emit({ type: "todos", todos: [] });
+    return cleared;
+  }
+
   private requireStarted(): void {
     if (!this.started) {
       throw new Error("Turn runner has not been started.");
@@ -1023,8 +1141,10 @@ export class TurnRunner {
         definition: workerResult.control.definition,
         currentState: firstState,
       });
-      this.emit({ type: "state_machine", currentState: firstState });
-      return this.stateMachineController.runDecision({ kind: "run_state", state: firstState });
+      return this.stateMachineController.runDecision({
+        kind: "run_state",
+        state: firstState,
+      });
     }
 
     if (workerResult.control.type !== "select_state_machine_state") {
@@ -1046,9 +1166,6 @@ export class TurnRunner {
         currentState: workerResult.control.decision.state,
       });
     }
-    if (workerResult.control.decision.kind !== "fail") {
-      this.emit({ type: "state_machine", currentState: workerResult.control.decision.state });
-    }
     return this.stateMachineController.runDecision(workerResult.control.decision);
   }
 
@@ -1069,7 +1186,7 @@ export class TurnRunner {
     const skills = this.skillContext.getSkills();
     const mcpTools = this.mcpRuntime?.tools ?? [];
     const recallStorage: RecallMemoryToolStorage = {
-      getDb: () => this.memoryPersistence?.db,
+      getSession: () => this.memoryPersistence?.session,
       embed: this.memoryPersistence?.embed,
       sessionId: this.config.sessionId,
       // Reuse the resolved memory model so recall_memory's optional
@@ -1149,6 +1266,7 @@ export class TurnRunner {
       if (this.tryRecoverFromContextOverflow(agent)) {
         await agent.continue();
       }
+      await this.retryTransientServerErrors(agent);
     } catch (error) {
       interruptedDuringPrompt = this.consumeInterruptedTerminal();
       if (!interruptedDuringPrompt) {
@@ -1293,6 +1411,71 @@ export class TurnRunner {
     return true;
   }
 
+  /**
+   * Retry transient upstream failures by popping the failed assistant
+   * message and continuing the same turn.
+   *
+   * Triggers only when the last assistant message has `stopReason: "error"`
+   * and the error text matches a known gateway 5xx or transport-fault
+   * pattern (see `transient-error.ts`). Context-overflow recoveries already
+   * ran upstream and are skipped here; 4xx errors and rate limits are
+   * intentionally not retried because the same payload would fail again.
+   *
+   * Each `agent.continue()` retry runs with exponential backoff + jitter.
+   * Each retry emits an informational `system` event so callers can show
+   * "retrying after upstream error" in the UI. The retry counter resets
+   * whenever the agent makes forward progress between failures — if
+   * `agent.continue()` appends a successful intermediate message before
+   * the next failure tail, the next failure is treated as a fresh
+   * sequence and gets the full retry budget. As soon as the assistant
+   * message after a retry is no longer a transient failure (success or
+   * a different non-retryable error), the helper returns and lets the
+   * caller surface that outcome.
+   *
+   * The loop has no explicit iteration cap because every iteration
+   * either reaches `maxAttempts` with no progress (terminates) or
+   * resets after real agent work (tool calls, tokens, bounded by
+   * pi-agent's own per-turn limits). A provider that can sustain
+   * infinite "progress + failure" cycles would already be billing the
+   * caller for real work each cycle — there is no free loop here.
+   */
+  protected async retryTransientServerErrors(
+    agent: Agent,
+    policy: TransientRetryPolicy = DEFAULT_TRANSIENT_RETRY_POLICY,
+  ): Promise<void> {
+    let attempt = 1;
+    while (attempt < policy.maxAttempts) {
+      if (!agent.state.errorMessage) return;
+      if (!lastMessageIsTransientFailure(agent.state.messages)) return;
+      const failingMessage = agent.state.messages.at(-1);
+      const reason =
+        failingMessage?.role === "assistant" && failingMessage.errorMessage
+          ? failingMessage.errorMessage
+          : "Upstream error";
+      const delayMs = transientRetryDelayMs(attempt, policy);
+      this.emit({
+        type: "system",
+        level: "info",
+        message: `Upstream error (${truncateForSystemMessage(reason)}); retrying in ${Math.round(delayMs / 100) / 10}s (attempt ${attempt + 1}/${policy.maxAttempts}).`,
+      });
+      // pi-agent leaves the failure as the tail assistant message and
+      // keeps `errorMessage` set; popping it lets `agent.continue()`
+      // resume from the prior user/tool-result tail without sending the
+      // failure marker back to the provider.
+      agent.state.messages.pop();
+      const lengthBeforeContinue = agent.state.messages.length;
+      await sleep(delayMs);
+      await agent.continue();
+      // If `continue()` appended more than just a new failure tail
+      // (i.e. at least one intermediate assistant or tool message
+      // landed before the agent failed again), the agent made real
+      // progress between failures. Reset so the next failure gets a
+      // fresh retry budget instead of inheriting the running count.
+      const messagesAppended = agent.state.messages.length - lengthBeforeContinue;
+      attempt = messagesAppended > 1 ? 1 : attempt + 1;
+    }
+  }
+
   protected async updateMemoryAfterAgentRun(
     messages: AgentMessage[],
     options: TurnOptions | undefined,
@@ -1300,10 +1483,10 @@ export class TurnRunner {
     if (this.config.memoryDbPath === undefined) {
       return;
     }
-    const db = this.memoryPersistence?.db;
-    if (!db) return;
+    const session = this.memoryPersistence?.session;
+    if (!session) return;
     const result = await updateObservationalMemory({
-      db,
+      session,
       memory: this.memory,
       sessionId: this.config.sessionId,
       effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
@@ -1325,10 +1508,11 @@ export class TurnRunner {
   }
 
   private async refreshMemoryContextPack(): Promise<void> {
-    if (!this.memoryPersistence?.db) return;
+    const session = this.memoryPersistence?.session;
+    if (!session) return;
     try {
       await rebuildMemoryContextPack({
-        db: this.memoryPersistence.db,
+        session,
         cache: this.memory,
         settings: resolveObservationalMemorySettings(
           this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
@@ -1474,6 +1658,26 @@ export class TurnRunner {
           ),
           ...(this.config.sessionId !== undefined ? { sessionId: this.config.sessionId } : {}),
         },
+        // Surface quarantine recoveries to the UI. The directory is moved
+        // aside on the user's disk and a fresh database is opened in its
+        // place, so prior memories are gone from this session's recall
+        // until the user manually inspects the backup — without a system
+        // event the loss is silent.
+        onWarn: (message) => {
+          // Cross-process lock contention: a concurrent duet CLI held the
+          // memory db's open-lock past our wait budget, so this op was
+          // skipped. Surface once per occurrence so the user knows recall
+          // and observer writes are degraded for this turn.
+          this.emit({ type: "system", level: "warn", message });
+        },
+        onRecover: ({ backupPath, cause }) => {
+          const reason = cause instanceof Error ? cause.message || cause.name : String(cause);
+          this.emit({
+            type: "system",
+            level: "warn",
+            message: `memory.db could not be opened (${reason}); quarantined to ${backupPath} and starting fresh.`,
+          });
+        },
       },
     );
   }
@@ -1535,12 +1739,12 @@ export class TurnRunner {
     this.turnUsage = addUsage(this.turnUsage, usage);
   }
 
-  protected emitAgentEvent(event: AgentEvent): void {
+  protected emitAgentEvent(event: AgentEvent, origin?: TurnEventOrigin): void {
     if (event.type === "message_start" && event.message.role === "user") {
       this.removeFollowUpPrompt(agentMessageText(event.message));
     }
     for (const turnEvent of agentEventToTurnEvents(event)) {
-      this.emit(turnEvent);
+      this.emit(origin ? { ...turnEvent, origin } : turnEvent);
     }
   }
 
@@ -1560,6 +1764,7 @@ export class TurnRunner {
         this.estimateContextWindowUsage(),
         event.message.usage.totalTokens,
       ),
+      lastMessageUsage: event.message.usage,
     };
   }
 
@@ -1573,13 +1778,15 @@ export class TurnRunner {
    * parent worker always sets the snapshot before its terminal usage is
    * recorded.
    */
-  protected emitTurnUsage(): void {
+  protected emitTurnUsage(origin?: TurnEventOrigin): void {
     if (!this.turnUsage || !this.lastParentUsageSnapshot) return;
     this.emit({
       type: "usage",
-      usage: this.turnUsage,
+      turnUsage: this.turnUsage,
+      lastMessageUsage: this.lastParentUsageSnapshot.lastMessageUsage,
       effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
       contextWindowUsage: this.lastParentUsageSnapshot.contextWindowUsage,
+      ...(origin ? { origin } : {}),
     });
   }
 
@@ -1589,11 +1796,13 @@ export class TurnRunner {
    * packs use the same `ceil(chars/4)` heuristic as the memory pipeline so
    * compaction triggers stay on the same scale as `MEMORY_BUDGET_RATIOS`.
    *
-   * The message tail uses {@link calculateWireBytes}: text and image blocks
-   * match the eviction guard, and structured blocks (`toolCall`, thinking,
-   * etc.) contribute a `JSON.stringify` length like the serialized request —
-   * unlike `agentMessagesToRaw`, which only counted plain text and turned
-   * tool calls into tiny placeholder previews.
+   * The message tail uses {@link calculateWireTokens} over the
+   * post-eviction slice — the same slice the provider tokenized — so
+   * messages already dropped by wire-shaping stop counting against the
+   * `messages` segment instead of inflating it from the runner's full
+   * retained transcript. Text and structured blocks (`toolCall`, thinking,
+   * etc.) use `ceil(chars/4)`, and image blocks contribute a fixed
+   * per-image estimate rather than their base64 byte length.
    *
    * `emitParentAgentEvent` rescales all four segments with
    * {@link scaleContextWindowUsageToTotalTokens} so the emitted breakdown
@@ -1602,7 +1811,11 @@ export class TurnRunner {
   protected estimateContextWindowUsage() {
     const agent = this.requireParentAgent();
     const pack = this.memory.getContextPack();
-    const messageWireTokens = Math.max(0, Math.ceil(calculateWireBytes(agent.state.messages) / 4));
+    const dispatched = applyEvictionHorizon(
+      agent.state.messages,
+      this.wireGuardHorizon.evictionHorizon,
+    );
+    const messageWireTokens = calculateWireTokens(dispatched);
     return {
       systemPrompt: estimateTokens(agent.state.systemPrompt),
       messages: messageWireTokens,
@@ -1635,6 +1848,21 @@ export class TurnRunner {
     const userValue = this.config.effectiveContext ?? DEFAULT_EFFECTIVE_CONTEXT;
     return modelWindow !== undefined ? Math.min(userValue, modelWindow) : userValue;
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Cap an upstream-error excerpt to a short, single-line form before emitting
+ * it as a `system` info message. Provider error payloads can be several
+ * kilobytes of JSON; clipping keeps the retry notice readable.
+ */
+function truncateForSystemMessage(message: string, limit = 160): string {
+  const flattened = message.replace(/\s+/g, " ").trim();
+  if (flattened.length <= limit) return flattened;
+  return `${flattened.slice(0, limit - 1)}…`;
 }
 
 /** Convert protocol-level prompt images into pi-ai `ImageContent` blocks. */

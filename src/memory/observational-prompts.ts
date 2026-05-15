@@ -24,11 +24,20 @@ export const OBSERVATION_CONTINUATION_HINT = dedent`
   Any messages following this reminder are newer and should take priority.
 `;
 
-export const OBSERVATION_CONTEXT_PROMPT =
-  "The following observations block contains your memory of past conversations with this user.";
+export const OBSERVATION_CONTEXT_PROMPT = dedent`
+  The following observations block contains your memory of past conversations with this user. It may contain two kinds of section, each wrapped in its own tag and prefaced with its own usage hint: <global_observations> for cross-session background and <local_observations> for the compacted history of the current conversation. Read the hint inside each section before deciding how to use it. When in doubt, the latest user message decides the topic.
+`;
+
+export const GLOBAL_OBSERVATIONS_HEADING = "### Long-term memory (cross-session)";
+export const GLOBAL_OBSERVATIONS_HINT =
+  "These are background notes from other conversations with this user. They may or may not be relevant to the current turn — only reach for them when the latest user message actually connects. Do not steer the reply toward old topics just because they appear here.";
+
+export const LOCAL_OBSERVATIONS_HEADING = "### From this session";
+export const LOCAL_OBSERVATIONS_HINT =
+  "This is a compacted summary of earlier turns in the current conversation. Treat it as authoritative recent history of what you and the user have already done together, and rely on it to stay continuous with the work in progress.";
 
 export const OBSERVATION_CONTEXT_INSTRUCTIONS = dedent`
-  IMPORTANT: When responding, reference specific details from these observations. Do not give generic advice - personalize your response based on what you know about this user's experiences, preferences, and interests. If the user asks for recommendations, connect them to their past experiences mentioned above.
+  IMPORTANT: Personalize the reply using specifics from the observations when they are actually relevant to the latest user message. Prefer local (this-session) observations for continuity with the work in progress; pull from global (cross-session) observations only when the user's request connects to that prior context. Do not force references to global observations into an unrelated reply.
 
   KNOWLEDGE UPDATES: When asked about current state (e.g., "where do I currently...", "what is my current..."), always prefer the MOST RECENT information. Observations include dates - if you see conflicting information, the newer observation supersedes the older one. Look for phrases like "will start", "is switching", "changed to", "moved to" as indicators that previous information has been updated.
 
@@ -76,6 +85,7 @@ const OBSERVER_EXTRACTION_INSTRUCTIONS = dedent`
   - Do NOT transcribe tool arguments, raw tool output, file listings, command output, or JSON payloads verbatim.
   - Tool results that just restate ground truth (file contents, directory listings, grep output, package metadata) are NOT memory by themselves — the agent can re-read them next time. Record an observation only when the exchange produced something the agent could not trivially re-discover: a decision, a non-trivial hypothesis acted on, a blocker, a completion, or a user preference revealed during the work. Otherwise prefer hasMemory=false.
   - Tool calls do not by themselves justify ✅. Apply the ✅ rules below: a read-only tool call (read_file, grep, ls, status check) is still routine work and stays 🟡, even when the tool succeeded.
+  - An "inspection request → agent summary" exchange is the canonical NOT-memory pattern. If the user asked the agent to read/show/inspect/explain a file, directory, or command output, and the agent's reply is an English restatement of what the tool returned, that exchange is hasMemory=false. This holds even when the user softens the request with phrases like "just for context", "for my understanding", or "can you explain". An English paraphrase of re-readable ground truth is still re-readable ground truth.
   - One observation should usually summarize an entire tool exchange, not enumerate every call. Use sub-bullets only when distinct results carry independent signal.
   - If a tool result is truncated, do not invent the missing content. Note "(partial)" if the truncation matters.
 
@@ -122,8 +132,8 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
 
   return dedent`
     Use priority levels:
-    - 🔴 High: durable user-identity facts (job, environment, relationships, identifiers), explicit user preferences, and unresolved critical decisions or blockers the user cares about across sessions. Do NOT use 🔴 for ordinary task requests.
-    - 🟡 Medium: in-session work that carries durable signal — decisions reached, hypotheses the agent committed to, blockers/errors that still gate progress, and ordinary task requests being performed. Do NOT use 🟡 just to record what the agent read; if the only content is "agent looked at X and X says Y", prefer hasMemory=false.
+    - 🔴 High: durable user-identity facts (job, environment, relationships, identifiers), explicit user preferences, and unresolved critical decisions or blockers the user cares about across sessions. Do NOT use 🔴 for ordinary task requests. Do NOT use 🔴 for an in-session refactor plan, agreed approach, or "yes, let's do that" confirmation — those are 🟡 even when the user agrees enthusiastically. Escalation to 🔴 requires a durable cross-session signal (a preference, identity fact, or lasting goal), not the strength of in-session agreement.
+    - 🟡 Medium: in-session work that carries durable signal — decisions reached, hypotheses the agent committed to, blockers/errors that still gate progress, and ordinary task requests being performed. This is the default home for agreed in-session plans and refactor decisions, including ones the user explicitly confirmed ("yes, do that", "go ahead"). Do NOT use 🟡 just to record what the agent read; if the only content is "agent looked at X and X says Y", prefer hasMemory=false.
     - 🟢 Low: tentative, speculative, or uncertain observations ("maybe", "might be", unmeasured guesses), explicit deferrals or "no data yet" states, and incidental details whose future relevance is unclear. Use 🟢 freely and do not promote tentative or unresolved content to 🟡 to look helpful.
     - ✅ Completed: a state-changing artifact was produced — code shipped, file edited, command run that mutated state, or a verified bug fix. Do NOT use ✅ for read-only lookups, file inspections, or simple Q&A. Do NOT use ✅ when the user defers, postpones, or changes their mind.
 

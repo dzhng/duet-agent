@@ -11,7 +11,6 @@ export * from "./types/config.js";
 export * from "./types/agent.js";
 export * from "./types/state-machine.js";
 export * from "./types/protocol.js";
-export * from "./core/structured-output.js";
 
 export * from "./turn-runner/turn-runner.js";
 export * from "./session/session.js";

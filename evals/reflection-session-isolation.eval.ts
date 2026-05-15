@@ -48,10 +48,12 @@ describe("reflection session isolation", () => {
         // Backdate session A's lastUsedAt so we can detect any
         // unintended write activity on those rows.
         const aSeedTime = Date.now() - 24 * 60 * 60 * 1000;
-        await fixture.db.query(
-          "UPDATE observations SET created_at = $1, last_used_at = $1 WHERE id = ANY($2::text[])",
-          [aSeedTime, [aDeploy.id, aPet.id]],
-        );
+        await fixture.session.withDb(async (db) => {
+          await db.query(
+            "UPDATE observations SET created_at = $1, last_used_at = $1 WHERE id = ANY($2::text[])",
+            [aSeedTime, [aDeploy.id, aPet.id]],
+          );
+        });
 
         // Seed session B with enough observation content to trip the
         // reflection threshold on the next update pass. The threshold
@@ -78,7 +80,7 @@ describe("reflection session isolation", () => {
         // seeded session B content estimates to ~900 tokens, comfortably
         // clearing the trigger so reflection actually fires.
         const result = await updateObservationalMemory({
-          db: fixture.db,
+          session: fixture.session,
           memory: fixture.cache,
           sessionId: "session_b",
           effectiveContext: 2_000,
@@ -93,36 +95,40 @@ describe("reflection session isolation", () => {
 
         // Session A rows survived: same ids, same content, same
         // last_used_at (no spurious bump).
-        const aRows = await fixture.db.query<{
-          id: string;
-          content: string;
-          last_used_at: number;
-          session_id: string | null;
-        }>(
-          "SELECT id, content, last_used_at, session_id FROM observations WHERE session_id = $1 ORDER BY created_at ASC",
-          ["session_a"],
+        const aRows = await fixture.session.withDb(async (db) =>
+          db.query<{
+            id: string;
+            content: string;
+            last_used_at: number;
+            session_id: string | null;
+          }>(
+            "SELECT id, content, last_used_at, session_id FROM observations WHERE session_id = $1 ORDER BY created_at ASC",
+            ["session_a"],
+          ),
         );
-        expect(aRows.rows.map((row) => row.id)).toEqual([aDeploy.id, aPet.id]);
-        expect(aRows.rows[0]?.content).toBe(aDeploy.content);
-        expect(aRows.rows[1]?.content).toBe(aPet.content);
-        expect(aRows.rows[0]?.last_used_at).toBe(aSeedTime);
-        expect(aRows.rows[1]?.last_used_at).toBe(aSeedTime);
+        expect(aRows?.rows.map((row) => row.id)).toEqual([aDeploy.id, aPet.id]);
+        expect(aRows?.rows[0]?.content).toBe(aDeploy.content);
+        expect(aRows?.rows[1]?.content).toBe(aPet.content);
+        expect(aRows?.rows[0]?.last_used_at).toBe(aSeedTime);
+        expect(aRows?.rows[1]?.last_used_at).toBe(aSeedTime);
 
         // Session B rows: the four seeded observations were replaced
         // by exactly one reflection row.
-        const bRows = await fixture.db.query<{ id: string; kind: string }>(
-          "SELECT id, kind FROM observations WHERE session_id = $1",
-          ["session_b"],
+        const bRows = await fixture.session.withDb(async (db) =>
+          db.query<{ id: string; kind: string }>(
+            "SELECT id, kind FROM observations WHERE session_id = $1",
+            ["session_b"],
+          ),
         );
-        expect(bRows.rows.length).toBe(1);
-        expect(bRows.rows[0]?.kind).toBe("reflection");
-        expect(bRows.rows[0]?.id).toBe(result.reflections[0]?.id);
+        expect(bRows?.rows.length).toBe(1);
+        expect(bRows?.rows[0]?.kind).toBe("reflection");
+        expect(bRows?.rows[0]?.id).toBe(result.reflections[0]?.id);
 
         // Total: 2 surviving session A rows + 1 session B reflection.
-        const total = await fixture.db.query<{ count: string }>(
-          "SELECT COUNT(*)::text AS count FROM observations",
+        const total = await fixture.session.withDb(async (db) =>
+          db.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM observations"),
         );
-        expect(Number(total.rows[0]?.count)).toBe(3);
+        expect(Number(total?.rows[0]?.count)).toBe(3);
       } finally {
         await fixture.dispose();
       }
