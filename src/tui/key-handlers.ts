@@ -5,7 +5,6 @@ import type { DinoPanel } from "./dino/index.js";
 import type { PasteController } from "./paste-controller.js";
 import type { QuestionPicker } from "./question-picker.js";
 import type { StarterSection } from "./starter-section.js";
-import type { StatusController } from "./status-controller.js";
 import type { TranscriptWriter } from "./transcript-writer.js";
 
 /**
@@ -39,13 +38,11 @@ export interface KeyHandlerDeps {
   onEscape(): void;
   /** Dispatch the composer text with behavior:"steer" (Ctrl+Enter). */
   onSteer(): void;
-  /** Dino "while-you-wait" panel. The panel always owns Ctrl-G (toggle)
-   *  and additionally receives game keystrokes (space, ArrowUp) while it
-   *  is expanded and the agent is busy. */
+  /** Dino "while-you-wait" panel. The panel always owns Ctrl-G (toggle).
+   *  Game keystrokes (space, ArrowUp) are forwarded while the panel is
+   *  expanded AND the composer is empty, so an empty prompt at rest is
+   *  fully playable but a half-typed follow-up keeps its spacebar. */
   dinoPanel: DinoPanel;
-  /** Used to gate dino keystroke routing on `running === true` so the
-   *  composer keeps its keys back the moment the agent needs the user. */
-  statusController: StatusController;
 }
 
 /**
@@ -77,7 +74,6 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
     onEscape,
     onSteer,
     dinoPanel,
-    statusController,
   } = deps;
 
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
@@ -139,11 +135,14 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
       return;
     }
 
-    // Forward game keys (space, ArrowUp) to the dino panel only while
-    // the panel is expanded AND the agent is busy. The composer keeps
-    // its keys back during idle so the user can type a follow-up
-    // without their spacebar being eaten by the game.
-    if (dinoPanel.isExpanded() && statusController.isRunning()) {
+    // Forward game keys (space, ArrowUp) to the dino panel whenever the
+    // panel is expanded AND the composer is empty. The empty-composer
+    // gate is what makes idle dogfooding work: with no typed text the
+    // spacebar belongs to the game, but the moment the user starts
+    // composing a follow-up their spaces go back into the textarea.
+    // We deliberately do not gate on `statusController.isRunning()` so
+    // the game is fully testable at rest.
+    if (dinoPanel.isExpanded() && inputField.plainText.length === 0) {
       if ((key.name === "space" || key.name === "up") && !key.ctrl && !key.meta && !key.super) {
         if (dinoPanel.handleKey(key.name)) {
           key.preventDefault();

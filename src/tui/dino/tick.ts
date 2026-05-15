@@ -78,12 +78,16 @@ export function tick(state: GameState, deps: TickDeps): GameState {
   }
 
   // Collision: only during `running`. The grace phase explicitly ignores
-  // collisions for `graceCellsLeft` cells so the resume is fair.
+  // collisions for `graceCellsLeft` cells so the resume is fair. The
+  // hitbox is narrower than the rendered sprite (which is 4 cells wide
+  // with a blank leading column) so collisions feel like Chrome's dino:
+  // forgiving on the edges, honest in the middle. dx covers the body
+  // columns DINO_X+1..DINO_X+2 where the actual ink lives.
   const collided =
     state.phase.kind === "running" &&
     nextObstacles.some((o) => {
       const dx = o.x - DINO_X;
-      return dx > -1 && dx < 1 && nextDinoY < o.height;
+      return dx > 0 && dx < 3 && nextDinoY < o.height;
     });
 
   if (collided) {

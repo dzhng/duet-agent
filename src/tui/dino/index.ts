@@ -50,6 +50,10 @@ export interface DinoPanel {
   resume(): void;
   /** Agent flipped to needs-user → freeze the world. */
   freeze(): void;
+  /** Track the agent's busy/idle signal so the collapsed hint row only
+   *  surfaces while the agent is working — at rest the panel takes no
+   *  vertical space and stays out of the way. */
+  setAgentBusy(busy: boolean): void;
   /** Route a keystroke to the game. Returns true when consumed. */
   handleKey(keyName: string | undefined): boolean;
   /** Persist high score and stop timers. */
@@ -65,6 +69,10 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   // input (so resume runs the 3-2-1 + grace gap) vs. a manual collapse
   // (so re-expand resumes instantly per the spec).
   let frozenByAgent = false;
+  // Mirrors the StatusController running signal. The collapsed hint row
+  // ("▶ Ctrl-G to play") only renders while this is true; at idle the
+  // panel is invisible and reserves no rows.
+  let agentBusy = false;
   let ticker: ReturnType<typeof setInterval> | undefined;
   // Last persisted high score, so we only write on improvement. Hydrated
   // from disk at construction time.
@@ -143,6 +151,13 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
     paint();
   }
 
+  function setAgentBusy(busy: boolean): void {
+    if (agentBusy === busy) return;
+    agentBusy = busy;
+    syncVisibility();
+    paint();
+  }
+
   function handleKey(keyName: string | undefined): boolean {
     if (!expanded) return false;
     const action = actionForKey(state, keyName);
@@ -196,10 +211,14 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   }
 
   function syncVisibility(): void {
-    // Visible row count: expanded shows all EXPANDED_ROWS; collapsed
-    // shows only the first row with the "press Ctrl-G  HI 0142" hint.
+    // Visible row count:
+    //   - expanded                → all EXPANDED_ROWS rows.
+    //   - collapsed + agent busy  → just the first row (the hint).
+    //   - collapsed + agent idle  → no rows at all; the panel disappears
+    //                               so the input area sits flush.
+    const showCollapsedHint = !expanded && agentBusy;
     for (let i = 0; i < rows.length; i++) {
-      rows[i].visible = expanded || i < COLLAPSED_ROWS;
+      rows[i].visible = expanded || (showCollapsedHint && i < COLLAPSED_ROWS);
     }
   }
 
@@ -210,7 +229,9 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
         rows[i].content = frame[i] ?? "";
       }
     } else {
-      rows[0].content = renderCollapsedRow(state.highScore);
+      // Only paint the hint while the agent is busy; otherwise the row
+      // is hidden and its content does not matter.
+      rows[0].content = agentBusy ? renderCollapsedRow(state.highScore) : "";
       for (let i = 1; i < rows.length; i++) rows[i].content = "";
     }
   }
@@ -221,6 +242,7 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
     toggle,
     resume,
     freeze,
+    setAgentBusy,
     handleKey,
     destroy,
   };

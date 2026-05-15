@@ -136,9 +136,12 @@ describe("dino render", () => {
     expect(frame.length).toBe(EXPANDED_ROWS);
     // Ground line is present and made of `_`.
     expect(frame.some((row) => row.includes("__________"))).toBe(true);
-    // Dino glyph sits at DINO_X on the ground row.
-    const groundRow = frame.find((row) => row[DINO_X] === "D");
-    expect(groundRow).toBeDefined();
+    // Dino sprite is anchored at DINO_X. The middle row of the sprite
+    // carries the unmistakable head shape ("/_)") which lets us verify
+    // the dino landed on the playfield without locking the assertion to
+    // any single character.
+    const middleSprite = frame.find((row) => row.slice(DINO_X, DINO_X + 4) === " /_)");
+    expect(middleSprite).toBeDefined();
   });
 
   test("frozen overlay tells the user the agent needs them", () => {

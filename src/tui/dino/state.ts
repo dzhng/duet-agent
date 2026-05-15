@@ -13,12 +13,16 @@ export const GROUND_ROW = 8;
 /** Horizontal cell the dino occupies; obstacles scroll past this column. */
 export const DINO_X = 6;
 
-/** Gravity applied per tick to `dinoVy`, in cells/tick². Tuned so a jump
- *  from `JUMP_VELOCITY` clears one cactus comfortably at base speed. */
-export const GRAVITY = 0.6;
+/** Gravity applied per tick to `dinoVy`, in cells/tick². Tuned with
+ *  `JUMP_VELOCITY` so a single press clears a small cactus and the dino
+ *  lands in ~0.45s — matching the snappy feel of Chrome's offline dino
+ *  rather than a floaty Mario jump. Peak height ≈ v²/(2g) ≈ 4.9 cells. */
+export const GRAVITY = 0.75;
 
-/** Upward velocity applied on a jump press while grounded, in cells/tick. */
-export const JUMP_VELOCITY = 3.2;
+/** Upward velocity applied on a jump press while grounded, in cells/tick.
+ *  Combined with `GRAVITY` this gives a tight ~7.2-tick airtime so the
+ *  rhythm matches Chrome's game. */
+export const JUMP_VELOCITY = 2.7;
 
 /** Base horizontal scroll speed in cells/tick. */
 export const BASE_SPEED = 0.6;

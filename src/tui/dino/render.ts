@@ -9,6 +9,24 @@ export const EXPANDED_ROWS = 12;
 export const COLLAPSED_ROWS = 1;
 export const PLAYFIELD_ROWS = 10;
 
+/** Width of the dino sprite in cells. Anchored at `DINO_X` (left edge). */
+export const DINO_WIDTH = 4;
+/** Height of the dino sprite in rows; feet sit on the ground row, so the
+ *  body extends up `DINO_HEIGHT - 1` rows above ground when grounded. */
+export const DINO_HEIGHT = 3;
+
+// Tiny T-rex sprites in pure ASCII so they line up cleanly in any
+// terminal. The right edge points in the direction of travel: head and
+// snout to the right, tail to the left. Two run poses alternate while
+// grounded so the legs visibly cycle; a third pose is used mid-air.
+//
+// Each sprite is exactly DINO_HEIGHT rows by DINO_WIDTH cols. Empty
+// cells use a literal space so the sprite never accidentally erases
+// neighboring playfield characters.
+const DINO_RUN_A: readonly string[] = ["  __", " /_)", " /\\ "];
+const DINO_RUN_B: readonly string[] = ["  __", " /_)", " \\/ "];
+const DINO_JUMP: readonly string[] = ["  __", " /_)", " || "];
+
 /** Single-row "press Ctrl-G  HI 0142" hint shown when the panel is
  *  collapsed but the user has opened it at least once this session. */
 export function renderCollapsedRow(highScore: number): string {
@@ -75,14 +93,31 @@ function buildPlayfield(state: GameState): string[] {
     }
   }
 
-  // Dino. Floor-rounded `y` so a sub-cell hop still visibly lifts off; the
-  // sprite is one cell, matching the obstacle column width so collision
-  // logic is honest. The character changes when airborne so the user can
-  // confirm a jump landed.
-  const dinoRow = groundIndex - Math.max(0, Math.floor(state.dinoY));
-  if (dinoRow >= 0 && dinoRow < PLAYFIELD_ROWS) {
-    const grounded = state.dinoY === 0;
-    rows[dinoRow][DINO_X] = grounded ? "D" : "d";
+  // Dino. Multi-row T-rex sprite anchored at `DINO_X`, with feet on the
+  // ground row when grounded. Floor-rounded `y` so a sub-cell hop still
+  // visibly lifts off. The grounded pose alternates between two leg
+  // positions so the dino looks like it's running; airborne uses the
+  // tucked-legs jump sprite so the user can confirm a jump landed.
+  const grounded = state.dinoY === 0;
+  const sprite = grounded
+    ? // Alternate legs every ~2 score units so the cadence reads as
+      // running rather than flickering at every frame.
+      Math.floor(state.score * 2) % 2 === 0
+      ? DINO_RUN_A
+      : DINO_RUN_B
+    : DINO_JUMP;
+  const feetRow = groundIndex - Math.max(0, Math.floor(state.dinoY));
+  for (let dy = 0; dy < sprite.length; dy++) {
+    const targetRow = feetRow - (sprite.length - 1 - dy);
+    if (targetRow < 0 || targetRow >= PLAYFIELD_ROWS) continue;
+    const line = sprite[dy];
+    for (let dx = 0; dx < line.length; dx++) {
+      const ch = line[dx];
+      if (ch === " ") continue; // sprite holes leave the playfield intact
+      const col = DINO_X + dx;
+      if (col < 0 || col >= FIELD_WIDTH) continue;
+      rows[targetRow][col] = ch;
+    }
   }
 
   return rows.map((r) => r.join(""));

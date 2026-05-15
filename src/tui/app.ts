@@ -219,6 +219,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   const dinoPanel = createDinoPanel({ renderer });
   ui.dinoPanel.add(dinoPanel.view);
   const unsubscribeDino = statusController.onRunningChange((running) => {
+    // Surface the collapsed hint row only while the agent is working, and
+    // drive the freeze/resume lifecycle off the same signal.
+    dinoPanel.setAgentBusy(running);
     if (running) dinoPanel.resume();
     else dinoPanel.freeze();
   });
@@ -390,7 +393,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     onEscape: handleEscape,
     onSteer: handleSteer,
     dinoPanel,
-    statusController,
   });
 
   // Typing hides starter chrome; backspacing empty brings it back until
