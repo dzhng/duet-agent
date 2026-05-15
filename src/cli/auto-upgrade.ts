@@ -6,7 +6,9 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
@@ -401,51 +403,120 @@ function describeError(error: unknown): string {
 }
 
 /**
- * Spawn options chosen so the install survives the parent CLI exiting:
- *   - `detached: true` puts npm in its own process group so a terminal
- *     Ctrl+C on the parent does not propagate and abort the install
- *     mid-write (which would leave the global node_modules tree corrupt).
- *   - The returned child is also `unref()`d (and so is its stderr pipe)
- *     so a clean `/exit` returns the shell immediately and the install
- *     continues independently. The parent still observes the child's exit
- *     event for as long as it is alive, so the TUI can render the
- *     "Updated… restart duet" line when the user stays.
+ * Base spawn options for the package manager upgrade. `detached: true` puts
+ * npm in its own process group so a terminal Ctrl+C on the parent does not
+ * propagate to the install. The full `stdio` array is composed at spawn
+ * time because the stderr slot is a per-invocation file descriptor — see
+ * `defaultRunUpgrade` for why a pipe would not be safe here.
  */
-export const PACKAGE_MANAGER_SPAWN_OPTIONS: SpawnOptions = {
-  stdio: ["ignore", "ignore", "pipe"],
+export const PACKAGE_MANAGER_SPAWN_OPTIONS: Pick<SpawnOptions, "detached"> = {
   detached: true,
 };
 
 export type SpawnFn = (command: string, args: string[], options: SpawnOptions) => ChildProcess;
 
 /**
+ * Path to the file we redirect the package manager's stderr into. The path
+ * is stable so the next `duet` launch can surface a previous install
+ * failure even though the writer was the prior process's detached child.
+ */
+function upgradeStderrPath(): string {
+  return join(upgradePaths().duetDir, "logs", "upgrade-stderr.log");
+}
+
+/**
  * Default in-process runner for the package manager upgrade command.
- * Exported so tests can verify the spawn contract (detached, unref'd) by
- * injecting a fake spawn.
+ *
+ * Survival contract (why this is not a `"pipe"`):
+ *   The parent CLI is interactive and exits on Ctrl+C or `/exit`. If the
+ *   child's stderr were a pipe owned by the parent, exiting closes the
+ *   read end and npm's next stderr write trips SIGPIPE — killing the
+ *   install mid-rename and leaving the global `@duetso` scope with a
+ *   `.agent-<rand>` staging dir but no `agent` (so `duet` disappears from
+ *   $PATH until the user reinstalls). Redirecting stderr to an inherited
+ *   file fd has no reader to disconnect, so the install keeps writing
+ *   after the parent is gone.
+ *
+ * We still want to report install errors in the `failed` status, so we
+ * record the file's size before spawning and, on a non-zero exit, read the
+ * tail written by this run.
  */
 export function defaultRunUpgrade(
   command: string[],
   spawn: SpawnFn = nodeSpawn,
 ): Promise<{ ok: boolean; stderr?: string }> {
   return new Promise((resolve) => {
-    const child = spawn(command[0]!, command.slice(1), PACKAGE_MANAGER_SPAWN_OPTIONS);
-    child.unref();
-    // The stderr pipe is a separate libuv handle that also pins the event
-    // loop alive; unref it so /exit returns even while the install is still
-    // streaming output. Node exposes `unref` on the underlying socket; cast
-    // because @types/node does not surface it on the Readable interface.
-    (child.stderr as unknown as { unref?: () => void } | null)?.unref?.();
-    let stderr = "";
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+    const stderrPath = upgradeStderrPath();
+    ensureDir(join(stderrPath, ".."));
+    let stderrFd: number | undefined;
+    let stderrStartByte = 0;
+    try {
+      stderrStartByte = statSync(stderrPath).size;
+    } catch {
+      // File does not exist yet; offset stays 0.
+    }
+    try {
+      stderrFd = openSync(stderrPath, "a");
+    } catch (error) {
+      // If we cannot open the log file, fall back to discarding stderr so
+      // the install still survives the parent exit. The failure message
+      // will be generic but the upgrade itself completes.
+      appendLog(`stderr-open-error path=${stderrPath} error=${describeError(error)}`);
+    }
+    const child = spawn(command[0]!, command.slice(1), {
+      ...PACKAGE_MANAGER_SPAWN_OPTIONS,
+      stdio: ["ignore", "ignore", stderrFd ?? "ignore"],
     });
+    // We passed our fd to the child; close the parent's copy so it does not
+    // pin the file open for the lifetime of this process.
+    if (stderrFd !== undefined) {
+      try {
+        closeSync(stderrFd);
+      } catch {
+        // ignore
+      }
+    }
+    child.unref();
     child.once("error", (error) => {
       resolve({ ok: false, stderr: describeError(error) });
     });
     child.once("exit", (code) => {
-      resolve({ ok: code === 0, stderr: stderr.trim() || undefined });
+      if (code === 0) {
+        resolve({ ok: true });
+        return;
+      }
+      resolve({ ok: false, stderr: readStderrTail(stderrPath, stderrStartByte) });
     });
   });
+}
+
+/**
+ * Read what this run appended to the shared stderr log. Capped so a long
+ * npm trace does not bloat the failed-status line.
+ */
+function readStderrTail(path: string, startByte: number): string | undefined {
+  const MAX_BYTES = 4096;
+  try {
+    const fd = openSync(path, "r");
+    try {
+      const size = statSync(path).size;
+      const from = Math.max(startByte, size - MAX_BYTES);
+      const length = Math.max(0, size - from);
+      if (length === 0) return undefined;
+      const buf = Buffer.alloc(length);
+      readSync(fd, buf, 0, length, from);
+      const trimmed = buf.toString("utf8").trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    return undefined;
+  }
 }
 
 // Test-only access to internal paths and constants.
