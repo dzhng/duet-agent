@@ -237,6 +237,13 @@ export interface StateMachineStateProgress {
   sleeps: number;
   /** Scheduled wake time from the latest sleep, cleared when the state runs again. */
   nextWakeAt?: number;
+  /**
+   * Timestamp of the latest `state_started` for this state. Mirrors what
+   * `history` records so elapsed-time checks (e.g. poll `timeoutMs`)
+   * keep working even after old `state_started` entries fall off the
+   * capped history.
+   */
+  startedAt?: number;
 }
 
 export interface StateMachineBaseState {

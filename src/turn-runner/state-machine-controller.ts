@@ -86,6 +86,14 @@ export interface StateMachineControllerConfig {
   cwd: string;
   /** Builds a fresh transient state-agent handle for one agent state execution. */
   createStateAgent(input: { state: StateMachineAgentState; prompt: string }): StateAgentHandle;
+  /**
+   * Notified whenever the controller has updated `session` and the new
+   * snapshot is worth broadcasting (state started, terminal reached).
+   * The turn runner uses this to emit `state_machine` protocol events
+   * carrying the full session, so UIs see fresh progress and current
+   * state before the new state begins executing.
+   */
+  onSessionChanged?(session: StateMachineSession): void;
 }
 
 export class StateMachineController {
@@ -216,6 +224,7 @@ export class StateMachineController {
       effectiveState,
       decision.kind === "run_state" ? decision.input : undefined,
     );
+    this.config.onSessionChanged?.(this.session);
     switch (effectiveState.kind) {
       case "agent":
         return this.runAgentState(effectiveState);

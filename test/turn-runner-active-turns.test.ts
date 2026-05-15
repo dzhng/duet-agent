@@ -450,7 +450,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "script_step",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "script_step",
       ),
     );
 
@@ -491,7 +492,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "script_step",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "script_step",
       ),
     );
 
@@ -532,7 +534,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "script_step",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "script_step",
       ),
     );
 
@@ -572,7 +575,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "script_step",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "script_step",
       ),
     );
 
@@ -620,7 +624,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "script_step",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "script_step",
       ),
     );
 
@@ -678,7 +683,10 @@ describe("TurnRunner active turns", () => {
       decision: { kind: "run_state", state: "poll_reply" },
     });
     await waitFor(() =>
-      events.some((event) => event.type === "state_machine" && event.currentState === "poll_reply"),
+      events.some(
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "poll_reply",
+      ),
     );
 
     const prompt = runner.turn({
@@ -707,7 +715,10 @@ describe("TurnRunner active turns", () => {
       decision: { kind: "run_state", state: "poll_reply" },
     });
     await waitFor(() =>
-      events.some((event) => event.type === "state_machine" && event.currentState === "poll_reply"),
+      events.some(
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "poll_reply",
+      ),
     );
 
     const steer = runner.turn({
@@ -761,7 +772,10 @@ describe("TurnRunner active turns", () => {
       decision: { kind: "run_state", state: "poll_reply" },
     });
     await waitFor(() =>
-      events.some((event) => event.type === "state_machine" && event.currentState === "poll_reply"),
+      events.some(
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "poll_reply",
+      ),
     );
 
     const firstPrompt = runner.turn({
@@ -807,7 +821,10 @@ describe("TurnRunner active turns", () => {
       decision: { kind: "run_state", state: "poll_reply" },
     });
     await waitFor(() =>
-      events.some((event) => event.type === "state_machine" && event.currentState === "poll_reply"),
+      events.some(
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "poll_reply",
+      ),
     );
 
     const prompt = runner.turn({
@@ -952,7 +969,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "state_agent",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "state_agent",
       ),
     );
     await waitFor(() => runner.pendingStreams.length === 1);
@@ -992,7 +1010,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "state_agent",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "state_agent",
       ),
     );
     await waitFor(() => runner.getState()?.stateMachine?.currentState === "state_agent");
@@ -1067,7 +1086,8 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() =>
       events.some(
-        (event) => event.type === "state_machine" && event.currentState === "state_agent",
+        (event) =>
+          event.type === "state_machine" && event.stateMachine.currentState === "state_agent",
       ),
     );
     await waitFor(() => runner.pendingStreams.length === 1);
@@ -1120,7 +1140,7 @@ function followUpQueueEvents(events: TurnEvent[]): string[][] {
       (event): event is Extract<TurnEvent, { type: "follow_up_queue" }> =>
         event.type === "follow_up_queue",
     )
-    .map((event) => event.prompts.map((entry) => entry.message));
+    .map((event) => event.followUpQueue.map((entry) => entry.message));
 }
 
 function messageTexts(state: TurnState): string[] {

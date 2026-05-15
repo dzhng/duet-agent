@@ -103,7 +103,7 @@ class FakeTurnRunner implements SessionTurnRunner {
 
   editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void {
     this.followUpQueueEdits.push(command);
-    this.emit({ type: "follow_up_queue", prompts: command.prompts });
+    this.emit({ type: "follow_up_queue", followUpQueue: command.prompts });
   }
 
   getState(): TurnState | undefined {
@@ -244,7 +244,7 @@ describe("Session", () => {
     ]);
     expect(events).toContainEqual({
       type: "follow_up_queue",
-      prompts: [{ message: "after this" }],
+      followUpQueue: [{ message: "after this" }],
     });
   });
 

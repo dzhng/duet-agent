@@ -39,7 +39,7 @@ async function main() {
   const runner = new TurnRunner(config);
   runner.subscribe((event) => {
     if (event.type === "state_machine") {
-      console.log(`State: ${event.currentState}`);
+      console.log(`State: ${event.stateMachine.currentState ?? "(none)"}`);
     }
     if (event.type === "step") {
       console.log(event.step);

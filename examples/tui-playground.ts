@@ -154,7 +154,7 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
   }
 
   editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void {
-    this.emit({ type: "follow_up_queue", prompts: command.prompts });
+    this.emit({ type: "follow_up_queue", followUpQueue: command.prompts });
   }
 
   getState(): TurnState | undefined {
@@ -280,14 +280,14 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       const secs = parseSeconds(message, 30);
       this.emit({
         type: "follow_up_queue",
-        prompts: [
+        followUpQueue: [
           { message: "draft release notes" },
           { message: "ping reviewers" },
           { message: "merge once green" },
         ],
       });
       const terminal = await this.runMemoryPhase("observation", secs);
-      this.emit({ type: "follow_up_queue", prompts: [] });
+      this.emit({ type: "follow_up_queue", followUpQueue: [] });
       return terminal;
     }
 
@@ -302,11 +302,11 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
           : ["follow-up one", "follow-up two", "follow-up three"];
       this.emit({
         type: "follow_up_queue",
-        prompts: messages.map((m) => ({ message: m })),
+        followUpQueue: messages.map((m) => ({ message: m })),
       });
       await this.sleep(2000);
       if (this.interrupted) return this.interruptedTerminal();
-      this.emit({ type: "follow_up_queue", prompts: [] });
+      this.emit({ type: "follow_up_queue", followUpQueue: [] });
       return this.complete(`Queued ${messages.length} follow-ups.`);
     }
 
@@ -792,16 +792,16 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       { message: "share a screenshot" },
       { message: "check the analytics" },
     ];
-    this.emit({ type: "follow_up_queue", prompts });
+    this.emit({ type: "follow_up_queue", followUpQueue: prompts });
     await this.sleep(1200);
     if (this.interrupted) return this.interruptedTerminal();
-    this.emit({ type: "follow_up_queue", prompts: prompts.slice(1) });
+    this.emit({ type: "follow_up_queue", followUpQueue: prompts.slice(1) });
     await this.sleep(1200);
     if (this.interrupted) return this.interruptedTerminal();
-    this.emit({ type: "follow_up_queue", prompts: prompts.slice(2) });
+    this.emit({ type: "follow_up_queue", followUpQueue: prompts.slice(2) });
     await this.sleep(1200);
     if (this.interrupted) return this.interruptedTerminal();
-    this.emit({ type: "follow_up_queue", prompts: [] });
+    this.emit({ type: "follow_up_queue", followUpQueue: [] });
     return this.complete("Follow-up queue drained.");
   }
 

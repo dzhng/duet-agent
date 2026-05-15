@@ -94,7 +94,7 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
       // line, and replay any entries the runner just delivered (entries
       // present in the prior snapshot but absent from the new one) as
       // proper `you:` transcript blocks.
-      const next = event.prompts;
+      const next = event.followUpQueue;
       for (const delivered of diffRemovedEntries(previousQueue, next)) {
         appendUserBlock(delivered.message);
         if (delivered.images?.length) {

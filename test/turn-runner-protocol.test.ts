@@ -140,7 +140,9 @@ describe("TurnRunner protocol scenarios", () => {
     const stateMachineEvent = events.find((event) => event.type === "state_machine");
     expect(stateMachineEvent).toMatchObject({ type: "state_machine" });
     expect(
-      stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
+      stateMachineEvent?.type === "state_machine"
+        ? stateMachineEvent.stateMachine.currentState
+        : "",
     ).not.toBe("");
     expect(terminal.state.stateMachine).toBeDefined();
     expect(terminal.state.mode).toBe("auto");
@@ -263,7 +265,9 @@ describe("TurnRunner protocol scenarios", () => {
     const stateMachineEvent = events.find((event) => event.type === "state_machine");
     expect(stateMachineEvent).toMatchObject({ type: "state_machine" });
     expect(
-      stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
+      stateMachineEvent?.type === "state_machine"
+        ? stateMachineEvent.stateMachine.currentState
+        : "",
     ).not.toBe("");
     expect(terminal.state.stateMachine?.history).toContainEqual(
       expect.objectContaining({ type: "state_started", state: "classify_reply" }),
@@ -475,7 +479,9 @@ describe("TurnRunner protocol scenarios", () => {
     const stateMachineEvent = events.find((event) => event.type === "state_machine");
     expect(stateMachineEvent).toMatchObject({ type: "state_machine" });
     expect(
-      stateMachineEvent?.type === "state_machine" ? stateMachineEvent.currentState : "",
+      stateMachineEvent?.type === "state_machine"
+        ? stateMachineEvent.stateMachine.currentState
+        : "",
     ).not.toBe("");
 
     expect(runner.agentConfigs[0]?.tools.map((tool) => tool.name)).not.toContain(
@@ -767,11 +773,13 @@ describe("TurnRunner protocol scenarios", () => {
       status: "sleeping" as const,
     };
     const startedAt = Date.now() - 12_000;
-    turnState.stateMachine?.history.push({
-      type: "state_started",
-      timestamp: startedAt,
-      state: "wait_before_retry",
-    });
+    if (turnState.stateMachine) {
+      turnState.stateMachine.progress = {
+        states: {
+          wait_before_retry: { kind: "timer", runs: 1, sleeps: 0, startedAt },
+        },
+      };
+    }
     runner.controlResults.push(
       {
         type: "select_state_machine_state",
@@ -898,11 +906,11 @@ describe("TurnRunner protocol scenarios", () => {
           : state,
       ),
     };
-    turnState.stateMachine.history.push({
-      type: "state_started",
-      timestamp: startedAt,
-      state: "poll_email_reply",
-    });
+    turnState.stateMachine.progress = {
+      states: {
+        poll_email_reply: { kind: "poll", runs: 1, sleeps: 0, startedAt },
+      },
+    };
     await runner.start({ type: "start", state: turnState });
 
     const terminal = await runner.turn({

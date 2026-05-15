@@ -74,7 +74,7 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  *
  * During the turn, the runner emits events that the UI can render directly:
  *
- * - `state_machine` shows the current state name
+ * - `state_machine` carries the full state-machine session snapshot
  * - `step` shows textual progress, reasoning, tool calls, or system messages
  * - `todos` shows current task progress
  * - `follow_up_queue` shows prompts waiting for the current turn chain to finish
@@ -499,13 +499,17 @@ export interface TurnTodosEvent {
 export interface TurnFollowUpQueueEvent {
   type: "follow_up_queue";
   /** Prompts currently waiting to run as follow-ups after active work settles. */
-  prompts: TurnFollowUpQueueEntry[];
+  followUpQueue: TurnFollowUpQueueEntry[];
 }
 
 export interface TurnStateMachineEvent {
   type: "state_machine";
-  /** Display name of the current state. */
-  currentState: string;
+  /**
+   * Full session snapshot so one event has everything a UI needs to
+   * render the relay. `stateMachine.progress.states[name].runs > 0`
+   * is the "already ran" signal.
+   */
+  stateMachine: StateMachineSession;
 }
 
 export interface TurnMemoryEvent extends ObservationalMemoryActivityEvent {

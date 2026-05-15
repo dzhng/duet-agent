@@ -120,10 +120,10 @@ describe("TUI submit + esc dispatch", () => {
       // what the subscription uses to decide what to replay.
       harness.runner.emitEvent({
         type: "follow_up_queue",
-        prompts: [{ message: distinctive }],
+        followUpQueue: [{ message: distinctive }],
       });
       await harness.flush();
-      harness.runner.emitEvent({ type: "follow_up_queue", prompts: [] });
+      harness.runner.emitEvent({ type: "follow_up_queue", followUpQueue: [] });
       await harness.flush();
 
       frame = await harness.captureCharFrame();

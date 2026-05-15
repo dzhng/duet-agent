@@ -272,6 +272,7 @@ export class TurnRunner {
     this.stateMachineController = new StateMachineController({
       cwd: config.cwd ?? process.cwd(),
       createStateAgent: (input) => this.createStateAgentHandle(input),
+      onSessionChanged: (session) => this.emit({ type: "state_machine", stateMachine: session }),
     });
   }
 
@@ -590,7 +591,7 @@ export class TurnRunner {
   }
 
   private emitFollowUpQueue(): void {
-    this.emit({ type: "follow_up_queue", prompts: this.getFollowUpQueue() });
+    this.emit({ type: "follow_up_queue", followUpQueue: this.getFollowUpQueue() });
   }
 
   interrupt(_command: TurnInterruptCommand): void {
@@ -1130,8 +1131,10 @@ export class TurnRunner {
         definition: workerResult.control.definition,
         currentState: firstState,
       });
-      this.emit({ type: "state_machine", currentState: firstState });
-      return this.stateMachineController.runDecision({ kind: "run_state", state: firstState });
+      return this.stateMachineController.runDecision({
+        kind: "run_state",
+        state: firstState,
+      });
     }
 
     if (workerResult.control.type !== "select_state_machine_state") {
@@ -1152,9 +1155,6 @@ export class TurnRunner {
         definition: state.mode as Exclude<TurnMode, "agent" | "auto">,
         currentState: workerResult.control.decision.state,
       });
-    }
-    if (workerResult.control.decision.kind !== "fail") {
-      this.emit({ type: "state_machine", currentState: workerResult.control.decision.state });
     }
     return this.stateMachineController.runDecision(workerResult.control.decision);
   }
