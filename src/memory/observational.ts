@@ -650,9 +650,7 @@ function buildObservationCompletedMessage(
   const base = observation ? "Memory observation recorded." : "Memory observation complete.";
   if (usageBumpedCount <= 0) return base;
   const noun = usageBumpedCount === 1 ? "memory" : "memories";
-  // Surface the count for now; consumers can later render the full
-  // observation contents from `usageBumpedObservations` on the event.
-  return `${base} Bumped last-use on ${usageBumpedCount} prior ${noun}.`;
+  return `Reinforced ${usageBumpedCount} prior ${noun}.`;
 }
 
 function emitMemoryActivity(

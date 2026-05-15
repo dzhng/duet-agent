@@ -319,7 +319,7 @@ function updateStreamingBlock(block: StreamingBlock): void {
  * string when there are no observations or usage bumps to show, so the
  * caller can elide the block entirely. The actual observation text is
  * intentionally omitted from the transcript — the completion `message`
- * ("Memory observation recorded. Bumped last-use on N prior memories.")
+ * ("Memory observation recorded." or "Reinforced N prior memories.")
  * is the only line shown under the `[memory:<phase>]` label.
  */
 export function formatMemoryEventBody(event: Extract<TurnEvent, { type: "memory" }>): string {

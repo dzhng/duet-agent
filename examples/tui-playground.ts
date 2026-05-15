@@ -710,7 +710,7 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       type: "memory",
       phase: "observation",
       status: "completed",
-      message: "Memory observation recorded. Bumped last-use on 3 prior memories.",
+      message: "Reinforced 3 prior memories.",
       observations: [
         fakeObservation(
           "obs_demo_1",
