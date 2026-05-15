@@ -592,13 +592,19 @@ export async function updateObservationalMemory(
     if (observation) {
       result.observations.push(observation);
     }
-    emitMemoryActivity(options.onActivity, {
-      phase: "observation",
-      status: "completed",
-      message: buildObservationCompletedMessage(observation, usageBumped.length),
-      ...(observation ? { observations: [observation] } : {}),
-      ...(usageBumped.length > 0 ? { usageBumpedObservations: usageBumped } : {}),
-    });
+    // Only surface a completion event when something actually changed in
+    // memory. If activation produced no new observation and bumped no prior
+    // memories, suppress the completed event entirely so the TUI does not
+    // render an empty `[memory:observation]` section.
+    if (observation || usageBumped.length > 0) {
+      emitMemoryActivity(options.onActivity, {
+        phase: "observation",
+        status: "completed",
+        message: buildObservationCompletedMessage(observation, usageBumped.length),
+        ...(observation ? { observations: [observation] } : {}),
+        ...(usageBumped.length > 0 ? { usageBumpedObservations: usageBumped } : {}),
+      });
+    }
   }
 
   if (options.sessionId) {
@@ -650,7 +656,7 @@ function buildObservationCompletedMessage(
   const base = observation ? "Memory observation recorded." : "Memory observation complete.";
   if (usageBumpedCount <= 0) return base;
   const noun = usageBumpedCount === 1 ? "memory" : "memories";
-  return `Reinforced ${usageBumpedCount} prior ${noun}.`;
+  return `${base} Reinforced ${usageBumpedCount} prior ${noun}.`;
 }
 
 function emitMemoryActivity(
