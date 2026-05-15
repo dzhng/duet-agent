@@ -8,12 +8,17 @@ import { actionForKey, applyJump, applyStart } from "../src/tui/dino/input.js";
 import { renderCollapsedRow, renderExpanded, EXPANDED_ROWS } from "../src/tui/dino/render.js";
 import {
   BASE_SPEED,
+  DEFAULT_FIELD_WIDTH,
   DINO_X,
   GRACE_DISTANCE_CELLS,
+  MAX_FIELD_WIDTH,
+  MIN_FIELD_WIDTH,
   beginCountdown,
   beginGrace,
+  clampFieldWidth,
   freezeRun,
   initialState,
+  setFieldWidth,
   startRun,
 } from "../src/tui/dino/state.js";
 import { tick } from "../src/tui/dino/tick.js";
@@ -156,4 +161,45 @@ describe("dino render", () => {
 // on to keep the collision window honest.
 test("BASE_SPEED stays sub-cell", () => {
   expect(BASE_SPEED).toBeLessThan(1);
+});
+
+describe("dino responsive width", () => {
+  test("clampFieldWidth clamps to [MIN, MAX] and floors floats", () => {
+    expect(clampFieldWidth(10)).toBe(MIN_FIELD_WIDTH);
+    expect(clampFieldWidth(9999)).toBe(MAX_FIELD_WIDTH);
+    expect(clampFieldWidth(123.7)).toBe(123);
+    expect(clampFieldWidth(Number.NaN)).toBe(DEFAULT_FIELD_WIDTH);
+  });
+
+  test("initialState honors the supplied field width", () => {
+    expect(initialState(0, 120).fieldWidth).toBe(120);
+    expect(initialState(0).fieldWidth).toBe(DEFAULT_FIELD_WIDTH);
+  });
+
+  test("setFieldWidth drops obstacles past the new right edge", () => {
+    const running = startRun(initialState(0, 120));
+    const stocked = {
+      ...running,
+      obstacles: [
+        { x: 30, height: 1 },
+        { x: 80, height: 1 },
+        { x: 110, height: 1 },
+      ],
+    };
+    const shrunk = setFieldWidth(stocked, 60);
+    expect(shrunk.fieldWidth).toBe(60);
+    expect(shrunk.obstacles.map((o) => o.x)).toEqual([30]);
+  });
+
+  test("renderExpanded stretches the ground line to the field width", () => {
+    const frame = renderExpanded(startRun(initialState(0, 100)));
+    const groundRow = frame.find((row) => row.startsWith("_"));
+    expect(groundRow).toBeDefined();
+    expect(groundRow!.length).toBe(100);
+  });
+
+  test("startRun preserves fieldWidth across runs", () => {
+    const wide = initialState(0, 150);
+    expect(startRun(wide).fieldWidth).toBe(150);
+  });
 });

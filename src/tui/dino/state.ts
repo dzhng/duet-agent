@@ -1,9 +1,25 @@
 // Pure GameState for the dino panel. No timers, no I/O, no OpenTUI imports.
 // All transitions are reducer-style: state in, state out.
 
-/** Logical width of the playfield in character cells. The render layer
- *  centers / clips around this and may render a smaller window. */
-export const FIELD_WIDTH = 60;
+/** Default logical width of the playfield in character cells. Used as the
+ *  initial value of `GameState.fieldWidth`; the panel updates the live
+ *  field width from the renderer on construction and on every resize so
+ *  the game fills the available column. */
+export const DEFAULT_FIELD_WIDTH = 60;
+
+/** Minimum field width we will render at. Below this the playfield gets
+ *  uncomfortably tight for the dino + grace window + spawned obstacles. */
+export const MIN_FIELD_WIDTH = 40;
+
+/** Maximum field width we will render at. Above this the obstacles get so
+ *  far apart that the game stops feeling like Chrome's dino. The cap is
+ *  generous so ultra-wide terminals still look full. */
+export const MAX_FIELD_WIDTH = 240;
+
+/** @deprecated Use `state.fieldWidth`. Kept as a re-export of the default
+ *  so older call sites and tests continue to compile against a single
+ *  width number. */
+export const FIELD_WIDTH = DEFAULT_FIELD_WIDTH;
 
 /** Row index of the ground line within the rendered panel (0-indexed from
  *  the top of the 12-row panel). The dino's `y` is measured upward from
@@ -89,9 +105,17 @@ export interface GameState {
   /** Cells of horizontal distance until the spawner is allowed to emit
    *  the next obstacle. Decremented each tick the world advances. */
   cellsUntilNextSpawn: number;
+  /** Live width of the playfield in cells. The panel keeps this in sync
+   *  with the renderer's terminal width on construction and on resize so
+   *  the game stretches to fill the available column. Obstacles spawn at
+   *  the right edge of this window. */
+  fieldWidth: number;
 }
 
-export function initialState(highScore: number): GameState {
+export function initialState(
+  highScore: number,
+  fieldWidth: number = DEFAULT_FIELD_WIDTH,
+): GameState {
   return {
     phase: { kind: "idle" },
     score: 0,
@@ -102,13 +126,33 @@ export function initialState(highScore: number): GameState {
     obstacles: [],
     graceCellsLeft: 0,
     cellsUntilNextSpawn: MIN_OBSTACLE_GAP,
+    fieldWidth: clampFieldWidth(fieldWidth),
   };
 }
 
-/** Start a fresh run from `idle` or `gameover`. Preserves `highScore`. */
+/** Resize reducer. Called by the panel when the terminal resizes; clamps
+ *  to the supported range and trims any obstacles that fell off the new
+ *  right edge so a shrink doesn't leave hazards floating in space. */
+export function setFieldWidth(state: GameState, fieldWidth: number): GameState {
+  const next = clampFieldWidth(fieldWidth);
+  if (next === state.fieldWidth) return state;
+  // Drop obstacles past the new right edge; the spawner will refill from
+  // the new edge on the next tick.
+  const obstacles = state.obstacles.filter((o) => o.x < next);
+  return { ...state, fieldWidth: next, obstacles };
+}
+
+export function clampFieldWidth(width: number): number {
+  if (!Number.isFinite(width)) return DEFAULT_FIELD_WIDTH;
+  return Math.max(MIN_FIELD_WIDTH, Math.min(MAX_FIELD_WIDTH, Math.floor(width)));
+}
+
+/** Start a fresh run from `idle` or `gameover`. Preserves `highScore` and
+ *  the current `fieldWidth` so resizes during gameover persist into the
+ *  next run. */
 export function startRun(state: GameState): GameState {
   return {
-    ...initialState(state.highScore),
+    ...initialState(state.highScore, state.fieldWidth),
     phase: { kind: "running" },
   };
 }

@@ -73,7 +73,9 @@ export function tick(state: GameState, deps: TickDeps): GameState {
   // distance, then drops an obstacle at the right edge when it hits zero.
   let cellsUntilNextSpawn = state.cellsUntilNextSpawn - scroll;
   if (advancingWorld && cellsUntilNextSpawn <= 0) {
-    nextObstacles = [...nextObstacles, { x: 60, height: 1 }];
+    // Spawn at the live right edge of the playfield so obstacles enter
+    // from the visible boundary at every terminal width.
+    nextObstacles = [...nextObstacles, { x: state.fieldWidth, height: 1 }];
     cellsUntilNextSpawn = MIN_OBSTACLE_GAP + deps.random() * MAX_EXTRA_GAP;
   }
 

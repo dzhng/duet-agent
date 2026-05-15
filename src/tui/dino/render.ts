@@ -1,7 +1,7 @@
 // state → string[]. Pure ASCII; no OpenTUI imports so tests can snapshot
 // the rendered frame as plain strings.
 
-import { DINO_X, FIELD_WIDTH, GROUND_ROW, type GameState } from "./state.js";
+import { DINO_X, GROUND_ROW, type GameState } from "./state.js";
 
 /** Total rendered rows of the expanded panel: title + 10 playfield rows +
  *  status row = 12 rows when expanded. Collapsed = 1 row. */
@@ -74,19 +74,20 @@ function renderStatusRow(state: GameState): string {
 }
 
 function buildPlayfield(state: GameState): string[] {
+  const width = state.fieldWidth;
   const rows: string[][] = Array.from({ length: PLAYFIELD_ROWS }, () =>
-    Array.from({ length: FIELD_WIDTH }, () => " "),
+    Array.from({ length: width }, () => " "),
   );
   // Ground line.
   const groundIndex = Math.min(GROUND_ROW, PLAYFIELD_ROWS - 1);
-  for (let x = 0; x < FIELD_WIDTH; x++) rows[groundIndex][x] = "_";
+  for (let x = 0; x < width; x++) rows[groundIndex][x] = "_";
 
   // Obstacles. Cactus is drawn as "#" stacked vertically, anchored at the
   // ground line. A 1-cell-wide column keeps collision and rendering in
   // exact agreement.
   for (const o of state.obstacles) {
     const col = Math.round(o.x);
-    if (col < 0 || col >= FIELD_WIDTH) continue;
+    if (col < 0 || col >= width) continue;
     for (let h = 0; h < o.height; h++) {
       const row = groundIndex - 1 - h;
       if (row >= 0) rows[row][col] = "#";
@@ -115,7 +116,7 @@ function buildPlayfield(state: GameState): string[] {
       const ch = line[dx];
       if (ch === " ") continue; // sprite holes leave the playfield intact
       const col = DINO_X + dx;
-      if (col < 0 || col >= FIELD_WIDTH) continue;
+      if (col < 0 || col >= width) continue;
       rows[targetRow][col] = ch;
     }
   }
@@ -141,15 +142,16 @@ function renderOverlay(state: GameState): string[] | undefined {
 }
 
 function overlayRows(rows: string[], overlay: string[]): void {
+  const width = rows[0]?.length ?? 0;
   const startRow = Math.max(0, Math.floor((rows.length - overlay.length) / 2));
   for (let i = 0; i < overlay.length; i++) {
     const target = startRow + i;
     if (target >= rows.length) break;
     const line = overlay[i];
-    const startCol = Math.max(0, Math.floor((FIELD_WIDTH - line.length) / 2));
+    const startCol = Math.max(0, Math.floor((width - line.length) / 2));
     const before = rows[target].slice(0, startCol);
     const after = rows[target].slice(startCol + line.length);
-    rows[target] = (before + line + after).slice(0, FIELD_WIDTH);
+    rows[target] = (before + line + after).slice(0, width);
   }
 }
 

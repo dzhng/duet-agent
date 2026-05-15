@@ -15,6 +15,7 @@
 //   - destroy()       : tear down the tick timer; persist high score.
 
 import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
+import { SIDEBAR_WIDTH } from "../sidebar.js";
 import { COLORS } from "../theme.js";
 import { actionForKey, applyJump, applyStart } from "./input.js";
 import {
@@ -25,8 +26,14 @@ import {
   type PanelOpenState,
 } from "./persistence.js";
 import { COLLAPSED_ROWS, EXPANDED_ROWS, renderCollapsedRow, renderExpanded } from "./render.js";
-import { beginCountdown, freezeRun, initialState, type GameState } from "./state.js";
+import { beginCountdown, freezeRun, initialState, setFieldWidth, type GameState } from "./state.js";
 import { tick } from "./tick.js";
+
+/** Horizontal chrome around the dino panel: the panel sits inside the main
+ *  layout column, which itself sits to the left of the sidebar. We deduct
+ *  the sidebar plus a few cells of frame padding to land on a field width
+ *  that fills the available column without overflowing it. */
+const PANEL_CHROME_COLUMNS = 4;
 
 /** Cadence of the physics loop. Chosen high enough that a jump arc feels
  *  smooth in a terminal but low enough that the redraw cost is negligible
@@ -64,7 +71,7 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   const { renderer } = opts;
   const initialOpen: PanelOpenState = loadPanelState();
   let expanded = initialOpen === "open";
-  let state: GameState = initialState(loadHighScore());
+  let state: GameState = initialState(loadHighScore(), computeFieldWidth(renderer));
   // Tracks whether the most recent freeze was caused by the agent needing
   // input (so resume runs the 3-2-1 + grace gap) vs. a manual collapse
   // (so re-expand resumes instantly per the spec).
@@ -100,6 +107,18 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   });
   syncVisibility();
   paint();
+
+  // Resize handler. The renderer fires "resize" on terminal size changes;
+  // we recompute the playfield width and let the next paint stretch the
+  // ground line / obstacles to the new column. We keep a reference so the
+  // panel's `destroy()` can detach it on teardown.
+  const handleResize = (): void => {
+    const next = computeFieldWidth(renderer);
+    if (next === state.fieldWidth) return;
+    state = setFieldWidth(state, next);
+    paint();
+  };
+  renderer.on("resize", handleResize);
 
   function isExpanded(): boolean {
     return expanded;
@@ -175,6 +194,7 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
 
   function destroy(): void {
     stopTicker();
+    renderer.off("resize", handleResize);
     if (state.highScore > persistedHighScore) {
       saveHighScore(state.highScore);
       persistedHighScore = state.highScore;
@@ -246,4 +266,14 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
     handleKey,
     destroy,
   };
+}
+
+/** Compute the current playfield width from the renderer's terminal size.
+ *  The panel sits in the main layout column to the left of the sidebar, so
+ *  we deduct the sidebar plus a small chrome margin and let `setFieldWidth`
+ *  clamp into the supported [MIN_FIELD_WIDTH, MAX_FIELD_WIDTH] range. */
+function computeFieldWidth(renderer: CliRenderer): number {
+  const terminal = renderer.terminalWidth;
+  if (!Number.isFinite(terminal) || terminal <= 0) return 0; // clamped by setFieldWidth
+  return terminal - SIDEBAR_WIDTH - PANEL_CHROME_COLUMNS;
 }
