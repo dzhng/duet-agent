@@ -5,7 +5,13 @@
 
 import { describe, expect, test } from "bun:test";
 import { actionForKey, applyJump, applyStart } from "../src/tui/dino/input.js";
-import { renderCollapsedRow, renderExpanded, EXPANDED_ROWS } from "../src/tui/dino/render.js";
+import {
+  COLLAPSED_ROWS,
+  renderCollapsedRow,
+  renderExpanded,
+  EXPANDED_ROWS,
+} from "../src/tui/dino/render.js";
+import { panelVisibleRowCount } from "../src/tui/dino/visibility.js";
 import {
   BASE_SPEED,
   DEFAULT_FIELD_WIDTH,
@@ -219,6 +225,18 @@ describe("dino responsive width", () => {
     // tick.
     expect(state.obstacles[0].x).toBeLessThanOrEqual(42);
     expect(state.obstacles[0].x).toBeGreaterThan(40);
+  });
+
+  test("panel is invisible while the agent is idle regardless of expanded", () => {
+    // Idle: zero rows visible in both collapsed and expanded shapes. A
+    // fresh `duet` session reserves no vertical space and shows no hint.
+    expect(panelVisibleRowCount(false, false)).toBe(0);
+    expect(panelVisibleRowCount(true, false)).toBe(0);
+  });
+
+  test("panel surfaces the hint when busy + collapsed and full game when busy + expanded", () => {
+    expect(panelVisibleRowCount(false, true)).toBe(COLLAPSED_ROWS);
+    expect(panelVisibleRowCount(true, true)).toBe(EXPANDED_ROWS);
   });
 
   test("first obstacle on a narrow field still spawns at the right edge", () => {

@@ -18,8 +18,9 @@ import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
 import { SIDEBAR_WIDTH } from "../sidebar.js";
 import { COLORS } from "../theme.js";
 import { actionForKey, applyJump, applyStart } from "./input.js";
-import { loadHighScore, savePanelState, saveHighScore } from "./persistence.js";
-import { COLLAPSED_ROWS, EXPANDED_ROWS, renderCollapsedRow, renderExpanded } from "./render.js";
+import { loadHighScore, saveHighScore } from "./persistence.js";
+import { EXPANDED_ROWS, renderCollapsedRow, renderExpanded } from "./render.js";
+import { panelVisibleRowCount } from "./visibility.js";
 import { beginCountdown, freezeRun, initialState, setFieldWidth, type GameState } from "./state.js";
 import { tick } from "./tick.js";
 
@@ -63,10 +64,11 @@ export interface DinoPanel {
 
 export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   const { renderer } = opts;
-  // Every new TUI session starts with the panel collapsed. The hint only
-  // appears once the agent goes busy, and from there the user toggles in.
-  // We deliberately ignore the persisted "open" state at startup so a
-  // fresh `duet` invocation is always clean.
+  // The panel is collapsed by default and re-collapses every time the
+  // agent goes idle. "Hint only" is the starting point for every busy
+  // cycle; if the user wants the game they toggle it open each time.
+  // We do not persist expanded state across sessions or across busy
+  // cycles — the simpler contract is more predictable.
   let expanded = false;
   let state: GameState = initialState(loadHighScore(), computeFieldWidth(renderer));
   // Tracks whether the most recent freeze was caused by the agent needing
@@ -127,7 +129,6 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
     // toggle — Ctrl-G is a no-op so a fresh `duet` session is clean.
     if (!agentBusy) return;
     expanded = !expanded;
-    savePanelState(expanded ? "open" : "closed");
     if (expanded) {
       // Re-expanding after a manual collapse during agent-busy resumes
       // instantly — the user explicitly chose to peek away, so the
@@ -174,6 +175,11 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   function setAgentBusy(busy: boolean): void {
     if (agentBusy === busy) return;
     agentBusy = busy;
+    // When the agent goes idle, snap the panel back to its starting
+    // point (collapsed) so the next busy cycle begins at "hint only"
+    // rather than re-appearing already expanded. The user opts back in
+    // by pressing Ctrl-G again.
+    if (!busy) expanded = false;
     syncVisibility();
     paint();
   }
@@ -232,18 +238,9 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   }
 
   function syncVisibility(): void {
-    // Visible row count:
-    //   - agent idle              → no rows; panel is fully invisible and
-    //                               reserves no vertical space. A fresh
-    //                               `duet` session shows nothing here.
-    //   - busy + expanded         → all EXPANDED_ROWS rows.
-    //   - busy + collapsed        → just the first row (the Ctrl-G hint).
-    if (!agentBusy) {
-      for (const row of rows) row.visible = false;
-      return;
-    }
+    const visibleRows = panelVisibleRowCount(expanded, agentBusy);
     for (let i = 0; i < rows.length; i++) {
-      rows[i].visible = expanded || i < COLLAPSED_ROWS;
+      rows[i].visible = i < visibleRows;
     }
   }
 
