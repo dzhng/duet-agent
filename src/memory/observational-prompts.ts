@@ -177,6 +177,8 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
     usedObservationIds:
     The existing observations block above lists prior cross-session memories with explicit \`[memory id: mem_xxx]\` markers. If the assistant's response in this exchange leaned on one or more of those memories — referenced facts, preferences, prior decisions, or context drawn from them — list the matching ids here. Omit or return [] when no prior memory was actually used. Only cite ids that appear verbatim in the markers above; do not invent ids.
 
+    CRITICAL — ONE CITATION PER FACT: When several existing memories describe the SAME underlying fact, decision, preference, or piece of context, cite only the single BEST representative — never every duplicate. The "best" memory is the one that is most specific, highest priority, and most recently observed (in that order). Listing every overlapping id uniformly refreshes stale and vague duplicates and breaks the freshness-decay ranking. If two memories independently informed the response on DIFFERENT facts, cite both. If they say the same thing in different words, cite only the strongest one and let the duplicates decay.
+
     suggestedContinuation:
     Hint for the agent's immediate next message. If the assistant needs to respond to the user, say that it should pause for user reply before continuing other tasks.
     ${threadTitleSection}
