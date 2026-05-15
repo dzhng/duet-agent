@@ -18,13 +18,7 @@ import { BoxRenderable, type CliRenderer, TextRenderable } from "@opentui/core";
 import { SIDEBAR_WIDTH } from "../sidebar.js";
 import { COLORS } from "../theme.js";
 import { actionForKey, applyJump, applyStart } from "./input.js";
-import {
-  loadHighScore,
-  loadPanelState,
-  savePanelState,
-  saveHighScore,
-  type PanelOpenState,
-} from "./persistence.js";
+import { loadHighScore, savePanelState, saveHighScore } from "./persistence.js";
 import { COLLAPSED_ROWS, EXPANDED_ROWS, renderCollapsedRow, renderExpanded } from "./render.js";
 import { beginCountdown, freezeRun, initialState, setFieldWidth, type GameState } from "./state.js";
 import { tick } from "./tick.js";
@@ -69,8 +63,11 @@ export interface DinoPanel {
 
 export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   const { renderer } = opts;
-  const initialOpen: PanelOpenState = loadPanelState();
-  let expanded = initialOpen === "open";
+  // Every new TUI session starts with the panel collapsed. The hint only
+  // appears once the agent goes busy, and from there the user toggles in.
+  // We deliberately ignore the persisted "open" state at startup so a
+  // fresh `duet` invocation is always clean.
+  let expanded = false;
   let state: GameState = initialState(loadHighScore(), computeFieldWidth(renderer));
   // Tracks whether the most recent freeze was caused by the agent needing
   // input (so resume runs the 3-2-1 + grace gap) vs. a manual collapse
@@ -125,6 +122,10 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   }
 
   function toggle(): void {
+    // The dino panel is a "while-you-wait" affordance: it only exists
+    // while the agent is actually busy. At rest there is no hint and no
+    // toggle — Ctrl-G is a no-op so a fresh `duet` session is clean.
+    if (!agentBusy) return;
     expanded = !expanded;
     savePanelState(expanded ? "open" : "closed");
     if (expanded) {
@@ -232,26 +233,34 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
 
   function syncVisibility(): void {
     // Visible row count:
-    //   - expanded                → all EXPANDED_ROWS rows.
-    //   - collapsed + agent busy  → just the first row (the hint).
-    //   - collapsed + agent idle  → no rows at all; the panel disappears
-    //                               so the input area sits flush.
-    const showCollapsedHint = !expanded && agentBusy;
+    //   - agent idle              → no rows; panel is fully invisible and
+    //                               reserves no vertical space. A fresh
+    //                               `duet` session shows nothing here.
+    //   - busy + expanded         → all EXPANDED_ROWS rows.
+    //   - busy + collapsed        → just the first row (the Ctrl-G hint).
+    if (!agentBusy) {
+      for (const row of rows) row.visible = false;
+      return;
+    }
     for (let i = 0; i < rows.length; i++) {
-      rows[i].visible = expanded || (showCollapsedHint && i < COLLAPSED_ROWS);
+      rows[i].visible = expanded || i < COLLAPSED_ROWS;
     }
   }
 
   function paint(): void {
+    // At rest the panel is invisible; skip painting entirely so the row
+    // contents stay empty and no chrome leaks into the layout.
+    if (!agentBusy) {
+      for (const row of rows) row.content = "";
+      return;
+    }
     if (expanded) {
       const frame = renderExpanded(state);
       for (let i = 0; i < rows.length; i++) {
         rows[i].content = frame[i] ?? "";
       }
     } else {
-      // Only paint the hint while the agent is busy; otherwise the row
-      // is hidden and its content does not matter.
-      rows[0].content = agentBusy ? renderCollapsedRow(state.highScore) : "";
+      rows[0].content = renderCollapsedRow(state.highScore);
       for (let i = 1; i < rows.length; i++) rows[i].content = "";
     }
   }
