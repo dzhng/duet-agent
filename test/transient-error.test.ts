@@ -37,6 +37,7 @@ describe("isTransientServerError", () => {
     "Websocket closed unexpectedly",
     "other side closed connection",
     "ended without sending chunks",
+    "Anthropic stream ended before message_stop",
     "http2 request did not get a response",
     "Retry delay of 90s exceeded maxRetryDelayMs cap",
     "429 Too Many Requests",

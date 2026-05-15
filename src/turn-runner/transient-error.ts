@@ -37,6 +37,10 @@
  * - HTTP/2 and websocket churn: "websocket closed", "other side closed",
  *   "reset before headers", "http2 request did not get a response",
  *   "ended without sending chunks", "terminated".
+ * - Streaming truncation: "stream ended" (covers Anthropic's
+ *   `Anthropic stream ended before message_stop`, which pi-ai throws
+ *   when the SSE stream closes without a terminal `message_stop`
+ *   event — a transient transport failure that retries cleanly).
  * - Timeouts: "request timed out", generic "timeout", "retry delay" (the
  *   marker pi-ai emits when `maxRetryDelayMs` is exceeded so higher-level
  *   logic can take over).
@@ -55,7 +59,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
  * between the two retry sites in the pi ecosystem.
  */
 const TRANSIENT_PATTERN =
-  /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|http2 request did not get a response|timed? out|timeout|terminated|retry delay|\bECONN(?:RESET|REFUSED|ABORTED)\b|\bETIMEDOUT\b|\bEPIPE\b|\bEAI_AGAIN\b/i;
+  /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|websocket.?closed|websocket.?error|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended|http2 request did not get a response|timed? out|timeout|terminated|retry delay|\bECONN(?:RESET|REFUSED|ABORTED)\b|\bETIMEDOUT\b|\bEPIPE\b|\bEAI_AGAIN\b/i;
 
 /**
  * Patterns excluded even when `TRANSIENT_PATTERN` matches. These are
