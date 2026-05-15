@@ -35,9 +35,12 @@ async function getBundledRgDir(): Promise<string | null> {
 
 /**
  * Wrap a `BashOperations` implementation so the bundled `rg` binary is on
- * `PATH` for every command. We prepend the directory rather than append so
- * the bundled version wins over any older system install, and we only do it
- * when `rg` isn't already shadowed by an explicit `env.PATH` override.
+ * `PATH` for every command.
+ *
+ * We prepend (not append) intentionally: the bundled version is a known-good
+ * ripgrep that the agent has been tested against, so we want it to win over
+ * any older system install the user happens to have on PATH. Power users who
+ * need a different `rg` can shell out to the absolute path explicitly.
  */
 export function withBundledRipgrep(base: BashOperations): BashOperations {
   return {

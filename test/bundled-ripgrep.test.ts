@@ -55,9 +55,12 @@ describe("withBundledRipgrep", () => {
     expect(secondPath).toBe(firstPath);
   });
 
-  test("falls back to system rg when bundled binary is missing", async () => {
-    // We can't easily uninstall the optional dep mid-test, so this test asserts
-    // the wrapper at least never throws when PATH is empty.
+  test("does not throw when env has no PATH", async () => {
+    // Sanity check: with an empty env (no PATH at all), the wrapper should
+    // still forward the call without throwing. The bundled-binary-missing
+    // path is exercised by resolveBundledRgPath in bundled-ripgrep.ts — it
+    // returns null on platforms without a matching optional dep, and
+    // withBundledRipgrep falls through to the wrapped ops unchanged.
     const { ops } = captureBashOps();
     const wrapped = withBundledRipgrep(ops);
     await expect(wrapped.exec("echo ok", "/tmp", { onData: () => {}, env: {} })).resolves.toEqual({
