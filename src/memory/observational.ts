@@ -34,6 +34,10 @@ import {
   wrapInObservationGroup,
 } from "./observation-groups.js";
 import {
+  GLOBAL_OBSERVATIONS_HEADING,
+  GLOBAL_OBSERVATIONS_HINT,
+  LOCAL_OBSERVATIONS_HEADING,
+  LOCAL_OBSERVATIONS_HINT,
   OBSERVATION_CONTEXT_INSTRUCTIONS,
   OBSERVATION_CONTEXT_PROMPT,
   OBSERVATION_CONTINUATION_HINT,
@@ -527,16 +531,22 @@ function renderContextPack(pack: { global: Observation[]; local: Observation[] }
   if (pack.global.length > 0) {
     sections.push(
       [
-        "### Long-term memory (cross-session)",
+        "<global_observations>",
+        GLOBAL_OBSERVATIONS_HEADING,
+        GLOBAL_OBSERVATIONS_HINT,
         pack.global.map((observation) => observation.content).join("\n\n"),
+        "</global_observations>",
       ].join("\n\n"),
     );
   }
   if (pack.local.length > 0) {
     sections.push(
       [
-        "### From this session",
+        "<local_observations>",
+        LOCAL_OBSERVATIONS_HEADING,
+        LOCAL_OBSERVATIONS_HINT,
         pack.local.map((observation) => observation.content).join("\n\n"),
+        "</local_observations>",
       ].join("\n\n"),
     );
   }
