@@ -63,6 +63,15 @@ export const MAX_EXTRA_GAP = 18;
  *  an automatic freeze. Set to ~1.5s worth of cells at base speed. */
 export const GRACE_DISTANCE_CELLS = 14;
 
+/** Maximum distance ahead of the dino at which the FIRST obstacle of a run
+ *  is allowed to spawn, in cells. Without this cap the first obstacle
+ *  always spawns at the right edge of the playfield, so on a 200-cell-wide
+ *  terminal the user waits ~23 seconds before anything reaches them. With
+ *  the cap, wide screens still see the obstacle enter from the right but
+ *  no further out than ~4 seconds of runway. Narrow screens (where the
+ *  edge is already closer than this) are unaffected. */
+export const FIRST_OBSTACLE_MAX_DISTANCE = 36;
+
 export interface Obstacle {
   /** Sub-cell horizontal position. Decreases as the world scrolls left. */
   x: number;

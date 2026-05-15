@@ -5,6 +5,7 @@
 import {
   BASE_SPEED,
   DINO_X,
+  FIRST_OBSTACLE_MAX_DISTANCE,
   GRAVITY,
   MAX_EXTRA_GAP,
   MAX_SPEED,
@@ -73,9 +74,19 @@ export function tick(state: GameState, deps: TickDeps): GameState {
   // distance, then drops an obstacle at the right edge when it hits zero.
   let cellsUntilNextSpawn = state.cellsUntilNextSpawn - scroll;
   if (advancingWorld && cellsUntilNextSpawn <= 0) {
-    // Spawn at the live right edge of the playfield so obstacles enter
-    // from the visible boundary at every terminal width.
-    nextObstacles = [...nextObstacles, { x: state.fieldWidth, height: 1 }];
+    // Spawn at the live right edge for every obstacle except the first
+    // of a run. For the very first obstacle (no existing obstacles) we
+    // clamp the spawn to a sensible distance ahead of the dino so wide
+    // terminals don't make the player wait 20+ seconds for anything to
+    // appear. Narrow screens fall back to the right edge because the
+    // cap is already past it. After the first spawn the obstacle list
+    // is never empty during a run (the next spawn fires long before the
+    // previous obstacle scrolls off), so this naturally only fires once.
+    const isFirstSpawnOfRun = nextObstacles.length === 0;
+    const spawnX = isFirstSpawnOfRun
+      ? Math.min(state.fieldWidth, DINO_X + FIRST_OBSTACLE_MAX_DISTANCE)
+      : state.fieldWidth;
+    nextObstacles = [...nextObstacles, { x: spawnX, height: 1 }];
     cellsUntilNextSpawn = MIN_OBSTACLE_GAP + deps.random() * MAX_EXTRA_GAP;
   }
 

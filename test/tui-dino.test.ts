@@ -202,4 +202,33 @@ describe("dino responsive width", () => {
     const wide = initialState(0, 150);
     expect(startRun(wide).fieldWidth).toBe(150);
   });
+
+  test("first obstacle of a run spawns within the lead-in window on wide fields", () => {
+    // Wide field: 200 cells. Without the cap the first obstacle would
+    // spawn at x=200; with the cap it should land at DINO_X + 36 = 42.
+    let state = startRun(initialState(0, 200));
+    // Run the world forward until the first obstacle appears. Cap the
+    // loop generously so a regression can't hang the test.
+    for (let i = 0; i < 200 && state.obstacles.length === 0; i++) {
+      state = tick(state, { random: fixedRandom, ticksPerSecond: TICKS_PER_SECOND });
+    }
+    expect(state.obstacles.length).toBeGreaterThan(0);
+    // 6 (DINO_X) + 36 (FIRST_OBSTACLE_MAX_DISTANCE) = 42. Allow a small
+    // tolerance because the spawn fires the tick `cellsUntilNextSpawn`
+    // crosses zero, so a fractional cell of scroll happens that same
+    // tick.
+    expect(state.obstacles[0].x).toBeLessThanOrEqual(42);
+    expect(state.obstacles[0].x).toBeGreaterThan(40);
+  });
+
+  test("first obstacle on a narrow field still spawns at the right edge", () => {
+    // Narrow field (40 cells) is inside the cap, so behavior is unchanged.
+    let state = startRun(initialState(0, 40));
+    for (let i = 0; i < 200 && state.obstacles.length === 0; i++) {
+      state = tick(state, { random: fixedRandom, ticksPerSecond: TICKS_PER_SECOND });
+    }
+    expect(state.obstacles.length).toBeGreaterThan(0);
+    expect(state.obstacles[0].x).toBeLessThanOrEqual(40);
+    expect(state.obstacles[0].x).toBeGreaterThan(38);
+  });
 });
