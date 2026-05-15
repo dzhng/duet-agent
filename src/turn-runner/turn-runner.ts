@@ -487,6 +487,16 @@ export class TurnRunner {
         followUpQueue: this.getFollowUpQueue(),
         queuedCommands: this.getQueuedCommands(),
       });
+      // A wake only has work to do when the runner is currently sleeping on
+      // a scheduled state. If the session moved on (the prior queued
+      // command already drove the state machine, or the session was never
+      // sleeping to begin with), running wake here would emit a
+      // "Nothing to wake." terminal that clobbers the real terminal from
+      // the previous command in this drain chain. Skipping the queued wake
+      // keeps the meaningful terminal as the single emitted event.
+      if (queued.type === "wake" && latest.state.status !== "sleeping") {
+        continue;
+      }
       latest = await this.executeTurnCommand(queued);
     }
     return latest;

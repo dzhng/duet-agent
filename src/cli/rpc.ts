@@ -10,8 +10,10 @@ import { maybeAutoSyncDefaultSkills } from "../lib/sync-skills.js";
 import { TurnRunner } from "../turn-runner/turn-runner.js";
 import type {
   TurnEditFollowUpQueueCommand,
+  TurnEvent,
   TurnInterruptCommand,
   TurnRunnerCommand,
+  TurnSystemEvent,
   TurnTerminalEvent,
 } from "../types/protocol.js";
 import type { PackageMetadata } from "./run.js";
@@ -40,10 +42,16 @@ export interface RpcRunner {
  * writes newline-delimited {@link import("../types/protocol.js").TurnEvent}
  * values to stdout. The first command must be `start`; the runner emits
  * `turn_started` and then waits for a turn-driving command (`prompt`,
- * `answer`, or `wake`). The process exits as soon as the runner emits the
- * terminal event for that single turn, so callers that want to drive more
- * turns reuse the returned `state` by launching a fresh `--rpc` process
- * with `start.state` set.
+ * `answer`, or `wake`). Additional turn-driving commands sent before the
+ * terminal event are forwarded into the runner, which queues them onto the
+ * same chain and still emits exactly one terminal. The process exits as
+ * soon as that terminal lands.
+ *
+ * Soft protocol errors — malformed JSON lines, commands sent before
+ * `start`, a second `start`, unknown command types — are surfaced as
+ * `TurnSystemEvent`s on stdout and the loop keeps reading. The process
+ * only ends on a terminal event or when stdin closes, so the host can
+ * recover from a bad line without losing an in-flight turn.
  *
  * Unlike the TUI path, RPC mode bypasses {@link SessionManager} entirely:
  * no session ids, no `state.json`, no resume hints. Persistence policy lives
@@ -89,14 +97,15 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
   process.stderr.write(`${pkg.name} ${pkg.version} rpc\n`);
 
   const runner = new TurnRunner(config);
-  runner.subscribe((event) => {
+  const writeEvent = (event: TurnEvent): void => {
     process.stdout.write(`${JSON.stringify(event)}\n`);
-  });
+  };
+  runner.subscribe(writeEvent);
 
   const removeShutdownHandlers = installShutdownHandlers(() => runner.dispose());
 
   try {
-    await driveRpcLoop(runner, readStdinCommands());
+    await driveRpcLoop(runner, readStdinCommands(writeEvent), { emit: writeEvent });
   } finally {
     removeShutdownHandlers();
     await runner.dispose();
@@ -225,117 +234,135 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
   };
 }
 
+export interface DriveRpcLoopOptions {
+  /**
+   * Sink for {@link TurnSystemEvent}s the loop emits when a command is
+   * unusable (premature command before start, second start, unknown
+   * command type). Defaults to a no-op so unit tests that do not care
+   * about soft errors stay terse. The CLI wires this to stdout so hosts
+   * see the same event stream they get from the runner.
+   */
+  emit?: (event: TurnSystemEvent) => void;
+}
+
 /**
- * One-turn RPC lifecycle:
+ * RPC dispatch loop. Drives one turn chain to completion and returns once
+ * the chain's single terminal event has been emitted (or stdin closes).
  *
- * 1. Wait for a `start` command, hand it to the runner.
- * 2. Pump remaining stdin commands concurrently with `runner.turn`. The
- *    turn-driving command (`prompt`, `answer`, `wake`) launches the turn;
- *    subsequent `interrupt` / `edit_follow_up_queue` commands flow into the
- *    runner while the turn is still in flight so callers can cancel or
- *    edit the follow-up queue without racing the stream.
- * 3. Resolve once the turn settles. Remaining stdin is drained but ignored;
- *    the lifecycle is one turn per process.
+ * Soft protocol errors are emitted as `TurnSystemEvent`s via `options.emit`
+ * and the loop keeps reading; the chain still ends on its terminal, so
+ * `duet --rpc` remains the one place that decides when the process is safe
+ * to tear down.
  *
- * Stdin closing before a turn-driving command arrives is a clean early exit:
- * the runner has nothing to do and the loop returns.
+ * Out-of-band commands (`interrupt`, `edit_follow_up_queue`) and additional
+ * turn-driving commands (`prompt`, `answer`, `wake`) are all forwarded to
+ * the runner whether or not a chain is already in flight — the runner is
+ * the source of truth for how repeated `turn()` calls compose.
  */
 export async function driveRpcLoop(
   runner: RpcRunner,
   commands: AsyncIterable<TurnRunnerCommand>,
+  options: DriveRpcLoopOptions = {},
 ): Promise<void> {
+  const emit = options.emit ?? (() => {});
+  const reportError = (message: string): void => {
+    emit({ type: "system", level: "error", message });
+  };
   const iterator = commands[Symbol.asyncIterator]();
+  const CHAIN_SETTLED: IteratorResult<TurnRunnerCommand> = { done: true, value: undefined };
 
-  // Phase 1: start.
-  const startResult = await iterator.next();
-  if (startResult.done) return;
-  const first = startResult.value;
-  if (first.type !== "start") {
-    fail(`First RPC command must be "start", received "${first.type}"`);
-  }
-  await runner.start(first);
+  let started = false;
+  let chain: Promise<TurnTerminalEvent> | undefined;
+  let chainSettled: Promise<IteratorResult<TurnRunnerCommand>> | undefined;
+  let chainDone = false;
 
-  // Phase 2: read until a turn-driving command arrives, applying out-of-band
-  // commands inline. `interrupt` and `edit_follow_up_queue` before a turn
-  // command are surfaced to the runner immediately even though the runner
-  // typically rejects them in that state; the runner is the source of truth
-  // for that contract, not this loop.
-  let turnPromise: Promise<TurnTerminalEvent> | undefined;
-  while (!turnPromise) {
-    const next = await iterator.next();
-    if (next.done) return;
-    const command = next.value;
-    switch (command.type) {
-      case "start":
-        fail("RPC runner already started; only one start command is allowed");
-        break;
-      case "interrupt":
-        runner.interrupt(command);
-        break;
-      case "edit_follow_up_queue":
-        runner.editFollowUpQueue(command);
-        break;
-      case "prompt":
-      case "answer":
-      case "wake":
-        turnPromise = runner.turn(command);
-        break;
-      default: {
-        const exhaustive: never = command;
-        fail(`Unknown RPC command type: ${JSON.stringify(exhaustive)}`);
-      }
-    }
-  }
-
-  // Phase 3: keep reading while the turn is in flight so the consumer can
-  // interrupt or edit the follow-up queue mid-turn. Stop as soon as the
-  // turn settles; further stdin is dropped because the lifecycle is one
-  // turn per process.
-  let turnDone = false;
-  const settle = turnPromise.then(() => {
-    turnDone = true;
-  });
-  while (!turnDone) {
-    const next = await Promise.race([
-      iterator.next(),
-      settle.then(() => ({ done: true, value: undefined }) as IteratorResult<TurnRunnerCommand>),
-    ]);
+  while (true) {
+    // Race stdin against the active chain so the loop wakes immediately
+    // when the terminal lands. `chainSettled` resolves on both fulfillment
+    // and rejection so a rejected chain never crashes the race; the
+    // rejection still surfaces through the final `await chain` below.
+    const next = chainSettled
+      ? await Promise.race([iterator.next(), chainSettled])
+      : await iterator.next();
+    if (chainDone) break;
     if (next.done) break;
+
     const command = next.value;
+
+    if (!started) {
+      if (command.type !== "start") {
+        // Out-of-band commands before start are not actionable: the
+        // runner cannot accept them yet. Surface a soft error and keep
+        // waiting for a real start command instead of killing the
+        // process — the host may have buffered stale stdin from a
+        // previous session.
+        reportError(
+          `RPC command "${command.type}" received before "start"; ignoring. The first command must be "start".`,
+        );
+        continue;
+      }
+      await runner.start(command);
+      started = true;
+      continue;
+    }
+
     switch (command.type) {
+      case "start":
+        reportError("RPC runner already started; ignoring duplicate start command.");
+        break;
       case "interrupt":
         runner.interrupt(command);
         break;
       case "edit_follow_up_queue":
         runner.editFollowUpQueue(command);
         break;
-      case "start":
       case "prompt":
       case "answer":
-      case "wake":
-        fail(`RPC mode runs one turn per process; rejected extra "${command.type}" command`);
+      case "wake": {
+        // The runner is the source of truth for command composition.
+        // The first turn-driving command launches the chain; later ones
+        // join it via the runner's own queueing. turn() returns the same
+        // activeTurnPromise for the whole chain, so we only track the
+        // first promise and let the runner serialize everything else.
+        const promise = runner.turn(command);
+        if (!chain) {
+          chain = promise;
+          const onSettle = (): IteratorResult<TurnRunnerCommand> => {
+            chainDone = true;
+            return CHAIN_SETTLED;
+          };
+          chainSettled = chain.then(onSettle, onSettle);
+        }
         break;
+      }
       default: {
-        const exhaustive: never = command;
-        fail(`Unknown RPC command type: ${JSON.stringify(exhaustive)}`);
+        const unknown = command as { type?: unknown };
+        reportError(`Unknown RPC command type: ${JSON.stringify(unknown.type)}. Ignoring command.`);
       }
     }
   }
-  await turnPromise;
+
+  if (chain) await chain;
 }
 
 /**
  * Async iterator over newline-delimited {@link TurnRunnerCommand} values
- * read from stdin. Blank lines are skipped; malformed JSON or commands
- * without a `type` field abort the process via {@link fail} so callers
- * see the error immediately instead of letting the runner reject them.
+ * read from stdin. Blank lines are skipped. Malformed JSON or commands
+ * without a `type` field are surfaced through {@link emit} as a soft
+ * {@link TurnSystemEvent} and skipped; the iterator never aborts the
+ * process, so a bad line cannot kill an in-flight turn.
  */
-async function* readStdinCommands(): AsyncGenerator<TurnRunnerCommand> {
+async function* readStdinCommands(
+  emit: (event: TurnSystemEvent) => void,
+): AsyncGenerator<TurnRunnerCommand> {
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   try {
     for await (const rawLine of rl) {
-      const command = parseRpcCommandLine(rawLine);
-      if (command) yield command;
+      const result = parseRpcCommandLine(rawLine);
+      if (result.kind === "command") yield result.command;
+      else if (result.kind === "error") {
+        emit({ type: "system", level: "error", message: result.message });
+      }
     }
   } finally {
     rl.close();
@@ -343,25 +370,43 @@ async function* readStdinCommands(): AsyncGenerator<TurnRunnerCommand> {
 }
 
 /**
- * Parse one stdin line into a {@link TurnRunnerCommand}. Returns `undefined`
- * for blank lines so callers can skip them without a separate check. Exposed
- * so tests can feed the dispatch loop without going through stdin.
+ * Discriminated outcome of parsing one stdin line. The dispatch loop
+ * forwards `error` results to its emit sink and skips `skip` results so a
+ * single bad line never propagates a thrown exception across the loop
+ * boundary or terminates the process.
  */
-export function parseRpcCommandLine(rawLine: string): TurnRunnerCommand | undefined {
+export type ParseRpcCommandLineResult =
+  | { kind: "command"; command: TurnRunnerCommand }
+  | { kind: "error"; message: string }
+  | { kind: "skip" };
+
+/**
+ * Parse one stdin line. Blank/whitespace-only lines return `{ kind: "skip" }`
+ * so the iterator can drop them silently; malformed JSON or commands without
+ * a string `type` field return `{ kind: "error" }` so the caller can surface
+ * a `TurnSystemEvent` to the host and keep reading.
+ */
+export function parseRpcCommandLine(rawLine: string): ParseRpcCommandLineResult {
   const line = rawLine.trim();
-  if (!line) return undefined;
+  if (!line) return { kind: "skip" };
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);
   } catch (error) {
-    fail(`Invalid RPC command JSON: ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      kind: "error",
+      message: `Invalid RPC command JSON: ${error instanceof Error ? error.message : String(error)}`,
+    };
   }
   if (
     !parsed ||
     typeof parsed !== "object" ||
     typeof (parsed as { type?: unknown }).type !== "string"
   ) {
-    fail(`RPC command must be an object with a string "type"; received: ${line}`);
+    return {
+      kind: "error",
+      message: `RPC command must be an object with a string "type"; received: ${line}`,
+    };
   }
-  return parsed as TurnRunnerCommand;
+  return { kind: "command", command: parsed as TurnRunnerCommand };
 }

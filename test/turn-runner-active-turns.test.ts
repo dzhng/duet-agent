@@ -416,11 +416,56 @@ describe("TurnRunner active turns", () => {
     expect(trailingIndex).toBeGreaterThan(xmlIndex);
   });
 
-  test("queued wake rebases onto latest state and no-ops when no longer sleeping on a poll", async () => {
+  test("chain of prompt → prompt → wake → prompt → prompt emits exactly one terminal", async () => {
+    // Mirrors what the RPC loop must forward into the runner: several
+    // turn-driving commands arrive while the chain is in flight, including
+    // a no-op wake. The runner queues them onto the active chain and emits
+    // a single terminal whose state reflects all four prompts.
+    const { runner, events } = createStreamingRunner();
+    const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "first" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+
+    const second = runner.turn({ type: "prompt", message: "second", behavior: "follow_up" });
+    await waitFor(() => followUpQueueEvents(events).some((queue) => queue.includes("second")));
+    const wake = runner.turn({ type: "wake" });
+    const third = runner.turn({ type: "prompt", message: "third", behavior: "follow_up" });
+    await waitFor(() => followUpQueueEvents(events).some((queue) => queue.includes("third")));
+    const fourth = runner.turn({ type: "prompt", message: "fourth", behavior: "follow_up" });
+    await waitFor(() => followUpQueueEvents(events).some((queue) => queue.includes("fourth")));
+
+    // The parent agent runs one pi-agent turn per consumed follow-up.
+    runner.completeNext("first response");
+    for (const reply of ["second response", "third response", "final response"]) {
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext(reply);
+    }
+
+    const [a, b, c, d, e] = await Promise.all([first, second, wake, third, fourth]);
+    expect(a).toBe(b);
+    expect(a).toBe(c);
+    expect(a).toBe(d);
+    expect(a).toBe(e);
+    expect(terminalEvents(events)).toHaveLength(1);
+    expect(a).toMatchObject({ type: "complete", status: "completed" });
+    expect(a.type === "complete" ? a.result : undefined).toBe("final response");
+    const texts = messageTexts(a.state);
+    expect(texts).toContain("first");
+    expect(texts).toContain("second");
+    expect(texts).toContain("third");
+    expect(texts).toContain("fourth");
+    // The queued wake on a non-sleeping session must not leak a
+    // "Nothing to wake." terminal into the chain.
+    expect(a.type === "complete" ? a.result : undefined).not.toBe("Nothing to wake.");
+  });
+
+  test("queued wake behind a prompt is dropped instead of clobbering the prompt's terminal", async () => {
     const { runner, events } = createStreamingRunner();
     const { turn: first } = await startTurn(runner, { mode: "agent", prompt: "finish work" });
     await waitFor(() => runner.pendingStreams.length === 1);
 
+    // Queue a wake mid-turn. The session is not sleeping, so the wake has
+    // no work to do; it must not replace the prompt's terminal with a
+    // "Nothing to wake." completion.
     const wake = runner.turn({
       type: "wake",
     });
@@ -433,7 +478,7 @@ describe("TurnRunner active turns", () => {
     expect(wakeTerminal).toMatchObject({
       type: "complete",
       status: "completed",
-      result: "Nothing to wake.",
+      result: "done",
     });
   });
 
