@@ -31,6 +31,7 @@ import type { Observation } from "../types/memory.js";
 import type { MemorySession } from "../memory/session.js";
 import type { ActiveStateOutput } from "./state-machine-controller.js";
 import { readSkillInstructions } from "./skills.js";
+import { withBundledRipgrep } from "./bundled-ripgrep.js";
 
 const jsonSchemaValidator = new Ajv({ strictSchema: false });
 
@@ -484,7 +485,9 @@ export function createDefaultTurnRunnerTools(
 ): AgentTool[] {
   const tools: AgentTool[] = [
     ...createCodingTools(cwd, {
-      bash: { operations: withDefaultBashTimeout(createLocalBashOperations()) },
+      bash: {
+        operations: withBundledRipgrep(withDefaultBashTimeout(createLocalBashOperations())),
+      },
     }),
     createTodoWriteTool(todoStorage),
     createAskUserQuestionTool(),
