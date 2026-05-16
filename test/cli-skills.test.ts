@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, spyOn } from "bun:test";
 import dedent from "dedent";
 import { runSkillsCommand } from "../src/cli/skills.js";
-import { discoverInstalledSkills, resolveSkillScope } from "../src/turn-runner/skills.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 type SkillsCliOutput = {
@@ -65,36 +64,8 @@ async function writeSkill(
 }
 
 describe("CLI skills command", () => {
-  // The `duet skills` command serializes each discovered skill with these four
-  // fields. Locking the shape here keeps the JSON output stable for any tool
-  // that consumes it.
-  testIfDocker("returns name, description, path, and scope for project skills", async () => {
-    const root = (projectRoot = await mkdtemp(join(tmpdir(), "duet-cli-skills-")));
-    const skillDir = await writeSkill(
-      join(root, ".duet", "skills"),
-      "release",
-      "Bump the version and push tags.",
-    );
-
-    const { skills, collisions } = discoverInstalledSkills(root);
-    const output = skills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      path: skill.baseDir,
-      scope: resolveSkillScope(skill, root),
-    }));
-
-    expect(collisions).toEqual([]);
-    expect(output).toEqual([
-      {
-        name: "release",
-        description: "Bump the version and push tags.",
-        path: skillDir,
-        scope: "project",
-      },
-    ]);
-  });
-
+  // The `duet skills` JSON contract is locked at the CLI boundary so any tool
+  // consuming the command's stdout stays stable across refactors.
   testIfDocker("prints { skills, collisions } JSON on stdout with nothing on stderr", async () => {
     const root = (projectRoot = await mkdtemp(join(tmpdir(), "duet-cli-skills-")));
     const skillDir = await writeSkill(join(root, ".duet", "skills"), "deploy", "Deploy the app.");
@@ -151,15 +122,11 @@ describe("CLI skills command", () => {
       "Review code before committing.",
     );
 
-    const { skills } = discoverInstalledSkills(root);
-    const summary = skills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      path: skill.baseDir,
-      scope: resolveSkillScope(skill, root),
-    }));
+    const { stdout, stderr } = captureSkillsCli(["--workdir", root]);
+    const parsed = JSON.parse(stdout) as SkillsCliOutput;
 
-    expect(summary).toEqual([
+    expect(stderr).toBe("");
+    expect(parsed.skills).toEqual([
       {
         name: "review",
         description: "Review code before committing.",
