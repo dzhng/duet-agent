@@ -5,6 +5,11 @@ import { join, resolve, sep } from "node:path";
 import type { ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
 import { loadSkills } from "@earendil-works/pi-coding-agent";
 import type { SkillDiscoveryOptions } from "../types/config.js";
+import {
+  getBuiltInSkillInstructions,
+  isBuiltInSkill,
+  listBuiltInSkills,
+} from "./built-in-skills.js";
 
 export interface SkillCollision {
   /** Skill name that collided. */
@@ -97,8 +102,10 @@ export function loadDiscoveredSkills(
   cwd: string,
 ): DiscoveredSkillsResult {
   const { skills, diagnostics } = loadSkills(buildSkillDiscoveryOptions(discoveryOptions, cwd));
+  // User/project skills win on name collisions, so built-ins are merged
+  // last and silently dropped when shadowed.
   return {
-    skills: skills.map(expandSkillMetadata),
+    skills: mergeSkillsByName(skills.map(expandSkillMetadata), listBuiltInSkills()),
     collisions: extractSkillCollisions(diagnostics),
   };
 }
@@ -110,7 +117,10 @@ export function loadDiscoveredSkills(
  */
 export function discoverInstalledSkills(cwd: string): DiscoveredSkillsResult {
   const { skills, diagnostics } = loadSkills(buildSkillDiscoveryOptions(undefined, cwd));
-  return { skills, collisions: extractSkillCollisions(diagnostics) };
+  return {
+    skills: mergeSkillsByName(skills, listBuiltInSkills()),
+    collisions: extractSkillCollisions(diagnostics),
+  };
 }
 
 function extractSkillCollisions(diagnostics: ResourceDiagnostic[]): SkillCollision[] {
@@ -141,6 +151,11 @@ export function mergeSkillsByName(primary: readonly Skill[], secondary: readonly
 }
 
 export function readSkillInstructions(skill: Skill): string {
+  // Built-in skills ship inline with the package, so they have no on-disk
+  // SKILL.md to read. Their bodies are static and never contain shell
+  // expansions, so we return them verbatim.
+  const builtIn = getBuiltInSkillInstructions(skill.filePath);
+  if (builtIn !== undefined) return builtIn;
   const content = readFileSync(skill.filePath, "utf-8");
   return expandSkillShellCommands(content, skill.baseDir);
 }
@@ -154,7 +169,11 @@ export function readSkillInstructions(skill: Skill): string {
  * three roots (.duet, .agents, .claude) per scope, so we re-label here so
  * downstream consumers get the truth instead of mostly-"temporary".
  */
-export function resolveSkillScope(skill: Skill, cwd: string): "user" | "project" | "temporary" {
+export function resolveSkillScope(
+  skill: Skill,
+  cwd: string,
+): "user" | "project" | "temporary" | "builtin" {
+  if (isBuiltInSkill(skill)) return "builtin";
   const baseDir = resolve(skill.baseDir);
   const home = homedir();
   for (const dirName of DEFAULT_SKILL_DIR_NAMES) {

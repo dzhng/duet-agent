@@ -51,12 +51,16 @@ describe("CLI skills command", () => {
     );
 
     const { skills, collisions } = discoverInstalledSkills(root);
-    const output = skills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      path: skill.baseDir,
-      scope: resolveSkillScope(skill, root),
-    }));
+    const output = skills
+      .map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        path: skill.baseDir,
+        scope: resolveSkillScope(skill, root),
+      }))
+      // Built-in skills are returned alongside user/project ones; this test
+      // is scoped to the project-discovery shape, so drop the built-ins.
+      .filter((s) => s.scope !== "builtin");
 
     expect(collisions).toEqual([]);
     expect(output).toEqual([
@@ -78,12 +82,14 @@ describe("CLI skills command", () => {
     );
 
     const { skills } = discoverInstalledSkills(root);
-    const summary = skills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      path: skill.baseDir,
-      scope: resolveSkillScope(skill, root),
-    }));
+    const summary = skills
+      .map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        path: skill.baseDir,
+        scope: resolveSkillScope(skill, root),
+      }))
+      .filter((s) => s.scope !== "builtin");
 
     expect(summary).toEqual([
       {
