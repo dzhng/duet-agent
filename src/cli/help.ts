@@ -166,7 +166,6 @@ OUTPUT
                    scope        "user", "project", "temporary", or "builtin"
     collisions   Array of name conflicts resolved during discovery.
                  Each entry has: name, winnerPath, loserPath.
-                 Collisions are also mirrored to stderr.
 `);
 }
 

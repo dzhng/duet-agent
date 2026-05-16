@@ -11,9 +11,8 @@ import { fail } from "./shared.js";
  *   - `collisions`: array of `{ name, winnerPath, loserPath }` for any
  *     name conflicts that were resolved while discovering skills.
  *
- * Collisions are also mirrored on stderr (without changing exit status) so
- * humans tailing the command still see the warning, but consumers should
- * read the JSON `collisions` key.
+ * Nothing is written to stderr on the happy path; stderr is reserved for
+ * cases where the JSON itself cannot be produced.
  */
 export function runSkillsCommand(args: string[]): void {
   let workDir = process.cwd();
@@ -48,9 +47,4 @@ export function runSkillsCommand(args: string[]): void {
     })),
   };
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
-  for (const collision of collisions) {
-    process.stderr.write(
-      `[skill collision] "${collision.name}": kept ${collision.winnerPath}, ignored ${collision.loserPath}\n`,
-    );
-  }
 }
