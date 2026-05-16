@@ -236,7 +236,7 @@ const observerResultSchema = Type.Object({
   usedObservationIds: Type.Optional(
     Type.Array(Type.String(), {
       description:
-        "Ids of prior memories from the [memory id: mem_...] markers in the existing observations block whose content actually informed the assistant's response in this exchange. Drives the lastUsedAt freshness signal so reused memories keep surfacing. Omit or return [] when no prior memory was leaned on.",
+        "Ids of prior memories from the [memory id: mem_...] markers in the existing observations block whose content actually informed the assistant's response in this exchange. Drives the lastUsedAt freshness signal so reused memories keep surfacing. When multiple existing memories describe the same fact, cite only the single best one (most specific, highest priority, most recent) — never every duplicate, otherwise stale duplicates get uniformly refreshed and decay-ranking breaks. Omit or return [] when no prior memory was leaned on.",
     }),
   ),
   currentTask: Type.Optional(
