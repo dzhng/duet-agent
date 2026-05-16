@@ -72,10 +72,13 @@ describe("CLI skills command", () => {
 
     const { stdout, stderr } = captureSkillsCli(["--workdir", root]);
     const parsed = JSON.parse(stdout) as SkillsCliOutput;
+    // Built-in skills (e.g. /relay) ride alongside user/project entries in
+    // the CLI output; this test is scoped to the project shape, so drop them.
+    const projectSkills = parsed.skills.filter((s) => s.scope !== "builtin");
 
     expect(stderr).toBe("");
     expect(parsed.collisions).toEqual([]);
-    expect(parsed.skills).toEqual([
+    expect(projectSkills).toEqual([
       {
         name: "deploy",
         description: "Deploy the app.",
@@ -102,9 +105,10 @@ describe("CLI skills command", () => {
 
     const { stdout, stderr } = captureSkillsCli(["--workdir", root]);
     const parsed = JSON.parse(stdout) as SkillsCliOutput;
+    const projectSkills = parsed.skills.filter((s) => s.scope !== "builtin");
 
     expect(stderr).toBe("");
-    expect(parsed.skills.map((skill) => skill.path)).toEqual([winner]);
+    expect(projectSkills.map((skill) => skill.path)).toEqual([winner]);
     expect(parsed.collisions).toEqual([
       {
         name: "release",
@@ -124,9 +128,10 @@ describe("CLI skills command", () => {
 
     const { stdout, stderr } = captureSkillsCli(["--workdir", root]);
     const parsed = JSON.parse(stdout) as SkillsCliOutput;
+    const projectSkills = parsed.skills.filter((s) => s.scope !== "builtin");
 
     expect(stderr).toBe("");
-    expect(parsed.skills).toEqual([
+    expect(projectSkills).toEqual([
       {
         name: "review",
         description: "Review code before committing.",
