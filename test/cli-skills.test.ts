@@ -1,10 +1,36 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect } from "bun:test";
+import { afterEach, describe, expect, spyOn } from "bun:test";
 import dedent from "dedent";
+import { runSkillsCommand } from "../src/cli/skills.js";
 import { discoverInstalledSkills, resolveSkillScope } from "../src/turn-runner/skills.js";
 import { testIfDocker } from "./helpers/docker-only.js";
+
+type SkillsCliOutput = {
+  skills: Array<{ name: string; description?: string; path: string; scope: string }>;
+  collisions: Array<{ name: string; winnerPath: string; loserPath: string }>;
+};
+
+function captureSkillsCli(args: string[]): { stdout: string; stderr: string } {
+  let stdout = "";
+  let stderr = "";
+  const stdoutSpy = spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+    stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk as Uint8Array).toString();
+    return true;
+  });
+  const stderrSpy = spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+    stderr += typeof chunk === "string" ? chunk : Buffer.from(chunk as Uint8Array).toString();
+    return true;
+  });
+  try {
+    runSkillsCommand(args);
+  } finally {
+    stdoutSpy.mockRestore();
+    stderrSpy.mockRestore();
+  }
+  return { stdout, stderr };
+}
 
 let projectRoot: string | undefined;
 
@@ -65,6 +91,54 @@ describe("CLI skills command", () => {
         description: "Bump the version and push tags.",
         path: skillDir,
         scope: "project",
+      },
+    ]);
+  });
+
+  testIfDocker("prints { skills, collisions } JSON on stdout with nothing on stderr", async () => {
+    const root = (projectRoot = await mkdtemp(join(tmpdir(), "duet-cli-skills-")));
+    const skillDir = await writeSkill(join(root, ".duet", "skills"), "deploy", "Deploy the app.");
+
+    const { stdout, stderr } = captureSkillsCli(["--workdir", root]);
+    const parsed = JSON.parse(stdout) as SkillsCliOutput;
+
+    expect(stderr).toBe("");
+    expect(parsed.collisions).toEqual([]);
+    expect(parsed.skills).toEqual([
+      {
+        name: "deploy",
+        description: "Deploy the app.",
+        path: skillDir,
+        scope: "project",
+      },
+    ]);
+  });
+
+  testIfDocker("surfaces name collisions in the JSON collisions key, not on stderr", async () => {
+    const root = (projectRoot = await mkdtemp(join(tmpdir(), "duet-cli-skills-")));
+    // Two skills with the same name in different scopes — .duet wins over
+    // .agents because .duet is scanned first.
+    const winner = await writeSkill(
+      join(root, ".duet", "skills"),
+      "release",
+      "Cut a release (canonical).",
+    );
+    const loser = await writeSkill(
+      join(root, ".agents", "skills"),
+      "release",
+      "Cut a release (shadowed).",
+    );
+
+    const { stdout, stderr } = captureSkillsCli(["--workdir", root]);
+    const parsed = JSON.parse(stdout) as SkillsCliOutput;
+
+    expect(stderr).toBe("");
+    expect(parsed.skills.map((skill) => skill.path)).toEqual([winner]);
+    expect(parsed.collisions).toEqual([
+      {
+        name: "release",
+        winnerPath: join(winner, "SKILL.md"),
+        loserPath: join(loser, "SKILL.md"),
       },
     ]);
   });
