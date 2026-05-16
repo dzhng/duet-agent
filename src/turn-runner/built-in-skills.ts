@@ -3,11 +3,13 @@ import type { Skill } from "@earendil-works/pi-coding-agent";
 import { createSyntheticSourceInfo } from "@earendil-works/pi-coding-agent";
 
 /**
- * Synthetic marker prefix for built-in skill paths. Real skills live under
- * a discoverable `baseDir` on disk; built-ins are shipped inside the
- * package itself, so their `filePath`/`baseDir` are virtual sentinels.
- * They must be unique and stable so `readSkillInstructions` and
- * `resolveSkillScope` can detect a built-in without filesystem access.
+ * Synthetic marker prefix for built-in skill `filePath`/`baseDir`. Real
+ * skills live under a discoverable `baseDir` on disk; built-ins ship
+ * inside the package, so the prefix is a virtual sentinel that keeps
+ * their paths from colliding with anything on the filesystem and gives
+ * humans a clear hint when they appear in logs or `duet skills` output.
+ * Built-in detection itself goes through the `BUILT_IN_BY_PATH` map, not
+ * a prefix match.
  */
 const BUILTIN_PATH_PREFIX = "<duet-builtin>";
 
