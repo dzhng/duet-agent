@@ -487,7 +487,7 @@ describe("TurnRunner skills", () => {
       body: "# Code Review\n\nPrefer direct imports and avoid thin wrappers.",
     });
 
-    const skills = await app.runner.getSkills();
+    const skills = (await app.runner.getSkills()).filter((s) => s.name !== "relay");
 
     expect(skills).toHaveLength(1);
     expect(skills[0]).toMatchObject({
@@ -506,7 +506,7 @@ describe("TurnRunner skills", () => {
       body: "# Standard Review\n\nUse the standard project skill.",
     });
 
-    const skills = await app.runner.getSkills();
+    const skills = (await app.runner.getSkills()).filter((s) => s.name !== "relay");
 
     expect(skills.map((skill) => skill.name)).toEqual(["standard-review"]);
     expect(skills[0]).toMatchObject({
@@ -528,7 +528,7 @@ describe("TurnRunner skills", () => {
       body: "# Agent Review\n\nUse the standard project skill.",
     });
 
-    const skills = await app.runner.getSkills();
+    const skills = (await app.runner.getSkills()).filter((s) => s.name !== "relay");
 
     expect(skills.map((skill) => skill.name)).toEqual(["duet-docs", "agent-review"]);
     expect(skills).toContainEqual(
@@ -555,7 +555,7 @@ describe("TurnRunner skills", () => {
       body: "# Release Notes\n\nSummarize user-visible changes.",
     });
 
-    const skills = await app.runner.getSkills();
+    const skills = (await app.runner.getSkills()).filter((s) => s.name !== "relay");
     expect(skills.map((skill) => skill.name)).toEqual(["release-notes"]);
     expect(skills[0]).toMatchObject({
       description: "Draft concise release notes from completed work.",
@@ -571,7 +571,7 @@ describe("TurnRunner skills", () => {
       body: "# Standard Release Notes\n\nSummarize user-visible changes.",
     });
 
-    const skills = await app.runner.getSkills();
+    const skills = (await app.runner.getSkills()).filter((s) => s.name !== "relay");
 
     expect(skills.map((skill) => skill.name)).toEqual(["standard-release-notes"]);
     expect(skills[0]).toMatchObject({
@@ -588,7 +588,7 @@ describe("TurnRunner skills", () => {
       body: "# Browser QA\n\nSession quick browser checks.",
     });
 
-    const skills = await app.runner.getSkills();
+    const skills = (await app.runner.getSkills()).filter((s) => s.name !== "relay");
 
     expect(skills.map((skill) => skill.description)).toEqual([
       "Fast headless browser for QA testing.\nUse when checking UI flows.\n",
