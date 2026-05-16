@@ -5,10 +5,15 @@ import { fail } from "./shared.js";
 /**
  * Run `duet skills` — print installed skills as JSON.
  *
- * Each entry includes name, description, absolute path, and resolved scope
- * ("user" | "project" | "temporary"). Skill collisions are reported on
- * stderr without changing exit status so scripts that rely on JSON output
- * stay parseable.
+ * Emits a JSON object with two keys:
+ *   - `skills`: array of `{ name, description, path, scope }` — scope is
+ *     `"user" | "project" | "temporary" | "builtin"`.
+ *   - `collisions`: array of `{ name, winnerPath, loserPath }` for any
+ *     name conflicts that were resolved while discovering skills.
+ *
+ * Collisions are also mirrored on stderr (without changing exit status) so
+ * humans tailing the command still see the warning, but consumers should
+ * read the JSON `collisions` key.
  */
 export function runSkillsCommand(args: string[]): void {
   let workDir = process.cwd();
@@ -29,12 +34,19 @@ export function runSkillsCommand(args: string[]): void {
   }
 
   const { skills, collisions } = discoverInstalledSkills(workDir);
-  const output = skills.map((skill) => ({
-    name: skill.name,
-    description: skill.description,
-    path: skill.baseDir,
-    scope: resolveSkillScope(skill, workDir),
-  }));
+  const output = {
+    skills: skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      path: skill.baseDir,
+      scope: resolveSkillScope(skill, workDir),
+    })),
+    collisions: collisions.map((collision) => ({
+      name: collision.name,
+      winnerPath: collision.winnerPath,
+      loserPath: collision.loserPath,
+    })),
+  };
   process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
   for (const collision of collisions) {
     process.stderr.write(
