@@ -160,8 +160,6 @@ export async function renderBootScreen(deps: {
     deps.session.getSkills(),
     deps.session.getResolvedAgentFiles(),
   ]);
-  // The `/relay` skill (and other built-ins) flows through the normal
-  // `skills` array now; no need to special-case the autocomplete picker.
   deps.autocomplete.setSkillItems([
     ...BUILT_IN_SLASH_COMMAND_ITEMS,
     ...skills.map((skill) => ({

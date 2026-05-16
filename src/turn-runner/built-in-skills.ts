@@ -1,5 +1,6 @@
 import dedent from "dedent";
 import type { Skill } from "@earendil-works/pi-coding-agent";
+import { createSyntheticSourceInfo } from "@earendil-works/pi-coding-agent";
 
 /**
  * Synthetic marker prefix for built-in skill paths. Real skills live under
@@ -40,21 +41,19 @@ const RELAY_DESCRIPTION =
 
 function buildBuiltIn(name: string, description: string, instructions: string): BuiltInSkill {
   const baseDir = `${BUILTIN_PATH_PREFIX}/${name}`;
+  const filePath = `${baseDir}/SKILL.md`;
   return {
     skill: {
       name,
       description,
-      filePath: `${baseDir}/SKILL.md`,
+      filePath,
       baseDir,
-      // Built-ins are not file-system resources; the source info is purely
-      // informational so consumers that surface it (logs, diagnostics) get
-      // a recognizable label.
-      sourceInfo: {
-        path: baseDir,
+      sourceInfo: createSyntheticSourceInfo(filePath, {
         source: "duet:builtin",
         scope: "user",
         origin: "top-level",
-      },
+        baseDir,
+      }),
       disableModelInvocation: false,
     },
     instructions,

@@ -3,16 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { SkillContext } from "../src/turn-runner/skill-context.js";
-import {
-  BUILT_IN_SKILLS,
-  isBuiltInSkill,
-  listBuiltInSkills,
-} from "../src/turn-runner/built-in-skills.js";
-import {
-  discoverInstalledSkills,
-  readSkillInstructions,
-  resolveSkillScope,
-} from "../src/turn-runner/skills.js";
+import { discoverInstalledSkills, resolveSkillScope } from "../src/turn-runner/skills.js";
 
 let tempDir: string;
 
@@ -24,44 +15,15 @@ afterEach(async () => {
   await rm(tempDir, { recursive: true, force: true });
 });
 
-describe("built-in skills registry", () => {
-  test("ships the /relay skill", () => {
-    const relay = BUILT_IN_SKILLS.find(({ skill }) => skill.name === "relay");
-    expect(relay).toBeDefined();
-    expect(relay!.instructions).toContain("state-machine tools");
-  });
-
-  test("listBuiltInSkills returns plain Skill records", () => {
-    const skills = listBuiltInSkills();
-    expect(skills.length).toBeGreaterThan(0);
-    for (const skill of skills) {
-      expect(isBuiltInSkill(skill)).toBe(true);
-    }
-  });
-});
-
-describe("discoverInstalledSkills", () => {
-  test("includes built-in skills with builtin scope", () => {
+describe("built-in skills surface through discovery", () => {
+  test("discoverInstalledSkills includes /relay with builtin scope", () => {
     const { skills } = discoverInstalledSkills(tempDir);
     const relay = skills.find((s) => s.name === "relay");
     expect(relay).toBeDefined();
     expect(resolveSkillScope(relay!, tempDir)).toBe("builtin");
   });
-});
 
-describe("readSkillInstructions", () => {
-  test("returns inline body for built-in skills without touching disk", () => {
-    const relay = listBuiltInSkills().find((s) => s.name === "relay")!;
-    const body = readSkillInstructions(relay);
-    expect(body).toContain("state-machine tools");
-    // No `<system-reminder>` wrapper — the runner wraps the body in a
-    // `<skill>` block instead.
-    expect(body).not.toContain("<system-reminder>");
-  });
-});
-
-describe("SkillContext.resolveSlashSkillPrompt with /relay", () => {
-  test("appends the built-in relay skill block when /relay is in the prompt", async () => {
+  test("SkillContext appends the relay skill block when /relay is in the prompt", async () => {
     const ctx = new SkillContext({
       skillDiscovery: { includeDefaults: false, cwd: tempDir },
     });
@@ -71,14 +33,16 @@ describe("SkillContext.resolveSlashSkillPrompt with /relay", () => {
 
     // Token stays in the prompt verbatim.
     expect(resolved).toContain("monitor the inbox /relay every hour");
-    // Skill block was appended.
+    // Skill block was injected with the relay instructions.
     expect(resolved).toContain('<skill name="relay">');
     expect(resolved).toContain("state-machine tools");
     expect(resolved).toContain("</skill>");
+    // The legacy `<system-reminder>` wrapper is gone — the body must not
+    // smuggle one in.
+    expect(resolved).not.toContain("<system-reminder>");
   });
 
-  test("user-installed skill named 'relay' shadows the built-in", async () => {
-    // SkillContext can take explicit skills which take precedence over discovery.
+  test("a user-installed skill named 'relay' shadows the built-in", async () => {
     const ctx = new SkillContext({
       skills: [
         {

@@ -313,10 +313,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       questionPicker.flushWithMessage(message, images);
       return;
     }
-    // `/relay` is now a built-in skill (see `built-in-skills.ts`): the
-    // turn runner injects its instructions via the normal skill machinery
-    // when the token appears in the prompt. The TUI no longer rewrites the
-    // message, so the `/relay` token stays in the user-visible transcript.
     void input.session.prompt({ message, behavior, images }).catch(reportError);
     if (!statusController.isRunning()) statusController.markRunning();
   }
