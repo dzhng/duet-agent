@@ -25,7 +25,7 @@ USAGE
 COMMANDS
   login                    Sign in via browser; saves DUET_API_KEY and syncs default skills (recommended)
   env                      Manually create or update the shared duet env file with provider API keys
-  skills                   List installed skills as JSON (name, description, path, scope)
+  skills                   List installed skills + collisions as JSON
   memory                   Open a TUI to view, edit, and delete observational memories (alias: memories)
   send-feedback            Send free-form markdown feedback to the Duet team
   upgrade                  Upgrade the global ${packageName} installation
@@ -158,11 +158,14 @@ OPTIONS
   -h, --help               Show this help
 
 OUTPUT
-  Prints a JSON array of installed skills. Each entry has:
-    name         Skill name
-    description  Skill description (from frontmatter, raw — no shell expansion)
-    path         Absolute path to the skill directory
-    scope        "user", "project", or "temporary"
+  Prints a JSON object with two keys:
+    skills       Array of installed skills. Each entry has:
+                   name         Skill name
+                   description  Skill description (from frontmatter)
+                   path         Absolute path to the skill directory
+                   scope        "user", "project", "temporary", or "builtin"
+    collisions   Array of name conflicts resolved during discovery.
+                 Each entry has: name, winnerPath, loserPath.
 `);
 }
 
