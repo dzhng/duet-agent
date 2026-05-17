@@ -18,7 +18,9 @@ import type { MemorySession } from "./session.js";
 import {
   appendObservation,
   bumpLastUsed,
+  readAllObservations,
   readSessionObservations,
+  replaceAllObservations,
   replaceSessionObservations,
 } from "./storage.js";
 import type {
@@ -854,6 +856,113 @@ async function reflectObservations(
   // memory durable past a reflection event.
   await replaceSessionObservations(session, sessionId, [reflected]);
   return [reflected];
+}
+
+/**
+ * Sentinel session id used by `reflectAllObservations` to stamp the
+ * reflection row produced from the entire cross-session pool. Lets the
+ * loader/UI distinguish a global prune-reflection from a per-session one
+ * without needing a new column.
+ */
+export const GLOBAL_REFLECTION_SESSION_ID = "__global_reflection__";
+
+export interface ReflectAllOptions {
+  session: MemorySession;
+  settings: ObservationalMemorySettings;
+  model: string;
+  /**
+   * Override the target token budget for the reflected log. Defaults to
+   * `settings.reflection.bufferActivation` so a global prune behaves the
+   * same way an in-session reflection does: condense to roughly the
+   * half-trigger budget, leaving headroom before the next reflection.
+   */
+  targetTokens?: number;
+  /**
+   * When true, do not write the reflected row back. The function still
+   * runs the reflector model and returns the result so callers can
+   * preview the prune (`duet memory reflect --dry-run`).
+   */
+  dryRun?: boolean;
+  onUsage?: (usage: Usage) => void;
+}
+
+export interface ReflectAllResult {
+  /** Observations as they existed before the reflect call. */
+  before: Observation[];
+  /** Single reflection row produced from the entire global pool. */
+  reflection: Observation;
+  /** Whether the reflection was persisted (false when `dryRun: true`). */
+  written: boolean;
+}
+
+/**
+ * Cross-session reflect: read every observation in the durable store,
+ * condense them through the reflector, and replace the entire pool with a
+ * single reflection row. Used by `duet memory reflect` to prune the
+ * global memory store. Returns `undefined` only when there is nothing to
+ * reflect (empty store).
+ *
+ * Unlike `reflectObservations`, this deletes rows across all sessions —
+ * the caller is asking for a global prune, not a per-session compaction.
+ */
+export async function reflectAllObservations(
+  options: ReflectAllOptions,
+): Promise<ReflectAllResult | undefined> {
+  const { session, settings, model, dryRun, onUsage } = options;
+  const snapshot = await readAllObservations(session);
+  if (snapshot.observations.length === 0) {
+    return undefined;
+  }
+  const source = snapshot.observations.map((observation) => observation.content).join("\n\n");
+  const rendered = renderObservationGroupsForReflection(source) ?? source;
+  const targetTokens = options.targetTokens ?? settings.reflection.bufferActivation;
+  const result = await generateStructuredOutput({
+    model,
+    tool: reflectorResultTool,
+    systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
+    prompt: buildReflectorPrompt(rendered, targetTokens),
+    onUsage,
+  });
+  const text = await enforceObservationTokenBudget({
+    text: result.observations,
+    targetTokens,
+    retry: async (actualTokens) => {
+      const retryResult = await generateStructuredOutput({
+        model,
+        tool: reflectorResultTool,
+        systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
+        prompt: buildReflectorPrompt(rendered, targetTokens, { actualTokens }),
+        onUsage,
+      });
+      return retryResult.observations;
+    },
+  });
+  const reconciled =
+    text && text.trim().length > 0
+      ? (reconcileObservationGroupsFromReflection(text, source) ?? text)
+      : "";
+  const now = Date.now();
+  const reflection: Observation = {
+    id: createMemoryId(),
+    createdAt: now,
+    lastUsedAt: now,
+    kind: "reflection",
+    sessionId: GLOBAL_REFLECTION_SESSION_ID,
+    observedDate: new Date().toISOString().slice(0, 10),
+    timeOfDay: new Date().toISOString().slice(11, 16),
+    priority: "high",
+    source: { kind: "system" },
+    content: reconciled,
+    tags: ["observational-memory", "reflection", "global-prune"],
+  };
+  if (!dryRun && reconciled.trim().length > 0) {
+    await replaceAllObservations(session, [reflection]);
+  }
+  return {
+    before: snapshot.observations,
+    reflection,
+    written: !dryRun && reconciled.trim().length > 0,
+  };
 }
 
 async function observe(

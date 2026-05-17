@@ -193,6 +193,34 @@ KEYS
 `);
 }
 
+export function printMemoryReflectHelp(): void {
+  console.log(`
+duet memory reflect — Condense the entire global memory pool through the reflector
+
+USAGE
+  duet memory reflect [--db <path>] [--dry-run] [--target-tokens <n>] [--model <name>]
+                      [--effective-context <tokens>] [--wait <seconds>]
+
+DESCRIPTION
+  Runs the observation → reflection pipeline across ALL observations in the
+  durable memory store (across every session), condensing them into a single
+  reflection row. Used to prune the global memory pool. The pre-reflection
+  observations are deleted on success; use --dry-run to preview the result
+  without writing.
+
+OPTIONS
+  --db <path>              Memory database path (default: ~/.duet/memory.db)
+  --dry-run                Print the reflected log without writing it back
+  --target-tokens <n>      Override the reflected log token budget
+  --model <name>           Memory model used for reflection (default: env / CLI default)
+  --effective-context <n>  Effective context window used to derive memory budgets
+                           (default: 200000)
+  --wait <seconds>         Seconds to wait for the cross-process open-lock
+                           (default: 30; 0 fails immediately)
+  -h, --help               Show this help
+`);
+}
+
 export function printSendFeedbackHelp(): void {
   console.log(`
 duet send-feedback — Send free-form markdown feedback to the Duet team
