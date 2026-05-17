@@ -69,13 +69,14 @@ export interface TurnRunnerConfig extends TurnOptions {
    * leaves the runner. Down-stream persistence (e.g. `state.json`) inherits
    * the cap for free.
    *
-   * - `true` (or omitted? — see default) enables the cap at
-   *   `DEFAULT_STATE_MAX_BYTES`.
+   * - `true` or omitted enables the cap at `DEFAULT_STATE_MAX_BYTES`.
    * - `false` disables compaction entirely.
    * - Pass `{ maxBytes }` to override the ceiling for this runner.
    *
-   * Off by default. Opt in per-runner so unit tests and short-lived sessions
-   * keep their full transcript on disk.
+   * On by default with a 100 MB ceiling — `state.json` is otherwise unbounded
+   * and a runaway transcript will eventually wedge persistence. Opt out per-
+   * runner (`autoStateCompaction: false`) when a test or short-lived session
+   * needs the full transcript verbatim.
    */
   autoStateCompaction?: AutoStateCompactionOptions | boolean;
 }

@@ -1019,9 +1019,12 @@ export class TurnRunner {
   }
 
   private resolveCompactionOptions(): AutoStateCompactionOptions | undefined {
+    // On by default: `undefined` and `true` both enable the 100 MB ceiling so
+    // unbounded `state.json` growth can't wedge persistence. Only an explicit
+    // `false` disables compaction.
     const setting = this.config.autoStateCompaction;
-    if (setting === undefined || setting === false) return undefined;
-    if (setting === true) return {};
+    if (setting === false) return undefined;
+    if (setting === undefined || setting === true) return {};
     return setting;
   }
 

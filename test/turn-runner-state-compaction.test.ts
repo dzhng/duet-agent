@@ -62,7 +62,10 @@ describe("TurnRunner auto state compaction", () => {
     expect(last.content[0].text.startsWith("msg-11 ")).toBe(true);
   });
 
-  test("leaves state untouched when autoStateCompaction is omitted", () => {
+  test("omitted autoStateCompaction defaults to the 100 MB ceiling", () => {
+    // Default-on: a small state passes through unchanged because it's well
+    // under the 100 MB default, but the cap is still active and would evict
+    // if the state ever grew past it.
     const runner = new HarnessRunner();
     const before = fatState(12, 2);
     runner.forceState(before);
@@ -71,6 +74,12 @@ describe("TurnRunner auto state compaction", () => {
     expect(snapshot).toBeDefined();
     expect(snapshot!.agent.messages.length).toBe(12);
     expect(JSON.stringify(snapshot).length).toBeGreaterThan(8 * 1024);
+
+    // And the cap actually fires when the state would exceed it.
+    const tiny = new HarnessRunner({ autoStateCompaction: { maxBytes: 1024 } });
+    tiny.forceState(fatState(12, 2));
+    const tinySnap = tiny.getState();
+    expect(tinySnap!.agent.messages.length).toBeLessThan(12);
   });
 
   test("autoStateCompaction: true uses the default ceiling and skips small states", () => {
