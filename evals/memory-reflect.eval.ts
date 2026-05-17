@@ -38,8 +38,31 @@ import { seedObservations } from "./fixtures/global-reflect/seed.js";
 
 const settings = resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT);
 
+/**
+ * Most existing evals were written before reflectAllObservations grew a
+ * min-age gate and per-batch packing. They want the historical "reflect
+ * everything as one batch" behavior so they can assert against a single
+ * reflection row. Pass these defaults to keep that contract for the
+ * fixture-based content evals; dedicated tests below exercise the new
+ * gating and batching paths.
+ */
+const REFLECT_EVERYTHING = {
+  minAgeMs: 0,
+  batchTokens: Number.MAX_SAFE_INTEGER,
+} as const;
+
 function tokensIn(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+function firstReflection(result: { reflections: { content: string; id: string }[] }): {
+  content: string;
+  id: string;
+} {
+  if (result.reflections.length === 0) {
+    throw new Error("expected at least one reflection row");
+  }
+  return result.reflections[0]!;
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -68,9 +91,11 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content;
+        const reflection = firstReflection(result!);
+        const content = reflection.content;
         expect(content).toContain("Velgress");
         // Concrete identifiers (URL OR commit) preserved somewhere.
         expect(content).toMatch(/velgress--team-aomni-com\.duet\.so|cac9bbc|5d199a9|a55172b/);
@@ -80,7 +105,7 @@ describe("duet memory reflect — global prune", () => {
         // Pool replaced with the single reflection row.
         const after = await readAllObservations(fixture.session);
         expect(after.observations.length).toBe(1);
-        expect(after.observations[0]!.id).toBe(result!.reflection.id);
+        expect(after.observations[0]!.id).toBe(reflection.id);
       } finally {
         await fixture.dispose();
       }
@@ -101,9 +126,10 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content;
+        const content = firstReflection(result!).content;
         expect(content).toContain("#1335");
         expect(content.toLowerCase()).toContain("bottominset");
       } finally {
@@ -126,9 +152,10 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content.toLowerCase();
+        const content = firstReflection(result!).content.toLowerCase();
         // Both durable conventions must survive in some recognizable form.
         expect(content).toMatch(/bun format/);
         expect(content).toMatch(/pr.*title|\[name\]|first name/);
@@ -152,9 +179,10 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content;
+        const content = firstReflection(result!).content;
         // Final state facts must survive.
         expect(content).toContain("PR #1334");
         expect(content.toLowerCase()).toMatch(/ascii|white-on-black|hero|use-cases/);
@@ -184,9 +212,10 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content.toLowerCase();
+        const content = firstReflection(result!).content.toLowerCase();
         // Three independent strategic decisions — all should leave a trace.
         expect(content).toMatch(/hyperframes|remotion/);
         expect(content).toMatch(/plan mode/);
@@ -214,12 +243,13 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
           targetTokens,
         });
         expect(result).toBeDefined();
         // Reflector + truncation guard must keep us under the budget,
         // with a small fudge factor for tokenization rounding.
-        expect(tokensIn(result!.reflection.content)).toBeLessThanOrEqual(targetTokens + 128);
+        expect(tokensIn(firstReflection(result!).content)).toBeLessThanOrEqual(targetTokens + 128);
       } finally {
         await fixture.dispose();
       }
@@ -240,6 +270,7 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
         const after = await readAllObservations(fixture.session);
@@ -268,11 +299,12 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
           dryRun: true,
         });
         expect(result).toBeDefined();
         expect(result!.written).toBe(false);
-        expect(result!.reflection.content.length).toBeGreaterThan(0);
+        expect(firstReflection(result!).content.length).toBeGreaterThan(0);
         const after = await readAllObservations(fixture.session);
         expect(after.observations.map((o) => o.id).sort()).toEqual([...beforeIds].sort());
       } finally {
@@ -294,6 +326,7 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeUndefined();
         const after = await readAllObservations(fixture.session);
@@ -318,9 +351,10 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content;
+        const content = firstReflection(result!).content;
         // The Velgress slice never mentions team members besides David,
         // and never mentions any redacted customer placeholders. If a
         // reflected row name-drops them, the reflector hallucinated.
@@ -347,9 +381,10 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content;
+        const content = firstReflection(result!).content;
         // The dump spans April 2026 → May 2026. After a prune we should
         // still see multiple distinct date anchors so supersession is
         // recoverable from the reflected log.
@@ -376,6 +411,7 @@ describe("duet memory reflect — global prune", () => {
           snapshot: before,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
         const after = await readAllObservations(fixture.session);
@@ -417,9 +453,10 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content;
+        const content = firstReflection(result!).content;
         // Both PRs in the chain must remain.
         expect(content).toMatch(/#1336/);
         expect(content).toMatch(/#1341/);
@@ -446,9 +483,10 @@ describe("duet memory reflect — global prune", () => {
           snapshot,
           settings,
           model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content;
+        const content = firstReflection(result!).content;
         expect(content).toMatch(/#1340/);
         expect(content.toLowerCase()).toMatch(/service worker|offline|share_target|manifest/);
       } finally {
@@ -456,5 +494,94 @@ describe("duet memory reflect — global prune", () => {
       }
     },
     240_000,
+  );
+
+  // ---- Eval 15 ------------------------------------------------------------
+  // Asserts the min-age gate end-to-end on real model output: fresh rows
+  // must survive the prune verbatim so a resumed session keeps its local
+  // memory tail intact. Pairs with the planner unit tests, which cover
+  // the deterministic partitioning logic without an LLM.
+  testIfDocker(
+    "min-age gate preserves observations younger than the cutoff and folds older ones",
+    async () => {
+      const fixture = await createMemoryFixture();
+      try {
+        // Half the slice is back-dated to be older than 3 days, half to
+        // be inside the cutoff window. seedObservations honors per-row
+        // ageDays, so override on a clone.
+        const slice = VELGRESS_SLICE.map((seed, index) => ({
+          ...seed,
+          ageDays: index % 2 === 0 ? 10 : 0.5,
+        }));
+        await seedObservations(fixture, slice);
+        const snapshot = await readAllObservations(fixture.session);
+        const freshIds = snapshot.observations
+          .filter((row) => row.createdAt > Date.now() - 3 * 24 * 60 * 60 * 1000)
+          .map((row) => row.id)
+          .sort();
+        expect(freshIds.length).toBeGreaterThan(0);
+
+        const result = await reflectAllObservations({
+          session: fixture.session,
+          snapshot,
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+          batchTokens: Number.MAX_SAFE_INTEGER,
+          // Default min-age is 3 days; assert that path directly.
+        });
+        expect(result).toBeDefined();
+        expect(result!.preserved.map((o) => o.id).sort()).toEqual(freshIds);
+        expect(result!.reflections.length).toBeGreaterThanOrEqual(1);
+        const after = await readAllObservations(fixture.session);
+        const afterIds = after.observations.map((o) => o.id);
+        for (const freshId of freshIds) {
+          expect(afterIds).toContain(freshId);
+        }
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    240_000,
+  );
+
+  // ---- Eval 16 ------------------------------------------------------------
+  // Re-running reflect must not collapse the previous reflection row into
+  // a vaguer one. Older reflections accumulate but never degrade.
+  testIfDocker(
+    "existing reflection rows are preserved verbatim and never re-reflected",
+    async () => {
+      const fixture = await createMemoryFixture();
+      try {
+        await seedObservations(fixture, VELGRESS_SLICE);
+        const firstRun = await reflectAllObservations({
+          session: fixture.session,
+          snapshot: await readAllObservations(fixture.session),
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
+        });
+        expect(firstRun).toBeDefined();
+        expect(firstRun!.reflections.length).toBeGreaterThanOrEqual(1);
+        const firstReflectionIds = firstRun!.reflections.map((r) => r.id).sort();
+
+        // Second run: pool is just the reflection row(s). Nothing eligible.
+        const secondRun = await reflectAllObservations({
+          session: fixture.session,
+          snapshot: await readAllObservations(fixture.session),
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+          ...REFLECT_EVERYTHING,
+        });
+        expect(secondRun).toBeDefined();
+        expect(secondRun!.eligible.length).toBe(0);
+        expect(secondRun!.reflections.length).toBe(0);
+        expect(secondRun!.written).toBe(false);
+        const after = await readAllObservations(fixture.session);
+        expect(after.observations.map((o) => o.id).sort()).toEqual(firstReflectionIds);
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    300_000,
   );
 });

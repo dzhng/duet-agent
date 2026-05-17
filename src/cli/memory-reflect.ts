@@ -1,6 +1,7 @@
 import { runMigrations } from "../memory/migrations.js";
 import {
   DEFAULT_EFFECTIVE_CONTEXT,
+  DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS,
   reflectAllObservations,
   resolveObservationalMemorySettings,
 } from "../memory/observational.js";
@@ -20,6 +21,7 @@ interface ReflectCommandOptions {
   model: string;
   effectiveContext: number;
   waitBudgetMs?: number;
+  minAgeDays: number;
 }
 
 interface ReflectCommandIO {
@@ -63,9 +65,10 @@ export async function runMemoryReflectCommand(
     }
     const settings = resolveObservationalMemorySettings(options.effectiveContext);
     const targetTokens = options.targetTokens ?? settings.reflection.bufferActivation;
+    const minAgeMs = options.minAgeDays * 24 * 60 * 60 * 1000;
     io.stdout.write(
       `Reflecting ${snapshot.observations.length} observations (~${snapshot.estimatedObservationTokens} tokens) ` +
-        `into <= ${targetTokens} tokens using ${options.model}` +
+        `older than ${options.minAgeDays} day(s) into <= ${targetTokens} tokens per batch using ${options.model}` +
         (options.dryRun ? " [dry-run]" : "") +
         "\n",
     );
@@ -76,6 +79,7 @@ export async function runMemoryReflectCommand(
       settings,
       model: options.model,
       targetTokens,
+      minAgeMs,
       dryRun: options.dryRun,
     });
 
@@ -84,15 +88,28 @@ export async function runMemoryReflectCommand(
       return;
     }
 
-    io.stdout.write("\n--- Reflected observations ---\n");
-    io.stdout.write(`${result.reflection.content.trim()}\n`);
-    io.stdout.write("--- end ---\n");
+    if (result.reflections.length === 0) {
+      io.stdout.write(
+        `\nNothing eligible: ${result.preserved.length} observation(s) preserved (too fresh or already reflections).\n`,
+      );
+      return;
+    }
+
+    for (let index = 0; index < result.reflections.length; index++) {
+      const reflection = result.reflections[index]!;
+      io.stdout.write(`\n--- Reflected batch ${index + 1}/${result.reflections.length} ---\n`);
+      io.stdout.write(`${reflection.content.trim()}\n`);
+      io.stdout.write("--- end ---\n");
+    }
     if (result.written) {
       io.stdout.write(
-        `\nReplaced ${result.before.length} observation(s) with 1 reflection row (id=${result.reflection.id}).\n`,
+        `\nReplaced ${result.eligible.length} eligible observation(s) with ${result.reflections.length} reflection row(s); ` +
+          `${result.preserved.length} preserved verbatim.\n`,
       );
     } else {
-      io.stdout.write(`\nDry-run: ${result.before.length} observation(s) left untouched.\n`);
+      io.stdout.write(
+        `\nDry-run: ${result.before.length} observation(s) left untouched (would have folded ${result.eligible.length} into ${result.reflections.length}).\n`,
+      );
     }
   } catch (error) {
     if (error instanceof MemoryLockTimeoutError) {
@@ -116,6 +133,7 @@ function parseArgs(args: string[]): ReflectCommandOptions | undefined {
   let model = process.env.DUET_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
   let effectiveContext = DEFAULT_EFFECTIVE_CONTEXT;
   let waitBudgetMs: number | undefined;
+  let minAgeDays = DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -156,6 +174,15 @@ function parseArgs(args: string[]): ReflectCommandOptions | undefined {
         waitBudgetMs = Math.round(seconds * 1000);
         break;
       }
+      case "--min-age-days": {
+        const raw = args[++i];
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < 0) {
+          fail(`Invalid --min-age-days value: ${raw} (expected non-negative number)`);
+        }
+        minAgeDays = n;
+        break;
+      }
       case "--help":
       case "-h":
         printMemoryReflectHelp();
@@ -172,5 +199,6 @@ function parseArgs(args: string[]): ReflectCommandOptions | undefined {
     model,
     effectiveContext,
     ...(waitBudgetMs !== undefined ? { waitBudgetMs } : {}),
+    minAgeDays,
   };
 }

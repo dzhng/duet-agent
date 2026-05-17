@@ -195,23 +195,28 @@ KEYS
 
 export function printMemoryReflectHelp(): void {
   console.log(`
-duet memory reflect — Condense the entire global memory pool through the reflector
+duet memory reflect — Condense old global observations into reflection rows
 
 USAGE
-  duet memory reflect [--db <path>] [--dry-run] [--target-tokens <n>] [--model <name>]
+  duet memory reflect [--db <path>] [--dry-run] [--min-age-days <n>]
+                      [--target-tokens <n>] [--model <name>]
                       [--effective-context <tokens>] [--wait <seconds>]
 
 DESCRIPTION
-  Runs the observation → reflection pipeline across ALL observations in the
-  durable memory store (across every session), condensing them into a single
-  reflection row. Used to prune the global memory pool. The pre-reflection
-  observations are deleted on success; use --dry-run to preview the result
-  without writing.
+  Walks the durable memory store and folds raw observations older than
+  --min-age-days (default 3) into one reflection row per batch. Existing
+  reflection rows and fresh observations (younger than the cutoff) are
+  preserved verbatim so resumed sessions keep their recent local memory
+  intact. Batches are packed up to one reflection trigger's worth of
+  tokens, sequenced chronologically across sessions for cross-session
+  dedup. Use --dry-run to preview without writing.
 
 OPTIONS
   --db <path>              Memory database path (default: ~/.duet/memory.db)
   --dry-run                Print the reflected log without writing it back
-  --target-tokens <n>      Override the reflected log token budget
+  --min-age-days <n>       Skip observations newer than this many days
+                           (default: 3)
+  --target-tokens <n>      Override the reflected log token budget per batch
   --model <name>           Memory model used for reflection (default: env / CLI default)
   --effective-context <n>  Effective context window used to derive memory budgets
                            (default: 200000)
