@@ -208,30 +208,6 @@ describe("enforceStateSizeCap", () => {
     expect(STATE_FILE_MAX_BYTES).toBe(100 * 1024 * 1024);
   });
 
-  test("sweeps non-leading orphan tool-results from the kept transcript", () => {
-    // Pathological input: a tool-result whose tool-call id was never emitted
-    // by any surviving assistant. Front-eviction shouldn't produce this on
-    // its own, but the integrity sweep must scrub it so the next LLM call
-    // doesn't 400 on a half-pair.
-    const big = "k".repeat(2000);
-    const messages: AgentMessage[] = [
-      userMessage(`old ${big}`),
-      userMessage(`older ${big}`),
-      userMessage("recent user"),
-      // toolResult whose call id was never seen — simulate corrupted input.
-      toolResult("call_missing", "dangling"),
-      userMessage("latest"),
-    ];
-    const payload = envelope(messages);
-
-    // Cap large enough that no byte-eviction is needed; only the sweep fires.
-    const result = enforceStateSizeCap(payload, 1024 * 1024);
-
-    const kept = result.payload.state!.agent.messages as AgentMessage[];
-    expect(kept.find((m) => (m as { role: string }).role === "toolResult")).toBeUndefined();
-    expect(result.evicted).toBe(1);
-  });
-
   test("keeps paired tool-call/tool-result intact when both survive eviction", () => {
     // Build a transcript where eviction stops on an assistant tool-call, and
     // its matching tool-result is the very next surviving message. The pair

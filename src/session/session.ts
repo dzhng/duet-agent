@@ -24,7 +24,12 @@ import type {
   TurnUsageFields,
 } from "../types/protocol.js";
 import type { StateMachinePollState, StateMachineTimerState } from "../types/state-machine.js";
-import { STATE_FILE_MAX_BYTES, enforceStateSizeCap, serializeEnvelope } from "./state-size-cap.js";
+import {
+  STATE_FILE_MAX_BYTES,
+  enforceStateSizeCap,
+  serializeEnvelope,
+  type StoredEnvelopeShape,
+} from "./state-size-cap.js";
 
 /**
  * How often `scheduleWake` checks the wall clock against `wakeAt`. Polling — instead of relying
@@ -33,13 +38,7 @@ import { STATE_FILE_MAX_BYTES, enforceStateSizeCap, serializeEnvelope } from "./
  */
 const WAKE_POLL_INTERVAL_MS = 30_000;
 
-interface StoredSessionFile {
-  sessionId?: string;
-  updatedAt?: number;
-  state?: TurnState;
-  lastUsage?: TurnUsageFields;
-  sessionCostUsd?: number;
-}
+type StoredSessionFile = StoredEnvelopeShape;
 
 export interface SessionStartInput {
   /** Routing mode for subsequent prompts. Omit to use the session's configured default. */
