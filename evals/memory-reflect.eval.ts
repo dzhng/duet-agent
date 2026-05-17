@@ -60,8 +60,10 @@ describe("duet memory reflect — global prune", () => {
       const fixture = await createMemoryFixture();
       try {
         await seedObservations(fixture, VELGRESS_DUPLICATES);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });
@@ -92,8 +94,10 @@ describe("duet memory reflect — global prune", () => {
       const fixture = await createMemoryFixture();
       try {
         await seedObservations(fixture, IOS_SAFE_AREA_DUPLICATES);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });
@@ -123,8 +127,10 @@ describe("duet memory reflect — global prune", () => {
           ...INBOX_NO_OP_DUPLICATES,
           ...TENTATIVE_LOW_SIGNAL,
         ]);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });
@@ -148,8 +154,10 @@ describe("duet memory reflect — global prune", () => {
       const fixture = await createMemoryFixture();
       try {
         await seedObservations(fixture, INBOX_NO_OP_DUPLICATES);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });
@@ -172,8 +180,10 @@ describe("duet memory reflect — global prune", () => {
       const fixture = await createMemoryFixture();
       try {
         await seedObservations(fixture, SUPERSEDED_CHAIN);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });
@@ -201,8 +211,10 @@ describe("duet memory reflect — global prune", () => {
       const fixture = await createMemoryFixture();
       try {
         await seedObservations(fixture, [...STRATEGIC_DECISIONS, ...TENTATIVE_LOW_SIGNAL]);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });
@@ -233,8 +245,10 @@ describe("duet memory reflect — global prune", () => {
           ...INBOX_NO_OP_DUPLICATES,
         ]);
         const targetTokens = 400;
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
           targetTokens,
@@ -257,8 +271,10 @@ describe("duet memory reflect — global prune", () => {
       const fixture = await createMemoryFixture();
       try {
         await seedObservations(fixture, VELGRESS_DUPLICATES);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });
@@ -283,8 +299,10 @@ describe("duet memory reflect — global prune", () => {
       const fixture = await createMemoryFixture();
       try {
         const beforeIds = await seedObservations(fixture, VELGRESS_DUPLICATES);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
           dryRun: true,
@@ -307,8 +325,10 @@ describe("duet memory reflect — global prune", () => {
     async () => {
       const fixture = await createMemoryFixture();
       try {
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });
@@ -329,8 +349,10 @@ describe("duet memory reflect — global prune", () => {
       const fixture = await createMemoryFixture();
       try {
         await seedObservations(fixture, VELGRESS_DUPLICATES);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });
@@ -356,8 +378,10 @@ describe("duet memory reflect — global prune", () => {
       const fixture = await createMemoryFixture();
       try {
         await seedObservations(fixture, STRATEGIC_DECISIONS);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });
@@ -391,8 +415,10 @@ describe("duet memory reflect — global prune", () => {
         ]);
         const before = await readAllObservations(fixture.session);
         expect(before.observations.length).toBeGreaterThanOrEqual(30);
+        const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
+          snapshot,
           settings,
           model: memoryModel,
         });

@@ -18,10 +18,10 @@ import type { MemorySession } from "./session.js";
 import {
   appendObservation,
   bumpLastUsed,
-  readAllObservations,
   readSessionObservations,
   replaceAllObservations,
   replaceSessionObservations,
+  type SessionObservationsSnapshot,
 } from "./storage.js";
 import type {
   Observation,
@@ -868,6 +868,12 @@ export const GLOBAL_REFLECTION_SESSION_ID = "__global_reflection__";
 
 export interface ReflectAllOptions {
   session: MemorySession;
+  /**
+   * The snapshot to reflect. Callers (the CLI) read the pool once so they
+   * can also print stats before the model call; passing the snapshot in
+   * avoids a redundant second `SELECT` inside this function.
+   */
+  snapshot: SessionObservationsSnapshot;
   settings: ObservationalMemorySettings;
   model: string;
   /**
@@ -908,8 +914,7 @@ export interface ReflectAllResult {
 export async function reflectAllObservations(
   options: ReflectAllOptions,
 ): Promise<ReflectAllResult | undefined> {
-  const { session, settings, model, dryRun, onUsage } = options;
-  const snapshot = await readAllObservations(session);
+  const { session, snapshot, settings, model, dryRun, onUsage } = options;
   if (snapshot.observations.length === 0) {
     return undefined;
   }
@@ -955,13 +960,14 @@ export async function reflectAllObservations(
     content: reconciled,
     tags: ["observational-memory", "reflection", "global-prune"],
   };
-  if (!dryRun && reconciled.trim().length > 0) {
+  const written = !dryRun && reconciled.trim().length > 0;
+  if (written) {
     await replaceAllObservations(session, [reflection]);
   }
   return {
     before: snapshot.observations,
     reflection,
-    written: !dryRun && reconciled.trim().length > 0,
+    written,
   };
 }
 

@@ -56,15 +56,15 @@ export async function runMemoryReflectCommand(
     // Eager probe so corruption / lock errors surface before the model call.
     await session.withDb(async () => {});
 
-    const before = await readAllObservations(session);
-    if (before.observations.length === 0) {
+    const snapshot = await readAllObservations(session);
+    if (snapshot.observations.length === 0) {
       io.stdout.write(`No observations to reflect at ${options.dbPath}\n`);
       return;
     }
     const settings = resolveObservationalMemorySettings(options.effectiveContext);
     const targetTokens = options.targetTokens ?? settings.reflection.bufferActivation;
     io.stdout.write(
-      `Reflecting ${before.observations.length} observations (~${before.estimatedObservationTokens} tokens) ` +
+      `Reflecting ${snapshot.observations.length} observations (~${snapshot.estimatedObservationTokens} tokens) ` +
         `into <= ${targetTokens} tokens using ${options.model}` +
         (options.dryRun ? " [dry-run]" : "") +
         "\n",
@@ -72,6 +72,7 @@ export async function runMemoryReflectCommand(
 
     const result = await reflectAllObservations({
       session,
+      snapshot,
       settings,
       model: options.model,
       targetTokens,
