@@ -330,6 +330,59 @@ describe("Session", () => {
     expect(stored.state.followUpQueue).toEqual([{ message: "keep this follow-up" }]);
   });
 
+  testIfDocker(
+    "caps state.json by evicting oldest agent messages",
+    async () => {
+      // Build an agent transcript that pushes the persisted envelope past the
+      // 100 MB hard cap. Each message is ~6 MB of utf-8 text; 20 of them =
+      // ~120 MB before serialization overhead, which is comfortably over the
+      // limit so we can assert that the writer drops oldest messages.
+      const chunk = "x".repeat(6 * 1024 * 1024);
+      const oversizedMessages = Array.from({ length: 20 }, (_unused, index) => ({
+        role: "user" as const,
+        content: [{ type: "text" as const, text: `msg-${index} ${chunk}` }],
+      }));
+      const fatState: TurnState = {
+        ...turnState,
+        agent: {
+          status: "running",
+          messages: oversizedMessages as unknown as TurnState["agent"]["messages"],
+        },
+      };
+      const fatTerminal: TurnTerminalEvent = {
+        type: "complete",
+        status: "completed",
+        result: "stored",
+        state: fatState,
+      };
+
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
+      tempDirs.push(tempDir);
+      const runner = new FakeTurnRunner([fatTerminal]);
+      await mkdir(join(tempDir, "capped-session"), { recursive: true });
+      const session = new Session(
+        { model: "anthropic:claude-opus-4-7" },
+        { id: "capped-session", runner, sessionPath: join(tempDir, "capped-session") },
+      );
+
+      await session.start();
+      await session.prompt({ message: "please remember a lot" });
+      await session.waitForTerminal();
+
+      const path = join(tempDir, "capped-session", "state.json");
+      const stat = await import("node:fs/promises").then((m) => m.stat(path));
+      expect(stat.size).toBeLessThanOrEqual(100 * 1024 * 1024);
+      const stored = JSON.parse(await readFile(path, "utf-8"));
+      // Newest message must always survive a cap-enforced eviction.
+      const kept = stored.state.agent.messages as Array<{ content: { text: string }[] }>;
+      expect(kept.length).toBeLessThan(20);
+      expect(kept.length).toBeGreaterThan(0);
+      expect(kept.at(-1)?.content[0].text.startsWith("msg-19 ")).toBe(true);
+      expect(kept[0]?.content[0].text.startsWith("msg-0 ")).toBe(false);
+    },
+    30_000,
+  );
+
   testIfDocker("reads current state from the runner", async () => {
     const runner = new FakeTurnRunner([complete()]);
     const session = await createSession(runner);
