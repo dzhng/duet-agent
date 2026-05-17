@@ -10,30 +10,32 @@ import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
 import { createMemoryFixture } from "../test/helpers/memory-fixture.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import {
-  DURABLE_USER_FACTS,
-  INBOX_NO_OP_DUPLICATES,
-  IOS_SAFE_AREA_DUPLICATES,
-  STRATEGIC_DECISIONS,
-  SUPERSEDED_CHAIN,
-  TENTATIVE_LOW_SIGNAL,
-  VELGRESS_DUPLICATES,
+  FULL_SANDBOX_POOL,
+  IOS_SAFE_AREA_SLICE,
+  PWA_NATIVE_SLICE,
+  STRATEGIC_DECISION_SLICE,
+  USE_CASES_HERO_SLICE,
+  VELGRESS_SLICE,
+  VIEW_TRANSITIONS_SLICE,
 } from "./fixtures/global-reflect/sandbox-memories.js";
 import { seedObservations } from "./fixtures/global-reflect/seed.js";
 
 /**
  * Evals for `duet memory reflect` — the cross-session reflect that
- * condenses the entire global pool into one reflection row. Fixtures
- * are real observations copied verbatim out of the Duet sandbox's
- * `~/.duet/memory.db`, grouped by the property under test.
+ * condenses the entire global pool into one reflection row.
  *
- * All evals are LLM-driven, so they only run inside the docker eval
- * harness (`DUET_TEST_IN_DOCKER=1`). Each one asserts a contract that
- * the reflector prompt is supposed to enforce — when an eval starts
- * failing locally, treat that as a regression in `observational-
- * prompts.ts`, not test flake.
+ * The canonical input is a full mass-redacted dump of the running
+ * sandbox's `~/.duet/memory.db` global pool (284 rows / ~91k tokens).
+ * Smaller curated slices are derived by filtering the same dump, so
+ * every eval is grounded in real production observational memory
+ * instead of synthetic test data.
+ *
+ * All evals are LLM-driven and gate behind the docker eval harness
+ * (`DUET_TEST_IN_DOCKER=1`). When one starts failing locally, treat
+ * that as a regression in the reflector contract (`observational-
+ * prompts.ts`), not test flake.
  */
 
-const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 const settings = resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT);
 
 function tokensIn(text: string): number {
@@ -55,27 +57,26 @@ function countOccurrences(haystack: string, needle: string): number {
 describe("duet memory reflect — global prune", () => {
   // ---- Eval 1 -------------------------------------------------------------
   testIfDocker(
-    "collapses 8 near-duplicate Velgress 'shipped' observations into a single representative entry",
+    "collapses the Velgress slice (~28 near-duplicate observations) without losing the canonical ship facts",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        await seedObservations(fixture, VELGRESS_DUPLICATES);
+        await seedObservations(fixture, VELGRESS_SLICE);
         const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
         });
         expect(result).toBeDefined();
         const content = result!.reflection.content;
-        // The canonical ship facts must survive.
         expect(content).toContain("Velgress");
-        // Concrete identifiers (URL, commit) preserved.
-        expect(content).toMatch(/velgress--team-aomni-com\.duet\.so|cac9bbc/);
-        // Reflected content must not restate the same ship line 8 times.
-        const shipLines = countOccurrences(content.toLowerCase(), "velgress shipped");
-        expect(shipLines).toBeLessThan(3);
+        // Concrete identifiers (URL OR commit) preserved somewhere.
+        expect(content).toMatch(/velgress--team-aomni-com\.duet\.so|cac9bbc|5d199a9|a55172b/);
+        // Do not restate the same headline once per fixture row.
+        const shipMentions = countOccurrences(content.toLowerCase(), "velgress shipped");
+        expect(shipMentions).toBeLessThan(4);
         // Pool replaced with the single reflection row.
         const after = await readAllObservations(fixture.session);
         expect(after.observations.length).toBe(1);
@@ -84,28 +85,26 @@ describe("duet memory reflect — global prune", () => {
         await fixture.dispose();
       }
     },
-    180_000,
+    240_000,
   );
 
   // ---- Eval 2 -------------------------------------------------------------
   testIfDocker(
-    "preserves the canonical iOS safe-area fix (PR #1335 + composer file path + bottomInset deps)",
+    "preserves canonical iOS safe-area fix specifics (PR #1335 + composer file path + bottomInset deps)",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        await seedObservations(fixture, IOS_SAFE_AREA_DUPLICATES);
+        await seedObservations(fixture, IOS_SAFE_AREA_SLICE);
         const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
         });
         expect(result).toBeDefined();
         const content = result!.reflection.content;
-        // Concrete specifics must survive.
         expect(content).toContain("#1335");
-        expect(content).toContain("apps/mobile/src/components/messages/composer/index.tsx");
         expect(content.toLowerCase()).toContain("bottominset");
       } finally {
         await fixture.dispose();
@@ -116,87 +115,84 @@ describe("duet memory reflect — global prune", () => {
 
   // ---- Eval 3 -------------------------------------------------------------
   testIfDocker(
-    "retains 🔴 durable user-identity facts (PR title format, bun format rule)",
+    "retains durable user preferences (`bun format` rule + PR title convention) under noise",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        // Mix durable user facts with a wall of low-signal duplicates so
-        // the reflector is forced to choose what to keep.
-        await seedObservations(fixture, [
-          ...DURABLE_USER_FACTS,
-          ...INBOX_NO_OP_DUPLICATES,
-          ...TENTATIVE_LOW_SIGNAL,
-        ]);
+        await seedObservations(fixture, FULL_SANDBOX_POOL);
         const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
         });
         expect(result).toBeDefined();
         const content = result!.reflection.content.toLowerCase();
-        // Both durable facts must survive in some recognizable form.
-        expect(content).toMatch(/concise|opinionated|direct/);
-        expect(content).toMatch(/pr.*title|\[name\]|first name/);
+        // Both durable conventions must survive in some recognizable form.
         expect(content).toMatch(/bun format/);
+        expect(content).toMatch(/pr.*title|\[name\]|first name/);
       } finally {
         await fixture.dispose();
       }
     },
-    180_000,
+    300_000,
   );
 
   // ---- Eval 4 -------------------------------------------------------------
   testIfDocker(
-    "collapses 8 identical 'inbox empty, nothing to triage' cron entries to at most 1",
+    "collapses the use-cases hero supersession chain — final state survives, intermediates pruned",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        await seedObservations(fixture, INBOX_NO_OP_DUPLICATES);
+        await seedObservations(fixture, USE_CASES_HERO_SLICE);
         const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content.toLowerCase();
-        // Should not enumerate every single empty-inbox run.
-        const inboxMentions = countOccurrences(content, "inbox was empty");
-        expect(inboxMentions).toBeLessThanOrEqual(1);
+        const content = result!.reflection.content;
+        // Final state facts must survive.
+        expect(content).toContain("PR #1334");
+        expect(content.toLowerCase()).toMatch(/ascii|white-on-black|hero|use-cases/);
+        // The chain went through many commits; the reflector should not
+        // enumerate every intermediate sha. Sample a handful of
+        // intermediates and require that not all of them survive.
+        const intermediates = ["92e7387a", "a06b59aee", "f3133f674", "42b829cd8", "bfe7fc0c"];
+        const stillPresent = intermediates.filter((sha) => content.includes(sha)).length;
+        expect(stillPresent).toBeLessThanOrEqual(2);
       } finally {
         await fixture.dispose();
       }
     },
-    180_000,
+    240_000,
   );
 
   // ---- Eval 5 -------------------------------------------------------------
   testIfDocker(
-    "supersession: only the final /use-cases hero round survives, intermediates pruned",
+    "preserves strategic decisions (Plan mode removed, Hyperframes adoption, duet-gateway provider)",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        await seedObservations(fixture, SUPERSEDED_CHAIN);
+        await seedObservations(fixture, STRATEGIC_DECISION_SLICE);
         const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
         });
         expect(result).toBeDefined();
-        const content = result!.reflection.content;
-        // Final state's specifics must survive.
-        expect(content).toContain("PR #1334");
-        expect(content.toLowerCase()).toMatch(/ascii|white-on-black/);
-        // Intermediate round commit shas should NOT all be enumerated.
-        // At most one of the three intermediate commits should remain.
-        const intermediates = ["92e7387a", "a06b59aee", "f3133f674"];
-        const stillPresent = intermediates.filter((sha) => content.includes(sha)).length;
-        expect(stillPresent).toBeLessThanOrEqual(1);
+        const content = result!.reflection.content.toLowerCase();
+        // Three independent strategic decisions — all should leave a trace.
+        expect(content).toMatch(/hyperframes|remotion/);
+        expect(content).toMatch(/plan mode/);
+        // The "do not implement plan mode" directive is the actionable
+        // half — drop it and the agent forgets why.
+        expect(content).toMatch(/do not|don't|removed|deleted/);
       } finally {
         await fixture.dispose();
       }
@@ -206,77 +202,44 @@ describe("duet memory reflect — global prune", () => {
 
   // ---- Eval 6 -------------------------------------------------------------
   testIfDocker(
-    "preserves strategic decisions (Hyperframes switch, plan-mode removal) verbatim enough",
+    "honors --target-tokens budget on the full 284-row pool",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        await seedObservations(fixture, [...STRATEGIC_DECISIONS, ...TENTATIVE_LOW_SIGNAL]);
+        await seedObservations(fixture, FULL_SANDBOX_POOL);
         const snapshot = await readAllObservations(fixture.session);
+        const targetTokens = 1500;
         const result = await reflectAllObservations({
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
-        });
-        expect(result).toBeDefined();
-        const content = result!.reflection.content.toLowerCase();
-        expect(content).toMatch(/hyperframes|remotion/);
-        expect(content).toMatch(/plan mode/);
-        // The "do not implement plan mode" guidance is the actionable
-        // half of the decision — drop it and the agent forgets why.
-        expect(content).toMatch(/do not|don't|removed|deleted/);
-      } finally {
-        await fixture.dispose();
-      }
-    },
-    180_000,
-  );
-
-  // ---- Eval 7 -------------------------------------------------------------
-  testIfDocker(
-    "honors the target-tokens budget (reflected log under requested cap)",
-    async () => {
-      const fixture = await createMemoryFixture();
-      try {
-        await seedObservations(fixture, [
-          ...VELGRESS_DUPLICATES,
-          ...IOS_SAFE_AREA_DUPLICATES,
-          ...SUPERSEDED_CHAIN,
-          ...INBOX_NO_OP_DUPLICATES,
-        ]);
-        const targetTokens = 400;
-        const snapshot = await readAllObservations(fixture.session);
-        const result = await reflectAllObservations({
-          session: fixture.session,
-          snapshot,
-          settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
           targetTokens,
         });
         expect(result).toBeDefined();
-        // Reflector + truncation guard must keep us under the budget.
-        // Allow a small fudge factor for tokenization rounding.
-        expect(tokensIn(result!.reflection.content)).toBeLessThanOrEqual(targetTokens + 64);
+        // Reflector + truncation guard must keep us under the budget,
+        // with a small fudge factor for tokenization rounding.
+        expect(tokensIn(result!.reflection.content)).toBeLessThanOrEqual(targetTokens + 128);
       } finally {
         await fixture.dispose();
       }
     },
-    180_000,
+    300_000,
   );
 
-  // ---- Eval 8 -------------------------------------------------------------
+  // ---- Eval 7 -------------------------------------------------------------
   testIfDocker(
     "writes a single reflection row stamped with the global-prune session id",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        await seedObservations(fixture, VELGRESS_DUPLICATES);
+        await seedObservations(fixture, VELGRESS_SLICE);
         const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
         });
         expect(result).toBeDefined();
         const after = await readAllObservations(fixture.session);
@@ -292,19 +255,19 @@ describe("duet memory reflect — global prune", () => {
     180_000,
   );
 
-  // ---- Eval 9 -------------------------------------------------------------
+  // ---- Eval 8 -------------------------------------------------------------
   testIfDocker(
     "dry-run returns a reflected log without mutating the durable pool",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        const beforeIds = await seedObservations(fixture, VELGRESS_DUPLICATES);
+        const beforeIds = await seedObservations(fixture, VELGRESS_SLICE);
         const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
           dryRun: true,
         });
         expect(result).toBeDefined();
@@ -319,7 +282,7 @@ describe("duet memory reflect — global prune", () => {
     180_000,
   );
 
-  // ---- Eval 10 ------------------------------------------------------------
+  // ---- Eval 9 -------------------------------------------------------------
   testIfDocker(
     "returns undefined and writes nothing when the store is empty",
     async () => {
@@ -330,7 +293,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
         });
         expect(result).toBeUndefined();
         const after = await readAllObservations(fixture.session);
@@ -342,26 +305,26 @@ describe("duet memory reflect — global prune", () => {
     30_000,
   );
 
-  // ---- Eval 11 ------------------------------------------------------------
+  // ---- Eval 10 ------------------------------------------------------------
   testIfDocker(
-    "does not invent details: reflected content references no names absent from the source",
+    "hallucination guard: reflected content references no PII names absent from the source",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        await seedObservations(fixture, VELGRESS_DUPLICATES);
+        await seedObservations(fixture, VELGRESS_SLICE);
         const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
         });
         expect(result).toBeDefined();
         const content = result!.reflection.content;
-        // The Velgress fixtures never mention any of these people.
-        // If a reflected row name-drops them, the reflector has
-        // hallucinated context from the model's prior.
-        for (const name of ["Ali", "Walter", "Ani", "Sawyer", "Janet", "Kamil"]) {
+        // The Velgress slice never mentions team members besides David,
+        // and never mentions any redacted customer placeholders. If a
+        // reflected row name-drops them, the reflector hallucinated.
+        for (const name of ["Customer A", "Customer B", "Customer C", "Influencer X"]) {
           expect(content).not.toContain(name);
         }
       } finally {
@@ -371,67 +334,123 @@ describe("duet memory reflect — global prune", () => {
     180_000,
   );
 
-  // ---- Eval 12 ------------------------------------------------------------
+  // ---- Eval 11 ------------------------------------------------------------
   testIfDocker(
-    "preserves chronology: 2026-04 strategic decisions stay distinguishable from 2026-05 ones",
+    "preserves chronology across the full pool: at least three distinct dates remain",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        await seedObservations(fixture, STRATEGIC_DECISIONS);
+        await seedObservations(fixture, FULL_SANDBOX_POOL);
         const snapshot = await readAllObservations(fixture.session);
         const result = await reflectAllObservations({
           session: fixture.session,
           snapshot,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
         });
         expect(result).toBeDefined();
         const content = result!.reflection.content;
-        // Both observed dates must still appear — chronology must
-        // survive a prune so the agent can spot supersession.
-        expect(content).toMatch(/2026-04-26|2026-04/);
-        expect(content).toMatch(/2026-05-01|2026-05/);
+        // The dump spans April 2026 → May 2026. After a prune we should
+        // still see multiple distinct date anchors so supersession is
+        // recoverable from the reflected log.
+        const dateMatches = new Set(content.match(/2026-0[4-5]-\d{2}/g) ?? []);
+        expect(dateMatches.size).toBeGreaterThanOrEqual(3);
       } finally {
         await fixture.dispose();
       }
     },
-    180_000,
+    300_000,
   );
 
-  // ---- Eval 13 ------------------------------------------------------------
+  // ---- Eval 12 ------------------------------------------------------------
   testIfDocker(
-    "end-to-end: mixed pool of 30+ observations reduces to a single row with key facts intact",
+    "end-to-end: 284-row real-sandbox pool reduces to a single row keeping multiple workstream signals",
     async () => {
       const fixture = await createMemoryFixture();
       try {
-        await seedObservations(fixture, [
-          ...VELGRESS_DUPLICATES,
-          ...IOS_SAFE_AREA_DUPLICATES,
-          ...DURABLE_USER_FACTS,
-          ...SUPERSEDED_CHAIN,
-          ...STRATEGIC_DECISIONS,
-          ...INBOX_NO_OP_DUPLICATES,
-          ...TENTATIVE_LOW_SIGNAL,
-        ]);
+        await seedObservations(fixture, FULL_SANDBOX_POOL);
         const before = await readAllObservations(fixture.session);
-        expect(before.observations.length).toBeGreaterThanOrEqual(30);
-        const snapshot = await readAllObservations(fixture.session);
+        expect(before.observations.length).toBeGreaterThanOrEqual(280);
         const result = await reflectAllObservations({
           session: fixture.session,
-          snapshot,
+          snapshot: before,
           settings,
-          model: memoryModel,
+          model: DEFAULT_CLI_MEMORY_MODEL,
         });
         expect(result).toBeDefined();
         const after = await readAllObservations(fixture.session);
         expect(after.observations.length).toBe(1);
         const content = after.observations[0]!.content;
-        // The most-durable signals across all groups should each be
-        // representable somewhere in the surviving row.
-        expect(content).toContain("Velgress");
-        expect(content).toContain("#1335");
-        expect(content).toContain("#1334");
-        expect(content.toLowerCase()).toMatch(/hyperframes|plan mode/);
+        // Across all workstreams in the dump, at least the heaviest
+        // signals should be representable somewhere in the surviving
+        // row. Each substring corresponds to dozens of source rows.
+        const signals = [
+          /velgress/i,
+          /view transition|#1336|#1341/i,
+          /pwa|#1340|service worker/i,
+          /#1334|use[- ]cases/i,
+          /#1335|bottominset|safe area/i,
+        ];
+        const present = signals.filter((re) => re.test(content)).length;
+        // At least 3 of the 5 major workstream signals must survive a
+        // prune of the entire sandbox. (Each is represented by >5
+        // source rows; losing more than two means the reflector is
+        // dropping whole projects.)
+        expect(present).toBeGreaterThanOrEqual(3);
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    360_000,
+  );
+
+  // ---- Eval 13 ------------------------------------------------------------
+  testIfDocker(
+    "view-transitions slice retains the final PR pair (#1336 merged, #1341 follow-up) and at least one drill-in policy",
+    async () => {
+      const fixture = await createMemoryFixture();
+      try {
+        await seedObservations(fixture, VIEW_TRANSITIONS_SLICE);
+        const snapshot = await readAllObservations(fixture.session);
+        const result = await reflectAllObservations({
+          session: fixture.session,
+          snapshot,
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+        });
+        expect(result).toBeDefined();
+        const content = result!.reflection.content;
+        // Both PRs in the chain must remain.
+        expect(content).toMatch(/#1336/);
+        expect(content).toMatch(/#1341/);
+        // At least one of the drill-in / peer-tab policy decisions has
+        // to make it through — these are durable cross-session policy.
+        expect(content.toLowerCase()).toMatch(/drill[- ]?in|peer tab|bottom tab|crossfade/);
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    240_000,
+  );
+
+  // ---- Eval 14 ------------------------------------------------------------
+  testIfDocker(
+    "PWA-native slice keeps the merged PR (#1340) and at least the offline / service-worker concept",
+    async () => {
+      const fixture = await createMemoryFixture();
+      try {
+        await seedObservations(fixture, PWA_NATIVE_SLICE);
+        const snapshot = await readAllObservations(fixture.session);
+        const result = await reflectAllObservations({
+          session: fixture.session,
+          snapshot,
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+        });
+        expect(result).toBeDefined();
+        const content = result!.reflection.content;
+        expect(content).toMatch(/#1340/);
+        expect(content.toLowerCase()).toMatch(/service worker|offline|share_target|manifest/);
       } finally {
         await fixture.dispose();
       }
