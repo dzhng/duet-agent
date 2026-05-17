@@ -3,10 +3,11 @@ import type { SeedObservation } from "./sandbox-memories.js";
 
 /**
  * Seed a memory fixture with the given observations and back-date
- * their `created_at` / `last_used_at` to match `ageDays`. The reflect
- * pipeline does not currently use age for selection, but seeding
- * realistic timestamps lets evals exercise chronology preservation
- * and any future age-aware logic without rewriting fixtures.
+ * their `created_at` / `last_used_at` to match `ageDays`. The global
+ * reflect pipeline gates eligibility on `created_at <= now - minAgeMs`,
+ * so accurate ageDays values are load-bearing for evals that exercise
+ * the min-age gate — set them explicitly per-fixture when the eval
+ * cares about partitioning.
  */
 export async function seedObservations(
   fixture: MemoryFixture,

@@ -100,9 +100,16 @@ describe("planReflectionBatches", () => {
       batchTokens: 25, // fits 2 rows (10+10=20) but not 3 (30) per batch
     });
 
+    // Eligible rows packed chronologically (oldest → newest). Originals
+    // were created at ages 10..15 days, so reverse index order = oldest
+    // first.
     expect(batches).toHaveLength(3);
+    expect(batches.map((b) => b.observations.map((o) => o.id))).toEqual([
+      ["o5", "o4"],
+      ["o3", "o2"],
+      ["o1", "o0"],
+    ]);
     for (const batch of batches) {
-      expect(batch.observations).toHaveLength(2);
       expect(batch.estimatedTokens).toBeLessThanOrEqual(25);
     }
   });
