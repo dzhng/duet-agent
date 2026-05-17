@@ -53,7 +53,7 @@ function envelope(messages: AgentMessage[], extra: Partial<TurnState> = {}): Sto
 }
 
 describe("enforceStateSizeCap", () => {
-  test("no-op when payload already fits", () => {
+  test("no-op when payload already fits and has no integrity issues", () => {
     const messages: AgentMessage[] = [userMessage("hi"), userMessage("there")];
     const payload = envelope(messages);
     const result = enforceStateSizeCap(payload, STATE_FILE_MAX_BYTES);
@@ -206,5 +206,61 @@ describe("enforceStateSizeCap", () => {
 
   test("default cap is 100 MB", () => {
     expect(STATE_FILE_MAX_BYTES).toBe(100 * 1024 * 1024);
+  });
+
+  test("sweeps non-leading orphan tool-results from the kept transcript", () => {
+    // Pathological input: a tool-result whose tool-call id was never emitted
+    // by any surviving assistant. Front-eviction shouldn't produce this on
+    // its own, but the integrity sweep must scrub it so the next LLM call
+    // doesn't 400 on a half-pair.
+    const big = "k".repeat(2000);
+    const messages: AgentMessage[] = [
+      userMessage(`old ${big}`),
+      userMessage(`older ${big}`),
+      userMessage("recent user"),
+      // toolResult whose call id was never seen — simulate corrupted input.
+      toolResult("call_missing", "dangling"),
+      userMessage("latest"),
+    ];
+    const payload = envelope(messages);
+
+    // Cap large enough that no byte-eviction is needed; only the sweep fires.
+    const result = enforceStateSizeCap(payload, 1024 * 1024);
+
+    const kept = result.payload.state!.agent.messages as AgentMessage[];
+    expect(kept.find((m) => (m as { role: string }).role === "toolResult")).toBeUndefined();
+    expect(result.evicted).toBe(1);
+  });
+
+  test("keeps paired tool-call/tool-result intact when both survive eviction", () => {
+    // Build a transcript where eviction stops on an assistant tool-call, and
+    // its matching tool-result is the very next surviving message. The pair
+    // must remain intact — dropping the result would break the conversation.
+    const stale = "s".repeat(4000);
+    const messages: AgentMessage[] = [
+      userMessage(`drop me ${stale}`),
+      userMessage("new turn"),
+      assistantToolCall("call_keep"),
+      toolResult("call_keep", "result kept"),
+      userMessage("after tool"),
+    ];
+    const payload = envelope(messages);
+    const cap = 3 * 1024;
+
+    const result = enforceStateSizeCap(payload, cap);
+
+    const kept = result.payload.state!.agent.messages as AgentMessage[];
+    const hasCall = kept.some((m) => {
+      const content = (m as { content?: unknown[] }).content ?? [];
+      return content.some(
+        (b) =>
+          (b as { type?: string }).type === "toolCall" &&
+          (b as { toolCallId?: string }).toolCallId === "call_keep",
+      );
+    });
+    const hasResult = kept.some((m) => (m as { toolCallId?: string }).toolCallId === "call_keep");
+    // Either both survive together or both are evicted together. They never
+    // appear in mismatched halves.
+    expect(hasCall).toBe(hasResult);
   });
 });

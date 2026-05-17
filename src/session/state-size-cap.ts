@@ -83,19 +83,33 @@ export function enforceStateSizeCap<T extends StoredEnvelopeShape>(
   maxBytes: number = STATE_FILE_MAX_BYTES,
 ): EnforceResult<T> {
   let current: T = payload;
+  let evicted = 0;
+
+  // Integrity sweep on every write, before checking the byte cap. A corrupted
+  // input transcript (orphan tool result anywhere, not just at the head)
+  // wedges the next LLM call regardless of byte count. Cheap O(n) walk, no
+  // JSON.stringify.
+  const initialMessages = current.state?.agent?.messages ?? [];
+  if (initialMessages.length > 0) {
+    const sweep = dropOrphanToolResults([...initialMessages]);
+    if (sweep.dropped > 0) {
+      evicted += sweep.dropped;
+      current = rewriteMessages(current, sweep.messages);
+    }
+  }
+
   let serialized = serializeEnvelope(current);
   if (serialized.length <= maxBytes) {
-    return { payload: current, evicted: 0, bytes: serialized.length };
+    return { payload: current, evicted, bytes: serialized.length };
   }
 
   const messages = current.state?.agent?.messages;
   if (!messages || messages.length === 0) {
     // Nothing to trim — non-message bloat (e.g. enormous queuedCommands).
-    return { payload: current, evicted: 0, bytes: serialized.length };
+    return { payload: current, evicted, bytes: serialized.length };
   }
 
   let trimmed: AgentMessage[] = [...messages];
-  let evicted = 0;
 
   while (serialized.length > maxBytes && trimmed.length > MIN_RETAINED_MESSAGES) {
     trimmed.shift();
@@ -108,7 +122,65 @@ export function enforceStateSizeCap<T extends StoredEnvelopeShape>(
     serialized = serializeEnvelope(current);
   }
 
+  // Defensive integrity sweep. Front-eviction maintains tool-call/tool-result
+  // pairing as an invariant (results always follow their assistant call, so
+  // dropping the assistant naturally drops its trailing results via the head
+  // loop above), but providers reject any transcript with a half-pair, and
+  // we never want a disk safety net to be the thing that wedges a session.
+  // Scrub any orphan tool-result whose matching assistant tool-call id isn't
+  // in the kept transcript.
+  const sweptOrphans = dropOrphanToolResults(trimmed);
+  if (sweptOrphans.dropped > 0) {
+    evicted += sweptOrphans.dropped;
+    current = rewriteMessages(current, sweptOrphans.messages);
+    serialized = serializeEnvelope(current);
+  }
+
   return { payload: current, evicted, bytes: serialized.length };
+}
+
+/**
+ * Removes any `toolResult` whose `toolCallId` doesn't match a `toolCall` block
+ * emitted by a kept `assistant` message. Returns the cleaned list and how
+ * many were dropped. Walks left-to-right so a tool result is only kept if its
+ * call appeared earlier in the surviving transcript.
+ */
+function dropOrphanToolResults(messages: AgentMessage[]): {
+  messages: AgentMessage[];
+  dropped: number;
+} {
+  const seenCallIds = new Set<string>();
+  const kept: AgentMessage[] = [];
+  let dropped = 0;
+  for (const message of messages) {
+    const role = (message as { role?: string }).role;
+    if (role === "assistant") {
+      const content = (message as { content?: unknown }).content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (
+            block &&
+            typeof block === "object" &&
+            (block as { type?: string }).type === "toolCall"
+          ) {
+            const id = (block as { toolCallId?: string }).toolCallId;
+            if (typeof id === "string") seenCallIds.add(id);
+          }
+        }
+      }
+      kept.push(message);
+      continue;
+    }
+    if (role === "toolResult") {
+      const id = (message as { toolCallId?: string }).toolCallId;
+      if (typeof id === "string" && !seenCallIds.has(id)) {
+        dropped += 1;
+        continue;
+      }
+    }
+    kept.push(message);
+  }
+  return { messages: kept, dropped };
 }
 
 function rewriteMessages<T extends StoredEnvelopeShape>(payload: T, messages: AgentMessage[]): T {
