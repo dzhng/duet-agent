@@ -89,6 +89,29 @@ describe("enforceStateSizeCap", () => {
     expect(keptTexts.some((t) => t.startsWith("m0"))).toBe(false);
   });
 
+  test("drops a leading assistant message after eviction so the head is always user", () => {
+    // Anthropic and OpenAI reject conversations whose first message is
+    // `assistant`. Build a transcript where evicting the oldest user message
+    // would leave an assistant at the head; the cap must drop it too.
+    const huge = "a".repeat(8000);
+    const messages: AgentMessage[] = [
+      userMessage(`stale ${huge}`),
+      assistantToolCall("call_1"),
+      toolResult("call_1", "ok"),
+      userMessage("recent"),
+    ];
+    const payload = envelope(messages);
+    const cap = 4 * 1024;
+
+    const result = enforceStateSizeCap(payload, cap);
+
+    const kept = result.payload.state!.agent.messages as AgentMessage[];
+    expect(kept.length).toBe(1);
+    expect((kept[0] as { role: string }).role).toBe("user");
+    expect((kept[0] as { content: { text: string }[] }).content[0].text).toBe("recent");
+    expect(result.evicted).toBe(3);
+  });
+
   test("drops a leading orphan tool-result after eviction", () => {
     // Order: oversized assistant tool call, its tool result, then a small
     // user message. Evicting the assistant call would orphan the tool result,

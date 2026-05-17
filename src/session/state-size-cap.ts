@@ -45,14 +45,21 @@ export function serializeEnvelope(payload: StoredEnvelopeShape): string {
 }
 
 /**
- * Returns true when the message is a tool result. A leading tool result with no
- * preceding assistant tool call is orphaned: most providers reject it on
- * resume, and the duet-agent runner has no way to reconstruct the missing
- * call. We drop these alongside the eviction so the head of the transcript
- * stays valid.
+ * Returns true when the head of a transcript would be rejected by the next
+ * LLM call. Anthropic and OpenAI both require the first message in a
+ * conversation to be `user`. After eviction the head can be:
+ *
+ * - `toolResult` — orphaned (no preceding assistant tool call) and rejected
+ *   by every provider.
+ * - `assistant` — violates the "first message must be user" rule.
+ *
+ * Either one wedges the next turn on resume, so we keep dropping until the
+ * head is a user message (or we hit the retention floor).
  */
-function isToolResult(message: AgentMessage | undefined): boolean {
-  return message?.role === "toolResult";
+function isInvalidHead(message: AgentMessage | undefined): boolean {
+  if (!message) return false;
+  const role = (message as { role?: string }).role;
+  return role === "toolResult" || role === "assistant";
 }
 
 /**
@@ -93,7 +100,7 @@ export function enforceStateSizeCap<T extends StoredEnvelopeShape>(
   while (serialized.length > maxBytes && trimmed.length > MIN_RETAINED_MESSAGES) {
     trimmed.shift();
     evicted += 1;
-    while (trimmed.length > MIN_RETAINED_MESSAGES && isToolResult(trimmed[0])) {
+    while (trimmed.length > MIN_RETAINED_MESSAGES && isInvalidHead(trimmed[0])) {
       trimmed.shift();
       evicted += 1;
     }
