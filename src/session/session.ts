@@ -24,12 +24,6 @@ import type {
   TurnUsageFields,
 } from "../types/protocol.js";
 import type { StateMachinePollState, StateMachineTimerState } from "../types/state-machine.js";
-import {
-  STATE_FILE_MAX_BYTES,
-  enforceStateSizeCap,
-  serializeEnvelope,
-  type StoredEnvelopeShape,
-} from "./state-size-cap.js";
 
 /**
  * How often `scheduleWake` checks the wall clock against `wakeAt`. Polling — instead of relying
@@ -38,7 +32,13 @@ import {
  */
 const WAKE_POLL_INTERVAL_MS = 30_000;
 
-type StoredSessionFile = StoredEnvelopeShape;
+interface StoredSessionFile {
+  sessionId?: string;
+  updatedAt?: number;
+  state?: TurnState;
+  lastUsage?: TurnUsageFields;
+  sessionCostUsd?: number;
+}
 
 export interface SessionStartInput {
   /** Routing mode for subsequent prompts. Omit to use the session's configured default. */
@@ -613,16 +613,7 @@ export class Session {
     if (this.lastUsage !== undefined) {
       payload.lastUsage = this.lastUsage;
     }
-    const { payload: capped, evicted, bytes } = enforceStateSizeCap(payload, STATE_FILE_MAX_BYTES);
-    if (evicted > 0) {
-      // Log to stderr only — the runner already owns the event channel, and a
-      // persist-time warning shouldn't surface as a turn event. Users who want
-      // to inspect this can grep their session logs.
-      console.warn(
-        `[duet-agent] state.json exceeded ${STATE_FILE_MAX_BYTES} bytes; evicted ${evicted} oldest message(s) (now ${bytes} bytes) for session ${this.id}`,
-      );
-    }
-    await writeFile(this.sessionFilePath(), serializeEnvelope(capped), "utf-8");
+    await writeFile(this.sessionFilePath(), `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
   }
 
   private sessionFilePath(): string {

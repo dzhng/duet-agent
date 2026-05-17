@@ -2,6 +2,7 @@ import type { Skill, loadSkills } from "@earendil-works/pi-coding-agent";
 import type { GuardrailConfig } from "./guardrails.js";
 import type { ObservationalMemorySettingsInput } from "./memory.js";
 import type { TurnMode, TurnOptions } from "./protocol.js";
+import type { AutoStateCompactionOptions } from "../turn-runner/state-compaction.js";
 
 /** Directly mirrors pi-coding-agent's loadSkills options. */
 export type SkillDiscoveryOptions = Partial<Parameters<typeof loadSkills>[0]>;
@@ -60,4 +61,21 @@ export interface TurnRunnerConfig extends TurnOptions {
    * explicit `skills` or `skillPaths`.
    */
   skillDiscovery?: SkillDiscoveryOptions;
+  /**
+   * Auto state compaction. When enabled, the runner caps emitted/returned
+   * `TurnState` at `maxBytes` (default 100 MB) by evicting the oldest agent
+   * messages first. Applied inside `snapshotState`, so every event, terminal
+   * payload, and `getState()` return value is already trimmed before it
+   * leaves the runner. Down-stream persistence (e.g. `state.json`) inherits
+   * the cap for free.
+   *
+   * - `true` (or omitted? — see default) enables the cap at
+   *   `DEFAULT_STATE_MAX_BYTES`.
+   * - `false` disables compaction entirely.
+   * - Pass `{ maxBytes }` to override the ceiling for this runner.
+   *
+   * Off by default. Opt in per-runner so unit tests and short-lived sessions
+   * keep their full transcript on disk.
+   */
+  autoStateCompaction?: AutoStateCompactionOptions | boolean;
 }
