@@ -19,7 +19,9 @@ import {
   appendObservation,
   bumpLastUsed,
   readSessionObservations,
+  replaceAllObservations,
   replaceSessionObservations,
+  type SessionObservationsSnapshot,
 } from "./storage.js";
 import type {
   Observation,
@@ -240,13 +242,19 @@ const observerResultSchema = Type.Object({
     }),
   ),
   currentTask: Type.Optional(
-    Type.String({ description: "Current task state distilled for continuity." }),
+    Type.String({
+      description: "Current task state distilled for continuity.",
+    }),
   ),
   suggestedContinuation: Type.Optional(
-    Type.String({ description: "Hint for the actor's next response after context compression." }),
+    Type.String({
+      description: "Hint for the actor's next response after context compression.",
+    }),
   ),
   threadTitle: Type.Optional(
-    Type.String({ description: "Short 2-5 word title when thread title generation is requested." }),
+    Type.String({
+      description: "Short 2-5 word title when thread title generation is requested.",
+    }),
   ),
 });
 
@@ -571,7 +579,10 @@ export async function updateObservationalMemory(
     : { observations: [], estimatedObservationTokens: 0 };
   const globalPack = options.memory.getContextPack().global;
   const unobservedMessages = getUnobservedMessageTail(rawMessages, localSnapshot.observations);
-  const result: ObservationalMemoryUpdateResult = { observations: [], reflections: [] };
+  const result: ObservationalMemoryUpdateResult = {
+    observations: [],
+    reflections: [],
+  };
 
   if (unobservedMessages.length > 0) {
     emitMemoryActivity(options.onActivity, {
@@ -854,6 +865,347 @@ async function reflectObservations(
   // memory durable past a reflection event.
   await replaceSessionObservations(session, sessionId, [reflected]);
   return [reflected];
+}
+
+/**
+ * Sentinel session id used by `reflectAllObservations` to stamp the
+ * reflection rows produced from the cross-session pool. Lets the
+ * loader/UI distinguish a global prune-reflection from a per-session one
+ * without needing a new column.
+ */
+export const GLOBAL_REFLECTION_SESSION_ID = "__global_reflection__";
+
+/**
+ * Default minimum age, in days, that a raw observation must reach before
+ * the global reflect prune (`duet memory reflect`) is allowed to fold it
+ * into a reflection row and delete the original.
+ *
+ * --- Why a min-age gate exists (read before changing) -----------------
+ *
+ * The global prune *deletes* the eligible source rows after condensing
+ * them. If a long-lived session is later resumed and finds its own local
+ * observation rows wiped, the runner's `getUnobservedMessageTail` loses
+ * its observation-group range markers — so the next observer call treats
+ * the entire session tail as unobserved and re-observes only the newest
+ * `FIXED_OBSERVER_BUDGETS.maxTranscriptTokens` (~35k tokens) of raw
+ * messages. Everything older than that newest slice is silently dropped
+ * by `trimMessagesToTranscriptBudget`, which walks newest→oldest. For
+ * sessions that had accumulated rich local condensation, that older
+ * content is genuinely lost: the actor's wire eviction horizon already
+ * shaped those messages off-wire, so they cannot be re-observed from the
+ * raw tail. The global reflection row preserves cross-session themes,
+ * but not the session-specific specifics.
+ *
+ * 3 days is the line where the cost-of-loss flips. After ~3 days a human
+ * no longer remembers session specifics anyway, only the higher-level
+ * shape — which is what the reflection row captures. Up to 3 days, the
+ * specifics still matter for resume continuity, so we hold those rows
+ * untouched.
+ *
+ * --- Alternatives considered and rejected (May 2026) ------------------
+ *
+ *   1. *Append-only with high-water-mark watermark.* Never delete; just
+ *      keep appending reflection rows tagged `global-prune`. Recall
+ *      ranks them above raw rows via `reflectionBias`. Pro: zero risk of
+ *      resume info loss. Con: the pool grows unbounded over time and we
+ *      still pay retrieval cost over every stale raw row that the
+ *      reflection already supersedes. Rejected because the user
+ *      explicitly wanted the pool to stay small.
+ *
+ *   2. *Per-session reflect+replace, batched by `session_id`.* Preserves
+ *      attribution. Rejected because the whole point of the global
+ *      prune is *cross-session* dedup; grouping by session forfeits
+ *      that. Used only by the in-session reflector
+ *      (`reflectObservations`).
+ *
+ *   3. *Reflect on existing reflections too.* Pro: keeps total row count
+ *      bounded across many reflect runs. Rejected because reflections
+ *      of reflections collapse already-condensed text into vaguer text,
+ *      losing specificity each pass. The current shape preserves rows
+ *      where `kind === "reflection"` (skipped as input and skipped from
+ *      the deletion set), so older reflections accumulate but never
+ *      degrade. A separate `duet memory compact` can later GC stale
+ *      reflections by `lastUsedAt`.
+ *
+ *   4. *Smaller min-age (e.g. 1 day) for faster pruning.* Rejected
+ *      because typical bursty work patterns (a 2-day investigation, a
+ *      multi-day refactor) would lose mid-thread specifics exactly when
+ *      a resume is most likely to need them.
+ */
+export const DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS = 3;
+export const DEFAULT_GLOBAL_REFLECT_MIN_AGE_MS =
+  DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS * 24 * 60 * 60 * 1000;
+
+export interface ReflectAllOptions {
+  session: MemorySession;
+  /**
+   * The snapshot to reflect. Callers (the CLI) read the pool once so they
+   * can also print stats before the model call; passing the snapshot in
+   * avoids a redundant second `SELECT` inside this function.
+   */
+  snapshot: SessionObservationsSnapshot;
+  settings: ObservationalMemorySettings;
+  model: string;
+  /**
+   * Override the target token budget for the reflected log produced by
+   * each batch's reflector call. Defaults to
+   * `settings.reflection.bufferActivation` so each batch behaves the
+   * same way an in-session reflection does: condense to roughly the
+   * half-trigger budget, leaving headroom before the next reflection.
+   */
+  targetTokens?: number;
+  /**
+   * Maximum input tokens packed into a single reflector batch. Defaults
+   * to `settings.reflection.observationTokens` — the same trigger the
+   * in-session reflector uses, so each global-prune batch is the size
+   * of one natural reflection round. Multiple batches fire sequentially
+   * when the eligible pool is larger; cross-session dedup still works
+   * because batches are packed in chronological order, not grouped by
+   * `sessionId`.
+   */
+  batchTokens?: number;
+  /**
+   * Minimum age, in milliseconds, before a non-reflection row is
+   * eligible for prune. Defaults to {@link DEFAULT_GLOBAL_REFLECT_MIN_AGE_MS}.
+   * See the {@link DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS} doc for the
+   * tradeoffs behind this default.
+   */
+  minAgeMs?: number;
+  /**
+   * Override of "now" for eligibility comparison. Defaults to
+   * `Date.now()`. Tests pin this so the cutoff is deterministic.
+   */
+  now?: number;
+  /**
+   * When true, do not write the reflected rows back. The function still
+   * runs the reflector model(s) and returns the result so callers can
+   * preview the prune (`duet memory reflect --dry-run`).
+   */
+  dryRun?: boolean;
+  onUsage?: (usage: Usage) => void;
+}
+
+export interface ReflectAllResult {
+  /** Observations as they existed before the reflect call. */
+  before: Observation[];
+  /**
+   * Rows preserved verbatim — either too fresh (younger than
+   * `minAgeMs`) or already reflection rows. These are written back
+   * untouched.
+   */
+  preserved: Observation[];
+  /**
+   * Raw observation rows that were eligible for condensation and were
+   * folded into one of `reflections`. When `written` is true, these
+   * rows have been deleted from the durable store.
+   */
+  eligible: Observation[];
+  /** One reflection row per batch processed. Empty if nothing was eligible. */
+  reflections: Observation[];
+  /** Whether the pool was rewritten (false on dryRun or when reflections is empty). */
+  written: boolean;
+}
+
+/** Pure-plan output of {@link planReflectionBatches}. */
+export interface ReflectionBatch {
+  observations: Observation[];
+  estimatedTokens: number;
+}
+
+export interface PlanReflectionBatchesOptions {
+  /** Observations older than this (`createdAt <= cutoff`) are eligible. */
+  cutoff: number;
+  /** Maximum content tokens packed into a single batch. */
+  batchTokens: number;
+}
+
+/**
+ * Partition a snapshot into rows preserved verbatim vs eligible batches
+ * fed to the reflector. Pure function — no I/O, no model calls — so the
+ * batching/eligibility rules can be unit-tested without docker/LLM.
+ *
+ * Rules:
+ *   - `kind === "reflection"` rows are always preserved (we never
+ *     reflect on reflections; see option 3 in the
+ *     {@link DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS} comment).
+ *   - Non-reflection rows with `createdAt > cutoff` are preserved (too
+ *     fresh; resume-info-loss risk too high).
+ *   - Everything else is eligible. Eligible rows are sorted by
+ *     `createdAt` ascending and greedily packed into batches whose
+ *     total `estimateTokens(content)` stays ≤ `batchTokens`. A single
+ *     oversize row is allowed to occupy its own batch so we never drop
+ *     rows just because they exceed the cap on their own.
+ */
+export function planReflectionBatches(
+  observations: readonly Observation[],
+  options: PlanReflectionBatchesOptions,
+): { preserved: Observation[]; batches: ReflectionBatch[] } {
+  const preserved: Observation[] = [];
+  const eligible: Observation[] = [];
+  for (const observation of observations) {
+    if (observation.kind === "reflection") {
+      preserved.push(observation);
+      continue;
+    }
+    if (observation.createdAt > options.cutoff) {
+      preserved.push(observation);
+      continue;
+    }
+    eligible.push(observation);
+  }
+  eligible.sort((a, b) => a.createdAt - b.createdAt);
+
+  const batches: ReflectionBatch[] = [];
+  let current: Observation[] = [];
+  let currentTokens = 0;
+  for (const observation of eligible) {
+    const tokens = estimateTokens(observation.content);
+    // Roll over to a new batch when adding this row would exceed the
+    // cap — unless the current batch is empty, in which case we keep
+    // the (oversize) row so it isn't silently dropped.
+    if (current.length > 0 && currentTokens + tokens > options.batchTokens) {
+      batches.push({ observations: current, estimatedTokens: currentTokens });
+      current = [];
+      currentTokens = 0;
+    }
+    current.push(observation);
+    currentTokens += tokens;
+  }
+  if (current.length > 0) {
+    batches.push({ observations: current, estimatedTokens: currentTokens });
+  }
+  return { preserved, batches };
+}
+
+/**
+ * Cross-session reflect: condense each eligible batch of raw
+ * observations through the reflector and replace the eligible rows
+ * with one reflection row per batch. Preserved rows (fresh
+ * observations and existing reflections) survive verbatim. Used by
+ * `duet memory reflect` to prune the global memory store.
+ *
+ * Unlike `reflectObservations`, this can touch rows across all
+ * sessions — the caller is asking for a global prune, not a
+ * per-session compaction. See {@link DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS}
+ * for the resume-info-loss tradeoffs that motivated the min-age gate
+ * and the "never reflect on reflections" rule.
+ *
+ * Returns `undefined` only when there is nothing eligible *and* nothing
+ * preserved (empty store). When the store has only fresh/reflection
+ * rows, returns a result with empty `eligible`/`reflections` and
+ * `written: false` so callers can report "nothing to prune" without
+ * conflating it with an empty store.
+ */
+export async function reflectAllObservations(
+  options: ReflectAllOptions,
+): Promise<ReflectAllResult | undefined> {
+  const { session, snapshot, settings, model, dryRun, onUsage } = options;
+  if (snapshot.observations.length === 0) {
+    return undefined;
+  }
+
+  const minAgeMs = options.minAgeMs ?? DEFAULT_GLOBAL_REFLECT_MIN_AGE_MS;
+  const now = options.now ?? Date.now();
+  const cutoff = now - minAgeMs;
+  const batchTokens = options.batchTokens ?? settings.reflection.observationTokens;
+  const targetTokens = options.targetTokens ?? settings.reflection.bufferActivation;
+
+  const { preserved, batches } = planReflectionBatches(snapshot.observations, {
+    cutoff,
+    batchTokens,
+  });
+
+  if (batches.length === 0) {
+    return {
+      before: snapshot.observations,
+      preserved,
+      eligible: [],
+      reflections: [],
+      written: false,
+    };
+  }
+
+  const eligible = batches.flatMap((batch) => batch.observations);
+  const reflections: Observation[] = [];
+  for (const batch of batches) {
+    const reflection = await reflectBatch({
+      batch,
+      settings,
+      model,
+      targetTokens,
+      onUsage,
+    });
+    if (reflection) {
+      reflections.push(reflection);
+    }
+  }
+
+  const written = !dryRun && reflections.length > 0;
+  if (written) {
+    // Single-write replacement keeps the storage transaction atomic:
+    // eligible rows disappear and new reflection rows appear together,
+    // never leaving a peer CLI looking at a half-pruned pool.
+    await replaceAllObservations(session, [...preserved, ...reflections]);
+  }
+
+  return {
+    before: snapshot.observations,
+    preserved,
+    eligible,
+    reflections,
+    written,
+  };
+}
+
+async function reflectBatch(args: {
+  batch: ReflectionBatch;
+  settings: ObservationalMemorySettings;
+  model: string;
+  targetTokens: number;
+  onUsage?: (usage: Usage) => void;
+}): Promise<Observation | undefined> {
+  const { batch, settings, model, targetTokens, onUsage } = args;
+  const source = batch.observations.map((observation) => observation.content).join("\n\n");
+  const rendered = renderObservationGroupsForReflection(source) ?? source;
+  const result = await generateStructuredOutput({
+    model,
+    tool: reflectorResultTool,
+    systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
+    prompt: buildReflectorPrompt(rendered, targetTokens),
+    onUsage,
+  });
+  const text = await enforceObservationTokenBudget({
+    text: result.observations,
+    targetTokens,
+    retry: async (actualTokens) => {
+      const retryResult = await generateStructuredOutput({
+        model,
+        tool: reflectorResultTool,
+        systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
+        prompt: buildReflectorPrompt(rendered, targetTokens, { actualTokens }),
+        onUsage,
+      });
+      return retryResult.observations;
+    },
+  });
+  if (!text || text.trim().length === 0) {
+    return undefined;
+  }
+  const reconciled = reconcileObservationGroupsFromReflection(text, source) ?? text;
+  const now = Date.now();
+  return {
+    id: createMemoryId(),
+    createdAt: now,
+    lastUsedAt: now,
+    kind: "reflection",
+    sessionId: GLOBAL_REFLECTION_SESSION_ID,
+    observedDate: new Date().toISOString().slice(0, 10),
+    timeOfDay: new Date().toISOString().slice(11, 16),
+    priority: "high",
+    source: { kind: "system" },
+    content: reconciled,
+    tags: ["observational-memory", "reflection", "global-prune"],
+  };
 }
 
 async function observe(

@@ -203,6 +203,60 @@ export interface SessionObservationsSnapshot {
   estimatedObservationTokens: number;
 }
 
+/**
+ * Read every observation in the durable store, regardless of session id,
+ * in chronological order. Used by the cross-session reflect command
+ * (`duet memory reflect`) which condenses the entire global pool into a
+ * single reflection row. Returns an empty snapshot when the cross-process
+ * lock could not be acquired.
+ */
+export async function readAllObservations(
+  session: MemorySession,
+): Promise<SessionObservationsSnapshot> {
+  const result = await session.withDb(async (db) => {
+    const queryResult = await db.query<ObservationRow>(
+      `SELECT id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
+              relative_date, time_of_day, priority, source_json, content, tags_json
+       FROM observations
+       ORDER BY created_at ASC`,
+    );
+    const observations = queryResult.rows.map(rowToObservation);
+    return {
+      observations,
+      estimatedObservationTokens: estimateTokens(
+        observations.map((observation) => observation.content).join("\n"),
+      ),
+    };
+  });
+  return result ?? { observations: [], estimatedObservationTokens: 0 };
+}
+
+/**
+ * Replace the entire observation pool (across all sessions) with the given
+ * list. Used by `reflectAllObservations` — the cross-session reflect — which
+ * is the only legitimate caller. Session-scoped reflection uses
+ * `replaceSessionObservations` instead so it does not destroy other
+ * sessions' rows. No-op when the cross-process lock could not be acquired.
+ */
+export async function replaceAllObservations(
+  session: MemorySession,
+  observations: readonly Observation[],
+): Promise<void> {
+  const ids = observations.map((observation) => observation.id);
+  await session.withDb(async (db) => {
+    await db.transaction(async (tx) => {
+      if (ids.length === 0) {
+        await tx.query("DELETE FROM observations");
+      } else {
+        await tx.query("DELETE FROM observations WHERE NOT (id = ANY($1::text[]))", [ids]);
+      }
+      for (const observation of observations) {
+        await upsertObservation(tx, observation);
+      }
+    });
+  });
+}
+
 export async function readSessionObservations(
   session: MemorySession,
   sessionId: string,
