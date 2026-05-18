@@ -419,6 +419,8 @@ export interface ObservationalMemoryUpdateOptions {
    * read back weeks later or across repos.
    */
   cwd?: string;
+  /** Optional wall-clock override stamped onto the observation row. Used by the longmemeval harness to anchor observations to haystack session dates instead of Date.now(). */
+  now?: Date;
   onUsage?: (usage: Usage) => void;
   onActivity?: (event: ObservationalMemoryActivityEvent) => void;
 }
@@ -640,6 +642,7 @@ export async function updateObservationalMemory(
       sessionId: options.sessionId,
       model: options.actorModel,
       ...(options.cwd ? { cwd: options.cwd } : {}),
+      ...(options.now ? { now: options.now } : {}),
       onUsage: options.onUsage,
     });
     if (observation) {
@@ -772,6 +775,8 @@ interface ActivateObservationsArgs {
   model: string;
   /** Working directory recorded on the observation-group wrapper and surfaced to the observer prompt. */
   cwd?: string;
+  /** Optional wall-clock override used to stamp the resulting observation. Benchmarks (longmemeval) pass haystack dates here so temporal-reasoning works. */
+  now?: Date;
   onUsage?: (usage: Usage) => void;
 }
 
@@ -809,11 +814,12 @@ async function activateObservations(
   }
 
   const range = `${args.messages[0]?.id ?? "unknown"}:${args.messages[args.messages.length - 1]?.id ?? "unknown"}`;
+  const stamp = (args.now ?? new Date()).toISOString();
   const observation = await appendObservation(args.session, {
     kind: "observation",
     ...(args.sessionId !== undefined ? { sessionId: args.sessionId } : {}),
-    observedDate: new Date().toISOString().slice(0, 10),
-    timeOfDay: new Date().toISOString().slice(11, 16),
+    observedDate: stamp.slice(0, 10),
+    timeOfDay: stamp.slice(11, 16),
     priority: inferPriority(observations.observations),
     source: { kind: "system" },
     content: wrapInObservationGroup(
