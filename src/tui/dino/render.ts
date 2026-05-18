@@ -36,10 +36,10 @@ export function renderCollapsedRow(highScore: number): string {
 /** Full 12-row expanded panel. The phase determines which overlay (idle
  *  splash, countdown numerals, dim "agent needs you" hint, gameover
  *  banner) is composited on top of the playfield. */
-export function renderExpanded(state: GameState): string[] {
+export function renderExpanded(state: GameState, gameFocused: boolean = true): string[] {
   const rows = buildPlayfield(state);
   const title = renderTitle(state);
-  const statusRow = renderStatusRow(state);
+  const statusRow = renderStatusRow(state, gameFocused);
   const overlay = renderOverlay(state);
   if (overlay) {
     // Overlay replaces a centered slice of the playfield rows; the dino
@@ -56,12 +56,19 @@ function renderTitle(state: GameState): string {
   return `  duet dino  ·  HI ${hi}  ·  ${score}`;
 }
 
-function renderStatusRow(state: GameState): string {
+function renderStatusRow(state: GameState, gameFocused: boolean): string {
+  // When the user has Ctrl-G'd into typing mode the panel stays open
+  // and the game keeps animating, but the spacebar belongs to the
+  // composer. The status row advertises how to take the keys back so
+  // the mode is discoverable.
+  if (!gameFocused) {
+    return "  typing mode  ·  Ctrl-G to play  ·  Ctrl-G again to close";
+  }
   switch (state.phase.kind) {
     case "idle":
-      return "  press space to start  ·  Ctrl-G to close";
+      return "  press ↑ to start  ·  Ctrl-G for typing mode";
     case "running":
-      return "  space / ↑ to jump  ·  Ctrl-G to close";
+      return "  ↑ to jump  ·  Ctrl-G for typing mode";
     case "grace":
       return "  …";
     case "countdown":
@@ -69,7 +76,7 @@ function renderStatusRow(state: GameState): string {
     case "frozen":
       return "  ▲ agent needs you — answer above";
     case "gameover":
-      return "  game over  ·  space to retry  ·  Ctrl-G to close";
+      return "  game over  ·  ↑ to retry  ·  Ctrl-G for typing mode";
   }
 }
 

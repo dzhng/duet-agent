@@ -179,6 +179,21 @@ export function freezeRun(state: GameState): GameState {
   };
 }
 
+/** Decide what should happen when the user re-expands the dino panel
+ *  while a run is in progress. Three outcomes:
+ *    - "countdown": agent-induced freeze → run the 3-2-1 + grace gap.
+ *    - "run":       user-induced collapse → instant resume.
+ *    - "noop":      nothing in flight (idle/gameover/countdown/grace/running).
+ *  Extracted as a pure helper so the panel's toggle flow is unit-testable
+ *  without spinning up a CliRenderer. */
+export function expandResumeKind(
+  phase: GameState["phase"],
+  frozenByAgent: boolean,
+): "countdown" | "run" | "noop" {
+  if (phase.kind !== "frozen") return "noop";
+  return frozenByAgent ? "countdown" : "run";
+}
+
 /** Begin the 3-2-1 countdown after an automatic freeze ends. The countdown
  *  itself counts down by tick in `tick.ts` so this just seeds the phase. */
 export function beginCountdown(state: GameState, ticksPerSecond: number): GameState {

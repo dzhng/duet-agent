@@ -38,10 +38,11 @@ export interface KeyHandlerDeps {
   onEscape(): void;
   /** Dispatch the composer text with behavior:"steer" (Ctrl+Enter). */
   onSteer(): void;
-  /** Dino "while-you-wait" panel. The panel always owns Ctrl-G (toggle).
-   *  Game keystrokes (space, ArrowUp) are forwarded while the panel is
-   *  expanded AND the composer is empty, so an empty prompt at rest is
-   *  fully playable but a half-typed follow-up keeps its spacebar. */
+  /** Dino "while-you-wait" panel. The panel always owns Ctrl-G, which
+   *  cycles collapsed → expanded+game-focused → expanded+composer-focused
+   *  → collapsed. The only game keystroke is ArrowUp; the spacebar is
+   *  always the composer's so a half-typed follow-up can coexist with
+   *  the running game. Ctrl-G hands the up-arrow back and forth. */
   dinoPanel: DinoPanel;
 }
 
@@ -135,15 +136,15 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
       return;
     }
 
-    // Forward game keys (space, ArrowUp) to the dino panel whenever the
-    // panel is expanded AND the composer is empty. The empty-composer
-    // gate is what makes idle dogfooding work: with no typed text the
-    // spacebar belongs to the game, but the moment the user starts
-    // composing a follow-up their spaces go back into the textarea.
-    // We deliberately do not gate on `statusController.isRunning()` so
-    // the game is fully testable at rest.
-    if (dinoPanel.isExpanded() && inputField.plainText.length === 0) {
-      if ((key.name === "space" || key.name === "up") && !key.ctrl && !key.meta && !key.super) {
+    // Forward ArrowUp to the dino panel whenever it is expanded AND
+    // game-focused. Spacebar is deliberately not a game key: users
+    // frequently type a follow-up while the game keeps running, and
+    // letting the composer always own space avoids the awkward case of
+    // a stray jump while typing. We deliberately do not gate on
+    // `statusController.isRunning()` so the game is fully testable at
+    // rest.
+    if (dinoPanel.isGameFocused()) {
+      if (key.name === "up" && !key.ctrl && !key.meta && !key.super && !key.shift) {
         if (dinoPanel.handleKey(key.name)) {
           key.preventDefault();
           return;

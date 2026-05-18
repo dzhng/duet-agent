@@ -7,9 +7,10 @@ import { JUMP_VELOCITY, startRun } from "./state.js";
 export type DinoAction = "jump" | "start" | "ignore";
 
 /** Names of keys that, when game is in a state that accepts input, trigger
- *  a jump. Matches Chrome's dino: Space and ArrowUp. We allow `up` as a
- *  fallback because OpenTUI normalizes the arrow key to `name: "up"`. */
-const JUMP_KEYS = new Set(["space", "up"]);
+ *  a jump. Arrow-only on purpose: the spacebar belongs to the composer so
+ *  the user can type a follow-up while the game keeps running in the
+ *  background. OpenTUI normalizes ArrowUp to `name: "up"`. */
+const JUMP_KEYS = new Set(["up"]);
 
 /** Returns the action implied by a key press for the current game state.
  *  Returns `"ignore"` for keys the panel should let bubble (so e.g. typing

@@ -22,6 +22,7 @@ import {
   beginCountdown,
   beginGrace,
   clampFieldWidth,
+  expandResumeKind,
   freezeRun,
   initialState,
   setFieldWidth,
@@ -68,15 +69,18 @@ describe("dino state reducers", () => {
 });
 
 describe("dino input router", () => {
-  test("space starts a run from idle", () => {
+  test("up starts a run from idle, space does not", () => {
     const idle = initialState(0);
-    expect(actionForKey(idle, "space")).toBe("start");
+    expect(actionForKey(idle, "up")).toBe("start");
+    // Arrow-only controls: the spacebar is owned by the composer.
+    expect(actionForKey(idle, "space")).toBe("ignore");
     expect(applyStart(idle).phase.kind).toBe("running");
   });
 
-  test("space jumps while running, but only from the ground", () => {
+  test("up jumps while running, but only from the ground", () => {
     const running = startRun(initialState(0));
-    expect(actionForKey(running, "space")).toBe("jump");
+    expect(actionForKey(running, "up")).toBe("jump");
+    expect(actionForKey(running, "space")).toBe("ignore");
     const jumped = applyJump(running);
     expect(jumped.dinoVy).toBeGreaterThan(0);
     // Second press mid-jump is rejected.
@@ -86,9 +90,9 @@ describe("dino input router", () => {
 
   test("countdown and frozen phases swallow input", () => {
     const counting = beginCountdown(startRun(initialState(0)), TICKS_PER_SECOND);
-    expect(actionForKey(counting, "space")).toBe("ignore");
+    expect(actionForKey(counting, "up")).toBe("ignore");
     const frozen = freezeRun(startRun(initialState(0)));
-    expect(actionForKey(frozen, "space")).toBe("ignore");
+    expect(actionForKey(frozen, "up")).toBe("ignore");
   });
 });
 
@@ -237,6 +241,19 @@ describe("dino responsive width", () => {
   test("panel surfaces the hint when busy + collapsed and full game when busy + expanded", () => {
     expect(panelVisibleRowCount(false, true)).toBe(COLLAPSED_ROWS);
     expect(panelVisibleRowCount(true, true)).toBe(EXPANDED_ROWS);
+  });
+
+  test("expandResumeKind picks countdown after an agent freeze and run after a manual collapse", () => {
+    // Repro for the answer-then-Ctrl-G bug: the agent freezes the run on
+    // needs-user; when the panel was collapsed at the moment the agent
+    // came back, `resume()` no-op'd. The user then re-opens with Ctrl-G
+    // and expects the 3-2-1 countdown to take it from there.
+    expect(expandResumeKind({ kind: "frozen" }, true)).toBe("countdown");
+    expect(expandResumeKind({ kind: "frozen" }, false)).toBe("run");
+    // Nothing in flight → toggling open must not invent a phase.
+    expect(expandResumeKind({ kind: "idle" }, true)).toBe("noop");
+    expect(expandResumeKind({ kind: "running" }, false)).toBe("noop");
+    expect(expandResumeKind({ kind: "gameover" }, false)).toBe("noop");
   });
 
   test("first obstacle on a narrow field still spawns at the right edge", () => {

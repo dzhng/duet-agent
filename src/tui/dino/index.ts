@@ -21,7 +21,14 @@ import { actionForKey, applyJump, applyStart } from "./input.js";
 import { loadHighScore, saveHighScore } from "./persistence.js";
 import { EXPANDED_ROWS, renderCollapsedRow, renderExpanded } from "./render.js";
 import { panelVisibleRowCount } from "./visibility.js";
-import { beginCountdown, freezeRun, initialState, setFieldWidth, type GameState } from "./state.js";
+import {
+  beginCountdown,
+  expandResumeKind,
+  freezeRun,
+  initialState,
+  setFieldWidth,
+  type GameState,
+} from "./state.js";
 import { tick } from "./tick.js";
 
 /** Horizontal chrome around the dino panel: the panel sits inside the main
@@ -46,7 +53,12 @@ export interface DinoPanel {
   readonly view: BoxRenderable;
   /** True when the panel is in its 12-row expanded form. */
   isExpanded(): boolean;
-  /** Toggle between expanded and collapsed. Persists state. */
+  /** True when game keys (space, ArrowUp) should route to the dino
+   *  panel instead of the composer. Only meaningful while expanded. */
+  isGameFocused(): boolean;
+  /** Cycle through: collapsed → expanded+playing → expanded+typing →
+   *  collapsed. Lets the user keep a half-typed follow-up in the
+   *  composer and still toggle game keys back on without erasing it. */
   toggle(): void;
   /** Agent went busy → resume the game with countdown + grace. */
   resume(): void;
@@ -70,6 +82,13 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   // We do not persist expanded state across sessions or across busy
   // cycles — the simpler contract is more predictable.
   let expanded = false;
+  // When expanded, tracks whether game keys (space, ArrowUp) belong to
+  // the dino or to the composer. Defaults to true on every expand so
+  // Ctrl-G straight into a playable game; flipping to false via a
+  // second Ctrl-G keeps the panel visible but releases the keys back
+  // to the textarea so the user can type a follow-up without
+  // collapsing the game.
+  let gameFocused = true;
   let state: GameState = initialState(loadHighScore(), computeFieldWidth(renderer));
   // Tracks whether the most recent freeze was caused by the agent needing
   // input (so resume runs the 3-2-1 + grace gap) vs. a manual collapse
@@ -79,6 +98,12 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   // ("▶ Ctrl-G to play") only renders while this is true; at idle the
   // panel is invisible and reserves no rows.
   let agentBusy = false;
+  // Auto-expand the panel the first time the agent goes busy in this
+  // session so the game is visible by default. Ctrl-G is otherwise an
+  // easter egg — surfacing the full panel once teaches the user it's
+  // there. Every subsequent busy cycle starts collapsed again so we
+  // don't fight users who chose to dismiss it.
+  let hasAutoExpanded = false;
   let ticker: ReturnType<typeof setInterval> | undefined;
   // Last persisted high score, so we only write on improvement. Hydrated
   // from disk at construction time.
@@ -123,17 +148,46 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
     return expanded;
   }
 
+  function isGameFocused(): boolean {
+    return expanded && gameFocused;
+  }
+
   function toggle(): void {
     // The dino panel is a "while-you-wait" affordance: it only exists
     // while the agent is actually busy. At rest there is no hint and no
     // toggle — Ctrl-G is a no-op so a fresh `duet` session is clean.
     if (!agentBusy) return;
-    expanded = !expanded;
+    // Three-step cycle so the user can toggle keystroke ownership
+    // without losing what they typed:
+    //   collapsed              → expanded + game-focused
+    //   expanded + game        → expanded + composer-focused (typing)
+    //   expanded + composer    → collapsed
+    if (!expanded) {
+      expanded = true;
+      gameFocused = true;
+    } else if (gameFocused) {
+      // Stay expanded; just release keys to the composer. The game
+      // keeps animating in the background so the user sees obstacles
+      // approach while they type.
+      gameFocused = false;
+      syncVisibility();
+      paint();
+      return;
+    } else {
+      expanded = false;
+      gameFocused = true;
+    }
     if (expanded) {
-      // Re-expanding after a manual collapse during agent-busy resumes
-      // instantly — the user explicitly chose to peek away, so the
-      // countdown would be friction rather than help.
-      if (state.phase.kind === "frozen" && !frozenByAgent) {
+      // Re-expanding into a frozen run: if the agent caused the freeze
+      // (needs-user → answered → busy again, but `resume()` no-op'd
+      // because the panel was collapsed), run the 3-2-1 + grace gap the
+      // live resume path uses. If the user collapsed manually, resume
+      // instantly — they explicitly chose to peek away.
+      const kind = expandResumeKind(state.phase, frozenByAgent);
+      if (kind === "countdown") {
+        state = beginCountdown(state, TICKS_PER_SECOND);
+        frozenByAgent = false;
+      } else if (kind === "run") {
         state = { ...state, phase: { kind: "running" } };
       }
     } else {
@@ -175,11 +229,22 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   function setAgentBusy(busy: boolean): void {
     if (agentBusy === busy) return;
     agentBusy = busy;
+    if (busy && !hasAutoExpanded) {
+      // First busy cycle of the session: open the panel so the user
+      // discovers the game. After this they own the toggle via Ctrl-G
+      // and we never auto-expand again.
+      hasAutoExpanded = true;
+      expanded = true;
+      gameFocused = true;
+    }
     // When the agent goes idle, snap the panel back to its starting
     // point (collapsed) so the next busy cycle begins at "hint only"
     // rather than re-appearing already expanded. The user opts back in
     // by pressing Ctrl-G again.
-    if (!busy) expanded = false;
+    if (!busy) {
+      expanded = false;
+      gameFocused = true;
+    }
     syncVisibility();
     paint();
   }
@@ -252,7 +317,7 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
       return;
     }
     if (expanded) {
-      const frame = renderExpanded(state);
+      const frame = renderExpanded(state, gameFocused);
       for (let i = 0; i < rows.length; i++) {
         rows[i].content = frame[i] ?? "";
       }
@@ -265,6 +330,7 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   return {
     view,
     isExpanded,
+    isGameFocused,
     toggle,
     resume,
     freeze,
