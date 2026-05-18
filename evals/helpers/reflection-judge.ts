@@ -95,6 +95,47 @@ export async function judgeConcreteIdentifiers(
 }
 
 /**
+ * Judges whether every project-specific row names the project it
+ * belongs to (repo, package, monorepo path, product surface), so the
+ * row stays meaningful when read back from a different working
+ * directory weeks later. Rows that are clearly user-level facts
+ * (preferences, personal info, schedule) do not need a project
+ * anchor and don't count against the verdict.
+ */
+export async function judgeProjectContext(
+  rows: readonly string[],
+  options: ReflectionJudgeOptions = {},
+): Promise<JudgeResult> {
+  return judge({
+    ...(options.model ? { model: options.model } : {}),
+    prompt: dedent`
+      Each row below comes from a long-term agent memory store that
+      spans many sessions and many working directories. For a
+      project-specific row to remain useful when read back from a
+      different repo, it must NAME THE PROJECT it belongs to — the
+      repo name, monorepo path, package name, or product surface
+      — inside the row's own prose. Generic file paths like
+      \`src/foo.ts\` or \`package.json\` are NOT enough on their
+      own because every repo has those; the row must also identify
+      which repo / product.
+
+      A row counts as project-specific when it describes code,
+      tests, CI, releases, infra, or anything else that lives inside
+      a particular codebase. A row about user preferences, personal
+      info, schedule, or general non-code work is NOT
+      project-specific and does NOT need a project anchor — ignore
+      it when grading.
+
+      Return valid=true ONLY when EVERY project-specific row names
+      its project / repo / package. Return valid=false (with a
+      one-sentence reason naming the offending rows by index) when
+      any project-specific row leaves the project ambiguous.
+    `,
+    value: { rows },
+  });
+}
+
+/**
  * Judges whether any pair of rows covers the same distinct insight.
  * Two rows are duplicates when they capture the same underlying
  * cause→fix story, decision, or lesson — even if wording, level of

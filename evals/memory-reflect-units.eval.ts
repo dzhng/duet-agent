@@ -15,6 +15,7 @@ import {
   judgeConcreteIdentifiers,
   judgeDistinctInsights,
   judgeNarrativeShape,
+  judgeProjectContext,
 } from "./helpers/reflection-judge.js";
 
 /**
@@ -125,6 +126,32 @@ describe("unit-sized reflections", () => {
         const rows = result!.reflections;
 
         const verdict = await judgeConcreteIdentifiers(rows.map((r) => r.content));
+        expect(verdict.valid, verdict.reason).toBe(true);
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    360_000,
+  );
+
+  testIfDocker(
+    "every project-specific row names its project / repo (judged)",
+    async () => {
+      const fixture = await createMemoryFixture();
+      try {
+        await seedObservations(fixture, RECENT_POOL);
+        const snapshot = await readAllObservations(fixture.session);
+        const result = await reflectAllObservations({
+          session: fixture.session,
+          snapshot,
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+          ...PACK_ONE_BATCH,
+        });
+        expect(result).toBeDefined();
+        const rows = result!.reflections;
+
+        const verdict = await judgeProjectContext(rows.map((r) => r.content));
         expect(verdict.valid, verdict.reason).toBe(true);
       } finally {
         await fixture.dispose();

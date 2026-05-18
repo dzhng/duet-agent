@@ -33,6 +33,27 @@ interface DumpedRow {
   tags: string[];
 }
 
+/**
+ * Backfill a synthetic `cwd="..."` attribute onto every observation-
+ * group wrapper. The dump was captured before the observer learned
+ * to stamp cwd on the wrapper, so the raw JSON has no project anchor
+ * even though we know what repo the work was done in. Adding the
+ * attribute here lets the global-reflect eval exercise the new
+ * "reflector reads cwd from the wrapper" path against real data.
+ *
+ * Regenerated dumps captured after the cwd-aware observer landed
+ * will already carry the attribute and should be loaded verbatim by
+ * removing this helper.
+ */
+const FIXTURE_CWD = "/Users/david/dev/duet-agent";
+
+function stampCwd(content: string): string {
+  return content.replace(/<observation-group([^>]*)>/g, (full, attrs: string) => {
+    if (/\bcwd="/.test(attrs)) return full;
+    return `<observation-group${attrs} cwd="${FIXTURE_CWD}">`;
+  });
+}
+
 function toSeed(row: DumpedRow): SeedObservation {
   return {
     sessionId: row.sessionId,
@@ -43,7 +64,7 @@ function toSeed(row: DumpedRow): SeedObservation {
     ...(row.timeOfDay !== undefined ? { timeOfDay: row.timeOfDay } : {}),
     priority: row.priority,
     source: row.source as Observation["source"],
-    content: row.content,
+    content: stampCwd(row.content),
     tags: row.tags,
     ageDays: row.ageDays,
   };

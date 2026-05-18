@@ -5,6 +5,16 @@ export interface ObservationGroup {
   range: string;
   content: string;
   kind?: string;
+  /**
+   * Working directory the observation was captured in, when known.
+   * Carried as an attribute on the `<observation-group>` wrapper so
+   * the reflector and any downstream reader can see which project
+   * a row belongs to without relying on the model to embed it in
+   * the content prose. Optional only because rows that predate cwd
+   * tracking carry no value — new writes always set it when the
+   * caller has a cwd.
+   */
+  cwd?: string;
 }
 
 interface ReflectionObservationGroupSection {
@@ -67,10 +77,16 @@ export function wrapInObservationGroup(
   id = generateAnchorId(),
   _sourceGroupIds?: string[],
   kind?: string,
+  cwd?: string,
 ): string {
   const content = observations.trim();
   const kindAttr = kind ? ` kind="${kind}"` : "";
-  return `<observation-group id="${id}" range="${range}"${kindAttr}>\n${content}\n</observation-group>`;
+  const cwdAttr = cwd ? ` cwd="${escapeAttribute(cwd)}"` : "";
+  return `<observation-group id="${id}" range="${range}"${kindAttr}${cwdAttr}>\n${content}\n</observation-group>`;
+}
+
+function escapeAttribute(value: string): string {
+  return value.replace(/"/g, "&quot;");
 }
 
 export function parseObservationGroups(observations: string): ObservationGroup[] {
@@ -93,7 +109,8 @@ export function parseObservationGroups(observations: string): ObservationGroup[]
     groups.push({
       id,
       range,
-      kind: attributes["kind"],
+      ...(attributes["kind"] ? { kind: attributes["kind"] } : {}),
+      ...(attributes["cwd"] ? { cwd: attributes["cwd"] } : {}),
       content: match[2]!.trim(),
     });
   }
@@ -218,16 +235,29 @@ export function reconcileObservationGroupsFromReflection(
   if (derivedGroups.length > 0) {
     return derivedGroups
       .map((group) =>
-        wrapInObservationGroup(group.content, group.range, group.id, undefined, group.kind),
+        wrapInObservationGroup(
+          group.content,
+          group.range,
+          group.id,
+          undefined,
+          group.kind,
+          group.cwd,
+        ),
       )
       .join("\n\n");
   }
 
+  // Reconciled reflection inherits the cwd when every source group
+  // agrees; mixed-cwd inputs leave the attribute off because no single
+  // value is correct for the joined row.
+  const sourceCwds = new Set(sourceGroups.map((group) => group.cwd).filter(Boolean));
+  const inheritedCwd = sourceCwds.size === 1 ? sourceGroups[0]?.cwd : undefined;
   return wrapInObservationGroup(
     normalizedContent,
     combineObservationGroupRanges(sourceGroups),
     generateAnchorId(),
     undefined,
     "reflection",
+    inheritedCwd,
   );
 }

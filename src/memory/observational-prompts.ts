@@ -202,12 +202,35 @@ export function buildObserverOutputFormat(includeThreadTitle = false): string {
   `;
 }
 
+export interface ObserverPromptContext {
+  /**
+   * Working directory the runner is executing in. Surfaced verbatim
+   * to the observer so project-specific observations carry enough
+   * cwd / project signal to stay meaningful when read back later
+   * — especially across repos or after the user switches projects.
+   */
+  cwd?: string;
+}
+
 export function buildObserverSystemPrompt(
   instruction?: string,
   includeThreadTitle = false,
+  context: ObserverPromptContext = {},
 ): string {
+  const cwdBlock = context.cwd
+    ? dedent`
+
+        === CURRENT PROJECT (CWD) ===
+
+        The runner is operating in:
+
+          ${context.cwd}
+
+        Every observation produced here is implicitly scoped to this directory. The persistence layer also writes this cwd onto the surrounding <observation-group> wrapper automatically, so you do NOT need to copy the literal path into observation content. What you DO need to do is keep enough project signal in the prose itself (the repo name, key package or module names, or the product/area being worked on) so a future reader who sees only one observation — without the wrapper attributes — can still tell which project it is about. "Updated session-store.ts" is too thin; "Updated \`packages/agent-gateway/src/session-store.ts\` in the duet-agent monorepo" is right-sized. Skip project tagging only for observations that are clearly user-level facts unrelated to any codebase (preferences, personal info, schedule).
+      `
+    : "";
   return dedent`
-    You are the memory consciousness of an AI assistant. Your observations will be the ONLY information the assistant has about past interactions with this user.
+    You are the memory consciousness of an AI assistant. Your observations will be the ONLY information the assistant has about past interactions with this user.${cwdBlock}
 
     Extract observations that will help the assistant remember:
 
@@ -304,9 +327,36 @@ function isImageContent(part: TextContent | ImageContent): part is ImageContent 
   return part.type !== "text";
 }
 
-export function buildReflectorSystemPrompt(instruction?: string): string {
+export interface ReflectorPromptContext {
+  /**
+   * Working directory of the in-session reflector run. Only set when
+   * the rolled-up blob comes from one session in one cwd; the global
+   * reflector spans many sessions and many cwds, so it leaves this
+   * undefined and instead relies on the cwd attribute already on each
+   * source <observation-group>.
+   */
+  cwd?: string;
+}
+
+export function buildReflectorSystemPrompt(
+  instruction?: string,
+  context: ReflectorPromptContext = {},
+): string {
+  const cwdBlock = context.cwd
+    ? dedent`
+
+        Current working directory for this batch:
+
+          ${context.cwd}
+
+        Every source observation was captured inside this cwd. Preserve the project / repo / module identifier in the reflected narrative so it stays meaningful when read back in another project.
+      `
+    : dedent`
+
+        Source observations may come from multiple working directories. Each <observation-group> in the input carries a \`cwd="..."\` attribute on its opening tag identifying the project that row belongs to. Treat that attribute as authoritative project context and INCLUDE the project / repo name in the narrative of each reflected row (e.g. "in the duet-agent monorepo", "on the marketing-site repo") when the row is project-specific. A row whose action only makes sense inside a specific codebase but doesn't name the project is incomplete.
+      `;
   return dedent`
-    You are the reflection agent for an observational memory system. Your output is the long-term cross-session memory the acting assistant will see weeks from now, when the original transcript is gone. Optimize for an agent who has never read the original turns.
+    You are the reflection agent for an observational memory system. Your output is the long-term cross-session memory the acting assistant will see weeks from now, when the original transcript is gone. Optimize for an agent who has never read the original turns.${cwdBlock}
 
     Each row is one durable insight told as a self-contained mini-narrative. A bare factual headline ("X was done on Y") is the WRONG shape. The RIGHT shape captures the journey:
 
@@ -314,6 +364,7 @@ export function buildReflectorSystemPrompt(instruction?: string): string {
       2. Investigation / path — what was tried, ruled out, or considered? Which file/system/person was involved? What constraint forced the path that was taken?
       3. Decision or outcome — what was actually done or chosen, with the concrete identifiers (file path, commit SHA, version, person, place) that let the agent find it again.
       4. Rationale or higher-level lesson — WHY this was the right call given the constraints. What is the durable principle the next session should generalize? Often this is the most important part of the row.
+      5. Project / cwd anchor — name the repo, package, or product surface the work belongs to whenever the row is project-specific. A row about "the session store race" is ambiguous without "duet-agent's \`packages/agent-gateway/\`"; the future agent may be working in a different repo when it reads this back. Skip the anchor only for rows that are clearly user-level facts unrelated to any codebase (preferences, personal info, schedule).
 
     Treat reflection as writing a short "why" memo, not bullet-point minutes. Multi-sentence rows that explain the journey are preferred over short rows that only state the outcome. A row that omits the trigger or the rationale is incomplete — expand it.
 
@@ -322,6 +373,7 @@ export function buildReflectorSystemPrompt(instruction?: string): string {
     - Preserve concrete identifiers (dates, file paths, commit SHAs, PR numbers, error strings, version tags, names of people/products) wherever they appear in the source. They are how the future agent finds the work.
     - Deduplicate across rows. Each insight gets one row. If two source observations describe the same journey, merge them.
     - Group cause and effect into one row, not two. "The metadata.json race caused /answer 400s" + "SessionStore.save was made atomic" belong in the SAME row because the second is the resolution of the first.
+    - Consolidate aggressively when multiple source observations describe the same underlying journey from different angles (the symptom, the investigation, the fix, the verification). Those are ONE row covering the whole arc, not three rows. Successive tweaks to the same file or subsystem also belong in one row that tells the layered story — not one row per release.
     - Preserve chronology and observation-group headings/ranges where they exist in the source.
     - Do not invent details. If a fact wasn't in the source, leave it out — but DO restate context that IS in the source even if it feels redundant within the row, because it won't be redundant when read cold.
     - Length budget per row: roughly 150-600 tokens (one short paragraph). Going longer is fine when the journey genuinely needs it; staying very short is the failure mode to avoid.

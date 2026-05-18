@@ -1523,6 +1523,7 @@ export class TurnRunner {
       actorModel: this.resolveMemoryActorModel(options),
       settings: this.config.memory,
       messages,
+      cwd: this.config.cwd ?? process.cwd(),
       onUsage: (usage) => this.recordUsage(usage),
       onActivity: (event) => this.emit({ type: "memory", ...event }),
     });

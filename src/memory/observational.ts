@@ -412,6 +412,14 @@ export interface ObservationalMemoryUpdateOptions {
   settings?: ObservationalMemorySettingsInput;
   actorModel: string;
   messages: AgentMessage[];
+  /**
+   * Working directory the runner is executing in. Stored on the
+   * resulting `<observation-group>` wrapper as a `cwd` attribute and
+   * exposed to the observer/in-session reflector prompts so project
+   * context is preserved in every row — essential when memory is
+   * read back weeks later or across repos.
+   */
+  cwd?: string;
   onUsage?: (usage: Usage) => void;
   onActivity?: (event: ObservationalMemoryActivityEvent) => void;
 }
@@ -632,6 +640,7 @@ export async function updateObservationalMemory(
       settings,
       sessionId: options.sessionId,
       model: options.actorModel,
+      ...(options.cwd ? { cwd: options.cwd } : {}),
       onUsage: options.onUsage,
     });
     if (observation) {
@@ -666,6 +675,7 @@ export async function updateObservationalMemory(
         settings,
         sessionId: options.sessionId,
         model: options.actorModel,
+        ...(options.cwd ? { cwd: options.cwd } : {}),
         onUsage: options.onUsage,
       });
       if (reflections) {
@@ -761,6 +771,8 @@ interface ActivateObservationsArgs {
   settings: ObservationalMemorySettings;
   sessionId: string | undefined;
   model: string;
+  /** Working directory recorded on the observation-group wrapper and surfaced to the observer prompt. */
+  cwd?: string;
   onUsage?: (usage: Usage) => void;
 }
 
@@ -779,6 +791,7 @@ async function activateObservations(
     args.attributableMemories,
     args.settings,
     args.model,
+    args.cwd,
     args.onUsage,
   );
   // Usage attribution applies whether or not the observer had new
@@ -804,7 +817,14 @@ async function activateObservations(
     timeOfDay: new Date().toISOString().slice(11, 16),
     priority: inferPriority(observations.observations),
     source: { kind: "system" },
-    content: wrapInObservationGroup(observations.observations, range),
+    content: wrapInObservationGroup(
+      observations.observations,
+      range,
+      undefined,
+      undefined,
+      undefined,
+      args.cwd,
+    ),
     tags: ["observational-memory"],
   });
   return { observation, usageBumped };
@@ -843,20 +863,22 @@ interface ReflectObservationsArgs {
   settings: ObservationalMemorySettings;
   sessionId: string;
   model: string;
+  /** Working directory surfaced to the in-session reflector prompt so the rolled-up blob retains project context. */
+  cwd?: string;
   onUsage?: (usage: Usage) => void;
 }
 
 async function reflectObservations(
   args: ReflectObservationsArgs,
 ): Promise<Observation[] | undefined> {
-  const { session, sessionObservations, settings, sessionId, model, onUsage } = args;
+  const { session, sessionObservations, settings, sessionId, model, cwd, onUsage } = args;
   const source = sessionObservations.map((observation) => observation.content).join("\n\n");
   const rendered = renderObservationGroupsForReflection(source) ?? source;
   const targetTokens = settings.reflection.bufferActivation;
   const result = await generateStructuredOutput({
     model,
     tool: reflectorResultTool,
-    systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
+    systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction, { cwd }),
     prompt: buildReflectorPrompt(rendered, targetTokens),
     onUsage,
   });
@@ -871,7 +893,7 @@ async function reflectObservations(
       const retryResult = await generateStructuredOutput({
         model,
         tool: reflectorResultTool,
-        systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
+        systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction, { cwd }),
         prompt: buildReflectorPrompt(rendered, targetTokens, { actualTokens }),
         onUsage,
       });
@@ -1302,6 +1324,7 @@ async function observe(
   attributableMemories: Observation[],
   settings: ObservationalMemorySettings,
   model: string,
+  cwd: string | undefined,
   onUsage?: (usage: Usage) => void,
 ): Promise<ObserverResult> {
   const transcriptBudget = settings.observation.maxTranscriptTokens;
@@ -1317,6 +1340,7 @@ async function observe(
   const systemPrompt = buildObserverSystemPrompt(
     settings.observation.instruction,
     settings.observation.threadTitle,
+    { cwd },
   );
   // Local prior observations support dedupe; attributable memories
   // (the cross-session global pack the actor saw) are the only set
