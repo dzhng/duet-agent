@@ -5,12 +5,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { actionForKey, applyJump, applyStart } from "../src/tui/dino/input.js";
-import {
-  COLLAPSED_ROWS,
-  renderCollapsedRow,
-  renderExpanded,
-  EXPANDED_ROWS,
-} from "../src/tui/dino/render.js";
+import { COLLAPSED_ROWS, renderExpanded, EXPANDED_ROWS } from "../src/tui/dino/render.js";
 import { panelVisibleRowCount } from "../src/tui/dino/visibility.js";
 import {
   BASE_SPEED,
@@ -141,9 +136,8 @@ describe("dino physics", () => {
 });
 
 describe("dino render", () => {
-  test("collapsed row formats the high score with leading zeros", () => {
-    expect(renderCollapsedRow(7)).toContain("HI 0007");
-    expect(renderCollapsedRow(1234)).toContain("HI 1234");
+  test("collapsed panel reserves zero rows so it never steals a line under the transcript", () => {
+    expect(COLLAPSED_ROWS).toBe(0);
   });
 
   test("expanded frame matches the row budget", () => {
@@ -238,8 +232,12 @@ describe("dino responsive width", () => {
     expect(panelVisibleRowCount(true, false)).toBe(0);
   });
 
-  test("panel surfaces the hint when busy + collapsed and full game when busy + expanded", () => {
+  test("collapsed panel stays invisible even when the agent is busy; expanded shows the full game", () => {
+    // Ctrl-G is now strictly opt-in. The collapsed shape reserves no
+    // rows so the transcript bottom stays aligned with the sidebar's
+    // bottom regardless of agent state.
     expect(panelVisibleRowCount(false, true)).toBe(COLLAPSED_ROWS);
+    expect(panelVisibleRowCount(false, true)).toBe(0);
     expect(panelVisibleRowCount(true, true)).toBe(EXPANDED_ROWS);
   });
 

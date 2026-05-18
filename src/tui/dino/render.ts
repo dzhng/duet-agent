@@ -4,9 +4,11 @@
 import { DINO_X, GROUND_ROW, type GameState } from "./state.js";
 
 /** Total rendered rows of the expanded panel: title + 10 playfield rows +
- *  status row = 12 rows when expanded. Collapsed = 1 row. */
+ *  status row = 12 rows when expanded. Collapsed = 0 rows — the Ctrl-G
+ *  tease lives in the input placeholder instead, so the dino takes no
+ *  vertical space until the user opts in. */
 export const EXPANDED_ROWS = 12;
-export const COLLAPSED_ROWS = 1;
+export const COLLAPSED_ROWS = 0;
 export const PLAYFIELD_ROWS = 10;
 
 /** Width of the dino sprite in cells. Anchored at `DINO_X` (left edge). */
@@ -26,12 +28,6 @@ export const DINO_HEIGHT = 3;
 const DINO_RUN_A: readonly string[] = ["  __", " /_)", " /\\ "];
 const DINO_RUN_B: readonly string[] = ["  __", " /_)", " \\/ "];
 const DINO_JUMP: readonly string[] = ["  __", " /_)", " || "];
-
-/** Single-row "press Ctrl-G  HI 0142" hint shown when the panel is
- *  collapsed but the user has opened it at least once this session. */
-export function renderCollapsedRow(highScore: number): string {
-  return `▶ Ctrl-G to play  ·  HI ${pad4(highScore)}`;
-}
 
 /** Full 12-row expanded panel. The phase determines which overlay (idle
  *  splash, countdown numerals, dim "agent needs you" hint, gameover
