@@ -90,14 +90,18 @@ export async function runMemoryReflectCommand(
 
     if (result.reflections.length === 0) {
       io.stdout.write(
-        `\nNothing eligible: ${result.preserved.length} observation(s) preserved (too fresh or already reflections).\n`,
+        `\nNothing eligible: ${result.preserved.length} row(s) preserved (too fresh or already a global reflection).\n`,
       );
       return;
     }
 
     for (let index = 0; index < result.reflections.length; index++) {
       const reflection = result.reflections[index]!;
-      io.stdout.write(`\n--- Reflected batch ${index + 1}/${result.reflections.length} ---\n`);
+      const priorityIcon =
+        reflection.priority === "high" ? "🔴" : reflection.priority === "medium" ? "🟡" : "🟢";
+      io.stdout.write(
+        `\n--- Reflected row ${index + 1}/${result.reflections.length} ${priorityIcon} ${reflection.priority} · observed ${reflection.observedDate} ---\n`,
+      );
       io.stdout.write(`${reflection.content.trim()}\n`);
       io.stdout.write("--- end ---\n");
     }

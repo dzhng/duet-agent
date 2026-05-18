@@ -175,9 +175,14 @@ duet memory — Browse, edit, and delete observational memories
 
 USAGE
   duet memory [--db <path>] [--wait <seconds>]
+  duet memory reflect [options]
 
 ALIASES
   duet memories
+
+SUBCOMMANDS
+  reflect                  Condense old global observations into reflection rows
+                           (run \`duet memory reflect --help\` for reflect-specific options)
 
 OPTIONS
   --db <path>              Memory database path (default: ~/.duet/memory.db)
@@ -203,13 +208,21 @@ USAGE
                       [--effective-context <tokens>] [--wait <seconds>]
 
 DESCRIPTION
-  Walks the durable memory store and folds raw observations older than
-  --min-age-days (default 3) into one reflection row per batch. Existing
-  reflection rows and fresh observations (younger than the cutoff) are
-  preserved verbatim so resumed sessions keep their recent local memory
-  intact. Batches are packed up to one reflection trigger's worth of
-  tokens, sequenced chronologically across sessions for cross-session
-  dedup. Use --dry-run to preview without writing.
+  Walks the durable memory store and folds older content into atomic
+  global reflection rows that downstream recall can rank, decay, and
+  refresh independently.
+
+  Eligible input includes raw observations AND single-blob local
+  reflections (the per-session reflections written automatically when a
+  session crosses its local memory budget). Global reflection rows from
+  prior \`duet memory reflect\` runs are preserved verbatim — re-reflecting
+  them would only collapse them into vaguer text. Fresh rows younger
+  than --min-age-days (default 3) are also preserved so resumed sessions
+  keep their recent local memory intact.
+
+  Batches are packed up to one reflection trigger's worth of tokens and
+  sequenced chronologically across sessions for cross-session dedup. Use
+  --dry-run to preview without writing.
 
 OPTIONS
   --db <path>              Memory database path (default: ~/.duet/memory.db)

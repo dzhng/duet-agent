@@ -56,6 +56,13 @@
 - Use `dedent` for multi-line prompts, markdown fixtures, and tool instruction strings in code.
 - Keep indentation in source readable without letting template indentation leak into the prompt or fixture content.
 
+## Reproduce Memory Bugs With Real Dumps
+
+- When observational memory misbehaves (reflection, recall, observer extraction, freshness, eviction), dump the live store and reproduce in an eval. Do not debug against the user's running `~/.duet/memory.db` directly.
+- `bun run scripts/dump-memory.ts` is the canonical dump tool. Filter with `--kind`, `--since`, `--until`, `--session`, `--priority`, `--tag`, and `--limit` to capture the smallest slice that reproduces the bug.
+- Save the JSON under `evals/fixtures/` and load it with `seedObservations` from `evals/fixtures/global-reflect/seed.ts`. Write the failing eval first; tune prompts/code until it goes green.
+- See `.agents/skills/debug-memory/SKILL.md` for the full playbook.
+
 ## Review Before Finishing
 
 - Check for stale names, stale comments, intermediary artifacts, unnecessary wrappers, and redundant guards.
