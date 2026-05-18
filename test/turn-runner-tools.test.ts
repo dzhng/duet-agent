@@ -996,9 +996,14 @@ describe("TurnRunner tools", () => {
     expect(selectStateTool).toBeDefined();
     if (!createDefinitionTool || !selectStateTool) throw new Error("Expected state-machine tools");
 
-    expect(createDefinitionTool.description).toContain("{{ input.email }}");
-    expect(createDefinitionTool.description).toContain('kind "timer"');
-    expect(createDefinitionTool.description).toContain("timeoutMs is exceeded");
+    // Smoke test: the trimmed description still surfaces the essentials
+    // (call-shape example with the `definition` wrapper, the template syntax,
+    // and the timer kind enum). Routing/policy guidance lives in the system
+    // prompt, not this description.
+    expect(createDefinitionTool.description).toContain("{{ input.foo }}");
+    expect(createDefinitionTool.description).toContain('"kind": "agent"');
+    expect(createDefinitionTool.description).toContain('"firstState"');
+    expect(createDefinitionTool.description).toContain("`timer`");
     expect(selectStateTool.description).toContain("input object");
     expect(selectStateTool.description).toContain("timer overrides");
     expect(propertyDescription(createDefinitionTool.parameters, "definition")).toContain(
