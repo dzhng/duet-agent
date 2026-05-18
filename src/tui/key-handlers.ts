@@ -1,6 +1,7 @@
 import type { CliRenderer, KeyEvent, ScrollBoxRenderable, TextareaRenderable } from "@opentui/core";
 import type { AutocompleteController } from "./autocomplete-controller.js";
 import type { CopyController } from "./copy-controller.js";
+import type { DinoPanel } from "./dino/index.js";
 import type { PasteController } from "./paste-controller.js";
 import type { QuestionPicker } from "./question-picker.js";
 import type { StarterSection } from "./starter-section.js";
@@ -37,6 +38,12 @@ export interface KeyHandlerDeps {
   onEscape(): void;
   /** Dispatch the composer text with behavior:"steer" (Ctrl+Enter). */
   onSteer(): void;
+  /** Dino "while-you-wait" panel. The panel always owns Ctrl-G, which
+   *  cycles collapsed → expanded+game-focused → expanded+composer-focused
+   *  → collapsed. The only game keystroke is ArrowUp; the spacebar is
+   *  always the composer's so a half-typed follow-up can coexist with
+   *  the running game. Ctrl-G hands the up-arrow back and forth. */
+  dinoPanel: DinoPanel;
 }
 
 /**
@@ -67,6 +74,7 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
     onSubmit,
     onEscape,
     onSteer,
+    dinoPanel,
   } = deps;
 
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
@@ -117,6 +125,32 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
     transcriptWriter.logKey("keydown", key);
+
+    // Ctrl-G: the dino panel always owns this keystroke regardless of
+    // focus, the agent's running state, or whether the composer has
+    // typed text. Toggling the panel must never be eaten by autocomplete
+    // or starter chrome below.
+    if (key.ctrl && (key.name === "g" || key.sequence === "\u0007")) {
+      key.preventDefault();
+      dinoPanel.toggle();
+      return;
+    }
+
+    // Forward ArrowUp to the dino panel whenever it is expanded AND
+    // game-focused. Spacebar is deliberately not a game key: users
+    // frequently type a follow-up while the game keeps running, and
+    // letting the composer always own space avoids the awkward case of
+    // a stray jump while typing. We deliberately do not gate on
+    // `statusController.isRunning()` so the game is fully testable at
+    // rest.
+    if (dinoPanel.isGameFocused()) {
+      if (key.name === "up" && !key.ctrl && !key.meta && !key.super && !key.shift) {
+        if (dinoPanel.handleKey(key.name)) {
+          key.preventDefault();
+          return;
+        }
+      }
+    }
     if (key.name === "pageup") {
       scrollByPage(-1);
       key.preventDefault();

@@ -38,6 +38,10 @@ export interface StatusControllerOptions {
 export class StatusController {
   private destroyed = false;
   private running = false;
+  /** Subscribers notified on every running→idle / idle→running transition.
+   *  Used by the dino panel to drive its freeze (idle) / resume (running)
+   *  lifecycle without coupling the panel to the session event stream. */
+  private readonly runningListeners = new Set<(running: boolean) => void>();
   private workingStartedAt: number | undefined;
   private workingTicker: ReturnType<typeof setInterval> | undefined;
   private workingMessage = "working…";
@@ -90,12 +94,14 @@ export class StatusController {
   }
 
   markRunning(): void {
+    const wasRunning = this.running;
     this.running = true;
     this.workingMessage = "working…";
     this.workingStartedAt = Date.now();
     this.refreshHint();
     this.refreshWorkingStatus();
     this.startWorkingTicker();
+    if (!wasRunning) this.notifyRunningChange(true);
   }
 
   /** Settle the working-status surface and optionally record the terminal
@@ -103,12 +109,33 @@ export class StatusController {
    *  so `runTui` can return it to its caller after renderer teardown. */
   markIdle(terminal?: TurnTerminalEvent): void {
     if (terminal !== undefined) this.terminal = terminal;
+    const wasRunning = this.running;
     this.running = false;
     this.stopWorkingTicker();
     this.workingStartedAt = undefined;
     this.workingMessage = "working…";
     this.refreshHint();
     this.refreshWorkingStatus();
+    if (wasRunning) this.notifyRunningChange(false);
+  }
+
+  /** Subscribe to running-state transitions. The listener is invoked with
+   *  the new running value on every flip; idempotent calls (markIdle while
+   *  already idle) are suppressed. Returns an unsubscribe handle. */
+  onRunningChange(listener: (running: boolean) => void): () => void {
+    this.runningListeners.add(listener);
+    return () => this.runningListeners.delete(listener);
+  }
+
+  private notifyRunningChange(running: boolean): void {
+    for (const listener of this.runningListeners) {
+      try {
+        listener(running);
+      } catch {
+        // Listener errors must not break the status surface; they bubble
+        // to the renderer's unhandled rejection path instead.
+      }
+    }
   }
 
   setStatus(text: string): void {
