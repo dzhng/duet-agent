@@ -7,7 +7,8 @@
 // Contract:
 //   - agent idle               → 0 rows (panel is invisible, reserves no
 //                                vertical space).
-//   - agent busy + collapsed   → COLLAPSED_ROWS rows (the Ctrl-G hint).
+//   - agent busy + collapsed   → 0 rows. The Ctrl-G tease lives in the
+//                                input placeholder, not in a hint row.
 //   - agent busy + expanded    → EXPANDED_ROWS rows (the full game).
 
 import { COLLAPSED_ROWS, EXPANDED_ROWS } from "./render.js";

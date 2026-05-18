@@ -392,7 +392,10 @@ export function buildLayout(renderer: CliRenderer): LayoutRefs {
   // Textarea (rather than Input) so long messages soft-wrap visually. Enter
   // is intercepted in onKeyDown below to submit instead of inserting a newline.
   const inputField = new TextareaRenderable(renderer, {
-    placeholder: "Type a message and press Enter…",
+    // Doubles as the easter-egg tease for the dino panel: idle composer
+    // hints that Ctrl-G exists, so the game stays opt-in and we don't
+    // need a dedicated hint row stealing a line under the transcript.
+    placeholder: "Type a message… or hit Ctrl-G if you're bored 🦖",
     flexGrow: 1,
     minHeight: 1,
     maxHeight: 10,

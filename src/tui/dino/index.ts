@@ -19,7 +19,7 @@ import { SIDEBAR_WIDTH } from "../sidebar.js";
 import { COLORS } from "../theme.js";
 import { actionForKey, applyJump, applyStart } from "./input.js";
 import { loadHighScore, saveHighScore } from "./persistence.js";
-import { EXPANDED_ROWS, renderCollapsedRow, renderExpanded } from "./render.js";
+import { EXPANDED_ROWS, renderExpanded } from "./render.js";
 import { panelVisibleRowCount } from "./visibility.js";
 import {
   beginCountdown,
@@ -98,12 +98,6 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   // ("▶ Ctrl-G to play") only renders while this is true; at idle the
   // panel is invisible and reserves no rows.
   let agentBusy = false;
-  // Auto-expand the panel the first time the agent goes busy in this
-  // session so the game is visible by default. Ctrl-G is otherwise an
-  // easter egg — surfacing the full panel once teaches the user it's
-  // there. Every subsequent busy cycle starts collapsed again so we
-  // don't fight users who chose to dismiss it.
-  let hasAutoExpanded = false;
   let ticker: ReturnType<typeof setInterval> | undefined;
   // Last persisted high score, so we only write on improvement. Hydrated
   // from disk at construction time.
@@ -229,14 +223,9 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   function setAgentBusy(busy: boolean): void {
     if (agentBusy === busy) return;
     agentBusy = busy;
-    if (busy && !hasAutoExpanded) {
-      // First busy cycle of the session: open the panel so the user
-      // discovers the game. After this they own the toggle via Ctrl-G
-      // and we never auto-expand again.
-      hasAutoExpanded = true;
-      expanded = true;
-      gameFocused = true;
-    }
+    // The game is strictly opt-in: the panel never auto-expands. The
+    // Ctrl-G tease lives in the input placeholder, and the user has to
+    // press it themselves to bring up the playfield.
     // When the agent goes idle, snap the panel back to its starting
     // point (collapsed) so the next busy cycle begins at "hint only"
     // rather than re-appearing already expanded. The user opts back in
@@ -322,8 +311,9 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
         rows[i].content = frame[i] ?? "";
       }
     } else {
-      rows[0].content = renderCollapsedRow(state.highScore);
-      for (let i = 1; i < rows.length; i++) rows[i].content = "";
+      // Collapsed reserves zero rows; clear any stale content so the
+      // pool stays tidy when the next expand reuses it.
+      for (const row of rows) row.content = "";
     }
   }
 
