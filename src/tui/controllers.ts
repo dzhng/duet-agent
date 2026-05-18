@@ -1,5 +1,6 @@
 import type { CliRenderer } from "@opentui/core";
 import { AutocompleteController } from "./autocomplete-controller.js";
+import { BUILT_IN_SLASH_COMMAND_ITEMS } from "./slash-commands.js";
 import { CopyController } from "./copy-controller.js";
 import type { LayoutRefs } from "./layout.js";
 import { PasteController } from "./paste-controller.js";
@@ -40,7 +41,11 @@ export interface TuiControllerDeps {
  * makes the controller surface easy to mock in isolation.
  */
 export function createTuiControllers(deps: TuiControllerDeps): TuiControllers {
-  const autocomplete = new AutocompleteController({
+  // Track an in-flight reload so rapid `/` openings collapse into a
+  // single discovery pass. Stays scoped to this controller bundle so the
+  // closure resets when the session is torn down and recreated.
+  let pendingSkillReload: Promise<void> | undefined;
+  const autocomplete: AutocompleteController = new AutocompleteController({
     inputField: deps.ui.inputField,
     skillAutocompletePanel: deps.ui.skillAutocompletePanel,
     commandRows: deps.ui.commandRows,
@@ -51,6 +56,30 @@ export function createTuiControllers(deps: TuiControllerDeps): TuiControllers {
     fileAutocompleteRows: deps.ui.fileAutocompleteRows,
     workDir: deps.workDir,
     onEscapeClose: deps.onPickerEscapeClose,
+    onSkillTokenOpened: () => {
+      if (pendingSkillReload) return;
+      pendingSkillReload = (async () => {
+        try {
+          const skills = await deps.session.reloadSkills();
+          autocomplete.setSkillItems([
+            ...BUILT_IN_SLASH_COMMAND_ITEMS,
+            ...skills.map((skill) => ({
+              name: skill.name,
+              description: skill.description,
+              path: skill.baseDir,
+              group: "skills" as const,
+            })),
+          ]);
+          // Re-evaluate against the current token so the open picker
+          // picks up the freshly discovered entries.
+          autocomplete.refresh();
+        } catch (error) {
+          deps.reportError(error);
+        } finally {
+          pendingSkillReload = undefined;
+        }
+      })();
+    },
   });
 
   const questionPicker = new QuestionPicker({

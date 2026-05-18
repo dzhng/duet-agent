@@ -35,6 +35,22 @@ export class SkillContext {
     this.collisions = discovered.collisions;
   }
 
+  /**
+   * Re-run skill discovery so newly installed skills show up without
+   * restarting the session. The initial explicit skill list from
+   * `config.skills` is preserved; on-disk discovery is re-read.
+   */
+  async reload(): Promise<void> {
+    const baseline = this.config.skills ? prepareExplicitSkills(this.config.skills) : [];
+    const discovered = loadDiscoveredSkills(
+      this.config.skillDiscovery,
+      this.config.cwd ?? process.cwd(),
+    );
+    this.skills = mergeSkillsByName(baseline, discovered.skills);
+    this.collisions = discovered.collisions;
+    this.loaded = true;
+  }
+
   getSkills(): readonly Skill[] {
     return [...this.skills];
   }

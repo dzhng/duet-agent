@@ -119,6 +119,10 @@ class FakeTurnRunner implements SessionTurnRunner {
     return this.skills;
   }
 
+  async reloadSkills(): Promise<readonly Skill[]> {
+    return this.skills;
+  }
+
   async getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]> {
     return [];
   }

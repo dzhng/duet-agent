@@ -90,6 +90,7 @@ export interface SessionTurnRunner {
   subscribe(handler: TurnEventHandler): () => void;
   getState(): TurnState | undefined;
   getSkills(): Promise<readonly Skill[]>;
+  reloadSkills(): Promise<readonly Skill[]>;
   getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]>;
   getSkillCollisions(): Promise<readonly SkillCollision[]>;
   dispose(): Promise<void>;
@@ -328,6 +329,14 @@ export class Session {
    */
   getSkills(): Promise<readonly Skill[]> {
     return this.runner.getSkills();
+  }
+
+  /**
+   * Re-discover skills from disk so newly installed ones show up in the
+   * autocomplete catalog without restarting the session.
+   */
+  reloadSkills(): Promise<readonly Skill[]> {
+    return this.runner.reloadSkills();
   }
 
   /** System-prompt files (AGENTS.md by default) that resolved on disk. */

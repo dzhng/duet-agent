@@ -1632,6 +1632,17 @@ export class TurnRunner {
     return this.skillContext.getSkills();
   }
 
+  /**
+   * Re-discover installed skills from disk. Surfaces newly added skills
+   * (e.g. installed in this session) without restarting the runner.
+   * Callers typically pair this with `getSkills()` to refresh their
+   * autocomplete catalog.
+   */
+  async reloadSkills(): Promise<readonly Skill[]> {
+    await this.skillContext.reload();
+    return this.skillContext.getSkills();
+  }
+
   /** System-prompt files (AGENTS.md by default) that resolved on disk for this session. */
   async getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]> {
     await this.ensureSkillsLoaded();
