@@ -92,6 +92,7 @@ class StateMachineAgentEventTurnRunner extends TurnRunner {
         return { type: "complete", result: "State-agent state complete." };
       },
       interrupt: () => undefined,
+      interruptedReason: () => undefined,
       partialAssistantText: () => undefined,
     };
   }
@@ -321,6 +322,7 @@ class StateMachineUsageTurnRunner extends TurnRunner {
         }
       },
       interrupt: () => undefined,
+      interruptedReason: () => undefined,
       partialAssistantText: () => undefined,
     };
   }
@@ -419,6 +421,7 @@ class StateMachineOriginTurnRunner extends TurnRunner {
         }
       },
       interrupt: () => undefined,
+      interruptedReason: () => undefined,
       partialAssistantText: () => undefined,
     };
   }

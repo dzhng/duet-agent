@@ -23,6 +23,7 @@ describe("state-machine active output", () => {
         prompt: () => deferred.promise,
         interrupt: () => deferred.resolve({ type: "interrupted" }),
         partialAssistantText: () => assistantText,
+        interruptedReason: () => undefined,
       }),
     });
     controller.startSession({ prompt: "Run agent.", definition, currentState: "research" });

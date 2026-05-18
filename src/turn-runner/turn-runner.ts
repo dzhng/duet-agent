@@ -926,6 +926,7 @@ export class TurnRunner {
       },
     );
     let unsubscribe: (() => void) | undefined;
+    let interruptedReason: string | undefined;
     const finish = (): StateAgentResult => {
       if (control.type === "ask_user_question") {
         return { type: "ask", questions: control.questions };
@@ -946,9 +947,9 @@ export class TurnRunner {
         try {
           await agent.prompt(input.prompt);
           await this.retryTransientServerErrors(agent);
-          return finish();
+          return interruptedReason ? { type: "interrupted" } : finish();
         } catch (error) {
-          if (this.consumeInterruptedTerminal()) return { type: "interrupted" };
+          if (interruptedReason) return { type: "interrupted" };
           if (error instanceof Error) return { type: "failed", error: error.message };
           return { type: "failed", error: String(error) };
         } finally {
@@ -960,12 +961,14 @@ export class TurnRunner {
           unsubscribe?.();
         }
       },
-      interrupt: () => {
+      interrupt: (reason) => {
+        interruptedReason = reason;
         agent.abort();
         agent.clearAllQueues();
         unsubscribe?.();
       },
       partialAssistantText: () => assistantText(agent.state.messages) || undefined,
+      interruptedReason: () => interruptedReason,
     };
   }
 

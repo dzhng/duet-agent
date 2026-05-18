@@ -18,8 +18,15 @@ export class ShellCommandError extends Error {
 
 export interface ShellStateHandle {
   run(): Promise<ShellCommandOutput>;
-  interrupt(): void;
+  /**
+   * Abort the running command and remember why. After `run()` rejects,
+   * callers consult `interruptedReason()` to tell our intentional
+   * cancellation apart from other shell errors.
+   */
+  interrupt(reason: string): void;
   partialOutput(): ShellPartialOutput | undefined;
+  /** The reason passed to `interrupt()`, or undefined if not interrupted. */
+  interruptedReason(): string | undefined;
 }
 
 export function createShellStateHandle(input: {
@@ -30,6 +37,7 @@ export function createShellStateHandle(input: {
 }): ShellStateHandle {
   const abortController = new AbortController();
   let partial: ShellPartialOutput | undefined;
+  let interruptedReason: string | undefined;
 
   return {
     run: () =>
@@ -42,10 +50,12 @@ export function createShellStateHandle(input: {
           partial = output;
         },
       }),
-    interrupt: () => {
+    interrupt: (reason) => {
+      interruptedReason = reason;
       abortController.abort();
     },
     partialOutput: () => partial,
+    interruptedReason: () => interruptedReason,
   };
 }
 
