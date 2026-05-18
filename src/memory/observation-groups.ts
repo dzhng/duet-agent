@@ -75,7 +75,6 @@ export function wrapInObservationGroup(
   observations: string,
   range: string,
   id = generateAnchorId(),
-  _sourceGroupIds?: string[],
   kind?: string,
   cwd?: string,
 ): string {
@@ -235,14 +234,7 @@ export function reconcileObservationGroupsFromReflection(
   if (derivedGroups.length > 0) {
     return derivedGroups
       .map((group) =>
-        wrapInObservationGroup(
-          group.content,
-          group.range,
-          group.id,
-          undefined,
-          group.kind,
-          group.cwd,
-        ),
+        wrapInObservationGroup(group.content, group.range, group.id, group.kind, group.cwd),
       )
       .join("\n\n");
   }
@@ -256,7 +248,6 @@ export function reconcileObservationGroupsFromReflection(
     normalizedContent,
     combineObservationGroupRanges(sourceGroups),
     generateAnchorId(),
-    undefined,
     "reflection",
     inheritedCwd,
   );

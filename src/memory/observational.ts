@@ -230,10 +230,9 @@ export interface ReflectorReflection {
 
 export interface ReflectorResult {
   /**
-   * Atomic reflection rows produced from the batch. The reflector must
-   * emit one row per durable insight rather than one giant blob; the
-   * global-prune path persists each as its own `Observation` so recall
-   * freshness can bump individual insights.
+   * Atomic reflection rows produced from the batch. The global-prune
+   * path persists each row as its own `Observation` so recall
+   * freshness can rank, decay, and refresh each insight independently.
    */
   reflections: ReflectorReflection[];
   /** Hint for the actor's next response after reflection rewrites memory. */
@@ -822,7 +821,6 @@ async function activateObservations(
       range,
       undefined,
       undefined,
-      undefined,
       args.cwd,
     ),
     tags: ["observational-memory"],
@@ -1248,11 +1246,11 @@ const MIN_REFLECTION_ROW_TOKENS = 120;
 
 /**
  * Run the reflector against one eligible batch and emit one
- * `Observation` per insight the model returned. The retry path used by
- * the single-blob reflector does not apply on the array shape — there
- * is no single "too long" condition that retrying with the same prompt
- * would fix — so this path enforces the budget by trimming each row to
- * a per-row token budget instead.
+ * `Observation` per insight the model returned. The token budget is
+ * enforced by trimming each row to its share of `targetTokens`: rows
+ * are independent insights, so retrying the whole batch when only one
+ * row is over budget would waste a model call without changing the
+ * other rows.
  */
 async function reflectBatch(args: {
   batch: ReflectionBatch;
