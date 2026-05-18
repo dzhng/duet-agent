@@ -94,7 +94,8 @@ export class SkillContext {
     return createSystemPromptWithAppendedLayers({
       config: this.config,
       skills: input?.skills ?? this.skills,
-      append: [...this.readSystemPromptFileLayers(), ...(input?.append ?? [])],
+      systemPromptFiles: this.readSystemPromptFileLayers(),
+      append: input?.append ?? [],
     });
   }
 

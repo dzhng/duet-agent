@@ -2,6 +2,7 @@ import { MemoryLockTimeoutError } from "../memory/pglite.js";
 import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
 import { printMemoryHelp } from "./help.js";
 import { MemoryDb } from "./memory-db.js";
+import { runMemoryReflectCommand } from "./memory-reflect.js";
 import { runMemoryTui } from "./memory-tui.js";
 import { fail, resolveUserPath } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
@@ -14,6 +15,14 @@ import { installShutdownHandlers } from "./shutdown.js";
  * propagate to the next session immediately.
  */
 export async function runMemoryCommand(args: string[]): Promise<void> {
+  // Route `duet memory reflect ...` to the cross-session reflect command.
+  // Kept as a subcommand under `memory` so the existing TUI entry stays
+  // the bare `duet memory` invocation.
+  if (args[0] === "reflect") {
+    await runMemoryReflectCommand(args.slice(1));
+    return;
+  }
+
   let dbPath = DEFAULT_MEMORY_DB_PATH;
   // Wait budget for the cross-process open-lock, in seconds. Defaults to the shared
   // `DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS` (30s) inside `MemoryDb.open`; `--wait 0` opts out

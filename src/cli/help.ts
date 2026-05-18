@@ -25,7 +25,7 @@ USAGE
 COMMANDS
   login                    Sign in via browser; saves DUET_API_KEY and syncs default skills (recommended)
   env                      Manually create or update the shared duet env file with provider API keys
-  skills                   List installed skills as JSON (name, description, path, scope)
+  skills                   List installed skills + collisions as JSON
   memory                   Open a TUI to view, edit, and delete observational memories (alias: memories)
   send-feedback            Send free-form markdown feedback to the Duet team
   upgrade                  Upgrade the global ${packageName} installation
@@ -158,11 +158,14 @@ OPTIONS
   -h, --help               Show this help
 
 OUTPUT
-  Prints a JSON array of installed skills. Each entry has:
-    name         Skill name
-    description  Skill description (from frontmatter, raw — no shell expansion)
-    path         Absolute path to the skill directory
-    scope        "user", "project", or "temporary"
+  Prints a JSON object with two keys:
+    skills       Array of installed skills. Each entry has:
+                   name         Skill name
+                   description  Skill description (from frontmatter)
+                   path         Absolute path to the skill directory
+                   scope        "user", "project", "temporary", or "builtin"
+    collisions   Array of name conflicts resolved during discovery.
+                 Each entry has: name, winnerPath, loserPath.
 `);
 }
 
@@ -187,6 +190,39 @@ KEYS
   e                        Edit selected memory in $EDITOR
   d                        Delete selected memory
   q / Esc                  Quit
+`);
+}
+
+export function printMemoryReflectHelp(): void {
+  console.log(`
+duet memory reflect — Condense old global observations into reflection rows
+
+USAGE
+  duet memory reflect [--db <path>] [--dry-run] [--min-age-days <n>]
+                      [--target-tokens <n>] [--model <name>]
+                      [--effective-context <tokens>] [--wait <seconds>]
+
+DESCRIPTION
+  Walks the durable memory store and folds raw observations older than
+  --min-age-days (default 3) into one reflection row per batch. Existing
+  reflection rows and fresh observations (younger than the cutoff) are
+  preserved verbatim so resumed sessions keep their recent local memory
+  intact. Batches are packed up to one reflection trigger's worth of
+  tokens, sequenced chronologically across sessions for cross-session
+  dedup. Use --dry-run to preview without writing.
+
+OPTIONS
+  --db <path>              Memory database path (default: ~/.duet/memory.db)
+  --dry-run                Print the reflected log without writing it back
+  --min-age-days <n>       Skip observations newer than this many days
+                           (default: 3)
+  --target-tokens <n>      Override the reflected log token budget per batch
+  --model <name>           Memory model used for reflection (default: env / CLI default)
+  --effective-context <n>  Effective context window used to derive memory budgets
+                           (default: 200000)
+  --wait <seconds>         Seconds to wait for the cross-process open-lock
+                           (default: 30; 0 fails immediately)
+  -h, --help               Show this help
 `);
 }
 

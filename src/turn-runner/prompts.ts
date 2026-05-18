@@ -39,9 +39,18 @@ const TOOL_EXECUTION_SYSTEM_PROMPT = dedent`
 export function createSystemPromptWithAppendedLayers(input: {
   config: TurnRunnerConfig;
   skills: readonly Skill[];
+  systemPromptFiles: string[];
   append: Array<string | undefined>;
 }): string {
-  return [createBaseSystemPrompt(input.config, input.skills), ...input.append]
+  return [
+    input.config.systemInstructions,
+    ...input.systemPromptFiles,
+    TOOL_EXECUTION_SYSTEM_PROMPT,
+    cwdSystemPrompt(input.config.cwd ?? process.cwd()),
+    createSkillsSystemPrompt(input.skills),
+    ...input.append,
+    currentDateSystemPrompt(),
+  ]
     .filter(Boolean)
     .join("\n\n");
 }
@@ -91,18 +100,6 @@ export function createStateMachineSystemPromptLayer(input: {
     "When the user changes direction during state-machine work, select the same state again with updated input or select a different state. Selecting a state while another state is running replaces the active state work.",
     constraint,
     definitionPrompt,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function createBaseSystemPrompt(config: TurnRunnerConfig, skills: readonly Skill[]): string {
-  return [
-    config.systemInstructions,
-    cwdSystemPrompt(config.cwd ?? process.cwd()),
-    currentDateSystemPrompt(),
-    TOOL_EXECUTION_SYSTEM_PROMPT,
-    createSkillsSystemPrompt(skills),
   ]
     .filter(Boolean)
     .join("\n\n");

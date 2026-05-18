@@ -39,20 +39,6 @@ export interface SkillAutocompleteItem {
 }
 
 /**
- * The inline `/relay` token is only meaningful when the runner can route
- * to state-machine tools, so the autocomplete row is gated to non-`agent`
- * modes. Lives here rather than in the slash-command registry because
- * `/relay` is parsed inline by `applyRelayCommand` instead of being
- * dispatched at submit time; the picker still surfaces it so users can
- * discover the token by typing `/`.
- */
-export const RELAY_SLASH_COMMAND: SkillAutocompleteItem = {
-  name: "relay",
-  description: "Inline anywhere in a prompt to nudge the agent into state-machine (relay) mode",
-  group: "commands",
-};
-
-/**
  * One row in the @-file picker. `relativePath` is what gets inserted; the
  * basename is shown larger and the directory portion is shown next to it
  * so deeply nested files stay scannable.

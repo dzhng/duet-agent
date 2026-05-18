@@ -1,7 +1,6 @@
 import { describe, expect } from "bun:test";
 import dedent from "dedent";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
-import { applyRelayCommand } from "../src/tui/relay-command.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
@@ -9,17 +8,17 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
 const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
 
 /**
- * End-to-end coverage for the `/relay` inline slash command. The TUI submit
- * path runs `applyRelayCommand` before handing the prompt to the session
- * (see `src/tui/app.ts` → `dispatchTurn`). This eval replays the same
- * transform and asserts the resulting prompt actually steers the model
- * toward `create_state_machine_definition` instead of `todo_write` — even
- * on a request that would otherwise look like a small in-conversation
- * task and route to todos (cf. `state-machine-routing.eval.ts`).
+ * End-to-end coverage for the built-in `/relay` skill. Unlike the legacy
+ * TUI-side rewrite, the token now stays in the prompt verbatim and the
+ * turn runner injects the relay skill body via `SkillContext` as a
+ * `<skill name="relay">...</skill>` block. This eval drops a raw `/relay`
+ * prompt straight into a fresh `TurnRunner` and asserts the resulting
+ * inference flips routing toward `create_state_machine_definition`,
+ * even on a task shape that would otherwise route to `todo_write`
+ * (cf. `state-machine-routing.eval.ts`).
  *
- * Without `/relay`, the matching "small task" eval expects `todo_write`.
- * With `/relay`, the same shape of task must flip to a state machine — that
- * delta is the contract the slash command promises the user.
+ * The delta — small task baseline picks todos; `/relay` flips to a
+ * state machine — is the contract the built-in skill promises users.
  */
 describe("/relay routing", () => {
   testIfDocker(
@@ -28,9 +27,12 @@ describe("/relay routing", () => {
       const runner = new TurnRunner({
         model,
         mode: "auto",
+        // `includeDefaults: false` skips user/project skill discovery; the
+        // built-in `/relay` skill is still merged in by
+        // `loadDiscoveredSkills` so the slash token resolves.
         skillDiscovery: { includeDefaults: false },
-        // Mirror the routing eval's planning-only harness so we measure the
-        // routing decision, not the execution.
+        // Mirror the routing eval's planning-only harness so we measure
+        // the routing decision, not the execution.
         systemInstructions: dedent`
           You are in a planning-only eval. Do not read, edit, or run anything.
           Use exactly one planning tool to register a plan that matches the
@@ -50,24 +52,18 @@ describe("/relay routing", () => {
         toolCalls.push({ name: step.toolName, input: step.input });
       });
 
-      // The raw prompt is intentionally a small, in-conversation task — the
-      // exact shape that routes to todo_write in the baseline eval. The
+      // The prompt is intentionally a small, in-conversation task — the
+      // exact shape that routes to todo_write in the baseline. The
       // `/relay` token is what should flip the decision.
-      const raw = dedent`
+      const prompt = dedent`
         /relay plan three small things: rename foo to bar in src/util.ts,
         then add a one-line comment above its declaration explaining the
         rename, then tell me you are done.
       `;
 
-      const relay = applyRelayCommand(raw);
-      // Sanity-check the transform itself before we spend tokens on it.
-      expect(relay.applied).toBe(true);
-      expect(relay.message).not.toContain("/relay");
-      expect(relay.message).toContain("<system-reminder>");
-
       const { turn } = await startTurn(runner, {
         mode: "auto",
-        prompt: relay.message,
+        prompt,
       });
       const terminal = await turn;
 
@@ -76,8 +72,9 @@ describe("/relay routing", () => {
       );
       const todoCalls = toolCalls.filter((call) => call.name === "todo_write");
 
-      // Primary assertion: the reminder injected by `/relay` was strong
-      // enough to override the default "small task → todos" routing.
+      // Primary assertion: the built-in skill body injected by the runner
+      // was strong enough to override the default "small task → todos"
+      // routing.
       expect(stateMachineCalls.length).toBeGreaterThanOrEqual(1);
       expect(todoCalls.length).toBe(0);
 
