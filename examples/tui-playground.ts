@@ -170,6 +170,10 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
     return [];
   }
 
+  async reloadSkills(): Promise<readonly Skill[]> {
+    return [];
+  }
+
   async getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]> {
     return [];
   }

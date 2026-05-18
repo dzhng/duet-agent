@@ -102,7 +102,15 @@ The most valuable test suite is the one most decoupled from the implementation i
 - **Coupled tests are a refactor tax.** When renaming an internal function or moving a module breaks dozens of tests without changing any user-visible behavior, the suite is testing the wrong layer. Rewrite those tests against the outer surface and delete the brittle ones.
 - **Reserve unit tests for genuinely tricky pure logic** — parsers, normalizers, schedulers, state machines with subtle invariants. Everything else earns more value as an integration or end-to-end test.
 
-## 14. Reuse existing types — derive, don't redeclare
+## 14. Gate filesystem-touching tests on `testIfDocker`
+
+- Tests that write real files, spawn subprocesses, mutate `$HOME`, or otherwise reach outside the process must use `testIfDocker` from `test/helpers/docker-only.js`, not bare `test`.
+- `testIfDocker` resolves to `test` when `DUET_TEST_IN_DOCKER=1` (inside the `oven/bun` test image) and `test.skip` everywhere else, so the same suite is safe to run on a contributor's laptop without polluting their host.
+- `os.tmpdir()` + `mkdirSync` / `writeFileSync` counts. So does anything that touches `~/.duet`, the home directory, the global skills root, or any path outside the test's own in-memory state.
+- If you find yourself reaching for `afterEach(rm)` to clean up a real directory, that's the signal — wrap the test in `testIfDocker` and let the container be the sandbox.
+- Pure-logic tests (parsers, reducers, in-memory data structures) stay on bare `test`; the gate is only for tests that escape the process boundary.
+
+## 15. Reuse existing types — derive, don't redeclare
 
 - If a type already exists upstream (SDK, protocol package, schema validator, generated client), use it directly. Don't redeclare its shape inline, even partially.
 - When you need a variant of an existing type — a subset of fields, an optional version, a union member, the args of a function — derive it with TypeScript utilities: `Pick`, `Omit`, `Partial`, `Required`, `Readonly`, `NonNullable`, `Parameters`, `ReturnType`, `Awaited`, indexed access (`T['field']`), `Extract`/`Exclude` on unions, `infer` in conditional types. Convex/Zod have their own equivalents (`Infer<typeof V>`, `FunctionArgs<typeof api.x.y>`, `z.input/z.output`); use them instead of writing a parallel TS type.

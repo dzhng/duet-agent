@@ -1,3 +1,4 @@
+import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillAutocompleteItem } from "./autocomplete.js";
 import type { CopyController } from "./copy-controller.js";
 import type { PasteController } from "./paste-controller.js";
@@ -128,6 +129,26 @@ export const BUILT_IN_SLASH_COMMAND_ITEMS: readonly SkillAutocompleteItem[] =
     description: command.description,
     group: "commands" as const,
   }));
+
+/**
+ * Build the slash-picker catalog from a list of discovered skills. Built-in
+ * commands lead, discovered skills follow under the `skills` group. Shared
+ * between the initial boot seed and the per-open background reload so both
+ * surfaces stay in lockstep.
+ */
+export function buildSkillAutocompleteCatalog(
+  skills: readonly Skill[],
+): readonly SkillAutocompleteItem[] {
+  return [
+    ...BUILT_IN_SLASH_COMMAND_ITEMS,
+    ...skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      path: skill.baseDir,
+      group: "skills" as const,
+    })),
+  ];
+}
 
 /**
  * Routes the message to a local handler when it matches a built-in command.
