@@ -15,7 +15,11 @@ import { judgeUserSteersPreserved } from "./helpers/reflection-judge.js";
 /**
  * Decision traces (alternatives considered, user steers, conventions
  * applied, prior precedent) have to survive THREE layers before they
- * can help a future agent:
+ * can help a future agent. The shape is borrowed from Foundation
+ * Capital's "Context Graphs: AI's Trillion-Dollar Opportunity":
+ *
+ *   https://foundationcapital.com/ideas/context-graphs-ais-trillion-dollar-opportunity
+ *
  *
  *   1. Observer            — extracts the trace from raw messages
  *   2. In-session reflector — collapses a session's observations

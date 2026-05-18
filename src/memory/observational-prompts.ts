@@ -1,6 +1,24 @@
 import dedent from "dedent";
 import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 
+/*
+ * The decision-trace shape that the observer and reflector prompts in
+ * this file extract — alternatives considered and rejected, user
+ * steers / approvals / overrides, conventions applied, prior
+ * precedent, exception flags — is inspired by Foundation Capital's
+ * "Context Graphs: AI's Trillion-Dollar Opportunity":
+ *
+ *   https://foundationcapital.com/ideas/context-graphs-ais-trillion-dollar-opportunity
+ *
+ * The piece argues that the durable value of a knowledge worker's
+ * day-to-day is not the outcomes they produce but the precedent graph
+ * around each decision: what was weighed and rejected, who approved
+ * an exception, which rule was leaned on. Recording only outcomes
+ * loses the part of the graph that future agents most need to reuse.
+ * The observer captures these dimensions where they enter the
+ * system, and the reflector preserves them through consolidation.
+ */
+
 export type RawMemoryContent = Array<TextContent | ImageContent>;
 
 /** Temporary multimodal serialization of AgentMessage used only while observing context. */
@@ -96,7 +114,7 @@ const OBSERVER_EXTRACTION_INSTRUCTIONS = dedent`
   A decision trace surfaces, when each is visible in the exchange:
 
     - INPUTS GATHERED. Which files, tool results, error strings, commands, or prior messages did the agent draw on before acting? Name the surfaces (file paths, tool names) that materially shaped the decision — not every single read, just the ones that informed the choice.
-    - ALTERNATIVES CONSIDERED AND REJECTED. What did the agent try first that didn't work, propose that was dropped, or weigh against the chosen path? "Tried \`findAtomicCoverage\` first, dropped it as overengineered" is a high-value trace; "the fix is X" alone is not. The article on context graphs calls this the conflicts/precedent layer — future agents reuse rejected options as much as chosen ones.
+    - ALTERNATIVES CONSIDERED AND REJECTED. What did the agent try first that didn't work, propose that was dropped, or weigh against the chosen path? "Tried \`findAtomicCoverage\` first, dropped it as overengineered" is a high-value trace; "the fix is X" alone is not. Foundation Capital's "Context Graphs" piece calls this the conflicts/precedent layer — future agents reuse rejected options as much as chosen ones.
     - USER STEERS / APPROVALS / OVERRIDES. When the user pushed back, redirected, vetoed, or explicitly approved a path, preserve their wording near-verbatim and treat it as an authority signal. Quotes like "I think this is overengineered", "we should not treat them as legacy", "do X instead", "go ahead" are the equivalent of a VP approving a discount on a Zoom call: not in any system of record until you write it down. These are the HIGHEST-signal observations to capture, because they are the precedent that overrides defaults.
     - CONVENTION OR POLICY APPLIED. Which \`AGENTS.md\` rule, project guideline, skill instruction, or prior decision was leaned on? "Per AGENTS.md ‘Prefer Direct, Local Guarantees’, removed the redundant guard" is a trace; "removed the redundant guard" alone loses the rule that justified it.
     - PRIOR PRECEDENT. When the decision was informed by a prior memory row, a prior PR, or an earlier session's choice, mention it by name or short paraphrase so the future agent can find the precedent edge. This is also what \`usedObservationIds\` captures structurally — the prose should mirror it for readers who only see the content.

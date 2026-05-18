@@ -92,7 +92,9 @@ Reference implementation: `evals/helpers/reflection-judge.ts` (three reflection 
 
 ## Decision traces have to clear THREE layers
 
-Observational memory has three serial stages, and a decision trace (alternatives considered, user steers, conventions applied, prior precedent, exception flags) only survives if every stage preserves it:
+The decision-trace shape (alternatives considered, user steers, conventions applied, prior precedent, exception flags) is borrowed from Foundation Capital's ["Context Graphs: AI's Trillion-Dollar Opportunity"](https://foundationcapital.com/ideas/context-graphs-ais-trillion-dollar-opportunity) — the durable value of a knowledge worker's day-to-day lives in the precedent graph around each decision, not in the outcomes alone.
+
+Observational memory has three serial stages, and a decision trace only survives if every stage preserves it:
 
 1. **Observer** — reads raw messages, writes one observation row. If the observer drops the user's push-back wording or the rejected approach, no downstream stage can recover them.
 2. **In-session reflector** — collapses a session's rows into one rolled-up blob inside `<observation-group>` markers. Same prompt as the global reflector (`buildReflectorSystemPrompt`), so any prompt-level rubric change applies to both layers automatically.

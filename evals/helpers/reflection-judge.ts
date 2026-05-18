@@ -177,10 +177,12 @@ export async function judgeUserSteersPreserved(
 
 /**
  * Judges whether decision rows record at least one alternative
- * considered and rejected, not just the chosen outcome. The article
- * on context graphs treats conflict resolution as a first-class part
- * of decision traces — rejected options carry as much precedent
- * weight as chosen ones for future agents weighing the same call.
+ * considered and rejected, not just the chosen outcome. Foundation
+ * Capital's "Context Graphs" piece
+ * (https://foundationcapital.com/ideas/context-graphs-ais-trillion-dollar-opportunity)
+ * treats conflict resolution as a first-class part of decision
+ * traces — rejected options carry as much precedent weight as chosen
+ * ones for future agents weighing the same call.
  *
  * Rows that are pure user-facts (preferences, schedule) don't have
  * decisions and are excluded from the denominator.
