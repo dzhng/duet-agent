@@ -1,6 +1,6 @@
 import type { CliRenderer } from "@opentui/core";
 import { AutocompleteController } from "./autocomplete-controller.js";
-import { BUILT_IN_SLASH_COMMAND_ITEMS } from "./slash-commands.js";
+import { buildSkillAutocompleteCatalog } from "./slash-commands.js";
 import { CopyController } from "./copy-controller.js";
 import type { LayoutRefs } from "./layout.js";
 import { PasteController } from "./paste-controller.js";
@@ -61,15 +61,7 @@ export function createTuiControllers(deps: TuiControllerDeps): TuiControllers {
       pendingSkillReload = (async () => {
         try {
           const skills = await deps.session.reloadSkills();
-          autocomplete.setSkillItems([
-            ...BUILT_IN_SLASH_COMMAND_ITEMS,
-            ...skills.map((skill) => ({
-              name: skill.name,
-              description: skill.description,
-              path: skill.baseDir,
-              group: "skills" as const,
-            })),
-          ]);
+          autocomplete.setSkillItems(buildSkillAutocompleteCatalog(skills));
           // Re-evaluate against the current token so the open picker
           // picks up the freshly discovered entries.
           autocomplete.refresh();
