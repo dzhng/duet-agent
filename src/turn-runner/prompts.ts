@@ -46,9 +46,9 @@ export function createSystemPromptWithAppendedLayers(input: {
     input.config.systemInstructions,
     ...input.systemPromptFiles,
     TOOL_EXECUTION_SYSTEM_PROMPT,
+    cwdSystemPrompt(input.config.cwd ?? process.cwd()),
     createSkillsSystemPrompt(input.skills),
     ...input.append,
-    cwdSystemPrompt(input.config.cwd ?? process.cwd()),
     currentDateSystemPrompt(),
   ]
     .filter(Boolean)
