@@ -20,6 +20,10 @@
  *     --dataset benchmarks/longmemeval/data/longmemeval_oracle.json \
  *     --limit 20 \
  *     --run-name smoke-oracle-20
+ *
+ * Add --stratify to sample `--limit` items proportionally across
+ * `question_type` buckets (deterministic via --seed, default 42) instead
+ * of taking the head of the dataset.
  */
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -51,10 +55,15 @@ interface Instance {
 
 interface CliOpts {
   dataset: string;
+  /** Cap on items to run. When --stratify is set, this is the size of the stratified sample. */
   limit: number;
   runName: string;
   model: string;
   concurrency: number;
+  /** When true, pick `limit` instances proportionally across `question_type` buckets instead of taking the head. */
+  stratify: boolean;
+  /** Seed for deterministic stratified sampling. */
+  seed: number;
 }
 
 function parseArgs(): CliOpts {
@@ -64,6 +73,8 @@ function parseArgs(): CliOpts {
   let runName = "smoke-oracle-20";
   let model = "gpt-5.4-mini";
   let concurrency = 8;
+  let stratify = false;
+  let seed = 42;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     const next = () => {
@@ -87,6 +98,12 @@ function parseArgs(): CliOpts {
       case "--concurrency":
         concurrency = Number(next());
         break;
+      case "--stratify":
+        stratify = true;
+        break;
+      case "--seed":
+        seed = Number(next());
+        break;
       default:
         throw new Error(`unknown flag: ${a}`);
     }
@@ -94,7 +111,71 @@ function parseArgs(): CliOpts {
   if (!Number.isFinite(concurrency) || concurrency < 1) {
     throw new Error(`--concurrency must be a positive integer, got ${concurrency}`);
   }
-  return { dataset, limit, runName, model, concurrency };
+  if (!Number.isFinite(seed)) {
+    throw new Error(`--seed must be a finite number, got ${seed}`);
+  }
+  return { dataset, limit, runName, model, concurrency, stratify, seed };
+}
+
+/** Deterministic mulberry32 PRNG. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Sample `total` items from `all`, proportionally allocated across
+ * `question_type` buckets. Uses largest-remainder rounding so the bucket
+ * counts sum to exactly `total`, and a seeded PRNG for the in-bucket pick.
+ * Returns items in the dataset's original order so the run log stays readable.
+ */
+function stratifiedSample(all: Instance[], total: number, seed: number): Instance[] {
+  if (total >= all.length) return all.slice();
+  const buckets = new Map<string, Instance[]>();
+  for (const inst of all) {
+    const key = inst.question_type;
+    const arr = buckets.get(key);
+    if (arr) arr.push(inst);
+    else buckets.set(key, [inst]);
+  }
+  const entries = Array.from(buckets.entries()).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const allocations = entries.map(([key, items]) => {
+    const exact = (items.length / all.length) * total;
+    return { key, items, exact, base: Math.floor(exact), frac: exact - Math.floor(exact) };
+  });
+  let allocated = allocations.reduce((sum, a) => sum + a.base, 0);
+  // Distribute remaining slots by largest fractional remainder.
+  const byFrac = allocations.slice().sort((a, b) => b.frac - a.frac);
+  let idx = 0;
+  while (allocated < total) {
+    const a = byFrac[idx++ % byFrac.length]!;
+    if (a.base < a.items.length) {
+      a.base++;
+      allocated++;
+    }
+  }
+
+  const rng = mulberry32(seed);
+  const chosen: Instance[] = [];
+  for (const a of allocations) {
+    // Fisher-Yates partial shuffle to pick `base` from `items` deterministically.
+    const pool = a.items.slice();
+    for (let i = 0; i < a.base; i++) {
+      const j = i + Math.floor(rng() * (pool.length - i));
+      [pool[i], pool[j]] = [pool[j]!, pool[i]!];
+    }
+    chosen.push(...pool.slice(0, a.base));
+  }
+  // Preserve dataset order.
+  const order = new Map(all.map((inst, i) => [inst.question_id, i] as const));
+  chosen.sort((x, y) => (order.get(x.question_id) ?? 0) - (order.get(y.question_id) ?? 0));
+  return chosen;
 }
 
 /** Convert "2023/04/10 (Mon) 23:07" to a Date. */
@@ -272,7 +353,19 @@ async function main() {
 
   const raw = await readFile(datasetPath, "utf8");
   const all = JSON.parse(raw) as Instance[];
-  const items = all.slice(0, opts.limit);
+  const items = opts.stratify
+    ? stratifiedSample(all, opts.limit, opts.seed)
+    : all.slice(0, opts.limit);
+  if (opts.stratify) {
+    const counts = new Map<string, number>();
+    for (const inst of items)
+      counts.set(inst.question_type, (counts.get(inst.question_type) ?? 0) + 1);
+    const breakdown = Array.from(counts.entries())
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([k, v]) => `${k}=${v}`)
+      .join(", ");
+    console.log(`stratified:  ${items.length} items (seed=${opts.seed}) — ${breakdown}`);
+  }
 
   const start = Date.now();
   let okCount = 0;
@@ -354,6 +447,8 @@ async function main() {
         runName: opts.runName,
         model: opts.model,
         concurrency: opts.concurrency,
+        stratify: opts.stratify,
+        seed: opts.stratify ? opts.seed : undefined,
         ok: okCount,
         total: items.length,
         elapsedSec: Number(elapsed),
