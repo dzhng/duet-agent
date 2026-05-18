@@ -90,6 +90,19 @@ A judge prompt is itself code that can drift, over-grade, or be fooled by partic
 
 Reference implementation: `evals/helpers/reflection-judge.ts` (three reflection judges), `evals/reflection-judge.eval.ts` (six judge-the-judge cases), `evals/memory-reflect-units.eval.ts` (the real eval that consumes the validated judges).
 
+## Decision traces have to clear THREE layers
+
+Observational memory has three serial stages, and a decision trace (alternatives considered, user steers, conventions applied, prior precedent, exception flags) only survives if every stage preserves it:
+
+1. **Observer** — reads raw messages, writes one observation row. If the observer drops the user's push-back wording or the rejected approach, no downstream stage can recover them.
+2. **In-session reflector** — collapses a session's rows into one rolled-up blob inside `<observation-group>` markers. Same prompt as the global reflector (`buildReflectorSystemPrompt`), so any prompt-level rubric change applies to both layers automatically.
+3. **Global reflector** (`duet memory reflect`) — atomizes the cross-session pool into durable rows stamped with `sessionId = __global_reflection__`.
+
+When you're tuning a prompt to capture a new dimension (decision traces, exception flags, attribution), update BOTH the observer prompt (`OBSERVER_EXTRACTION_INSTRUCTIONS` in `src/memory/observational-prompts.ts`) AND the reflector rubric (`buildReflectorSystemPrompt` in the same file). A great reflector prompt fed by an observer that strips the dimension is a great rubric applied to nothing. Gate each layer with its own eval:
+
+- Observer layer: `evals/memory-decision-trace-layers.eval.ts` drives `updateObservationalMemory` end-to-end with messages that contain the dimension, then judges the resulting observation row.
+- Reflector layers: `evals/memory-reflect-units.eval.ts` seeds the dump fixture, runs `reflectAllObservations`, and judges the atomic output. Because in-session and global share the prompt, this gate catches both.
+
 ## Keep prompt examples independent from eval fixtures
 
 When you tune a memory prompt to make an eval pass, write the worked examples in the prompt with content from a DIFFERENT domain than the fixture. A prompt example that mirrors the fixture is teaching the model to pattern-match the test, not the rule.

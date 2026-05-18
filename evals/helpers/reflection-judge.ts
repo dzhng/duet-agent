@@ -136,6 +136,135 @@ export async function judgeProjectContext(
 }
 
 /**
+ * Judges whether each user steer / push-back / approval listed in
+ * `steers` is preserved by AT LEAST ONE reflection row (verbatim, as
+ * a near-quote, or as a clear paraphrase that names the user's
+ * intent). User steers are the highest-signal precedent in the
+ * decision graph — they override defaults and reset the rule going
+ * forward — so losing them through reflection is the most expensive
+ * failure mode for cross-session memory.
+ */
+export async function judgeUserSteersPreserved(
+  rows: readonly string[],
+  steers: readonly string[],
+  options: ReflectionJudgeOptions = {},
+): Promise<JudgeResult> {
+  return judge({
+    ...(options.model ? { model: options.model } : {}),
+    prompt: dedent`
+      The following STEERS are statements the user made during the
+      original conversation that overrode defaults, redirected the
+      work, vetoed a path, or approved an exception. Each one is
+      durable precedent the agent should remember verbatim or as a
+      faithful paraphrase. The ROWS below are the reflection memory
+      the agent will see weeks from now.
+
+      Return valid=true ONLY when EVERY steer is preserved by AT
+      LEAST ONE row — either as a quoted snippet, a near-quote, or
+      a paraphrase that clearly names the user's intent and is
+      attributed to the user ("per the user's direction…", "the
+      user pushed back that…", "the user explicitly approved…").
+      A row that captures the OUTCOME of acting on a steer but
+      strips the steer itself does NOT count — the precedent value
+      comes from knowing the user's wording / framing.
+
+      Return valid=false (with a one-sentence reason naming the
+      missing steers by index) when any steer is not preserved.
+    `,
+    value: { steers, rows },
+  });
+}
+
+/**
+ * Judges whether decision rows record at least one alternative
+ * considered and rejected, not just the chosen outcome. The article
+ * on context graphs treats conflict resolution as a first-class part
+ * of decision traces — rejected options carry as much precedent
+ * weight as chosen ones for future agents weighing the same call.
+ *
+ * Rows that are pure user-facts (preferences, schedule) don't have
+ * decisions and are excluded from the denominator.
+ */
+export async function judgeAlternativesConsidered(
+  rows: readonly string[],
+  options: ReflectionJudgeOptions = {},
+): Promise<JudgeResult> {
+  return judge({
+    ...(options.model ? { model: options.model } : {}),
+    prompt: dedent`
+      Each row below is a reflection memory. Identify which rows
+      record an engineering or product DECISION (a path chosen, a
+      fix landed, an approach picked, an option weighed). Pure
+      user-fact rows (preferences, personal info, schedule) are
+      NOT decisions and should be ignored when grading.
+
+      A decision row is COMPLETE only when it surfaces at least one
+      alternative that was considered and rejected, dropped, or
+      weighed against the chosen path. Phrasings that count include:
+      "tried X first, dropped it because…", "considered Y but…",
+      "rejected Z in favor of…", "weighed A vs B and picked A
+      because…", "earlier approach was… then switched to…". A row
+      that only states the chosen outcome ("the fix is X", "X was
+      released") without any rejected alternative is INCOMPLETE.
+
+      Return valid=true when AT LEAST 50% of decision rows record
+      at least one alternative. Return valid=false (with a
+      one-sentence reason naming the offending rows by index) when
+      the bulk are outcome-only.
+    `,
+    value: { rows },
+  });
+}
+
+/**
+ * Judges whether every decision row attributes the decision to a
+ * concrete source: a user steer, a project convention or rule
+ * (AGENTS.md, skill instruction), a prior precedent or memory, an
+ * observed symptom / error, or an explicit "no precedent — fresh
+ * judgement call". Decisions with no attribution are dead-ends in
+ * the precedent graph because the future agent can't tell whether to
+ * generalize, replicate, or revisit the call.
+ */
+export async function judgeDecisionAttribution(
+  rows: readonly string[],
+  options: ReflectionJudgeOptions = {},
+): Promise<JudgeResult> {
+  return judge({
+    ...(options.model ? { model: options.model } : {}),
+    prompt: dedent`
+      Each row below is a reflection memory. For rows that record
+      an engineering or product DECISION (a path chosen, a fix
+      landed, an approach picked), the row must ATTRIBUTE the
+      decision to a concrete source. Valid attributions include:
+
+        - a user steer / push-back / approval ("per the user's
+          direction…", "the user explicitly chose…"),
+        - a project convention or rule ("per AGENTS.md…",
+          "following the skill's guidance…"),
+        - a prior precedent / earlier memory ("following the
+          earlier fix for X…", "consistent with the previous
+          decision on Y…"),
+        - an observed symptom / error / measurement that forced
+          the path ("because the test surfaced X…", "to resolve
+          the Y race…"),
+        - an explicit "no precedent — fresh judgement call"
+          framing.
+
+      A decision row with NO attribution — just an outcome stated
+      in passive voice ("X was changed to Y", "v1.2.3 was
+      released") — is INVALID. Pure user-fact rows are not
+      decisions and don't need attribution.
+
+      Return valid=true ONLY when EVERY decision row attributes
+      its decision to one of the sources above. Return valid=false
+      (with a one-sentence reason naming the offending rows by
+      index) when any decision row is unattributed.
+    `,
+    value: { rows },
+  });
+}
+
+/**
  * Judges whether any pair of rows covers the same distinct insight.
  * Two rows are duplicates when they capture the same underlying
  * cause→fix story, decision, or lesson — even if wording, level of

@@ -89,6 +89,21 @@ const OBSERVER_EXTRACTION_INSTRUCTIONS = dedent`
   - One observation should usually summarize an entire tool exchange, not enumerate every call. Use sub-bullets only when distinct results carry independent signal.
   - If a tool result is truncated, do not invent the missing content. Note "(partial)" if the truncation matters.
 
+  DECISION TRACES — CAPTURE THE WHY, NOT JUST THE WHAT
+
+  The most valuable observations are decision traces: short records of HOW context turned into action, not just what action was taken. When the exchange contained any kind of decision (which file to edit, which approach to take, which option to ship, whether to escalate), capture the trace inside the observation prose. Bare outcome rows ("X was fixed", "v0.1.131 released") are the failure mode — expand them into traces.
+
+  A decision trace surfaces, when each is visible in the exchange:
+
+    - INPUTS GATHERED. Which files, tool results, error strings, commands, or prior messages did the agent draw on before acting? Name the surfaces (file paths, tool names) that materially shaped the decision — not every single read, just the ones that informed the choice.
+    - ALTERNATIVES CONSIDERED AND REJECTED. What did the agent try first that didn't work, propose that was dropped, or weigh against the chosen path? "Tried \`findAtomicCoverage\` first, dropped it as overengineered" is a high-value trace; "the fix is X" alone is not. The article on context graphs calls this the conflicts/precedent layer — future agents reuse rejected options as much as chosen ones.
+    - USER STEERS / APPROVALS / OVERRIDES. When the user pushed back, redirected, vetoed, or explicitly approved a path, preserve their wording near-verbatim and treat it as an authority signal. Quotes like "I think this is overengineered", "we should not treat them as legacy", "do X instead", "go ahead" are the equivalent of a VP approving a discount on a Zoom call: not in any system of record until you write it down. These are the HIGHEST-signal observations to capture, because they are the precedent that overrides defaults.
+    - CONVENTION OR POLICY APPLIED. Which \`AGENTS.md\` rule, project guideline, skill instruction, or prior decision was leaned on? "Per AGENTS.md ‘Prefer Direct, Local Guarantees’, removed the redundant guard" is a trace; "removed the redundant guard" alone loses the rule that justified it.
+    - PRIOR PRECEDENT. When the decision was informed by a prior memory row, a prior PR, or an earlier session's choice, mention it by name or short paraphrase so the future agent can find the precedent edge. This is also what \`usedObservationIds\` captures structurally — the prose should mirror it for readers who only see the content.
+    - EXCEPTION / OVERRIDE FLAG. If the path taken deviates from the usual approach or contradicts an existing rule, mark it plainly ("exception:", "override:", "departing from the default because…"). Exceptions are the most-reused precedent.
+
+  Not every observation is a decision — user facts, preferences, and routine completions don't need traces. But when a decision IS being recorded, omitting the trace is the same as recording a discount approval without the policy version, the exception route, or who signed off. The outcome alone is not enough.
+
   PRESERVE SPECIFICS
 
   Capture user facts, preferences, goals, constraints, corrections, explicit decisions, project details, file paths, commands, unresolved tasks, and completed work.
@@ -365,6 +380,12 @@ export function buildReflectorSystemPrompt(
       3. Decision or outcome — what was actually done or chosen, with the concrete identifiers (file path, commit SHA, version, person, place) that let the agent find it again.
       4. Rationale or higher-level lesson — WHY this was the right call given the constraints. What is the durable principle the next session should generalize? Often this is the most important part of the row.
       5. Project / cwd anchor — name the repo, package, or product surface the work belongs to whenever the row is project-specific. A row about "the session store race" is ambiguous without "duet-agent's \`packages/agent-gateway/\`"; the future agent may be working in a different repo when it reads this back. Skip the anchor only for rows that are clearly user-level facts unrelated to any codebase (preferences, personal info, schedule).
+      6. Decision-trace dimensions — when the source observations recorded any of these for a decision, PRESERVE them in the reflected row. Do not strip them as "narrative fluff". Every row that records a DECISION (a path chosen, a fix landed, an option weighed) must ATTRIBUTE that decision to a concrete source: a user steer, a project convention or rule, a prior precedent / earlier fix, an observed symptom / error / measurement, or an explicit "no precedent — fresh judgement call". Passive-voice outcome rows ("X was changed to Y", "v1.2.3 was released") are INVALID — always name WHY the path was taken.
+           - Alternatives considered and rejected ("tried X first, dropped it because…", "weighed Y vs Z, picked Y because…"). Future agents reuse rejected options as much as chosen ones.
+           - User steers, push-backs, approvals, vetoes — quote or near-quote the user's wording. These are the highest-signal precedent because they override defaults. A reflection that loses the user's "we should not treat them as legacy" or "I think this is overengineered" has destroyed the most valuable input.
+           - Convention / policy applied (\`AGENTS.md\` rules, skill instructions, project guidelines that justified the path).
+           - Prior precedent / earlier decisions / earlier memory rows the work built on, by short paraphrase so the next agent can follow the precedent edge.
+           - Exception / override markers when the path deviates from the default. Exceptions are the most-reused precedent.
 
     Treat reflection as writing a short "why" memo, not bullet-point minutes. Multi-sentence rows that explain the journey are preferred over short rows that only state the outcome. A row that omits the trigger or the rationale is incomplete — expand it.
 
@@ -374,6 +395,7 @@ export function buildReflectorSystemPrompt(
     - Deduplicate across rows. Each insight gets one row. If two source observations describe the same journey, merge them.
     - Group cause and effect into one row, not two. "The metadata.json race caused /answer 400s" + "SessionStore.save was made atomic" belong in the SAME row because the second is the resolution of the first.
     - Consolidate aggressively when multiple source observations describe the same underlying journey from different angles (the symptom, the investigation, the fix, the verification). Those are ONE row covering the whole arc, not three rows. Successive tweaks to the same file or subsystem also belong in one row that tells the layered story — not one row per release.
+    - When two rows would describe the SAME overarching outcome or lesson at a different zoom level (one summarizes the loop, the other zooms in on one fix inside the loop), MERGE them into one row that names the specific fixes inside the larger arc. Do not let "this row mentions a different SHA" justify keeping a duplicate — the test is whether the durable insight is the same.
     - Preserve chronology and observation-group headings/ranges where they exist in the source.
     - Do not invent details. If a fact wasn't in the source, leave it out — but DO restate context that IS in the source even if it feels redundant within the row, because it won't be redundant when read cold.
     - Length budget per row: roughly 150-600 tokens (one short paragraph). Going longer is fine when the journey genuinely needs it; staying very short is the failure mode to avoid.

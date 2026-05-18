@@ -1,10 +1,13 @@
 import { describe, expect } from "bun:test";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import {
+  judgeAlternativesConsidered,
   judgeConcreteIdentifiers,
+  judgeDecisionAttribution,
   judgeDistinctInsights,
   judgeNarrativeShape,
   judgeProjectContext,
+  judgeUserSteersPreserved,
 } from "./helpers/reflection-judge.js";
 
 /**
@@ -49,6 +52,63 @@ const NARRATIVE_ROWS = [
 // the repo or product. These read fine inside the original session
 // but become ambiguous when read from a different working directory
 // because every monorepo has `apps/web` and `packages/backend`.
+// User steers from a real session: explicit push-backs and approvals
+// that overrode defaults. These are the precedent the reflection has
+// to preserve.
+const SOURCE_STEERS = [
+  "I think this is overengineered, simplify.",
+  "We should not treat them as legacy — reframe as splitting large reflections into smaller ones.",
+  "The cwd should actually be included in observations.",
+];
+
+// Steers-preserved positive: each steer surfaces somewhere as a
+// quote or clear paraphrase attributed to the user.
+const STEER_PRESERVING_ROWS = [
+  '2026-05-18: In duet-agent, the first pass of the bump-prefers-atomic work added a runtime classifier with `isLegacyBlobReflection`, `findAtomicCoverage`, and `extractAlphanumericRuns` heuristics on top of `applyUsageBumps`. The user pushed back — "I think this is overengineered, simplify" — so the classifier was stripped and the preference was moved entirely into the observer prompt\'s narrowest-row rule, on the lesson that prompt-level guidance should be tried before runtime heuristics.',
+  '2026-05-18: In duet-agent, an earlier framing of the bumping fixture used "legacy blob" language for big reflection rows; the user explicitly redirected, "we should not treat them as legacy — reframe as splitting large reflections into smaller ones", so the fixture and prompts were renamed to broad-summary / narrow-row terminology with no `legacy` vocabulary anywhere. The durable rule: don\'t characterize prior decisions as broken; characterize the new split as finer-grained.',
+  '2026-05-18: In duet-agent\'s memory subsystem, observations and reflections did not carry the cwd, which the user pointed out as a real gap ("the cwd should actually be included"). The fix added a `cwd="…"` attribute to every `<observation-group>` wrapper, threaded the cwd from the turn runner through `updateObservationalMemory`, and updated the observer and global reflector prompts to anchor every project-specific row in its repo. The lesson: structured XML attributes survive reflection better than content-prose conventions.',
+];
+
+// Steers-preserved negative: the OUTCOME of acting on each steer is
+// captured, but the steer language and user-attribution are gone.
+const STEER_LOSING_ROWS = [
+  "2026-05-18: The bump-prefers-atomic implementation was simplified to a prompt-only narrowest-row rule, removing the `isLegacyBlobReflection`, `findAtomicCoverage`, and `extractAlphanumericRuns` runtime helpers from `applyUsageBumps`.",
+  "2026-05-18: The bumping fixture was renamed from `BLOB_REFLECTION` / `ATOMIC_REFLECTIONS` to `SUMMARY_REFLECTION` / `ATOMIC_REFLECTIONS` and the prompt language switched from broad/narrow blob/atomic terminology.",
+  '2026-05-18: A `cwd="…"` attribute was added to `<observation-group>` wrappers and the observer / reflector prompts were updated to anchor project-specific rows.',
+];
+
+// Alternatives-considered positive: each row records a path that was
+// tried, dropped, or weighed.
+const ALTERNATIVE_RICH_ROWS = [
+  "2026-05-15: In duet-agent, Anthropic streams ending before `message_stop` were terminating sessions. A gateway-side reset was considered first but rejected because it lost too much in-flight state; instead the transient classifier in `src/turn-runner/transient-error.ts` was widened to treat `stream ended` as transient so `TurnRunner.retryTransientServerErrors` could resume in-place. Shipped in v0.1.131.",
+  "2026-05-15: In duet-agent's CI loop on staging, an `/answer` 400 was first investigated as an EPIPE / async-stdin issue in `runner-manager.ts` (commit `05ad9a191`) and later as a terminal-race timeout (commit `beb774830`), but the real cause was a `metadata.json` mid-write race in `packages/agent-gateway/src/session-store.ts`. The two earlier suspects were ruled out before `SessionStore.save()` was made atomic via temp file + `rename()` in `fc197bdff`.",
+  "2026-05-18: For the reflection-judge work in duet-agent, regex / n-gram heuristics were tried first for narrative-shape detection but dropped because they were brittle on real reflector output; the eval was switched to LLM-as-judge calls, validated by a separate judge-the-judge eval (six positive/negative fixtures) before being consumed by `evals/memory-reflect-units.eval.ts`.",
+];
+
+// Alternatives-considered negative: rows describe only the chosen
+// path, no rejected alternative.
+const OUTCOME_ONLY_ROWS = [
+  "2026-05-15: `src/turn-runner/transient-error.ts` widened transient classification to include `stream ended`, shipped in v0.1.131.",
+  "2026-05-15: `SessionStore.save()` was made atomic via temp file + `rename()` in commit `fc197bdff` on staging.",
+  "2026-05-18: Reflection-judge evals were added under `evals/helpers/reflection-judge.ts` and `evals/reflection-judge.eval.ts`.",
+];
+
+// Decision-attribution positive: every decision row attributes the
+// decision to a concrete source.
+const ATTRIBUTED_ROWS = [
+  "2026-05-15: In duet-agent, the `metadata.json` mid-write race was traced from a recurring staging `/answer` 400 — the observed symptom forced the path. `SessionStore.save()` was made atomic via temp file + `rename()` in `fc197bdff` after the symptom narrowed the suspect to in-place writes.",
+  '2026-05-18: The user redirected the bump-prefers-atomic work — "I think this is overengineered" — so the runtime classifier was stripped and the preference was implemented as a prompt rule. Per-user-steer attribution: the decision came from the user, not the agent.',
+  '2026-05-18: Per AGENTS.md\'s "Prefer Direct, Local Guarantees", the redundant null check after `getOrCreateMemorySession()` was removed in `src/memory/observational.ts`. The convention was the explicit source.',
+];
+
+// Decision-attribution negative: decisions stated in passive voice,
+// no source attribution.
+const UNATTRIBUTED_ROWS = [
+  "2026-05-15: `metadata.json` was made atomic via temp file + `rename()` in commit `fc197bdff`.",
+  "2026-05-18: The bump-prefers-atomic runtime classifier was removed in favor of a prompt rule.",
+  "2026-05-18: A redundant null check after `getOrCreateMemorySession()` was removed.",
+];
+
 const PROJECT_AMBIGUOUS_ROWS = [
   "2026-05-15: An `/answer` 400 was traced to `packages/agent-gateway/src/session-store.ts`, where `SessionStore.save()` wrote `metadata.json` in place and races with concurrent reads produced truncated JSON. The fix made `save()` atomic via temp file + `rename()` (commit `fc197bdff`).",
   "2026-05-15: Vitest was upgraded from `^1.6.0` to `^4.1.6` across eight workspace packages; `apps/web` needed `@vitejs/plugin-react` bumped to `^6.0.2` and three `.test.ts` files renamed to `.test.tsx`, `packages/ui` switched `NodeJS.Timeout` to `ReturnType<typeof setTimeout>`, and `packages/backend` migrated to `test.projects` (commit `885746567`).",
@@ -139,6 +199,60 @@ describe("reflection judges — judge the judge", () => {
     "judgeProjectContext returns valid=false on project-ambiguous rows",
     async () => {
       const result = await judgeProjectContext(PROJECT_AMBIGUOUS_ROWS);
+      expect(result.valid, result.reason).toBe(false);
+    },
+    180_000,
+  );
+
+  testIfDocker(
+    "judgeUserSteersPreserved returns valid=true when each steer is preserved",
+    async () => {
+      const result = await judgeUserSteersPreserved(STEER_PRESERVING_ROWS, SOURCE_STEERS);
+      expect(result.valid, result.reason).toBe(true);
+    },
+    180_000,
+  );
+
+  testIfDocker(
+    "judgeUserSteersPreserved returns valid=false when only outcomes survive",
+    async () => {
+      const result = await judgeUserSteersPreserved(STEER_LOSING_ROWS, SOURCE_STEERS);
+      expect(result.valid, result.reason).toBe(false);
+    },
+    180_000,
+  );
+
+  testIfDocker(
+    "judgeAlternativesConsidered returns valid=true on rows that record rejected paths",
+    async () => {
+      const result = await judgeAlternativesConsidered(ALTERNATIVE_RICH_ROWS);
+      expect(result.valid, result.reason).toBe(true);
+    },
+    180_000,
+  );
+
+  testIfDocker(
+    "judgeAlternativesConsidered returns valid=false on outcome-only rows",
+    async () => {
+      const result = await judgeAlternativesConsidered(OUTCOME_ONLY_ROWS);
+      expect(result.valid, result.reason).toBe(false);
+    },
+    180_000,
+  );
+
+  testIfDocker(
+    "judgeDecisionAttribution returns valid=true when every decision names its source",
+    async () => {
+      const result = await judgeDecisionAttribution(ATTRIBUTED_ROWS);
+      expect(result.valid, result.reason).toBe(true);
+    },
+    180_000,
+  );
+
+  testIfDocker(
+    "judgeDecisionAttribution returns valid=false on unattributed passive-voice decisions",
+    async () => {
+      const result = await judgeDecisionAttribution(UNATTRIBUTED_ROWS);
       expect(result.valid, result.reason).toBe(false);
     },
     180_000,

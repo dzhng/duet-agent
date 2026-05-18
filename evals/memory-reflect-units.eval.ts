@@ -12,10 +12,13 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
 import { RECENT_POOL } from "./fixtures/global-reflect/recent-pool.js";
 import { seedObservations } from "./fixtures/global-reflect/seed.js";
 import {
+  judgeAlternativesConsidered,
   judgeConcreteIdentifiers,
+  judgeDecisionAttribution,
   judgeDistinctInsights,
   judgeNarrativeShape,
   judgeProjectContext,
+  judgeUserSteersPreserved,
 } from "./helpers/reflection-judge.js";
 
 /**
@@ -188,6 +191,95 @@ describe("unit-sized reflections", () => {
         for (const row of result!.reflections) {
           expect(byId.get(row.id)).toBe(row.content);
         }
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    360_000,
+  );
+
+  testIfDocker(
+    "decision rows record at least one alternative considered or rejected (judged)",
+    async () => {
+      const fixture = await createMemoryFixture();
+      try {
+        await seedObservations(fixture, RECENT_POOL);
+        const snapshot = await readAllObservations(fixture.session);
+        const result = await reflectAllObservations({
+          session: fixture.session,
+          snapshot,
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+          ...PACK_ONE_BATCH,
+        });
+        expect(result).toBeDefined();
+        const rows = result!.reflections;
+
+        const verdict = await judgeAlternativesConsidered(rows.map((r) => r.content));
+        expect(verdict.valid, verdict.reason).toBe(true);
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    360_000,
+  );
+
+  testIfDocker(
+    "every decision row attributes its decision to a source (judged)",
+    async () => {
+      const fixture = await createMemoryFixture();
+      try {
+        await seedObservations(fixture, RECENT_POOL);
+        const snapshot = await readAllObservations(fixture.session);
+        const result = await reflectAllObservations({
+          session: fixture.session,
+          snapshot,
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+          ...PACK_ONE_BATCH,
+        });
+        expect(result).toBeDefined();
+        const rows = result!.reflections;
+
+        const verdict = await judgeDecisionAttribution(rows.map((r) => r.content));
+        expect(verdict.valid, verdict.reason).toBe(true);
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    360_000,
+  );
+
+  testIfDocker(
+    "known user steers from the source pool survive reflection (judged)",
+    async () => {
+      const fixture = await createMemoryFixture();
+      try {
+        await seedObservations(fixture, RECENT_POOL);
+        const snapshot = await readAllObservations(fixture.session);
+        const result = await reflectAllObservations({
+          session: fixture.session,
+          snapshot,
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+          ...PACK_ONE_BATCH,
+        });
+        expect(result).toBeDefined();
+        const rows = result!.reflections;
+
+        // Two known user steers visible in `recent-pool.json`. If the
+        // fixture is regenerated and these steers no longer appear,
+        // update this list. The judge accepts verbatim quotes,
+        // near-quotes, and clear paraphrases attributed to the user.
+        const knownSteers = [
+          "User pushed back on the global CSS approach for comment-message recoloring, asking why the colors couldn’t be set directly instead of touching global.css.",
+          "User clarified the threading rule that, in a normal non-AI thread, tagging AI mid-thread should not mark the parent.",
+        ];
+        const verdict = await judgeUserSteersPreserved(
+          rows.map((r) => r.content),
+          knownSteers,
+        );
+        expect(verdict.valid, verdict.reason).toBe(true);
       } finally {
         await fixture.dispose();
       }
