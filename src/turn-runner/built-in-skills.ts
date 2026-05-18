@@ -39,7 +39,7 @@ const RELAY_INSTRUCTIONS = dedent`
 `;
 
 const RELAY_DESCRIPTION =
-  "Inline anywhere in a prompt to nudge the agent into state-machine (relay) mode.";
+  "Run durable, multi-step, or recurring work as a state machine of sub-agent, script, poll, and timer states so the work survives session boundaries and progress stays visible to the user.";
 
 function buildBuiltIn(name: string, description: string, instructions: string): BuiltInSkill {
   const baseDir = `${BUILTIN_PATH_PREFIX}/${name}`;
