@@ -357,41 +357,15 @@ const stateMachineDefinitionSchema = Type.Object(
   },
 );
 
-// `definition` is technically required, but we declare it as Optional in the
-// schema so the upstream tool validator (pi-ai) does not reject empty/malformed
-// calls with a generic "must have required properties definition" message.
-// Instead, our `execute()` runs, detects the missing wrapper, and throws a
-// retry-hint that includes the expected call shape — so the model's next
-// attempt is grounded rather than guessing. The CALL_SHAPE_HINT below is the
-// exact text returned as the tool result on that failure path.
 const createDefinitionSchema = Type.Object({
-  definition: Type.Optional(stateMachineDefinitionSchema),
+  definition: stateMachineDefinitionSchema,
   firstState: Type.Optional(
     Type.String({ description: "Optional state name to run first after creating the definition." }),
   ),
 });
 
 type CreateDefinitionParams = Static<typeof createDefinitionSchema>;
-type ToolStateMachineDefinition = NonNullable<CreateDefinitionParams["definition"]>;
-
-const CREATE_DEFINITION_CALL_SHAPE_HINT = [
-  "create_state_machine_definition requires a top-level `definition` wrapper. Top-level keys are `definition` and `firstState` ONLY — every state goes inside `definition.states`, never at the top level.",
-  "",
-  "Expected call shape:",
-  "{",
-  '  "definition": {',
-  '    "name": "<human-readable state-machine name>",',
-  '    "prompt": "<routing guidance for when this state machine applies>",',
-  '    "states": [',
-  '      { "name": "step-1", "kind": "agent", "prompt": "..." },',
-  '      { "name": "done", "kind": "terminal", "status": "completed" }',
-  "    ]",
-  "  },",
-  '  "firstState": "step-1"',
-  "}",
-  "",
-  "Retry with a populated `definition`.",
-].join("\n");
+type ToolStateMachineDefinition = CreateDefinitionParams["definition"];
 
 const selectStateSchema = Type.Object({
   decision: Type.Object(
@@ -941,14 +915,6 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
     `,
     parameters: createDefinitionSchema,
     async execute(_toolCallId, params) {
-      // Retry-hint path: model sometimes serializes this tool call with an
-      // empty/malformed body (observed in production on long-context sessions).
-      // The TypeBox schema is intentionally permissive on `definition` so we
-      // can return a structured retry-hint here instead of the generic
-      // upstream validator message.
-      if (!params.definition) {
-        throw new Error(CREATE_DEFINITION_CALL_SHAPE_HINT);
-      }
       assertValidDefinition(params.definition);
       const result: TurnRunnerControlResult = {
         type: "create_state_machine_definition",

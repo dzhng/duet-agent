@@ -146,33 +146,6 @@ describe("TurnRunner tools", () => {
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
   });
 
-  test("empty-input call returns a retry-hint with the expected call shape", async () => {
-    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
-    const createDefinitionTool = tools.find(
-      (tool) => tool.name === "create_state_machine_definition",
-    );
-    expect(createDefinitionTool).toBeDefined();
-    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
-
-    // Simulates the observed production bug where the model emits the tool
-    // call with an empty body. The schema is intentionally permissive on
-    // `definition` so the upstream validator passes the call through to our
-    // execute(), which then throws a structured hint the model can act on.
-    let caught: unknown;
-    try {
-      await createDefinitionTool.execute("tool-empty", {} as never);
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    const message = (caught as Error).message;
-    expect(message).toContain("requires a top-level `definition` wrapper");
-    expect(message).toContain("Expected call shape:");
-    expect(message).toContain('"firstState": "step-1"');
-    expect(message).toContain('"kind": "terminal"');
-    expect(message).toContain("Retry with a populated `definition`.");
-  });
-
   test("returns control decisions in tool details and model-visible content", async () => {
     const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
     const createDefinitionTool = tools.find(
