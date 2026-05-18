@@ -11,15 +11,32 @@ import { createMemoryFixture } from "../test/helpers/memory-fixture.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { RECENT_POOL } from "./fixtures/global-reflect/recent-pool.js";
 import { seedObservations } from "./fixtures/global-reflect/seed.js";
+import {
+  judgeConcreteIdentifiers,
+  judgeDistinctInsights,
+  judgeNarrativeShape,
+} from "./helpers/reflection-judge.js";
 
 /**
  * Unit-sized reflection evals.
  *
- * A single `reflectAllObservations` batch should emit MULTIPLE small,
- * atomic reflection rows — one per durable insight — instead of a
- * single mega-row that concatenates the whole batch. Each row must be
- * a bumpable unit so the recall freshness path can promote individual
- * insights without dragging unrelated noise along with them.
+ * A single `reflectAllObservations` batch should emit MULTIPLE atomic
+ * reflection rows — one durable insight per row — instead of a single
+ * mega-row that concatenates the whole batch. Each row must be:
+ *   - a bumpable unit so the recall freshness path can promote
+ *     individual insights without dragging unrelated noise along, AND
+ *   - a self-contained mini-narrative (trigger → journey → decision →
+ *     rationale/lesson) so it stays useful weeks later when the
+ *     original transcript is gone.
+ *
+ * Structural properties (row count, length cap, durable-pool
+ * persistence) are checked with cheap assertions. Semantic properties
+ * (narrative shape, concrete identifiers, no duplicate insights) are
+ * checked with the dedicated reflection judges from
+ * `evals/helpers/reflection-judge.ts`, which are themselves exercised
+ * against known-answer fixtures in `evals/reflection-judge.eval.ts`.
+ * If a judge starts misbehaving, the judge-eval catches it before
+ * this eval pulls it into a real grading pass.
  */
 
 const settings = resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT);
@@ -29,21 +46,15 @@ const PACK_ONE_BATCH = {
   batchTokens: Number.MAX_SAFE_INTEGER,
 } as const;
 
-const MAX_ROW_CHARS = 2400; // ~600 tokens at 4 chars/token.
-const SPECIFIC_RE = /(2026-\d{2}-\d{2})|(#\d{2,5})|(src\/[\w./-]+)|\b[0-9a-f]{7,40}\b/;
-
-function ngrams(text: string, n: number): Set<string> {
-  const words = text.toLowerCase().split(/\s+/).filter(Boolean);
-  const grams = new Set<string>();
-  for (let i = 0; i + n <= words.length; i++) {
-    grams.add(words.slice(i, i + n).join(" "));
-  }
-  return grams;
-}
+// Generous upper bound — narrative rows are larger than bullet rows.
+// ~1000 tokens at 4 chars/token. The narrative judge enforces
+// "narrative, not kitchen sink"; this cap just catches runaway rows
+// that swallow the whole pool.
+const MAX_ROW_CHARS = 4000;
 
 describe("unit-sized reflections", () => {
   testIfDocker(
-    "single batch produces multiple atomic reflection rows",
+    "single batch produces multiple atomic reflection rows under the per-row cap",
     async () => {
       const fixture = await createMemoryFixture();
       try {
@@ -61,8 +72,60 @@ describe("unit-sized reflections", () => {
         expect(rows.length).toBeGreaterThanOrEqual(5);
         for (const row of rows) {
           expect(row.content.length).toBeLessThanOrEqual(MAX_ROW_CHARS);
-          expect(row.content).toMatch(SPECIFIC_RE);
         }
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    360_000,
+  );
+
+  testIfDocker(
+    "every row reads as a self-contained mini-narrative (judged)",
+    async () => {
+      const fixture = await createMemoryFixture();
+      try {
+        await seedObservations(fixture, RECENT_POOL);
+        const snapshot = await readAllObservations(fixture.session);
+        const result = await reflectAllObservations({
+          session: fixture.session,
+          snapshot,
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+          ...PACK_ONE_BATCH,
+        });
+        expect(result).toBeDefined();
+        const rows = result!.reflections;
+        expect(rows.length).toBeGreaterThanOrEqual(5);
+
+        const verdict = await judgeNarrativeShape(rows.map((r) => r.content));
+        expect(verdict.valid, verdict.reason).toBe(true);
+      } finally {
+        await fixture.dispose();
+      }
+    },
+    360_000,
+  );
+
+  testIfDocker(
+    "every row anchors to concrete identifiers (judged)",
+    async () => {
+      const fixture = await createMemoryFixture();
+      try {
+        await seedObservations(fixture, RECENT_POOL);
+        const snapshot = await readAllObservations(fixture.session);
+        const result = await reflectAllObservations({
+          session: fixture.session,
+          snapshot,
+          settings,
+          model: DEFAULT_CLI_MEMORY_MODEL,
+          ...PACK_ONE_BATCH,
+        });
+        expect(result).toBeDefined();
+        const rows = result!.reflections;
+
+        const verdict = await judgeConcreteIdentifiers(rows.map((r) => r.content));
+        expect(verdict.valid, verdict.reason).toBe(true);
       } finally {
         await fixture.dispose();
       }
@@ -106,7 +169,7 @@ describe("unit-sized reflections", () => {
   );
 
   testIfDocker(
-    "unit reflections do not repeat the same headline across rows",
+    "no two rows cover the same distinct insight (judged)",
     async () => {
       const fixture = await createMemoryFixture();
       try {
@@ -123,23 +186,8 @@ describe("unit-sized reflections", () => {
         const rows = result!.reflections;
         expect(rows.length).toBeGreaterThanOrEqual(5);
 
-        const rowGrams = rows.map((r) => ngrams(r.content, 6));
-        let duplicateRows = 0;
-        for (let i = 0; i < rowGrams.length; i++) {
-          let sharesWithOther = false;
-          for (let j = 0; j < rowGrams.length && !sharesWithOther; j++) {
-            if (i === j) continue;
-            for (const gram of rowGrams[i]!) {
-              if (rowGrams[j]!.has(gram)) {
-                sharesWithOther = true;
-                break;
-              }
-            }
-          }
-          if (sharesWithOther) duplicateRows++;
-        }
-        const ratio = duplicateRows / rows.length;
-        expect(ratio).toBeLessThan(0.2);
+        const verdict = await judgeDistinctInsights(rows.map((r) => r.content));
+        expect(verdict.valid, verdict.reason).toBe(true);
       } finally {
         await fixture.dispose();
       }

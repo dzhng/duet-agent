@@ -73,6 +73,23 @@ Run with `bun run eval evals/<name>.eval.ts`. All file-writing evals must use `t
 - Rerun the eval. Repeat.
 - When green, confirm the broader eval suite still passes: `bun run eval evals/memory-reflect.eval.ts`, plus any sibling memory evals (`observer-*.eval.ts`, `continuous-memory.eval.ts`).
 
+## Prefer LLM judges over regex/n-gram heuristics for semantic asserts
+
+Many memory properties are easy to describe in English and brittle to encode in regex — "each row reads as a self-contained mini-narrative", "no two rows cover the same insight", "the row anchors to at least one concrete identifier". Reach for `test/helpers/judge.ts` whenever the property depends on whole-text understanding instead of substring matching.
+
+Keep structural / cheap checks as plain assertions: row counts, length caps, persistence of an id, presence of a kind/tag, etc. The judge is for the parts a regex would have to approximate.
+
+### Judge the judge first
+
+A judge prompt is itself code that can drift, over-grade, or be fooled by particular phrasing. Before pulling a judge into a real eval, validate it against hand-crafted positive and negative fixtures so a false-pass / false-fail can be caught against known answers instead of the live LLM output.
+
+1. **Write the dedicated judge.** Put it under `evals/helpers/` as a function per semantic property (e.g. `judgeNarrativeShape(rows)`, `judgeConcreteIdentifiers(rows)`, `judgeDistinctInsights(rows)`). Each wraps `judge()` from `test/helpers/judge.ts` with a tightly-scoped grading prompt. Keep the prompt focused on one property; multi-property judges are harder to debug.
+2. **Write the judge-eval.** Create `evals/<name>-judge.eval.ts` and exercise EACH judge with at least one positive fixture (valid=true expected) and one negative fixture (valid=false expected). Use `testIfDocker`. Hand-craft the fixtures so the right answer is obvious to a human reader — narrative rows that include trigger/journey/decision/lesson vs bare-headline rows of the form "X was fixed on Y". Pass the judge result's `reason` as the assertion message so failures surface why the judge disagreed.
+3. **Run the judge-eval until green.** A judge whose own eval doesn't pass is not safe to consume. If a fixture flips the wrong way, tighten or loosen the judge prompt, then add a new fixture that locks in the new boundary.
+4. **Only then wire the judge into the real eval.** Import the validated judge and call it with live LLM output. If you tighten or loosen a judge prompt later, add new fixtures to the judge-eval first.
+
+Reference implementation: `evals/helpers/reflection-judge.ts` (three reflection judges), `evals/reflection-judge.eval.ts` (six judge-the-judge cases), `evals/memory-reflect-units.eval.ts` (the real eval that consumes the validated judges).
+
 ## Keep prompt examples independent from eval fixtures
 
 When you tune a memory prompt to make an eval pass, write the worked examples in the prompt with content from a DIFFERENT domain than the fixture. A prompt example that mirrors the fixture is teaching the model to pattern-match the test, not the rule.

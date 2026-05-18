@@ -306,16 +306,25 @@ function isImageContent(part: TextContent | ImageContent): part is ImageContent 
 
 export function buildReflectorSystemPrompt(instruction?: string): string {
   return dedent`
-    You are the reflection agent for an observational memory system.
+    You are the reflection agent for an observational memory system. Your output is the long-term cross-session memory the acting assistant will see weeks from now, when the original transcript is gone. Optimize for an agent who has never read the original turns.
 
-    Condense and restructure observations while preserving important facts, dates, user preferences, unresolved work, and completion markers.
+    Each row is one durable insight told as a self-contained mini-narrative. A bare factual headline ("X was done on Y") is the WRONG shape. The RIGHT shape captures the journey:
+
+      1. Trigger — what surfaced the problem, request, or decision? What was the symptom, complaint, error, or goal that started this thread of work?
+      2. Investigation / path — what was tried, ruled out, or considered? Which file/system/person was involved? What constraint forced the path that was taken?
+      3. Decision or outcome — what was actually done or chosen, with the concrete identifiers (file path, commit SHA, version, person, place) that let the agent find it again.
+      4. Rationale or higher-level lesson — WHY this was the right call given the constraints. What is the durable principle the next session should generalize? Often this is the most important part of the row.
+
+    Treat reflection as writing a short "why" memo, not bullet-point minutes. Multi-sentence rows that explain the journey are preferred over short rows that only state the outcome. A row that omits the trigger or the rationale is incomplete — expand it.
 
     Rules:
-    - Keep observations useful to the acting assistant.
-    - Deduplicate repeated facts.
-    - Preserve chronology and concrete details.
-    - Preserve observation group headings/ranges when possible.
-    - Do not invent details.
+    - Each row must be readable cold, by an agent with no other context. Test it: if a reader can't tell why the work mattered or what problem it solved, the row is too thin.
+    - Preserve concrete identifiers (dates, file paths, commit SHAs, PR numbers, error strings, version tags, names of people/products) wherever they appear in the source. They are how the future agent finds the work.
+    - Deduplicate across rows. Each insight gets one row. If two source observations describe the same journey, merge them.
+    - Group cause and effect into one row, not two. "The metadata.json race caused /answer 400s" + "SessionStore.save was made atomic" belong in the SAME row because the second is the resolution of the first.
+    - Preserve chronology and observation-group headings/ranges where they exist in the source.
+    - Do not invent details. If a fact wasn't in the source, leave it out — but DO restate context that IS in the source even if it feels redundant within the row, because it won't be redundant when read cold.
+    - Length budget per row: roughly 150-600 tokens (one short paragraph). Going longer is fine when the journey genuinely needs it; staying very short is the failure mode to avoid.
     ${instruction ? `\nCustom instructions:\n${instruction}` : ""}
   `;
 }
@@ -334,7 +343,9 @@ export function buildReflectorPrompt(
     : `Target budget: keep the reflected observation log under approximately ${targetTokens.toLocaleString("en-US")} tokens.`;
 
   return dedent`
-    Reflect on these observations and return a condensed observation log.
+    Reflect on these observations and return an ARRAY of atomic reflection rows. One self-contained narrative per row.
+
+    For each row, walk through trigger → journey → decision → rationale/lesson. A row that only states the outcome ("X was fixed", "v0.1.131 was released") is incomplete — expand it with what triggered the work, what was tried, why this resolution was chosen, and what the durable lesson is.
 
     ${budgetInstruction}
 

@@ -283,7 +283,7 @@ const reflectorResultSchema = Type.Object({
     Type.Object({
       content: Type.String({
         description:
-          "One durable insight as a single small row (~30-150 tokens, 1-3 sentences). Each row must stand alone as a bumpable unit of memory. Never wrap multiple insights in a single <observation-group> or otherwise concatenate them into one row.",
+          "One durable insight told as a self-contained mini-narrative (~150-600 tokens, 2-5 sentences or one short paragraph). Each row must stand alone as a bumpable unit of memory AND be readable cold — include the trigger that surfaced it, the path taken, the decision or outcome, and the rationale or higher-level lesson where one exists. A bare factual headline without that context is wrong; expand it. Never wrap multiple distinct insights in one row.",
       }),
       priority: Type.Optional(
         Type.Union([Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")], {
@@ -299,7 +299,7 @@ const reflectorResultSchema = Type.Object({
     }),
     {
       description:
-        "Atomic reflection rows. Prefer many small rows over one summary row; deduplicate across rows and keep cross-session themes as their own rows.",
+        "Atomic reflection rows. Each row is its own self-contained mini-narrative — trigger → journey → decision → lesson — not a bare fact headline. Prefer many narrative rows over one giant summary; deduplicate across rows and keep cross-session themes as their own rows.",
     },
   ),
   suggestedContinuation: Type.Optional(
@@ -312,7 +312,7 @@ const reflectorResultSchema = Type.Object({
 const reflectorResultTool = {
   name: "reflectObservations",
   description:
-    "Return an array of atomic reflection rows. Each row is one durable insight; never concatenate multiple insights into one row.",
+    "Return an array of atomic reflection rows. Each row is one durable insight, told with enough context (trigger, journey, decision, lesson) to be understood on its own; never concatenate multiple insights into one row.",
   parameters: reflectorResultSchema,
 };
 
