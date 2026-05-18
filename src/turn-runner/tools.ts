@@ -891,31 +891,27 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
     name: "create_state_machine_definition",
     label: "Create state machine definition",
     description: dedent`
-      Create a state-machine definition for durable business-process work, or for any multi-step task whose steps are well-scoped enough that a sub-agent or script can complete each one on its own.
+      Create a new state-machine definition for durable, multi-step, or recurring work. See the system prompt for full routing rules (when to choose this over todo_write, how states resume, terminal acknowledgment, etc.). This description only covers the call shape.
 
-      Always create a state machine when the user asks for a recurring or unbounded task — anything shaped like "monitor X and do Y", "watch for X", "keep checking X until Y", "every N minutes/hours do X", or any work with no natural finish line in a single turn. Use a poll state for repeating checks (intervalMs) and a timer state for a single future wake (wakeAt). Once the parent turn ends, only state-machine work keeps running in the background; trying to handle these inline or with todo_write will simply stop when you reply.
+      Call shape (top-level keys are \`definition\` and \`firstState\` ONLY — every state goes inside \`definition.states\`, never at the top level):
+      {
+        "definition": {
+          "name": "<human-readable state-machine name>",
+          "prompt": "<routing guidance for when this state machine applies>",
+          "states": [
+            { "name": "step-1", "kind": "agent", "prompt": "..." },
+            { "name": "step-2", "kind": "script", "command": "..." },
+            { "name": "done", "kind": "terminal", "status": "completed" }
+          ]
+        },
+        "firstState": "step-1"
+      }
 
-      Also always create a state machine when the work is large enough that it would otherwise span multiple sessions. Concrete heuristic: if your plan has roughly seven or more items, or any single item is itself a multi-step job (an entire refactor phase, an entire module extraction, an entire test file to author, an entire batch of files to migrate), make one agent state per item instead of one todo per item. Agent and script states have no minimum duration — only poll intervalMs and timer wakeAt require 15 minutes — so a pure-agent state machine is the right shape for a large in-conversation refactor too, not just lifecycle work. If you are about to tell the user to "continue this in a fresh session" or "land the remaining phases later," you should have created a state machine of agent states up front; the work survives the session boundary on its own and you stay the orchestrator across it.
+      State \`kind\` is one of \`agent\`, \`script\`, \`poll\`, \`timer\`, \`terminal\`. Poll \`intervalMs\` and timer \`wakeAt\` must be ≥ 15 minutes; agent/script states have no minimum duration. Every definition needs at least one \`terminal\` state with status "completed"; "failed" and "cancelled" terminals are auto-injected if omitted.
 
-      Reach for this tool — not todo_write — whenever a step can be described as "do X with these inputs and return the result." Each agent state runs in a fresh sub-agent context, and each script/poll/timer state runs without an agent at all. Only a compact result returns to you, so the sub-agent's tool calls, file reads, and script output never pollute this transcript. That makes a state machine the primary way to keep the parent context clean on multi-step work. The definition, current state, and progress are also rendered to the user in real time, so it doubles as a visible plan — they can see which state is running, what came before, and what is waiting.
+      State prompts and script commands may use \`{{ input.foo }}\` templates — declare \`inputSchema\` on those states and pass matching \`input\` when selecting them via select_state_machine_state. Agent states may set \`allowedSkills\` to restrict the skill set for that sub-agent.
 
-      You stay the orchestrator: when each state finishes, the runner wakes you with its result so you can inspect the output and decide the next transition (select the next state, finalize with a terminal state, or hand back to the user). Sub-agents and scripts only do the per-state work; they do not pick what comes next.
-
-      State-machine work also keeps the user unblocked. While states execute in the background the user can keep sending messages and you (the parent) will respond without waiting for the state machine to finish. State-machine progress continues regardless of what you do in that side reply — by default just answer the user. Only call select_state_machine_state if the user actually wants to redirect or change the running work; questions, status checks, and side conversations should be answered with plain replies. A "steer" message arrives immediately as an interruption (right shape for redirects or anything time-sensitive); a "follow_up" message is queued and delivered when your current turn settles (right shape for context that does not need to interrupt). Doing the same multi-step work via todo_write would block the user behind your own tool calls instead.
-
-      Use todo_write instead only when you need to do the steps yourself in this conversation because you will keep reasoning over the intermediate output.
-
-      State prompts and script commands may use template strings such as {{ input.email }}; define inputSchema on those states and pass matching input when selecting them. Agent states may set allowedSkills to restrict which skills are injected into that sub-agent.
-
-      Poll states always run script attempts on a recurring intervalMs and fail the state machine when timeoutMs is exceeded. Timer states are separate: set kind "timer" with wakeAt as an absolute Unix epoch millisecond timestamp, and the state completes at that time so the parent can choose the next state.
-
-      Poll intervalMs must be at least 15 minutes (900000 ms), and timer wakeAt must be at least 15 minutes in the future. State machines are for long-running lifecycle work that benefits from sleep/wake/background execution. Anything shorter-term should run directly in your turn rather than through a state machine — the orchestration overhead is not worth it for sub-15-minute waits.
-
-      Every definition must include at least one terminal state with status "completed" representing the happy-path exit (success). The runner automatically adds terminal states named "failed" (status "failed") and "cancelled" (status "cancelled") if you do not define them, so you always have escape hatches for unrecoverable failure and user cancellation without specifying boilerplate terminals. You may still define your own "failed" or "cancelled" states (with reasons or different names) to override or supplement the auto-injected ones.
-
-      Every terminal — both the ones you select via select_state_machine_state and the ones the runner records when a state fails at runtime — wakes you one more time with the terminal details so you can summarize the outcome to the user and optionally start follow-up work via another create_state_machine_definition call. Plan terminal states with that in mind: name them meaningfully and use the \`reason\` field, because both flow into the acknowledgment prompt the parent sees.
-
-      Use this only when no state machine is active or the previous state machine has reached a terminal state; otherwise use select_state_machine_state.
+      Only use this when no state machine is active or the previous one has reached a terminal state; otherwise call select_state_machine_state.
     `,
     parameters: createDefinitionSchema,
     async execute(_toolCallId, params) {
