@@ -14,6 +14,15 @@ function cwdSystemPrompt(cwd: string): string {
   `;
 }
 
+function sessionStateSystemPrompt(sessionStatePath: string): string {
+  return dedent`
+    <session_state_file>
+    Session state file: ${sessionStatePath}.
+    This JSON file contains your session's raw, untruncated chat history (every turn, tool call, and tool result the runner has persisted). If you ever need to inspect what was actually said earlier in this session — beyond the summarized context already in your prompt — read this file directly (e.g. \`read\` or \`jq\` it). Do not write to it.
+    </session_state_file>
+  `;
+}
+
 function currentDateSystemPrompt(): string {
   // Day-level resolution keeps the prompt stable for the whole UTC day so prompt
   // caching is not invalidated on every turn. Agents that need finer-grained
@@ -47,6 +56,9 @@ export function createSystemPromptWithAppendedLayers(input: {
     ...input.systemPromptFiles,
     TOOL_EXECUTION_SYSTEM_PROMPT,
     cwdSystemPrompt(input.config.cwd ?? process.cwd()),
+    input.config.sessionStatePath
+      ? sessionStateSystemPrompt(input.config.sessionStatePath)
+      : undefined,
     createSkillsSystemPrompt(input.skills),
     ...input.append,
     currentDateSystemPrompt(),

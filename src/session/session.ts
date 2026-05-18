@@ -166,8 +166,14 @@ export class Session {
     // observer/reflector write are tagged with this session. The memory
     // loader uses session id to separate local memory (this session) from
     // global memory (every other session, ranked into a budget).
-    this.runner = options.runner ?? new TurnRunner({ ...config, sessionId: options.id });
     this.sessionPath = options.sessionPath;
+    this.runner =
+      options.runner ??
+      new TurnRunner({
+        ...config,
+        sessionId: options.id,
+        sessionStatePath: join(this.sessionPath, "state.json"),
+      });
     this.unsubscribeRunner = this.runner.subscribe((event) => void this.handleTurnEvent(event));
   }
 
