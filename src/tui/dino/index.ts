@@ -64,9 +64,9 @@ export interface DinoPanel {
   resume(): void;
   /** Agent flipped to needs-user → freeze the world. */
   freeze(): void;
-  /** Track the agent's busy/idle signal so the collapsed hint row only
-   *  surfaces while the agent is working — at rest the panel takes no
-   *  vertical space and stays out of the way. */
+  /** Track the agent's busy/idle signal so Ctrl-G is only meaningful
+   *  while the agent is working — at rest the panel takes no vertical
+   *  space and the toggle is a no-op. */
   setAgentBusy(busy: boolean): void;
   /** Route a keystroke to the game. Returns true when consumed. */
   handleKey(keyName: string | undefined): boolean;
@@ -94,9 +94,9 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   // input (so resume runs the 3-2-1 + grace gap) vs. a manual collapse
   // (so re-expand resumes instantly per the spec).
   let frozenByAgent = false;
-  // Mirrors the StatusController running signal. The collapsed hint row
-  // ("▶ Ctrl-G to play") only renders while this is true; at idle the
-  // panel is invisible and reserves no rows.
+  // Mirrors the StatusController running signal. Ctrl-G is only
+  // accepted while this is true; at idle the panel is invisible and
+  // reserves no rows.
   let agentBusy = false;
   let ticker: ReturnType<typeof setInterval> | undefined;
   // Last persisted high score, so we only write on improvement. Hydrated
@@ -226,10 +226,9 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
     // The game is strictly opt-in: the panel never auto-expands. The
     // Ctrl-G tease lives in the input placeholder, and the user has to
     // press it themselves to bring up the playfield.
-    // When the agent goes idle, snap the panel back to its starting
-    // point (collapsed) so the next busy cycle begins at "hint only"
-    // rather than re-appearing already expanded. The user opts back in
-    // by pressing Ctrl-G again.
+    // When the agent goes idle, snap the panel back to collapsed so
+    // the next busy cycle starts invisible rather than re-appearing
+    // already expanded. The user opts back in by pressing Ctrl-G.
     if (!busy) {
       expanded = false;
       gameFocused = true;
