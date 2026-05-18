@@ -34,6 +34,7 @@ import {
   resolveModelName,
 } from "../model-resolution/resolver.js";
 import type { TurnRunnerConfig } from "../types/config.js";
+import { compactTurnState, type AutoStateCompactionOptions } from "./state-compaction.js";
 import type {
   TurnAgentFile,
   TurnAnswerCommand,
@@ -988,7 +989,7 @@ export class TurnRunner {
           messages: this.parentAgent.state.messages,
         }
       : state.agent;
-    return {
+    const snapshot: TurnState = {
       ...state,
       agent: parentAgent,
       stateMachine: this.stateMachineController.getSession(),
@@ -996,6 +997,35 @@ export class TurnRunner {
       followUpQueue: copyOptionalArray(state.followUpQueue ?? this.state?.followUpQueue),
       queuedCommands: copyOptionalArray(state.queuedCommands ?? this.state?.queuedCommands),
     };
+    return this.applyAutoStateCompaction(snapshot);
+  }
+
+  /**
+   * Caps the size of every state that leaves the runner via emit/return/
+   * getState. Runs only when `TurnRunnerConfig.autoStateCompaction` is
+   * enabled — the single choke point ensures persistence layers, terminal
+   * payloads, and external observers all see the same trimmed state.
+   */
+  private applyAutoStateCompaction(state: TurnState): TurnState {
+    const options = this.resolveCompactionOptions();
+    if (!options) return state;
+    const { state: capped, evicted, bytes } = compactTurnState(state, options);
+    if (evicted > 0) {
+      console.warn(
+        `[duet-agent] turn state exceeded auto-compaction ceiling; evicted ${evicted} oldest message(s) (now ${bytes} bytes) for session ${this.config.sessionId ?? "<unknown>"}`,
+      );
+    }
+    return capped;
+  }
+
+  private resolveCompactionOptions(): AutoStateCompactionOptions | undefined {
+    // On by default: `undefined` and `true` both enable the 100 MB ceiling so
+    // unbounded `state.json` growth can't wedge persistence. Only an explicit
+    // `false` disables compaction.
+    const setting = this.config.autoStateCompaction;
+    if (setting === false) return undefined;
+    if (setting === undefined || setting === true) return {};
+    return setting;
   }
 
   private setState(state: TurnState): void {

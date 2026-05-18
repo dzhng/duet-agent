@@ -485,6 +485,8 @@ Observational memory thresholds (tuned for modern 200k-token windows):
 - Raw-tail retention keeps about `30_000` exact message tokens after context replacement activates.
 - Observation context is injected as reminder messages; replacing raw context with observations/reflections is the compaction path.
 
+As a final safety net for on-disk state, `TurnRunner` also caps the size of every `TurnState` that leaves the runner via `snapshotState` — every emitted event, terminal payload, and `getState()` return is trimmed before persistence sees it. Eviction drops the oldest agent messages first while keeping tool-call/result pairs intact, so `state.json` cannot grow unbounded even if memory compaction has already run many times. This is on by default at a 100 MB ceiling; override or disable via `autoStateCompaction` on `TurnRunnerConfig` (`true` → default ceiling, `{ maxBytes }` → custom, `false` → off).
+
 </details>
 
 ## Skills

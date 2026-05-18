@@ -15,6 +15,7 @@ export * from "./types/protocol.js";
 export * from "./turn-runner/turn-runner.js";
 export * from "./session/session.js";
 export * from "./session/session-manager.js";
+export * from "./turn-runner/state-compaction.js";
 export * from "./guardrails/semantic.js";
 export * from "./guardrails/pattern.js";
 export * from "./guardrails/firewall.js";
