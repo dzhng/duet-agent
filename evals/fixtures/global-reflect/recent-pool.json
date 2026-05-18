@@ -1,0 +1,1298 @@
+[
+  {
+    "id": "mem_zU1T9Zq8HpbO",
+    "createdAt": 1778854034651,
+    "lastUsedAt": 1778854034651,
+    "ageDays": 2.681397662037037,
+    "sessionId": "session_NAQUMAGyxdZw",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:07",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"3d31299b9a9dcaf6\" range=\"msg_user_1778852873403_8fd4ebc8:msg_assistant_gen_01KRNZCMSPXQF8GZTXXZ7ME0EZ\">\nDate: 2026-05-15\n* 🟡 (14:06) Latest CI failure on `staging` is now a different gateway integration test: `ask + answer (multi-turn via persisted TurnState) > writes pendingQuestion + waiting-for-input on ask, then resumes via /answer` got `400` instead of `200`.\n-> CI log shows the response body contained `\"message\": \"Invalid input: expected 1\"`, so the breakage is in request validation / payload shape rather than the prior EPIPE or timeout issues.\n* 🟡 (13:57) The terminal-race regression test was given a per-test timeout of `30_000` in `packages/agent-gateway/src/session-controller.integration.test.ts` because CI was timing out at Vitest's default 5s budget before the race could run.\n* ✅ (13:57) Committed and pushed `beb774830` to `staging` with the timeout bump for `does not let the prior terminal handler kill the new turn’s live runner`; local gateway tests passed 156/156 afterward.\n* ✅ (13:50) Committed and pushed `05ad9a191` to `staging` with the async stdin EPIPE fix in `packages/agent-gateway/src/runner-manager.ts`.\n-> `RunnerManager.spawn()` now attaches a no-op `stdin` `'error'` listener, and `send()` uses a no-op `stdin.write(..., () => {})` callback so child-exit write races no longer crash the gateway.\n-> Local verification before push: `bun run check-types`, `bun run lint`, and `packages/agent-gateway` tests were clean.\n* 🟡 (13:55) CI on `beb774830` still failed, but the failing test had shifted to the `ask + answer` persisted `TurnState` path with `400` vs `200`, indicating another unrelated gateway regression now needs investigation.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_vRuTM5514REi",
+    "createdAt": 1778854066401,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.681030185185185,
+    "sessionId": "session_BN5tlJTaxm8t",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:07",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"c327b58f7fa6c548\" range=\"msg_user_1778853449798_f6f9488f:msg_assistant_gen_01KRNZDN7GR7XKZEX4W2Y8M2AM\">\nDate: 2026-05-15\n* 🟡 (13:57-14:07) User requested the memory stats message wording be shortened to just “Reinforced 1 prior memory” and then clarified the visible prefix must remain `Memory observation recorded.` when there is observation activity.\n* 🟡 (14:07) User clarified that if memory activity produces neither a new observation nor any bump, the assistant should not send a memory event at all, so the TUI should not show a `[memory:observation]` section in that case.\n* ✅ (14:07) Updated `src/memory/observational.ts` so completed memory events are skipped when both `observation` and `usageBumped` are empty; restored completion messages to keep the `Memory observation recorded.` prefix with optional `Reinforced N prior memor{y,ies}.` suffix when bumps exist.\n* ✅ (14:07) Updated the TUI playground fixture and `src/tui/step-renderer.ts` comment to match the restored prefix/suffix behavior; `tsc --noEmit` and `oxlint` were clean after the change.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_yTJsZhRVgGk8",
+    "createdAt": 1778854149019,
+    "lastUsedAt": 1778854149019,
+    "ageDays": 2.6800739583333333,
+    "sessionId": "session_BN5tlJTaxm8t",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:09",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"0af81799711e4bb8\" range=\"msg_user_1778854119080_594b0040:msg_assistant_gen_01KRNZG6CQDYH2FDC8EZSTV11R\">\nDate: 2026-05-15\n* 🟡 (14:08) User requested `/release`.\n* ✅ (14:08) Released v0.1.130 on `main`.\n-> bumped `package.json` version from 0.1.129 to 0.1.130.\n-> commit `1977aab` (`chore: release v0.1.130`) was created and pushed.\n-> annotated tag `v0.1.130` was created and pushed to origin.\n-> verification before release was clean: `bun run check-types`, `bun run lint`.\n-> release included the memory-observation formatting change: restored the `Memory observation recorded.` prefix with an optional ` Reinforced N prior memor{y,ies}.` suffix, and suppressed the `[memory:observation]` completion event when no observation was recorded and no prior memories were bumped.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_XQD4oMvfhBQ3",
+    "createdAt": 1778854187082,
+    "lastUsedAt": 1778855248450,
+    "ageDays": 2.679633414351852,
+    "sessionId": "session_g3ZwgiinEMuH",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:09",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"a27d5b9e120e8c76\" range=\"msg_user_1778854068470_d535706d:msg_assistant_gen_01KRNZGW9WM756Z6SQBZF3FCFE\">\nDate: 2026-05-15\n* 🟡 (14:07) User wants duet-agent to detect Anthropic streams ending before `message_stop` and retry locally, preferably avoiding a session reset unless recovery is impossible.\n* 🟡 (14:07-14:09) Investigated duet-agent retry paths and found the current transient-error regex in `src/turn-runner/transient-error.ts` likely misses `Anthropic stream ended before message_stop`; `TurnRunner.retryTransientServerErrors` already exists and uses `lastMessageIsTransientFailure` plus `agent.continue()` retries.\n* 🟡 (14:09) Found gateway-side wording in `packages/agent-gateway/src/session-controller.ts` that emits the recovery note: \"The session has been reset. Your next message will start a fresh one — the runner will pick up from the working directory's current state.\"\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_t3Fe1dJytYDQ",
+    "createdAt": 1778854197003,
+    "lastUsedAt": 1778872120696,
+    "ageDays": 2.679518587962963,
+    "sessionId": "session_NAQUMAGyxdZw",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:09",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"6bf5503c5472509e\" range=\"msg_user_1778854148877_a8dbb4b0:msg_tool_toolu_01JvsNaZp7yzia18ZnPHgwg4\">\nDate: 2026-05-15\n* 🟡 (14:09) User wants the CI-greening loop to keep iterating until CI consistently passes on staging.\n* 🟡 (14:09) A state machine was created for the CI loop: `CI green loop on staging`, with a `fix-and-push` agent state intended to inspect the latest staging failure, apply a fix, run local checks, commit, push, and then continue watching CI until it is consistently green.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_gN-yQ33nU7xa",
+    "createdAt": 1778854395535,
+    "lastUsedAt": 1778854395535,
+    "ageDays": 2.6772207638888887,
+    "sessionId": "session_g3ZwgiinEMuH",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:13",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"cf48101f24249d19\" range=\"msg_user_1778854215051_4e9f3590:msg_assistant_gen_01KRNZQKQAWPV2YS4TXDP3ETBZ\">\nDate: 2026-05-15\n* ✅ (14:12-14:13) Released v0.1.131 after fixing transient Anthropic stream truncation retries.\n-> `src/turn-runner/transient-error.ts` now matches `stream ended` and documents the `Anthropic stream ended before message_stop` SSE truncation case as transient.\n-> `test/transient-error.test.ts` gained coverage for that exact error string.\n-> verified clean with `bun run check-types`, `bun run lint`, and `bun run test` (586/586 passing).\n-> release commit `fe2e6c6` (`chore: release v0.1.131`) bumped `package.json` 0.1.130 -> 0.1.131; annotated tag `v0.1.131` was created and pushed, and `origin/main` advanced to `fe2e6c6`.\n* 🟡 (14:10-14:12) Investigated the transient Anthropic failure and chose a local retry fix rather than a gateway-side reset change.\n-> confirmed the repo already had `test/transient-error.test.ts` and used it to validate the new transient-error classification.\n-> root cause was that `Anthropic stream ended before message_stop` fell through the existing transient pattern, so retries were not triggered.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_POmRIno5Oaix",
+    "createdAt": 1778854642297,
+    "lastUsedAt": 1778854642297,
+    "ageDays": 2.674364722222222,
+    "sessionId": "session_NAQUMAGyxdZw",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:17",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"7e993bacebb6f7db\" range=\"msg_user_1778854632172_9d050090:msg_tool_toolu_01CXFyvwsXiBGSqAzA3JqoQZ\">\nDate: 2026-05-15\n* ✅ (14:17) The `fix-and-push` CI-loop state finished by pushing `fc197bdff` to `staging`.\n  -> `SessionStore.save()` now writes atomically via temp file + `rename()`, and `load()` only swallows `ENOENT`.\n  -> This closes the `/answer` vs ask-handler race where `metadata.json` could be read mid-write, producing truncated JSON, `null`, and HTTP 400 (`Session not found`).\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_lE5CHa8kYRbO",
+    "createdAt": 1778854846115,
+    "lastUsedAt": 1778854846115,
+    "ageDays": 2.6720057175925924,
+    "sessionId": "session_NAQUMAGyxdZw",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:20",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"1a13395eeff88d2a\" range=\"msg_user_1778854837487_33c7d8dd:msg_tool_toolu_01GaNRrXvbDs5war5qZP7b36\">\n🟡 (14:20) The `watch-ci` state finished after staging run 25922744180 completed successfully.\n-> `build-and-test` passed in 3m21s on `aomni-com/chat-app#193`.\n-> Only remaining annotations were non-blocking lint/deprecation warnings (Node.js 20 action deprecation plus several existing `Unexpected any`, `Unexpected await`, `new Array(singleArgument)`, and empty spread fallback warnings).\n🟡 (14:20) The CI loop selected the next state `verify-rerun` after the successful watch step.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_jV6Cz55Jinq6",
+    "createdAt": 1778855053191,
+    "lastUsedAt": 1778855053191,
+    "ageDays": 2.6696090046296295,
+    "sessionId": "session_oXiRM3qP3O4a",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:24",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"397256dce1bdf650\" range=\"msg_user_1778855012138_e803a022:msg_assistant_gen_01KRP0BKMMMVTQ3EHR6K1SKYA6\">\nDate: 2026-05-15\n* 🟡 (14:23) User asked whether the recovery text shown after `Anthropic stream ended before message_stop` is actually added as a reminder to the next prompt.\n* ✅ (14:23) Verified `src/session-controller.ts` appends a one-shot `<session-recovery>` block to the next turn’s system prompt when `pendingRecoveryNote` exists, then clears the note; it tells the fresh runner the prior session ended unexpectedly, that working-directory state remains, and to recover context from recent channel messages and the workdir.\n* -> The recovery text is not a chat message; it is injected into the next runner’s system prompt only for that turn.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_LbkpwsfPLGrK",
+    "createdAt": 1778855102295,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.669040671296296,
+    "sessionId": "session_NAQUMAGyxdZw",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:25",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"2062278ab9d5b234\" range=\"msg_user_1778855091394_a55c8bc3:msg_tool_toolu_01BtqutSXSB1PNCuywcVGnEA\">\nDate: 2026-05-15\n* ✅ (14:24) CI loop reached terminal `ci-green` after the `verify-rerun` state finished.\n-> staging run 25922744180 reran cleanly as CI job 76196398843 in 3m47s, with lint, type check, format check, and test all passing.\n-> This provides two consecutive green staging runs overall, so the gating issue is now considered resolved on commit fc197bdff.\n* 🟡 (14:24) The remaining CI annotations are non-blocking warnings only, including Node.js 20 action deprecation and several existing lint warnings (`unexpected any`, `unexpected await`, `new Array(singleArgument)`, empty spread fallback).\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_KGWR-trg58Vy",
+    "createdAt": 1778855119009,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.6688472222222224,
+    "sessionId": "session_NAQUMAGyxdZw",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:25",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"111f344c531e4da4\" range=\"msg_user_1778855102298_813d0ea9:msg_assistant_gen_01KRP0DJTCMJPK73HW8M9HG3E5\">\nDate: 2026-05-15\n* 🟡 (14:25) User reported the `CI green loop on staging` state machine reached terminal `ci-green` and is no longer running; CI passes consistently on staging.\n* ✅ (14:25) Finalized the CI loop on `staging` at commit `fc197bdff`; `SessionStore.save()` now writes atomically via temp file + `rename()`, and `load()` only swallows `ENOENT`, fixing the mid-write `metadata.json` race that caused truncated JSON and `/answer` 400s.\n* ✅ (14:25) Verified two consecutive green staging runs: run `25922744180` (3m21s) and rerun job `76196398843` (3m47s), both passing lint, type check, format check, and tests.\n* 🟡 (14:25) Remaining CI annotations are non-blocking only: Node.js 20 action deprecation plus existing lint warnings (`unexpected any`, `unexpected await`, `new Array(singleArgument)`, empty spread fallback).\n* 🟡 (14:25) Recommended next step offered: deploy to prod when ready via `/deploy-to-prod`; user can also choose to leave warning cleanup for later.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_Hflc-y9MzVEU",
+    "createdAt": 1778855138108,
+    "lastUsedAt": 1778855138108,
+    "ageDays": 2.6686261689814814,
+    "sessionId": "session_oXiRM3qP3O4a",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:25",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"8f6c922deef95984\" range=\"msg_user_1778855119924_ce103021:msg_assistant_gen_01KRP0E3Y6PPS0T5SGQ1K9MKRP\">\nDate: 2026-05-15\n* 🟡 (14:25) User asked whether a failed Anthropic stream turn completely deletes turn state.\n* 🟡 (14:25) On failed `complete`, `src/session-controller.ts` wipes `turnState`/pending state for the session and the next `/prompt` starts a fresh runner; the working directory is preserved.\n* 🟡 (14:25) The only carried-forward recovery context is the one-shot `<session-recovery>` system-prompt block from `pendingRecoveryNote`, which is consumed and cleared on the next turn.\n* 🟢 (14:25) The earlier transient-error retry work in `src/turn-runner/transient-error.ts` is intended to prevent hitting this failed-terminal reset path.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_-Ziu5Tl1vrUu",
+    "createdAt": 1778855248471,
+    "lastUsedAt": 1778855248471,
+    "ageDays": 2.6673488194444444,
+    "sessionId": "session_oXiRM3qP3O4a",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:27",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"c45a087530597c0f\" range=\"msg_user_1778855215418_c8cead69:msg_assistant_gen_01KRP0H7BXQRX1SRQVSGPF5EDY\">\nDate: 2026-05-15\n* 🟡 (14:26) User asked whether `handleTerminal` makes sense and what users see in a failed-complete case.\n* 🟡 (14:27) In the failed-complete path, `handleTerminal('complete')` skips persisting `event.state`, still flushes buffered output, updates cost/lastUsage, and then the caller creates an error agent message, stages a recovery note, wipes session state, and completes the session with error.\n* 🟢 (14:27) One subtlety noted: when `state.muted` is true, the error message and recovery-note path are skipped together, so muted failures end quietly without staging recovery context.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_DhjOAMf0boHR",
+    "createdAt": 1778855263393,
+    "lastUsedAt": 1778856275267,
+    "ageDays": 2.667176111111111,
+    "sessionId": "session_NAQUMAGyxdZw",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:27",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"44396653e5baaa44\" range=\"msg_user_1778855252257_1426751f:msg_assistant_gen_01KRP0J984P6J98XVZ7Y812RTC\">\n* 🟡 (14:27) User asked whether the recent CI-green changes are purely agent-gateway changes.\n* 🟡 (14:27) Assistant confirmed the touched files are only in `packages/agent-gateway/src/`: `runner-manager.ts`, `session-controller.integration.test.ts`, and `session-store.ts`; no changes in `apps/web`, `convex/`, or other packages.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_B4sA6G4B25Zk",
+    "createdAt": 1778856172089,
+    "lastUsedAt": 1778857640306,
+    "ageDays": 2.656658796296296,
+    "sessionId": "session_N2Mjs2RRD9aq",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:42",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"0010649d3beb6306\" range=\"msg_user_1778856112326_4f0a6b0e:msg_assistant_gen_01KRP1DNW5C3W1VF145GCC071G\">\n* 🟡 (14:41-14:42) User asked whether the latest `rg`-bundling release path runs a `postinstall` during upgrade; clarified they meant the latest commit that adds `rg` support.\n* 🟡 (14:42) Determined the repo has no `postinstall`/`install` lifecycle script, and the bundled `@vscode/ripgrep` dependency also has no scripts; it ships via `optionalDependencies` of platform-specific packages, so the upgrade/install path only needs normal package-manager dependency resolution.\n* 🟡 (14:42) `duet upgrade` installs `@duetso/agent@<version>` through the detected global package manager, so the new `rg` binary becomes available as part of ordinary dependency installation; if optional deps are skipped, runtime falls back to system `rg`.\n* 🟢 (14:42) Noted that `bun add -g` does not execute lifecycle scripts by default, reinforcing why the `rg` bundling approach avoids relying on `postinstall`.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_GVP8djqAUjMn",
+    "createdAt": 1778856217569,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.6561324074074073,
+    "sessionId": "session_N2Mjs2RRD9aq",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:43",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"9cd82b5866ea522d\" range=\"msg_user_1778856204362_72c2d0b7:msg_assistant_gen_01KRP1FAJXMW7HHJ9V9CBKR622\">\nDate: 2026-05-15\n* 🟡 (14:43) User asked to try using `rg`.\n* ✅ (14:43) Verified `rg` is available in the environment and resolves to the bundled ripgrep binary from `node_modules/@vscode/ripgrep-darwin-arm64/bin/rg` (ripgrep 15.0.0).\n-> This confirms the optional-dependency install path produced a usable local `rg` without needing a postinstall step.\n* 🟢 (14:43) The shell runtime PATH appears to already prefer local node_modules binaries; `withBundledRipgrep` is still the code path that would explicitly prepend the bundled ripgrep directory for tool operations.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_eLMlhn7qO-Wy",
+    "createdAt": 1778856275280,
+    "lastUsedAt": 1778936565586,
+    "ageDays": 2.6554644560185183,
+    "sessionId": "session_N2Mjs2RRD9aq",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "14:44",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"9fc8819e79a9f3f3\" range=\"msg_user_1778856240174_594b0040:msg_assistant_gen_01KRP1H2R0ED9N2AX1B4P4JEHQ\">\nDate: 2026-05-15\n* ✅ (14:44) Released v0.1.132 on `main`.\n-> bumped `package.json` version from 0.1.131 to 0.1.132.\n-> commit `3d6558a4fcbad9da6a108a135593bfe6a39d101f` (`chore: release v0.1.132`) was created and pushed.\n-> annotated tag `v0.1.132` was created and pushed to origin.\n-> verification before release was clean: `bun run check-types`, `bun run lint` (0 warnings, 0 errors).\n-> pre-commit format hook ran (`oxfmt --write --no-error-on-unmatched-pattern`) and completed cleanly.\n* 🟢 (14:44) This release includes the bundled-ripgrep change from commit `ad046b8`, so global installs resolve `@vscode/ripgrep` and its platform-specific optional dep without a postinstall step.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_1hE1oN7AbOTs",
+    "createdAt": 1778857640380,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.6396646875,
+    "sessionId": "session_WymiI3xGRTcC",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "15:07",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"c9d802aea30673d0\" range=\"msg_user_1778857620955_620e488e:msg_assistant_gen_01KRP2TR3W2N71PBK5233WGHY8\">\n* 🟡 (15:07) User asked to use `rg` to test some things.\n* ✅ (15:07) Verified `rg` is available and resolves to the bundled `@vscode/ripgrep-darwin-arm64` binary (`ripgrep 15.0.0`).\n* 🟡 (15:07) A quick probe confirmed `withBundledRipgrep` is wired into `src/turn-runner/tools.ts:489`, the repo has 215 indexed files, and a TypeScript-only `rg` filter surfaced transient-error and memory-related test/source files.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_Ib94XzfkE8_m",
+    "createdAt": 1778859169953,
+    "lastUsedAt": 1778859169953,
+    "ageDays": 2.621961296296296,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "15:32",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"9ba192316cca4d89\" range=\"msg_user_1778859142132_4b683f7c:msg_tool_toolu_019xmJXq6gQLSfnvVfj8jnSq\">\n* 🟡 (15:32) User wants vitest updated across all packages in the monorepo.\n* 🟡 (15:32) Discovered `vitest` is pinned to `^1.6.0` in 8 workspace packages: `packages/backend`, `packages/ui`, `packages/services`, `packages/sync-engine`, `apps/web`, `packages/agent-gateway`, `packages/shared`, and `apps/mobile`.\n* 🟡 (15:32) Set up a state machine for the task: bump vitest to the latest stable version, refresh `bun.lock` with `bun install`, then verify tests still run under the new version.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_pDf6Wr88hnCe",
+    "createdAt": 1778859204861,
+    "lastUsedAt": 1778859204861,
+    "ageDays": 2.6215572685185187,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "15:33",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"a9a386f434d83337\" range=\"msg_user_1778859198047_b7ad2d19:msg_tool_toolu_01ChazusdWwwaA3ThXb7Kgyc\">\n* 🟡 (15:33) User reported the `bump-and-install` state finished.\n  -> New version is `^4.1.6` (latest stable vitest).\n  -> `bun install` refreshed `bun.lock` cleanly with 408 resolved / 39 installed and no errors.\n  -> Eight package.json files were updated: `apps/mobile`, `apps/web`, `packages/agent-gateway`, `packages/backend`, `packages/services`, `packages/shared`, `packages/sync-engine`, and `packages/ui`.\n  -> No `@vitest/*` packages were present, so no matching major bump was needed.\n  -> The version jump is major (1.x -> 4.x), so upcoming test verification may expose vitest config/API breakage.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_5MnKpIvrJd2o",
+    "createdAt": 1778859262459,
+    "lastUsedAt": 1778859262459,
+    "ageDays": 2.620890625,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "15:34",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"11960eeb1dfb76ed\" range=\"msg_user_1778859250557_49695301:msg_tool_toolu_01H9ffHDN1qKbPhBkVubBq2o\">\n* 🟡 (15:34) `verify-tests` finished and selected terminal state `done`.\n  -> vitest was bumped from `^1.6.0` to `^4.1.6` across all 8 workspace `package.json`s, and `bun.lock` was refreshed.\n  -> `bun run test` is green everywhere except `web`: 8 test files failed to load, while 347 tests passed and 3 were skipped in the tests that did run.\n  -> The `web` breakage is attributed to vitest 4 / rolldown-vite being stricter about JSX: 3 misnamed `.test.ts` files contain JSX, and 5 `.tsx` test files hit a `RolldownError` parse failure; the likely fix is updating `@vitejs/plugin-react` or using a different JSX loader/transform in `apps/web/vitest.config.ts`.\n  -> `bun run check-types` also failed separately in `@repo/ui` because `NodeJS.Timeout` is unresolved (`Cannot find namespace 'NodeJS'`), likely needing `@types/node` or a type refactor.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_ovMuJAkppTDC",
+    "createdAt": 1778859274810,
+    "lastUsedAt": 1778859274810,
+    "ageDays": 2.620747673611111,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "15:34",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"fb279edaa5d91ead\" range=\"msg_user_1778859262462_929a549c:msg_assistant_gen_01KRP4CHRQ4KQ9CJ0Q8WH7N0E3\">\n* 🟡 (15:34) The `Update vitest across all packages` state machine reached terminal `done` with `completed`; vitest was updated across all workspace packages and verified.\n  -> vitest was bumped from `^1.6.0` to `^4.1.6` across all 8 workspace `package.json`s and `bun.lock` was refreshed.\n  -> non-web packages are green; `apps/web` has 347 passing tests but 8 test files fail to load under vitest 4's new rolldown-vite bundler.\n  -> likely follow-ups: fix rolldown JSX parsing in `apps/web` by upgrading `@vitejs/plugin-react` or switching to `@vitejs/plugin-react-oxc`, and rename 3 `.test.ts` files that actually contain JSX to `.test.tsx`.\n  -> unrelated existing issue noted: `packages/ui/src/hooks/scrolling/use-scrollable-content.ts` uses `NodeJS.Timeout` without resolvable `@types/node`; suggested fix is `ReturnType<typeof setTimeout>` or adding `@types/node` to `packages/ui`.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_CRjf5edTFHI6",
+    "createdAt": 1778871441556,
+    "lastUsedAt": 1778871441556,
+    "ageDays": 2.479928854166667,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "18:57",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"f876247f68c28d35\" range=\"msg_user_1778871416128_4e9f3590:msg_tool_toolu_01LZeyDpdcXByJDRYswJbJvB\">\n* 🟡 (18:56) User confirmed they want the vitest-4 breakage fix effort to proceed.\n* 🟡 (18:56) Assistant started a new state machine titled “Fix vitest 4 breakages” to address `apps/web` rolldown JSX failures and the `@repo/ui` `NodeJS.Timeout` type error caused by the vitest 4 upgrade.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem__CST22gxaTPc",
+    "createdAt": 1778871516670,
+    "lastUsedAt": 1778871516670,
+    "ageDays": 2.4790594791666667,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "18:58",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"ee70ccebf236d6a5\" range=\"msg_user_1778871508150_98d6b4c1:msg_tool_toolu_01APYb4PuZk4p6VLANiPcgFe\">\n* 🟡 (18:58) The `fix-web-jsx` state finished: all 45 test files / 397 tests pass.\n  -> Renamed 3 JSX-containing `.test.ts` files to `.test.tsx` in `apps/web/components/tiptap/`, `apps/web/components/chat/compose-bar/primitives/input/features/mention/`, and `apps/web/spa/files/components/editors/hooks/`.\n  -> `apps/web/vitest.config.ts` was already using `@vitejs/plugin-react`; `apps/web/package.json` was bumped from `^4.3.4` to `^6.0.2` for vitest 4 / rolldown-vite compatibility.\n  -> `bun install` at repo root resolved cleanly, and `cd apps/web && bun run test` passed with no `RolldownError: Unexpected JSX expression` failures.\n  -> No imports referenced the renamed test files by path.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_s8NlsvP6feC5",
+    "createdAt": 1778871555296,
+    "lastUsedAt": 1779039043692,
+    "ageDays": 2.4786124189814815,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "18:59",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"3c979f5268ce803f\" range=\"msg_user_1778871544955_83458cba:msg_tool_toolu_01TB9GWgbwqteYdJE2nJvKN5\">\n* ✅ (18:59) State `fix-ui-types` finished.\n-> `packages/ui/src/hooks/scrolling/use-scrollable-content.ts` changed `NodeJS.Timeout | null` to `ReturnType<typeof setTimeout> | null` at lines 66 and 82, clearing the prior `TS2503` failures for `@repo/ui`.\n-> `bun run check-types` is now green for `@repo/ui`; `bun run lint` still has 25 pre-existing warnings and no regressions.\n-> An unrelated blocker remains in `@repo/backend` (`vitest.config.ts` uses `environmentMatchGlobs`, which Vitest 4 removed).\n* ✅ (18:59) Assistant selected terminal state `done` for the state machine after also noting earlier completed work: apps/web rolldown JSX issues were fixed by renaming 3 `.test.ts` files to `.test.tsx` and bumping `@vitejs/plugin-react` to `^6.0.2`, with all 397 web tests passing.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_JNjhZ4hp1gLq",
+    "createdAt": 1778871567910,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.478466423611111,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "18:59",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"37df9cf0e0d8a72a\" range=\"msg_user_1778871555309_af5d2566:msg_assistant_gen_01KRPG3P8PD0QTZRHBFDHRJ250\">\nDate: 2026-05-15\n* ✅ (18:59) The state machine \"Fix vitest 4 breakages\" reached terminal `done` and is no longer running.\n-> Work completed: vitest 4 breakages were addressed in `apps/web` and `@repo/ui`.\n-> `apps/web` rolldown JSX failures were fixed by renaming 3 JSX-containing `.test.ts` files to `.test.tsx` and bumping `@vitejs/plugin-react` from `^4.3.4` to `^6.0.2`; all 45 web files / 397 tests now pass under vitest 4.1.6.\n-> `@repo/ui` type error was fixed by changing `NodeJS.Timeout` to `ReturnType<typeof setTimeout>` in `use-scrollable-content.ts`; `check-types` is green and lint is clean aside from pre-existing warnings.\n* 🟡 (18:59) New follow-up surfaced: `@repo/backend`'s `vitest.config.ts` still uses removed Vitest 4 `environmentMatchGlobs`; recommended replacement is `test.projects` with per-project `environment` settings.\n* 🟡 (18:59) User was invited to start follow-up work to migrate `@repo/backend`'s Vitest config to `test.projects`, otherwise the work is considered complete for now.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_GIxlQczVyqPO",
+    "createdAt": 1778871739868,
+    "lastUsedAt": 1778871739868,
+    "ageDays": 2.4764761689814816,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "19:02",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"1ce147a6bdea3de5\" range=\"msg_user_1778871725039_4e9f3590:msg_tool_toolu_01PPUaKMNFPqrb4sUVf64Nq3\">\n* 🟡 (19:02) User confirmed they want the newly created state machine for the Vitest migration to proceed.\n* 🟡 (19:02) A state machine was created for \"Migrate @repo/backend vitest config to test.projects\".\n-> Goal: migrate `packages/backend/vitest.config.ts` off removed `environmentMatchGlobs` to Vitest 4 `test.projects`.\n-> Planned work: read current config, rewrite with per-environment projects preserving setupFiles/alias/plugins, run `cd packages/backend && bun run test`, then run repo-root `bun run check-types`, and report the config diff plus results.\n-> Scope is limited to `packages/backend`; do not touch other packages.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_CtR72-RCi4J6",
+    "createdAt": 1778871810449,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.4756592592592592,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "19:03",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"b2109066f4b3bd0f\" range=\"msg_user_1778871801184_e84c44fa:msg_tool_toolu_0159c8KFCNJPwnjHymPwL2c5\">\n* ✅ (19:03) Completed the `migrate-config` state: `packages/backend/vitest.config.ts` was migrated to `test.projects` with separate `node` and `convex`/edge-runtime projects, preserving the old split via shared test options.\n  -> Backend verification passed: `cd packages/backend && bun run test` ran 6 files / 54 tests successfully, with `convex/`, `registry/`, and `scripts/` under `node` and `tests/convex/sleep-sync.test.ts` under `edge-runtime`.\n  -> `bun run check-types` is green for `@repo/backend`; the remaining `web#check-types` failure is pre-existing and unrelated (`MarkdownMetadata` overload issue outside scope).\n* ✅ (19:03) The state machine was advanced to terminal `done` for the migrated backend config work.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_3u95f5X0Sphp",
+    "createdAt": 1778871823714,
+    "lastUsedAt": 1779082727793,
+    "ageDays": 2.4755057291666667,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "19:03",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"b17bc1bf22fbd5a5\" range=\"msg_user_1778871810516_cb3455fc:msg_assistant_gen_01KRPGBFHAAFHJYY802MAPF3WF\">\nDate: 2026-05-15\n* ✅ (19:03) Migrate `@repo/backend` vitest config to `test.projects` reached terminal done/completed; backend config migration is finished.\n-> `packages/backend/vitest.config.ts` now splits `node` and `convex` projects with shared test options extracted into `sharedTest`.\n-> Validation reported 6 files / 54 backend tests passing and `@repo/backend` check-types green.\n* 🟡 (19:03) Vitest 4 upgrade is now complete across the monorepo.\n-> all 8 packages are on `vitest ^4.1.6`; `apps/web` rolldown JSX issues were fixed via `@vitejs/plugin-react ^6.0.2` and converting 3 `.test.ts` files to `.test.tsx`; `@repo/ui` changed `NodeJS.Timeout` to `ReturnType<typeof setTimeout>`; `@repo/backend` migrated to `test.projects`.\n* 🟡 (19:03) One unrelated pre-existing typecheck issue remains in `apps/web`: a `MarkdownMetadata` overload error surfaced, and the assistant suggested either investigating it next or leaving it alone before committing/pushing.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_QXCqk_3DxTTv",
+    "createdAt": 1778871999627,
+    "lastUsedAt": 1778871999627,
+    "ageDays": 2.473469699074074,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "19:06",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"4dc58223a48476c4\" range=\"msg_user_1778871979585_2ab20b71:msg_tool_toolu_01KdommUTa6ogVT5cLcu5QdK\">\n* 🟡 (19:06) User wants the current work to keep going until it is done, with no stopping in between.\n* 🟡 (19:06) The active task is a vitest 4 upgrade cleanup: resolve the remaining `apps/web` `MarkdownMetadata` type error, then run full repo verification and commit/push.\n* 🟡 (19:06) A state machine named `Finish vitest 4 upgrade` was created with a `fix-markdown-metadata` state focused on the `MarkdownMetadata` overload mismatch in `apps/web` and a follow-up `commit-and-push` state.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_IkhXa2U0esMd",
+    "createdAt": 1778872075645,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.472589861111111,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "19:07",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"67d1e315ebc9a3fe\" range=\"msg_user_1778872068428_52812616:msg_tool_toolu_01AVVJBj51Eeq88LiubehWVn\">\n* ✅ (19:07) The `fix-markdown-metadata` state finished successfully.\n  -> Updated `apps/web/spa/files/components/editors/hooks/use-markdown-editor.test.tsx:51` from the old `vi.fn<TArgs, TReturn>` style to Vitest 4's single function-type generic.\n  -> Updated `apps/web/spa/files/components/editors/markdown-frontmatter-editor.test.tsx` at 6 call sites (`121, 146, 164, 207, 229, 253`) to the new `vi.fn<(metadata: MarkdownMetadata) => void>()` form.\n  -> Verified from repo root with `bun run check-types` (13/13 successful), `bun run lint` (0 errors, 25 pre-existing warnings), and `bun run test` (8/8 tasks successful; web 397/397, agent-gateway 159/159, backend 54/54, ui 9/9).\n* 🟡 (19:07) After the successful test fix, the state machine advanced to `commit-and-push`.\n* 🟡 (19:07) The repo remains in the middle of the CI/state-machine workflow; next step is to commit and push the Markdown metadata test update.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_54U55vGOcd27",
+    "createdAt": 1778872120764,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.472067650462963,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "19:08",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"89c21cbf9114c117\" range=\"msg_user_1778872112980_5c5981b7:msg_tool_toolu_01YBUQCgg393rdrxww33xMzP\">\n* ✅ (19:08) The `commit-and-push` state finished successfully.\n-> committed `885746567` (`chore(deps): upgrade vitest to ^4.1.6 across workspace`) rebased onto `c86d781cd`.\n-> 15 files changed, including 8 `package.json` files, `bun.lock`, 3 `.test.ts`→`.test.tsx` renames, `markdown-frontmatter-editor.test.tsx`, `packages/ui/src/hooks/scrolling/use-scrollable-content.ts`, and `packages/backend/vitest.config.ts`.\n-> pre-commit hook ran `check-types`, `lint`, and `format` cleanly.\n-> push initially rejected because remote was ahead; after rebasing on `origin/staging`, push succeeded (`c86d781cd..885746567`).\n* ✅ (19:08) The selected state machine outcome is terminal `done` because the Vitest 4 upgrade is complete, all breakages were fixed, and checks are green on `staging`.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_rBol528ezvNB",
+    "createdAt": 1778872132911,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.4719270601851853,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "19:08",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"ab590373c0ffaf10\" range=\"msg_user_1778872120766_c827556f:msg_assistant_gen_01KRPGMYH6BAPHFR9X95G6WSJF\">\nDate: 2026-05-15\n* ✅ (19:08) The state machine `Finish vitest 4 upgrade` reached terminal `done` and is no longer running.\n-> vitest 4 upgrade is complete, all checks were green, and the work was committed and pushed to `staging`.\n-> final reported state: all 8 packages on `vitest ^4.1.6`; commit `885746567` was rebased onto `origin/staging` and pushed.\n-> verification reported green: `check-types` 13/13, `lint` 0 errors, `test` 8/8 (web 397, agent-gateway 159, backend 54, ui 9, others cached).\n-> breaking changes handled included `@vitejs/plugin-react` `^4.3.4` → `^6.0.2` for rolldown-vite compatibility, renaming 3 JSX `.test.ts` files to `.test.tsx`, `packages/ui` timeout typing changes, `packages/backend` migration from `environmentMatchGlobs` to `test.projects`, and `vi.fn<[args], ret>()` → `vi.fn<(args) => ret>()`.\n-> recommended next step: monitor CI on `staging`, then use `/deploy-to-prod` once green.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_qaq_W-NJA0k8",
+    "createdAt": 1778872264798,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 2.470400590277778,
+    "sessionId": "session_spqq_UX6d_R2",
+    "kind": "observation",
+    "observedDate": "2026-05-15",
+    "timeOfDay": "19:11",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"5a6052d92a05cacb\" range=\"msg_user_1778872147513_6fec6c57:msg_assistant_gen_01KRPGRV8EQZ3SJDTTPXJD79XG\">\n* 🟡 (19:09-19:10) Reviewed the Vitest 4 upgrade commit `885746567` and found one issue: a migration-narrative comment in `packages/backend/vitest.config.ts` that explained the `environmentMatchGlobs` -> `test.projects` change rather than the current WHY; removed it in commit `e898c780e`.\n* ✅ (19:10) Verified the cleanup with `bun run check-types`, `bun run lint`, and `cd packages/backend && bun run test` (6 files, 54 tests) after the comment removal; the fix was committed and pushed to `staging`.\n* 🟢 (19:10) The review concluded the rest of the upgrade diff was clean: names matched current behavior, no stale `environmentMatchGlobs` references remained, and the `sharedTest` extraction in backend vitest config was a real shared-options boundary.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_Jf2_XoRUb58e",
+    "createdAt": 1778918186214,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 1.9389027199074074,
+    "sessionId": "session_3_Z_eLCaNBWO",
+    "kind": "observation",
+    "observedDate": "2026-05-16",
+    "timeOfDay": "07:56",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"a6e147f6bb3b6c7a\" range=\"msg_user_1778918148618_594b0040:msg_assistant_gen_01KRQWJGMBP2Q1FSNT3Q93KCM7\">\nDate: 2026-05-16\n* ✅ (07:56) Released v0.1.133.\n-> Bumped `package.json` from 0.1.132 to 0.1.133.\n-> Commit `cd8f5ac` (`chore: release v0.1.133`) was created and pushed to `main`.\n-> Annotated tag `v0.1.133` was created and pushed.\n-> Verification passed: `bun run check-types` and `bun run lint` (0 warnings, 0 errors).\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_WirOYbAQZFJk",
+    "createdAt": 1778918292603,
+    "lastUsedAt": 1778918292603,
+    "ageDays": 1.9376713657407407,
+    "sessionId": "session_YjfvkIbuO9Hn",
+    "kind": "observation",
+    "observedDate": "2026-05-16",
+    "timeOfDay": "07:58",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"b6e47abedb219b80\" range=\"msg_user_1778918222781_1056336e:msg_tool_toolu_01XHy6FDWZ9J87Lib5zcdXga\">\nDate: 2026-05-16\n* 🟡 (07:58) User asked to review all commits from today.\n* 🟡 (07:58) Started a review pass over today's staging commits, with the plan to inspect each commit diff and report issues plus a clean/not-clean verdict per commit.\n* 🟡 (07:58) Review scope identified today’s relevant staging commits as including `5bdf48748` (`feat(skills): use duet cli to list sandbox skills`), `108863115` (`revert: drop answer-command image plumbing (prompt fallback covers it)`), `3551c9abc` (`Add compose bar error boundary that clears stale drafts on crash`), `3d004e89c` (`Use bottom sheet for billing, support, and feedback modals on mobile`), and `9e0e6c2e5` (`Fix narrow mobile compose and search layout`).\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_slmgxc5f6jEM",
+    "createdAt": 1778918355657,
+    "lastUsedAt": 1778918355657,
+    "ageDays": 1.936941574074074,
+    "sessionId": "session_YjfvkIbuO9Hn",
+    "kind": "observation",
+    "observedDate": "2026-05-16",
+    "timeOfDay": "07:59",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"91425b155b07ae97\" range=\"msg_user_1778918349285_3ec7cf72:msg_tool_toolu_014GJ3PSNQM4WjYcNZckrugD\">\n* 🟡 (07:59) The `review-skills-cli` state finished its review and found two shippability follow-ups in commit `5bdf48748`.\n  -> Remove the deprecated `includeDescriptions` prop and its JSDoc from `packages/shared/src/hooks/queries/use-sandbox-skills.ts`; the migration is atomic and no callsites still pass it.\n  -> Either consume `skill.scope` / `SandboxSkillScope` / `normalizeScope` in a UI surface in this PR, or drop the speculative scope plumbing until it has a real reader.\n  -> The review considered the test deletion and moving description parsing into `duet skills` to be correct, and noted the cache key cleanup and elimination of the extra CLI round-trip as good changes.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_vSaahkWaRpE7",
+    "createdAt": 1778918516612,
+    "lastUsedAt": 1778936450798,
+    "ageDays": 1.9350786689814814,
+    "sessionId": "session_YjfvkIbuO9Hn",
+    "kind": "observation",
+    "observedDate": "2026-05-16",
+    "timeOfDay": "08:01",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"99bc8bfd1fd76eb4\" range=\"msg_user_1778918508611_59b21ce9:msg_tool_toolu_01KBZ7gSwbmwDZaCSHiTrTxu\">\nDate: 2026-05-16\n* ✅ (08:01) The `review-answer-image-revert` state finished; commit `108863115` was verified against the resulting `staging` tree rather than diff alone.\n-> The revert correctly removed answer-path image plumbing: `submitSessionQuestionAnswers` is back to `{ sessionId, answers }`, no `messageId`/`images` remain in callers or integration tests, and `buildMessageImageAttachments` now has only the prompt-path caller.\n-> One stale-narrative doc comment remains in `packages/backend/convex/domains/sandboxes/actions.ts:1324-1336`; it should be trimmed to a short “Answers-only; attachments travel through the normal message → prompt path.” style comment.\n-> A separate answer-path protocol surface (`AnswerSessionRequest.images`, controller forwarding, admin route, backend gateway) is dead/unused but pre-existing, so it was noted as an informational follow-up decision rather than a revert regression.\n* 🟡 (08:01) The state machine advanced to `review-mobile-ui-batch` as the next review state.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_Y3Ke1DizJLP6",
+    "createdAt": 1778918628239,
+    "lastUsedAt": 1778918628239,
+    "ageDays": 1.9337866898148148,
+    "sessionId": "session_YjfvkIbuO9Hn",
+    "kind": "observation",
+    "observedDate": "2026-05-16",
+    "timeOfDay": "08:03",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"eef129873611b40c\" range=\"msg_user_1778918615863_3d26a730:msg_assistant_gen_01KRQWZW2ZED347KJ28VT7RFQ0\">\nDate: 2026-05-16\n* 🟡 (08:03) User challenged an apparent revert and clarified the PR is specifically for using the duet skills CLI.\n* 🟡 (08:03) Assistant clarified no edits had been made in this turn; the reviewed revert commit `108863115` was a different staging PR (`#1315`) unrelated to the duet skills CLI PR `#1317`, and the skills CLI commit `5bdf48748` remained intact with only cleanup suggestions noted earlier.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_urdvA24bPTyf",
+    "createdAt": 1778936450878,
+    "lastUsedAt": 1778936450878,
+    "ageDays": 1.7275061458333334,
+    "sessionId": "session_TFlFdDCR-1Lm",
+    "kind": "observation",
+    "observedDate": "2026-05-16",
+    "timeOfDay": "13:00",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"1855b499dae951b4\" range=\"msg_user_1778936369974_dd6ca7fc:msg_assistant_gen_01KRRDZT8VVPBHGQCKQA3F74EJ\">\nDate: 2026-05-16\n* 🟡 (12:59-13:00) Reviewed the last 2 merged commits `ca315b6` and `1e2cf6c`; found one minor stale doc-comment in `src/turn-runner/built-in-skills.ts` where the JSDoc implied `BUILTIN_PATH_PREFIX` was the detection mechanism.\n* ✅ (13:00) Applied a wording fix to that JSDoc so it now describes the prefix as a virtual sentinel for built-in `filePath`/`baseDir`, while noting detection happens via the `BUILT_IN_BY_PATH` map.\n* ✅ (13:00) Verified the repo typechecks cleanly with `bunx tsc --noEmit` after the comment fix; no other issues were found in the two reviewed commits.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_nJ-YsR1rbeyr",
+    "createdAt": 1778936565642,
+    "lastUsedAt": 1778938328174,
+    "ageDays": 1.7261778587962964,
+    "sessionId": "session_TFlFdDCR-1Lm",
+    "kind": "observation",
+    "observedDate": "2026-05-16",
+    "timeOfDay": "13:02",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"bb6ee1f9f03bfc41\" range=\"msg_user_1778936508830_594b0040:msg_assistant_gen_01KRRE37RCTWBRYEVRADDEAKCE\">\n* 🟡 (13:01-13:02) User invoked the `/release` workflow on `main` while `src/turn-runner/built-in-skills.ts` was already modified.\n  -> the working tree also contained an existing change to `src/turn-runner/built-in-skills.ts` that was committed separately as `966589d` (`docs(built-in-skills): clarify BUILTIN_PATH_PREFIX role`) before the version bump.\n* ✅ (13:02) Released `v0.1.134`.\n  -> bumped `package.json` from `0.1.133` to `0.1.134`.\n  -> created release commit `97a5c57` (`chore: release v0.1.134`).\n  -> created and pushed annotated tag `v0.1.134` to origin.\n  -> pushed `main` successfully; remote advanced from `1e2cf6c` to `97a5c57`.\n  -> verification before release passed: `bun run check-types` and `bun run lint` (0 warnings, 0 errors).\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_-DJ1pI5u7JRS",
+    "createdAt": 1778938328241,
+    "lastUsedAt": 1779081555944,
+    "ageDays": 1.7057774074074075,
+    "sessionId": "session_Xi4dGHYUUdsj",
+    "kind": "observation",
+    "observedDate": "2026-05-16",
+    "timeOfDay": "13:32",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"e0796bc2f9226f36\" range=\"msg_user_1778938291287_594b0040:msg_assistant_gen_01KRRFS770JA8RHWAHGYEC1YSK\">\nDate: 2026-05-16\n* ✅ (13:31-13:32) Released v0.1.135 on `main`.\n-> bumped `package.json` from 0.1.134 to 0.1.135.\n-> created release commit `ee5e6c1` (`chore: release v0.1.135`).\n-> created and pushed annotated tag `v0.1.135` to origin.\n-> pushed `main` successfully; remote advanced from `52df27b` to `ee5e6c1`.\n-> verification before release passed: `bun run check-types` and `bun run lint` (0 warnings, 0 errors).\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_SLJhj0prOk_4",
+    "createdAt": 1779036584521,
+    "lastUsedAt": 1779036584521,
+    "ageDays": 0.5685519444444445,
+    "sessionId": "session_3G8LnZP3CYHY",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "16:49",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"eafb481532a34c2c\" range=\"msg_user_1779036396550_557ff5d0:msg_assistant_gen_01KRVDFMEPF62Y0CT2QK9V23GZ\">\n* 🟡 (16:46-16:49) Investigated a Convex \"Invalid syscall\" error in `packages/backend/convex/domains/sandboxes/actions.ts:573` while handling session wake cancellation.\n  -> traced the failure to `ctx.scheduler.cancel(session.scheduledWakeId)` inside the `'use node'` action `cancelSessionWake`.\n  -> determined the scheduler cancel syscall is not exposed to Node-runtime actions; the cancellation must happen in V8 mutation context instead.\n  -> moved the cancel into `clearSessionWake` in `packages/backend/convex/domains/sandboxes/internal.ts`, and updated `cancelSessionWake` to delegate there with an explanatory comment.\n* ✅ (16:49) Verified the fix with `bun run check-types`, `bun run lint`, and `packages/backend` tests; typecheck was green (13/13), lint had no errors, and backend tests passed (8 files / 67 tests).\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_vRINPNmW3yIe",
+    "createdAt": 1779036665262,
+    "lastUsedAt": 1779039043692,
+    "ageDays": 0.5676174421296296,
+    "sessionId": "session_3G8LnZP3CYHY",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "16:51",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"5b53be3f40f9a27d\" range=\"msg_user_1779036620899_6fec6c57:msg_assistant_gen_01KRVDJ7B61VWXGV0D3D4V214M\">\n* 🟡 (16:50) Reviewed unstaged changes in `packages/backend/convex/domains/sandboxes/actions.ts` and `packages/backend/convex/domains/sandboxes/internal.ts`; the change moves `ctx.scheduler.cancel` out of the `'use node'` action and into `clearSessionWake` so the cancel syscall runs in mutation/V8 context.\n* 🟡 (16:50) A brief call-site comment was simplified to point at `clearSessionWake` for the full explanation instead of repeating the Node-action syscall limitation.\n* ✅ (16:50) Confirmed the simplification with `bun run check-types` and `bun run lint` passing after the edit.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_1rXJ9bATju1z",
+    "createdAt": 1779036703153,
+    "lastUsedAt": 1779036703153,
+    "ageDays": 0.5671788888888889,
+    "sessionId": "session_3G8LnZP3CYHY",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "16:51",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"3fba0abe78e1956f\" range=\"msg_user_1779036683770_8e7c334b:msg_assistant_gen_01KRVDKCSARA4FTYX7Z544ZP9V\">\nDate: 2026-05-17\n* ✅ (16:51) Committed and pushed a fix on `staging` as `150f9a590` (`fix(sandbox): cancel scheduled wake from mutation, not node action`).\n-> `packages/backend/convex/domains/sandboxes/actions.ts` and `packages/backend/convex/domains/sandboxes/internal.ts` were modified.\n-> the fix moved `ctx.scheduler.cancel` out of `cancelSessionWake` node action into the `clearSessionWake` internal mutation because the syscall is not exposed to `use node` actions and was causing `Invalid syscall`.\n-> pre-commit checks passed cleanly: `bun run check-types`, `bun run lint`, and `bun run format`.\n-> push to `origin/staging` succeeded after the commit.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_DLJMvo5IK0gZ",
+    "createdAt": 1779038367239,
+    "lastUsedAt": 1779039635716,
+    "ageDays": 0.5479186342592592,
+    "sessionId": "session_oQ7VLJzpQZ4b",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "17:19",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"af5d16db581a65a1\" range=\"msg_user_1779038317012_ff213f30:msg_assistant_gen_01KRVF63QS8Z9FTMKADRX2Z70K\">\n* 🟡 (17:18-17:19) User asked to merge `staging` into the current branch `david/comment-highlight`.\n* ✅ (17:19) Merged `origin/staging` into `david/comment-highlight` and created merge commit `48df5fb57` (`Merge remote-tracking branch 'origin/staging' into david/comment-highlight`).\n-> Resolved one conflict in `apps/web/components/chat/message/primitives/message-root.tsx` by keeping staging's `@container/message` class/comment block and preserving the branch's `{...rest}` spread.\n-> Pre-commit hooks passed during `merge --continue`: `bun run check-types`, `bun run lint`, and `bun run format` all completed cleanly.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_7zDjr6AmMIi0",
+    "createdAt": 1779038751436,
+    "lastUsedAt": 1779038751436,
+    "ageDays": 0.5434719097222223,
+    "sessionId": "session_m76f_OwRW3Rd",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "17:25",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"d7e0aab5c55582dc\" range=\"msg_user_1779038517432_6791b609:msg_assistant_gen_01KRVFHS0XMENHW2AS4EVK0N4Y\">\n* 🟡 (17:21-17:25) User reported a screenshot where message text was missing/blank in the chat UI and asked why it happened.\n* ✅ (17:25) Diagnosed the blank-message regression as `isEmptyParagraphNode` treating ProseMirror paragraph nodes as JSON arrays; in prod `renderToReactElement` passes PM `Node` instances whose `content` is a Fragment, so every paragraph was being rendered as an empty spacer.\n* ✅ (17:25) Patched `apps/web/components/chat/message/primitives/message-mdx.tsx` so empty-paragraph detection handles both JSON arrays and PM Fragment shapes (`childCount`/`size`), then verified `bun run check-types` passed cleanly.\n* 🟡 (17:25) The fix is currently local in the `david/comment-highlight` branch; assistant suggested optionally adding an end-to-end regression test and committing/pushing the change to `staging` if desired.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_9JPznYFzlk-F",
+    "createdAt": 1779039043755,
+    "lastUsedAt": 1779039043755,
+    "ageDays": 0.540088587962963,
+    "sessionId": "session_m76f_OwRW3Rd",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "17:30",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"0ebf6072702bb451\" range=\"msg_user_1779038791269_3ac3eb6b:msg_assistant_gen_01KRVFTMCXJ4WBVKXP967P0VE8\">\n* 🟡 (17:26-17:28) User asked to repro the paragraph-rendering regression in a test and use red/green TDD; the assistant added pm/react-based regression tests in `apps/web/components/chat/message/primitives/message-markdown-utils.test.ts` that drive real `renderToReactElement`/`@tiptap/static-renderer/pm/react` behavior.\n* ✅ (17:28) Confirmed the spacer regression is reproducible in tests: the buggy `Array.isArray(node.content)`-only `isEmptyParagraphNode` implementation makes content-bearing paragraphs and list items collapse into `data-block=\"spacer\"`, while the Fragment-aware fix restores 16/16 passing.\n* 🟡 (17:28-17:30) User reported two visual issues in the screenshot: the second message in a back-to-back comment group is indented more than the first, and rounded corners should be removed so adjacent messages don't look like separate pills.\n* ✅ (17:30) Fixed the grouped-message layout: `message-grouped-timestamp.tsx` now uses `w-7 @md/message:w-9` to match avatar width and removed `pr-2`, and `main-message.tsx` comment styling now drops `rounded-md`/`before:rounded-full` with `before:inset-y-0` so stacked comment rows form one continuous amber rail; `bun run check-types` and `bun run lint` were clean afterward.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_2GokToppc9bB",
+    "createdAt": 1779039086295,
+    "lastUsedAt": 1779039086295,
+    "ageDays": 0.5395962268518518,
+    "sessionId": "session_m76f_OwRW3Rd",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "17:31",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"1de1627b3c76c52b\" range=\"msg_user_1779039043758_a9205730:msg_assistant_gen_01KRVFW06S8D5WE29ZQYDDHXV6\">\n* 🟡 (17:31) User wants the comment-style message treatment to feel lighter/quieter, more like a margin comment than main content.\n* ✅ (17:31) Changed comment messages in `apps/web/components/chat/message/implementations/main-message.tsx` to render at `opacity-70` with a hover fade-in, so the whole row (text/avatar/header) reads more subdued while preserving the amber wash and left rail.\n* 🟡 (17:31) Assistant noted a possible follow-up refinement: if the opacity fade is too broad, switch to dimming only the text via prose color variables so reactions/action affordances stay crisp.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_rTqXkPTIXAuf",
+    "createdAt": 1779039129311,
+    "lastUsedAt": 1779039129311,
+    "ageDays": 0.5390983564814815,
+    "sessionId": "session_m76f_OwRW3Rd",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "17:32",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"801cf1c66d6276be\" range=\"msg_user_1779039091665_b24eddae:msg_assistant_gen_01KRVFX8HGSTZRBW4ZZSJZKD7P\">\n* 🟡 (17:31) User wanted the comment-message highlight to use a color similar to the existing highlight.\n* ✅ (17:31) Updated `apps/web/components/chat/message/implementations/main-message.tsx` so comment messages now tint their prose/body text amber to match the existing amber rail/wash, including dark-mode prose variable overrides and a root fallback tint for header/timestamp text.\n* ✅ (17:31) Verified the change with `bun run check-types` and `bun run lint` passing.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_6DtFh7DW3Mo0",
+    "createdAt": 1779039180399,
+    "lastUsedAt": 1779039180399,
+    "ageDays": 0.5385070601851852,
+    "sessionId": "session_m76f_OwRW3Rd",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "17:33",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"2e35c8cd5656d1a3\" range=\"msg_user_1779039144628_9111eeeb:msg_assistant_gen_01KRVFYW1DA3VQNMRZNR1B5ZWY\">\n* 🟡 (17:32) User reported dark mode looks weird while light mode is fine for the screenshoted chat message styling.\n* 🟡 (17:32) Assistant changed `apps/web/components/chat/message/implementations/main-message.tsx` to remove the alpha blend from the dark amber body text/quotes (`amber-200` at full alpha) while keeping darker `amber-100` for headings/bold/code.\n* ✅ (17:32) Verified `bun run check-types` still passes after the dark-mode styling tweak.\n* 🟢 (17:32) Assistant noted the next possible tweak, if needed, would be softening the body color to `amber-200/90`.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_FlPr19D3YdgX",
+    "createdAt": 1779039257507,
+    "lastUsedAt": 1779039257507,
+    "ageDays": 0.5376146064814815,
+    "sessionId": "session_m76f_OwRW3Rd",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "17:34",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"09d69e3f29889a25\" range=\"msg_user_1779039227446_73f24151:msg_assistant_gen_01KRVG169B6K63RKVJK55P10R9\">\n* 🟡 (17:33-17:34) User reported the dark-mode message styling in the screenshot was still weird and should match or be similar to David color.\n* ✅ (17:33-17:34) Adjusted `apps/web/components/chat/message/implementations/main-message.tsx` so the message body/quote/root fallback use `amber-100` in dark mode, aligning the whole annotation with the David header tone.\n* 🟢 (17:33-17:34) The user-visible result should be a single bright-amber column in dark mode, while light mode remains unchanged.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_XzfNmuYStKvj",
+    "createdAt": 1779039444198,
+    "lastUsedAt": 1779081282946,
+    "ageDays": 0.5354538310185185,
+    "sessionId": "session_m76f_OwRW3Rd",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "17:37",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"b23bb642eacea8f1\" range=\"msg_user_1779039281341_a8546302:msg_assistant_gen_01KRVG6T2H7AWD0Z744T6P0BNN\">\n* 🟡 (17:37) User is debugging a message/comment style override; screenshot still shows the comment body text not matching the header tint and asks whether style is being overridden.\n* 🟡 (17:37) Assistant concluded `@tailwindcss/typography`/`dark:prose-invert` was shadowing same-element `--tw-prose-body` overrides in dark mode, so the utility-class approach was unreliable.\n* ✅ (17:37) Moved the comment-message recolor into `packages/tailwind-config/globals.css`, scoped to `[data-comment=\"true\"]`, using direct color rules on the row, `.message-mdx`, and prose descendants to bypass the variable cascade.\n* 🟡 (17:37) Verification after the CSS edit showed `bun run check-types` and `bun run lint` still passed cleanly.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_84hoD8nB8gAU",
+    "createdAt": 1779039513184,
+    "lastUsedAt": 1779082678385,
+    "ageDays": 0.5346553819444444,
+    "sessionId": "session_m76f_OwRW3Rd",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "17:38",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"57683238b3f35dea\" range=\"msg_user_1779039444268_e1a3db8c:msg_assistant_gen_01KRVG8W66Y9XKR6QSMCN7GZ4M\">\n* 🟡 (17:37-17:38) User pushed back on the global CSS approach for comment-message recoloring, asking why the colors couldn't be set directly instead of touching `global.css`.\n* ✅ (17:37-17:38) Reverted the shared `globals.css` recolor block and moved the comment-message tint back into `apps/web/components/chat/message/implementations/main-message.tsx` as local descendant Tailwind utilities with `!important` to override `dark:prose-invert`.\n* ✅ (17:38) Verified the repo still passes `bun run check-types` and `bun run lint` after the inline recolor change.\n* 🟢 (17:38) The final guidance to the user was that the body text should now track the header color in both light and dark, and that tables/links could be added later if they still slip through.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_63gveUxQOfba",
+    "createdAt": 1779039635799,
+    "lastUsedAt": 1779039635799,
+    "ageDays": 0.5332362268518519,
+    "sessionId": "session_m76f_OwRW3Rd",
+    "kind": "observation",
+    "observedDate": "2026-05-17",
+    "timeOfDay": "17:40",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"ce37f4f8e0a3f849\" range=\"msg_user_1779039578186_8e7c334b:msg_assistant_gen_01KRVGCRKKMM80K24YK54601TY\">\n* ✅ (17:40) Committed and pushed two fixes on `david/comment-highlight`.\n-> commit `dd8bb22aa` fixed `isEmptyParagraphNode` to treat ProseMirror `Fragment` content as non-empty when rendering via `@tiptap/static-renderer/pm/react`; added regression coverage for the prod `pm/react` path that had been missing from the prior JSON-array-only tests.\n-> commit `bacca4805` aligned grouped comment rows (`MessageGroupedTimestamp` width/spacing) and tinted message body prose to match the comment rail styling.\n-> pre-commit hooks passed on both commits: `bun run check-types`, `bun run lint`, and `bun run format`.\n-> push to `origin/david/comment-highlight` succeeded (`48df5fb57..bacca4805`).\n-> assistant noted the blank-body regression is also live on `staging` for anyone who pulled after #1351; offered to cherry-pick the fix to `staging` or open a PR.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_0TURvQ_4SRFM",
+    "createdAt": 1779081283008,
+    "lastUsedAt": 1779081283008,
+    "ageDays": 0.05120834490740741,
+    "sessionId": "session_feePQ18Ht99y",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:14",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"4aeaa9603a837422\" range=\"msg_user_1779081155697_677b0418:msg_assistant_gen_01KRWR3M7ZXF6WX9E73KMPNZVH\">\n* 🟡 (05:12-05:14) User wants thread-start messages to carry `sandboxSessionId` whenever the AI chimes in, including via channel settings or `@duet` mentions.\n* ✅ (05:14) Patched `packages/backend/convex/workflows/chat/chime.ts` so when a new sandbox session is created for a thread, the thread-starter message (`channelMetadata.parentMessage`) is also updated with the same `sandboxSessionId` if it doesn't already have one; this uses the existing message mutation path that accepts optional `sandboxSessionId`.\n* ✅ (05:14) Verified the change with `bun run check-types` passing cleanly.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_Evl84mVFsRsk",
+    "createdAt": 1779081383180,
+    "lastUsedAt": 1779081383180,
+    "ageDays": 0.05004894675925926,
+    "sessionId": "session_feePQ18Ht99y",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:16",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"bf5a7b82782971e9\" range=\"msg_user_1779081331561_d0df0a9b:msg_assistant_gen_01KRWR6VG3R2Y6RKJBYQX8JCP7\">\n* 🟡 (05:15) User clarified a threading rule: if an AI message was sent later in the thread, the parent message should not be marked.\n* ✅ (05:16) Patched `packages/backend/convex/workflows/chat/chime.ts` so the thread-starter message is only stamped with `sandboxSessionId` on the channel's inaugural chime, gated by `channelHadPriorSession` and the parent message lacking an existing session id.\n* ✅ (05:16) Verified the gating change with `bun run check-types` passing cleanly.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_wu-dCrKUkp2x",
+    "createdAt": 1779081517891,
+    "lastUsedAt": 1779081517891,
+    "ageDays": 0.048489791666666664,
+    "sessionId": "session_feePQ18Ht99y",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:18",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"fd76c2307f208305\" range=\"msg_user_1779081473002_af56e6ba:msg_assistant_gen_01KRWRAW660NZ44DCS23KWTN6S\">\n* 🟡 (05:17-05:18) User clarified the desired threading rule: in a normal non-AI thread, if AI is tagged in mid-thread, the parent should not be marked; only mark the parent when the thread chime actually originated from the parent.\n* ✅ (05:18) Updated `packages/backend/convex/workflows/chat/chime.ts` so parent stamping is gated by `chimeOriginatedFromParent` rather than merely the channel having no prior session.\n-> The new condition treats a chime as parent-originated only when there is a thread-starter message and either the parent channel is an AI channel or the starter message contains an `@duet` mention.\n-> This preserves normal threads where someone tags AI mid-thread, while still stamping AI-originated threads and thread-starters that explicitly mention AI.\n* ✅ (05:18) Ran `bun run check-types`; typecheck remained green after the logic change.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_nNzCoakcb2nD",
+    "createdAt": 1779081557553,
+    "lastUsedAt": 1779081557553,
+    "ageDays": 0.04803074074074074,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:19",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"3029da206ba36342\" range=\"msg_user_1779081517512_594b0040:msg_assistant_gen_01KRWRC5J2KYJHNJA4E3B2ZH3C\">\n* ✅ (05:19) Released `v0.1.136` on `main`.\n-> bumped `package.json` from `0.1.135` to `0.1.136`.\n-> commit `503482d` (`chore: release v0.1.136`) created.\n-> annotated tag `v0.1.136` created and pushed.\n-> pushed `main` successfully (`a148091..503482d`).\n-> verified with `bun run check-types` and `bun run lint` passing cleanly.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_YJErP5CdP2eF",
+    "createdAt": 1779081581329,
+    "lastUsedAt": 1779081581329,
+    "ageDays": 0.04775555555555556,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:19",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"e043c1f26ce84aba\" range=\"msg_user_1779081564120_669dd5fa:msg_assistant_gen_01KRWRCV436KC43S0RG2VRZESK\">\n* 🟡 (05:19) User asked what's in release v0.1.136.\n* ✅ (05:19) Summarized release v0.1.136 from git log: release commit `503482d` plus `a148091` ([duet] feat(session): cap `state.json` at 100MB by evicting oldest messages) and `de482fa` ([david] feat(memory): `duet memory reflect` cross-session global prune + 13 evals).\n* 🟡 (05:19) Captured key release details: 100MB hard cap enforced in `writeStoredEnvelope`, oldest agent messages evicted until under cap, orphan leading tool results dropped if needed, at least one message always retained, and new tests added for the cap/session behavior.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_an-s176mhGUF",
+    "createdAt": 1779082344814,
+    "lastUsedAt": 1779082344814,
+    "ageDays": 0.038918923611111114,
+    "sessionId": "session_feePQ18Ht99y",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:32",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"966c3a8f31ad718b\" range=\"msg_user_1779082310913_8e7c334b:msg_assistant_gen_01KRWS49166VBMFNF2DSQN4XX5\">\n* ✅ (05:31-05:32) Committed and pushed a new fix on `staging`.\n-> commit `a029b3a3f` (`feat(chime): stamp thread-starter message with sandbox session`) updated `packages/backend/convex/workflows/chat/chime.ts`.\n-> the change stamps the thread-starter message with the sandbox session id when an AI chime cascades from the parent (AI parent channel or `@duet` in the thread-starter message), so session-scoped UI surfaces treat it as part of the thread's session.\n-> the commit skips back-linking when the chime did not originate from the parent or when the starter already has a session link.\n-> pre-commit hooks passed on the staged file: `bun run check-types`, `bun run lint`, and `bun run format`.\n-> push to `origin/staging` succeeded (`ec2bb0699..a029b3a3f`).\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_Qm31aNPyxj4x",
+    "createdAt": 1779082451282,
+    "lastUsedAt": 1779082451282,
+    "ageDays": 0.03768665509259259,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:34",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"2f985670304ccaee\" range=\"msg_user_1779082420316_f9ae0ad0:msg_assistant_gen_01KRWS7FDGRQS9BWWGFVQNJ838\">\n* 🟡 (05:34) User wants the built-in relay skill description to describe relay itself, and specifically not mention phrasing like \"inline anywhere\" because that wording applies to all skills.\n* ✅ (05:34) Updated `src/turn-runner/built-in-skills.ts` `RELAY_DESCRIPTION` to explain relay as durable multi-step recurring work modeled as sub-agent/script/poll/timer state machine work that survives session boundaries and keeps progress visible.\n* ✅ (05:34) Verified the repo still passes `bun run check-types` and `bun run lint` after the description change.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_-C32q0A7L8vU",
+    "createdAt": 1779082497877,
+    "lastUsedAt": 1779082497877,
+    "ageDays": 0.03714736111111111,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:34",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"8d0dd948c53b48f1\" range=\"msg_user_1779082478935_7888144c:msg_assistant_gen_01KRWS8TM8Y4QR1XJT1A9YCQFR\">\n* 🟡 (05:34) User asked whether the built-in skill is also injected into the system prompt.\n* 🟡 (05:34) Assistant answered that built-in skills are merged into the same skills metadata shown in the system prompt, while the full instruction body is lazily injected only when read; therefore a description change will appear in every system prompt after release.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_f0bTo7usUXP0",
+    "createdAt": 1779082527250,
+    "lastUsedAt": 1779082527250,
+    "ageDays": 0.03680739583333333,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:35",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"185807b87b2f0c07\" range=\"msg_user_1779082517180_42246c7f:msg_assistant_gen_01KRWS9VG5CTNZ9GG44E6ZT3AB\">\n* 🟡 (05:35) User asked whether `read_skill` can also use built-in skills.\n* 🟡 (05:35) Assistant determined `readSkillInstructions` checks built-in skill instructions first via `getBuiltInSkillInstructions`, so `read_skill` can load built-ins from in-memory content before falling back to disk; `read_skill relay` would return `RELAY_INSTRUCTIONS` verbatim.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_O-XK62SGWfaH",
+    "createdAt": 1779082588038,
+    "lastUsedAt": 1779082588038,
+    "ageDays": 0.036103831018518516,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:36",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"69c611c595ce8ceb\" range=\"msg_user_1779082551259_594b0040:msg_assistant_gen_01KRWSBP2FS9S372Z32N0X0M1K\">\n* ✅ (05:36) Released v0.1.137 on `main`.\n-> bumped `package.json` from 0.1.136 to 0.1.137.\n-> commit `013ad80` (`chore: release v0.1.137`) created and pushed.\n-> annotated tag `v0.1.137` created and pushed to origin.\n-> verification passed: `bun run check-types` and `bun run lint` (0 warnings, 0 errors).\n-> release also included a change to `src/turn-runner/built-in-skills.ts`, rewriting the built-in `relay` skill description to explain what relay does instead of how to invoke it.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_z3BU_NBrdjFE",
+    "createdAt": 1779082678449,
+    "lastUsedAt": 1779082678449,
+    "ageDays": 0.035057407407407405,
+    "sessionId": "session_feePQ18Ht99y",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:37",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"f00b0725c763c5b4\" range=\"msg_user_1779082365387_54fe1693:msg_assistant_gen_01KRWSE1XQKFESHAR0599TYBDS\">\n* 🟡 (05:32-05:37) User asked for tests covering all 4 chime cases and requested best-practice review guidance.\n* 🟡 (05:34-05:37) Assistant extracted the chime back-stamp decision into a pure helper `packages/backend/convex/workflows/chat/chime-helpers.ts` (`shouldStampThreadStarter`) and refactored `chime.ts` to call it.\n* ✅ (05:37) Added `packages/backend/convex/workflows/chat/chime-helpers.test.ts` with scenario-based tests for the helper; the suite passed (5 tests).\n* ✅ (05:37) Verified `bun run check-types`, `bun run lint`, and backend vitest all pass after the refactor (9 files / 72 tests).\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_gwmlr_695vAW",
+    "createdAt": 1779082729421,
+    "lastUsedAt": 1779082729421,
+    "ageDays": 0.0344674537037037,
+    "sessionId": "session_feePQ18Ht99y",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:38",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"c77ef529333ba8c2\" range=\"msg_user_1779082702408_4e9f3590:msg_assistant_gen_01KRWSFY0BH1PKYRYY86X4W8V3\">\n* ✅ (05:38) Committed and pushed chime back-stamp refactor on `staging` as `b31bc096a` (`test(chime): cover thread-starter back-stamp decision`).\n-> extracted the parent-stamp condition into `packages/backend/convex/workflows/chat/chime-helpers.ts` as `shouldStampThreadStarter`.\n-> added `packages/backend/convex/workflows/chat/chime-helpers.test.ts` covering the four chime cases via pure boolean assertions.\n-> pre-commit hooks passed: `bun run check-types`, `bun run lint`, and `bun run format`.\n-> push to `origin/staging` succeeded.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_UgmhpbKZpIYA",
+    "createdAt": 1779082792775,
+    "lastUsedAt": 1779082792775,
+    "ageDays": 0.03373418981481482,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:39",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"c82ae23d70658bd1\" range=\"msg_user_1779082758407_5f77edeb:msg_assistant_gen_01KRWSHDFAFG50T6ZYY53V7064\">\n* 🟡 (05:39) User asked for a walkthrough of the system prompt: what pieces it contains, what happens when a system-prompt file is specified, and what happens when none is specified.\n* ✅ (05:39) Assistant explained the prompt assembly order from `src/turn-runner/prompts.ts` and `src/turn-runner/skill-context.ts`: optional `systemInstructions`, `<cwd>`, `<current_date>`, tool-execution guidance, skill metadata, appended system-prompt files, state-machine layer, then any host-added layers such as memory observations.\n* ✅ (05:39) Assistant also explained default file behavior: `systemPromptFiles` defaults to `AGENTS.md` when unset; specifying `--system-prompt-file` supplies the file list explicitly (multiple files allowed), while `--no-system-prompt-files` disables loading any prompt files.\n* 🟡 (05:39) Assistant noted system-prompt files are read from disk per turn and wrapped in `<system_prompt_file path=\"...\">...</system_prompt_file>` blocks, with absolute paths honored and missing files skipped silently.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_w3p1_Jp5FxMV",
+    "createdAt": 1779082927427,
+    "lastUsedAt": 1779082927427,
+    "ageDays": 0.03217571759259259,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:42",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"9147046e492c84ac\" range=\"msg_user_1779082900424_e0d846cb:msg_tool_toolu_01QTSjDL2Nd1muLcFirc44in\">\n* 🟡 (05:42) User corrected prompt ordering expectations: system prompt files should come first, and `<cwd>`/`<current_date>` should be near the end before memory observations.\n* 🟢 (05:42) User is thinking about whether the memory observations block is part of the system prompt; assistant clarified it is appended as a `<system-reminder>` on the latest user message, not the system role.\n* 🟡 (05:42) Assistant proposed reordering the base system prompt to place files first, then system instructions/tools/skills, with `<cwd>` and `<current_date>` last, and asked the user where the state-machine layer should sit relative to those fields.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_QkoIbyAXypEc",
+    "createdAt": 1779083148246,
+    "lastUsedAt": 1779083148246,
+    "ageDays": 0.02961994212962963,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:45",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"c3227d03337de940\" range=\"msg_user_1779082938016_c6b1d92c:msg_assistant_gen_01KRWSWKR5987C8GDSTT8SWJKS\">\n* 🟡 (05:42-05:45) User confirmed prompt-layer ordering preferences for the turn-runner: system instructions should be first, files after, and the state-machine layer should sit before `<cwd>/<current_date>`.\n* ✅ (05:43-05:45) Updated `src/turn-runner/prompts.ts` and `src/turn-runner/skill-context.ts` so system prompt assembly now orders layers as: system instructions → system prompt files → tool-execution prompt → skills → appended layers → cwd/date.\n* ✅ (05:45) Verified the prompt-order change with all 613 tests passing, plus typecheck and lint clean.\n* 🟢 (05:45) Assistant noted memory observations are appended separately to the latest user message as `<system-reminder>`, not injected into the system prompt prefix.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_jaeD4oKIOA2w",
+    "createdAt": 1779083195735,
+    "lastUsedAt": 1779083195735,
+    "ageDays": 0.029070300925925927,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:46",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"e1d4ff8781d7f19b\" range=\"msg_user_1779083164565_4e9f3590:msg_assistant_gen_01KRWSY5HTXNSJ81HXH13SCNF0\">\n* ✅ (05:46) Released v0.1.138.\n-> commit `3899612` (`chore: release v0.1.138`) created, `v0.1.138` annotated tag pushed, and `main` advanced (`013ad80..3899612`).\n-> verification passed: `bun run check-types`, `bun run lint`, and `bun run test` (613 tests).\n-> release content reordered the system prompt so `systemInstructions` and system-prompt files lead, with `<cwd>` and `<current_date>` moved to the end after the state-machine layer.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_xHnZqHpN8BXp",
+    "createdAt": 1779083357122,
+    "lastUsedAt": 1779083357122,
+    "ageDays": 0.027202395833333334,
+    "sessionId": "session_UtqMsdY-Xx5-",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:49",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"353e150482cfdab8\" range=\"msg_user_1779083324498_aa80b69f:msg_assistant_gen_01KRWT32TH7EFPAA3XX8TNM53R\">\n* 🟡 (05:48-05:49) User asked to release again after a manual rearrangement.\n* ✅ (05:49) Re-released the app as v0.1.139 after moving `cwdSystemPrompt(input.config.cwd ?? process.cwd())` earlier in `src/turn-runner/prompts.ts` so it sits before skills in the system-prompt assembly.\n  -> bumped `package.json` version to `0.1.139`\n  -> verified `bun run check-types` and `bun run lint` passed\n  -> committed `ef0f6bc` (`chore: release v0.1.139`)\n  -> pushed `main` and annotated tag `v0.1.139` successfully\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_dvjYqqbFmald",
+    "createdAt": 1779083475085,
+    "lastUsedAt": 1779083664867,
+    "ageDays": 0.025837083333333333,
+    "sessionId": "session_feePQ18Ht99y",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:51",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"c6d1ed932cc0254c\" range=\"msg_user_1779083411349_9dd81a21:msg_assistant_gen_01KRWT6NVRQS3A397TEWYJM234\">\n* 🟡 (05:50-05:51) User reported a Convex deploy error: `workflows/chat/chime-helpers.js` is rejected because Convex module paths cannot contain hyphens.\n* ✅ (05:50-05:51) Renamed the Convex workflow helper files to camelCase (`chimeHelpers.ts` and `chimeHelpers.test.ts`), updated imports in `packages/backend/convex/workflows/chat/chime.ts` and the test file, and verified `bun run check-types` plus backend tests for `chimeHelpers` passed.\n* ✅ (05:51) Committed the rename as `37523536a` with message `fix(chime): rename chime-helpers to chimeHelpers for Convex path rules` and pushed it; pre-commit hooks ran cleanly (check-types, lint, format).\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_6vsAuZUXrMP7",
+    "createdAt": 1779083643279,
+    "lastUsedAt": 1779083643279,
+    "ageDays": 0.02389039351851852,
+    "sessionId": "session_XURjVwdl4a6N",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:54",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"7a48da2012caff38\" range=\"msg_user_1779083609840_29bbe1f5:msg_assistant_gen_01KRWTBV3DMZG4STHM7X6GFFNX\">\n* 🟡 (05:53) User invoked `/deploy-to-prod`; deployment workflow is in progress.\n* 🟡 (05:53) Staging was fetched/updated and is current with `origin/staging`.\n* 🟡 (05:53) `origin/main` has no commits not already in `staging`; `staging` has one commit to ship: `37523536a fix(chime): rename chime-helpers to chimeHelpers for Convex path rules`.\n* ✅ (05:53) `bun run test` passed on staging (backend/shared/ui/web test suites green; output showed backend 72 tests passing, with a non-fatal TimeoutNegativeWarning in backend test runner).\n* 🟢 (05:53) Assistant asked for explicit confirmation before touching `main`, warning that the push will trigger Vercel prod + Convex prod.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_kSeNfUxmXvjc",
+    "createdAt": 1779083664927,
+    "lastUsedAt": 1779085413940,
+    "ageDays": 0.023639837962962963,
+    "sessionId": "session_XURjVwdl4a6N",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "05:54",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"146645351863d262\" range=\"msg_user_1779083643447_4e9f3590:msg_assistant_gen_01KRWTCHK170RBGZ3JJATBVJMS\">\n* ✅ (05:54) Promoted `staging` to `main` by fast-forwarding main to `37523536a` and pushing it; `origin/main` and `origin/staging` now match at that commit.\n-> merge brought in the Convex path-rule rename from `chime-helpers` to `chimeHelpers` plus the related `chime.ts` import updates and generated API changes.\n* 🟢 (05:54) Assistant reported Vercel prod and Convex prod deploys are in flight after the promotion.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_RhexImr-S7BS",
+    "createdAt": 1779084970941,
+    "lastUsedAt": 1779084970941,
+    "ageDays": 0.008523935185185185,
+    "sessionId": "session_63jkyHl8XsUw",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "06:16",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"483ed29818b08c5b\" range=\"msg_user_1779084887331_9b9d7711:msg_assistant_gen_01KRWVMBEJM4D8YCMAXWXG04AR\">\n* 🟡 (06:14-06:16) User wants the skill-collision section in the skills list moved to the bottom and hidden behind an expand/collapse control until clicked.\n* ✅ (06:15-06:16) Updated `apps/web/spa/skills/route.tsx` so the collisions warning is rendered as a bottom-of-page expandable card with a caret toggle; the collision details are collapsed by default and only shown on expand.\n* ✅ (06:16) Verified `bun run check-types` passed after the UI change.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_Yl2In8kZkMBe",
+    "createdAt": 1779085358083,
+    "lastUsedAt": 1779085358083,
+    "ageDays": 0.004043125,
+    "sessionId": "session_mgR7w4RUOQmH",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "06:22",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"1a40852e87d42885\" range=\"msg_user_1779085174830_afc74897:msg_tool_toolu_015gXLbDPb25LNQMiShZQLRR\">\n* 🟡 (06:19-06:22) User wants `duet memory --help` to show the `reflect` subcommand, and wants `duet memory reflect` changed so reflection emits multiple unit-sized insight rows per batch instead of one giant blob.\n* 🟡 (06:19-06:22) User asked for a real-data fixture + eval based on their own memory data, then red/green TDD tuning of the reflection logic/prompts until the eval passes.\n* 🟡 (06:19-06:22) Assistant inspected the CLI/help and memory reflection code paths (`src/cli/help.ts`, `src/cli/memory.ts`, `src/cli/memory-reflect.ts`, `src/memory/observational-prompts.ts`, `src/memory/observational.ts`) and found existing reflection evals under `evals/memory-reflect.eval.ts` plus global-reflect fixtures under `evals/fixtures/global-reflect/`.\n* 🟡 (06:21-06:22) Assistant started a multi-step plan for the work and explicitly intends to keep it as a relay-style iterative effort rather than a one-shot change.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_Gcp3vyD4yeoY",
+    "createdAt": 1779085377793,
+    "lastUsedAt": 1779085377793,
+    "ageDays": 0.003815,
+    "sessionId": "session_63jkyHl8XsUw",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "06:22",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"77ad2c2350f772c8\" range=\"msg_user_1779085344017_1ad886ed:msg_assistant_gen_01KRWW0TBK66P1GA9NJ0FMT29T\">\n* ✅ (06:22) Made the entire skills warning card clickable in `apps/web/spa/skills/route.tsx` by turning the `details/summary` row into the full click target and adjusting padding/layout around the icon and list.\n* ✅ (06:22) Verified `bun run check-types` remained clean after the UI change.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_qIqV79E5NBAh",
+    "createdAt": 1779085413950,
+    "lastUsedAt": 1779085413950,
+    "ageDays": 0.0033965162037037037,
+    "sessionId": "session_63jkyHl8XsUw",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "06:23",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"c280a98d68067666\" range=\"msg_user_1779085386425_876fffdd:msg_assistant_gen_01KRWW1Y7FAJ8VD7EZQFHJ55SW\">\n* ✅ (06:23) Pushed a new staging change as commit `de549ae36` with message `feat(skills): collapse skill name collisions card and move to bottom`.\n-> pre-commit hooks passed on the staged `apps/web/spa/skills/route.tsx` change: check-types, lint, and format all completed cleanly.\n-> the push advanced `origin/staging` from `37523536a` to `de549ae36`.\n-> git status before the commit showed `staging` was up to date with `origin/staging` and only `apps/web/spa/skills/route.tsx` was modified.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_imwUBMdcwgBb",
+    "createdAt": 1779085592207,
+    "lastUsedAt": 1779085592207,
+    "ageDays": 0.0013333564814814816,
+    "sessionId": "session_mgR7w4RUOQmH",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "06:26",
+    "priority": "high",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"9a349ad2c57a5268\" range=\"msg_user_1779085580780_37018ce8:msg_tool_toolu_01TJdUrgjGnJ7aRPgQXZS5WE\">\n* 🟡 (06:26) User reported the `fix-help` state finished and provided the exact help text change in `src/cli/help.ts` (`printMemoryHelp` only).\n  -> `duet memory` usage now shows `duet memory [--db <path>] [--wait <seconds>]` and `duet memory reflect [options]`.\n  -> alias `duet memories` remains.\n  -> `reflect` is now listed as a subcommand with the description “Condense old global observations into reflection rows” and a note pointing to `duet memory reflect --help` for subcommand-specific options.\n  -> `printRunHelp` and `src/cli/memory.ts` were scanned and left unchanged because they do not publicly enumerate subcommands.\n* ✅ (06:26) Verification for the help update passed: `bun run check-types` clean and `bun run lint` had 0 warnings / 0 errors.\n* 🟢 (06:26) The change was intentionally left uncommitted.\n</observation-group>",
+    "tags": ["observational-memory"]
+  },
+  {
+    "id": "mem_zIP9abYpiT-2",
+    "createdAt": 1779085598618,
+    "lastUsedAt": 1779085598618,
+    "ageDays": 0.0012591550925925925,
+    "sessionId": "session__WLCWqyerMUz",
+    "kind": "observation",
+    "observedDate": "2026-05-18",
+    "timeOfDay": "06:26",
+    "priority": "medium",
+    "source": {
+      "kind": "system"
+    },
+    "content": "<observation-group id=\"65dfeed77bdf81e1\" range=\"msg_user_1779085553542_d292ff30:msg_assistant_gen_01KRWW76E7DF7VJT950HFJN761\">\n* 🟡 (06:25) User asked whether the `allowedSkills` param in state machine definitions is enforced.\n* 🟡 (06:25-06:26) Assistant determined `allowedSkills` is enforced in `src/turn-runner/skill-context.ts` by validating requested names against the loaded parent skill set and throwing on unknown names before a sub-agent runs.\n* 🟡 (06:26) Assistant also determined state agents receive only the resolved `Skill[]` via `createAgent(..., { skills: ... })` in `src/turn-runner/turn-runner.ts`, so `allowedSkills` gates which skills are injected into the sub-agent prompt/metadata; omitted means the parent skills are inherited.\n* 🟢 (06:26) Assistant noted this is an allowlist for skill metadata/`read_skill`, not a sandbox for tool or filesystem access.\n</observation-group>",
+    "tags": ["observational-memory"]
+  }
+]

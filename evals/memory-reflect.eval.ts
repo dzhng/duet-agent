@@ -55,14 +55,24 @@ function tokensIn(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function firstReflection(result: { reflections: { content: string; id: string }[] }): {
+/**
+ * The reflector emits an ARRAY of atomic rows per batch. The substring /
+ * regex assertions below want to know whether a fact survived the prune,
+ * regardless of which row it landed in, so flatten all rows into one
+ * string before each content check. `ids` keeps the per-row ids around
+ * for tests that assert on durable-store identity.
+ */
+function joinedReflections(result: { reflections: { content: string; id: string }[] }): {
   content: string;
-  id: string;
+  ids: string[];
 } {
   if (result.reflections.length === 0) {
     throw new Error("expected at least one reflection row");
   }
-  return result.reflections[0]!;
+  return {
+    content: result.reflections.map((row) => row.content).join("\n\n"),
+    ids: result.reflections.map((row) => row.id),
+  };
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -94,7 +104,7 @@ describe("duet memory reflect — global prune", () => {
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const reflection = firstReflection(result!);
+        const reflection = joinedReflections(result!);
         const content = reflection.content;
         expect(content).toContain("Velgress");
         // Concrete identifiers (URL OR commit) preserved somewhere.
@@ -102,10 +112,11 @@ describe("duet memory reflect — global prune", () => {
         // Do not restate the same headline once per fixture row.
         const shipMentions = countOccurrences(content.toLowerCase(), "velgress shipped");
         expect(shipMentions).toBeLessThan(4);
-        // Pool replaced with the single reflection row.
+        // Pool replaced with the reflection rows the reflector emitted; the
+        // eligible originals are gone and only the new atomic rows remain.
         const after = await readAllObservations(fixture.session);
-        expect(after.observations.length).toBe(1);
-        expect(after.observations[0]!.id).toBe(reflection.id);
+        expect(after.observations.length).toBe(reflection.ids.length);
+        expect(after.observations.map((o) => o.id).sort()).toEqual([...reflection.ids].sort());
       } finally {
         await fixture.dispose();
       }
@@ -129,7 +140,7 @@ describe("duet memory reflect — global prune", () => {
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = firstReflection(result!).content;
+        const content = joinedReflections(result!).content;
         expect(content).toContain("#1335");
         expect(content.toLowerCase()).toContain("bottominset");
       } finally {
@@ -155,7 +166,7 @@ describe("duet memory reflect — global prune", () => {
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = firstReflection(result!).content.toLowerCase();
+        const content = joinedReflections(result!).content.toLowerCase();
         // Both durable conventions must survive in some recognizable form.
         expect(content).toMatch(/bun format/);
         expect(content).toMatch(/pr.*title|\[name\]|first name/);
@@ -182,7 +193,7 @@ describe("duet memory reflect — global prune", () => {
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = firstReflection(result!).content;
+        const content = joinedReflections(result!).content;
         // Final state facts must survive.
         expect(content).toContain("PR #1334");
         expect(content.toLowerCase()).toMatch(/ascii|white-on-black|hero|use-cases/);
@@ -215,7 +226,7 @@ describe("duet memory reflect — global prune", () => {
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = firstReflection(result!).content.toLowerCase();
+        const content = joinedReflections(result!).content.toLowerCase();
         // Three independent strategic decisions — all should leave a trace.
         expect(content).toMatch(/hyperframes|remotion/);
         expect(content).toMatch(/plan mode/);
@@ -249,7 +260,9 @@ describe("duet memory reflect — global prune", () => {
         expect(result).toBeDefined();
         // Reflector + truncation guard must keep us under the budget,
         // with a small fudge factor for tokenization rounding.
-        expect(tokensIn(firstReflection(result!).content)).toBeLessThanOrEqual(targetTokens + 128);
+        // Combined budget across every atomic row must stay under the cap.
+        const combined = joinedReflections(result!).content;
+        expect(tokensIn(combined)).toBeLessThanOrEqual(targetTokens + 128);
       } finally {
         await fixture.dispose();
       }
@@ -274,11 +287,12 @@ describe("duet memory reflect — global prune", () => {
         });
         expect(result).toBeDefined();
         const after = await readAllObservations(fixture.session);
-        expect(after.observations.length).toBe(1);
-        const [row] = after.observations;
-        expect(row!.sessionId).toBe(GLOBAL_REFLECTION_SESSION_ID);
-        expect(row!.kind).toBe("reflection");
-        expect(row!.tags).toContain("global-prune");
+        expect(after.observations.length).toBe(result!.reflections.length);
+        for (const row of after.observations) {
+          expect(row.sessionId).toBe(GLOBAL_REFLECTION_SESSION_ID);
+          expect(row.kind).toBe("reflection");
+          expect(row.tags).toContain("global-prune");
+        }
       } finally {
         await fixture.dispose();
       }
@@ -304,7 +318,7 @@ describe("duet memory reflect — global prune", () => {
         });
         expect(result).toBeDefined();
         expect(result!.written).toBe(false);
-        expect(firstReflection(result!).content.length).toBeGreaterThan(0);
+        expect(joinedReflections(result!).content.length).toBeGreaterThan(0);
         const after = await readAllObservations(fixture.session);
         expect(after.observations.map((o) => o.id).sort()).toEqual([...beforeIds].sort());
       } finally {
@@ -354,7 +368,7 @@ describe("duet memory reflect — global prune", () => {
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = firstReflection(result!).content;
+        const content = joinedReflections(result!).content;
         // The Velgress slice never mentions team members besides David,
         // and never mentions any redacted customer placeholders. If a
         // reflected row name-drops them, the reflector hallucinated.
@@ -384,7 +398,7 @@ describe("duet memory reflect — global prune", () => {
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = firstReflection(result!).content;
+        const content = joinedReflections(result!).content;
         // The dump spans April 2026 → May 2026. After a prune we should
         // still see multiple distinct date anchors so supersession is
         // recoverable from the reflected log.
@@ -415,11 +429,11 @@ describe("duet memory reflect — global prune", () => {
         });
         expect(result).toBeDefined();
         const after = await readAllObservations(fixture.session);
-        expect(after.observations.length).toBe(1);
-        const content = after.observations[0]!.content;
+        expect(after.observations.length).toBe(result!.reflections.length);
+        const content = after.observations.map((o) => o.content).join("\n\n");
         // Across all workstreams in the dump, at least the heaviest
-        // signals should be representable somewhere in the surviving
-        // row. Each substring corresponds to dozens of source rows.
+        // signals should be representable somewhere across the surviving
+        // rows. Each substring corresponds to dozens of source rows.
         const signals = [
           /velgress/i,
           /view transition|#1336|#1341/i,
@@ -456,7 +470,7 @@ describe("duet memory reflect — global prune", () => {
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = firstReflection(result!).content;
+        const content = joinedReflections(result!).content;
         // Both PRs in the chain must remain.
         expect(content).toMatch(/#1336/);
         expect(content).toMatch(/#1341/);
@@ -486,7 +500,7 @@ describe("duet memory reflect — global prune", () => {
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
-        const content = firstReflection(result!).content;
+        const content = joinedReflections(result!).content;
         expect(content).toMatch(/#1340/);
         expect(content.toLowerCase()).toMatch(/service worker|offline|share_target|manifest/);
       } finally {

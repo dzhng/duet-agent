@@ -18,8 +18,12 @@ import { createMemoryFixture } from "./helpers/memory-fixture.js";
  *
  *   - Fresh non-reflection rows survive (their session might still be
  *     resumed).
- *   - Existing reflection rows survive (do not collapse condensed text
- *     into vaguer text).
+ *   - GLOBAL reflection rows (`sessionId === "__global_reflection__"`)
+ *     survive: re-reflecting condensed text would only collapse it into
+ *     vaguer text.
+ *   - LOCAL reflection rows (`kind === "reflection"` with a real session
+ *     id) become eligible — `duet memory reflect` is how the single-blob
+ *     in-session reflections get broken up into atomic global rows.
  *   - Older raw observations are batched chronologically up to a
  *     per-batch token cap, mixing sessions for cross-session dedup.
  */
@@ -62,26 +66,36 @@ describe("planReflectionBatches", () => {
     expect(batches[0]!.observations.map((o) => o.id)).toEqual(["old2", "old1"]);
   });
 
-  test("never reflects on reflection rows (preserved even when old)", () => {
-    const oldReflection = makeObservation({
-      id: "reflection-old",
+  test("preserves global reflection rows but folds local reflection rows", () => {
+    const globalReflection = makeObservation({
+      id: "global-refl",
       kind: "reflection",
+      sessionId: "__global_reflection__",
       createdAt: NOW - 30 * DAY_MS,
       tags: ["observational-memory", "reflection", "global-prune"],
+    });
+    const localReflection = makeObservation({
+      id: "local-refl",
+      kind: "reflection",
+      sessionId: "session_a",
+      createdAt: NOW - 30 * DAY_MS,
+      tags: ["observational-memory", "reflection"],
     });
     const oldRaw = makeObservation({
       id: "raw-old",
       createdAt: NOW - 30 * DAY_MS,
     });
 
-    const { preserved, batches } = planReflectionBatches([oldReflection, oldRaw], {
-      cutoff,
-      batchTokens: 1_000_000,
-    });
+    const { preserved, batches } = planReflectionBatches(
+      [globalReflection, localReflection, oldRaw],
+      { cutoff, batchTokens: 1_000_000 },
+    );
 
-    expect(preserved.map((o) => o.id)).toEqual(["reflection-old"]);
+    // Only the global reflection survives untouched; the local one
+    // gets folded alongside raw observations.
+    expect(preserved.map((o) => o.id)).toEqual(["global-refl"]);
     expect(batches).toHaveLength(1);
-    expect(batches[0]!.observations.map((o) => o.id)).toEqual(["raw-old"]);
+    expect(batches[0]!.observations.map((o) => o.id).sort()).toEqual(["local-refl", "raw-old"]);
   });
 
   test("packs eligible rows greedily up to batchTokens, then rolls over", () => {

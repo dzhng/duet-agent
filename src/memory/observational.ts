@@ -219,9 +219,23 @@ function createMemoryId(): string {
   return `mem_${nanoid(12)}`;
 }
 
+export interface ReflectorReflection {
+  /** One durable insight rendered as a single small row (~30-150 tokens). */
+  content: string;
+  /** Priority for the row. Defaults to "high" when omitted. */
+  priority?: ObservationPriority;
+  /** ISO YYYY-MM-DD the insight is anchored to. Defaults to today when omitted. */
+  observedDate?: string;
+}
+
 export interface ReflectorResult {
-  /** Condensed observation log produced from existing observations. */
-  observations: string;
+  /**
+   * Atomic reflection rows produced from the batch. The reflector must
+   * emit one row per durable insight rather than one giant blob; the
+   * global-prune path persists each as its own `Observation` so recall
+   * freshness can bump individual insights.
+   */
+  reflections: ReflectorReflection[];
   /** Hint for the actor's next response after reflection rewrites memory. */
   suggestedContinuation?: string;
 }
@@ -265,10 +279,29 @@ const observerResultTool = {
 };
 
 const reflectorResultSchema = Type.Object({
-  observations: Type.String({
-    description:
-      "Condensed observation log preserving important facts, dates, preferences, unresolved work, and completion markers.",
-  }),
+  reflections: Type.Array(
+    Type.Object({
+      content: Type.String({
+        description:
+          "One durable insight as a single small row (~30-150 tokens, 1-3 sentences). Each row must stand alone as a bumpable unit of memory. Never wrap multiple insights in a single <observation-group> or otherwise concatenate them into one row.",
+      }),
+      priority: Type.Optional(
+        Type.Union([Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")], {
+          description:
+            "Importance signal for recall ranking. Defaults to high when omitted; use medium/low for routine or tentative material.",
+        }),
+      ),
+      observedDate: Type.Optional(
+        Type.String({
+          description: "ISO YYYY-MM-DD the insight is anchored to. Defaults to today when omitted.",
+        }),
+      ),
+    }),
+    {
+      description:
+        "Atomic reflection rows. Prefer many small rows over one summary row; deduplicate across rows and keep cross-session themes as their own rows.",
+    },
+  ),
   suggestedContinuation: Type.Optional(
     Type.String({
       description: "Hint for the actor's next response after reflection rewrites memory.",
@@ -278,7 +311,8 @@ const reflectorResultSchema = Type.Object({
 
 const reflectorResultTool = {
   name: "reflectObservations",
-  description: "Return condensed observational memory fields.",
+  description:
+    "Return an array of atomic reflection rows. Each row is one durable insight; never concatenate multiple insights into one row.",
   parameters: reflectorResultSchema,
 };
 
@@ -826,8 +860,12 @@ async function reflectObservations(
     prompt: buildReflectorPrompt(rendered, targetTokens),
     onUsage,
   });
+  // The in-session reflector still produces a single observation row,
+  // so collapse the array back into one blob and let the observation-
+  // group reconciliation helpers run against the joined text.
+  const joined = joinReflectorRows(result.reflections);
   const text = await enforceObservationTokenBudget({
-    text: result.observations,
+    text: joined,
     targetTokens,
     retry: async (actualTokens) => {
       const retryResult = await generateStructuredOutput({
@@ -837,7 +875,7 @@ async function reflectObservations(
         prompt: buildReflectorPrompt(rendered, targetTokens, { actualTokens }),
         onUsage,
       });
-      return retryResult.observations;
+      return joinReflectorRows(retryResult.reflections);
     },
   });
   if (!text) {
@@ -1025,9 +1063,19 @@ export interface PlanReflectionBatchesOptions {
  * batching/eligibility rules can be unit-tested without docker/LLM.
  *
  * Rules:
- *   - `kind === "reflection"` rows are always preserved (we never
- *     reflect on reflections; see option 3 in the
- *     {@link DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS} comment).
+ *   - GLOBAL reflection rows (`kind === "reflection"` AND
+ *     `sessionId === GLOBAL_REFLECTION_SESSION_ID`) are always preserved.
+ *     They are the output of prior `duet memory reflect` runs and
+ *     reflecting on them again would collapse already-condensed text
+ *     into vaguer text. See option 3 in the
+ *     {@link DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS} comment.
+ *   - LOCAL reflection rows (`kind === "reflection"` with any other
+ *     sessionId) are the single-blob outputs of the in-session reflector
+ *     (`reflectObservations`), each still wrapped in `<observation-group>`.
+ *     They ARE eligible: `duet memory reflect` is the path that breaks
+ *     them up into atomic global reflection rows. Once folded, the
+ *     resulting global rows carry `sessionId === GLOBAL_REFLECTION_SESSION_ID`
+ *     and are preserved on subsequent runs.
  *   - Non-reflection rows with `createdAt > cutoff` are preserved (too
  *     fresh; resume-info-loss risk too high).
  *   - Everything else is eligible. Eligible rows are sorted by
@@ -1043,7 +1091,12 @@ export function planReflectionBatches(
   const preserved: Observation[] = [];
   const eligible: Observation[] = [];
   for (const observation of observations) {
-    if (observation.kind === "reflection") {
+    if (
+      observation.kind === "reflection" &&
+      observation.sessionId === GLOBAL_REFLECTION_SESSION_ID
+    ) {
+      // Global reflection rows are the output of a prior reflect run;
+      // never re-reflect them (option 3 in DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS).
       preserved.push(observation);
       continue;
     }
@@ -1051,6 +1104,9 @@ export function planReflectionBatches(
       preserved.push(observation);
       continue;
     }
+    // Local reflection rows (kind === "reflection" with a real sessionId)
+    // fall through to eligible: `duet memory reflect` folds them into
+    // atomic global rows alongside raw observations.
     eligible.push(observation);
   }
   eligible.sort((a, b) => a.createdAt - b.createdAt);
@@ -1128,17 +1184,19 @@ export async function reflectAllObservations(
   const eligible = batches.flatMap((batch) => batch.observations);
   const reflections: Observation[] = [];
   for (const batch of batches) {
-    const reflection = await reflectBatch({
+    const reflectionRows = await reflectBatch({
       batch,
       settings,
       model,
       targetTokens,
       onUsage,
     });
-    if (reflection) {
-      reflections.push(reflection);
-    }
+    reflections.push(...reflectionRows);
   }
+  // `reflections.length === 0` here means every batch returned an empty
+  // array — no model row survived sanitation. The eligible rows stay
+  // unprocessed in that case (no write below) so the next reflect run
+  // can try again.
 
   const written = !dryRun && reflections.length > 0;
   if (written) {
@@ -1157,55 +1215,85 @@ export async function reflectAllObservations(
   };
 }
 
+/**
+ * Soft per-row token budget when splitting the reflection target
+ * across rows. Each row is a single insight (~30-150 tokens) so a
+ * modest floor keeps a row from being trimmed to a stub, but the
+ * floor stays low enough that combined output still fits inside a
+ * tight global `targetTokens` budget when callers pass one.
+ */
+const MIN_REFLECTION_ROW_TOKENS = 120;
+
+/**
+ * Run the reflector against one eligible batch and emit one
+ * `Observation` per insight the model returned. The retry path used by
+ * the single-blob reflector does not apply on the array shape — there
+ * is no single "too long" condition that retrying with the same prompt
+ * would fix — so this path enforces the budget by trimming each row to
+ * a per-row token budget instead.
+ */
 async function reflectBatch(args: {
   batch: ReflectionBatch;
   settings: ObservationalMemorySettings;
   model: string;
   targetTokens: number;
   onUsage?: (usage: Usage) => void;
-}): Promise<Observation | undefined> {
+}): Promise<Observation[]> {
   const { batch, settings, model, targetTokens, onUsage } = args;
   const source = batch.observations.map((observation) => observation.content).join("\n\n");
-  const rendered = renderObservationGroupsForReflection(source) ?? source;
   const result = await generateStructuredOutput({
     model,
     tool: reflectorResultTool,
     systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
-    prompt: buildReflectorPrompt(rendered, targetTokens),
+    prompt: buildReflectorPrompt(source, targetTokens),
     onUsage,
   });
-  const text = await enforceObservationTokenBudget({
-    text: result.observations,
-    targetTokens,
-    retry: async (actualTokens) => {
-      const retryResult = await generateStructuredOutput({
-        model,
-        tool: reflectorResultTool,
-        systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
-        prompt: buildReflectorPrompt(rendered, targetTokens, { actualTokens }),
-        onUsage,
-      });
-      return retryResult.observations;
-    },
-  });
-  if (!text || text.trim().length === 0) {
-    return undefined;
+  const rows = result.reflections ?? [];
+  if (rows.length === 0) return [];
+
+  const perRowBudget = Math.max(MIN_REFLECTION_ROW_TOKENS, Math.floor(targetTokens / rows.length));
+  const today = new Date().toISOString().slice(0, 10);
+  const timeOfDay = new Date().toISOString().slice(11, 16);
+  const observations: Observation[] = [];
+  let combinedTokens = 0;
+  for (const row of rows) {
+    const sanitized = sanitizeObservationLines((row.content ?? "").trim());
+    if (!sanitized) continue;
+    const trimmed = trimObservationTextToTokenBudget(sanitized, perRowBudget);
+    if (!trimmed) continue;
+    const rowTokens = estimateTokens(trimmed);
+    // Combined budget cap: once cumulative row tokens would exceed the
+    // caller's `targetTokens`, drop the remaining rows rather than
+    // letting per-row floors blow past the global budget. Always keep at
+    // least one row so a tiny budget still produces output.
+    if (observations.length > 0 && combinedTokens + rowTokens > targetTokens) {
+      break;
+    }
+    combinedTokens += rowTokens;
+    const now = Date.now();
+    observations.push({
+      id: createMemoryId(),
+      createdAt: now,
+      lastUsedAt: now,
+      kind: "reflection",
+      sessionId: GLOBAL_REFLECTION_SESSION_ID,
+      observedDate: row.observedDate ?? today,
+      timeOfDay,
+      priority: row.priority ?? "high",
+      source: { kind: "system" },
+      content: trimmed,
+      tags: ["observational-memory", "reflection", "global-prune"],
+    });
   }
-  const reconciled = reconcileObservationGroupsFromReflection(text, source) ?? text;
-  const now = Date.now();
-  return {
-    id: createMemoryId(),
-    createdAt: now,
-    lastUsedAt: now,
-    kind: "reflection",
-    sessionId: GLOBAL_REFLECTION_SESSION_ID,
-    observedDate: new Date().toISOString().slice(0, 10),
-    timeOfDay: new Date().toISOString().slice(11, 16),
-    priority: "high",
-    source: { kind: "system" },
-    content: reconciled,
-    tags: ["observational-memory", "reflection", "global-prune"],
-  };
+  return observations;
+}
+
+function joinReflectorRows(rows: ReflectorReflection[] | undefined): string {
+  if (!rows || rows.length === 0) return "";
+  return rows
+    .map((row) => (row.content ?? "").trim())
+    .filter((content) => content.length > 0)
+    .join("\n\n");
 }
 
 async function observe(
