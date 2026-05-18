@@ -231,8 +231,14 @@ export class TurnRunner {
   private readonly stateMachineController: StateMachineController;
   /** Parent prompt started by a steer while state-machine work is driving the turn. */
   private activeStateWorkPrompt?: Promise<TurnTerminalEvent>;
-  /** Terminal event prepared by `interrupt()` and returned when active work unwinds. */
-  private interruptedTerminal?: TurnTerminalEvent;
+  /**
+   * Set true by `interrupt()` while a parent-agent prompt is in flight, so
+   * `runAgentWorker` can tell our own abort apart from a real provider error
+   * after `agent.prompt()` rejects. The interrupted `TurnState` itself lives
+   * on `this.state` (written by `interrupt()` before aborting); this flag is
+   * just the discriminator. Reset at the start of each `runAgentWorker`.
+   */
+  private parentAgentInterrupted = false;
   /**
    * Active work-chain promise. Callers may call turn() repeatedly while this is
    * set; those commands are folded into the same duet-agent turn. A duet-agent
@@ -621,9 +627,10 @@ export class TurnRunner {
     };
     this.setState(terminal.state);
     if (this.parentAgentRunning || hadActiveControllerWork) {
-      // The active turn emits this terminal event after agent.prompt() unwinds.
-      // interrupt() only aborts out-of-band; it does not own turn completion.
-      this.interruptedTerminal = terminal;
+      // The active turn emits the terminal event after agent.prompt() unwinds;
+      // interrupt() only aborts out-of-band. The interrupted snapshot is
+      // already on `this.state` above — `runAgentWorker` reads it from there.
+      this.parentAgentInterrupted = true;
     }
     this.parentAgent?.abort();
     this.parentAgent?.clearAllQueues();
@@ -637,12 +644,6 @@ export class TurnRunner {
     for (const handler of this.eventHandlers) {
       handler(event);
     }
-  }
-
-  private consumeInterruptedTerminal(): TurnTerminalEvent | undefined {
-    const terminal = this.interruptedTerminal;
-    this.interruptedTerminal = undefined;
-    return terminal;
   }
 
   protected async prompt(command: TurnPromptCommand): Promise<TurnTerminalEvent> {
@@ -1285,7 +1286,7 @@ export class TurnRunner {
     this.setParentAgentRunning(true);
 
     const unsubscribe = agent.subscribe((event) => this.emitParentAgentEvent(event));
-    let interruptedDuringPrompt: TurnTerminalEvent | undefined;
+    this.parentAgentInterrupted = false;
     try {
       await agent.prompt(input.prompt, input.images);
       // Single-shot recovery: if the provider rejected the first attempt
@@ -1301,8 +1302,7 @@ export class TurnRunner {
       }
       await this.retryTransientServerErrors(agent);
     } catch (error) {
-      interruptedDuringPrompt = this.consumeInterruptedTerminal();
-      if (!interruptedDuringPrompt) {
+      if (!this.parentAgentInterrupted) {
         throw error;
       }
     } finally {
@@ -1310,11 +1310,10 @@ export class TurnRunner {
       this.setParentAgentRunning(false);
     }
 
-    const interrupted = interruptedDuringPrompt ?? this.consumeInterruptedTerminal();
-    if (interrupted) {
+    if (this.parentAgentInterrupted) {
       return {
         control: this.parentControlResult,
-        outcome: { type: "interrupted", state: interrupted.state },
+        outcome: { type: "interrupted", state: this.requireRunnerState() },
       };
     }
 
