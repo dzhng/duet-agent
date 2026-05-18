@@ -42,13 +42,17 @@ export interface TurnRunnerConfig extends TurnOptions {
   memoryDbPath?: string | false;
   cwd?: string;
   /**
-   * Absolute path to this session's persisted `state.json` on disk. The runner
-   * advertises it in the system prompt so the agent can read its own raw
-   * chat history if it needs to. Set by `Session` from its owned
-   * `sessionPath`; unset for direct TurnRunner construction (tests, one-shot
-   * tools) that has no persisted session file.
+   * Advertised in the system prompt as the path the agent can read to
+   * inspect its own raw chat history. The TurnRunner does NOT read, write,
+   * or otherwise manage this file — it only echoes the value into the
+   * `<session_state_file>` prompt layer. The file itself is owned and
+   * persisted by `Session` (which writes `state.json` inside its
+   * `sessionPath`), so this config is purely an out-of-band hint pointing
+   * the agent at that path. Unset for direct TurnRunner construction
+   * (tests, one-shot tools, `duet --rpc`) where no persisted session file
+   * exists; the prompt layer is omitted in that case.
    */
-  sessionStatePath?: string;
+  advertisedSessionStatePath?: string;
   /** Default mode for TurnRunner.turn. "auto" lets the runner classify each prompt. */
   mode?: TurnMode;
   guardrails?: GuardrailConfig[];

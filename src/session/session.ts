@@ -172,7 +172,10 @@ export class Session {
       new TurnRunner({
         ...config,
         sessionId: options.id,
-        sessionStatePath: join(this.sessionPath, "state.json"),
+        // Prompt-layer hint only. Session owns the file; the runner just
+        // advertises this path to the agent so it can read its own raw
+        // chat history when needed.
+        advertisedSessionStatePath: join(this.sessionPath, "state.json"),
       });
     this.unsubscribeRunner = this.runner.subscribe((event) => void this.handleTurnEvent(event));
   }
