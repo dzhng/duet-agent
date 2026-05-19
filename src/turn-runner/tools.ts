@@ -75,7 +75,9 @@ const questionSchema = Type.Object({
     Type.String({ description: "Optional section heading for this question." }),
   ),
   options: Type.Array(questionOptionSchema, {
-    description: "Answer options the user can choose from.",
+    minItems: 1,
+    description:
+      "Answer options the user can choose from. Each question must have at least one option so the user has something to select.",
   }),
   multiSelect: Type.Optional(
     Type.Boolean({ description: "Whether the user may select more than one option." }),
@@ -544,6 +546,15 @@ function createAskUserQuestionTool(): AgentTool<typeof askUserQuestionSchema> {
       "Ask the user one or more structured multiple-choice questions. Use this when progress requires user input before continuing.",
     parameters: askUserQuestionSchema,
     async execute(_toolCallId, params) {
+      // The schema declares minItems: 1 on options, but defend at runtime too:
+      // some providers will still emit an empty options array, which would
+      // leave the user with no answers to pick and stall the turn.
+      const emptyIndex = params.questions.findIndex((question) => question.options.length === 0);
+      if (emptyIndex !== -1) {
+        throw new Error(
+          `ask_user_question rejected: questions[${emptyIndex}] has no options. Each question must include at least one option.`,
+        );
+      }
       const result: TurnRunnerControlResult = {
         type: "ask_user_question",
         questions: params.questions,

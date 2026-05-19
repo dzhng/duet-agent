@@ -146,6 +146,45 @@ describe("TurnRunner tools", () => {
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
   });
 
+  test("rejects ask_user_question calls with an empty options array", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "agent" });
+    const askUserQuestionTool = tools.find((tool) => tool.name === "ask_user_question");
+    expect(askUserQuestionTool).toBeDefined();
+    if (!askUserQuestionTool) throw new Error("ask_user_question tool missing");
+
+    await expect(
+      askUserQuestionTool.execute("tool-empty", {
+        questions: [
+          {
+            question: "Pick one",
+            options: [],
+          },
+          {
+            question: "Pick two",
+            options: [{ label: "only" }],
+          },
+        ],
+      }),
+    ).rejects.toThrow(
+      "ask_user_question rejected: questions[0] has no options. Each question must include at least one option.",
+    );
+  });
+
+  test("ask_user_question rejection message points at the offending question's index", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "agent" });
+    const askUserQuestionTool = tools.find((tool) => tool.name === "ask_user_question");
+    if (!askUserQuestionTool) throw new Error("ask_user_question tool missing");
+
+    await expect(
+      askUserQuestionTool.execute("tool-empty-2", {
+        questions: [
+          { question: "Has options", options: [{ label: "yes" }] },
+          { question: "No options", options: [] },
+        ],
+      }),
+    ).rejects.toThrow(/questions\[1\] has no options/);
+  });
+
   test("returns control decisions in tool details and model-visible content", async () => {
     const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
     const createDefinitionTool = tools.find(
