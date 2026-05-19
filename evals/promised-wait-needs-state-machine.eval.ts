@@ -66,11 +66,19 @@ describe("promised waits are backed by state-machine setup", () => {
           aomni-com/chat-app — there is no code work left for you to do
           right now.
 
-          You CAN call create_state_machine_definition and todo_write. If
-          you create a state machine, define a terminal state named
-          "eval_done" with status "completed" so no real background work
-          runs. Reply with a short status update describing what you did
-          and what (if anything) you scheduled for after this turn.
+          Codex, Vercel, and CI bots will post their review comments on
+          PR #1325 in roughly 5–7 minutes from now. You are expected to
+          triage those comments once they arrive (read them, decide if
+          they require action, reply or push fixes if needed). That
+          triage cannot happen until the bots have actually posted, so
+          it must be scheduled to run after a delay — not immediately
+          in this turn.
+
+          You CAN call create_state_machine_definition and todo_write.
+          If you create a state machine, include a terminal state named
+          "eval_done" with status "completed" so no real background
+          work runs. Reply with a short status update describing what
+          you did and what you scheduled for after this turn.
         `,
       });
 
@@ -108,7 +116,13 @@ describe("promised waits are backed by state-machine setup", () => {
         `,
         behavior: "follow_up",
       });
-      expect(second.type).toBe("complete");
+      // The turn ends in `sleep` when the agent wires a timer/poll as
+      // firstState (the SM is actually waiting). It ends in `complete`
+      // when the agent creates the SM but does not enter the wait this
+      // turn — either form is acceptable at the turn-event level
+      // because the actual kinds-of-states check below is what catches
+      // a pure-agent SM that skipped the wait.
+      expect(["complete", "sleep"]).toContain(second.type);
 
       const stateMachineCalls = toolCalls.filter(
         (call) => call.name === "create_state_machine_definition",

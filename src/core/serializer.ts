@@ -27,3 +27,20 @@ export function assistantText(messages: AgentMessage[]): string {
     .join("\n")
     .trim();
 }
+
+/**
+ * Concatenate every assistant message's text content in order. Useful when a
+ * caller cares whether a token appears anywhere in the parent transcript, not
+ * just in the latest assistant message — e.g. acknowledgment-turn evals where
+ * the model may emit the token on the SM1 ack while SM2's ack adds a trailing
+ * summary that would otherwise shadow it in `assistantText`.
+ */
+export function allAssistantText(messages: AgentMessage[]): string {
+  return messages
+    .filter((message) => message.role === "assistant")
+    .flatMap((message) => {
+      const content = (message as { content?: unknown }).content;
+      return Array.isArray(content) ? content.filter(isTextContentBlock).map((b) => b.text) : [];
+    })
+    .join("\n");
+}
