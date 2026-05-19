@@ -43,10 +43,29 @@ export interface SlashCommandContext {
 }
 
 /**
- * One built-in slash command. The same record drives both the dispatcher
- * (`matches` + `handle`) and the autocomplete picker (`name` +
- * `description`), so a command added here automatically shows up in `/`
- * suggestions without a second registration step.
+ * Shape of inline matching for a command — i.e. the form the command
+ * takes when it appears anywhere in a longer prompt rather than as the
+ * whole submitted message.
+ *
+ * - `"none"`: bare invocation only (`/reset`). Matches `/name` with
+ *   whitespace / start / end boundaries on both sides.
+ * - `"token"`: requires one whitespace-bounded argument (`/model X`).
+ *   Matches `/name <token>` with whitespace / start before and consumes
+ *   the next non-whitespace run as the argument.
+ *
+ * Commands that take rest-of-line arguments (`/feedback`, `/copy`,
+ * `/image`) intentionally have no inline shape — there is no
+ * unambiguous way to split "the argument" from "the rest of the
+ * prompt" mid-message, so they remain whole-message only.
+ */
+type InlineShape = "none" | "token";
+
+/**
+ * One built-in slash command. The same record drives the whole-message
+ * dispatcher (`matches` + `handle`), the inline extractor (`inline`),
+ * and the autocomplete picker (`name` + `description`), so a command
+ * added here automatically shows up in `/` suggestions without a
+ * second registration step.
  */
 interface BuiltInSlashCommand {
   /** Bare command name, no leading slash. Picker renders this as `/name`. */
@@ -57,6 +76,14 @@ interface BuiltInSlashCommand {
   matches(message: string): boolean;
   /** Side-effecting handler. Errors are surfaced through `appendBlock`. */
   handle(message: string, ctx: SlashCommandContext): void;
+  /**
+   * When set, the command also runs when it appears anywhere inside a
+   * longer prompt. The inline extractor reconstructs a synthetic
+   * whole-message form (`/name` or `/name <arg>`) and calls `handle`
+   * with it, so the inline path reuses the same logic the whole-message
+   * path already uses.
+   */
+  inline?: InlineShape;
 }
 
 /** `/name` with no trailing arguments. */
@@ -90,6 +117,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
     handle: (_, ctx) => {
       void ctx.pasteController.triggerClipboardProbe("slash");
     },
+    inline: "none",
   },
   {
     name: "clear-images",
@@ -99,6 +127,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
       ctx.pasteController.clearPendingImages();
       ctx.appendBlock("[paste]", "cleared pending image attachments", COLORS.system);
     },
+    inline: "none",
   },
   {
     name: "copy",
@@ -114,6 +143,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
       "Toggle diagnostic logging (keys, selection events) for surfacing terminal-specific issues",
     matches: (message) => isInvocation(message, "diag"),
     handle: handleDiagSlashCommand,
+    inline: "none",
   },
   {
     name: "feedback",
@@ -131,6 +161,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
       ctx.appendBlock("[reset]", "starting a new session…", COLORS.system);
       ctx.onReset();
     },
+    inline: "none",
   },
   {
     name: "model",
@@ -138,6 +169,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
       "Switch the model for the next turn (does not affect the current turn): /model <name>",
     matches: (message) => isInvocation(message, "model"),
     handle: handleModelSlashCommand,
+    inline: "token",
   },
   {
     name: "thinking",
@@ -145,6 +177,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
       "Switch the thinking level for the next turn (minimal|low|medium|high|xhigh): /thinking <level>",
     matches: (message) => isInvocation(message, "thinking"),
     handle: handleThinkingSlashCommand,
+    inline: "token",
   },
 ];
 
@@ -194,6 +227,57 @@ export function tryDispatchSlashCommand(message: string, ctx: SlashCommandContex
     }
   }
   return false;
+}
+
+/** Escape a literal command name for safe inclusion in a RegExp pattern. */
+function escapeRegex(source: string): string {
+  return source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Run every inline-eligible slash command appearing inside a longer
+ * prompt, leaving the original message text untouched. Mirrors how the
+ * autocomplete picker handles `/skill-name` references: the slash form
+ * stays in the prompt the agent sees, and the local side effect (config
+ * mutation for `/model` / `/thinking`, controller calls for the rest)
+ * fires before the prompt dispatches.
+ *
+ * Returns the names of every command that fired so callers can log,
+ * meter, or branch on the side effects; the message is the caller's to
+ * dispatch (or not).
+ */
+export function extractInlineSlashCommands(
+  message: string,
+  ctx: SlashCommandContext,
+  options: { onlyCommands?: ReadonlySet<string> } = {},
+): { handledCommands: string[] } {
+  const handledCommands: string[] = [];
+
+  for (const command of BUILT_IN_SLASH_COMMANDS) {
+    if (!command.inline) continue;
+    if (options.onlyCommands && !options.onlyCommands.has(command.name)) continue;
+    const namePattern = escapeRegex(command.name);
+    // Boundary `(?:^|\s)` keeps `/model` from matching mid-word (e.g.
+    // inside a URL `https://example.com/model`). For the token shape
+    // the captured argument bounds the right edge so neighboring text
+    // is not consumed; the bare shape uses a `\s|$` lookahead for the
+    // same reason. We iterate matches via `matchAll` rather than
+    // `replace` because we do not rewrite the message — the original
+    // text is passed through to the agent verbatim, the same way
+    // `/skill-name` references survive the prompt dispatch.
+    const pattern =
+      command.inline === "token"
+        ? new RegExp(`(?:^|\\s)\\/${namePattern}[ \\t]+(\\S+)`, "g")
+        : new RegExp(`(?:^|\\s)\\/${namePattern}(?=\\s|$)`, "g");
+    for (const match of message.matchAll(pattern)) {
+      const arg = command.inline === "token" ? (match[1] ?? "") : "";
+      const synthetic = arg ? `/${command.name} ${arg}` : `/${command.name}`;
+      command.handle(synthetic, ctx);
+      handledCommands.push(command.name);
+    }
+  }
+
+  return { handledCommands };
 }
 
 /**

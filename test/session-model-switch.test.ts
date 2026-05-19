@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "bun:test";
 import { Session } from "../src/session/session.js";
+import { extractInlineSlashCommands } from "../src/tui/slash-commands.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let tempDirs: string[] = [];
@@ -136,6 +137,64 @@ describe("Session model-switch persistence", () => {
     expect(() => session.setThinkingLevel("ultra")).toThrow();
     expect(session.config.thinkingLevel).toBe("medium");
   });
+
+  // Inline contract: when /model appears inside a longer prompt, the swap
+  // must take effect *before* the remainder dispatches as a prompt, so the
+  // turn that delivers the remainder uses the newly-selected model. This
+  // is the "hey can you review this /model gpt-5.5" flow.
+  testIfDocker(
+    "inline /model mutates config.model before the remainder is dispatched",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-model-inline-"));
+      tempDirs.push(tempDir);
+      const sessionPath = join(tempDir, "inline-session");
+      await mkdir(sessionPath, { recursive: true });
+
+      const session = new Session(
+        {
+          model: "anthropic:claude-opus-4-7",
+          memoryDbPath: false,
+          skillDiscovery: { includeDefaults: false },
+        },
+        { id: "inline-session", sessionPath },
+      );
+
+      // Minimal stub that exercises only the SlashCommandContext surface
+      // the inline extractor touches when /model is the matched command.
+      const blocks: Array<{ label: string | null; body: string }> = [];
+      const ctx = {
+        pasteController: {} as never,
+        copyController: {} as never,
+        transcriptWriter: {} as never,
+        appendBlock: (label: string | null, body: string) => {
+          blocks.push({ label, body });
+        },
+        onReset: () => {},
+        setModel: (model: string) => session.setModel(model),
+        setThinkingLevel: (level: string) => session.setThinkingLevel(level),
+      };
+
+      const message = "hey can you review this /model anthropic:claude-sonnet-5-1";
+      const { handledCommands } = extractInlineSlashCommands(message, ctx);
+
+      // The mutation has to be observable on the live config before the
+      // caller dispatches the prompt — otherwise the turn that delivers
+      // this very message would still land on the previously-configured
+      // model. The message itself is NOT touched: the slash stays in the
+      // prompt the agent sees, mirroring how `/skill-name` references
+      // survive the dispatch.
+      expect(session.config.model).toBe("anthropic:claude-sonnet-5-1");
+      expect(handledCommands).toEqual(["model"]);
+      expect(blocks.some((b) => b.label === "[model]")).toBe(true);
+
+      // Run a real turn to confirm the runner picks up the new model on the
+      // prompt that carries the remainder, not just on some later turn.
+      await session.start();
+      await session.dispose();
+      const stored = JSON.parse(await readFile(join(sessionPath, "state.json"), "utf-8"));
+      expect(stored.state.options.model).toBe("anthropic:claude-sonnet-5-1");
+    },
+  );
 
   testIfDocker("setModel rejects unknown model shorthands without mutating config", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-model-set-bad-"));

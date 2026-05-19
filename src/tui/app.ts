@@ -17,7 +17,7 @@ import { bindSessionToUi } from "./session-subscription.js";
 import { StarterSection } from "./starter-section.js";
 import { StatusController } from "./status-controller.js";
 import { StepRenderer } from "./step-renderer.js";
-import { tryDispatchSlashCommand } from "./slash-commands.js";
+import { extractInlineSlashCommands, tryDispatchSlashCommand } from "./slash-commands.js";
 import { COLORS } from "./theme.js";
 import { TranscriptWriter } from "./transcript-writer.js";
 import type { TranscriptEntry } from "./transcript-log.js";
@@ -348,22 +348,27 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (starters && !starters.isPermanentlyDismissed()) {
       starters.destroyPermanently();
     }
-    if (
-      tryDispatchSlashCommand(message, {
-        pasteController,
-        copyController,
-        transcriptWriter,
-        appendBlock,
-        onReset: () => {
-          input.onResetRequest?.();
-          renderer.destroy();
-        },
-        setModel: (model: string) => input.session.setModel(model),
-        setThinkingLevel: (level: string) => input.session.setThinkingLevel(level),
-      })
-    ) {
+    const slashCtx = {
+      pasteController,
+      copyController,
+      transcriptWriter,
+      appendBlock,
+      onReset: () => {
+        input.onResetRequest?.();
+        renderer.destroy();
+      },
+      setModel: (model: string) => input.session.setModel(model),
+      setThinkingLevel: (level: string) => input.session.setThinkingLevel(level),
+    };
+    if (tryDispatchSlashCommand(message, slashCtx)) {
       return;
     }
+    // Whole-message dispatch missed; fall back to inline extraction so
+    // commands work anywhere inside a longer prompt (`hey can you review
+    // this /model gpt-5.5`). Inline-eligible commands fire their side
+    // effects locally; the message itself is sent to the agent verbatim,
+    // the same way `/skill-name` references survive the dispatch.
+    extractInlineSlashCommands(message, slashCtx);
     void dispatchTurn(message, "follow_up").catch(reportError);
   }
 

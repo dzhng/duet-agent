@@ -10,11 +10,14 @@ import {
   describeModelResolution,
   resolveCliMemoryModel,
   resolveCliModel,
+  resolveModelName,
   type ModelResolution,
 } from "../model-resolution/resolver.js";
 import { DEFAULT_MEMORY_DB_PATH, SessionManager } from "../session/session-manager.js";
 import { runTui } from "../tui/app.js";
+import { extractInlineSlashCommands, type SlashCommandContext } from "../tui/slash-commands.js";
 import type { TurnRunnerConfig } from "../types/config.js";
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import { DEFAULT_RESUME_HISTORY_MESSAGES, printRunHelp } from "./help.js";
 import { resumeCommand } from "./resume-hint.js";
 import { fail, isInteractive, loadCliEnvFiles, parseResumeHistoryMessages } from "./shared.js";
@@ -276,6 +279,50 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   memoryModelName = memoryModelResolution.modelName;
 
   const useTui = shouldUseTui({ interactive, prompt });
+
+  // Apply inline `/model` and `/thinking` commands embedded in the
+  // non-TUI one-shot prompt before we hand the prompt to the session.
+  // The handlers mutate `config.model` / `config.thinkingLevel` in
+  // place; the prompt text itself is passed through to the agent
+  // verbatim, mirroring how the TUI keeps the slash form in the
+  // message and how `/skill-name` references survive the dispatch.
+  if (!useTui && prompt) {
+    const inlineCtx: SlashCommandContext = {
+      pasteController: undefined as never,
+      copyController: undefined as never,
+      transcriptWriter: undefined as never,
+      appendBlock: (label, body) => {
+        const tag = label ? `${label} ` : "";
+        process.stderr.write(`${tag}${body}\n`);
+      },
+      onReset: () => {},
+      setModel: (model) => {
+        const trimmed = model.trim();
+        if (!trimmed) throw new Error("Model name is required");
+        resolveModelName(trimmed);
+        config.model = trimmed;
+        return { modelName: trimmed };
+      },
+      setThinkingLevel: (level) => {
+        const normalized = level.trim().toLowerCase();
+        const allowed: ReadonlyArray<ThinkingLevel> = ["minimal", "low", "medium", "high", "xhigh"];
+        if (!(allowed as readonly string[]).includes(normalized)) {
+          throw new Error(
+            `Unknown thinking level: ${level}. Expected one of ${allowed.join(", ")}.`,
+          );
+        }
+        config.thinkingLevel = normalized as ThinkingLevel;
+        return { thinkingLevel: normalized };
+      },
+    };
+    extractInlineSlashCommands(prompt, inlineCtx, {
+      onlyCommands: new Set(["model", "thinking"]),
+    });
+    // Sync the cached display name so the boot summary lines reflect any
+    // inline override; the resolver source is unchanged because the
+    // inline form is logically equivalent to `--model`.
+    modelName = config.model ?? modelName;
+  }
 
   // One-shot consumers want a single summary line, not a streaming status.
   // Await the final upgrade status and print the human-readable form (if any)
