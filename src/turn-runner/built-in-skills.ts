@@ -36,6 +36,66 @@ const RELAY_INSTRUCTIONS = dedent`
     replying directly.
   - Only fall back to a plain answer when the request is genuinely a
     one-shot question that cannot be expressed as a state.
+
+  ## Running multiple scheduled tasks (cron-style) in ONE state machine
+
+  Only one state machine can be active per session, so when the user wants
+  several recurring jobs ("replace my crons", "run these N tasks on
+  different cadences"), do NOT try to spin up one relay per task. Build a
+  single master relay that multiplexes them all. This pattern is proven
+  in production.
+
+  ### Architecture
+
+  - **Schedule file** (e.g. \`~/.duet/relay/schedule.json\`):
+    \`{ "<task>": { "interval": <ms>, "next": <unix-ms>, "kind": "agent"|"script" } }\`.
+    This is the only source of truth for "what's due when."
+  - **Dispatcher script** (e.g. \`~/.duet/relay/dispatch.sh\`): reads
+    \`schedule.json\`, sorted by \`next\` ascending. For every due task:
+      - If \`kind: "script"\` (shell-only): run inline inside the dispatcher,
+        append output to a bounded log, then bump \`next += interval\` and
+        keep looking. The orchestrator never wakes for these.
+      - If \`kind: "agent"\` (needs an LLM): write the task name to
+        \`next-agent.txt\`, echo it on stdout, \`exit 0\` so the poll state
+        treats this attempt as successful and wakes the orchestrator.
+      - For known-noisy agents (e.g. inbox triage), pre-check cheaply
+        from shell first (e.g. count IMAP unread). If there's nothing to
+        do, skip the wake and just bump \`next\`.
+    If no due task needed a wake: \`exit 1\` (poll keeps polling).
+  - **Log file**: always size-bounded (\`tail -n 500\` rotate, or similar).
+    Long-running relays will fill any unbounded log.
+
+  ### State machine shape
+
+  - One \`poll\` state with \`intervalMs\` ≥ the platform floor that runs
+    the dispatcher script. \`successCodes: [0]\` so it only wakes the
+    orchestrator when an agent task is queued.
+  - One \`agent\` state **per agent task** (\`run-inbox\`,
+    \`run-growth-report\`, etc.). Each prompt is narrow — just that one
+    task's instructions — and ends with the same footer:
+      1. Bump \`schedule.json\` for this task (\`while next <= now: next += interval\`).
+      2. \`rm -f next-agent.txt\` to clear the signal.
+      3. Reply with one terse line of result.
+  - A \`stop\` terminal so the operator can cancel cleanly.
+
+  ### Orchestrator loop
+
+  On wake: read \`next-agent.txt\` (the dispatcher wrote which agent is due),
+  select the matching \`run-*\` state. After the agent completes, re-select
+  \`poll\`. That's it — no scheduling logic in the orchestrator; the
+  dispatcher and the agent footers own the math.
+
+  ### Why this works
+
+  - The orchestrator only consumes parent-context tokens when there is
+    actual agent work to do. Quiet hours cost zero.
+  - Shell tasks and zero-work agent checks run silently inside the poll.
+  - Bumping \`next\` with the \`while\` loop catches up automatically if a
+    task fell several intervals behind (e.g. after sandbox downtime).
+  - One file (\`schedule.json\`) plus one script (\`dispatch.sh\`) is the
+    whole surface area; adding a new cron is a single JSON entry and a
+    branch in the dispatcher (plus, for agent tasks, one new \`run-*\`
+    state).
 `;
 
 const RELAY_DESCRIPTION =
