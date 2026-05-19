@@ -358,6 +358,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
           input.onResetRequest?.();
           renderer.destroy();
         },
+        setModel: (model: string) => input.session.setModel(model),
       })
     ) {
       return;

@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TurnRunner, type TurnEventHandler } from "../turn-runner/turn-runner.js";
+import { resolveModelName } from "../model-resolution/resolver.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "../turn-runner/skills.js";
@@ -342,6 +343,26 @@ export class Session {
   /** System-prompt files (AGENTS.md by default) that resolved on disk. */
   getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]> {
     return this.runner.getResolvedAgentFiles();
+  }
+
+  /**
+   * Swap the model used for subsequent turns. Validates the name by
+   * resolving it through the same `provider:modelId` machinery the CLI
+   * uses at boot, so unknown shorthands / missing provider credentials
+   * throw before we mutate runtime config. The change takes effect on
+   * the next prompt (`startOptions` reads `this.config.model` per turn);
+   * any in-flight turn keeps the model it started with.
+   */
+  setModel(model: string): { modelName: string } {
+    const trimmed = model.trim();
+    if (!trimmed) {
+      throw new Error("Model name is required");
+    }
+    // Throws on unknown shorthand or unresolvable provider; surfaces the
+    // same error the CLI startup would have produced for `--model`.
+    resolveModelName(trimmed);
+    this.config.model = trimmed;
+    return { modelName: trimmed };
   }
 
   /** Skill name collisions where one definition shadowed another during discovery. */

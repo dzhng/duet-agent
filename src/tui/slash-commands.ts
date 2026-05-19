@@ -24,6 +24,14 @@ export interface SlashCommandContext {
    * loop in `cli/run.ts` wakes and performs the swap.
    */
   onReset(): void;
+  /**
+   * Invoked by `/model <name>` to swap the model used for subsequent
+   * turns. Returns the canonicalized name the session will use on the
+   * next prompt, or throws if validation fails (unknown shorthand /
+   * missing provider credentials). The change is queued: the current
+   * in-flight turn keeps the model it started with.
+   */
+  setModel(model: string): { modelName: string };
 }
 
 /**
@@ -115,6 +123,13 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
       ctx.appendBlock("[reset]", "starting a new session…", COLORS.system);
       ctx.onReset();
     },
+  },
+  {
+    name: "model",
+    description:
+      "Switch the model for the next turn (does not affect the current turn): /model <name>",
+    matches: (message) => isInvocation(message, "model"),
+    handle: handleModelSlashCommand,
   },
 ];
 
@@ -211,6 +226,38 @@ async function handleFeedbackSlashCommand(raw: string, ctx: SlashCommandContext)
   } catch (error) {
     ctx.appendBlock(
       "[feedback]",
+      error instanceof Error ? error.message : String(error),
+      COLORS.error,
+    );
+  }
+}
+
+/**
+ * `/model <name>` validates the requested model against the same resolver
+ * the CLI uses at boot, then mutates session config so the next prompt
+ * picks it up. The handler intentionally does not interrupt or restart
+ * an in-flight turn; the swap applies starting at the next user turn.
+ */
+function handleModelSlashCommand(raw: string, ctx: SlashCommandContext): void {
+  const argument = raw === "/model" ? "" : raw.slice("/model ".length).trim();
+  if (!argument) {
+    ctx.appendBlock(
+      "[model]",
+      "Usage: /model <name>  — switch the model for the next turn (e.g. /model sonnet-4.6)",
+      COLORS.system,
+    );
+    return;
+  }
+  try {
+    const { modelName } = ctx.setModel(argument);
+    ctx.appendBlock(
+      "[model]",
+      `next turn will use ${modelName}. The current turn (if any) keeps its model.`,
+      COLORS.system,
+    );
+  } catch (error) {
+    ctx.appendBlock(
+      "[model]",
       error instanceof Error ? error.message : String(error),
       COLORS.error,
     );
