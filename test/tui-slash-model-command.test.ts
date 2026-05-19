@@ -13,13 +13,12 @@ import {
  * branch coverage cheap.
  */
 function makeContext(
-  overrides: Partial<SlashCommandContext> & {
-    onSetModel?: (model: string) => { modelName: string };
-  } = {},
+  overrides: Partial<SlashCommandContext> = {},
 ): SlashCommandContext & { blocks: Array<{ label: string | null; body: string; fg: string }> } {
   const blocks: Array<{ label: string | null; body: string; fg: string }> = [];
-  const setModel =
-    overrides.setModel ?? overrides.onSetModel ?? ((model: string) => ({ modelName: model }));
+  const setModel = overrides.setModel ?? ((model: string) => ({ modelName: model }));
+  const setThinkingLevel =
+    overrides.setThinkingLevel ?? ((level: string) => ({ thinkingLevel: level }));
   return {
     pasteController: {} as never,
     copyController: {} as never,
@@ -29,6 +28,7 @@ function makeContext(
     },
     onReset: () => {},
     setModel,
+    setThinkingLevel,
     ...overrides,
     blocks,
   };
@@ -90,5 +90,66 @@ describe("/model slash command", () => {
     expect(ctx.blocks).toHaveLength(1);
     expect(ctx.blocks[0]!.label).toBe("[model]");
     expect(ctx.blocks[0]!.body).toBe("unknown model: bogus");
+  });
+});
+
+describe("/thinking slash command", () => {
+  test("/thinking is registered in the autocomplete catalog", () => {
+    const item = BUILT_IN_SLASH_COMMAND_ITEMS.find((row) => row.name === "thinking");
+    expect(item).toBeDefined();
+    expect(item?.group).toBe("commands");
+  });
+
+  test("/thinking <level> dispatches setThinkingLevel and writes a [thinking] block", () => {
+    const calls: string[] = [];
+    const ctx = makeContext({
+      setThinkingLevel: (level) => {
+        calls.push(level);
+        return { thinkingLevel: level };
+      },
+    });
+
+    const handled = tryDispatchSlashCommand("/thinking high", ctx);
+
+    expect(handled).toBe(true);
+    expect(calls).toEqual(["high"]);
+    expect(ctx.blocks).toHaveLength(1);
+    expect(ctx.blocks[0]!.label).toBe("[thinking]");
+    expect(ctx.blocks[0]!.body).toContain("high");
+    expect(ctx.blocks[0]!.body).toContain("next turn");
+  });
+
+  test("/thinking with no argument prints usage and never calls setThinkingLevel", () => {
+    const calls: string[] = [];
+    const ctx = makeContext({
+      setThinkingLevel: (level) => {
+        calls.push(level);
+        return { thinkingLevel: level };
+      },
+    });
+
+    const handled = tryDispatchSlashCommand("/thinking", ctx);
+
+    expect(handled).toBe(true);
+    expect(calls).toHaveLength(0);
+    expect(ctx.blocks).toHaveLength(1);
+    expect(ctx.blocks[0]!.body).toContain("Usage:");
+    expect(ctx.blocks[0]!.body).toContain("minimal");
+    expect(ctx.blocks[0]!.body).toContain("xhigh");
+  });
+
+  test("/thinking surfaces setThinkingLevel errors through an error-colored block", () => {
+    const ctx = makeContext({
+      setThinkingLevel: () => {
+        throw new Error("Unknown thinking level: bogus");
+      },
+    });
+
+    const handled = tryDispatchSlashCommand("/thinking bogus", ctx);
+
+    expect(handled).toBe(true);
+    expect(ctx.blocks).toHaveLength(1);
+    expect(ctx.blocks[0]!.label).toBe("[thinking]");
+    expect(ctx.blocks[0]!.body).toBe("Unknown thinking level: bogus");
   });
 });

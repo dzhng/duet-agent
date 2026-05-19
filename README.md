@@ -319,6 +319,23 @@ Tool calls render with custom per-tool headers (e.g. `$ <command>`, `read <path>
 </details>
 
 <details>
+<summary><b>Slash commands</b> — in-session controls</summary>
+
+Type `/` in the composer to open the command picker, or send any of these as a message:
+
+- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts the same shorthands and `provider:modelId` forms as the `--model` flag (e.g. `/model sonnet-4.6`, `/model anthropic:claude-opus-4-7`). Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with.
+- **`/thinking <level>`** — switch the thinking level for the **next** turn. One of `minimal`, `low`, `medium`, `high`, `xhigh`. The runner clamps to the active model's supported range at use-time. The in-flight turn (if any) keeps its level.
+- **`/feedback <message>`** — send free-form feedback to the Duet team.
+- **`/reset`** — dispose the current session and start a fresh one.
+- **`/copy [last|all|<N>]`** — copy transcript text to the system clipboard (default: last agent reply).
+- **`/paste`**, **`/image <path>`**, **`/clear-images`** — image-attachment helpers, covered in the next section.
+- **`/diag`** — toggle key and selection event logging when triaging terminal-specific issues.
+
+Slash commands are intercepted locally; they never reach the model unless the picker inserts a `/skill-name` skill reference for the agent to call `read_skill`.
+
+</details>
+
+<details>
 <summary><b>Image attachments</b></summary>
 
 The interactive TUI accepts image attachments (PNG, JPEG, GIF, WebP):

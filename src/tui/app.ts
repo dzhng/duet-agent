@@ -359,6 +359,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
           renderer.destroy();
         },
         setModel: (model: string) => input.session.setModel(model),
+        setThinkingLevel: (level: string) => input.session.setThinkingLevel(level),
       })
     ) {
       return;

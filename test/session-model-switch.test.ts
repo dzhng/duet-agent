@@ -87,6 +87,56 @@ describe("Session model-switch persistence", () => {
     expect(stored.state.options.model).toBe("anthropic:claude-sonnet-5-1");
   });
 
+  testIfDocker(
+    "setThinkingLevel mutates config.thinkingLevel and is picked up on next start",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-thinking-set-"));
+      tempDirs.push(tempDir);
+      const sessionPath = join(tempDir, "thinking-session");
+      await mkdir(sessionPath, { recursive: true });
+
+      const session = new Session(
+        {
+          model: "anthropic:claude-opus-4-7",
+          thinkingLevel: "medium",
+          memoryDbPath: false,
+          skillDiscovery: { includeDefaults: false },
+        },
+        { id: "thinking-session", sessionPath },
+      );
+
+      const result = session.setThinkingLevel("HIGH");
+      expect(result.thinkingLevel).toBe("high");
+      expect(session.config.thinkingLevel).toBe("high");
+
+      await session.start();
+      await session.dispose();
+
+      const stored = JSON.parse(await readFile(join(sessionPath, "state.json"), "utf-8"));
+      expect(stored.state.options.thinkingLevel).toBe("high");
+    },
+  );
+
+  testIfDocker("setThinkingLevel rejects unknown levels without mutating config", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-thinking-set-bad-"));
+    tempDirs.push(tempDir);
+    const sessionPath = join(tempDir, "thinking-bad-session");
+    await mkdir(sessionPath, { recursive: true });
+
+    const session = new Session(
+      {
+        model: "anthropic:claude-opus-4-7",
+        thinkingLevel: "medium",
+        memoryDbPath: false,
+        skillDiscovery: { includeDefaults: false },
+      },
+      { id: "thinking-bad-session", sessionPath },
+    );
+
+    expect(() => session.setThinkingLevel("ultra")).toThrow();
+    expect(session.config.thinkingLevel).toBe("medium");
+  });
+
   testIfDocker("setModel rejects unknown model shorthands without mutating config", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-model-set-bad-"));
     tempDirs.push(tempDir);

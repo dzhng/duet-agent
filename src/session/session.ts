@@ -2,7 +2,25 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TurnRunner, type TurnEventHandler } from "../turn-runner/turn-runner.js";
 import { resolveModelName } from "../model-resolution/resolver.js";
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { TurnRunnerConfig } from "../types/config.js";
+
+/**
+ * The full set of pi-ai thinking levels, in ascending intensity. Kept as a
+ * runtime constant so `setThinkingLevel` can both validate input and
+ * surface the legal values in error messages without duplicating the type.
+ */
+const THINKING_LEVELS = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const satisfies readonly ThinkingLevel[];
+
+function isThinkingLevel(value: string): value is ThinkingLevel {
+  return (THINKING_LEVELS as readonly string[]).includes(value);
+}
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "../turn-runner/skills.js";
 import type {
@@ -363,6 +381,25 @@ export class Session {
     resolveModelName(trimmed);
     this.config.model = trimmed;
     return { modelName: trimmed };
+  }
+
+  /**
+   * Swap the thinking level used for subsequent turns. Accepts any of the
+   * pi-ai `ThinkingLevel` values (minimal / low / medium / high / xhigh);
+   * the runner clamps to the model's supported range at use-time, so
+   * passing a level a given model does not support is not an error here.
+   * The change applies on the next prompt; any in-flight turn keeps the
+   * level it started with.
+   */
+  setThinkingLevel(level: string): { thinkingLevel: ThinkingLevel } {
+    const normalized = level.trim().toLowerCase();
+    if (!isThinkingLevel(normalized)) {
+      throw new Error(
+        `Unknown thinking level: ${level}. Expected one of ${THINKING_LEVELS.join(", ")}.`,
+      );
+    }
+    this.config.thinkingLevel = normalized;
+    return { thinkingLevel: normalized };
   }
 
   /** Skill name collisions where one definition shadowed another during discovery. */

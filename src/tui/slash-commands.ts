@@ -32,6 +32,14 @@ export interface SlashCommandContext {
    * in-flight turn keeps the model it started with.
    */
   setModel(model: string): { modelName: string };
+  /**
+   * Invoked by `/thinking <level>` to swap the thinking level used for
+   * subsequent turns. Returns the normalized level, or throws if the
+   * value is not one of minimal / low / medium / high / xhigh. The
+   * change is queued: the current in-flight turn keeps the level it
+   * started with.
+   */
+  setThinkingLevel(level: string): { thinkingLevel: string };
 }
 
 /**
@@ -131,6 +139,13 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
     matches: (message) => isInvocation(message, "model"),
     handle: handleModelSlashCommand,
   },
+  {
+    name: "thinking",
+    description:
+      "Switch the thinking level for the next turn (minimal|low|medium|high|xhigh): /thinking <level>",
+    matches: (message) => isInvocation(message, "thinking"),
+    handle: handleThinkingSlashCommand,
+  },
 ];
 
 /**
@@ -226,6 +241,38 @@ async function handleFeedbackSlashCommand(raw: string, ctx: SlashCommandContext)
   } catch (error) {
     ctx.appendBlock(
       "[feedback]",
+      error instanceof Error ? error.message : String(error),
+      COLORS.error,
+    );
+  }
+}
+
+/**
+ * `/thinking <level>` validates the requested level against the pi-ai
+ * `ThinkingLevel` set, then mutates session config so the next prompt
+ * picks it up. Like `/model`, the swap is queued for the next turn and
+ * does not interrupt the in-flight one.
+ */
+function handleThinkingSlashCommand(raw: string, ctx: SlashCommandContext): void {
+  const argument = raw === "/thinking" ? "" : raw.slice("/thinking ".length).trim();
+  if (!argument) {
+    ctx.appendBlock(
+      "[thinking]",
+      "Usage: /thinking <level>  — one of minimal, low, medium, high, xhigh",
+      COLORS.system,
+    );
+    return;
+  }
+  try {
+    const { thinkingLevel } = ctx.setThinkingLevel(argument);
+    ctx.appendBlock(
+      "[thinking]",
+      `next turn will think at ${thinkingLevel}. The current turn (if any) keeps its level.`,
+      COLORS.system,
+    );
+  } catch (error) {
+    ctx.appendBlock(
+      "[thinking]",
       error instanceof Error ? error.message : String(error),
       COLORS.error,
     );
