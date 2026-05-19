@@ -10,13 +10,11 @@ import {
   describeModelResolution,
   resolveCliMemoryModel,
   resolveCliModel,
-  resolveModelName,
   type ModelResolution,
 } from "../model-resolution/resolver.js";
 import { DEFAULT_MEMORY_DB_PATH, SessionManager } from "../session/session-manager.js";
 import { runTui } from "../tui/app.js";
-import { scanInlineSlashCommands } from "../tui/slash-commands.js";
-import { validateThinkingLevel } from "../session/thinking-level.js";
+import { applyInlineSlashCommandsToCliConfig } from "./inline-slash.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import { DEFAULT_RESUME_HISTORY_MESSAGES, printRunHelp } from "./help.js";
 import { resumeCommand } from "./resume-hint.js";
@@ -196,7 +194,11 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     }
   }
 
-  let prompt = promptParts.join(" ");
+  // `let prompt: string | undefined` so the inline-slash applier can
+  // unset it when the whole prompt was just slash commands (e.g.
+  // `duet "/model X"`) — mirrors the TUI's whole-message dispatcher
+  // skipping the agent turn entirely.
+  let prompt: string | undefined = promptParts.join(" ");
 
   // Read from stdin if no prompt is provided
   if (!prompt && !interactive) {
@@ -286,37 +288,19 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   // mirroring how the TUI keeps the slash form in the message and how
   // `/skill-name` references survive the dispatch.
   if (!useTui && prompt) {
-    for (const { name, arg } of scanInlineSlashCommands(prompt, {
-      onlyCommands: new Set(["model", "thinking"]),
-    })) {
-      try {
-        if (name === "model") {
-          const trimmed = arg.trim();
-          if (!trimmed) throw new Error("Model name is required");
-          // Throws on unknown shorthand / missing provider credentials,
-          // matching the validation `--model` would have done at boot.
-          resolveModelName(trimmed);
-          config.model = trimmed;
-          process.stderr.write(
-            `[model] next turn will use ${trimmed}. The current turn (if any) keeps its model.\n`,
-          );
-        } else if (name === "thinking") {
-          const level = validateThinkingLevel(arg);
-          config.thinkingLevel = level;
-          process.stderr.write(
-            `[thinking] next turn will think at ${level}. The current turn (if any) keeps its level.\n`,
-          );
-        }
-      } catch (error) {
-        process.stderr.write(
-          `[${name}] ${error instanceof Error ? error.message : String(error)}\n`,
-        );
-      }
-    }
+    const { residue } = applyInlineSlashCommandsToCliConfig(prompt, config, (line) =>
+      process.stderr.write(line),
+    );
     // Sync the cached display name so the boot summary lines reflect any
     // inline override; the resolver source is unchanged because the
     // inline form is logically equivalent to `--model`.
     modelName = config.model ?? modelName;
+    // Dispatch the prompt with the slash forms stripped out. When the
+    // whole prompt was just slash commands (e.g. `duet "/model X"`),
+    // the residue is empty and we skip the agent turn entirely —
+    // mirrors the TUI's whole-message dispatcher returning before
+    // reaching dispatchTurn.
+    prompt = residue.length > 0 ? residue : undefined;
   }
 
   // One-shot consumers want a single summary line, not a streaming status.

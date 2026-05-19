@@ -12,8 +12,10 @@ const overrideModel = process.env.EVAL_OVERRIDE_MODEL ?? "sonnet-4.6";
 /**
  * Live CLI eval covering the "hey can you review this /model X" use case:
  * an inline `/model` reference embedded anywhere inside the one-shot
- * prompt must swap the model that the very next (and only) turn runs on,
- * without stripping the slash form from the message the agent sees.
+ * prompt must swap the model that the very next (and only) turn runs
+ * on, and the slash form must be stripped from the prompt the agent
+ * sees (so the agent does not have to re-parse local UI commands as
+ * user content).
  *
  * The eval spawns the real `src/cli.ts` binary in JSONL mode so the
  * assertion observes the same `turn_started` payload a production

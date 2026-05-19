@@ -17,7 +17,7 @@ import { bindSessionToUi } from "./session-subscription.js";
 import { StarterSection } from "./starter-section.js";
 import { StatusController } from "./status-controller.js";
 import { StepRenderer } from "./step-renderer.js";
-import { runInlineSlashCommands, tryDispatchSlashCommand } from "./slash-commands.js";
+import { applyInlineSlashCommands, tryDispatchSlashCommand } from "./slash-commands.js";
 import { COLORS } from "./theme.js";
 import { TranscriptWriter } from "./transcript-writer.js";
 import type { TranscriptEntry } from "./transcript-log.js";
@@ -363,13 +363,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     if (tryDispatchSlashCommand(message, slashCtx)) {
       return;
     }
-    // Whole-message dispatch missed; fall back to inline extraction so
+    // Whole-message dispatch missed; fall back to inline application so
     // commands work anywhere inside a longer prompt (`hey can you review
-    // this /model gpt-5.5`). Inline-eligible commands fire their side
-    // effects locally; the message itself is sent to the agent verbatim,
-    // the same way `/skill-name` references survive the dispatch.
-    runInlineSlashCommands(message, slashCtx);
-    void dispatchTurn(message, "follow_up").catch(reportError);
+    // this /model gpt-5.5`). Each matched slash form fires its handler
+    // and is stripped out of the message; the leftover `residue` is what
+    // the agent sees. When the residue is empty (the whole prompt was
+    // slash commands), we skip the turn entirely — mirrors the
+    // `tryDispatchSlashCommand` early-return above.
+    const { residue } = applyInlineSlashCommands(message, slashCtx);
+    if (residue.length === 0) return;
+    void dispatchTurn(residue, "follow_up").catch(reportError);
   }
 
   installKeyHandlers({

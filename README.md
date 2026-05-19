@@ -331,9 +331,9 @@ Type `/` in the composer to open the command picker, or send any of these as a m
 - **`/paste`**, **`/image <path>`**, **`/clear-images`** — image-attachment helpers, covered in the next section.
 - **`/diag`** — toggle key and selection event logging when triaging terminal-specific issues.
 
-`/model`, `/thinking`, `/reset`, `/paste`, `/clear-images`, and `/diag` also work **anywhere inside a longer prompt** — the same way `/skill-name` references do. `hey can you review this /model gpt-5.5` swaps the model for the very turn that delivers the message, and the slash form stays in the prompt the agent sees. Commands that take rest-of-line arguments (`/feedback`, `/copy`, `/image`) only fire when they own the whole message.
+`/model`, `/thinking`, `/reset`, `/paste`, `/clear-images`, and `/diag` also work **anywhere inside a longer prompt**. `hey can you review this /model gpt-5.5` swaps the model for the very turn that delivers the message; the slash form is stripped from what the agent sees, so the model receives `hey can you review this`. When the whole prompt is just slash commands, no agent turn runs at all. Commands that take rest-of-line arguments (`/feedback`, `/copy`, `/image`) only fire when they own the whole message.
 
-The inline form also works for the non-TUI one-shot CLI: `duet "hey can you review this /model gpt-5.5"` swaps the model before the prompt dispatches, so the same one turn runs on the requested model.
+The inline form also works for the non-TUI one-shot CLI: `duet "hey can you review this /model gpt-5.5"` swaps the model and dispatches the stripped prompt to the agent; `duet "/model gpt-5.5"` applies the swap and exits without dispatching a turn.
 
 Slash commands are intercepted locally; they never reach the model unless the picker inserts a `/skill-name` skill reference for the agent to call `read_skill`.
 

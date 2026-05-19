@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "bun:test";
 import { Session } from "../src/session/session.js";
-import { runInlineSlashCommands } from "../src/tui/slash-commands.js";
+import { applyInlineSlashCommands } from "../src/tui/slash-commands.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let tempDirs: string[] = [];
@@ -175,7 +175,7 @@ describe("Session model-switch persistence", () => {
       };
 
       const message = "hey can you review this /model anthropic:claude-sonnet-5-1";
-      const { handledCommands } = runInlineSlashCommands(message, ctx);
+      const { handledCommands } = applyInlineSlashCommands(message, ctx);
 
       // The mutation has to be observable on the live config before the
       // caller dispatches the prompt — otherwise the turn that delivers
@@ -193,6 +193,95 @@ describe("Session model-switch persistence", () => {
       await session.dispose();
       const stored = JSON.parse(await readFile(join(sessionPath, "state.json"), "utf-8"));
       expect(stored.state.options.model).toBe("anthropic:claude-sonnet-5-1");
+    },
+  );
+
+  // The inline path must absorb validation failures: a typo'd model
+  // name should not crash the prompt dispatch or silently swap config.
+  // The handler renders a red [model] block via appendBlock, leaves
+  // session.config.model untouched, and lets the original prompt run on
+  // the previously-configured model.
+  testIfDocker(
+    "inline /model with a rejected name leaves config.model untouched and surfaces an error block",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-model-inline-bad-"));
+      tempDirs.push(tempDir);
+      const sessionPath = join(tempDir, "inline-bad-session");
+      await mkdir(sessionPath, { recursive: true });
+
+      const session = new Session(
+        {
+          model: "anthropic:claude-opus-4-7",
+          memoryDbPath: false,
+          skillDiscovery: { includeDefaults: false },
+        },
+        { id: "inline-bad-session", sessionPath },
+      );
+
+      const blocks: Array<{ label: string | null; body: string }> = [];
+      const ctx = {
+        pasteController: {} as never,
+        copyController: {} as never,
+        transcriptWriter: {} as never,
+        appendBlock: (label: string | null, body: string) => {
+          blocks.push({ label, body });
+        },
+        onReset: () => {},
+        setModel: (model: string) => session.setModel(model),
+        setThinkingLevel: (level: string) => session.setThinkingLevel(level),
+      };
+
+      applyInlineSlashCommands("hey /model totally-not-a-real-model please review this", ctx);
+
+      expect(session.config.model).toBe("anthropic:claude-opus-4-7");
+      const errorBlock = blocks.find((b) => b.label === "[model]");
+      expect(errorBlock).toBeDefined();
+      // Body comes straight from resolveModelName — the canonical message
+      // for an unresolvable shorthand. We assert on the shape, not the
+      // exact wording, so resolver copy can evolve without breaking this.
+      expect(errorBlock?.body).toMatch(/totally-not-a-real-model/);
+    },
+  );
+
+  // Same shape for /thinking: a bogus level shows the error block and
+  // never mutates the config.
+  testIfDocker(
+    "inline /thinking with a rejected level leaves config.thinkingLevel untouched",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-thinking-inline-bad-"));
+      tempDirs.push(tempDir);
+      const sessionPath = join(tempDir, "inline-bad-thinking");
+      await mkdir(sessionPath, { recursive: true });
+
+      const session = new Session(
+        {
+          model: "anthropic:claude-opus-4-7",
+          thinkingLevel: "medium",
+          memoryDbPath: false,
+          skillDiscovery: { includeDefaults: false },
+        },
+        { id: "inline-bad-thinking", sessionPath },
+      );
+
+      const blocks: Array<{ label: string | null; body: string }> = [];
+      const ctx = {
+        pasteController: {} as never,
+        copyController: {} as never,
+        transcriptWriter: {} as never,
+        appendBlock: (label: string | null, body: string) => {
+          blocks.push({ label, body });
+        },
+        onReset: () => {},
+        setModel: (model: string) => session.setModel(model),
+        setThinkingLevel: (level: string) => session.setThinkingLevel(level),
+      };
+
+      applyInlineSlashCommands("think harder /thinking ultra please", ctx);
+
+      expect(session.config.thinkingLevel).toBe("medium");
+      const errorBlock = blocks.find((b) => b.label === "[thinking]");
+      expect(errorBlock?.body).toMatch(/Unknown thinking level: ultra/);
+      expect(errorBlock?.body).toMatch(/minimal, low, medium, high, xhigh/);
     },
   );
 

@@ -235,81 +235,92 @@ function escapeRegex(source: string): string {
 }
 
 /**
- * One inline-eligible slash command match found inside a longer prompt,
- * with its argument (if the command has a `token` inline shape). The
- * scanner emits these in the order BUILT_IN_SLASH_COMMANDS declares
- * them, not the order they appear in the message; callers that care
- * about textual order can sort by `match.index` themselves.
+ * Build the global RegExp that matches one inline slash command. Shared
+ * between the scanner (which iterates matches to fire handlers) and the
+ * stripper (which removes matches to compute the leftover prompt) so
+ * both surfaces stay byte-for-byte in sync. Boundary `(?:^|\s)` keeps
+ * `/model` from matching mid-word (e.g. inside a URL
+ * `https://example.com/model`). For the token shape the captured
+ * argument bounds the right edge so neighboring text is not consumed;
+ * the bare shape uses a `\s|$` lookahead for the same reason.
  */
-export interface InlineSlashMatch {
-  /** Bare command name, no leading slash. */
-  name: string;
-  /** Argument text for `token`-shape commands; empty for `none`-shape. */
-  arg: string;
+function inlinePattern(name: string, shape: InlineShape): RegExp {
+  const namePattern = escapeRegex(name);
+  // Capture group 1 = boundary character (empty at start-of-string, else
+  // the one whitespace char before the slash). The replace callback
+  // returns it as-is so adjacent words do not fuse after stripping.
+  // Token shape additionally captures the next non-whitespace run as
+  // the argument; bare shape uses a lookahead for the right edge so
+  // neighboring text is not consumed.
+  return shape === "token"
+    ? new RegExp(`(^|\\s)\\/${namePattern}[ \\t]+(\\S+)`, "g")
+    : new RegExp(`(^|\\s)\\/${namePattern}(?=\\s|$)`, "g");
 }
 
 /**
- * Scan a prompt for every inline-eligible slash command appearing inside
- * it, without firing any side effects. Used by both the TUI inline
- * runner and the non-TUI CLI — the TUI then routes each match back
- * through the regular `handle()` path (so users see the same `[model]`
- * confirmation block), while the CLI applies the side effect against
- * its own config object without faking a TUI context.
+ * Result of `applyInlineSlashCommands`: which commands fired, plus the
+ * leftover prompt after stripping every matched slash form. The residue
+ * is what the caller should dispatch to the agent; if `.trim()` on it
+ * is empty, the whole prompt was just slash commands and no agent turn
+ * needs to run.
  */
-export function* scanInlineSlashCommands(
-  message: string,
-  options: { onlyCommands?: ReadonlySet<string> } = {},
-): Generator<InlineSlashMatch> {
-  for (const command of BUILT_IN_SLASH_COMMANDS) {
-    if (!command.inline) continue;
-    if (options.onlyCommands && !options.onlyCommands.has(command.name)) continue;
-    const namePattern = escapeRegex(command.name);
-    // Boundary `(?:^|\s)` keeps `/model` from matching mid-word (e.g.
-    // inside a URL `https://example.com/model`). For the token shape
-    // the captured argument bounds the right edge so neighboring text
-    // is not consumed; the bare shape uses a `\s|$` lookahead for the
-    // same reason. We iterate matches with `matchAll` rather than
-    // `replace` because the message is not rewritten — the original
-    // text is passed through to the agent verbatim, the same way
-    // `/skill-name` references survive the prompt dispatch.
-    const pattern =
-      command.inline === "token"
-        ? new RegExp(`(?:^|\\s)\\/${namePattern}[ \\t]+(\\S+)`, "g")
-        : new RegExp(`(?:^|\\s)\\/${namePattern}(?=\\s|$)`, "g");
-    for (const match of message.matchAll(pattern)) {
-      const arg = command.inline === "token" ? (match[1] ?? "") : "";
-      yield { name: command.name, arg };
-    }
-  }
+export interface InlineSlashResult {
+  /** Commands whose handler fired, in BUILT_IN_SLASH_COMMANDS order. */
+  handledCommands: string[];
+  /** Prompt with matched slash forms removed and whitespace collapsed. */
+  residue: string;
 }
 
 /**
- * Run every inline-eligible slash command appearing inside a longer
- * prompt, leaving the original message text untouched. Mirrors how the
- * autocomplete picker handles `/skill-name` references: the slash form
- * stays in the prompt the agent sees, and the local side effect (config
- * mutation for `/model` / `/thinking`, controller calls for the rest)
- * fires before the prompt dispatches.
+ * Apply every inline-eligible slash command found inside a longer
+ * prompt: fire its handler (so users see the same `[model]` confirmation
+ * block they would for a whole-message `/model`), and strip the slash
+ * form out of the message so the agent does not have to re-parse local
+ * UI commands as user content. The returned `residue` is the message
+ * the caller should actually dispatch — callers check `.trim() === ""`
+ * to detect the "whole prompt was just slash commands" case and skip
+ * the agent turn entirely.
  *
- * Returns the names of every command that fired so callers can log,
- * meter, or branch on the side effects; the message is the caller's to
- * dispatch (or not).
+ * Boundary characters are preserved on the inside of the strip so that
+ * adjacent words do not fuse: `"hey /model X please"` becomes
+ * `"hey  please"` mid-strip and then collapses to `"hey please"` at the
+ * end. Multi-line prompts keep their newlines.
  */
-export function runInlineSlashCommands(
+export function applyInlineSlashCommands(
   message: string,
   ctx: SlashCommandContext,
   options: { onlyCommands?: ReadonlySet<string> } = {},
-): { handledCommands: string[] } {
+): InlineSlashResult {
   const handledCommands: string[] = [];
-  const byName = new Map(BUILT_IN_SLASH_COMMANDS.map((command) => [command.name, command]));
-  for (const { name, arg } of scanInlineSlashCommands(message, options)) {
-    const command = byName.get(name);
-    if (!command) continue;
-    const synthetic = arg ? `/${name} ${arg}` : `/${name}`;
-    command.handle(synthetic, ctx);
-    handledCommands.push(name);
+  let residue = message;
+  for (const command of BUILT_IN_SLASH_COMMANDS) {
+    if (!command.inline) continue;
+    if (options.onlyCommands && !options.onlyCommands.has(command.name)) continue;
+    residue = residue.replace(
+      inlinePattern(command.name, command.inline),
+      (_match, lead: string, arg?: string) => {
+        const synthetic =
+          command.inline === "token" && arg ? `/${command.name} ${arg}` : `/${command.name}`;
+        command.handle(synthetic, ctx);
+        handledCommands.push(command.name);
+        // Preserve the boundary character (space, tab, newline, or empty
+        // for start-of-string) so words on either side of the stripped
+        // command stay separated.
+        return lead;
+      },
+    );
   }
-  return { handledCommands };
+  if (handledCommands.length > 0) {
+    // Collapse the holes left by stripped commands. Only flatten runs
+    // of spaces/tabs so multi-line prompts keep their newlines, and
+    // trim the outer edges to avoid leading/trailing whitespace from a
+    // command that sat at the very start or end of the message.
+    residue = residue
+      .replace(/[ \t]+/g, " ")
+      .replace(/ ?\n ?/g, "\n")
+      .trim();
+  }
+  return { handledCommands, residue };
 }
 
 /**
