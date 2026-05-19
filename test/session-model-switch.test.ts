@@ -163,9 +163,6 @@ describe("Session model-switch persistence", () => {
       // the inline extractor touches when /model is the matched command.
       const blocks: Array<{ label: string | null; body: string }> = [];
       const ctx = {
-        pasteController: {} as never,
-        copyController: {} as never,
-        transcriptWriter: {} as never,
         appendBlock: (label: string | null, body: string) => {
           blocks.push({ label, body });
         },
@@ -220,9 +217,6 @@ describe("Session model-switch persistence", () => {
 
       const blocks: Array<{ label: string | null; body: string }> = [];
       const ctx = {
-        pasteController: {} as never,
-        copyController: {} as never,
-        transcriptWriter: {} as never,
         appendBlock: (label: string | null, body: string) => {
           blocks.push({ label, body });
         },
@@ -265,9 +259,6 @@ describe("Session model-switch persistence", () => {
 
       const blocks: Array<{ label: string | null; body: string }> = [];
       const ctx = {
-        pasteController: {} as never,
-        copyController: {} as never,
-        transcriptWriter: {} as never,
         appendBlock: (label: string | null, body: string) => {
           blocks.push({ label, body });
         },

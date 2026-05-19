@@ -13,9 +13,18 @@ import { COLORS } from "./theme.js";
  * `submit()` can short-circuit before the message reaches `session.prompt()`.
  */
 export interface SlashCommandContext {
-  pasteController: PasteController;
-  copyController: CopyController;
-  transcriptWriter: TranscriptWriter;
+  /**
+   * Controllers are optional because not every consumer of this
+   * interface wires the full TUI. The non-TUI CLI applies inline
+   * `/model` and `/thinking` against a stripped-down context that
+   * has no clipboard, transcript, or reset surface — those commands
+   * are filtered out via `applyInlineSlashCommands`'s `onlyCommands`
+   * before they could ever run, so the handlers that depend on these
+   * controllers never see a missing one in practice.
+   */
+  pasteController?: PasteController;
+  copyController?: CopyController;
+  transcriptWriter?: TranscriptWriter;
   appendBlock(label: string | null, body: string, fg: string): void;
   /**
    * Invoked by `/reset` to ask the outer dispatcher to dispose the
@@ -23,7 +32,7 @@ export interface SlashCommandContext {
    * tears its renderer down immediately after so the parent `while`
    * loop in `cli/run.ts` wakes and performs the swap.
    */
-  onReset(): void;
+  onReset?(): void;
   /**
    * Invoked by `/model <name>` to swap the model used for subsequent
    * turns. Returns the canonicalized name the session will use on the
@@ -115,7 +124,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
     description: "Probe the OS clipboard for an image (fallback when Cmd+V is swallowed)",
     matches: (message) => isBare(message, "paste"),
     handle: (_, ctx) => {
-      void ctx.pasteController.triggerClipboardProbe("slash");
+      void ctx.pasteController?.triggerClipboardProbe("slash");
     },
     inline: "none",
   },
@@ -124,7 +133,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
     description: "Drop pending image attachments before submit",
     matches: (message) => isBare(message, "clear-images"),
     handle: (_, ctx) => {
-      ctx.pasteController.clearPendingImages();
+      ctx.pasteController?.clearPendingImages();
       ctx.appendBlock("[paste]", "cleared pending image attachments", COLORS.system);
     },
     inline: "none",
@@ -134,7 +143,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
     description: "Copy text to your clipboard: /copy [last|all|<N>] (default: last agent reply)",
     matches: (message) => isInvocation(message, "copy"),
     handle: (message, ctx) => {
-      void ctx.copyController.handleCopySlashCommand(message);
+      void ctx.copyController?.handleCopySlashCommand(message);
     },
   },
   {
@@ -159,7 +168,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
     matches: (message) => isBare(message, "reset"),
     handle: (_, ctx) => {
       ctx.appendBlock("[reset]", "starting a new session…", COLORS.system);
-      ctx.onReset();
+      ctx.onReset?.();
     },
     inline: "none",
   },
@@ -235,14 +244,13 @@ function escapeRegex(source: string): string {
 }
 
 /**
- * Build the global RegExp that matches one inline slash command. Shared
- * between the scanner (which iterates matches to fire handlers) and the
- * stripper (which removes matches to compute the leftover prompt) so
- * both surfaces stay byte-for-byte in sync. Boundary `(?:^|\s)` keeps
- * `/model` from matching mid-word (e.g. inside a URL
- * `https://example.com/model`). For the token shape the captured
- * argument bounds the right edge so neighboring text is not consumed;
- * the bare shape uses a `\s|$` lookahead for the same reason.
+ * Build the global RegExp that matches one inline slash command.
+ * Boundary `(^|\s)` keeps `/model` from matching mid-word (e.g. inside
+ * a URL `https://example.com/model`) and is captured so the strip step
+ * can put the boundary character back — otherwise adjacent words would
+ * fuse. For the token shape, group 2 captures the argument and bounds
+ * the right edge; the bare shape uses a `\s|$` lookahead for the same
+ * reason.
  */
 function inlinePattern(name: string, shape: InlineShape): RegExp {
   const namePattern = escapeRegex(name);
@@ -333,6 +341,10 @@ export function applyInlineSlashCommands(
 function handleDiagSlashCommand(raw: string, ctx: SlashCommandContext): void {
   const argument = raw === "/diag" ? "" : raw.slice("/diag ".length).trim();
   if (argument === "" || argument === "keys") {
+    // `transcriptWriter` is only optional for the non-TUI CLI shim,
+    // which filters /diag out before it can run — in the TUI (the only
+    // surface that exposes /diag) it is always wired.
+    if (!ctx.transcriptWriter) return;
     const enabled = !ctx.transcriptWriter.isKeyDiagnosticsEnabled();
     ctx.transcriptWriter.setKeyDiagnosticsEnabled(enabled);
     ctx.appendBlock(
@@ -448,5 +460,5 @@ async function handleImageSlashCommand(raw: string, ctx: SlashCommandContext): P
     );
     return;
   }
-  await ctx.pasteController.attachImageFromPath(rest);
+  await ctx.pasteController?.attachImageFromPath(rest);
 }

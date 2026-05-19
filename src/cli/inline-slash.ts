@@ -15,40 +15,34 @@ export type InlineSlashLog = (line: string) => void;
  * prompt to the runner config in place, and return the prompt with the
  * slash forms stripped out. Callers dispatch the returned `residue`;
  * when it is empty (the whole prompt was just slash commands like
- * `duet "/model X"`), they skip the agent turn entirely \u2014 same way the
+ * `duet "/model X"`), they skip the agent turn entirely — same way the
  * TUI's whole-message dispatcher returns early before reaching
  * `dispatchTurn`.
  *
- * Validation failures (unresolvable model name, unknown thinking level,
- * empty argument) do not throw. They are surfaced through `log` as
- * `[name] <error message>\n` lines matching the red error blocks the TUI
- * handlers render. The original config stays untouched so the prompt
- * still dispatches on whatever model / thinking level the boot-time
- * flags chose.
+ * Validation failures (unresolvable model name, unknown thinking level)
+ * do not throw. They are surfaced through `log` as `[name] <error>\n`
+ * lines matching the red error blocks the TUI handlers render. The
+ * original config stays untouched so the prompt still dispatches on
+ * whatever model / thinking level the boot-time flags chose.
  */
 export function applyInlineSlashCommandsToCliConfig(
   prompt: string,
   config: TurnRunnerConfig,
   log: InlineSlashLog,
 ): { residue: string } {
-  // Wire `applyInlineSlashCommands` against the CLI surface. The TUI
-  // handlers want the full SlashCommandContext shape (with controllers
-  // for /reset, /paste, etc.), but the CLI only enables model/thinking
-  // \u2014 the other fields are guaranteed unreachable by the onlyCommands
-  // filter, so this context only implements the slice the model/thinking
-  // handlers actually use.
+  // /model and /thinking both need just appendBlock + their setter; the
+  // other SlashCommandContext fields are optional precisely so this
+  // shim does not have to fake them.
   const ctx: SlashCommandContext = {
-    pasteController: undefined as never,
-    copyController: undefined as never,
-    transcriptWriter: undefined as never,
-    onReset: () => {},
     appendBlock: (label, body) => log(`${label ? `${label} ` : ""}${body}\n`),
     setModel: (model) => {
-      const trimmed = model.trim();
-      if (!trimmed) throw new Error("Model name is required");
-      resolveModelName(trimmed);
-      config.model = trimmed;
-      return { modelName: trimmed };
+      // applyInlineSlashCommands's regex `(\S+)` guarantees the model
+      // arg is non-empty non-whitespace, so we go straight to the
+      // resolver — which throws on unknown shorthand / missing
+      // credentials, matching the validation `--model` does at boot.
+      resolveModelName(model);
+      config.model = model;
+      return { modelName: model };
     },
     setThinkingLevel: (level) => {
       const normalized = validateThinkingLevel(level);

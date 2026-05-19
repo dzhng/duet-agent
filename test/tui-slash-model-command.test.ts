@@ -20,10 +20,11 @@ function makeContext(
   const setModel = overrides.setModel ?? ((model: string) => ({ modelName: model }));
   const setThinkingLevel =
     overrides.setThinkingLevel ?? ((level: string) => ({ thinkingLevel: level }));
+  // Controllers are intentionally omitted — they are optional on
+  // SlashCommandContext, and these tests only exercise commands that
+  // do not touch them. Leaves the test fixtures honest about which
+  // surfaces they actually depend on.
   return {
-    pasteController: {} as never,
-    copyController: {} as never,
-    transcriptWriter: {} as never,
     appendBlock: (label, body, fg) => {
       blocks.push({ label, body, fg });
     },
