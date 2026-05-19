@@ -99,13 +99,16 @@ export class TestTurnRunner extends TurnRunner {
     };
     this.stateAgentInputs.push(workerInput);
     let terminal: StateAgentResult | undefined;
+    let interruptedReason: string | undefined;
     return {
       prompt: async () => {
         const result = this.worker
           ? await this.worker(workerInput, () => this.runDefaultWorker(workerInput))
           : await this.runDefaultWorker(workerInput);
         this.recordUsage(result.parentUsage);
-        if (result.control.type === "ask_user_question") {
+        if (interruptedReason !== undefined) {
+          terminal = { type: "interrupted" };
+        } else if (result.control.type === "ask_user_question") {
           terminal = { type: "ask", questions: result.control.questions };
         } else if (result.outcome.type === "interrupted") {
           terminal = { type: "interrupted" };
@@ -116,10 +119,12 @@ export class TestTurnRunner extends TurnRunner {
         }
         return terminal;
       },
-      interrupt: () => {
+      interrupt: (reason) => {
+        interruptedReason = reason;
         terminal = { type: "interrupted" };
       },
       partialAssistantText: () => (terminal?.type === "complete" ? terminal.result : undefined),
+      interruptedReason: () => interruptedReason,
     };
   }
 }

@@ -1,7 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TurnRunner, type TurnEventHandler } from "../turn-runner/turn-runner.js";
+import { resolveModelName } from "../model-resolution/resolver.js";
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { TurnRunnerConfig } from "../types/config.js";
+import { validateThinkingLevel } from "./thinking-level.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "../turn-runner/skills.js";
 import type {
@@ -90,6 +93,7 @@ export interface SessionTurnRunner {
   subscribe(handler: TurnEventHandler): () => void;
   getState(): TurnState | undefined;
   getSkills(): Promise<readonly Skill[]>;
+  reloadSkills(): Promise<readonly Skill[]>;
   getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]>;
   getSkillCollisions(): Promise<readonly SkillCollision[]>;
   dispose(): Promise<void>;
@@ -330,9 +334,51 @@ export class Session {
     return this.runner.getSkills();
   }
 
+  /**
+   * Re-discover skills from disk so newly installed ones show up in the
+   * autocomplete catalog without restarting the session.
+   */
+  reloadSkills(): Promise<readonly Skill[]> {
+    return this.runner.reloadSkills();
+  }
+
   /** System-prompt files (AGENTS.md by default) that resolved on disk. */
   getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]> {
     return this.runner.getResolvedAgentFiles();
+  }
+
+  /**
+   * Swap the model used for subsequent turns. Validates the name by
+   * resolving it through the same `provider:modelId` machinery the CLI
+   * uses at boot, so unknown shorthands / missing provider credentials
+   * throw before we mutate runtime config. The change takes effect on
+   * the next prompt (`startOptions` reads `this.config.model` per turn);
+   * any in-flight turn keeps the model it started with.
+   */
+  setModel(model: string): { modelName: string } {
+    const trimmed = model.trim();
+    if (!trimmed) {
+      throw new Error("Model name is required");
+    }
+    // Throws on unknown shorthand or unresolvable provider; surfaces the
+    // same error the CLI startup would have produced for `--model`.
+    resolveModelName(trimmed);
+    this.config.model = trimmed;
+    return { modelName: trimmed };
+  }
+
+  /**
+   * Swap the thinking level used for subsequent turns. Accepts any of the
+   * pi-ai `ThinkingLevel` values (minimal / low / medium / high / xhigh);
+   * the runner clamps to the model's supported range at use-time, so
+   * passing a level a given model does not support is not an error here.
+   * The change applies on the next prompt; any in-flight turn keeps the
+   * level it started with.
+   */
+  setThinkingLevel(level: string): { thinkingLevel: ThinkingLevel } {
+    const normalized = validateThinkingLevel(level);
+    this.config.thinkingLevel = normalized;
+    return { thinkingLevel: normalized };
   }
 
   /** Skill name collisions where one definition shadowed another during discovery. */

@@ -129,9 +129,13 @@ describe("state machine usage accumulation", () => {
           expect(sum).toBe(u.lastMessageUsage.totalTokens);
         }
         const distinctBars = new Set(usageEvents.map((u) => JSON.stringify(u.contextWindowUsage)));
-        // 2 agent states + 1 terminal-selecting parent call ≤ 3 parent
-        // emissions; state-agent ticks in between reuse the prior snapshot.
-        expect(distinctBars.size).toBeLessThanOrEqual(3);
+        // Parent emissions in this workflow: select note_one, select
+        // note_two, select eval_done (terminal), then the terminal
+        // acknowledgment turn the runner fires after every state-machine
+        // terminal. That is up to 4 distinct parent snapshots; state-agent
+        // ticks in between reuse the prior snapshot and do not add new
+        // distinct bars.
+        expect(distinctBars.size).toBeLessThanOrEqual(4);
         // `lastMessageUsage` is snapshotted from the same parent emission,
         // so its distinct values match the bar's distinct values exactly.
         const distinctLast = new Set(usageEvents.map((u) => JSON.stringify(u.lastMessageUsage)));

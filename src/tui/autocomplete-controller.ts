@@ -53,6 +53,13 @@ export interface AutocompleteControllerOptions {
    * escape that closed the picker stops there.
    */
   onEscapeClose: () => void;
+  /**
+   * Fires the moment the slash picker opens (token went from absent to
+   * present). Used to re-discover installed skills so additions made
+   * during the session show up; the cached catalog is shown first and
+   * the callback updates it asynchronously.
+   */
+  onSkillTokenOpened?: () => void;
 }
 
 /**
@@ -223,6 +230,12 @@ export class AutocompleteController {
       this.skillSelectedIndex = 0;
     }
     this.renderSkill();
+    // Fire after rendering the cached catalog so the picker paints
+    // immediately; the reload runs in the background and a follow-up
+    // setSkillItems()+refresh() updates the open picker in place.
+    if (!previousToken) {
+      this.opts.onSkillTokenOpened?.();
+    }
   }
 
   private refreshFile(): void {

@@ -8,7 +8,7 @@ import {
 import type { Session } from "../session/session.js";
 import type { TurnAgentFile } from "../types/protocol.js";
 import type { AutocompleteController } from "./autocomplete-controller.js";
-import { BUILT_IN_SLASH_COMMAND_ITEMS } from "./slash-commands.js";
+import { buildSkillAutocompleteCatalog } from "./slash-commands.js";
 import { refreshSidebarFromSession } from "./session-subscription.js";
 import type { Sidebar } from "./sidebar.js";
 import type { StarterSection } from "./starter-section.js";
@@ -160,15 +160,7 @@ export async function renderBootScreen(deps: {
     deps.session.getSkills(),
     deps.session.getResolvedAgentFiles(),
   ]);
-  deps.autocomplete.setSkillItems([
-    ...BUILT_IN_SLASH_COMMAND_ITEMS,
-    ...skills.map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      path: skill.baseDir,
-      group: "skills" as const,
-    })),
-  ]);
+  deps.autocomplete.setSkillItems(buildSkillAutocompleteCatalog(skills));
   deps.autocomplete.refresh();
   renderSetupIntro(
     {

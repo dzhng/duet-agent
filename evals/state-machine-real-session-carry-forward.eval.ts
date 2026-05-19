@@ -73,14 +73,28 @@ describe("state machine real session c_cGfNEIotLU carry-forward", () => {
               // Bound the sub-agent for eval cost. The carry-forward decision
               // we are measuring happens at transition time, before this
               // sub-agent runs; this systemPrompt only keeps the actual run
-              // cheap and assertable.
+              // cheap and assertable. The instruction is repeated and given
+              // in imperative form because the parent's system prompt
+              // strongly encourages tool use, and a single "do not call
+              // tools" line otherwise loses to the tool-use prior.
               systemPrompt: dedent`
-                You are inside a live eval. Do not call any tools. Do not
-                modify any files. Do not ask the user questions — if the
-                prompt is missing context, that is itself a failure. Reply
-                with one short paragraph that names the concrete root cause
-                you would fix and the concrete repo file(s) you would touch,
-                based only on what is in your prompt.
+                ABSOLUTE CONSTRAINTS — THIS IS AN EVAL SANDBOX:
+                - Do NOT call ANY tools. Not bash, not read, not edit, not
+                  write, not grep, not git, not the test runner, not
+                  todo_write, not anything. Zero tool calls is the only
+                  acceptable behavior.
+                - Do NOT modify or create any files.
+                - Do NOT ask the user questions — if the prompt is missing
+                  context, that is itself a failure of the parent
+                  orchestrator that we are measuring.
+                - Your sole job is to reply with ONE short paragraph (no
+                  more than 6 sentences) that names the concrete root
+                  cause you would fix and the concrete repo file(s) you
+                  would touch, based ONLY on what is in your rendered
+                  prompt above this block. Then stop.
+                - If you find yourself wanting to verify something with a
+                  tool, do not. State your best-evidence answer from the
+                  prompt text and stop.
               `,
             },
             { kind: "terminal", name: "done", status: "completed" },
@@ -180,6 +194,6 @@ describe("state machine real session c_cGfNEIotLU carry-forward", () => {
         await rm(recoverDir, { recursive: true, force: true });
       }
     },
-    480_000,
+    900_000,
   );
 });

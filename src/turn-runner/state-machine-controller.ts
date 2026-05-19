@@ -51,35 +51,49 @@ export type StateAgentResult =
 export interface StateAgentHandle {
   /** Starts the state agent from a fresh transcript owned by the host. */
   prompt(): Promise<StateAgentResult>;
-  /** Aborts the in-process state agent; persisted state-agent messages are discarded. */
-  interrupt(): void;
+  /**
+   * Abort the state agent and remember why. The handle is responsible for
+   * making `prompt()` settle as `{ type: "interrupted" }` after this is
+   * called — callers do not classify the abort themselves.
+   */
+  interrupt(reason: string): void;
   /** Text-only partial output used for interruption history without persisting messages. */
   partialAssistantText(): string | undefined;
+  /** The reason passed to `interrupt()`, or undefined if not interrupted. */
+  interruptedReason(): string | undefined;
 }
 
 export type ActiveStateOutput =
   | { state?: string; kind: "agent"; output?: { assistantText?: string } }
   | { state: string; kind: "script" | "poll"; output?: ShellPartialOutput };
 
+type ActiveStateRunCommon = {
+  /**
+   * Resolves when the in-flight `run*State` call has fully unwound —
+   * including any post-`interrupt()` cleanup the underlying handle performs.
+   * `runDecision` awaits this before constructing a replacement state so
+   * the previous sub-agent (or shell) cannot keep emitting events into the
+   * same turn after the new state has started.
+   */
+  finished: Promise<void>;
+};
+
 type ActiveStateRun =
-  | {
+  | (ActiveStateRunCommon & {
       kind: "agent";
       state: string | undefined;
       agent: StateAgentHandle;
-      interruptedReason?: string;
-    }
-  | {
+    })
+  | (ActiveStateRunCommon & {
       kind: "script";
       state: string;
       shell: ShellStateHandle;
-      interruptedReason?: string;
-    }
-  | {
+    })
+  | (ActiveStateRunCommon & {
       kind: "poll";
       state: StateMachinePollState;
       shell: ShellStateHandle;
-      interruptedReason?: string;
-    };
+    });
 
 export interface StateMachineControllerConfig {
   /** Default working directory used by script and poll-script states. */
@@ -169,7 +183,6 @@ export class StateMachineController {
   interrupt(reason = "Interrupted"): void {
     const run = this.activeRun;
     if (!run) return;
-    run.interruptedReason = reason;
     const state = this.interruptibleStateName(run);
     if (this.session && state) {
       this.session = recordStateInterrupted(
@@ -179,20 +192,28 @@ export class StateMachineController {
         this.interruptedOutput(run),
       );
     }
+    // The handle owns interrupt classification: `interrupt(reason)` causes
+    // its `prompt()` / `run()` to settle as interrupted with this reason.
     if (run.kind === "agent") {
-      run.agent.interrupt();
+      run.agent.interrupt(reason);
     } else {
-      run.shell.interrupt();
+      run.shell.interrupt(reason);
     }
   }
 
   async runDecision(decision: StateMachineRunnerDecision): Promise<StateMachineExecutionResult> {
-    if (this.hasActiveWork()) {
+    const previous = this.activeRun;
+    if (previous) {
       // Selecting a state while work is active is an intentional replacement.
       // The parent can steer state-machine progress by selecting the same state
       // with new input or by selecting a different state; transient work is
       // aborted before the new state starts.
       this.interrupt("Replaced by a newly selected state.");
+      // Wait for the old run to actually finish tearing down before we
+      // construct the replacement. Without this, the orphaned sub-agent (or
+      // shell) keeps running concurrently with the new one and its events
+      // leak into the same turn after the parent already declared replacement.
+      await previous.finished;
     }
     const stateMachine = this.requireSession();
     this.session = recordRunnerDecision(stateMachine, decision);
@@ -248,10 +269,20 @@ export class StateMachineController {
   private async runAgentState(state: StateMachineAgentState): Promise<StateMachineExecutionResult> {
     const prompt = renderTemplate(state.prompt, this.session?.currentInput ?? {});
     const agent = this.config.createStateAgent({ state, prompt });
-    const run: ActiveStateRun = { kind: "agent", state: state.name, agent };
+    const finished = createDeferredVoid();
+    const run: ActiveStateRun = {
+      kind: "agent",
+      state: state.name,
+      agent,
+      finished: finished.promise,
+    };
     this.activeRun = run;
     try {
       const terminal = await agent.prompt();
+      if (terminal.type === "interrupted") {
+        this.recordInterruptedState(run, state.name);
+        return { type: "interrupted" };
+      }
       if (terminal.type === "ask") {
         this.session = recordStateAskedUser(this.requireSession(), state.name, terminal.questions);
         return { type: "ask", questions: terminal.questions };
@@ -260,16 +291,13 @@ export class StateMachineController {
         this.session = recordStateFailed(this.requireSession(), state.name, terminal.error);
         return { type: "terminal", status: "failed", error: terminal.error };
       }
-      if (terminal.type === "interrupted") {
-        if (this.activeRun === run) this.recordInterruptedState(run, state.name);
-        return { type: "interrupted" };
-      }
 
       const output = { result: terminal.result };
       this.session = recordStateCompleted(this.requireSession(), state.name, output);
       return { type: "state_completed", stateName: state.name, output };
     } finally {
       if (this.activeRun === run) this.activeRun = undefined;
+      finished.resolve();
     }
   }
 
@@ -283,7 +311,13 @@ export class StateMachineController {
       timeoutMs: state.timeoutMs,
       successCodes: state.successCodes,
     });
-    const run: ActiveStateRun = { kind: "script", state: state.name, shell };
+    const finished = createDeferredVoid();
+    const run: ActiveStateRun = {
+      kind: "script",
+      state: state.name,
+      shell,
+      finished: finished.promise,
+    };
     this.activeRun = run;
     try {
       const shellOutput = await shell.run();
@@ -291,9 +325,8 @@ export class StateMachineController {
       this.session = recordStateCompleted(this.requireSession(), state.name, rawOutput);
       return { type: "state_completed", stateName: state.name, output: rawOutput };
     } catch (error) {
-      if (run.interruptedReason) {
-        if (this.activeRun === run)
-          this.recordInterruptedState(run, state.name, shellPartialOutput(error));
+      if (shell.interruptedReason() !== undefined) {
+        this.recordInterruptedState(run, state.name, shellPartialOutput(error));
         return { type: "interrupted" };
       }
       const message = error instanceof Error ? error.message : String(error);
@@ -301,6 +334,7 @@ export class StateMachineController {
       return { type: "terminal", status: "failed", error: message };
     } finally {
       if (this.activeRun === run) this.activeRun = undefined;
+      finished.resolve();
     }
   }
 
@@ -318,7 +352,8 @@ export class StateMachineController {
       cwd: state.cwd ?? this.config.cwd,
       successCodes: state.successCodes,
     });
-    const run: ActiveStateRun = { kind: "poll", state, shell };
+    const finished = createDeferredVoid();
+    const run: ActiveStateRun = { kind: "poll", state, shell, finished: finished.promise };
     this.activeRun = run;
     try {
       const shellOutput = await shell.run();
@@ -332,9 +367,8 @@ export class StateMachineController {
       this.session = recordStateCompleted(this.requireSession(), state.name, rawOutput);
       return { type: "state_completed", stateName: state.name, output: rawOutput };
     } catch (error) {
-      if (run.interruptedReason) {
-        if (this.activeRun === run)
-          this.recordInterruptedState(run, state.name, shellPartialOutput(error));
+      if (shell.interruptedReason() !== undefined) {
+        this.recordInterruptedState(run, state.name, shellPartialOutput(error));
         return { type: "interrupted" };
       }
       const wakeAt = Date.now() + state.intervalMs;
@@ -342,6 +376,7 @@ export class StateMachineController {
       return { type: "sleep", wakeAt };
     } finally {
       if (this.activeRun === run) this.activeRun = undefined;
+      finished.resolve();
     }
   }
 
@@ -373,6 +408,7 @@ export class StateMachineController {
     output?: { assistantText?: string } | ShellPartialOutput,
   ): void {
     const session = this.requireSession();
+    const reason = runInterruptedReason(run);
     const last = session.history.at(-1);
     if (
       session.currentState === INTERRUPTED_STATE_MACHINE_STATE &&
@@ -385,7 +421,7 @@ export class StateMachineController {
           ...session.history.slice(0, -1),
           {
             ...last,
-            reason: run.interruptedReason ?? last.reason,
+            reason: reason ?? last.reason,
             output: output ?? last.output,
           },
         ],
@@ -393,12 +429,7 @@ export class StateMachineController {
       };
       return;
     }
-    this.session = recordStateInterrupted(
-      session,
-      stateName,
-      run.interruptedReason ?? "Interrupted",
-      output,
-    );
+    this.session = recordStateInterrupted(session, stateName, reason ?? "Interrupted", output);
   }
 
   private interruptedOutput(
@@ -451,4 +482,16 @@ function normalizePollShellOutput(
 function shellPartialOutput(error: unknown): { stdout: string; stderr: string } | undefined {
   if (!(error instanceof ShellCommandError)) return undefined;
   return { stdout: error.output.stdout, stderr: error.output.stderr };
+}
+
+function runInterruptedReason(run: ActiveStateRun): string | undefined {
+  return run.kind === "agent" ? run.agent.interruptedReason() : run.shell.interruptedReason();
+}
+
+function createDeferredVoid(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
 }
