@@ -14,6 +14,7 @@ import {
 } from "../model-resolution/resolver.js";
 import { DEFAULT_MEMORY_DB_PATH, SessionManager } from "../session/session-manager.js";
 import { runTui } from "../tui/app.js";
+import { applyInlineSlashCommandsToCliConfig } from "./inline-slash.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import { DEFAULT_RESUME_HISTORY_MESSAGES, printRunHelp } from "./help.js";
 import { resumeCommand } from "./resume-hint.js";
@@ -193,7 +194,11 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     }
   }
 
-  let prompt = promptParts.join(" ");
+  // `let prompt: string | undefined` so the inline-slash applier can
+  // unset it when the whole prompt was just slash commands (e.g.
+  // `duet "/model X"`) — mirrors the TUI's whole-message dispatcher
+  // skipping the agent turn entirely.
+  let prompt: string | undefined = promptParts.join(" ");
 
   // Read from stdin if no prompt is provided
   if (!prompt && !interactive) {
@@ -276,6 +281,27 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   memoryModelName = memoryModelResolution.modelName;
 
   const useTui = shouldUseTui({ interactive, prompt });
+
+  // Apply inline `/model` and `/thinking` commands embedded in the
+  // non-TUI one-shot prompt before we hand the prompt to the session.
+  // The prompt text itself is passed through to the agent verbatim,
+  // mirroring how the TUI keeps the slash form in the message and how
+  // `/skill-name` references survive the dispatch.
+  if (!useTui && prompt) {
+    const { residue } = applyInlineSlashCommandsToCliConfig(prompt, config, (line) =>
+      process.stderr.write(line),
+    );
+    // Sync the cached display name so the boot summary lines reflect any
+    // inline override; the resolver source is unchanged because the
+    // inline form is logically equivalent to `--model`.
+    modelName = config.model ?? modelName;
+    // Dispatch the prompt with the slash forms stripped out. When the
+    // whole prompt was just slash commands (e.g. `duet "/model X"`),
+    // the residue is empty and we skip the agent turn entirely —
+    // mirrors the TUI's whole-message dispatcher returning before
+    // reaching dispatchTurn.
+    prompt = residue.length > 0 ? residue : undefined;
+  }
 
   // One-shot consumers want a single summary line, not a streaming status.
   // Await the final upgrade status and print the human-readable form (if any)
