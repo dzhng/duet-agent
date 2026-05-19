@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "bun:test";
 import { Session } from "../src/session/session.js";
-import { extractInlineSlashCommands } from "../src/tui/slash-commands.js";
+import { runInlineSlashCommands } from "../src/tui/slash-commands.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let tempDirs: string[] = [];
@@ -175,7 +175,7 @@ describe("Session model-switch persistence", () => {
       };
 
       const message = "hey can you review this /model anthropic:claude-sonnet-5-1";
-      const { handledCommands } = extractInlineSlashCommands(message, ctx);
+      const { handledCommands } = runInlineSlashCommands(message, ctx);
 
       // The mutation has to be observable on the live config before the
       // caller dispatches the prompt — otherwise the turn that delivers

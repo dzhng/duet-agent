@@ -17,7 +17,7 @@ import { bindSessionToUi } from "./session-subscription.js";
 import { StarterSection } from "./starter-section.js";
 import { StatusController } from "./status-controller.js";
 import { StepRenderer } from "./step-renderer.js";
-import { extractInlineSlashCommands, tryDispatchSlashCommand } from "./slash-commands.js";
+import { runInlineSlashCommands, tryDispatchSlashCommand } from "./slash-commands.js";
 import { COLORS } from "./theme.js";
 import { TranscriptWriter } from "./transcript-writer.js";
 import type { TranscriptEntry } from "./transcript-log.js";
@@ -368,7 +368,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     // this /model gpt-5.5`). Inline-eligible commands fire their side
     // effects locally; the message itself is sent to the agent verbatim,
     // the same way `/skill-name` references survive the dispatch.
-    extractInlineSlashCommands(message, slashCtx);
+    runInlineSlashCommands(message, slashCtx);
     void dispatchTurn(message, "follow_up").catch(reportError);
   }
 

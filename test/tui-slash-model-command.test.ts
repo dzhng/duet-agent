@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   BUILT_IN_SLASH_COMMAND_ITEMS,
-  extractInlineSlashCommands,
+  runInlineSlashCommands,
   type SlashCommandContext,
   tryDispatchSlashCommand,
 } from "../src/tui/slash-commands.js";
@@ -155,7 +155,7 @@ describe("/thinking slash command", () => {
   });
 });
 
-describe("extractInlineSlashCommands", () => {
+describe("runInlineSlashCommands", () => {
   test("fires /model from the middle of a prompt without touching the message", () => {
     const calls: string[] = [];
     const ctx = makeContext({
@@ -167,7 +167,7 @@ describe("extractInlineSlashCommands", () => {
 
     // The message itself stays the caller's responsibility — the
     // extractor only triggers side effects, exactly like skills.
-    const { handledCommands } = extractInlineSlashCommands(
+    const { handledCommands } = runInlineSlashCommands(
       "hey /model sonnet-4.6 please refactor this file",
       ctx,
     );
@@ -190,7 +190,7 @@ describe("extractInlineSlashCommands", () => {
       },
     });
 
-    const { handledCommands } = extractInlineSlashCommands(
+    const { handledCommands } = runInlineSlashCommands(
       "/model opus-4.7 think hard /thinking high about this",
       ctx,
     );
@@ -212,7 +212,7 @@ describe("extractInlineSlashCommands", () => {
       },
     });
 
-    const { handledCommands } = extractInlineSlashCommands(
+    const { handledCommands } = runInlineSlashCommands(
       "check https://example.com/model/foo and /usr/local/bin",
       ctx,
     );
@@ -223,7 +223,7 @@ describe("extractInlineSlashCommands", () => {
 
   test("/feedback inside a prompt is NOT fired (rest-of-line arg, no inline shape)", () => {
     const ctx = makeContext();
-    const { handledCommands } = extractInlineSlashCommands(
+    const { handledCommands } = runInlineSlashCommands(
       "please send /feedback this rocks for me",
       ctx,
     );
@@ -242,7 +242,7 @@ describe("extractInlineSlashCommands", () => {
       },
     });
 
-    const { handledCommands } = extractInlineSlashCommands(
+    const { handledCommands } = runInlineSlashCommands(
       "/model sonnet-4.6 also /reset please",
       ctx,
       { onlyCommands: new Set(["model", "thinking"]) },

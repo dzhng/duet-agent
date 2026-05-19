@@ -15,9 +15,9 @@ import {
 } from "../model-resolution/resolver.js";
 import { DEFAULT_MEMORY_DB_PATH, SessionManager } from "../session/session-manager.js";
 import { runTui } from "../tui/app.js";
-import { extractInlineSlashCommands, type SlashCommandContext } from "../tui/slash-commands.js";
+import { scanInlineSlashCommands } from "../tui/slash-commands.js";
+import { validateThinkingLevel } from "../session/thinking-level.js";
 import type { TurnRunnerConfig } from "../types/config.js";
-import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import { DEFAULT_RESUME_HISTORY_MESSAGES, printRunHelp } from "./help.js";
 import { resumeCommand } from "./resume-hint.js";
 import { fail, isInteractive, loadCliEnvFiles, parseResumeHistoryMessages } from "./shared.js";
@@ -282,42 +282,37 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
 
   // Apply inline `/model` and `/thinking` commands embedded in the
   // non-TUI one-shot prompt before we hand the prompt to the session.
-  // The handlers mutate `config.model` / `config.thinkingLevel` in
-  // place; the prompt text itself is passed through to the agent
-  // verbatim, mirroring how the TUI keeps the slash form in the
-  // message and how `/skill-name` references survive the dispatch.
+  // The prompt text itself is passed through to the agent verbatim,
+  // mirroring how the TUI keeps the slash form in the message and how
+  // `/skill-name` references survive the dispatch.
   if (!useTui && prompt) {
-    const inlineCtx: SlashCommandContext = {
-      pasteController: undefined as never,
-      copyController: undefined as never,
-      transcriptWriter: undefined as never,
-      appendBlock: (label, body) => {
-        const tag = label ? `${label} ` : "";
-        process.stderr.write(`${tag}${body}\n`);
-      },
-      onReset: () => {},
-      setModel: (model) => {
-        const trimmed = model.trim();
-        if (!trimmed) throw new Error("Model name is required");
-        resolveModelName(trimmed);
-        config.model = trimmed;
-        return { modelName: trimmed };
-      },
-      setThinkingLevel: (level) => {
-        const normalized = level.trim().toLowerCase();
-        const allowed: ReadonlyArray<ThinkingLevel> = ["minimal", "low", "medium", "high", "xhigh"];
-        if (!(allowed as readonly string[]).includes(normalized)) {
-          throw new Error(
-            `Unknown thinking level: ${level}. Expected one of ${allowed.join(", ")}.`,
+    for (const { name, arg } of scanInlineSlashCommands(prompt, {
+      onlyCommands: new Set(["model", "thinking"]),
+    })) {
+      try {
+        if (name === "model") {
+          const trimmed = arg.trim();
+          if (!trimmed) throw new Error("Model name is required");
+          // Throws on unknown shorthand / missing provider credentials,
+          // matching the validation `--model` would have done at boot.
+          resolveModelName(trimmed);
+          config.model = trimmed;
+          process.stderr.write(
+            `[model] next turn will use ${trimmed}. The current turn (if any) keeps its model.\n`,
+          );
+        } else if (name === "thinking") {
+          const level = validateThinkingLevel(arg);
+          config.thinkingLevel = level;
+          process.stderr.write(
+            `[thinking] next turn will think at ${level}. The current turn (if any) keeps its level.\n`,
           );
         }
-        config.thinkingLevel = normalized as ThinkingLevel;
-        return { thinkingLevel: normalized };
-      },
-    };
-    extractInlineSlashCommands(prompt, inlineCtx, {
-      onlyCommands: new Set(["model", "thinking"]),
-    });
+      } catch (error) {
+        process.stderr.write(
+          `[${name}] ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+    }
     // Sync the cached display name so the boot summary lines reflect any
     // inline override; the resolver source is unchanged because the
     // inline form is logically equivalent to `--model`.
