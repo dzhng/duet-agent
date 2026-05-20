@@ -219,6 +219,13 @@ export async function openPGliteHoldingLock(
     return { db, lockPath };
   } catch (error) {
     if (!isExistingDirectory(path)) throw error;
+    // Do not quarantine when the failure is about something outside the
+    // user's dataDir — typically a PGlite runtime asset missing from
+    // node_modules during a self-update (e.g. ENOENT on `pglite.data`).
+    // Renaming the perfectly healthy memory.db aside in that window has
+    // burned real users; let the error surface so the next launch (with
+    // node_modules fully unpacked) succeeds against the existing data.
+    if (isExternalAssetError(error, path)) throw error;
 
     // Release the lock before renaming the directory aside — the lock
     // file lives inside that directory and would be moved with it.
@@ -299,6 +306,34 @@ async function openAndProbe(
 export async function openForRecovery(path: string): Promise<PGlite> {
   clearStalePostmasterLock(path);
   return PGlite.create({ dataDir: path, extensions: MEMORY_EXTENSIONS });
+}
+
+/**
+ * True when an open failure points at a filesystem path that is not under
+ * `dataDir` — i.e. the dataDir itself is fine and PGlite stumbled on one of
+ * its own bundled runtime files (the canonical case is `pglite.data` being
+ * momentarily missing while `npm` is rewriting `node_modules` during a duet
+ * self-update). Used to suppress quarantine so we never move a healthy
+ * memory.db aside because of a transient packaging error.
+ */
+export function isExternalAssetError(error: unknown, dataDir: string): boolean {
+  if (!error || typeof error !== "object") return false;
+  const errno = error as NodeJS.ErrnoException & { path?: string };
+  if (errno.code !== "ENOENT") return false;
+  const candidates: string[] = [];
+  if (typeof errno.path === "string") candidates.push(errno.path);
+  if (typeof errno.message === "string") {
+    // PGlite re-throws fs errors with the path embedded in the message but
+    // not always on `.path`; pull anything that looks absolute out of it.
+    const match = errno.message.match(/['"]([^'"]+)['"]/);
+    if (match?.[1]) candidates.push(match[1]);
+  }
+  if (candidates.length === 0) return false;
+  const normalizedDir = resolvePath(dataDir);
+  return candidates.every((candidate) => {
+    const normalized = resolvePath(candidate);
+    return normalized !== normalizedDir && !normalized.startsWith(`${normalizedDir}/`);
+  });
 }
 
 /**

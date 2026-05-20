@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearStalePostmasterLock,
+  isExternalAssetError,
   MemoryLockTimeoutError,
   openPGlite,
   openPGliteWaitingForLock,
@@ -103,6 +104,74 @@ describe("clearStalePostmasterLock", () => {
       expect(() => clearStalePostmasterLock(dataDir)).toThrow();
     } finally {
       await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("isExternalAssetError", () => {
+  test("flags ENOENT on a path outside the dataDir", () => {
+    const error = Object.assign(
+      new Error("ENOENT: no such file or directory, open '/x/y/pglite.data'"),
+      {
+        code: "ENOENT",
+        path: "/x/y/pglite.data",
+      },
+    );
+    expect(isExternalAssetError(error, "/home/user/.duet/memory.db")).toBe(true);
+  });
+
+  test("does not flag ENOENT on a path inside the dataDir", () => {
+    const dataDir = "/home/user/.duet/memory.db";
+    const error = Object.assign(new Error("ENOENT"), {
+      code: "ENOENT",
+      path: `${dataDir}/PG_VERSION`,
+    });
+    expect(isExternalAssetError(error, dataDir)).toBe(false);
+  });
+
+  test("falls back to parsing the path out of the message", () => {
+    const error = Object.assign(
+      new Error(
+        "ENOENT: no such file or directory, open '/usr/lib/node_modules/pglite/dist/pglite.data'",
+      ),
+      { code: "ENOENT" },
+    );
+    expect(isExternalAssetError(error, "/home/user/.duet/memory.db")).toBe(true);
+  });
+
+  test("ignores non-ENOENT errors", () => {
+    expect(isExternalAssetError(new Error("boom"), "/dir")).toBe(false);
+  });
+});
+
+describe("openPGlite quarantine guard", () => {
+  testIfDocker("does not quarantine when init fails with ENOENT on an external asset", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+    try {
+      const dataDir = join(tempDir, "memory.db");
+      const externalPath = join(tempDir, "missing-asset.data");
+      let attempt = 0;
+      await expect(
+        openPGlite(dataDir, {
+          init: async () => {
+            attempt += 1;
+            const error = Object.assign(
+              new Error(`ENOENT: no such file or directory, open '${externalPath}'`),
+              { code: "ENOENT", path: externalPath },
+            );
+            throw error;
+          },
+        }),
+      ).rejects.toThrow(/ENOENT/);
+      expect(attempt).toBe(1);
+      expect(existsSync(dataDir)).toBe(true);
+      // No quarantine sibling was created.
+      const siblings = readdirSync(tempDir).filter((name) =>
+        name.startsWith("memory.db.corrupted-"),
+      );
+      expect(siblings).toEqual([]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 });
