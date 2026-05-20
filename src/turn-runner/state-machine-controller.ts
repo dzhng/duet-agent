@@ -356,14 +356,14 @@ export class StateMachineController {
     const run: ActiveStateRun = { kind: "poll", state, shell, finished: finished.promise };
     this.activeRun = run;
     try {
+      // Poll success is determined purely by the script's exit code being
+      // in `successCodes` (default [0]). `shell.run()` resolves when the
+      // exit code is in the success set and rejects otherwise, so reaching
+      // this branch means "this poll attempt found a result." Stdout is
+      // parsed as JSON when possible for convenience, but the result of
+      // that parse does NOT affect whether the poll completes.
       const shellOutput = await shell.run();
-      const output = parseJsonObject(shellOutput.stdout);
-      if (Object.keys(output).length === 0) {
-        const wakeAt = Date.now() + state.intervalMs;
-        this.session = recordStateSleep(this.requireSession(), state, wakeAt);
-        return { type: "sleep", wakeAt };
-      }
-      const rawOutput = normalizePollShellOutput(shellOutput, output);
+      const rawOutput = normalizePollShellOutput(shellOutput);
       this.session = recordStateCompleted(this.requireSession(), state.name, rawOutput);
       return { type: "state_completed", stateName: state.name, output: rawOutput };
     } catch (error) {
@@ -371,6 +371,7 @@ export class StateMachineController {
         this.recordInterruptedState(run, state.name, shellPartialOutput(error));
         return { type: "interrupted" };
       }
+      // Exit code not in `successCodes` (or shell error) → keep polling.
       const wakeAt = Date.now() + state.intervalMs;
       this.session = recordStateSleep(this.requireSession(), state, wakeAt);
       return { type: "sleep", wakeAt };
@@ -469,13 +470,12 @@ function normalizeStructuredShellOutput(shellOutput: ShellCommandOutput): ShellC
 
 function normalizePollShellOutput(
   shellOutput: ShellCommandOutput,
-  parsed: Record<string, unknown>,
 ): ShellCommandOutput & { parsed: Record<string, unknown> } {
   return {
     ...shellOutput,
     stdout: shellOutput.stdout.trim(),
     stderr: shellOutput.stderr.trim(),
-    parsed,
+    parsed: parseJsonObject(shellOutput.stdout),
   };
 }
 

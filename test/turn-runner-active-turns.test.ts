@@ -1263,7 +1263,8 @@ function unresolvedPollDefinition(): StateMachineDefinition {
         kind: "poll",
         name: "poll_reply",
         intervalMs: 60_000,
-        command: "sleep 2; printf '{}'",
+        // Exit 1 → not in successCodes → keep polling.
+        command: "sleep 2; exit 1",
       },
       { kind: "terminal", name: "done", status: "completed" },
     ],
@@ -1295,7 +1296,8 @@ function immediateUnresolvedPollDefinition(): StateMachineDefinition {
         kind: "poll",
         name: "poll_reply",
         intervalMs: 60_000,
-        command: "printf '{}'",
+        // Exit 1 → not in successCodes → keep polling.
+        command: "exit 1",
       },
       { kind: "terminal", name: "done", status: "completed" },
     ],
