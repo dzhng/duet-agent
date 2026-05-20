@@ -606,7 +606,6 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         toolName: "select_state_machine_state",
         input: {
           decision: {
-            kind: "run_state",
             state: "wait-for-ci",
             reason: "verify completed; CI workflow dispatched, polling for green checks",
             input: { runId: "12345" },
@@ -618,7 +617,6 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         toolName: "select_state_machine_state",
         input: {
           decision: {
-            kind: "terminal",
             state: "done",
             reason: "all states completed successfully",
           },
