@@ -315,8 +315,13 @@ export interface StateMachinePollState extends StateMachineBaseState {
   /** Maximum time the state machine can remain in this poll state before failing the session. */
   timeoutMs?: number;
   /**
-   * Runs once per poll attempt. The command should return structured output
-   * only when something changed; otherwise the runner sleeps and tries again.
+   * Runs once per poll attempt. The script signals "found a result" by
+   * exiting with a code in `successCodes`; any other exit code is treated
+   * as "keep polling" and the runner sleeps for `intervalMs` before the
+   * next attempt. Stdout is captured and surfaced as the state output
+   * (and parsed as JSON when possible for convenience), but the parse
+   * result does NOT affect whether the poll completes — only the exit
+   * code does.
    */
   command: string;
   /** Working directory for the command. Defaults to the state-machine session cwd. */

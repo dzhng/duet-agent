@@ -56,8 +56,11 @@ const RELAY_INSTRUCTIONS = dedent`
         append output to a bounded log, then bump \`next += interval\` and
         keep looking. The orchestrator never wakes for these.
       - If \`kind: "agent"\` (needs an LLM): write the task name to
-        \`next-agent.txt\`, echo it on stdout, \`exit 0\` so the poll state
-        treats this attempt as successful and wakes the orchestrator.
+        \`next-agent.txt\` and \`exit 0\` (or another code in the poll's
+        \`successCodes\`) so the poll completes and the orchestrator wakes.
+        Stdout is captured and surfaced as the state output, so echoing
+        the task name (or a JSON payload) is a useful debugging signal,
+        but the *exit code is what makes the poll succeed*.
       - For known-noisy agents (e.g. inbox triage), pre-check cheaply
         from shell first (e.g. count IMAP unread). If there's nothing to
         do, skip the wake and just bump \`next\`.
