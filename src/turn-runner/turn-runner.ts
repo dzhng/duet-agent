@@ -1176,7 +1176,6 @@ export class TurnRunner {
         currentState: firstState,
       });
       return this.stateMachineController.runDecision({
-        kind: "run_state",
         state: firstState,
       });
     }
@@ -1189,11 +1188,7 @@ export class TurnRunner {
       };
     }
 
-    if (
-      !this.stateMachineController.getSession() &&
-      typeof state.mode === "object" &&
-      workerResult.control.decision.kind !== "fail"
-    ) {
+    if (!this.stateMachineController.getSession() && typeof state.mode === "object") {
       this.stateMachineController.startSession({
         prompt: workerResult.outcome.type === "complete" ? (workerResult.outcome.result ?? "") : "",
         definition: state.mode as Exclude<TurnMode, "agent" | "auto">,

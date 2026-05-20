@@ -168,7 +168,7 @@ describe("TurnRunner protocol scenarios", () => {
       { type: "none" },
       {
         type: "select_state_machine_state",
-        decision: { kind: "terminal", state: "meeting_scheduled" },
+        decision: { state: "meeting_scheduled" },
       },
     );
     const usageByWorker = [
@@ -253,7 +253,7 @@ describe("TurnRunner protocol scenarios", () => {
     });
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "classify_reply" },
+      decision: { state: "classify_reply" },
     });
 
     const terminal = await runner.turn({
@@ -358,7 +358,7 @@ describe("TurnRunner protocol scenarios", () => {
     await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "poll_email_reply" },
+      decision: { state: "poll_email_reply" },
     });
 
     const terminal = await runner.turn({
@@ -431,7 +431,7 @@ describe("TurnRunner protocol scenarios", () => {
     await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "fail", reason: "Interrupted" },
+      decision: { state: "failed", reason: "Interrupted" },
     });
 
     const turn = runner.turn({
@@ -459,7 +459,7 @@ describe("TurnRunner protocol scenarios", () => {
     const prompt = "Prospect Ada until she books a meeting.";
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "research_prospect" },
+      decision: { state: "research_prospect" },
     });
 
     const terminal = await (await startTurn(runner, { mode: definition, prompt })).turn;
@@ -517,7 +517,7 @@ describe("TurnRunner protocol scenarios", () => {
     const definition = createOutreachStateMachine();
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "invented_state" },
+      decision: { state: "invented_state" },
     });
 
     const terminal = await (
@@ -545,7 +545,6 @@ describe("TurnRunner protocol scenarios", () => {
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: {
-        kind: "run_state",
         state: "research_prospect",
         override: { kind: "agent", state: { prompt: "Research Grace Hopper." } },
       },
@@ -578,7 +577,7 @@ describe("TurnRunner protocol scenarios", () => {
     };
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "waiting_for_reply" },
+      decision: { state: "waiting_for_reply" },
     });
 
     await runner.turn({
@@ -627,7 +626,7 @@ describe("TurnRunner protocol scenarios", () => {
     };
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "research_prospect" },
+      decision: { state: "research_prospect" },
     });
 
     await runner.turn({
@@ -650,12 +649,12 @@ describe("TurnRunner protocol scenarios", () => {
     runner.controlResults.push(
       {
         type: "select_state_machine_state",
-        decision: { kind: "run_state", state: "research_prospect" },
+        decision: { state: "research_prospect" },
       },
       { type: "none" },
       {
         type: "select_state_machine_state",
-        decision: { kind: "terminal", state: "meeting_scheduled" },
+        decision: { state: "meeting_scheduled" },
       },
       { type: "none" },
     );
@@ -715,7 +714,6 @@ describe("TurnRunner protocol scenarios", () => {
       {
         type: "select_state_machine_state",
         decision: {
-          kind: "run_state",
           state: "research_prospect",
           input: { prospect: "Ada Lovelace" },
         },
@@ -723,7 +721,7 @@ describe("TurnRunner protocol scenarios", () => {
       { type: "none" },
       {
         type: "select_state_machine_state",
-        decision: { kind: "terminal", state: "meeting_scheduled" },
+        decision: { state: "meeting_scheduled" },
       },
     );
     let calls = 0;
@@ -783,7 +781,7 @@ describe("TurnRunner protocol scenarios", () => {
     runner.controlResults.push(
       {
         type: "select_state_machine_state",
-        decision: { kind: "terminal", state: "meeting_scheduled" },
+        decision: { state: "meeting_scheduled" },
       },
       // Terminal acknowledgment turn: parent replies in plain text.
       { type: "none" },
@@ -817,7 +815,7 @@ describe("TurnRunner protocol scenarios", () => {
     await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "wait_before_retry" },
+      decision: { state: "wait_before_retry" },
     });
 
     const terminal = await runner.turn({
@@ -851,7 +849,7 @@ describe("TurnRunner protocol scenarios", () => {
     await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "wait_before_retry" },
+      decision: { state: "wait_before_retry" },
     });
 
     const sleeping = await runner.turn({
@@ -870,7 +868,7 @@ describe("TurnRunner protocol scenarios", () => {
     });
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "terminal", state: "meeting_scheduled" },
+      decision: { state: "meeting_scheduled" },
     });
 
     const terminal = await runner.turn({ type: "wake" });
@@ -945,7 +943,6 @@ describe("TurnRunner protocol scenarios", () => {
       {
         type: "select_state_machine_state",
         decision: {
-          kind: "run_state",
           state: "send_email",
           override: {
             kind: "script",
@@ -959,7 +956,7 @@ describe("TurnRunner protocol scenarios", () => {
       },
       {
         type: "select_state_machine_state",
-        decision: { kind: "terminal", state: "meeting_scheduled" },
+        decision: { state: "meeting_scheduled" },
       },
     );
 
@@ -989,7 +986,7 @@ describe("TurnRunner protocol scenarios", () => {
     await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "research_prospect" },
+      decision: { state: "research_prospect" },
     });
 
     const terminal = await runner.turn({
@@ -1027,7 +1024,7 @@ describe("TurnRunner protocol scenarios", () => {
     runner.controlResults.push(
       {
         type: "select_state_machine_state",
-        decision: { kind: "run_state", state: "research_prospect" },
+        decision: { state: "research_prospect" },
       },
       { type: "none" },
       {
@@ -1106,7 +1103,7 @@ describe("TurnRunner protocol scenarios", () => {
     await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "research_prospect" },
+      decision: { state: "research_prospect" },
     });
     let calls = 0;
     runner.worker = async (input, next) => {
@@ -1148,7 +1145,6 @@ describe("TurnRunner protocol scenarios", () => {
       {
         type: "select_state_machine_state",
         decision: {
-          kind: "run_state",
           state: "research_prospect",
           input: { prospect: "Ada Lovelace" },
         },
@@ -1156,7 +1152,7 @@ describe("TurnRunner protocol scenarios", () => {
       { type: "none" },
       {
         type: "select_state_machine_state",
-        decision: { kind: "terminal", state: "meeting_scheduled" },
+        decision: { state: "meeting_scheduled" },
       },
       // Terminal acknowledgment turn.
       { type: "none" },
@@ -1200,7 +1196,7 @@ describe("TurnRunner protocol scenarios", () => {
     await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
-      decision: { kind: "run_state", state: "research_prospect" },
+      decision: { state: "research_prospect" },
     });
 
     const terminal = await runner.turn({

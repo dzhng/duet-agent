@@ -77,11 +77,10 @@ describe("state-machine replacement", () => {
       currentState: "research",
     });
 
-    const firstRun = controller.runDecision({ kind: "run_state", state: "research" });
+    const firstRun = controller.runDecision({ state: "research" });
     await firstStartedPromise;
 
     const secondRun = controller.runDecision({
-      kind: "run_state",
       state: "research",
       input: { plan: "revised" },
     });
@@ -163,11 +162,10 @@ describe("state-machine replacement", () => {
     });
     controller.startSession({ prompt: "Run.", definition, currentState: "work" });
 
-    const firstRun = controller.runDecision({ kind: "run_state", state: "work" });
+    const firstRun = controller.runDecision({ state: "work" });
     await firstStartedPromise;
 
     const secondRun = controller.runDecision({
-      kind: "run_state",
       state: "work",
       input: { plan: "revised" },
     });

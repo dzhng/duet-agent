@@ -55,7 +55,7 @@ describe("state-machine wake after interrupt", () => {
       currentState: "research",
     });
 
-    const run = controller.runDecision({ kind: "run_state", state: "research" });
+    const run = controller.runDecision({ state: "research" });
     await agentStartedPromise;
 
     controller.interrupt("User pressed stop.");

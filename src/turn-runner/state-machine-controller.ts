@@ -218,12 +218,6 @@ export class StateMachineController {
     const stateMachine = this.requireSession();
     this.session = recordRunnerDecision(stateMachine, decision);
 
-    if (decision.kind === "fail") {
-      const state = this.session.currentState ?? "unknown";
-      this.session = recordStateFailed(this.session, state, decision.reason);
-      return { type: "terminal", status: "failed", error: decision.reason };
-    }
-
     const selectedState = findState(this.session, decision.state);
     if (!selectedState) {
       const validStates = this.session.definition.states.map((state) => state.name);
@@ -236,14 +230,17 @@ export class StateMachineController {
       return { type: "terminal", status: "failed", error: message };
     }
 
-    const effectiveState =
-      decision.kind === "run_state"
-        ? applyStateOverride(selectedState, decision.override)
-        : selectedState;
+    // Terminal states ignore overrides/inputs — they just record their
+    // status and any caller-supplied reason. Every other state kind
+    // honors the override + input so the caller can steer the next run.
+    const isTerminal = selectedState.kind === "terminal";
+    const effectiveState = isTerminal
+      ? selectedState
+      : applyStateOverride(selectedState, decision.override);
     this.session = recordStateStarted(
       this.session,
       effectiveState,
-      decision.kind === "run_state" ? decision.input : undefined,
+      isTerminal ? undefined : decision.input,
     );
     this.config.onSessionChanged?.(this.session);
     switch (effectiveState.kind) {
@@ -256,7 +253,7 @@ export class StateMachineController {
       case "timer":
         return this.runTimerState(effectiveState);
       case "terminal":
-        return this.runTerminalState(effectiveState);
+        return this.runTerminalState(effectiveState, decision.reason);
     }
   }
 
@@ -397,10 +394,16 @@ export class StateMachineController {
 
   private async runTerminalState(
     state: StateMachineTerminalState,
+    decisionReason?: string,
   ): Promise<StateMachineExecutionResult> {
-    const terminal = { state: state.name, status: state.status, reason: state.reason };
+    // Caller-supplied reason wins over the state's default — that lets the
+    // model pass a specific failure explanation when selecting `failed`,
+    // without losing the static `reason` on bespoke terminals when no
+    // override is provided.
+    const reason = decisionReason ?? state.reason;
+    const terminal = { state: state.name, status: state.status, reason };
     this.session = recordStateMachineCompleted(this.requireSession(), terminal);
-    return { type: "terminal", status: state.status, result: state.reason };
+    return { type: "terminal", status: state.status, result: reason };
   }
 
   private recordInterruptedState(

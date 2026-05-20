@@ -544,13 +544,13 @@ describe("TurnRunner tools", () => {
     if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
 
     const result = await selectStateTool.execute("tool-1", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
 
     const details: TurnRunnerControlResult = result.details;
     expect(details).toEqual({
       type: "select_state_machine_state",
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     expect(result.terminate).toBe(true);
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
@@ -587,7 +587,6 @@ describe("TurnRunner tools", () => {
 
     const result = await selectStateTool.execute("tool-1", {
       decision: {
-        kind: "run_state",
         state: "send_email",
         input: { email: "ada@example.com" },
       },
@@ -596,7 +595,6 @@ describe("TurnRunner tools", () => {
     expect(result.details).toMatchObject({
       type: "select_state_machine_state",
       decision: {
-        kind: "run_state",
         state: "send_email",
         input: { email: "ada@example.com" },
       },
@@ -604,7 +602,6 @@ describe("TurnRunner tools", () => {
 
     const resultWithOptionalField = await selectStateTool.execute("tool-2", {
       decision: {
-        kind: "run_state",
         state: "send_email",
         input: { email: "ada@example.com", followUpCount: 1 },
       },
@@ -613,7 +610,6 @@ describe("TurnRunner tools", () => {
     expect(resultWithOptionalField.details).toMatchObject({
       type: "select_state_machine_state",
       decision: {
-        kind: "run_state",
         state: "send_email",
         input: { email: "ada@example.com", followUpCount: 1 },
       },
@@ -647,7 +643,6 @@ describe("TurnRunner tools", () => {
 
     const result = selectStateTool.execute("tool-1", {
       decision: {
-        kind: "run_state",
         state: "send_email",
         input: { email: 123 },
       },
@@ -686,7 +681,6 @@ describe("TurnRunner tools", () => {
 
     const result = selectStateTool.execute("tool-1", {
       decision: {
-        kind: "run_state",
         state: "send_email",
         input: { followUpCount: 1 },
       },
@@ -726,7 +720,6 @@ describe("TurnRunner tools", () => {
 
     const result = selectStateTool.execute("tool-1", {
       decision: {
-        kind: "run_state",
         state: "send_email",
         input: { email: "ada@example.com", extra: true },
       },
@@ -751,7 +744,6 @@ describe("TurnRunner tools", () => {
 
     const result = selectStateTool.execute("tool-1", {
       decision: {
-        kind: "run_state",
         state: "send_email",
         override: {
           kind: "script",
@@ -790,7 +782,6 @@ describe("TurnRunner tools", () => {
 
     const accepted = await selectStateTool.execute("tool-1", {
       decision: {
-        kind: "run_state",
         state: "send_email",
         override: {
           kind: "script",
@@ -810,7 +801,6 @@ describe("TurnRunner tools", () => {
     expect(accepted.details).toMatchObject({
       type: "select_state_machine_state",
       decision: {
-        kind: "run_state",
         state: "send_email",
         input: { prospectId: "prospect-1" },
       },
@@ -818,7 +808,6 @@ describe("TurnRunner tools", () => {
 
     const rejected = selectStateTool.execute("tool-2", {
       decision: {
-        kind: "run_state",
         state: "send_email",
         override: {
           kind: "script",
@@ -920,7 +909,7 @@ describe("TurnRunner tools", () => {
     if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
 
     const result = selectStateTool.execute("tool-1", {
-      decision: { kind: "run_state", state: "invented_state" },
+      decision: { state: "invented_state" },
     });
 
     await expect(result).rejects.toThrow(
@@ -947,7 +936,7 @@ describe("TurnRunner tools", () => {
     if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
 
     const result = selectStateTool.execute("tool-1", {
-      decision: { kind: "terminal", state: "invented_state" },
+      decision: { state: "invented_state" },
     });
 
     await expect(result).rejects.toThrow(

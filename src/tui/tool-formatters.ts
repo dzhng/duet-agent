@@ -478,7 +478,7 @@ const formatCreateStateMachine: Formatter = (spec) => {
 };
 
 /**
- * `select_state_machine_state` renders the transition verb and target.
+ * `select_state_machine_state` renders the target state on the header line.
  * Reason, input, and override hints fall into the body. The tool result
  * echoes the decision back, which the body already covers, so it is
  * suppressed.
@@ -486,20 +486,11 @@ const formatCreateStateMachine: Formatter = (spec) => {
 const formatSelectStateMachineState: Formatter = (spec) => {
   const input = pickObject(spec.input);
   const decision = pickObject(input ? input["decision"] : undefined);
-  const kind = stringField(decision, "kind");
   const stateName = stringField(decision, "state");
   const reason = stringField(decision, "reason");
   const transitionInput = pickObject(decision ? decision["input"] : undefined);
   const override = pickObject(decision ? decision["override"] : undefined);
-  const verb =
-    kind === "run_state"
-      ? "run"
-      : kind === "terminal"
-        ? "finalize"
-        : kind === "fail"
-          ? "fail"
-          : (kind ?? "?");
-  const headerTail = stateName ? `: ${stateName}` : "";
+  const target = stateName ?? "?";
   const bodyParts: string[] = [];
   if (reason) bodyParts.push(`reason: ${reason}`);
   if (transitionInput && Object.keys(transitionInput).length > 0) {
@@ -510,7 +501,7 @@ const formatSelectStateMachineState: Formatter = (spec) => {
     bodyParts.push(`override: ${overrideKind ?? "unknown"}`);
   }
   return {
-    header: `→ ${verb}${headerTail}`,
+    header: `→ ${target}`,
     body: bodyParts.length > 0 ? bodyParts.join("\n") : undefined,
     // Tool result is just an echo of the decision; the body already covers it.
     result: undefined,

@@ -491,7 +491,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "script_step" },
+      decision: { state: "script_step" },
     });
     await waitFor(() =>
       events.some(
@@ -514,7 +514,7 @@ describe("TurnRunner active turns", () => {
     expect(lastUserText(runner.contexts[2]!)).toContain('The state "script_step" finished');
     expect(contextText(runner.contexts[2]!)).toContain("answer after script");
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     await ackTerminal(runner);
 
@@ -533,7 +533,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "script_step" },
+      decision: { state: "script_step" },
     });
     await waitFor(() =>
       events.some(
@@ -557,7 +557,7 @@ describe("TurnRunner active turns", () => {
     expect(lastUserText(runner.contexts[2]!)).toContain('The state "script_step" finished');
     expect(contextText(runner.contexts[2]!)).toContain("answer after script");
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     await ackTerminal(runner);
 
@@ -575,7 +575,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "script_step" },
+      decision: { state: "script_step" },
     });
     await waitFor(() =>
       events.some(
@@ -598,7 +598,7 @@ describe("TurnRunner active turns", () => {
     expect(lastUserText(runner.contexts[2]!)).toContain('The state "script_step" finished');
     expect(contextText(runner.contexts[2]!)).toContain("steer after script");
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     await ackTerminal(runner);
 
@@ -616,7 +616,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "script_step" },
+      decision: { state: "script_step" },
     });
     await waitFor(() =>
       events.some(
@@ -633,14 +633,13 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.contexts.length >= 2);
     runner.completeNextToolCall("select_state_machine_state", {
       decision: {
-        kind: "run_state",
         state: "script_step",
         override: { kind: "script", state: { command: "printf '{\"replacement\":true}'" } },
       },
     });
     await waitFor(() => runner.contexts.length >= 3);
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     await ackTerminal(runner);
 
@@ -665,7 +664,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "script_step" },
+      decision: { state: "script_step" },
     });
     await waitFor(() =>
       events.some(
@@ -695,14 +694,13 @@ describe("TurnRunner active turns", () => {
     expect(lastUserText(runner.contexts[2]!)).toContain("second steer during parent prompt");
     runner.completeNextToolCall("select_state_machine_state", {
       decision: {
-        kind: "run_state",
         state: "script_step",
         override: { kind: "script", state: { command: "printf '{\"replacement\":true}'" } },
       },
     });
     await waitFor(() => runner.contexts.length >= 4);
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     await ackTerminal(runner);
 
@@ -725,7 +723,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "poll_reply" },
+      decision: { state: "poll_reply" },
     });
     await waitFor(() =>
       events.some(
@@ -757,7 +755,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "poll_reply" },
+      decision: { state: "poll_reply" },
     });
     await waitFor(() =>
       events.some(
@@ -795,7 +793,7 @@ describe("TurnRunner active turns", () => {
     });
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "poll_reply" },
+      decision: { state: "poll_reply" },
     });
 
     const [turnTerminal, wakeTerminal] = await Promise.all([turn, wake]);
@@ -814,7 +812,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "poll_reply" },
+      decision: { state: "poll_reply" },
     });
     await waitFor(() =>
       events.some(
@@ -863,7 +861,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "poll_reply" },
+      decision: { state: "poll_reply" },
     });
     await waitFor(() =>
       events.some(
@@ -887,7 +885,7 @@ describe("TurnRunner active turns", () => {
     expect(lastUserText(runner.contexts[2]!)).toContain('The state "poll_reply" finished');
     expect(contextText(runner.contexts[2]!)).toContain("agent saw user before continuation");
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     await ackTerminal(runner);
 
@@ -1010,7 +1008,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "state_agent" },
+      decision: { state: "state_agent" },
     });
     await waitFor(() =>
       events.some(
@@ -1033,7 +1031,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNext("state-agent answer response");
     await waitFor(() => runner.contexts.length >= 4);
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     await ackTerminal(runner);
 
@@ -1051,7 +1049,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "state_agent" },
+      decision: { state: "state_agent" },
     });
     await waitFor(() =>
       events.some(
@@ -1070,7 +1068,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNext("state-agent response");
     await waitFor(() => runner.contexts.length >= 3);
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     await ackTerminal(runner);
     await turn;
@@ -1103,7 +1101,7 @@ describe("TurnRunner active turns", () => {
     });
     await waitFor(() => runner.pendingStreams.length === 1);
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "state_agent" },
+      decision: { state: "state_agent" },
     });
     await waitFor(() => runner.contexts.length >= 2);
 
@@ -1112,7 +1110,7 @@ describe("TurnRunner active turns", () => {
     runner.completeNext("state-agent rerun");
     await waitFor(() => runner.contexts.length >= 3);
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     await ackTerminal(runner);
     await turn;
@@ -1127,7 +1125,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.pendingStreams.length === 1);
 
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "run_state", state: "state_agent" },
+      decision: { state: "state_agent" },
     });
     await waitFor(() =>
       events.some(
@@ -1152,7 +1150,7 @@ describe("TurnRunner active turns", () => {
     await waitFor(() => runner.contexts.length >= 4);
     expect(lastUserText(runner.contexts[3]!)).toContain('The state "state_agent" finished');
     runner.completeNextToolCall("select_state_machine_state", {
-      decision: { kind: "terminal", state: "done" },
+      decision: { state: "done" },
     });
     await ackTerminal(runner);
 

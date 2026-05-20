@@ -183,13 +183,12 @@ describe("tool formatters > state machine", () => {
     expect(formatted.clamp).toBe(false);
   });
 
-  test("select_state_machine_state renders verb, target, reason, and input", () => {
+  test("select_state_machine_state renders target state, reason, and input", () => {
     const formatted = formatToolBlock({
       toolName: "select_state_machine_state",
       status: "completed",
       input: {
         decision: {
-          kind: "run_state",
           state: "wait-for-ci",
           reason: "verify completed; polling CI",
           input: { runId: "12345" },
@@ -198,29 +197,32 @@ describe("tool formatters > state machine", () => {
       output: [{ type: "text", text: "echo" }],
       mode: "live",
     });
-    expect(formatted.header).toBe("→ run: wait-for-ci");
+    expect(formatted.header).toBe("→ wait-for-ci");
     expect(formatted.body).toContain("reason: verify completed; polling CI");
     expect(formatted.body).toContain("input:");
     expect(formatted.body).toContain("runId");
     expect(formatted.result).toBeUndefined();
   });
 
-  test("select_state_machine_state maps terminal and fail kinds to friendly verbs", () => {
+  test("select_state_machine_state renders the auto-injected `failed` terminal with its reason", () => {
+    // No separate fail verb: failure is just selecting the auto-injected
+    // `failed` terminal by name, optionally with a reason that surfaces in
+    // the body.
     const finalize = formatToolBlock({
       toolName: "select_state_machine_state",
       status: "completed",
-      input: { decision: { kind: "terminal", state: "done" } },
+      input: { decision: { state: "done" } },
       mode: "live",
     });
-    expect(finalize.header).toBe("→ finalize: done");
+    expect(finalize.header).toBe("→ done");
 
     const fail = formatToolBlock({
       toolName: "select_state_machine_state",
       status: "completed",
-      input: { decision: { kind: "fail", reason: "unrecoverable" } },
+      input: { decision: { state: "failed", reason: "unrecoverable" } },
       mode: "live",
     });
-    expect(fail.header).toBe("→ fail");
+    expect(fail.header).toBe("→ failed");
     expect(fail.body).toContain("reason: unrecoverable");
   });
 

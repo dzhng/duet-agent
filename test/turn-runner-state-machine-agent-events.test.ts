@@ -31,7 +31,7 @@ class StateMachineAgentEventTurnRunner extends TurnRunner {
       return {
         control: {
           type: "select_state_machine_state",
-          decision: { kind: "run_state", state: "research_prospect" },
+          decision: { state: "research_prospect" },
         },
         outcome: {
           type: "complete",
@@ -241,7 +241,7 @@ class StateMachineUsageTurnRunner extends TurnRunner {
       return {
         control: {
           type: "select_state_machine_state",
-          decision: { kind: "run_state", state: "research_prospect" },
+          decision: { state: "research_prospect" },
         },
         outcome: {
           type: "complete",
@@ -351,7 +351,7 @@ class StateMachineOriginTurnRunner extends TurnRunner {
       return {
         control: {
           type: "select_state_machine_state",
-          decision: { kind: "run_state", state: "research_prospect" },
+          decision: { state: "research_prospect" },
         },
         outcome: {
           type: "complete",

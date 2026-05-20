@@ -28,7 +28,7 @@ describe("state-machine active output", () => {
     });
     controller.startSession({ prompt: "Run agent.", definition, currentState: "research" });
 
-    const run = controller.runDecision({ kind: "run_state", state: "research" });
+    const run = controller.runDecision({ state: "research" });
     try {
       await waitFor(() => controller.hasActiveWork());
 
@@ -60,7 +60,7 @@ describe("state-machine active output", () => {
     const controller = createController();
     controller.startSession({ prompt: "Run script.", definition, currentState: "send" });
 
-    const run = controller.runDecision({ kind: "run_state", state: "send" });
+    const run = controller.runDecision({ state: "send" });
     try {
       await waitFor(() => {
         const output = controller.getActiveOutput();
@@ -99,7 +99,7 @@ describe("state-machine active output", () => {
     const controller = createController();
     controller.startSession({ prompt: "Poll.", definition, currentState: "wait" });
 
-    const run = controller.runDecision({ kind: "run_state", state: "wait" });
+    const run = controller.runDecision({ state: "wait" });
     try {
       await waitFor(() => {
         const output = controller.getActiveOutput();

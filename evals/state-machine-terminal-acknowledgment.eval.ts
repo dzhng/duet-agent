@@ -60,9 +60,8 @@ describe("state-machine terminal acknowledgment", () => {
              named "primary_done" with status "completed". Use
              firstState "noop" so the runner starts noop immediately
              after the create call. After "noop" completes, select
-             "primary_done" via select_state_machine_state with
-             decision.kind set to "terminal" (not "run_state") since
-             primary_done is a terminal state.
+             "primary_done" via select_state_machine_state — selecting
+             a terminal state by name is how you end the machine.
           2. The runner will then wake you with the terminal details for
              "primary_done". On that SM1 acknowledgment turn, create a
              second state machine named "followup_after_terminal" whose
@@ -120,14 +119,12 @@ describe("state-machine terminal acknowledgment", () => {
       // call.
       const selectCalls = toolCalls.filter((call) => call.name === "select_state_machine_state");
       expect(selectCalls.length).toBe(1);
-      // The lone select must terminate SM1 — either via decision.kind
-      // "terminal" (canonical) or "run_state" pointing at the terminal
-      // state (functionally equivalent, since the controller routes
-      // either kind through runTerminalState). Both forms are accepted
-      // by the API, so the eval accepts either as well.
+      // The lone select must terminate SM1 by naming the terminal state
+      // directly — there is no separate kind verb to disambiguate, the
+      // dispatch is driven entirely by the state's own kind in the
+      // definition (`primary_done` is the terminal here).
       const selectDecision = selectCalls[0]?.input?.decision;
       expect(selectDecision?.state).toBe("primary_done");
-      expect(["terminal", "run_state"]).toContain(selectDecision?.kind);
 
       expect(terminal.type).toBe("complete");
       if (terminal.type === "complete") {

@@ -372,10 +372,15 @@ type ToolStateMachineDefinition = CreateDefinitionParams["definition"];
 const selectStateSchema = Type.Object({
   decision: Type.Object(
     {
-      kind: Type.Union([Type.Literal("run_state"), Type.Literal("terminal"), Type.Literal("fail")]),
-      state: Type.Optional(Type.String({ description: "State name to run or finalize." })),
+      state: Type.String({
+        description:
+          "Name of the state to advance to. Must exactly match one of the names declared in the active definition (including the auto-injected `failed` and `cancelled` terminal escape hatches). Selecting a terminal state ends the state machine.",
+      }),
       reason: Type.Optional(
-        Type.String({ description: "Reason for a terminal or failure decision." }),
+        Type.String({
+          description:
+            "Free-form explanation attached to the resulting terminal when `state` names a terminal state. Ignored for non-terminal states.",
+        }),
       ),
       override: Type.Optional(stateOverrideSchema),
       input: Type.Optional(
@@ -387,13 +392,10 @@ const selectStateSchema = Type.Object({
     },
     {
       description:
-        "State transition decision. Use input when selecting states with inputSchema or {{ input.foo }} templates.",
+        "State transition decision. Use `input` when selecting states with inputSchema or {{ input.foo }} templates; `reason` carries through to terminal states.",
     },
   ),
 });
-
-type SelectStateParams = Static<typeof selectStateSchema>;
-type ToolRunnerDecision = SelectStateParams["decision"];
 
 export interface CurrentStateMachineStateResult {
   currentState?: string;
@@ -408,15 +410,17 @@ export interface CurrentStateMachineStateResult {
   history: StateMachineSessionEvent[];
 }
 
-export type StateMachineRunnerDecision =
-  | (ToolRunnerDecision & {
-      kind: "run_state";
-      state: string;
-      override?: StateMachineStateOverride;
-      input?: Record<string, unknown>;
-    })
-  | (ToolRunnerDecision & { kind: "terminal"; state: string })
-  | (ToolRunnerDecision & { kind: "fail"; reason: string });
+// A runner decision is simply "go to this state, optionally with these
+// transition extras". The state's own `kind` (agent/script/poll/timer/terminal)
+// in the definition drives dispatch; the decision does not need to restate it.
+// To end the machine in failure, select the auto-injected `failed` terminal
+// (and optionally attach a `reason`) — there is no separate fail verb.
+export interface StateMachineRunnerDecision {
+  state: string;
+  reason?: string;
+  override?: StateMachineStateOverride;
+  input?: Record<string, unknown>;
+}
 
 export type TurnRunnerControlResult =
   | { type: "none" }
@@ -948,16 +952,21 @@ function createSelectStateTool(
     name: "select_state_machine_state",
     label: "Select state machine state",
     description: dedent`
-      Select the next state-machine state, terminal state, or failure outcome. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt.
+      Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt.
 
       Carry forward what the orchestrator now knows. Each agent state runs in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — it only sees the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: the sub-agent has no way to read those findings.
 
-      Selecting a terminal state (or passing decision.kind: "fail") ends the state machine. You will then be woken once more for a terminal acknowledgment turn — the runner re-prompts you with the terminal details (state, status, reason) so you can reply to the user in plain text and, if appropriate, kick off a follow-up state machine via create_state_machine_definition. Do not call select_state_machine_state on that acknowledgment turn; the state machine is already terminal.
+      Selecting a terminal state ends the state machine. Every definition is guaranteed to have the auto-injected \`failed\` and \`cancelled\` terminals available, so to fail or cancel, just select one of those by name and optionally attach a \`reason\`. After a terminal you will be woken once more for an acknowledgment turn — the runner re-prompts you with the terminal details (state, status, reason) so you can reply to the user in plain text and, if appropriate, kick off a follow-up state machine via create_state_machine_definition. Do not call select_state_machine_state on that acknowledgment turn; the state machine is already terminal.
     `,
     parameters: selectStateSchema,
     async execute(_toolCallId, params) {
-      const decision = normalizeRunnerDecision(params.decision);
       const definition = getDefinition?.();
+      const decision: StateMachineRunnerDecision = {
+        state: params.decision.state,
+        reason: params.decision.reason,
+        override: params.decision.override as StateMachineStateOverride | undefined,
+        input: params.decision.input,
+      };
       assertValidSelectedState(decision, definition);
 
       const result: TurnRunnerControlResult = { type: "select_state_machine_state", decision };
@@ -1006,9 +1015,7 @@ function assertValidSelectedState(
   decision: StateMachineRunnerDecision,
   definition: StateMachineDefinition | undefined,
 ): void {
-  if (decision.kind === "fail" || !definition) {
-    return;
-  }
+  if (!definition) return;
 
   const validStates = definition.states.map((state) => state.name);
   const selectedState = definition.states.find((state) => state.name === decision.state);
@@ -1016,37 +1023,16 @@ function assertValidSelectedState(
     throw new Error(`Unknown state: ${decision.state}. Valid states: ${validStates.join(", ")}`);
   }
 
-  if (decision.kind !== "run_state") return;
+  // Terminal states don't accept override or per-transition input — they
+  // just record their status and reason. Skip the override/input checks so
+  // a caller selecting `failed` (or any other terminal) with an empty
+  // decision is always accepted.
+  if (selectedState.kind === "terminal") return;
 
   const effectiveState = applyStateOverride(selectedState, decision.override);
   assertValidStateInputSchema(effectiveState);
   assertValidStateSchedule(effectiveState);
   assertValidStateInput(effectiveState, decision.input);
-}
-
-function normalizeRunnerDecision(decision: ToolRunnerDecision): StateMachineRunnerDecision {
-  if (decision.kind === "fail") {
-    return {
-      kind: "fail",
-      reason: decision.reason ?? "No available state can make progress.",
-    };
-  }
-
-  if (decision.kind === "terminal") {
-    return {
-      kind: "terminal",
-      state: decision.state ?? "",
-      reason: decision.reason,
-    };
-  }
-
-  return {
-    kind: "run_state",
-    state: decision.state ?? "",
-    reason: decision.reason,
-    override: decision.override as StateMachineStateOverride | undefined,
-    input: decision.input,
-  };
 }
 
 function assertValidStateInput(state: StateMachineState, input: unknown): void {

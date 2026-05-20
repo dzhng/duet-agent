@@ -32,7 +32,7 @@ describe("poll-state success contract", () => {
     const controller = createController();
     controller.startSession({ prompt: "Poll.", definition, currentState: "check" });
 
-    const result = await controller.runDecision({ kind: "run_state", state: "check" });
+    const result = await controller.runDecision({ state: "check" });
     expect(result.type).toBe("state_completed");
     if (result.type === "state_completed") {
       expect(result.stateName).toBe("check");
@@ -57,7 +57,7 @@ describe("poll-state success contract", () => {
     const controller = createController();
     controller.startSession({ prompt: "Poll.", definition, currentState: "check" });
 
-    const result = await controller.runDecision({ kind: "run_state", state: "check" });
+    const result = await controller.runDecision({ state: "check" });
     expect(result.type).toBe("state_completed");
     if (result.type === "state_completed") {
       expect(result.output).toMatchObject({
@@ -85,7 +85,7 @@ describe("poll-state success contract", () => {
     const controller = createController();
     controller.startSession({ prompt: "Poll.", definition, currentState: "check" });
 
-    const result = await controller.runDecision({ kind: "run_state", state: "check" });
+    const result = await controller.runDecision({ state: "check" });
     expect(result.type).toBe("state_completed");
     if (result.type === "state_completed") {
       expect(result.output).toMatchObject({
@@ -113,7 +113,7 @@ describe("poll-state success contract", () => {
     controller.startSession({ prompt: "Poll.", definition, currentState: "check" });
 
     const before = Date.now();
-    const result = await controller.runDecision({ kind: "run_state", state: "check" });
+    const result = await controller.runDecision({ state: "check" });
     expect(result.type).toBe("sleep");
     if (result.type === "sleep") {
       expect(result.wakeAt).toBeGreaterThanOrEqual(before + 60_000 - 5);
@@ -143,7 +143,7 @@ describe("poll-state success contract", () => {
         definition: baseDefinition("exit 7"),
         currentState: "check",
       });
-      const result = await controller.runDecision({ kind: "run_state", state: "check" });
+      const result = await controller.runDecision({ state: "check" });
       expect(result.type).toBe("state_completed");
     }
 
@@ -154,7 +154,7 @@ describe("poll-state success contract", () => {
         definition: baseDefinition("exit 0"),
         currentState: "check",
       });
-      const result = await controller.runDecision({ kind: "run_state", state: "check" });
+      const result = await controller.runDecision({ state: "check" });
       expect(result.type).toBe("sleep");
     }
   });
