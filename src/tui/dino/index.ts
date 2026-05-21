@@ -10,7 +10,7 @@
 //                       followed by a grace gap. No-op when collapsed or
 //                       when no run is in progress.
 //   - handleKey(key)  : input router forwards keystrokes here while the
-//                       panel is expanded and the agent is busy. Returns
+//                       panel is expanded and game-focused. Returns
 //                       true when the key was consumed.
 //   - destroy()       : tear down the tick timer; persist high score.
 
@@ -64,10 +64,6 @@ export interface DinoPanel {
   resume(): void;
   /** Agent flipped to needs-user → freeze the world. */
   freeze(): void;
-  /** Track the agent's busy/idle signal so Ctrl-G is only meaningful
-   *  while the agent is working — at rest the panel takes no vertical
-   *  space and the toggle is a no-op. */
-  setAgentBusy(busy: boolean): void;
   /** Route a keystroke to the game. Returns true when consumed. */
   handleKey(keyName: string | undefined): boolean;
   /** Persist high score and stop timers. */
@@ -76,11 +72,9 @@ export interface DinoPanel {
 
 export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   const { renderer } = opts;
-  // The panel is collapsed by default and re-collapses every time the
-  // agent goes idle. "Hint only" is the starting point for every busy
-  // cycle; if the user wants the game they toggle it open each time.
-  // We do not persist expanded state across sessions or across busy
-  // cycles — the simpler contract is more predictable.
+  // The panel is collapsed by default. Users open it explicitly with
+  // Ctrl-G; we do not persist expanded state across sessions, so each
+  // fresh `duet` starts with the game out of the way.
   let expanded = false;
   // When expanded, tracks whether game keys (space, ArrowUp) belong to
   // the dino or to the composer. Defaults to true on every expand so
@@ -94,10 +88,6 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   // input (so resume runs the 3-2-1 + grace gap) vs. a manual collapse
   // (so re-expand resumes instantly per the spec).
   let frozenByAgent = false;
-  // Mirrors the StatusController running signal. Ctrl-G is only
-  // accepted while this is true; at idle the panel is invisible and
-  // reserves no rows.
-  let agentBusy = false;
   let ticker: ReturnType<typeof setInterval> | undefined;
   // Last persisted high score, so we only write on improvement. Hydrated
   // from disk at construction time.
@@ -147,10 +137,10 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   }
 
   function toggle(): void {
-    // The dino panel is a "while-you-wait" affordance: it only exists
-    // while the agent is actually busy. At rest there is no hint and no
-    // toggle — Ctrl-G is a no-op so a fresh `duet` session is clean.
-    if (!agentBusy) return;
+    // Ctrl-G is a user-driven affordance: it works whether or not the
+    // agent is currently busy. The composer placeholder advertises
+    // "hit Ctrl-G if you're bored", so an at-rest toggle has to bring
+    // up a playable game instead of silently no-op'ing.
     // Three-step cycle so the user can toggle keystroke ownership
     // without losing what they typed:
     //   collapsed              → expanded + game-focused
@@ -220,23 +210,6 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
     paint();
   }
 
-  function setAgentBusy(busy: boolean): void {
-    if (agentBusy === busy) return;
-    agentBusy = busy;
-    // The game is strictly opt-in: the panel never auto-expands. The
-    // Ctrl-G tease lives in the input placeholder, and the user has to
-    // press it themselves to bring up the playfield.
-    // When the agent goes idle, snap the panel back to collapsed so
-    // the next busy cycle starts invisible rather than re-appearing
-    // already expanded. The user opts back in by pressing Ctrl-G.
-    if (!busy) {
-      expanded = false;
-      gameFocused = true;
-    }
-    syncVisibility();
-    paint();
-  }
-
   function handleKey(keyName: string | undefined): boolean {
     if (!expanded) return false;
     const action = actionForKey(state, keyName);
@@ -291,19 +264,13 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
   }
 
   function syncVisibility(): void {
-    const visibleRows = panelVisibleRowCount(expanded, agentBusy);
+    const visibleRows = panelVisibleRowCount(expanded);
     for (let i = 0; i < rows.length; i++) {
       rows[i].visible = i < visibleRows;
     }
   }
 
   function paint(): void {
-    // At rest the panel is invisible; skip painting entirely so the row
-    // contents stay empty and no chrome leaks into the layout.
-    if (!agentBusy) {
-      for (const row of rows) row.content = "";
-      return;
-    }
     if (expanded) {
       const frame = renderExpanded(state, gameFocused);
       for (let i = 0; i < rows.length; i++) {
@@ -323,7 +290,6 @@ export function createDinoPanel(opts: DinoPanelOptions): DinoPanel {
     toggle,
     resume,
     freeze,
-    setAgentBusy,
     handleKey,
     destroy,
   };

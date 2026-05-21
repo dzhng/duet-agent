@@ -46,12 +46,11 @@ export interface LayoutRefs {
   status: TextRenderable;
   /** Single-line hint row showing the active keystrokes (Enter / Esc / copy). */
   hint: TextRenderable;
-  /** Mount point for the dino "while-you-wait" game panel. Sits between
-   *  the hint row and the autocomplete pickers so it never overlaps the
-   *  input box. The dino factory adds its own rows into this container;
-   *  layout doesn't reserve a height because the panel sizes itself from
-   *  its children (12 rows when expanded, 1 when collapsed, 0 when
-   *  never opened). */
+  /** Mount point for the dino game panel. Sits between the hint row
+   *  and the autocomplete pickers so it never overlaps the input box.
+   *  The dino factory adds its own rows into this container; layout
+   *  doesn't reserve a height because the panel sizes itself from its
+   *  children (12 rows when expanded, 0 when collapsed). */
   dinoPanel: BoxRenderable;
   /** Slash + skill autocomplete panel; toggled via `visible` from the autocomplete controller. */
   skillAutocompletePanel: BoxRenderable;

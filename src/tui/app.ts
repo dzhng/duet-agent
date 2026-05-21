@@ -211,16 +211,13 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     },
   });
 
-  // Dino panel: a "while-you-wait" mini-game that lives below the input
-  // box. The panel is opt-in via Ctrl-G; the agent's busy/idle transitions
-  // drive its freeze/resume so the world automatically pauses the moment
-  // the user is needed.
+  // Dino panel: an opt-in mini-game that lives below the input box.
+  // Ctrl-G toggles it at any time; the agent's busy/idle transitions
+  // drive freeze/resume so the world automatically pauses the moment
+  // the user is needed and runs the 3-2-1 countdown when work resumes.
   const dinoPanel = createDinoPanel({ renderer });
   ui.dinoPanel.add(dinoPanel.view);
   const unsubscribeDino = statusController.onRunningChange((running) => {
-    // Surface the collapsed hint row only while the agent is working, and
-    // drive the freeze/resume lifecycle off the same signal.
-    dinoPanel.setAgentBusy(running);
     if (running) dinoPanel.resume();
     else dinoPanel.freeze();
   });

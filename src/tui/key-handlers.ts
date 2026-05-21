@@ -38,7 +38,7 @@ export interface KeyHandlerDeps {
   onEscape(): void;
   /** Dispatch the composer text with behavior:"steer" (Ctrl+Enter). */
   onSteer(): void;
-  /** Dino "while-you-wait" panel. The panel always owns Ctrl-G, which
+  /** Dino mini-game panel. The panel always owns Ctrl-G, which
    *  cycles collapsed → expanded+game-focused → expanded+composer-focused
    *  → collapsed. The only game keystroke is ArrowUp; the spacebar is
    *  always the composer's so a half-typed follow-up can coexist with

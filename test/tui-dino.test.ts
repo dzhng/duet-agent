@@ -225,20 +225,18 @@ describe("dino responsive width", () => {
     expect(state.obstacles[0].x).toBeGreaterThan(40);
   });
 
-  test("panel is invisible while the agent is idle regardless of expanded", () => {
-    // Idle: zero rows visible in both collapsed and expanded shapes. A
-    // fresh `duet` session reserves no vertical space and shows no hint.
-    expect(panelVisibleRowCount(false, false)).toBe(0);
-    expect(panelVisibleRowCount(true, false)).toBe(0);
+  test("collapsed panel reserves zero rows", () => {
+    // Collapsed is always invisible: the Ctrl-G tease lives in the input
+    // placeholder, not in a reserved row.
+    expect(panelVisibleRowCount(false)).toBe(COLLAPSED_ROWS);
+    expect(COLLAPSED_ROWS).toBe(0);
   });
 
-  test("collapsed panel stays invisible even when the agent is busy; expanded shows the full game", () => {
-    // Ctrl-G is now strictly opt-in. The collapsed shape reserves no
-    // rows so the transcript bottom stays aligned with the sidebar's
-    // bottom regardless of agent state.
-    expect(panelVisibleRowCount(false, true)).toBe(COLLAPSED_ROWS);
-    expect(panelVisibleRowCount(false, true)).toBe(0);
-    expect(panelVisibleRowCount(true, true)).toBe(EXPANDED_ROWS);
+  test("expanded panel shows the full game whether the agent is busy or idle", () => {
+    // Ctrl-G must work at any time — the placeholder advertises "hit
+    // Ctrl-G if you're bored", so at-rest toggles have to bring up the
+    // game instead of silently no-op'ing.
+    expect(panelVisibleRowCount(true)).toBe(EXPANDED_ROWS);
   });
 
   test("expandResumeKind picks countdown after an agent freeze and run after a manual collapse", () => {
