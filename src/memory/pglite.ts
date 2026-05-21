@@ -2,15 +2,18 @@ import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/vector";
 import {
   closeSync,
+  cpSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { dirname, resolve as resolvePath, join } from "node:path";
+import { basename, dirname, resolve as resolvePath, join } from "node:path";
 
 /**
  * pgvector ships with PGlite as an opt-in WASM extension. We load it
@@ -82,10 +85,33 @@ export const DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS = 30_000;
  * Total wall-time we'll spend retrying opens on a structurally-intact cluster before
  * giving up and quarantining. Long enough to outlast a slow `npm install -g` rewrite
  * of `node_modules` (the only known transient failure mode that mimics corruption,
- * routinely 5-12s on cold caches), short enough that a genuinely WAL-corrupted
- * dataDir still quarantines within a tolerable startup window.
+ * routinely 5-12s on cold caches), short enough to stay well under a typical agent
+ * turn so a genuinely WAL-corrupted dataDir surfaces as a quarantine event in the
+ * same session instead of disappearing into a longer-than-the-turn poll.
  */
-const RETRY_BEFORE_QUARANTINE_BUDGET_MS = 15_000;
+const RETRY_BEFORE_QUARANTINE_BUDGET_MS = 10_000;
+
+/**
+ * Number of rotating on-disk backups we keep alongside the live dataDir. Each new
+ * startup snapshots the dir (best-effort) so we always have a recent known-good
+ * cluster to fall back on if PGlite can no longer open the current one. Five is
+ * enough to span a few days of normal use without bloating `~/.duet`.
+ */
+const MAX_BACKUPS = 5;
+
+/**
+ * Filename prefix used for rotating on-disk backups. Siblings to the live `memory.db`
+ * directory, suffixed with an ISO timestamp so newest-first sort is plain lexicographic.
+ */
+const BACKUP_SUFFIX_PREFIX = ".backup-";
+
+/**
+ * Skip taking a startup snapshot if the most recent backup is younger than this.
+ * MemorySession refcount-opens many times per turn; without dedupe we'd burn inodes
+ * snapshotting on every acquire. Picked to be much shorter than typical inter-session
+ * gaps so a fresh duet launch after even a brief pause still gets a new backup.
+ */
+const BACKUP_DEDUPE_WINDOW_MS = 5 * 60 * 1_000;
 
 /**
  * Backoff schedule between retry attempts during the quarantine grace window.
@@ -230,6 +256,11 @@ export async function openPGliteHoldingLock(
   installExitCleanup();
   mkdirSync(dirname(path), { recursive: true });
   clearStalePostmasterLock(path);
+  // Snapshot the on-disk cluster before any open attempt so we always have a
+  // recent known-good copy to fall back on if PGlite later refuses to open the
+  // live dir. Best-effort: copy errors must never block a startup, and the
+  // dedupe window keeps refcount-opens from burning inodes on every acquire.
+  snapshotForBackup(path);
 
   try {
     const db = await openAndProbe(path, options.init);
@@ -259,22 +290,42 @@ export async function openPGliteHoldingLock(
       const opened = await retryOpenWhileIntact(path, options.init);
       if (opened) return { db: opened, lockPath };
       // Every attempt within the grace window failed — treat as genuine
-      // corruption and fall through to quarantine using the original
-      // error as the recovery cause.
+      // corruption and fall through to recovery using the original
+      // error as the cause.
     }
 
     // Release the lock before renaming the directory aside — the lock
     // file lives inside that directory and would be moved with it.
     releaseOpenLock(lockPath);
 
-    const backupPath = quarantineDataDirectory(path);
+    // Before quarantining + starting fresh, try restoring from rotating backups.
+    // Walk newest-first; each candidate is verified by actually opening it.
+    // On success the unreadable live dir is quarantined and the restored
+    // backup takes its place, so the user keeps their memory instead of
+    // starting from an empty db.
+    const restored = await tryRestoreFromBackup(path, options.init, error);
+    if (restored) {
+      if (options.onRecover) {
+        options.onRecover({ backupPath: restored.quarantinedPath, cause: error });
+      } else {
+        const reason = error instanceof Error ? error.message || error.name : String(error);
+        console.warn(
+          `[duet] memory database at ${path} could not be opened (${reason}). ` +
+            `Restored from backup ${restored.backupSource}; ` +
+            `the unreadable copy was moved to ${restored.quarantinedPath}.`,
+        );
+      }
+      return { db: restored.db, lockPath: restored.lockPath };
+    }
+
+    const quarantinedPath = quarantineDataDirectory(path);
     if (options.onRecover) {
-      options.onRecover({ backupPath, cause: error });
+      options.onRecover({ backupPath: quarantinedPath, cause: error });
     } else {
       const reason = error instanceof Error ? error.message || error.name : String(error);
       console.warn(
         `[duet] memory database at ${path} could not be opened (${reason}). ` +
-          `Moved aside to ${backupPath} and starting fresh.`,
+          `Moved aside to ${quarantinedPath} and starting fresh.`,
       );
     }
 
@@ -422,6 +473,141 @@ export function looksLikeIntactPGliteDirectory(path: string): boolean {
   const version = tryReadFile(versionFile);
   if (!version || version.trim().length === 0) return false;
   return REQUIRED_PGLITE_SUBDIRS.every((sub) => isExistingDirectory(join(path, sub)));
+}
+
+/**
+ * List rotating backup directories that sit alongside the live dataDir.
+ * Returns absolute paths sorted newest-first by lexicographic timestamp.
+ * Exported for testing.
+ */
+export function listBackups(path: string): string[] {
+  const dir = dirname(path);
+  const base = basename(path);
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const prefix = `${base}${BACKUP_SUFFIX_PREFIX}`;
+  return entries
+    .filter((name) => name.startsWith(prefix))
+    .map((name) => join(dir, name))
+    .sort()
+    .reverse();
+}
+
+/**
+ * Take a best-effort snapshot of `path` for later restoration. No-ops when the
+ * dir is not structurally intact (nothing useful to snapshot) or when a recent
+ * backup already exists within the dedupe window (MemorySession refcount-opens
+ * would otherwise burn inodes on every acquire). Prunes to `MAX_BACKUPS` newest.
+ * Errors are swallowed: a snapshot failure must never block startup.
+ */
+function snapshotForBackup(path: string): void {
+  try {
+    if (!looksLikeIntactPGliteDirectory(path)) return;
+    const existing = listBackups(path);
+    if (existing.length > 0) {
+      const newest = existing[0];
+      if (newest) {
+        try {
+          const age = Date.now() - statSync(newest).mtimeMs;
+          if (age < BACKUP_DEDUPE_WINDOW_MS) return;
+        } catch {
+          // If we can't stat the newest backup, fall through and take a new one.
+        }
+      }
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backup = `${path}${BACKUP_SUFFIX_PREFIX}${stamp}`;
+    // `cp -r` semantics; on APFS this uses clonefile so 60MB is near-instant.
+    cpSync(path, backup, { recursive: true });
+    pruneOldBackups(path);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message || error.name : String(error);
+    console.warn(`[duet] could not snapshot memory db at ${path} for backup (${reason}).`);
+  }
+}
+
+function pruneOldBackups(path: string): void {
+  const backups = listBackups(path);
+  for (const stale of backups.slice(MAX_BACKUPS)) {
+    try {
+      rmSync(stale, { recursive: true, force: true });
+    } catch {
+      // Best-effort prune; the next startup will try again.
+    }
+  }
+}
+
+/**
+ * Try restoring `path` from the rotating backups, newest-first. For each
+ * candidate: move the unreadable live dir aside, move the backup into place,
+ * acquire a fresh open-lock, and verify by actually opening + probing the
+ * restored dir. Returns the opened db + the path the unreadable live dir was
+ * quarantined to on success. On failure rolls the swap back and tries the next
+ * backup. Returns undefined when no backup yields a readable db.
+ */
+async function tryRestoreFromBackup(
+  path: string,
+  init: ((db: PGlite) => Promise<void>) | undefined,
+  _cause: unknown,
+): Promise<
+  { db: PGlite; lockPath: string; backupSource: string; quarantinedPath: string } | undefined
+> {
+  const backups = listBackups(path);
+  for (const candidate of backups) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const quarantinedPath = `${path}.corrupted-${stamp}`;
+    try {
+      renameSync(path, quarantinedPath);
+    } catch {
+      // If we can't quarantine the live dir, no point continuing with this
+      // candidate or any other; surface to the caller's quarantine path.
+      return undefined;
+    }
+    try {
+      renameSync(candidate, path);
+    } catch {
+      // Swap back the live dir; try the next candidate.
+      try {
+        renameSync(quarantinedPath, path);
+      } catch {
+        // Live dir is now lost; let the caller's fresh-start path handle it.
+      }
+      continue;
+    }
+    try {
+      clearStalePostmasterLock(path);
+      const lockPath = acquireOpenLock(path);
+      try {
+        const db = await openAndProbe(path, init);
+        return { db, lockPath, backupSource: candidate, quarantinedPath };
+      } catch (verifyError) {
+        releaseOpenLock(lockPath);
+        throw verifyError;
+      }
+    } catch {
+      // This backup did not open either. Swap the original unreadable dir
+      // back into place so the next candidate (or the caller's fresh-start
+      // fallback) sees the same state we started with.
+      try {
+        renameSync(path, `${candidate}.failed-${Date.now()}`);
+      } catch {
+        // If we can't move the failed candidate aside, leave it; the next
+        // iteration's rename(path, quarantinedPath) will still succeed.
+      }
+      try {
+        renameSync(quarantinedPath, path);
+      } catch {
+        // Couldn't restore original state; bail and let caller quarantine.
+        return undefined;
+      }
+    }
+  }
+  return undefined;
 }
 
 /**

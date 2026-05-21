@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Restore ~/.duet/memory.db from the most recent memory.db.corrupted-* backup.
+# Restore ~/.duet/memory.db from the most recent rotating backup or, failing
+# that, the newest .corrupted-* snapshot duet wrote when it gave up opening
+# the live dir.
 #
 # Run this AFTER quitting every duet CLI. It will refuse to run if anything
 # still holds the open-lock on the current memory.db.
@@ -7,10 +9,19 @@ set -euo pipefail
 
 DUET_DIR="$HOME/.duet"
 CURRENT="$DUET_DIR/memory.db"
-RESTORE_SRC="$(ls -d "$DUET_DIR"/memory.db.corrupted-* 2>/dev/null | sort | tail -1 || true)"
+
+# Prefer rotating .backup-* snapshots (taken on every clean startup) over
+# .corrupted-* (quarantined unreadable copies). Within each pool, newest first.
+NEWEST_BACKUP="$(ls -d "$DUET_DIR"/memory.db.backup-* 2>/dev/null | sort | tail -1 || true)"
+NEWEST_QUARANTINE="$(ls -d "$DUET_DIR"/memory.db.corrupted-* 2>/dev/null | sort | tail -1 || true)"
+if [[ -n "$NEWEST_BACKUP" ]]; then
+  RESTORE_SRC="$NEWEST_BACKUP"
+else
+  RESTORE_SRC="$NEWEST_QUARANTINE"
+fi
 
 if [[ -z "$RESTORE_SRC" ]]; then
-  echo "no memory.db.corrupted-* backup found under $DUET_DIR" >&2
+  echo "no memory.db.backup-* or memory.db.corrupted-* found under $DUET_DIR" >&2
   exit 1
 fi
 

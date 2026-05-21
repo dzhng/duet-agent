@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearStalePostmasterLock,
   isExternalAssetError,
+  listBackups,
   looksLikeIntactPGliteDirectory,
   MemoryLockTimeoutError,
   openPGlite,
@@ -324,6 +325,142 @@ describe("openPGlite quarantine guard", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+});
+
+describe("startup backup snapshots", () => {
+  // Helper: an opened-and-cleanly-closed PGlite cluster ready to be reopened.
+  async function seedRealCluster(dataDir: string): Promise<void> {
+    const db = await openPGlite(dataDir);
+    await db.close();
+  }
+
+  testIfDocker("takes one snapshot per startup window when the cluster is intact", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+    try {
+      const dataDir = join(tempDir, "memory.db");
+      await seedRealCluster(dataDir);
+
+      // First reopen after the seed-close should snapshot; second reopen
+      // within the dedupe window should NOT add another snapshot, so
+      // refcount-opens during a single session don't burn inodes.
+      const a = await openPGlite(dataDir);
+      await a.close();
+      const afterFirst = listBackups(dataDir);
+      expect(afterFirst).toHaveLength(1);
+
+      const b = await openPGlite(dataDir);
+      await b.close();
+      const afterSecond = listBackups(dataDir);
+      expect(afterSecond).toEqual(afterFirst);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker("prunes to the five newest backups", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+    try {
+      const dataDir = join(tempDir, "memory.db");
+      await seedRealCluster(dataDir);
+
+      // Plant six pre-existing backups with monotonically increasing
+      // timestamps. Age them on disk so the dedupe window does not
+      // suppress the next real snapshot — the new snapshot becomes the
+      // seventh and should leave exactly MAX_BACKUPS (5) on disk, with
+      // the four oldest pre-planted dirs pruned.
+      const ancient = new Date("2026-01-01T00:00:00Z");
+      for (let i = 0; i < 6; i++) {
+        const stamp = `2026-01-0${i + 1}T00-00-00-000Z`;
+        const dir = `${dataDir}.backup-${stamp}`;
+        mkdirSync(dir);
+        writeFileSync(join(dir, "marker"), String(i), "utf8");
+        utimesSync(dir, ancient, ancient);
+      }
+
+      const db = await openPGlite(dataDir);
+      await db.close();
+
+      const remaining = listBackups(dataDir);
+      expect(remaining).toHaveLength(5);
+      // Newest-first — the just-taken snapshot should lead the list.
+      const newest = remaining[0]!;
+      expect(newest.startsWith(`${dataDir}.backup-`)).toBe(true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  // The corruption-recovery path: a deterministic init failure on a
+  // structurally intact cluster used to quarantine and start from an empty db.
+  // Now, if a previous startup left a usable backup, we restore from it
+  // instead so the user keeps their memory.
+  testIfDocker(
+    "restores from the newest backup when the live dir cannot be opened",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+      try {
+        const dataDir = join(tempDir, "memory.db");
+
+        // First clean session writes a marker row, closes, snapshots on
+        // next open. After this loop a healthy backup exists alongside.
+        {
+          const db = await openPGlite(dataDir);
+          await db.exec("CREATE TABLE marker (v TEXT)");
+          await db.exec("INSERT INTO marker (v) VALUES ('from-backup')");
+          await db.close();
+        }
+        {
+          const db = await openPGlite(dataDir);
+          await db.close();
+        }
+        expect(listBackups(dataDir)).toHaveLength(1);
+
+        // Now reopen with a deterministic init failure (mimics WAL
+        // corruption). The retry loop exhausts the budget, the recovery
+        // path walks backups newest-first, and the restored backup is
+        // verified by opening it (init must NOT throw on the restored
+        // dir — our trigger only fires on the original path).
+        let attempt = 0;
+        let recoveredQuarantinePath: string | undefined;
+        const liveSiblingsBefore = readdirSync(tempDir);
+        const db = await openPGlite(dataDir, {
+          init: async () => {
+            attempt += 1;
+            // Fail until the original `memory.db` has been moved aside
+            // (recovery quarantines it before swapping the backup in).
+            const stillLive = readdirSync(tempDir).some((name) =>
+              name.startsWith("memory.db.corrupted-"),
+            );
+            if (!stillLive) {
+              throw new Error("invalid magic number 0000 in log segment");
+            }
+          },
+          onRecover: ({ backupPath }) => {
+            recoveredQuarantinePath = backupPath;
+          },
+        });
+        try {
+          const row = await db.query<{ v: string }>("SELECT v FROM marker");
+          expect(row.rows).toEqual([{ v: "from-backup" }]);
+          expect(attempt).toBeGreaterThanOrEqual(2);
+          expect(recoveredQuarantinePath).toBeDefined();
+          expect(recoveredQuarantinePath!.startsWith(`${dataDir}.corrupted-`)).toBe(true);
+          // The unreadable live dir is now quarantined; the restored
+          // backup is no longer in the backup pool.
+          const siblings = readdirSync(tempDir);
+          expect(siblings).not.toEqual(liveSiblingsBefore);
+          expect(siblings.filter((name) => name.startsWith("memory.db.corrupted-"))).toHaveLength(
+            1,
+          );
+        } finally {
+          await db.close();
+        }
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 });
 
 describe("quarantineDataDirectory", () => {
