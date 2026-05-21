@@ -254,22 +254,32 @@ describe("openPGlite quarantine guard", () => {
         await seedRealCluster(dataDir);
 
         let attempt = 0;
+        let quarantineRan = false;
         let recoveredBackupPath: string | undefined;
         const db = await openPGlite(dataDir, {
           init: async () => {
             attempt += 1;
-            if (attempt <= 2) {
+            // Fail every attempt against the original dataDir; only stop
+            // throwing once the dir has been quarantined and the caller
+            // is opening a fresh cluster. We detect that by checking
+            // whether the corrupted-* sibling already exists when init
+            // runs — the rename happens before the post-quarantine open.
+            const siblings = readdirSync(tempDir).filter((name) =>
+              name.startsWith("memory.db.corrupted-"),
+            );
+            if (siblings.length === 0) {
               // Shape of a WAL-corruption error: deterministic, not ENOENT.
               throw new Error("invalid magic number 0000 in log segment");
             }
-            // Third call is on the fresh post-quarantine dataDir.
+            quarantineRan = true;
           },
           onRecover: ({ backupPath }) => {
             recoveredBackupPath = backupPath;
           },
         });
         try {
-          expect(attempt).toBe(3);
+          expect(quarantineRan).toBe(true);
+          expect(attempt).toBeGreaterThanOrEqual(3);
           expect(recoveredBackupPath).toBeDefined();
           const siblings = readdirSync(tempDir).filter((name) =>
             name.startsWith("memory.db.corrupted-"),
@@ -282,6 +292,7 @@ describe("openPGlite quarantine guard", () => {
         await rm(tempDir, { recursive: true, force: true });
       }
     },
+    30_000,
   );
 
   testIfDocker("does not quarantine when init fails with ENOENT on an external asset", async () => {

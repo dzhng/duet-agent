@@ -79,12 +79,21 @@ export type TryAcquireOpenLockResult = { lockPath: string } | { holderPid: numbe
 export const DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS = 30_000;
 
 /**
- * Wait between the first failed open and the retry that decides whether to quarantine.
- * Long enough to outlast a typical `npm install -g` rewrite of `node_modules` (the only
- * known transient failure mode that mimics corruption), short enough that a genuine
- * WAL-corrupted dataDir still quarantines without a noticeable startup pause.
+ * Total wall-time we'll spend retrying opens on a structurally-intact cluster before
+ * giving up and quarantining. Long enough to outlast a slow `npm install -g` rewrite
+ * of `node_modules` (the only known transient failure mode that mimics corruption,
+ * routinely 5-12s on cold caches), short enough that a genuinely WAL-corrupted
+ * dataDir still quarantines within a tolerable startup window.
  */
-const RETRY_BEFORE_QUARANTINE_MS = 2_000;
+const RETRY_BEFORE_QUARANTINE_BUDGET_MS = 15_000;
+
+/**
+ * Backoff schedule between retry attempts during the quarantine grace window.
+ * Front-loaded (250ms, 500ms, 1s) so a fast upgrade is picked up quickly,
+ * with a 2s ceiling so a long `npm install` does not produce a retry storm
+ * before the budget elapses.
+ */
+const RETRY_BACKOFF_MS = [250, 500, 1_000, 2_000];
 
 /**
  * Exponential backoff schedule used by `pollAcquireOpenLock`. Doubles from 50ms up to a 1s
@@ -240,25 +249,18 @@ export async function openPGliteHoldingLock(
     // surface failure shapes that are not strictly ENOENT (a half-written
     // wasm/data file appears as a `WebAssembly.CompileError`, a
     // `RangeError`, or an ENOENT without a parseable path). These all
-    // resolve on their own once npm finishes, so a single retry
-    // distinguishes them from genuine data corruption (WAL torn by a
-    // kill mid-write), which fails deterministically on every attempt.
-    // We only run the retry when the on-disk cluster *looks* intact
+    // resolve on their own once npm finishes, so polling for a tolerant
+    // window distinguishes them from genuine data corruption (WAL torn by
+    // a kill mid-write), which fails deterministically on every attempt.
+    // We only run the retry loop when the on-disk cluster *looks* intact
     // (PG_VERSION + required subdirs present) so a clearly broken layout
     // still quarantines immediately on the first failure.
     if (looksLikeIntactPGliteDirectory(path)) {
-      await sleep(RETRY_BEFORE_QUARANTINE_MS);
-      try {
-        const db = await openAndProbe(path, options.init);
-        return { db, lockPath };
-      } catch (retryError) {
-        // External-asset ENOENT can take longer than our retry window if
-        // a slow `npm install` is still mid-flight; surface that error
-        // instead of quarantining a healthy db on a slow machine.
-        if (isExternalAssetError(retryError, path)) throw retryError;
-        // Second attempt failed too — treat as genuine corruption and
-        // fall through to quarantine using the original error as cause.
-      }
+      const opened = await retryOpenWhileIntact(path, options.init);
+      if (opened) return { db: opened, lockPath };
+      // Every attempt within the grace window failed — treat as genuine
+      // corruption and fall through to quarantine using the original
+      // error as the recovery cause.
     }
 
     // Release the lock before renaming the directory aside — the lock
@@ -302,6 +304,36 @@ function installLockReleasingClose(db: PGlite, lockPath: string): PGlite {
     }
   };
   return db;
+}
+
+/**
+ * Poll `openAndProbe` for up to `RETRY_BEFORE_QUARANTINE_BUDGET_MS` while the on-disk
+ * cluster keeps looking intact. Returns the opened db on success, or `undefined` when
+ * the budget elapses (the caller then quarantines). External-asset ENOENTs short-circuit
+ * the loop — they signal a node_modules-side problem the retry cannot fix, and surfacing
+ * them as-is lets the user act on the real failure instead of waiting 15s to no effect.
+ * If the directory layout becomes structurally broken during the loop (e.g. a peer
+ * process truncated it), we also bail so quarantine can run.
+ */
+async function retryOpenWhileIntact(
+  path: string,
+  init: ((db: PGlite) => Promise<void>) | undefined,
+): Promise<PGlite | undefined> {
+  const start = Date.now();
+  for (let attempt = 0; ; attempt++) {
+    const elapsed = Date.now() - start;
+    if (elapsed >= RETRY_BEFORE_QUARANTINE_BUDGET_MS) return undefined;
+    const backoff = RETRY_BACKOFF_MS[Math.min(attempt, RETRY_BACKOFF_MS.length - 1)] ?? 2_000;
+    const remaining = RETRY_BEFORE_QUARANTINE_BUDGET_MS - elapsed;
+    await sleep(Math.max(1, Math.min(backoff, remaining)));
+    try {
+      return await openAndProbe(path, init);
+    } catch (retryError) {
+      if (isExternalAssetError(retryError, path)) throw retryError;
+      if (!looksLikeIntactPGliteDirectory(path)) return undefined;
+      // Otherwise loop and try again until the budget elapses.
+    }
+  }
 }
 
 async function openAndProbe(
