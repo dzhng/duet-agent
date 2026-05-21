@@ -256,14 +256,16 @@ export async function openPGliteHoldingLock(
   installExitCleanup();
   mkdirSync(dirname(path), { recursive: true });
   clearStalePostmasterLock(path);
-  // Snapshot the on-disk cluster before any open attempt so we always have a
-  // recent known-good copy to fall back on if PGlite later refuses to open the
-  // live dir. Best-effort: copy errors must never block a startup, and the
-  // dedupe window keeps refcount-opens from burning inodes on every acquire.
-  snapshotForBackup(path);
 
   try {
     const db = await openAndProbe(path, options.init);
+    // Snapshot the cluster after a successful open + init so every entry in
+    // the backup pool is verified-readable. Snapshotting before open would
+    // happily copy a WAL-corrupted dataDir into the pool and rotate out the
+    // last good copy, defeating the rotation. CHECKPOINT first so the on-disk
+    // bytes match the in-memory state PGlite just validated. Best-effort:
+    // checkpoint and copy failures are warned about but never block startup.
+    await snapshotAfterSuccessfulOpen(db, path);
     return { db, lockPath };
   } catch (error) {
     if (!isExistingDirectory(path)) throw error;
@@ -499,15 +501,16 @@ export function listBackups(path: string): string[] {
 }
 
 /**
- * Take a best-effort snapshot of `path` for later restoration. No-ops when the
- * dir is not structurally intact (nothing useful to snapshot) or when a recent
+ * Take a best-effort snapshot of `path` for later restoration. Called only
+ * after a successful open + init so each entry in the rotation is
+ * verified-readable. CHECKPOINT first to flush dirty buffers so the on-disk
+ * bytes match the in-memory state PGlite just validated. No-ops when a recent
  * backup already exists within the dedupe window (MemorySession refcount-opens
- * would otherwise burn inodes on every acquire). Prunes to `MAX_BACKUPS` newest.
- * Errors are swallowed: a snapshot failure must never block startup.
+ * would otherwise burn inodes on every acquire). Prunes to `MAX_BACKUPS`
+ * newest. Errors at any step are warned about but never block startup.
  */
-function snapshotForBackup(path: string): void {
+async function snapshotAfterSuccessfulOpen(db: PGlite, path: string): Promise<void> {
   try {
-    if (!looksLikeIntactPGliteDirectory(path)) return;
     const existing = listBackups(path);
     if (existing.length > 0) {
       const newest = existing[0];
@@ -519,6 +522,12 @@ function snapshotForBackup(path: string): void {
           // If we can't stat the newest backup, fall through and take a new one.
         }
       }
+    }
+    try {
+      await db.exec("CHECKPOINT");
+    } catch {
+      // Checkpoint failures should not block the snapshot — the WAL on disk
+      // is still self-consistent, the copy just may be slightly stale.
     }
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const backup = `${path}${BACKUP_SUFFIX_PREFIX}${stamp}`;

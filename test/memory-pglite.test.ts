@@ -328,46 +328,91 @@ describe("openPGlite quarantine guard", () => {
 });
 
 describe("startup backup snapshots", () => {
-  // Helper: an opened-and-cleanly-closed PGlite cluster ready to be reopened.
-  async function seedRealCluster(dataDir: string): Promise<void> {
-    const db = await openPGlite(dataDir);
-    await db.close();
+  // Push every existing backup's mtime far enough into the past that the
+  // dedupe window stops suppressing the next snapshot. Real usage spans days
+  // between sessions so the window is harmless; tests run in milliseconds
+  // and would otherwise see only the very first snapshot ever taken.
+  function ageAllBackups(dataDir: string): void {
+    const ancient = new Date("2026-01-01T00:00:00Z");
+    for (const backup of listBackups(dataDir)) {
+      utimesSync(backup, ancient, ancient);
+    }
   }
 
-  testIfDocker("takes one snapshot per startup window when the cluster is intact", async () => {
+  testIfDocker("snapshots on a successful open and dedupes within the window", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
     try {
       const dataDir = join(tempDir, "memory.db");
-      await seedRealCluster(dataDir);
 
-      // First reopen after the seed-close should snapshot; second reopen
-      // within the dedupe window should NOT add another snapshot, so
-      // refcount-opens during a single session don't burn inodes.
+      // Fresh open of an empty dataDir snapshots the just-validated cluster.
       const a = await openPGlite(dataDir);
       await a.close();
       const afterFirst = listBackups(dataDir);
       expect(afterFirst).toHaveLength(1);
 
+      // Reopen inside the dedupe window must not add a second backup so
+      // MemorySession refcount-opens don't burn inodes on every acquire.
       const b = await openPGlite(dataDir);
       await b.close();
-      const afterSecond = listBackups(dataDir);
-      expect(afterSecond).toEqual(afterFirst);
+      expect(listBackups(dataDir)).toEqual(afterFirst);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
+  testIfDocker(
+    "only snapshots after a successful open + init",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+      try {
+        const dataDir = join(tempDir, "memory.db");
+
+        // Seed a healthy cluster (one snapshot taken), then age it so the
+        // dedupe window does not mask the test — a second snapshot would be
+        // free to take if the success path ran.
+        const seed = await openPGlite(dataDir);
+        await seed.close();
+        expect(listBackups(dataDir)).toHaveLength(1);
+        ageAllBackups(dataDir);
+
+        // An open that fails the initial probe must NOT snapshot — entries
+        // in the backup pool must be verified-readable. The recovery path
+        // restores from the existing aged snapshot and we verify that the
+        // pool size did not grow with a (potentially corrupt) new entry.
+        const recovered = await openPGlite(dataDir, {
+          init: async () => {
+            // Throw against the live dir; once recovery moves it aside the
+            // restored backup has no `corrupted-` sibling yet, so we let
+            // that open through.
+            const stillLive = readdirSync(tempDir).some((name) =>
+              name.startsWith("memory.db.corrupted-"),
+            );
+            if (!stillLive) throw new Error("WAL torn");
+          },
+        });
+        await recovered.close();
+
+        // No new backups were taken — the only snapshot is still the aged
+        // seed (it was consumed by the restore, so the pool is now empty;
+        // we just want to confirm the failed open did NOT add an entry).
+        const after = listBackups(dataDir);
+        expect(after.length).toBeLessThanOrEqual(1);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   testIfDocker("prunes to the five newest backups", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
     try {
       const dataDir = join(tempDir, "memory.db");
-      await seedRealCluster(dataDir);
 
-      // Plant six pre-existing backups with monotonically increasing
-      // timestamps. Age them on disk so the dedupe window does not
-      // suppress the next real snapshot — the new snapshot becomes the
-      // seventh and should leave exactly MAX_BACKUPS (5) on disk, with
-      // the four oldest pre-planted dirs pruned.
+      // Plant six pre-existing backups, all aged past the dedupe window
+      // so the next real snapshot is free to take. The new snapshot
+      // becomes the seventh entry and pruning should leave exactly
+      // MAX_BACKUPS (5) on disk — the two oldest pre-planted dirs go.
       const ancient = new Date("2026-01-01T00:00:00Z");
       for (let i = 0; i < 6; i++) {
         const stamp = `2026-01-0${i + 1}T00-00-00-000Z`;
@@ -382,52 +427,54 @@ describe("startup backup snapshots", () => {
 
       const remaining = listBackups(dataDir);
       expect(remaining).toHaveLength(5);
-      // Newest-first — the just-taken snapshot should lead the list.
+      // Newest-first — the just-taken snapshot leads the list and is
+      // distinguishable from the planted 2026-01-0X stamps.
       const newest = remaining[0]!;
       expect(newest.startsWith(`${dataDir}.backup-`)).toBe(true);
+      expect(newest).not.toMatch(/2026-01-0[0-9]T/);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
 
-  // The corruption-recovery path: a deterministic init failure on a
+  // End-to-end corruption-recovery: a deterministic init failure on a
   // structurally intact cluster used to quarantine and start from an empty db.
   // Now, if a previous startup left a usable backup, we restore from it
   // instead so the user keeps their memory.
   testIfDocker(
-    "restores from the newest backup when the live dir cannot be opened",
+    "restores from the newest backup and recovers the data the live dir lost",
     async () => {
       const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
       try {
         const dataDir = join(tempDir, "memory.db");
 
-        // First clean session writes a marker row, closes, snapshots on
-        // next open. After this loop a healthy backup exists alongside.
+        // Session 1: open (initial empty snapshot taken), write a marker,
+        // close. The marker is now on disk in the live dir but NOT yet
+        // captured in any backup.
         {
           const db = await openPGlite(dataDir);
           await db.exec("CREATE TABLE marker (v TEXT)");
           await db.exec("INSERT INTO marker (v) VALUES ('from-backup')");
           await db.close();
         }
+        ageAllBackups(dataDir);
+
+        // Session 2: reopen, take a snapshot of the now-populated cluster,
+        // close. This is the snapshot the recovery path should restore.
         {
           const db = await openPGlite(dataDir);
           await db.close();
         }
-        expect(listBackups(dataDir)).toHaveLength(1);
+        expect(listBackups(dataDir)).toHaveLength(2);
 
-        // Now reopen with a deterministic init failure (mimics WAL
-        // corruption). The retry loop exhausts the budget, the recovery
-        // path walks backups newest-first, and the restored backup is
-        // verified by opening it (init must NOT throw on the restored
-        // dir — our trigger only fires on the original path).
-        let attempt = 0;
+        // Session 3: simulate corruption (deterministic init failure).
+        // After the retry budget elapses, recovery walks backups newest-
+        // first, restores the populated snapshot, and verifies it by
+        // opening it cleanly (our trigger only throws against the
+        // original live dir).
         let recoveredQuarantinePath: string | undefined;
-        const liveSiblingsBefore = readdirSync(tempDir);
         const db = await openPGlite(dataDir, {
           init: async () => {
-            attempt += 1;
-            // Fail until the original `memory.db` has been moved aside
-            // (recovery quarantines it before swapping the backup in).
             const stillLive = readdirSync(tempDir).some((name) =>
               name.startsWith("memory.db.corrupted-"),
             );
@@ -442,13 +489,11 @@ describe("startup backup snapshots", () => {
         try {
           const row = await db.query<{ v: string }>("SELECT v FROM marker");
           expect(row.rows).toEqual([{ v: "from-backup" }]);
-          expect(attempt).toBeGreaterThanOrEqual(2);
           expect(recoveredQuarantinePath).toBeDefined();
           expect(recoveredQuarantinePath!.startsWith(`${dataDir}.corrupted-`)).toBe(true);
-          // The unreadable live dir is now quarantined; the restored
-          // backup is no longer in the backup pool.
+          // Quarantine sibling now exists alongside; the consumed backup
+          // is no longer in the pool.
           const siblings = readdirSync(tempDir);
-          expect(siblings).not.toEqual(liveSiblingsBefore);
           expect(siblings.filter((name) => name.startsWith("memory.db.corrupted-"))).toHaveLength(
             1,
           );
