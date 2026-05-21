@@ -59,6 +59,7 @@ import type { StateMachineAgentState } from "../types/state-machine.js";
 import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
 import {
   createRecallMemorySystemPromptLayer,
+  createSourceOfTruthSystemPromptLayer,
   createStateMachineSystemPromptLayer,
 } from "./prompts.js";
 import {
@@ -1127,6 +1128,10 @@ export class TurnRunner {
         ? undefined
         : createStateMachineSystemPromptLayer({ mode: state.mode, session: state }),
       this.config.memoryDbPath !== undefined ? createRecallMemorySystemPromptLayer() : undefined,
+      // Source-of-truth-first guidance always applies: even without
+      // configured memory, the agent should still prefer live tools,
+      // skills, and files in cwd over guessed answers.
+      createSourceOfTruthSystemPromptLayer(),
     ].filter((layer): layer is string => Boolean(layer));
     const appendSystemPrompt = layers.length > 0 ? layers.join("\n\n") : undefined;
     this.parentControlResult = { type: "none" };
