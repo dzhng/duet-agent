@@ -123,6 +123,15 @@ The most valuable test suite is the one most decoupled from the implementation i
 - Good: `type CreateUserInput = FunctionArgs<typeof api.users.create>`.
 - Same rule for value-level wrappers: prefer constructing via the named type (`satisfies TurnWakeCommand`) over a structural literal so the constraint lives at the call site.
 
+## 16. Leave the codebase cleaner than you found it
+
+- Every change is a chance to delete duplication, not just an excuse to add more. When you touch a file, audit the surrounding code for things that were already wrong — and if your change is in the same neighborhood, fix them in the same turn.
+- **No parallel literal sets.** Before adding a new enum, union, picker list, validator, or zod schema that enumerates string values, grep the repo for the same set. If any version of it already exists, derive from it — don't redeclare. Examples that have bitten us: a `THINKING_LEVELS` array next to `ThinkingLevelValidator`, a hand-written zod enum next to a Convex validator with the same members, a hard-coded `['none', 'low', 'medium', ...]` in a picker next to a separate one in another picker.
+- The fix is always: one source of truth (the schema validator, the protocol type, the SDK enum), and everything else derives. Use `Infer<typeof V>`, indexed access, `Pick`/`Omit`, `satisfies`, or a `const X = [...] as const` exported from a single file. Add a compile-time drift check (`type _Check = Infer<typeof V> extends X ? true : never`) when the validator and the array must agree.
+- This applies recursively. If your refactor touches the picker, the validator, the wire-protocol type, and the cron config, and three of them already redeclared the literal list, fix all four — don't leave two clean and two stale.
+- "I'll do that in a follow-up PR" is how the codebase rots. The follow-up rarely happens, and the next person to touch the file inherits the same mess plus your new addition.
+- The reviewer test: after your change, is there exactly ONE place a future contributor would look to add a new value? If the answer is "two or three places, and you have to know which", the refactor isn't done.
+
 ## Your task
 
 Review: $ARGUMENTS
