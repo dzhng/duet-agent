@@ -18,7 +18,13 @@ import { applyInlineSlashCommandsToCliConfig } from "./inline-slash.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import { DEFAULT_RESUME_HISTORY_MESSAGES, printRunHelp } from "./help.js";
 import { resumeCommand } from "./resume-hint.js";
-import { fail, isInteractive, loadCliEnvFiles, parseResumeHistoryMessages } from "./shared.js";
+import {
+  expandHomeDir,
+  fail,
+  isInteractive,
+  loadCliEnvFiles,
+  parseResumeHistoryMessages,
+} from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
 import {
   createUpgradeStatusStream,
@@ -135,7 +141,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       case "--workdir":
       case "-w":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
-        workDir = args[++i]!;
+        workDir = expandHomeDir(args[++i]!);
         break;
       case "--resume":
       case "-r":

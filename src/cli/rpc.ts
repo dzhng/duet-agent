@@ -18,7 +18,7 @@ import type {
 } from "../types/protocol.js";
 import type { PackageMetadata } from "./run.js";
 import { buildCliTurnConfig } from "./run.js";
-import { fail, loadCliEnvFiles } from "./shared.js";
+import { expandHomeDir, fail, loadCliEnvFiles } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
 
 /**
@@ -170,7 +170,7 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
       case "--workdir":
       case "-w":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
-        workDir = args[++i]!;
+        workDir = expandHomeDir(args[++i]!);
         break;
       case "--system-prompt":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);

@@ -1,4 +1,6 @@
 import { describe, expect, test, spyOn } from "bun:test";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { driveRpcLoop, parseRpcArgs, parseRpcCommandLine, type RpcRunner } from "../src/cli/rpc.js";
 import type {
   TurnEditFollowUpQueueCommand,
@@ -102,6 +104,16 @@ describe("parseRpcArgs", () => {
     expect(parsed.envFilePath).toBe("/etc/duet/env");
     expect(parsed.incognito).toBe(true);
     expect(parsed.noSkillSync).toBe(false);
+  });
+
+  test("expands a leading ~ in --workdir to the user's home directory", () => {
+    const home = homedir();
+    expect(parseRpcArgs(["--workdir", "~/code/foo"]).workDir).toBe(join(home, "code/foo"));
+    expect(parseRpcArgs(["-w", "~"]).workDir).toBe(home);
+    // Non-tilde paths pass through unchanged so relative workdirs still
+    // resolve against the spawning shell's cwd.
+    expect(parseRpcArgs(["--workdir", "/abs/path"]).workDir).toBe("/abs/path");
+    expect(parseRpcArgs(["--workdir", "relative/path"]).workDir).toBe("relative/path");
   });
 
   test("--db sets an explicit memory database path", () => {

@@ -33,9 +33,23 @@ export function fail(message: string): never {
  * filesystem path argument (env files, system-prompt files, workdir).
  */
 export function resolveUserPath(path: string, baseDir = process.cwd()): string {
+  const expanded = expandHomeDir(path);
+  if (expanded !== path) return expanded;
+  return isAbsolute(path) ? path : resolve(baseDir, path);
+}
+
+/**
+ * Expand a leading `~` or `~/` to the current user's home directory. Used
+ * for path-shaped CLI args (notably `--workdir`) where we want `~` support
+ * but do not want to force the value to an absolute path the way
+ * {@link resolveUserPath} does. Paths without a leading `~` are returned
+ * verbatim so relative working directories still resolve against the
+ * spawning shell's cwd.
+ */
+export function expandHomeDir(path: string): string {
   if (path === "~") return homedir();
   if (path.startsWith("~/")) return join(homedir(), path.slice(2));
-  return isAbsolute(path) ? path : resolve(baseDir, path);
+  return path;
 }
 
 /** Resolved absolute path of the shared duet env file. */

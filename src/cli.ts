@@ -45,6 +45,7 @@ export type { SendFeedbackCommandIO } from "./cli/send-feedback.js";
 export {
   cliEnvFilePaths,
   defaultDuetEnvFilePath,
+  expandHomeDir,
   fileExists,
   formatEnvEntries,
   loadCliEnvFiles,

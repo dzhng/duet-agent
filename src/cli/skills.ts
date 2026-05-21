@@ -1,6 +1,6 @@
 import { discoverInstalledSkills, resolveSkillScope } from "../turn-runner/skills.js";
 import { printSkillsHelp } from "./help.js";
-import { fail } from "./shared.js";
+import { expandHomeDir, fail } from "./shared.js";
 
 /**
  * Run `duet skills` — print installed skills as JSON.
@@ -21,7 +21,7 @@ export function runSkillsCommand(args: string[]): void {
       case "--workdir":
       case "-w":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
-        workDir = args[++i]!;
+        workDir = expandHomeDir(args[++i]!);
         break;
       case "--help":
       case "-h":

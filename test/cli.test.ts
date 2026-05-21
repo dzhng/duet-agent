@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -8,6 +8,7 @@ import {
   cliEnvFilePaths,
   compareSemverVersions,
   detectPackageManagerFromContext,
+  expandHomeDir,
   formatEnvEntries,
   globalUpgradeCommand,
   loadCliEnvFiles,
@@ -419,6 +420,27 @@ describe("CLI model inference", () => {
       envVar: "OPENAI_API_KEY",
       fromDotenv: false,
     });
+  });
+});
+
+describe("expandHomeDir", () => {
+  // Covers the `--workdir ~/xyz` path in both run.ts and rpc.ts so a quoted
+  // tilde (which the shell does not expand) still resolves to the user's
+  // home directory.
+  test("expands a leading ~ to the user's home directory", () => {
+    const home = homedir();
+    expect(expandHomeDir("~")).toBe(home);
+    expect(expandHomeDir("~/code/foo")).toBe(join(home, "code/foo"));
+  });
+
+  test("leaves non-tilde paths unchanged so relative workdirs still work", () => {
+    expect(expandHomeDir("/abs/path")).toBe("/abs/path");
+    expect(expandHomeDir("relative/path")).toBe("relative/path");
+    expect(expandHomeDir("")).toBe("");
+    // `~user` is intentionally not expanded — Node has no portable helper for
+    // resolving another user's home, and shells already expand the supported
+    // forms before duet sees them.
+    expect(expandHomeDir("~other/foo")).toBe("~other/foo");
   });
 });
 
