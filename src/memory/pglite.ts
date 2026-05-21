@@ -226,6 +226,18 @@ export async function openPGliteHoldingLock(
     // burned real users; let the error surface so the next launch (with
     // node_modules fully unpacked) succeeds against the existing data.
     if (isExternalAssetError(error, path)) throw error;
+    // Stronger structural guard: a `duet upgrade` running concurrently with
+    // another duet CLI can rewrite node_modules mid-flight and surface
+    // failure shapes that are not strictly ENOENT — a half-written wasm or
+    // data file appears as a `WebAssembly.CompileError`, a `RangeError`,
+    // or an ENOENT without a parseable path in the message. Any of those
+    // used to slip past `isExternalAssetError` and quarantine a perfectly
+    // intact dataDir. Treat the directory as healthy whenever the on-disk
+    // PGlite cluster structure is intact (PG_VERSION + the required cluster
+    // subdirs) and let the caller see the real error instead of moving
+    // their memory aside. Auto-quarantine only kicks in when the data on
+    // disk is genuinely missing required pieces.
+    if (looksLikeIntactPGliteDirectory(path)) throw error;
 
     // Release the lock before renaming the directory aside — the lock
     // file lives inside that directory and would be moved with it.
@@ -334,6 +346,28 @@ export function isExternalAssetError(error: unknown, dataDir: string): boolean {
     const normalized = resolvePath(candidate);
     return normalized !== normalizedDir && !normalized.startsWith(`${normalizedDir}/`);
   });
+}
+
+/**
+ * Subdirectories every PGlite cluster on disk has. If all of these plus a
+ * parseable `PG_VERSION` are present, the dataDir's on-disk layout is
+ * intact and any open failure is environmental (mid-upgrade asset rewrite,
+ * permissions, WASM load) rather than data corruption.
+ */
+const REQUIRED_PGLITE_SUBDIRS = ["base", "global", "pg_wal"] as const;
+
+/**
+ * True when `path` looks like a valid PGlite cluster: it contains a
+ * non-empty `PG_VERSION` and every directory PGlite needs to bootstrap a
+ * cluster. Used as a quarantine guard so an upgrade-time WASM/data load
+ * failure cannot move a healthy memory.db aside. Exported for testing.
+ */
+export function looksLikeIntactPGliteDirectory(path: string): boolean {
+  if (!isExistingDirectory(path)) return false;
+  const versionFile = join(path, "PG_VERSION");
+  const version = tryReadFile(versionFile);
+  if (!version || version.trim().length === 0) return false;
+  return REQUIRED_PGLITE_SUBDIRS.every((sub) => isExistingDirectory(join(path, sub)));
 }
 
 /**

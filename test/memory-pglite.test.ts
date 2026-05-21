@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   clearStalePostmasterLock,
   isExternalAssetError,
+  looksLikeIntactPGliteDirectory,
   MemoryLockTimeoutError,
   openPGlite,
   openPGliteWaitingForLock,
@@ -144,7 +145,91 @@ describe("isExternalAssetError", () => {
   });
 });
 
+describe("looksLikeIntactPGliteDirectory", () => {
+  test("returns false for a missing directory", () => {
+    expect(looksLikeIntactPGliteDirectory("/definitely/not/a/real/path")).toBe(false);
+  });
+
+  testIfDocker("returns false when PG_VERSION is missing", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+    try {
+      mkdirSync(join(dataDir, "base"));
+      mkdirSync(join(dataDir, "global"));
+      mkdirSync(join(dataDir, "pg_wal"));
+      expect(looksLikeIntactPGliteDirectory(dataDir)).toBe(false);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker("returns false when a required cluster subdir is missing", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+    try {
+      writeFileSync(join(dataDir, "PG_VERSION"), "16\n", "utf8");
+      mkdirSync(join(dataDir, "base"));
+      mkdirSync(join(dataDir, "global"));
+      // pg_wal intentionally omitted
+      expect(looksLikeIntactPGliteDirectory(dataDir)).toBe(false);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker("returns true when PG_VERSION and all required subdirs are present", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+    try {
+      writeFileSync(join(dataDir, "PG_VERSION"), "16\n", "utf8");
+      mkdirSync(join(dataDir, "base"));
+      mkdirSync(join(dataDir, "global"));
+      mkdirSync(join(dataDir, "pg_wal"));
+      expect(looksLikeIntactPGliteDirectory(dataDir)).toBe(true);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("openPGlite quarantine guard", () => {
+  // Repro for the `duet upgrade while another duet is running` corruption:
+  // npm rewrites node_modules, the still-running duet reopens its memory db,
+  // PGlite hits a half-written wasm/data file and throws a WebAssembly /
+  // RangeError that is NOT strictly ENOENT. Before the structural guard,
+  // any such throw quarantined a perfectly intact memory.db. With the
+  // guard, an intact cluster on disk is left alone and the error surfaces.
+  testIfDocker(
+    "does not quarantine when init fails with a non-ENOENT error on an intact cluster",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+      try {
+        const dataDir = join(tempDir, "memory.db");
+        mkdirSync(dataDir);
+        writeFileSync(join(dataDir, "PG_VERSION"), "16\n", "utf8");
+        mkdirSync(join(dataDir, "base"));
+        mkdirSync(join(dataDir, "global"));
+        mkdirSync(join(dataDir, "pg_wal"));
+
+        // Shape of a half-loaded wasm asset during `npm install -g`. PGlite
+        // wraps this internally and rethrows a generic Error, but the point
+        // here is that the failure is not strictly ENOENT and used to slip
+        // past `isExternalAssetError` and quarantine the dataDir.
+        await expect(
+          openPGlite(dataDir, {
+            init: async () => {
+              throw new WebAssembly.CompileError("wasm validation failed");
+            },
+          }),
+        ).rejects.toThrow();
+
+        const siblings = readdirSync(tempDir).filter((name) =>
+          name.startsWith("memory.db.corrupted-"),
+        );
+        expect(siblings).toEqual([]);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   testIfDocker("does not quarantine when init fails with ENOENT on an external asset", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
     try {
