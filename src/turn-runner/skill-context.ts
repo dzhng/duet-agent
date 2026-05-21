@@ -150,17 +150,34 @@ export class SkillContext {
   }
 }
 
+// Matches the self-closing `<Skill name="..." path="..." />` tag that the
+// chat-app compose-bar `/` skill picker emits on both web and mobile when a
+// user selects a skill (see
+// apps/web/components/chat/compose-bar/primitives/input/features/mention/mention-markdown-codec.ts
+// and apps/mobile/src/lib/markdown.ts). We honor the tag as an alias for the
+// bare `/<name>` slash command so picker-driven activations get the same
+// SKILL.md injection as keyboard-typed ones. The tag spelling is fixed by
+// the chat-app codec, so capitalization is exact and the regex stays loose
+// only around the `name="..."` attribute position so other attributes (like
+// `path="..."`) can sit on either side.
+const SKILL_TAG_PATTERN = /<Skill\b[^>]*\bname="([A-Za-z0-9_.-]+)"[^>]*\/>/g;
+
 function parseSlashCommands(prompt: string): {
   commands: string[];
 } {
-  const tokens = prompt.trim().split(/\s+/);
   const commands: string[] = [];
 
+  const tokens = prompt.trim().split(/\s+/);
   for (const token of tokens) {
     const match = token.match(/^\/([A-Za-z0-9_.-]+)$/);
     if (match) {
       commands.push(match[1]!);
     }
+  }
+
+  for (const match of prompt.matchAll(SKILL_TAG_PATTERN)) {
+    const name = match[1];
+    if (name) commands.push(name);
   }
 
   return { commands };

@@ -120,4 +120,103 @@ describe("SkillContext.resolveSlashSkillPrompt", () => {
     const resolved = ctx.resolveSlashSkillPrompt("look at /review:summary please");
     expect(resolved).toBe("look at /review:summary please");
   });
+
+  // Regression: a real Duet user message starting with `/review` followed by
+  // newlines and free-form prompt text. Locks in that the resolver wraps
+  // the SKILL.md body in the expected XML envelope:
+  //   <skill name="review">
+  //     <instructions>...SKILL.md body...</instructions>
+  //   </skill>
+  // and appends it after the user's original prompt verbatim.
+  testIfDocker(
+    "wraps the SKILL.md body in <skill><instructions> XML for a real `/review` user message",
+    async () => {
+      const skillBody = "Audit changed code for naming, dead refs, and stale comments.";
+      const skill = await writeSkill("review", skillBody);
+
+      const ctx = new SkillContext({
+        skills: [skill],
+        skillDiscovery: { includeDefaults: false },
+      });
+      await ctx.ensureLoaded();
+
+      const userPrompt =
+        "/review\n\nplus also review the changes - does it resolve with the xml tags?";
+      const resolved = ctx.resolveSlashSkillPrompt(userPrompt);
+
+      // Original user prompt preserved verbatim at the head.
+      expect(resolved.startsWith(userPrompt)).toBe(true);
+
+      // Full XML envelope present, with the SKILL.md body inside <instructions>.
+      expect(resolved).toContain('<skill name="review">');
+      expect(resolved).toContain("<instructions>");
+      expect(resolved).toContain(skillBody);
+      expect(resolved).toContain("</instructions>");
+      expect(resolved).toContain("</skill>");
+
+      // Tag ordering: opening <skill> before <instructions> before body
+      // before </instructions> before </skill>.
+      const skillOpen = resolved.indexOf('<skill name="review">');
+      const instrOpen = resolved.indexOf("<instructions>", skillOpen);
+      const bodyAt = resolved.indexOf(skillBody, instrOpen);
+      const instrClose = resolved.indexOf("</instructions>", bodyAt);
+      const skillClose = resolved.indexOf("</skill>", instrClose);
+      expect(skillOpen).toBeGreaterThan(-1);
+      expect(instrOpen).toBeGreaterThan(skillOpen);
+      expect(bodyAt).toBeGreaterThan(instrOpen);
+      expect(instrClose).toBeGreaterThan(bodyAt);
+      expect(skillClose).toBeGreaterThan(instrClose);
+
+      // Exactly one skill block — no accidental duplicate injection.
+      const skillOpenings = resolved.match(/<skill name="/g) ?? [];
+      expect(skillOpenings.length).toBe(1);
+    },
+  );
+
+  // Regression: chat-app's compose-bar `/` skill picker does NOT emit a bare
+  // `/review` slash token. It emits a literal self-closing XML tag of the
+  // shape `<Skill name="review" path="..." />` into the message markdown,
+  // verbatim, with no backend-side expansion (see
+  // apps/web/components/chat/compose-bar/primitives/input/features/mention/mention-markdown-codec.ts
+  // and apps/mobile/src/lib/markdown.ts). When chat-app sends that message
+  // to duet-agent, the runner must still inject the SKILL.md body so the
+  // model has skill context. Today `parseSlashCommands` only matches
+  // whitespace-separated `/name` tokens, so this case currently no-ops.
+  // This test pins the desired behavior so the gap is visible and the
+  // resolver can be extended to recognize the `<Skill name="..." />` form.
+  testIfDocker(
+    "injects the SKILL.md body when the user message contains the chat-app compose-bar `<Skill name=... path=... />` tag",
+    async () => {
+      const skillBody = "Audit changed code for naming, dead refs, and stale comments.";
+      const skill = await writeSkill("review", skillBody);
+
+      const ctx = new SkillContext({
+        skills: [skill],
+        skillDiscovery: { includeDefaults: false },
+      });
+      await ctx.ensureLoaded();
+
+      // Literal payload emitted by the chat-app web + mobile compose bars
+      // when the user picks the `review` skill from the `/` picker.
+      const userPrompt =
+        '<Skill name="review" path="/home/app/.duet/skills/review" />\n\nplease review the diff';
+      const resolved = ctx.resolveSlashSkillPrompt(userPrompt);
+
+      // Original user prompt preserved verbatim at the head.
+      expect(resolved.startsWith(userPrompt)).toBe(true);
+
+      // Skill body must be injected in the same XML envelope used for the
+      // bare `/review` slash form, so downstream consumers see one shape.
+      expect(resolved).toContain('<skill name="review">');
+      expect(resolved).toContain("<instructions>");
+      expect(resolved).toContain(skillBody);
+      expect(resolved).toContain("</instructions>");
+      expect(resolved).toContain("</skill>");
+
+      // Exactly one skill block — the `<Skill .../>` tag in the prompt must
+      // not double-resolve into two injected blocks.
+      const skillOpenings = resolved.match(/<skill name="/g) ?? [];
+      expect(skillOpenings.length).toBe(1);
+    },
+  );
 });
