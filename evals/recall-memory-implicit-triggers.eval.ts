@@ -10,31 +10,138 @@ import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
 /**
- * Implicit cross-session recall_memory triggers.
+ * Implicit cross-session `recall_memory` triggers.
+ *
+ * --- WHAT THIS EVAL IS FOR ---
+ *
+ * The trigger guidance for `recall_memory` lives in
+ * `createRecallMemorySystemPromptLayer` (src/turn-runner/prompts.ts).
+ * That layer is appended to the parent agent's system prompt whenever
+ * `memoryDbPath` is set, and tells the model when to reach for the
+ * tool. The tool itself only documents the mechanics (params, scopes,
+ * fusion); the "when" lives in the layer.
  *
  * The explicit-trigger eval (`recall-memory-cross-session.eval.ts`)
- * proves the model reaches for `recall_memory` when the user uses
- * obvious past-tense markers — "yesterday", "previous session",
- * "already done X". The much harder failure mode is the IMPLICIT
- * case: the user names a person, project, branch, PR, bug, pet,
- * commitment, or codename the agent has no active context on, and
- * does NOT flag it as past work. A well-tuned trigger layer should
- * still send the agent to the durable store because the named
- * referent has no in-context anchor.
+ * proves the layer fires on obvious past-tense markers — "yesterday",
+ * "previous session", "already done X". This eval covers the HARDER
+ * failure mode: IMPLICIT cross-session triggers. The user mentions
+ * a name (a person, pet, project, codename, release, branch, PR,
+ * personal artifact) without flagging it as past work, or asks for
+ * advice that only personalizes via durable memory. A well-tuned
+ * layer should still send the agent to the durable store because
+ * the named referent has no in-context anchor.
  *
- * The failure mode this eval guards against is the agent inventing
- * a hedge ("I'm not sure who that is" / "I don't have details on
- * that branch") instead of running a single recall_memory query
- * against a name that almost certainly exists in the user's
- * durable memory.
+ * Failure mode being guarded: the agent hedges ("I'm not sure who
+ * that is" / "I'd need more context") or answers generically instead
+ * of running one cheap `recall_memory` query against a name that
+ * almost certainly exists in the user's durable memory.
  *
- * Negatives: world-knowledge questions, math, and prompts whose
- * named referents are part of the active conversation (the user
- * just defined "Project Atlas" in this turn) must stay at zero
- * recall calls so the layer does not bias toward over-recall.
+ * Negatives keep the layer honest: world-knowledge questions and
+ * prompts whose named referents are DEFINED IN THIS TURN must stay
+ * at zero recall calls. Without those, any prompt change that bumps
+ * the implicit positives could also be silently over-recalling on
+ * unrelated turns.
+ *
+ * --- HOW TO RUN IT ---
+ *
+ * From the repo root:
+ *
+ *   bun run eval                                # full eval suite
+ *   bun test ./evals/recall-memory-implicit-triggers.eval.ts
+ *                                               # this file only
+ *
+ * The `bun run eval` script runs inside Docker (oven/bun:1.3.11)
+ * because every test here is gated by `testIfDocker` — they hit the
+ * real Anthropic API and touch a real PGlite memory.db under tmp.
+ * `bun test` directly works on a developer box that already has the
+ * API keys exported.
+ *
+ * Override the actor model via `EVAL_MODEL=...` (e.g.
+ * `EVAL_MODEL=sonnet-4.6` to compare). The default is opus because
+ * that is the production CLI default (`DEFAULT_CLI_MODEL`).
+ *
+ * --- WHAT WE TRIED, WHAT WORKED, WHAT TO TRY NEXT ---
+ *
+ * The trigger layer in `prompts.ts` is the result of an iteration
+ * pass against this eval and the explicit one. Findings, so a
+ * future agent does not redo the same dead-end loops:
+ *
+ *   - Stuffing the trigger guidance into the tool description gave
+ *     the same behavior as the split layer (4/4 on the explicit
+ *     eval), but ate prompt-cache tokens on every turn and lived
+ *     far from the rest of the routing guidance. The split layer
+ *     mirrors the state-machine pattern in `prompts.ts` and stays
+ *     gated on `memoryDbPath`. Keep the split.
+ *
+ *   - Sonnet-4.6 hit 8/11 combined (this eval + the explicit one).
+ *     Opus-4.7 hits 6/11 with the same layer. Opus is more
+ *     conservative about speculative tool calls and stops calling
+ *     `recall_memory` on the implicit-but-clearly-personal cases
+ *     (colleague name, release id) that Sonnet handles. We accept
+ *     that gap: Opus is the production default, but tuning the
+ *     layer further to coax Opus regressed Sonnet (notably the
+ *     colleague case), so the current layer is the Pareto-best
+ *     prose we found.
+ *
+ *   - More aggressive imperatives ("DEFAULT BEHAVIOR: recall_memory
+ *     is cheap, call it freely…", possessive/continuity heuristics,
+ *     self-check clauses) did NOT help on Opus and sometimes hurt
+ *     on Sonnet. Shorter / sharper prose also regressed (Opus
+ *     stopped firing on "what did you do yesterday"). The current
+ *     layer is intentionally medium-verbosity — two enumerated
+ *     classes (EXPLICIT / IMPLICIT) plus a personalization clause
+ *     plus an anti-hedge clause.
+ *
+ *   - Mechanical interventions outside prompt tuning are the next
+ *     productive lever, NOT more prose. Options:
+ *       • a pre-turn proper-noun classifier (a small structured
+ *         output call before the parent agent that flags un-anchored
+ *         named referents and injects a one-shot system reminder);
+ *       • active-recall on send (kick off a `recall_memory` in
+ *         parallel with the parent agent when a heuristic flag fires
+ *         and surface the result as context, removing the choice
+ *         from the model).
+ *     The user explicitly chose to stick to prompt tuning for now
+ *     to avoid complexity, so do not introduce these without
+ *     fresh direction.
+ *
+ * --- EXPECTED FAILURES (opus-4.7, current layer) ---
+ *
+ * On the default actor model (opus-4.7) ALL FIVE implicit-trigger
+ * positives below are EXPECTED to stay red, and the eval will
+ * report them as failures. The two negatives in this file pass on
+ * Opus, plus all four scenarios in the sibling explicit eval —
+ * 6/11 combined.
+ *
+ *   • "How is Doughy doing?"                                (pet name)
+ *   • "Has Walter shared his take on the gateway race?"      (colleague — passes on Sonnet, fails on Opus)
+ *   • "What was in v0.1.146, exactly?"                       (release id — passes on Sonnet, fails on Opus)
+ *   • "Is the fiddle-leaf still happy in its spot?"          (houseplant codename)
+ *   • "Given how my starter has been behaving…"              (personalization-by-possessive)
+ *
+ * These are the cases where Opus is most willing to answer
+ * generically without a lookup. If you change the layer, the
+ * stable target is: do not regress the explicit-trigger eval
+ * (must stay 4/4 on both models) and do not regress the negatives
+ * here (must stay 2/2 on both models). Anything beyond that on
+ * Opus implicit triggers is a bonus.
+ *
+ * --- REPRODUCING THE BASELINE ---
+ *
+ * If a future change makes results swing wildly, re-run twice
+ * before drawing conclusions — single-trial LLM noise can flip
+ * 1–2 scenarios per run, especially "colleague" and "yesterday".
+ * The combined cross-session + implicit run takes ~3 minutes
+ * end-to-end against real APIs, so a second run is cheap.
  */
 
-const actorModel = process.env.EVAL_MODEL ?? "sonnet-4.6";
+// Defaults to opus-4.7 because opus is the production CLI default
+// (`DEFAULT_CLI_MODEL` in src/model-resolution/catalog.ts). Tuning the
+// trigger layer against the model the user actually runs is the only
+// version of this eval that constrains real-world behavior. Override
+// with `EVAL_MODEL=sonnet-4.6` to compare — see the table near the
+// bottom of this file for the cross-model behavior we measured.
+const actorModel = process.env.EVAL_MODEL ?? "opus-4.7";
 const memoryModel = process.env.EVAL_MEMORY_MODEL ?? "haiku-4.5";
 
 let tempDirs: string[] = [];
