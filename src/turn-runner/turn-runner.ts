@@ -57,7 +57,10 @@ import type {
 } from "../types/protocol.js";
 import type { StateMachineAgentState } from "../types/state-machine.js";
 import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
-import { createStateMachineSystemPromptLayer } from "./prompts.js";
+import {
+  createRecallMemorySystemPromptLayer,
+  createStateMachineSystemPromptLayer,
+} from "./prompts.js";
 import {
   applyEvictionHorizon,
   calculateWireTokens,
@@ -1107,14 +1110,25 @@ export class TurnRunner {
 
   private initializeParentAgent(): void {
     const state = this.requireRunnerState();
-    // Append the state-machine routing guidance whenever the parent agent has
-    // state-machine tools available. "auto" mode is the case that matters most:
-    // the agent must decide between todo_write and create_state_machine_definition,
-    // and without this layer the only signal is each tool's own description.
-    const appendSystemPrompt =
+    // Routing-guidance layers travel alongside the tools they describe.
+    // Each tool keeps its own description lean (how to call it, what the
+    // params mean) and the "when to reach for it" guidance lives here so
+    // the agent learns the trigger patterns the user actually types.
+    //  - state-machine layer: appended in non-`agent` modes where
+    //    state-machine tools are exposed; `auto` mode is the case that
+    //    matters most because the agent must decide between todo_write
+    //    and create_state_machine_definition.
+    //  - recall-memory layer: appended whenever durable memory persistence
+    //    is wired up, so the agent reaches for `recall_memory` on
+    //    cross-session questions ("what did you do yesterday", "didn't
+    //    we ship X already?") instead of hedging.
+    const layers = [
       state.mode === "agent"
         ? undefined
-        : createStateMachineSystemPromptLayer({ mode: state.mode, session: state });
+        : createStateMachineSystemPromptLayer({ mode: state.mode, session: state }),
+      this.config.memoryDbPath !== undefined ? createRecallMemorySystemPromptLayer() : undefined,
+    ].filter((layer): layer is string => Boolean(layer));
+    const appendSystemPrompt = layers.length > 0 ? layers.join("\n\n") : undefined;
     this.parentControlResult = { type: "none" };
     this.parentAgent = this.createAgent(
       {

@@ -605,11 +605,9 @@ function createRecallMemoryTool(
     name: "recall_memory",
     label: "Recall memory",
     description: dedent`
-      Search the user's durable memory for facts, decisions, and prior context that may not be in the active prompt.
+      Search the user's durable memory for facts, decisions, and prior context from past conversations.
 
-      The current memory section above shows the highest-signal cross-session reflections plus this session's compaction; call this tool when the user references something older or more specific. Hybrid retrieval (vector embeddings + keyword) returns the most relevant rows ranked by reciprocal rank fusion. Pass \`expand: true\` if a first call returned weak results and you want paraphrased variants to broaden the search.
-
-      Do not use for general world knowledge or facts already visible in the rendered memory section.
+      Hybrid retrieval (vector embeddings + keyword) ranks results by reciprocal rank fusion. Use \`scope: "global"\` to look only at other sessions, \`"session"\` for the current one, or \`"all"\` (default) when unsure. Pass \`expand: true\` to run paraphrased variants alongside the original query when a first pass returned weak results.
     `,
     parameters: recallMemorySchema,
     async execute(_toolCallId, params) {

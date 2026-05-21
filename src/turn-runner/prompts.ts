@@ -106,6 +106,26 @@ export function createStateMachineSystemPromptLayer(input: {
     .join("\n\n");
 }
 
+/**
+ * Routing guidance for the durable cross-session memory tool. Mirrors the
+ * state-machine layer pattern: the `recall_memory` tool description stays
+ * lean and mechanical (how to call it, what the params mean), and this
+ * layer carries the "when to reach for it" guidance so the agent learns
+ * to use the tool on the cross-session prompts the user cares about.
+ *
+ * Appended to the parent agent's system prompt whenever durable memory
+ * persistence is wired up (i.e. the runner has a `memoryDbPath`).
+ */
+export function createRecallMemorySystemPromptLayer(): string {
+  return [
+    "Treat past conversations with this user as durable memory you must look up, not as context that has to already be in the active transcript. The rendered observations block above only carries the highest-signal headlines; specific details, older threads, exact identifiers, and most of yesterday's work live in the durable store and are only reachable through the `recall_memory` tool.",
+    'Call `recall_memory` BEFORE answering whenever the user\'s message points at work from another session. Concrete triggers, even when the rendered observations block looks empty or thin: "what did you do yesterday / last week / earlier today", "you\'ve already done X, right?", "didn\'t we ship Y already?", "in a previous session / last time / before we…", any question about a past decision, release, branch, PR, bug, or commitment that you do not currently see context for, and any reference to a project, person, model, file, or identifier you have no active context on. In all of those cases recall first, then answer from what comes back.',
+    'Do not guess, hedge, or say "I don\'t remember" / "I don\'t have access to past sessions" without trying `recall_memory` at least once. "I don\'t see it in my notes" is not a valid answer until you have actually queried. If the first query returns nothing useful, try one more phrasing or pass `expand: true` before giving up.',
+    'Choose `scope` deliberately: "global" when the user explicitly asks about other sessions ("yesterday", "another project", "a previous chat"); "session" when they ask about something earlier in this exact conversation; "all" (default) when you are not sure.',
+    "Skip `recall_memory` only for general world knowledge or questions fully answered by the active conversation and the rendered observations block.",
+  ].join("\n\n");
+}
+
 function createSkillsSystemPrompt(skills: readonly Skill[]): string | undefined {
   if (skills.length === 0) {
     return undefined;
