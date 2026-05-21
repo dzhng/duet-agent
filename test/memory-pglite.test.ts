@@ -196,34 +196,88 @@ describe("openPGlite quarantine guard", () => {
   // RangeError that is NOT strictly ENOENT. Before the structural guard,
   // any such throw quarantined a perfectly intact memory.db. With the
   // guard, an intact cluster on disk is left alone and the error surfaces.
+  // Helper: seed `dataDir` with a real, cleanly-closed PGlite cluster so
+  // subsequent opens exercise the retry / quarantine paths against actual
+  // PGlite layout, not a hand-rolled stub that fails `PGlite.create`
+  // before our init callback ever runs.
+  async function seedRealCluster(dataDir: string): Promise<void> {
+    const db = await openPGlite(dataDir);
+    await db.close();
+  }
+
   testIfDocker(
-    "does not quarantine when init fails with a non-ENOENT error on an intact cluster",
+    "transient init failure on an intact cluster recovers via retry without quarantine",
     async () => {
       const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
       try {
         const dataDir = join(tempDir, "memory.db");
-        mkdirSync(dataDir);
-        writeFileSync(join(dataDir, "PG_VERSION"), "16\n", "utf8");
-        mkdirSync(join(dataDir, "base"));
-        mkdirSync(join(dataDir, "global"));
-        mkdirSync(join(dataDir, "pg_wal"));
+        await seedRealCluster(dataDir);
 
-        // Shape of a half-loaded wasm asset during `npm install -g`. PGlite
-        // wraps this internally and rethrows a generic Error, but the point
-        // here is that the failure is not strictly ENOENT and used to slip
-        // past `isExternalAssetError` and quarantine the dataDir.
-        await expect(
-          openPGlite(dataDir, {
-            init: async () => {
+        // First call fails as if a `npm install -g` was halfway through
+        // rewriting `node_modules`; second call succeeds the way it would
+        // once npm finishes. The retry path should ride out the transient
+        // and quarantine should never run.
+        let attempt = 0;
+        const db = await openPGlite(dataDir, {
+          init: async () => {
+            attempt += 1;
+            if (attempt === 1) {
               throw new WebAssembly.CompileError("wasm validation failed");
-            },
-          }),
-        ).rejects.toThrow();
+            }
+          },
+        });
+        try {
+          expect(attempt).toBe(2);
+          const siblings = readdirSync(tempDir).filter((name) =>
+            name.startsWith("memory.db.corrupted-"),
+          );
+          expect(siblings).toEqual([]);
+        } finally {
+          await db.close();
+        }
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 
-        const siblings = readdirSync(tempDir).filter((name) =>
-          name.startsWith("memory.db.corrupted-"),
-        );
-        expect(siblings).toEqual([]);
+  // Inverse case: real WAL corruption from a kill mid-write leaves the
+  // cluster structurally intact but fails deterministically on every open.
+  // The retry must NOT mask this — after the second failure we quarantine
+  // so the user gets a fresh db instead of being wedged forever.
+  testIfDocker(
+    "deterministic init failure on an intact cluster still quarantines after retry",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-pglite-"));
+      try {
+        const dataDir = join(tempDir, "memory.db");
+        await seedRealCluster(dataDir);
+
+        let attempt = 0;
+        let recoveredBackupPath: string | undefined;
+        const db = await openPGlite(dataDir, {
+          init: async () => {
+            attempt += 1;
+            if (attempt <= 2) {
+              // Shape of a WAL-corruption error: deterministic, not ENOENT.
+              throw new Error("invalid magic number 0000 in log segment");
+            }
+            // Third call is on the fresh post-quarantine dataDir.
+          },
+          onRecover: ({ backupPath }) => {
+            recoveredBackupPath = backupPath;
+          },
+        });
+        try {
+          expect(attempt).toBe(3);
+          expect(recoveredBackupPath).toBeDefined();
+          const siblings = readdirSync(tempDir).filter((name) =>
+            name.startsWith("memory.db.corrupted-"),
+          );
+          expect(siblings).toHaveLength(1);
+        } finally {
+          await db.close();
+        }
       } finally {
         await rm(tempDir, { recursive: true, force: true });
       }

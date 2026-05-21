@@ -79,6 +79,14 @@ export type TryAcquireOpenLockResult = { lockPath: string } | { holderPid: numbe
 export const DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS = 30_000;
 
 /**
+ * Wait between the first failed open and the retry that decides whether to quarantine.
+ * Long enough to outlast a typical `npm install -g` rewrite of `node_modules` (the only
+ * known transient failure mode that mimics corruption), short enough that a genuine
+ * WAL-corrupted dataDir still quarantines without a noticeable startup pause.
+ */
+const RETRY_BEFORE_QUARANTINE_MS = 2_000;
+
+/**
  * Exponential backoff schedule used by `pollAcquireOpenLock`. Doubles from 50ms up to a 1s
  * ceiling so a peer that releases the lock during an idle-close gap is picked up within ~50ms,
  * while a long-running peer does not produce a poll storm.
@@ -226,18 +234,32 @@ export async function openPGliteHoldingLock(
     // burned real users; let the error surface so the next launch (with
     // node_modules fully unpacked) succeeds against the existing data.
     if (isExternalAssetError(error, path)) throw error;
-    // Stronger structural guard: a `duet upgrade` running concurrently with
-    // another duet CLI can rewrite node_modules mid-flight and surface
-    // failure shapes that are not strictly ENOENT — a half-written wasm or
-    // data file appears as a `WebAssembly.CompileError`, a `RangeError`,
-    // or an ENOENT without a parseable path in the message. Any of those
-    // used to slip past `isExternalAssetError` and quarantine a perfectly
-    // intact dataDir. Treat the directory as healthy whenever the on-disk
-    // PGlite cluster structure is intact (PG_VERSION + the required cluster
-    // subdirs) and let the caller see the real error instead of moving
-    // their memory aside. Auto-quarantine only kicks in when the data on
-    // disk is genuinely missing required pieces.
-    if (looksLikeIntactPGliteDirectory(path)) throw error;
+    // Retry-then-quarantine for the structurally-intact case. A `duet
+    // upgrade` running concurrently with another duet CLI rewrites
+    // node_modules mid-flight, and the still-running duet's reopen can
+    // surface failure shapes that are not strictly ENOENT (a half-written
+    // wasm/data file appears as a `WebAssembly.CompileError`, a
+    // `RangeError`, or an ENOENT without a parseable path). These all
+    // resolve on their own once npm finishes, so a single retry
+    // distinguishes them from genuine data corruption (WAL torn by a
+    // kill mid-write), which fails deterministically on every attempt.
+    // We only run the retry when the on-disk cluster *looks* intact
+    // (PG_VERSION + required subdirs present) so a clearly broken layout
+    // still quarantines immediately on the first failure.
+    if (looksLikeIntactPGliteDirectory(path)) {
+      await sleep(RETRY_BEFORE_QUARANTINE_MS);
+      try {
+        const db = await openAndProbe(path, options.init);
+        return { db, lockPath };
+      } catch (retryError) {
+        // External-asset ENOENT can take longer than our retry window if
+        // a slow `npm install` is still mid-flight; surface that error
+        // instead of quarantining a healthy db on a slow machine.
+        if (isExternalAssetError(retryError, path)) throw retryError;
+        // Second attempt failed too — treat as genuine corruption and
+        // fall through to quarantine using the original error as cause.
+      }
+    }
 
     // Release the lock before renaming the directory aside — the lock
     // file lives inside that directory and would be moved with it.
