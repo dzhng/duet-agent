@@ -129,6 +129,34 @@ export function createRecallMemorySystemPromptLayer(): string {
   ].join("\n\n");
 }
 
+/**
+ * Source-of-truth-first guidance for factual lookups.
+ *
+ * When the user asks a question whose answer is not already in the
+ * active context, the agent must reach for the *live* source of truth
+ * before falling back to memory or — worst of all — answering from a
+ * confident-looking observation in the rendered memory block.
+ *
+ * Motivating failure: the agent confirmed an unsubscribe based on a
+ * stale rendered observation that was itself a prior hallucination.
+ * Hitting the live source (Resend via the connected CLI, a CRM
+ * skill, or a workspace file) would have refuted it instantly.
+ *
+ * Appended to the parent agent's system prompt unconditionally — the
+ * rule applies whether or not skills/memory are configured, because
+ * "check the file in cwd" is a source-of-truth check too.
+ */
+export function createSourceOfTruthSystemPromptLayer(): string {
+  return [
+    "When you need a fact that is not already in the active transcript, never make it up. Reach for whichever lookup actually has the answer: a live source (connected tool, skill, file in cwd) if one exists for this topic, or `recall_memory` if the topic only lives in durable memory. Both are first-class lookups — the rule is *some* lookup before answering, not silence and not fabrication.",
+    "Prefer a *live* source over memory when both could answer. A confident-looking observation in the rendered memory block is NOT a substitute for the live source on anything that could have changed externally (subscriptions, payments, deploys, file contents, account state, ticket status, integration data, CRM rows). Observations can be stale or wrong — including ones the agent itself wrote in a prior turn. Treat memory as a hint, not as authoritative state whenever a live source exists.",
+    'Yes/no confirmation questions about external state are the highest-risk shape. "You did X already, right?", "is X currently true?", "did we ship Y?", "is contact Z unsubscribed?" — never answer yes/no from memory alone when a live source can answer authoritatively. Verify with the live source first, then confirm or correct. If memory and the live source disagree, the live source wins.',
+    "Skills advertised as the source of truth for a topic must be loaded via `read_skill` when that topic comes up. If a skill's description names it as the lookup path for people, deals, contacts, accounts, integrations, or a specific service, treat that as a hard pointer: read the skill and run the lookup it documents before answering questions in its domain.",
+    "Workspace files in the cwd that the user names or that the skill points at are also live sources — `bash`/`read` them before answering. A file in the cwd that obviously holds the ground truth (a data file, a config, a CSV, a JSON) outranks any memory observation about the same fact.",
+    'When no live source exists for the question — a personal fact, a past decision, a named referent with no tool behind it ("Doughy", "my starter", a past project codename, a teammate the agent should already know) — `recall_memory` IS the right first move, not a fallback. Recall before answering, never invent.',
+  ].join("\n\n");
+}
+
 function createSkillsSystemPrompt(skills: readonly Skill[]): string | undefined {
   if (skills.length === 0) {
     return undefined;
