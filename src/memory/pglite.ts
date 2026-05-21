@@ -305,7 +305,7 @@ export async function openPGliteHoldingLock(
     // On success the unreadable live dir is quarantined and the restored
     // backup takes its place, so the user keeps their memory instead of
     // starting from an empty db.
-    const restored = await tryRestoreFromBackup(path, options.init, error);
+    const restored = await tryRestoreFromBackup(path, options.init);
     if (restored) {
       if (options.onRecover) {
         options.onRecover({ backupPath: restored.quarantinedPath, cause: error });
@@ -364,9 +364,9 @@ function installLockReleasingClose(db: PGlite, lockPath: string): PGlite {
  * cluster keeps looking intact. Returns the opened db on success, or `undefined` when
  * the budget elapses (the caller then quarantines). External-asset ENOENTs short-circuit
  * the loop — they signal a node_modules-side problem the retry cannot fix, and surfacing
- * them as-is lets the user act on the real failure instead of waiting 15s to no effect.
- * If the directory layout becomes structurally broken during the loop (e.g. a peer
- * process truncated it), we also bail so quarantine can run.
+ * them as-is lets the user act on the real failure instead of waiting out the full budget
+ * to no effect. If the directory layout becomes structurally broken during the loop (e.g.
+ * a peer process truncated it), we also bail so quarantine can run.
  */
 async function retryOpenWhileIntact(
   path: string,
@@ -562,16 +562,14 @@ function pruneOldBackups(path: string): void {
 async function tryRestoreFromBackup(
   path: string,
   init: ((db: PGlite) => Promise<void>) | undefined,
-  _cause: unknown,
 ): Promise<
   { db: PGlite; lockPath: string; backupSource: string; quarantinedPath: string } | undefined
 > {
   const backups = listBackups(path);
   for (const candidate of backups) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const quarantinedPath = `${path}.corrupted-${stamp}`;
+    let quarantinedPath: string;
     try {
-      renameSync(path, quarantinedPath);
+      quarantinedPath = quarantineDataDirectory(path);
     } catch {
       // If we can't quarantine the live dir, no point continuing with this
       // candidate or any other; surface to the caller's quarantine path.
