@@ -50,7 +50,7 @@ async function readSessionObservations(
 ): Promise<string[]> {
   const result = await fixture.session.withDb(async (db) =>
     db.query<{ content: string }>(
-      "SELECT content FROM observations WHERE session_id = ? ORDER BY created_at DESC",
+      "SELECT content FROM observations WHERE session_id = $1 ORDER BY created_at DESC",
       [sessionId],
     ),
   );
