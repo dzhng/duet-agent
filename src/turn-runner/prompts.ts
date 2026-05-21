@@ -99,6 +99,7 @@ export function createStateMachineSystemPromptLayer(input: {
     "Use allowedSkills on agent states only when that sub-agent should receive a restricted skill set.",
     'When resuming after an interruption, an agent ask, or uncertainty about progress, call get_current_state_machine_state before selecting the next state. Also call it before answering user questions about current state-machine progress, background work, poll/wake status, what has already happened, or why the session is waiting. If currentState is "interrupted", use the history to identify the interrupted state and rerun it when appropriate.',
     "When the user changes direction during state-machine work, select the same state again with updated input or select a different state. Selecting a state while another state is running replaces the active state work.",
+    'Status questions during state-machine work ("have you done X yet?", "where are the Ys?", "is it running?") are user-facing replies, not tool calls. Call get_current_state_machine_state if you need to confirm progress, then answer in plain text, and if prior cycles produced artifacts the user hasn\'t seen yet, include them in the reply.',
     constraint,
     definitionPrompt,
   ]

@@ -882,8 +882,20 @@ export class TurnRunner {
 
           ${retryInstruction ?? ""}
 
-          You must call the select_state_machine_state tool to choose the next state, terminal state, or failure outcome.
-          Do not answer normally. Do not return text instead of calling the tool.
+          If the state produced output the user would want to see — a written
+          artifact (poem, summary, draft), a finding, a status the user is
+          watching, or anything else the background work was meant to surface
+          — post that content to the user in this turn before or alongside the
+          tool call. The user does not see state output, transcripts, or tool
+          results from background states; if you do not relay it here, they
+          never see it. Skip the user-facing message only when the state
+          output is purely internal plumbing (an ack, a control signal, a
+          value that only matters to the next state).
+
+          Either way, you must end this turn by calling the
+          select_state_machine_state tool to choose the next state, terminal
+          state, or failure outcome. Text without the tool call is not a
+          valid response.
         `,
         ...this.createTools(turnState.mode),
       });
