@@ -8,6 +8,7 @@ import { MemorySession } from "../src/memory/session.js";
 import { appendObservation } from "../src/memory/storage.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
+import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
 
 /**
  * Source-of-truth-first lookups.
@@ -35,7 +36,7 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
 // is the kind of judgement call where the larger model is held to a higher
 // bar; sonnet-tier models will be tuned against a separate scenario set.
 const actorModel = process.env.EVAL_MODEL ?? "opus-4.7";
-const memoryModel = process.env.EVAL_MEMORY_MODEL ?? "haiku-4.5";
+const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 
 let tempDirs: string[] = [];
 

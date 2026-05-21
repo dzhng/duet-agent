@@ -8,6 +8,7 @@ import { MemorySession } from "../src/memory/session.js";
 import { appendObservation } from "../src/memory/storage.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
+import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
 
 /**
  * Cross-session recall_memory tool usage.
@@ -29,7 +30,7 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
  */
 
 const actorModel = process.env.EVAL_MODEL ?? "sonnet-4.6";
-const memoryModel = process.env.EVAL_MEMORY_MODEL ?? "haiku-4.5";
+const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 
 let tempDirs: string[] = [];
 

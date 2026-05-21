@@ -128,6 +128,18 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       openai: "gpt-5.4-mini",
     },
   },
+  {
+    // xAI's Grok 4.3 is routed through the duet/vercel gateways under the
+    // `xai/grok-4.3` model id. We do not currently configure a direct xAI
+    // provider, so the gateway entries are the only routes.
+    shorthand: "grok-4.3",
+    aliases: ["xai/grok-4.3", "xai/grok-4-3", "grok-4-3"],
+    modelsByProvider: {
+      "duet-gateway": "xai/grok-4.3",
+      "vercel-ai-gateway": "xai/grok-4.3",
+      openrouter: "x-ai/grok-4.3",
+    },
+  },
 ];
 
 export function isProviderPinnedModelName(modelName: string): boolean {

@@ -23,7 +23,7 @@ import { waitFor } from "../test/helpers/async.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
 const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
-const memoryModel = DEFAULT_CLI_MEMORY_MODEL;
+const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 
 describe("continuous memory", () => {
   testIfDocker(

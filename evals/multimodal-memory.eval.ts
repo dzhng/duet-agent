@@ -9,7 +9,7 @@ import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
 import { createMemoryFixture } from "../test/helpers/memory-fixture.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const memoryModel = DEFAULT_CLI_MEMORY_MODEL;
+const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 
 describe("multimodal memory", () => {
   testIfDocker(

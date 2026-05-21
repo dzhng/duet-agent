@@ -7,6 +7,7 @@ import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { createAssistantMessage } from "../test/helpers/messages.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
+import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
 
 /**
  * End-to-end repro for the observer overflowing the memory model's
@@ -42,7 +43,7 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
  * `hasMemory=false`, which is how the tail grows in production.
  */
 const actorModel = process.env.EVAL_MODEL ?? "sonnet-4.6";
-const memoryModel = process.env.EVAL_MEMORY_MODEL ?? "haiku-4.5";
+const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 
 let tempDirs: string[] = [];
 
@@ -62,8 +63,9 @@ describe("observer input overflow", () => {
 
       // Actor uses a roomy model so wire-shaping handles the seeded
       // history on the actor side without tripping the recovery
-      // branch. The observer is pinned to `haiku-4.5`, which has a
-      // 200k window — the exact ceiling the production bug overflows.
+      // branch. The observer runs on the default CLI memory model
+      // (overridable via EVAL_MEMORY_MODEL) so this eval tracks whatever
+      // window the production default exposes.
       const runner = new TurnRunner({
         sessionId: "observer-overflow-eval",
         model: actorModel,

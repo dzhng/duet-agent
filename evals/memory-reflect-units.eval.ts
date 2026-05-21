@@ -7,6 +7,7 @@ import {
 } from "../src/memory/observational.js";
 import { readAllObservations } from "../src/memory/storage.js";
 import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
+const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 import { createMemoryFixture } from "../test/helpers/memory-fixture.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { RECENT_POOL } from "./fixtures/global-reflect/recent-pool.js";
@@ -68,7 +69,7 @@ describe("unit-sized reflections", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...PACK_ONE_BATCH,
         });
         expect(result).toBeDefined();
@@ -95,7 +96,7 @@ describe("unit-sized reflections", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...PACK_ONE_BATCH,
         });
         expect(result).toBeDefined();
@@ -122,7 +123,7 @@ describe("unit-sized reflections", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...PACK_ONE_BATCH,
         });
         expect(result).toBeDefined();
@@ -148,7 +149,7 @@ describe("unit-sized reflections", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...PACK_ONE_BATCH,
         });
         expect(result).toBeDefined();
@@ -174,7 +175,7 @@ describe("unit-sized reflections", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...PACK_ONE_BATCH,
         });
         expect(result).toBeDefined();
@@ -209,7 +210,7 @@ describe("unit-sized reflections", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...PACK_ONE_BATCH,
         });
         expect(result).toBeDefined();
@@ -235,7 +236,7 @@ describe("unit-sized reflections", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...PACK_ONE_BATCH,
         });
         expect(result).toBeDefined();
@@ -261,7 +262,7 @@ describe("unit-sized reflections", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...PACK_ONE_BATCH,
         });
         expect(result).toBeDefined();
@@ -298,7 +299,7 @@ describe("unit-sized reflections", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...PACK_ONE_BATCH,
         });
         expect(result).toBeDefined();

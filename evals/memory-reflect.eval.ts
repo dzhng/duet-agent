@@ -7,6 +7,7 @@ import {
 } from "../src/memory/observational.js";
 import { readAllObservations } from "../src/memory/storage.js";
 import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
+const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 import { createMemoryFixture } from "../test/helpers/memory-fixture.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import {
@@ -100,7 +101,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -136,7 +137,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -162,7 +163,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -189,7 +190,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -222,7 +223,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -253,7 +254,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
           targetTokens,
         });
@@ -282,7 +283,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -312,7 +313,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
           dryRun: true,
         });
@@ -339,7 +340,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeUndefined();
@@ -364,7 +365,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -394,7 +395,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -424,7 +425,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot: before,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -466,7 +467,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -496,7 +497,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(result).toBeDefined();
@@ -539,7 +540,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot,
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           batchTokens: Number.MAX_SAFE_INTEGER,
           // Default min-age is 3 days; assert that path directly.
         });
@@ -571,7 +572,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot: await readAllObservations(fixture.session),
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(firstRun).toBeDefined();
@@ -583,7 +584,7 @@ describe("duet memory reflect — global prune", () => {
           session: fixture.session,
           snapshot: await readAllObservations(fixture.session),
           settings,
-          model: DEFAULT_CLI_MEMORY_MODEL,
+          model: memoryModel,
           ...REFLECT_EVERYTHING,
         });
         expect(secondRun).toBeDefined();

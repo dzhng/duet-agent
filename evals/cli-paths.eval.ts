@@ -9,6 +9,7 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
 import { judge } from "../test/helpers/judge.js";
 
 const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 
 describe("CLI production paths", () => {
   testIfDocker(
@@ -23,7 +24,7 @@ describe("CLI production paths", () => {
           "--model",
           model,
           "--memory-model",
-          DEFAULT_CLI_MEMORY_MODEL,
+          memoryModel,
           dedent`
             Remember that ${marker} belongs to the CLI memory eval.
             Reply in one sentence that you have noted the marker.
