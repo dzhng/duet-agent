@@ -153,7 +153,6 @@ function isCompactSystemEvent(event: TurnEvent): event is Extract<TurnEvent, { t
 
 interface RpcSessionResult {
   exitCode: number;
-  stderr: string;
   events: TurnEvent[];
 }
 
@@ -178,17 +177,16 @@ async function runRpcSession(
     stderr: "pipe",
   });
   await writeCommandsToStdin(proc, commands);
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
+  // Drain stderr so the buffer cannot stall the subprocess; the contents
+  // are not asserted on but the pipe must keep moving.
+  void new Response(proc.stderr).text();
+  const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
   const events = stdout
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => JSON.parse(line) as TurnEvent);
-  return { exitCode, stderr, events };
+  return { exitCode, events };
 }
 
 async function writeCommandsToStdin(

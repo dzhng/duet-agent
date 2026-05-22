@@ -619,7 +619,6 @@ describe("RPC CLI mode", () => {
 
 interface RpcSessionResult {
   exitCode: number;
-  stderr: string;
   events: TurnEvent[];
 }
 
@@ -657,6 +656,9 @@ async function runRpcSessionStreaming(
   });
 
   const stream = new EventStream(proc.stdout);
+  // Drain stderr so the buffer cannot stall the subprocess; the contents
+  // are not asserted on but the pipe must keep moving.
+  void new Response(proc.stderr).text();
   const send = async (command: TurnRunnerCommand) => {
     proc.stdin.write(`${JSON.stringify(command)}\n`);
     await proc.stdin.flush();
@@ -668,8 +670,8 @@ async function runRpcSessionStreaming(
     await proc.stdin.end();
   }
   await stream.done();
-  const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-  return { exitCode, stderr, events: stream.collected };
+  const exitCode = await proc.exited;
+  return { exitCode, events: stream.collected };
 }
 
 /**
@@ -763,12 +765,11 @@ async function runRpcSession(
     stderr: "pipe",
   });
   await writeCommandsToStdin(proc, commands);
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  return { exitCode, stderr, events: parseJsonEvents(stdout) };
+  // Drain stderr so the buffer cannot stall the subprocess; the contents
+  // are not asserted on but the pipe must keep moving.
+  void new Response(proc.stderr).text();
+  const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  return { exitCode, events: parseJsonEvents(stdout) };
 }
 
 async function writeCommandsToStdin(

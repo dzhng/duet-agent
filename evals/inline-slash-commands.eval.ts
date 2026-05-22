@@ -82,7 +82,6 @@ describe("inline slash commands (live CLI)", () => {
 
 async function runCliEvents(args: string[]): Promise<{
   exitCode: number;
-  stdout: string;
   stderr: string;
   events: TurnEvent[];
 }> {
@@ -99,12 +98,7 @@ async function runCliEvents(args: string[]): Promise<{
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  return {
-    exitCode,
-    stdout,
-    stderr,
-    events: parseJsonEvents(stdout),
-  };
+  return { exitCode, stderr, events: parseJsonEvents(stdout) };
 }
 
 function parseJsonEvents(stdout: string): TurnEvent[] {
