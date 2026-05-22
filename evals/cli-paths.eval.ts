@@ -95,40 +95,18 @@ describe("CLI production paths", () => {
   );
 });
 
-async function runCliEvents(args: string[]): Promise<{
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-  events: TurnEvent[];
-}> {
-  const proc = Bun.spawn(["bun", "src/cli.ts", ...args], {
+async function runCliEvents(args: string[]): Promise<{ exitCode: number; events: TurnEvent[] }> {
+  // --no-skill-sync skips the duet.so default-skill fetch the CLI normally runs
+  // at startup when DUET_API_KEY is set. The eval asserts CLI behavior, not
+  // that side effect; disabling it keeps the temp workdir and JSONL stream
+  // focused on the path under test without dropping gateway auth.
+  const proc = Bun.spawn(["bun", "src/cli.ts", "--no-skill-sync", ...args], {
     cwd: process.cwd(),
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      // The eval asserts CLI behavior, not default skill sync behavior. Both
-      // gateway env vars must be cleared: judge() calls earlier in the run
-      // resolve `opus-4.7` through duet-gateway, which mutates
-      // AI_GATEWAY_API_KEY on the parent process via forceDuetGatewayAuth.
-      // Without clearing both, the spawned CLI inherits a Duet token under
-      // AI_GATEWAY_API_KEY, routes through vercel-ai-gateway, and 401s
-      // upstream. With both blank, the CLI falls through to anthropic.
-      DUET_API_KEY: "",
-      AI_GATEWAY_API_KEY: "",
-    },
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ]);
-  return {
-    exitCode,
-    stdout,
-    stderr,
-    events: parseJsonEvents(stdout),
-  };
+  const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  return { exitCode, events: parseJsonEvents(stdout) };
 }
 
 function parseJsonEvents(stdout: string): TurnEvent[] {
