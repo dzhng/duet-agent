@@ -11,9 +11,10 @@ import {
 } from "../src/memory/observational.js";
 
 /**
- * The whole memory budget surface is now one knob: every numeric trigger
- * and buffer falls out of `effectiveContext`. These tests pin the
- * documented ratios so the README, the type docs, and the runtime
+ * The local-session memory triggers and buffers all fall out of
+ * `effectiveContext` via fixed ratios; the cross-session global pack uses
+ * a separate fixed token cap (`GLOBAL_CONTEXT_TOKEN_BUDGET`). These tests
+ * pin both surfaces so the README, the type docs, and the runtime
  * derivation cannot drift apart silently.
  */
 describe("Memory budgets", () => {
