@@ -157,6 +157,12 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
     this.emit({ type: "follow_up_queue", followUpQueue: command.prompts });
   }
 
+  compact(): void {
+    // The playground transcript is synthesized, not a real model session, so
+    // compact is a no-op here. The SessionTurnRunner interface still has to
+    // be implemented because it's shared with production.
+  }
+
   getState(): TurnState | undefined {
     return this.state;
   }

@@ -9,6 +9,7 @@ import {
 import { maybeAutoSyncDefaultSkills } from "../lib/sync-skills.js";
 import { TurnRunner } from "../turn-runner/turn-runner.js";
 import type {
+  TurnCompactCommand,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
@@ -33,6 +34,7 @@ export interface RpcRunner {
   ): Promise<TurnTerminalEvent>;
   interrupt(command: TurnInterruptCommand): void;
   editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void;
+  compact(command: TurnCompactCommand): void | Promise<void>;
 }
 
 /**
@@ -254,7 +256,7 @@ export interface DriveRpcLoopOptions {
  * `duet --rpc` remains the one place that decides when the process is safe
  * to tear down.
  *
- * Out-of-band commands (`interrupt`, `edit_follow_up_queue`) and additional
+ * Out-of-band commands (`interrupt`, `edit_follow_up_queue`, `compact`) and additional
  * turn-driving commands (`prompt`, `answer`, `wake`) are all forwarded to
  * the runner whether or not a chain is already in flight — the runner is
  * the source of truth for how repeated `turn()` calls compose.
@@ -315,6 +317,12 @@ export async function driveRpcLoop(
         break;
       case "edit_follow_up_queue":
         runner.editFollowUpQueue(command);
+        break;
+      case "compact":
+        // Compact runs an async drain + horizon advance. Awaiting it
+        // here serializes the RPC loop behind the drain so the next
+        // prompt observes the freshly trimmed wire-tail.
+        await runner.compact(command);
         break;
       case "prompt":
       case "answer":

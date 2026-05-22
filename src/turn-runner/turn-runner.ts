@@ -34,11 +34,16 @@ import {
   resolveModelName,
 } from "../model-resolution/resolver.js";
 import type { TurnRunnerConfig } from "../types/config.js";
-import { compactTurnState, type AutoStateCompactionOptions } from "./state-compaction.js";
+import {
+  COMPACT_MESSAGE_TOKENS_RATIO,
+  compactTurnState,
+  type AutoStateCompactionOptions,
+} from "./state-compaction.js";
 import type {
   TurnAgentFile,
   TurnAnswerCommand,
   TurnContextWindowUsage,
+  WireGuardHorizon,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnEventOrigin,
@@ -67,7 +72,6 @@ import {
   calculateWireTokens,
   createInitialHorizon,
   findEvictionHorizon,
-  type WireGuardHorizon,
 } from "./wire-shaping.js";
 import {
   createDefaultTurnRunnerTools,
@@ -250,6 +254,15 @@ export class TurnRunner {
    * transitions, but it emits one public terminal event for the whole chain.
    */
   private activeTurnPromise?: Promise<TurnTerminalEvent>;
+  /**
+   * In-flight `compact()` promise, published while the drain + horizon
+   * advance is running so concurrent `turn()` calls can serialize behind
+   * it. Compact has no `activeTurnPromise` (it does not start a turn
+   * chain), so this is the only signal a fire-and-forget caller (e.g. the
+   * TUI `/compact` slash command followed immediately by a prompt) has
+   * that the wire-shaping horizon is mid-advance.
+   */
+  private compactInFlight?: Promise<void>;
   /** Latest runner-owned state, hydrated by start() and advanced by terminal events. */
   private state?: TurnState;
   /** True after `start()` has emitted the initial `turn_started` event. */
@@ -311,6 +324,152 @@ export class TurnRunner {
   }
 
   /**
+   * Compact the runner's wire-visible message tail on demand by advancing
+   * the sticky `wireGuardHorizon` so the next request to the actor model
+   * dispatches a smaller prompt.
+   *
+   * Critical: this does **not** mutate `state.agent.messages` or the live
+   * parent agent's transcript. The durable transcript is the source of
+   * truth for resume, snapshotting, observer/reflector passes, and the
+   * TUI scrollback; destroying it would lose information the wire-shaping
+   * pipeline is specifically designed to preserve. Instead this reuses
+   * the same horizon-advance mechanism that
+   * `createObservationalContextTransform` runs every turn — it just
+   * forces it now, against a tighter token target than the automatic
+   * trigger uses.
+   *
+   * Target selection:
+   *  - When the current wire-tail tokens exceed
+   *    `COMPACT_MESSAGE_TOKENS_RATIO` (20%) of the parent agent's
+   *    effective context window, the target is that 20% ceiling —
+   *    leaving 80% headroom for system prompt, memory packs, the next
+   *    user prompt, and the next assistant response.
+   *  - When the wire-tail is already under 20%, the target halves the
+   *    current wire-tail tokens instead. `compact` is user-initiated, so
+   *    even an already-light session must produce visible relief.
+   *
+   * On a successful horizon advance the memory context pack is refreshed
+   * (same fire-and-forget call the transform's `onCompaction` handler
+   * uses) so the rendered prefix lines up with the new horizon and the
+   * next prompt-cache fault is paid once instead of twice.
+   *
+   * Rejected with a soft warning when a turn chain is in flight —
+   * mutating the horizon mid-stream would invalidate the request the
+   * parent (or a state agent) is already dispatching. `activeTurnPromise`
+   * is the single source of truth here, so poll/timer sleeps pass the
+   * gate cleanly: the chain has already resolved to the `sleep` terminal
+   * before compact is allowed to run.
+   */
+  async compact(): Promise<void> {
+    this.requireStarted();
+    // `activeTurnPromise` is the single source of truth for "a turn chain
+    // is in flight" — it covers the parent agent dispatching, a state
+    // agent dispatching while the parent is paused, and a poll/script
+    // command currently executing. Sleep terminals (poll/timer waits)
+    // have already resolved the chain and cleared this, so compact is
+    // free to run during those waits.
+    if (this.activeTurnPromise || this.compactInFlight) {
+      this.emit({
+        type: "system",
+        level: "warn",
+        message: this.compactInFlight
+          ? "compact ignored: a compact pass is already in progress."
+          : "compact ignored: a turn chain is in flight; send compact between turns.",
+      });
+      return;
+    }
+    // Publish the compact promise so concurrent `turn()` calls observe
+    // it and serialize behind us. Fire-and-forget callers (e.g. the TUI
+    // `/compact` slash command) would otherwise let a follow-up prompt
+    // dispatch with the pre-compact wire-tail and race the horizon
+    // mutation. The promise resolves to `void` after the inner body
+    // finishes, so `turn()` only needs to await, not inspect a result.
+    const inFlight = this.runCompact();
+    this.compactInFlight = inFlight;
+    try {
+      await inFlight;
+    } finally {
+      if (this.compactInFlight === inFlight) {
+        this.compactInFlight = undefined;
+      }
+    }
+  }
+
+  private async runCompact(): Promise<void> {
+    try {
+      const state = this.requireRunnerState();
+      // Drain: observe any unobserved tail before evicting it from the
+      // wire. `updateObservationalMemory` internally computes the
+      // unobserved tail via `getUnobservedMessageTail`, so this is
+      // idempotent when the observer already ran on those turns and
+      // does real work only when there's something new to capture.
+      // Wrapped because memory-model calls can fail; a failed drain
+      // should still let the user's compact request advance the horizon.
+      try {
+        await this.updateMemoryAfterAgentRun(state.agent.messages, state.options);
+      } catch (error) {
+        this.emit({
+          type: "system",
+          level: "warn",
+          message: `compact: observation drain failed (${truncateForSystemMessage(
+            error instanceof Error ? error.message : String(error),
+          )}); evicting anyway.`,
+        });
+      }
+      // Rebuild the rendered pack so the new observations from the
+      // drain (and anything else freshly written) are part of the
+      // prefix the next turn ships with the trimmed wire-tail.
+      await this.refreshMemoryContextPack();
+
+      const observable = stripObservationalContextMessages(state.agent.messages);
+      const previousHorizon = this.wireGuardHorizon.evictionHorizon;
+      const currentRetained = applyEvictionHorizon(observable, previousHorizon);
+      const beforeTokens = calculateWireTokens(currentRetained);
+      const contextWindow = this.effectiveContextWindow();
+      const ceiling = Math.max(1, Math.floor(contextWindow * COMPACT_MESSAGE_TOKENS_RATIO));
+      const overCeiling = beforeTokens > ceiling;
+      const target = overCeiling ? ceiling : Math.max(1, Math.floor(beforeTokens / 2));
+      const targetLabel = overCeiling
+        ? `target ${target} = 20% of ${contextWindow}`
+        : `target ${target} = 50% of current ${beforeTokens}`;
+      const newHorizon = findEvictionHorizon(
+        observable,
+        previousHorizon,
+        (candidate) => calculateWireTokens(candidate) <= target,
+      );
+      if (newHorizon === previousHorizon) {
+        this.emit({
+          type: "system",
+          level: "info",
+          message: `compact: nothing to evict (wire-tail ~${beforeTokens} tokens; ${targetLabel}).`,
+        });
+        return;
+      }
+      this.wireGuardHorizon.evictionHorizon = newHorizon;
+      const retainedAfter = applyEvictionHorizon(observable, newHorizon);
+      const afterTokens = calculateWireTokens(retainedAfter);
+      const dropped = currentRetained.length - retainedAfter.length;
+      this.emit({
+        type: "system",
+        level: "info",
+        message: `compact: dropped ${dropped} older wire message(s); wire-tail ~${beforeTokens} → ~${afterTokens} tokens (${targetLabel}).`,
+      });
+    } catch (error) {
+      // The drain and pack-refresh have their own try/catch; this outer
+      // catch guards against an unexpected throw in the horizon-advance
+      // path so `runCompact` always settles cleanly and `compactInFlight`
+      // resets via the caller's finally.
+      this.emit({
+        type: "system",
+        level: "warn",
+        message: `compact: failed (${truncateForSystemMessage(
+          error instanceof Error ? error.message : String(error),
+        )}).`,
+      });
+    }
+  }
+
+  /**
    * Set up a session before any turn runs. Loads memory and skills, then
    * emits `turn_started` with the initial state (a fresh state, or the
    * resumed state when `command.state` is provided). No agent work runs.
@@ -331,6 +490,14 @@ export class TurnRunner {
         }
       : createInitialTurnState(mode, this.resolveTurnOptions(startOptions));
     this.stateMachineController.hydrate(state.stateMachine);
+    // Hydrate the wire-shaping object in place. `this.wireGuardHorizon` is
+    // referenced by the observational context transform; replacing the
+    // reference would orphan the transform's view. `Object.assign` over
+    // the fresh default lets the persisted state contribute every field
+    // it carries without this code knowing the field list.
+    if (state.wireGuardHorizon) {
+      Object.assign(this.wireGuardHorizon, state.wireGuardHorizon);
+    }
     this.setState(state);
     this.initializeParentAgent();
     this.started = true;
@@ -343,6 +510,15 @@ export class TurnRunner {
     this.requireStarted();
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
+    // Serialize behind an in-flight compact. Compact advances the wire
+    // horizon and may write observations to the durable store; a turn
+    // started concurrently would dispatch the pre-compact wire-tail and
+    // race the horizon mutation. Awaiting here gives fire-and-forget
+    // callers (TUI `/compact` then a prompt) the same ordering RPC mode
+    // gets for free by awaiting `compact` between iterations.
+    if (this.compactInFlight) {
+      await this.compactInFlight;
+    }
     if (this.activeTurnPromise) {
       // turn() is the concurrency boundary: repeated calls extend or queue
       // behind the active chain instead of creating a separate parent transcript.
@@ -1016,6 +1192,16 @@ export class TurnRunner {
       todos: copyOptionalArray(state.todos ?? this.state?.todos),
       followUpQueue: copyOptionalArray(state.followUpQueue ?? this.state?.followUpQueue),
       queuedCommands: copyOptionalArray(state.queuedCommands ?? this.state?.queuedCommands),
+      // Carry wire-shaping state through every snapshot so persistence
+      // layers (state.json, terminal payloads, getState consumers) see
+      // the current value. Copy by spread so consumers can't mutate the
+      // runner's live object. Omit when nothing has moved off the
+      // fresh-runner default so untouched sessions stay schema-clean;
+      // `evictionHorizon` is the only field today, so it doubles as the
+      // dirty sentinel — revisit when more wire-shaping fields land.
+      ...(this.wireGuardHorizon.evictionHorizon > 0
+        ? { wireGuardHorizon: { ...this.wireGuardHorizon } }
+        : {}),
     };
     return this.applyAutoStateCompaction(snapshot);
   }

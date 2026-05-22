@@ -13,12 +13,14 @@ import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "../src/turn-runner/skills.js";
 import type {
   TurnAgentFile,
+  TurnCompactCommand,
   TurnEvent,
   TurnEditFollowUpQueueCommand,
   TurnInterruptCommand,
   TurnStartCommand,
   TurnState,
   TurnTerminalEvent,
+  TurnUsageEvent,
   TurnCommand,
 } from "../src/types/protocol.js";
 import { testIfDocker } from "./helpers/docker-only.js";
@@ -29,6 +31,7 @@ class FakeTurnRunner implements SessionTurnRunner {
   readonly startCommands: TurnStartCommand[] = [];
   readonly commands: TurnCommand[] = [];
   readonly interrupts: TurnInterruptCommand[] = [];
+  readonly compacts: TurnCompactCommand[] = [];
   readonly followUpQueueEdits: TurnEditFollowUpQueueCommand[] = [];
   readonly handlers = new Set<(event: TurnEvent) => void>();
   state = turnState;
@@ -106,6 +109,10 @@ class FakeTurnRunner implements SessionTurnRunner {
     this.emit({ type: "follow_up_queue", followUpQueue: command.prompts });
   }
 
+  compact(command: TurnCompactCommand): void {
+    this.compacts.push(command);
+  }
+
   getState(): TurnState | undefined {
     return this.state;
   }
@@ -173,7 +180,7 @@ afterEach(async () => {
   tempDirs = [];
 });
 
-function buildUsageEvent(costTotal: number): import("../src/types/protocol.js").TurnUsageEvent {
+function buildUsageEvent(costTotal: number): TurnUsageEvent {
   const usage = {
     input: 100,
     output: 50,
@@ -233,6 +240,41 @@ describe("Session", () => {
 
     expect(session.id).toStartWith("session_");
     expect(runner.commands).toEqual([{ type: "prompt", message: "hello", behavior: "follow_up" }]);
+  });
+
+  testIfDocker("compact() forwards to the runner and persists the new wire horizon", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
+    tempDirs.push(tempDir);
+    const sessionPath = join(tempDir, "compact-session");
+    await mkdir(sessionPath, { recursive: true });
+    const runner = new FakeTurnRunner([]);
+    const session = new Session(
+      { model: "anthropic:claude-opus-4-7" },
+      { id: "compact-session", runner, sessionPath },
+    );
+    await session.start();
+    // Simulate the runner advancing its horizon during compaction. The
+    // session reads `runner.getState()` when it persists, so this is
+    // the cleanest end-to-end proxy for "the runner ran compaction
+    // and the persisted snapshot must carry the new horizon forward
+    // for the next resume" without booting a real TurnRunner.
+    const compactedState: TurnState = {
+      ...turnState,
+      wireGuardHorizon: { evictionHorizon: 4242 },
+    };
+    runner.state = compactedState;
+
+    await session.compact();
+
+    expect(runner.compacts).toEqual([{ type: "compact" }]);
+    const content = await readFile(join(sessionPath, "state.json"), "utf-8");
+    const stored = JSON.parse(content);
+    // Resume must see the same wire-shaping object — otherwise a
+    // session compacted before the user exits the TUI would lose the
+    // trim on next launch. Persisting the whole object (not just the
+    // horizon timestamp) is what lets future wire-shaping fields be
+    // added without touching the persistence path.
+    expect(stored.state.wireGuardHorizon).toEqual({ evictionHorizon: 4242 });
   });
 
   testIfDocker("forwards follow-up queue edits to the runner", async () => {

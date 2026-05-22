@@ -126,9 +126,19 @@ While the turn is running, the caller may send:
   `interrupted` terminal event.
 - `edit_follow_up_queue` — replaces the queued follow-up prompts wholesale.
   The runner mirrors the queue into the active pi agent when possible.
+- `compact` — compacts the runner's wire-visible message tail by
+  advancing the sticky eviction horizon so the next request to the actor
+  model fits 20% of the parent agent's effective context window. When the
+  wire-tail is already under 20%, the target halves the current wire-tail
+  tokens instead so the command still produces visible relief. The durable
+  transcript stored in session state is intentionally untouched — only the
+  next outgoing prompt shrinks. Takes no arguments. Reports the result on
+  stdout as a single informational `system` event. Rejected with a soft
+  warning when a turn is currently active — send `compact` between turns.
+  Equivalent to the `/compact` slash command in the TUI.
 
-Both are processed concurrently with the turn. They do **not** count as a
-turn-driving command, so they cannot start or replace the in-flight turn.
+All three are processed concurrently with the turn. They do **not** count as
+a turn-driving command, so they cannot start or replace the in-flight turn.
 
 ### `prompt.behavior`
 

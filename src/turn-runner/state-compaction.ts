@@ -33,6 +33,18 @@ export interface CompactionResult {
 }
 
 /**
+ * Fraction of the parent agent's effective context window that the on-demand
+ * `compact` command targets for the surviving wire-tail. 20% is an
+ * intentionally aggressive ceiling: it leaves the remaining 80% of the
+ * window for the system prompt, memory packs, the next user prompt, and
+ * the next assistant response, so a freshly compacted session has real
+ * headroom for the next turn instead of immediately bumping the
+ * auto-compaction ceiling again. The runner consumes this via the
+ * wire-shaping `WireGuardHorizon`; nothing on disk changes.
+ */
+export const COMPACT_MESSAGE_TOKENS_RATIO = 0.2;
+
+/**
  * Anthropic and OpenAI both reject conversations whose first message isn't
  * `user`. Front-eviction can leave a `toolResult` (orphaned without its
  * assistant call) or an `assistant` message at the head, both of which wedge

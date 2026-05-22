@@ -11,8 +11,8 @@ import {
   findEvictionHorizon,
   WIRE_BYTE_TARGET,
   WIRE_BYTE_TRIGGER,
-  type WireGuardHorizon,
 } from "../turn-runner/wire-shaping.js";
+import type { WireGuardHorizon } from "../types/protocol.js";
 import type { MemoryContextCache } from "./store.js";
 import type { MemorySession } from "./session.js";
 import {

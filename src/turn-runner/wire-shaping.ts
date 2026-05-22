@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { CHARS_PER_TOKEN } from "../memory/observational.js";
+import type { WireGuardHorizon } from "../types/protocol.js";
 
 /**
  * Byte-budget safety net for the dispatched message list. The token-budget
@@ -52,23 +53,11 @@ export const IMAGE_WIRE_TOKEN_ESTIMATE = 1_600;
 const MIN_HISTORY_TAIL = 1;
 
 /**
- * Sticky eviction point. Pi-agent re-runs `transformContext` on every turn
- * against the full untransformed history; if the projection's cut moved
- * every turn, the prompt-cache prefix would be invalidated each time. By
- * pinning the cut to a timestamp that only advances, the dropped prefix
- * stays content-deterministic across turns: subsequent turns produce the
- * same shape and re-hit the provider's prompt cache.
- *
- * Tracked in-memory on the runner instance; resets on session resume.
- * That costs at most one cold cache miss per resume — the provider-side
- * prompt cache typically does not survive resume gaps anyway, so
- * persisting the horizon would buy little.
+ * Fresh-runner default. Persistence round-trips `WireGuardHorizon` through
+ * `TurnState.wireGuardHorizon`, so resumed sessions hydrate over this
+ * default in place via `Object.assign` to preserve the reference identity
+ * held by the observational context transform.
  */
-export interface WireGuardHorizon {
-  /** Messages with `timestamp <= evictionHorizon` are dropped from the wire. */
-  evictionHorizon: number;
-}
-
 export function createInitialHorizon(): WireGuardHorizon {
   return { evictionHorizon: 0 };
 }

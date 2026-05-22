@@ -205,6 +205,40 @@ export interface TurnState {
    * order when the runner can safely continue.
    */
   queuedCommands?: TurnCommand[];
+  /**
+   * Persisted wire-shaping state. Carries the sticky eviction horizon and
+   * any future wire-shaping fields across resume so a compacted session
+   * keeps its trimmed wire-tail — the durable transcript still holds the
+   * full history, but the next outgoing prompt continues to ship only the
+   * post-horizon slice. Absent on fresh sessions; the runner falls back
+   * to `createInitialHorizon()`.
+   */
+  wireGuardHorizon?: WireGuardHorizon;
+}
+
+/**
+ * Sticky eviction point for the actor agent's wire-tail. Pi-agent re-runs
+ * `transformContext` on every turn against the full untransformed history;
+ * if the projection's cut moved every turn, the prompt-cache prefix would
+ * be invalidated each time. By pinning the cut to a timestamp that only
+ * advances, the dropped prefix stays content-deterministic across turns
+ * and subsequent turns re-hit the provider's prompt cache.
+ *
+ * The runtime keeps a single mutable instance per runner (held by
+ * `TurnRunner.wireGuardHorizon` and referenced from the observational
+ * context transform). It is round-tripped through `TurnState` so resume
+ * preserves the trimmed wire-tail; advances when the observational
+ * context transform's auto-trigger fires, when
+ * `tryRecoverFromContextOverflow` reacts to a provider overflow error,
+ * or when the user invokes `compact`.
+ *
+ * Defined as an object (rather than a bare timestamp) so future
+ * wire-shaping fields land here and persist alongside the horizon
+ * without a schema change.
+ */
+export interface WireGuardHorizon {
+  /** Messages with `timestamp <= evictionHorizon` are dropped from the wire. */
+  evictionHorizon: number;
 }
 
 /**
@@ -452,11 +486,48 @@ export interface TurnInterruptCommand {
   type: "interrupt";
 }
 
+/**
+ * Out-of-band control message that compacts the runner's wire-visible
+ * message tail. The durable transcript in `TurnState.agent.messages` is
+ * **not** mutated — the runner instead advances its sticky wire-shaping
+ * eviction horizon so the next request to the actor model dispatches a
+ * smaller prompt. Scrollback, resume, and observer/reflector passes all
+ * keep their full history.
+ *
+ * Target selection (against the current wire-tail, not the durable
+ * transcript):
+ *  - When the wire-tail currently occupies more than 20% of the parent
+ *    agent's effective context window, the target is that 20% ceiling —
+ *    leaving 80% headroom for system prompt, memory packs, the next user
+ *    prompt, and the next assistant response.
+ *  - When the wire-tail is already under 20%, the target halves the
+ *    current wire-tail tokens instead. `compact` is user-initiated, so
+ *    an already-light session still produces visible relief rather than
+ *    silently no-opping.
+ *
+ * Unlike the automatic wire-shaping trigger (which only fires when the
+ * actor's context-window budget is breached), `compact` runs even when
+ * the wire is already under that budget, so callers can free context on
+ * demand.
+ *
+ * `compact` does not start or end a turn. It is rejected with a soft
+ * warning when a turn chain is in flight — mutating the horizon
+ * mid-stream would invalidate the request the parent (or a state agent)
+ * is already dispatching. Poll/timer sleeps have already resolved the
+ * chain by the time they emit their `sleep` terminal, so compact runs
+ * cleanly during those waits; callers only need to defer compact while a
+ * turn is actively dispatching.
+ */
+export interface TurnCompactCommand {
+  type: "compact";
+}
+
 export type TurnRunnerCommand =
   | TurnStartCommand
   | TurnCommand
   | TurnInterruptCommand
-  | TurnEditFollowUpQueueCommand;
+  | TurnEditFollowUpQueueCommand
+  | TurnCompactCommand;
 
 /** A system-prompt file that was resolved on disk for the session. */
 export interface TurnAgentFile {

@@ -49,6 +49,14 @@ export interface SlashCommandContext {
    * started with.
    */
   setThinkingLevel(level: string): { thinkingLevel: string };
+  /**
+   * Invoked by `/compact` to ask the runner to compact its in-memory
+   * `TurnState`. The runner targets 20% of the effective context window;
+   * the slash command itself takes no arguments. Implementations forward
+   * the request through the session/RPC layer so the same command works
+   * in the TUI and over the protocol.
+   */
+  compact?(): void;
 }
 
 /**
@@ -187,6 +195,14 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
     matches: (message) => isInvocation(message, "thinking"),
     handle: handleThinkingSlashCommand,
     inline: "token",
+  },
+  {
+    name: "compact",
+    description:
+      "Shrink the next request to ~20% of the context window by advancing the wire-shaping horizon (durable transcript is preserved)",
+    matches: (message) => isBare(message, "compact"),
+    handle: handleCompactSlashCommand,
+    inline: "none",
   },
 ];
 
@@ -448,6 +464,26 @@ function handleModelSlashCommand(raw: string, ctx: SlashCommandContext): void {
       COLORS.error,
     );
   }
+}
+
+/**
+ * `/compact` asks the runner to compact its in-memory `TurnState` down to
+ * 20% of the parent agent's effective context window. Same handler is
+ * reachable over RPC via the protocol-level `compact` command, so the
+ * slash form and the RPC form share semantics. No arguments — the target
+ * is fixed by the runner.
+ */
+function handleCompactSlashCommand(_raw: string, ctx: SlashCommandContext): void {
+  if (!ctx.compact) {
+    ctx.appendBlock("[compact]", "compact is not available in this context", COLORS.system);
+    return;
+  }
+  ctx.compact();
+  ctx.appendBlock(
+    "[compact]",
+    "shrinking the next request to ~20% of the context window…",
+    COLORS.system,
+  );
 }
 
 async function handleImageSlashCommand(raw: string, ctx: SlashCommandContext): Promise<void> {

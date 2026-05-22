@@ -10,6 +10,7 @@ import type { SkillCollision } from "../turn-runner/skills.js";
 import type {
   TurnAgentFile,
   TurnAnswerCommand,
+  TurnCompactCommand,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
@@ -90,6 +91,7 @@ export interface SessionTurnRunner {
   turn(command: TurnCommand): Promise<TurnTerminalEvent>;
   interrupt(command: TurnInterruptCommand): void;
   editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void;
+  compact(command: TurnCompactCommand): void | Promise<void>;
   subscribe(handler: TurnEventHandler): () => void;
   getState(): TurnState | undefined;
   getSkills(): Promise<readonly Skill[]>;
@@ -280,6 +282,25 @@ export class Session {
       type: "edit_follow_up_queue",
       prompts: input.prompts,
     });
+  }
+
+  /**
+   * Compact the runner's wire-visible message tail on demand. The runner
+   * first drains any unobserved tail of the transcript into the durable
+   * memory store (so evicted messages survive as observations in the
+   * rendered prefix), then advances its sticky eviction horizon so the
+   * next request to the actor model dispatches a smaller prompt.
+   *
+   * The durable transcript in `TurnState.agent.messages` is intentionally
+   * untouched, so resume, scrollback, and observer/reflector passes keep
+   * their full history. The new eviction horizon is persisted as part
+   * of `TurnState.wireGuardHorizon` so a session compacted right before
+   * the user exits the TUI keeps its trimmed wire-tail on the next resume.
+   */
+  async compact(): Promise<void> {
+    await this.ensureStarted();
+    await this.runner.compact({ type: "compact" });
+    await this.persistLatestState();
   }
 
   async waitForTerminal(): Promise<TurnTerminalEvent> {

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { driveRpcLoop, parseRpcArgs, parseRpcCommandLine, type RpcRunner } from "../src/cli/rpc.js";
 import type {
+  TurnCompactCommand,
   TurnEditFollowUpQueueCommand,
   TurnInterruptCommand,
   TurnRunnerCommand,
@@ -26,6 +27,7 @@ interface RecordedRunner extends RpcRunner {
   turns: Array<Extract<TurnRunnerCommand, { type: "prompt" | "answer" | "wake" }>>;
   interrupts: TurnInterruptCommand[];
   editQueues: TurnEditFollowUpQueueCommand[];
+  compacts: TurnCompactCommand[];
   resolveTurn: (terminal: TurnTerminalEvent) => void;
 }
 
@@ -58,6 +60,7 @@ function buildRunner(): RecordedRunner {
     turns: [],
     interrupts: [],
     editQueues: [],
+    compacts: [],
     resolveTurn,
     async start(command) {
       runner.starts.push(command);
@@ -71,6 +74,9 @@ function buildRunner(): RecordedRunner {
     },
     editFollowUpQueue(command) {
       runner.editQueues.push(command);
+    },
+    compact(command) {
+      runner.compacts.push(command);
     },
   };
   return runner;
@@ -300,6 +306,32 @@ describe("driveRpcLoop", () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(runner.editQueues).toEqual([editCommand]);
     expect(runner.interrupts).toEqual([interruptCommand]);
+    runner.resolveTurn(terminal);
+    await loop;
+  });
+
+  test("routes compact mid-turn into the runner without ending the chain", async () => {
+    const runner = buildRunner();
+    const terminal: TurnTerminalEvent = {
+      type: "complete",
+      status: "completed",
+      state: {} as never,
+    };
+    const compactCommand: TurnCompactCommand = { type: "compact" };
+    const loop = driveRpcLoop(
+      runner,
+      commandStream([
+        { type: "start" },
+        { type: "prompt", message: "go", behavior: "follow_up" },
+        compactCommand,
+      ]),
+    );
+    // Let the loop consume every queued stdin command before resolving the
+    // in-flight turn. compact is out-of-band so it must not end the chain;
+    // the only way the loop exits is the explicit terminal we resolve below.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(runner.compacts).toEqual([compactCommand]);
     runner.resolveTurn(terminal);
     await loop;
   });

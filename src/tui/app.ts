@@ -356,6 +356,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       },
       setModel: (model: string) => input.session.setModel(model),
       setThinkingLevel: (level: string) => input.session.setThinkingLevel(level),
+      compact: () => {
+        void input.session.compact();
+      },
     };
     if (tryDispatchSlashCommand(message, slashCtx)) {
       return;
