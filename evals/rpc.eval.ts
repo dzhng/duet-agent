@@ -646,12 +646,14 @@ async function runRpcSessionStreaming(
   args: string[],
   drive: (handle: RpcSessionHandle) => Promise<void>,
 ): Promise<RpcSessionResult> {
-  const proc = Bun.spawn(["bun", "src/cli.ts", "--rpc", ...args], {
+  // --no-skill-sync skips the duet.so default-skill fetch the CLI normally
+  // runs at startup when DUET_API_KEY is set. The eval asserts RPC behavior,
+  // not that side effect.
+  const proc = Bun.spawn(["bun", "src/cli.ts", "--rpc", "--no-skill-sync", ...args], {
     cwd: process.cwd(),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, DUET_API_KEY: process.env.DUET_API_KEY ?? "" },
   });
 
   const stream = new EventStream(proc.stdout);
@@ -754,17 +756,11 @@ async function runRpcSession(
   args: string[],
   commands: TurnRunnerCommand[],
 ): Promise<RpcSessionResult> {
-  const proc = Bun.spawn(["bun", "src/cli.ts", "--rpc", ...args], {
+  const proc = Bun.spawn(["bun", "src/cli.ts", "--rpc", "--no-skill-sync", ...args], {
     cwd: process.cwd(),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      // RPC mode does not perform default-skill sync, but mirror cli-paths
-      // and zero the API key so an empty `~/.duet` dir cannot trip anything.
-      DUET_API_KEY: process.env.DUET_API_KEY ?? "",
-    },
   });
   await writeCommandsToStdin(proc, commands);
   const [stdout, stderr, exitCode] = await Promise.all([

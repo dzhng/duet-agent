@@ -86,15 +86,13 @@ async function runCliEvents(args: string[]): Promise<{
   stderr: string;
   events: TurnEvent[];
 }> {
-  const proc = Bun.spawn(["bun", "src/cli.ts", ...args], {
+  // --no-skill-sync skips the duet.so default-skill fetch the CLI normally
+  // runs at startup when DUET_API_KEY is set. The eval asserts CLI behavior,
+  // not that side effect; disabling it keeps gateway auth intact.
+  const proc = Bun.spawn(["bun", "src/cli.ts", "--no-skill-sync", ...args], {
     cwd: process.cwd(),
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      // The eval asserts CLI behavior, not default-skill sync behavior.
-      DUET_API_KEY: "",
-    },
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),

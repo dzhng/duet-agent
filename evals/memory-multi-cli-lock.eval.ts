@@ -117,16 +117,15 @@ describe("multi-CLI memory lock", () => {
 });
 
 function spawnCli(args: string[], home: string): Subprocess<"ignore", "pipe", "pipe"> {
-  return Bun.spawn(["bun", "src/cli.ts", ...args], {
+  // --no-skill-sync skips the duet.so default-skill fetch the CLI normally
+  // runs at startup; unrelated to the multi-CLI memory.db lock contention
+  // this eval is asserting.
+  return Bun.spawn(["bun", "src/cli.ts", "--no-skill-sync", ...args], {
     cwd: process.cwd(),
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
-    env: {
-      ...process.env,
-      HOME: home,
-      DUET_API_KEY: process.env.DUET_API_KEY ?? "",
-    },
+    env: { ...process.env, HOME: home },
   });
 }
 

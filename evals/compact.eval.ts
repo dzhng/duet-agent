@@ -168,12 +168,14 @@ async function runRpcSession(
   args: string[],
   commands: TurnRunnerCommand[],
 ): Promise<RpcSessionResult> {
-  const proc = Bun.spawn(["bun", "src/cli.ts", "--rpc", ...args], {
+  // --no-skill-sync skips the duet.so default-skill fetch the CLI normally
+  // runs at startup when DUET_API_KEY is set; unrelated to what this eval
+  // asserts.
+  const proc = Bun.spawn(["bun", "src/cli.ts", "--rpc", "--no-skill-sync", ...args], {
     cwd: process.cwd(),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, DUET_API_KEY: process.env.DUET_API_KEY ?? "" },
   });
   await writeCommandsToStdin(proc, commands);
   const [stdout, stderr, exitCode] = await Promise.all([
