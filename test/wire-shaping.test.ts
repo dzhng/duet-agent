@@ -1,6 +1,7 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, test } from "bun:test";
 
+import { CHARS_PER_TOKEN } from "../src/memory/observational.js";
 import {
   applyEvictionHorizon,
   calculateWireBytes,
@@ -166,9 +167,9 @@ describe("calculateWireTokens", () => {
     expect(calculateWireTokens([huge])).toBe(IMAGE_WIRE_TOKEN_ESTIMATE);
   });
 
-  test("uses ceil(chars/4) for text blocks", () => {
+  test("uses ceil(chars / CHARS_PER_TOKEN) for text blocks", () => {
     const messages = [userText("x".repeat(401), 1)];
-    expect(calculateWireTokens(messages)).toBe(Math.ceil(401 / 4));
+    expect(calculateWireTokens(messages)).toBe(Math.ceil(401 / CHARS_PER_TOKEN));
   });
 
   test("sums image, text, and structured contributions across messages", () => {
@@ -181,14 +182,14 @@ describe("calculateWireTokens", () => {
       } as AgentMessage,
       assistantToolCall("toolu_1", 3),
     ];
-    const textTokens = Math.ceil("hello world".length / 4);
+    const textTokens = Math.ceil("hello world".length / CHARS_PER_TOKEN);
     const structuredJson = JSON.stringify({
       type: "toolCall",
       id: "toolu_1",
       name: "bash",
       arguments: {},
     });
-    const structuredTokens = Math.ceil(structuredJson.length / 4);
+    const structuredTokens = Math.ceil(structuredJson.length / CHARS_PER_TOKEN);
     expect(calculateWireTokens(messages)).toBe(
       textTokens + IMAGE_WIRE_TOKEN_ESTIMATE + structuredTokens,
     );

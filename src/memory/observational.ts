@@ -1852,14 +1852,25 @@ function estimateMessageTokens(message: ObserverMessagePreview): number {
 }
 
 /**
- * Heuristic 4-chars-per-token estimator used everywhere the runner needs
+ * Average characters per token assumed by the heuristic estimator. The
+ * common rule of thumb is ~4 chars/token on English prose, but real
+ * provider tokenizers consistently produce more tokens than that on
+ * code, JSON, tool calls, and non-English content. We use 3.2 to bias
+ * the estimate ~25 % conservative so memory triggers fire before the
+ * provider's actual token count crosses the actor's window, instead of
+ * after.
+ */
+export const CHARS_PER_TOKEN = 3.2;
+
+/**
+ * Heuristic chars-per-token estimator used everywhere the runner needs
  * a budget number without tokenizing the actual provider payload. Exported
  * so surfaces and the runner can attribute the same estimate the memory
  * pipeline does, keeping the segment breakdown on `TurnUsageFields`
  * consistent with the trigger arithmetic in this file.
  */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
 function hashText(text: string): string {

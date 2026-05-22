@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadGlobalPack, loadLocalPack } from "../src/memory/loader.js";
 import { runMigrations } from "../src/memory/migrations.js";
+import { CHARS_PER_TOKEN } from "../src/memory/observational.js";
 import type { Observation } from "../src/types/memory.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
@@ -88,7 +89,7 @@ describe("Memory loader", () => {
         });
 
         const usedTokens = pack.reduce(
-          (sum, observation) => sum + Math.ceil(observation.content.length / 4),
+          (sum, observation) => sum + Math.ceil(observation.content.length / CHARS_PER_TOKEN),
           0,
         );
         expect(usedTokens).toBeLessThanOrEqual(tokenBudget);

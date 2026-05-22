@@ -1863,7 +1863,7 @@ export class TurnRunner {
   /**
    * Estimate the per-segment occupancy of the parent agent's input before
    * reconciliation with provider `totalTokens`. System prompt and memory
-   * packs use the same `ceil(chars/4)` heuristic as the memory pipeline so
+   * packs use the same `ceil(chars / CHARS_PER_TOKEN)` heuristic as the memory pipeline so
    * compaction triggers stay on the same scale as `MEMORY_BUDGET_RATIOS`.
    *
    * The message tail uses {@link calculateWireTokens} over the
@@ -1871,7 +1871,7 @@ export class TurnRunner {
    * messages already dropped by wire-shaping stop counting against the
    * `messages` segment instead of inflating it from the runner's full
    * retained transcript. Text and structured blocks (`toolCall`, thinking,
-   * etc.) use `ceil(chars/4)`, and image blocks contribute a fixed
+   * etc.) use `ceil(chars / CHARS_PER_TOKEN)`, and image blocks contribute a fixed
    * per-image estimate rather than their base64 byte length.
    *
    * `emitParentAgentEvent` rescales all four segments with

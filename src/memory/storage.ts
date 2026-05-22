@@ -6,6 +6,7 @@ import type { EmbedFn } from "./embedding.js";
 import { EmbeddingBackfillWorker } from "./embedding-worker.js";
 import { rebuildMemoryContextPack } from "./context-pack.js";
 import { runMigrations } from "./migrations.js";
+import { estimateTokens } from "./observational.js";
 import { MemorySession } from "./session.js";
 import type { MemoryContextCache } from "./store.js";
 import { nanoid } from "nanoid";
@@ -344,10 +345,6 @@ async function upsertObservation(
 
 function resolveMemoryPath(path: string, cwd: string): string {
   return path.startsWith("/") ? path : join(cwd, path);
-}
-
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
 }
 
 function createMemoryId(): string {

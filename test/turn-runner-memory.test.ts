@@ -9,6 +9,7 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   agentMessageToRaw,
+  CHARS_PER_TOKEN,
   enforceObservationTokenBudget,
   getUnobservedMessageTail,
   trimMessagesToTranscriptBudget,
@@ -743,7 +744,7 @@ describe("TurnRunner memory", () => {
       },
     });
 
-    expect(retryTokens).toBe(25);
+    expect(retryTokens).toBe(Math.ceil(100 / CHARS_PER_TOKEN));
     expect(result).toBe("short");
   });
 
@@ -1027,11 +1028,11 @@ describe("TurnRunner memory", () => {
     // global content is longer than local, so the scaled global segment
     // should still exceed the scaled local segment by a healthy margin.
     const expectedGlobalRaw = seeded.global.reduce(
-      (sum, row) => sum + Math.ceil(row.content.length / 4),
+      (sum, row) => sum + Math.ceil(row.content.length / CHARS_PER_TOKEN),
       0,
     );
     const expectedLocalRaw = seeded.local.reduce(
-      (sum, row) => sum + Math.ceil(row.content.length / 4),
+      (sum, row) => sum + Math.ceil(row.content.length / CHARS_PER_TOKEN),
       0,
     );
     expect(expectedGlobalRaw).toBeGreaterThan(expectedLocalRaw);
