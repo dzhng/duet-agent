@@ -4,28 +4,30 @@ import {
   DEFAULT_EFFECTIVE_CONTEXT,
   deriveMemoryBudgets,
   FIXED_OBSERVER_BUDGETS,
+  GLOBAL_CONTEXT_TOKEN_BUDGET,
   MEMORY_BUDGET_RATIOS,
   resolveObservationalMemorySettings,
   validateObservationalMemorySettings,
 } from "../src/memory/observational.js";
 
 /**
- * The whole memory budget surface is now one knob: every numeric trigger
- * and buffer falls out of `effectiveContext`. These tests pin the
- * documented ratios so the README, the type docs, and the runtime
+ * The local-session memory triggers and buffers all fall out of
+ * `effectiveContext` via fixed ratios; the cross-session global pack uses
+ * a separate fixed token cap (`GLOBAL_CONTEXT_TOKEN_BUDGET`). These tests
+ * pin both surfaces so the README, the type docs, and the runtime
  * derivation cannot drift apart silently.
  */
 describe("Memory budgets", () => {
-  test("actor-context ratios sum to 1.0 and global pack is 7.5 % of effectiveContext", () => {
-    const total =
-      MEMORY_BUDGET_RATIOS.messageTokens +
-      MEMORY_BUDGET_RATIOS.observationTokens +
-      MEMORY_BUDGET_RATIOS.globalContextTokenBudget;
-    // Floating point: the three ratios are exact decimals chosen so the
-    // sum equals 1 without rounding. If anyone shifts a ratio they must
-    // also shift another to preserve the invariant.
-    expect(total).toBe(1);
-    expect(MEMORY_BUDGET_RATIOS.globalContextTokenBudget).toBe(0.075);
+  test("local-session ratios stay below 1.0 and global pack is a fixed 8k cap", () => {
+    const total = MEMORY_BUDGET_RATIOS.messageTokens + MEMORY_BUDGET_RATIOS.observationTokens;
+    // The two local-session ratios used to share `effectiveContext` with
+    // the global pack so the three summed to 1. The global pack is now a
+    // fixed cap, so the remaining ratios only need to leave headroom for
+    // the system prompt and tool slack the raw tail absorbs.
+    expect(total).toBeLessThan(1);
+    expect(MEMORY_BUDGET_RATIOS.messageTokens).toBe(0.6);
+    expect(MEMORY_BUDGET_RATIOS.observationTokens).toBe(0.325);
+    expect(GLOBAL_CONTEXT_TOKEN_BUDGET).toBe(8_000);
   });
 
   test("deriveMemoryBudgets produces the documented numbers at the 200k default", () => {
@@ -42,8 +44,23 @@ describe("Memory budgets", () => {
         observationTokens: 65_000,
         bufferActivation: 32_500,
       },
-      globalContextTokenBudget: 15_000,
+      globalContextTokenBudget: GLOBAL_CONTEXT_TOKEN_BUDGET,
     });
+  });
+
+  test("globalContextTokenBudget is fixed across actor windows", () => {
+    for (const effectiveContext of [50_000, 200_000, 1_000_000]) {
+      const budgets = deriveMemoryBudgets(effectiveContext);
+      expect(budgets.globalContextTokenBudget).toBe(GLOBAL_CONTEXT_TOKEN_BUDGET);
+    }
+  });
+
+  test("globalContextTokenBudget clamps down on tiny effectiveContext", () => {
+    // Test-mode fixtures sometimes pass effectiveContext smaller than the
+    // global cap; the loader should never be told to pack more tokens than
+    // the actor can hold.
+    const budgets = deriveMemoryBudgets(2_000);
+    expect(budgets.globalContextTokenBudget).toBe(2_000);
   });
 
   test("observer-only budgets are fixed regardless of effectiveContext", () => {
@@ -112,7 +129,7 @@ describe("Memory budgets", () => {
     // Derived numbers come from deriveMemoryBudgets unchanged.
     expect(settings.observation.messageTokens).toBe(120_000);
     expect(settings.reflection.observationTokens).toBe(65_000);
-    expect(settings.globalContextTokenBudget).toBe(15_000);
+    expect(settings.globalContextTokenBudget).toBe(GLOBAL_CONTEXT_TOKEN_BUDGET);
 
     // User knobs flow through.
     expect(settings.observation.instruction).toBe("always remember X");

@@ -1,5 +1,6 @@
 import type { PGlite } from "@electric-sql/pglite";
 import type { Observation, ObservationKind, ObservationPriority } from "../types/memory.js";
+import { estimateTokens } from "./observational.js";
 
 /**
  * Loads ranked memory packs for rendering above the message tail.
@@ -197,9 +198,4 @@ function rowToObservation(row: GlobalRow): Observation {
     content: row.content,
     tags: JSON.parse(row.tags_json) as string[],
   };
-}
-
-/** Rough char-to-token estimate matching the rest of the memory subsystem. */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
 }

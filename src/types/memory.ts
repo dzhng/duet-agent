@@ -177,10 +177,14 @@ export interface ObservationalMemorySettings {
     instruction?: string;
   };
   /**
-   * Derived. Token budget for the global memory layer rendered ahead of
+   * Fixed cap. Token budget for the global memory layer rendered ahead of
    * the local session's compacted view. Cross-session reflections and
    * observations are ranked by `priority * usageDecay * kindBias` and
-   * packed greedily until this budget is exhausted. `0.075 * effectiveContext`.
+   * packed greedily until this budget is exhausted. Held at a fixed value
+   * (`GLOBAL_CONTEXT_TOKEN_BUDGET`, currently 8k) instead of scaling with
+   * `effectiveContext` so larger model windows do not bloat the rendered
+   * prefix — the long tail of reflections stays reachable via the
+   * `recall_memory` tool.
    */
   globalContextTokenBudget: number;
   /**

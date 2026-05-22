@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { CHARS_PER_TOKEN } from "../memory/observational.js";
 
 /**
  * Byte-budget safety net for the dispatched message list. The token-budget
@@ -141,8 +142,8 @@ export function calculateWireBytes(messages: AgentMessage[]): number {
 
 /**
  * Token-side companion to {@link calculateWireBytes}. Text and structured
- * blocks use the same `ceil(chars/4)` heuristic the memory pipeline uses
- * elsewhere, but image blocks contribute a fixed
+ * blocks use the same `ceil(chars / CHARS_PER_TOKEN)` heuristic the memory
+ * pipeline uses elsewhere, but image blocks contribute a fixed
  * {@link IMAGE_WIRE_TOKEN_ESTIMATE} regardless of base64 size — the
  * provider's per-image charge is bounded and unrelated to payload bytes.
  * This is the value the eviction gate and the context-window usage bar
@@ -151,15 +152,15 @@ export function calculateWireBytes(messages: AgentMessage[]): number {
  */
 function calculateMessageTokens(msg: AgentMessage): number {
   const content = (msg as { content?: unknown }).content;
-  if (typeof content === "string") return Math.ceil(content.length / 4);
+  if (typeof content === "string") return Math.ceil(content.length / CHARS_PER_TOKEN);
   if (!Array.isArray(content)) return 0;
   let total = 0;
   for (const block of content) {
     if (isImageBlock(block)) total += IMAGE_WIRE_TOKEN_ESTIMATE;
-    else if (isTextBlock(block)) total += Math.ceil(block.text.length / 4);
+    else if (isTextBlock(block)) total += Math.ceil(block.text.length / CHARS_PER_TOKEN);
     else if (block && typeof block === "object") {
       try {
-        total += Math.ceil(JSON.stringify(block).length / 4);
+        total += Math.ceil(JSON.stringify(block).length / CHARS_PER_TOKEN);
       } catch {
         total += 64;
       }

@@ -62,22 +62,34 @@ import {
 export const DEFAULT_EFFECTIVE_CONTEXT = 200_000;
 
 /**
- * Ratios of `effectiveContext` that sum to exactly 100%. These three budgets
- * are the only ones that count against the actor model's per-turn input —
- * `messageTokens` caps the raw-message tail, `observationTokens` caps the
- * local-memory pack rendered into the prefix, and `globalContextTokenBudget`
- * caps the cross-session pack rendered above local. The system prompt and
- * tool-call slack come out of `messageTokens`'s share since the raw tail
- * naturally absorbs whatever's left.
+ * Ratios of `effectiveContext` that govern the local-session budgets that
+ * count against the actor model's per-turn input. `messageTokens` caps the
+ * raw-message tail; `observationTokens` caps the local-memory pack rendered
+ * into the prefix. The system prompt and tool-call slack come out of
+ * `messageTokens`'s share since the raw tail naturally absorbs whatever's
+ * left. The cross-session pack is sized separately (see
+ * `GLOBAL_CONTEXT_TOKEN_BUDGET`) because scaling it with the model window
+ * would explode the prompt prefix on frontier-window models without
+ * making the global pack itself any more useful.
  */
 export const MEMORY_BUDGET_RATIOS = {
   /** Raw-message compaction trigger (per turn). */
   messageTokens: 0.6,
   /** Local-memory pack ceiling between reflection events. */
   observationTokens: 0.325,
-  /** Cross-session global pack ceiling. */
-  globalContextTokenBudget: 0.075,
 } as const;
+
+/**
+ * Fixed token cap on the cross-session global memory pack rendered above
+ * the local-session compacted view. Held constant (rather than derived from
+ * `effectiveContext`) because the pack's value is bounded by retrieval
+ * quality, not by the actor's window: a 1M-window model does not benefit
+ * from 75k of densest-recall reflections injected on every turn, it just
+ * pays for them. 8k is enough headroom for the top tens of reflections
+ * the ranker would actually choose, and the long tail stays reachable via
+ * the `recall_memory` tool when the turn needs it.
+ */
+export const GLOBAL_CONTEXT_TOKEN_BUDGET = 8_000;
 
 /**
  * Shared "keep half of the trigger" knob applied to both buffer activations.
@@ -171,9 +183,10 @@ export function deriveMemoryBudgets(effectiveContext: number): DerivedMemoryBudg
   const positive = Math.max(1, Math.floor(effectiveContext));
   const messageTokens = atLeastOne(MEMORY_BUDGET_RATIOS.messageTokens * positive);
   const observationTokens = atLeastOne(MEMORY_BUDGET_RATIOS.observationTokens * positive);
-  const globalContextTokenBudget = atLeastOne(
-    MEMORY_BUDGET_RATIOS.globalContextTokenBudget * positive,
-  );
+  // Clamp the global pack to the actor's window in degenerate small-context
+  // test fixtures so the pack can never grow larger than the budget the
+  // actor is sized for. Production windows are always well above 8k.
+  const globalContextTokenBudget = atLeastOne(Math.min(GLOBAL_CONTEXT_TOKEN_BUDGET, positive));
   return {
     observation: {
       messageTokens,
@@ -1839,14 +1852,25 @@ function estimateMessageTokens(message: ObserverMessagePreview): number {
 }
 
 /**
- * Heuristic 4-chars-per-token estimator used everywhere the runner needs
+ * Average characters per token assumed by the heuristic estimator. The
+ * common rule of thumb is ~4 chars/token on English prose, but real
+ * provider tokenizers consistently produce more tokens than that on
+ * code, JSON, tool calls, and non-English content. We use 3.2 to bias
+ * the estimate ~25 % conservative so memory triggers fire before the
+ * provider's actual token count crosses the actor's window, instead of
+ * after.
+ */
+export const CHARS_PER_TOKEN = 3.2;
+
+/**
+ * Heuristic chars-per-token estimator used everywhere the runner needs
  * a budget number without tokenizing the actual provider payload. Exported
  * so surfaces and the runner can attribute the same estimate the memory
  * pipeline does, keeping the segment breakdown on `TurnUsageFields`
  * consistent with the trigger arithmetic in this file.
  */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
 function hashText(text: string): string {

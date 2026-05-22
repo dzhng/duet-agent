@@ -99,7 +99,7 @@ describe("planReflectionBatches", () => {
   });
 
   test("packs eligible rows greedily up to batchTokens, then rolls over", () => {
-    // Each content is ~40 chars => ~10 tokens via the 4-chars-per-token heuristic.
+    // Each content is 40 chars => 13 tokens via the CHARS_PER_TOKEN=3.2 heuristic.
     const content = "x".repeat(40);
     const observations = Array.from({ length: 6 }, (_, i) =>
       makeObservation({
@@ -111,7 +111,7 @@ describe("planReflectionBatches", () => {
 
     const { batches } = planReflectionBatches(observations, {
       cutoff,
-      batchTokens: 25, // fits 2 rows (10+10=20) but not 3 (30) per batch
+      batchTokens: 30, // fits 2 rows (13+13=26) but not 3 (39) per batch
     });
 
     // Eligible rows packed chronologically (oldest → newest). Originals
@@ -124,7 +124,7 @@ describe("planReflectionBatches", () => {
       ["o1", "o0"],
     ]);
     for (const batch of batches) {
-      expect(batch.estimatedTokens).toBeLessThanOrEqual(25);
+      expect(batch.estimatedTokens).toBeLessThanOrEqual(30);
     }
   });
 
