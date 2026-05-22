@@ -16,7 +16,12 @@ const judgeTool: Tool<typeof judgeSchema> = {
   parameters: judgeSchema,
 };
 
-const judgeModel = "anthropic:claude-opus-4-7";
+// Use the shorthand so the judge routes through whichever provider the
+// eval environment has credentials for (duet-gateway when DUET_API_KEY is
+// set, falling back to Anthropic-direct on a local laptop with
+// ANTHROPIC_API_KEY). Pinning the provider here would break the docker
+// eval container, which only has gateway-style credentials.
+const judgeModel = "opus-4.7";
 
 export async function judge(input: {
   prompt: string;
