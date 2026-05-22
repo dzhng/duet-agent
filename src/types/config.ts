@@ -21,11 +21,13 @@ export interface TurnRunnerConfig extends TurnOptions {
    */
   sessionId?: string;
   /**
-   * Target ceiling, in tokens, for the actor model's per-turn input. Every
-   * memory budget (raw-message compaction trigger, raw-tail buffer,
-   * reflection trigger and buffer, global pack budget) is derived from this
-   * single number via fixed ratios in `deriveMemoryBudgets`; see
+   * Target ceiling, in tokens, for the actor model's per-turn input. The
+   * local-session memory budgets (raw-message compaction trigger, raw-tail
+   * buffer, reflection trigger and buffer) are derived from this single
+   * number via fixed ratios in `deriveMemoryBudgets`; see
    * `MEMORY_BUDGET_RATIOS` in `src/memory/observational.ts` for the table.
+   * The cross-session global pack uses a fixed cap
+   * (`GLOBAL_CONTEXT_TOKEN_BUDGET`) instead of scaling with this value.
    *
    * Defaults to 200_000. The runner clamps the resolved value to
    * `min(effectiveContext, model.contextWindow)` at use-time so a user
