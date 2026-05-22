@@ -107,8 +107,15 @@ async function runCliEvents(args: string[]): Promise<{
     stderr: "pipe",
     env: {
       ...process.env,
-      // The eval asserts CLI behavior, not default skill sync behavior.
+      // The eval asserts CLI behavior, not default skill sync behavior. Both
+      // gateway env vars must be cleared: judge() calls earlier in the run
+      // resolve `opus-4.7` through duet-gateway, which mutates
+      // AI_GATEWAY_API_KEY on the parent process via forceDuetGatewayAuth.
+      // Without clearing both, the spawned CLI inherits a Duet token under
+      // AI_GATEWAY_API_KEY, routes through vercel-ai-gateway, and 401s
+      // upstream. With both blank, the CLI falls through to anthropic.
       DUET_API_KEY: "",
+      AI_GATEWAY_API_KEY: "",
     },
   });
   const [stdout, stderr, exitCode] = await Promise.all([
