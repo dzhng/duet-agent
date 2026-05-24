@@ -51,6 +51,18 @@
 - Tests that write files, create databases, touch `.duet`, or depend on the home directory must use `testIfDocker` so host-only focused runs skip them.
 - If a focused host run creates runtime artifacts, fix the test/eval boundary instead of committing or relying on cleanup.
 
+## Writing Live Evals
+
+- Live evals run a real model against the runner. The shorthand (e.g. `sonnet-4.6`, `opus-4.7`) resolves through `PROVIDER_ORDER`, picking whichever credential is present: `DUET_API_KEY` (duet-gateway), `AI_GATEWAY_API_KEY` (vercel-ai-gateway), `OPENROUTER_API_KEY`, or `ANTHROPIC_API_KEY` (anthropic-direct). Forward `DUET_API_KEY` into the docker container — it is the credential the docker eval path is set up for. The other keys are fallbacks for laptop runs and may be stale.
+- To iterate on one eval file, run it directly inside the same container `bun run eval` uses, e.g. `docker run --rm -v "$PWD:/src:ro" -w /work -e HOME=/tmp/home -e DUET_TEST_IN_DOCKER=1 -e DUET_API_KEY="$DUET_API_KEY" oven/bun:1.3.11 sh -lc 'cp -R /src/. /work && bun install --frozen-lockfile >/dev/null 2>&1 && bun test ./evals/<file>.eval.ts'`. The repo-wide `bun run eval` script runs every eval and is wrong for fast iteration.
+- Wrap each eval body in `testIfDocker` from `test/helpers/docker-only.js`. Set a generous timeout (60–120s for planning-only evals, longer for evals that actually run tool calls).
+- Pick the model with `const model = process.env.EVAL_MODEL ?? "sonnet-4.6"` so the same eval can be reroutered to opus / haiku / a custom shorthand without code edits.
+- Disable skill discovery in evals that don't need it (`skillDiscovery: { includeDefaults: false }`) — it keeps the prompt cheap and stops local user skills from drifting the result.
+- For planning-only evals, give the model an escape hatch: a terminal state named `eval_done` it can wire as the relay's `firstState`, plus a system instruction explaining the eval is planning-only and listing exactly which planning tools are allowed (`create_state_machine_definition`, `todo_write`). Without this the model can refuse the request or run real bash/edit calls.
+- Routing evals ("did the model pick the right tool / field / shape?") subscribe to `runner.subscribe` and collect tool calls off the `step` events with `step.type === "tool_call"` and `step.status === "running"`. Assistant text comes through `step.type === "text"` (not `"assistant"`).
+- A relay that wires the timer/poll as its `firstState` ends the turn in `terminal.type === "sleep"`, not `"complete"`. Assert `expect(["complete", "sleep"]).toContain(terminal.type)` for any eval that exercises a real wait — the same shape `evals/promised-wait-needs-state-machine.eval.ts` uses.
+- When an eval fails because the model produced no tool calls and no text in 2–3 seconds, suspect an auth error before suspecting the prompt: inspect `terminal.state.agent.messages` for a `stopReason: "error"` and the provider response. Real model runs against `sonnet-4.6` are 5–20s for a single planning turn.
+
 ## Keep Prompt Literals Aligned
 
 - Use `dedent` for multi-line prompts, markdown fixtures, and tool instruction strings in code.
