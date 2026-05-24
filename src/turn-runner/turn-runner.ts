@@ -15,6 +15,7 @@ import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
 
 import { assistantText } from "../core/serializer.js";
+import { scheduledStateFallbackWakeAt } from "./duration.js";
 import { toXML } from "../lib/xml.js";
 import {
   createObservationalContextTransform,
@@ -900,9 +901,7 @@ export class TurnRunner {
 
     const state = currentScheduledState(terminal.state.stateMachine);
     const progress = state ? terminal.state.stateMachine?.progress?.states[state.name] : undefined;
-    const wakeAt =
-      progress?.nextWakeAt ??
-      (state?.kind === "poll" ? Date.now() + state.intervalMs : (state?.wakeAt ?? Date.now()));
+    const wakeAt = progress?.nextWakeAt ?? scheduledStateFallbackWakeAt(state);
     return {
       type: "sleep",
       wakeAt,

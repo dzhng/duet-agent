@@ -9,6 +9,7 @@ import type {
   StateMachineTimerState,
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE } from "../types/state-machine.js";
+import { parseDurationToMs, parseWakeAtToMs } from "./duration.js";
 import {
   currentScheduledState,
   elapsedSinceStateStarted,
@@ -369,7 +370,8 @@ export class StateMachineController {
         return { type: "interrupted" };
       }
       // Exit code not in `successCodes` (or shell error) → keep polling.
-      const wakeAt = Date.now() + state.intervalMs;
+      const wakeAt =
+        Date.now() + parseDurationToMs(state.intervalMs, `poll "${state.name}" intervalMs`);
       this.session = recordStateSleep(this.requireSession(), state, wakeAt);
       return { type: "sleep", wakeAt };
     } finally {
@@ -379,9 +381,10 @@ export class StateMachineController {
   }
 
   private runTimerState(state: StateMachineTimerState, woke = false): StateMachineExecutionResult {
-    if (!woke && state.wakeAt > Date.now()) {
-      this.session = recordStateSleep(this.requireSession(), state, state.wakeAt);
-      return { type: "sleep", wakeAt: state.wakeAt };
+    const wakeAt = resolveTimerWakeAt(state, this.session);
+    if (!woke && wakeAt > Date.now()) {
+      this.session = recordStateSleep(this.requireSession(), state, wakeAt);
+      return { type: "sleep", wakeAt };
     }
 
     const output = {
@@ -458,6 +461,27 @@ export class StateMachineController {
     }
     return this.session;
   }
+}
+
+// Timer states accept either an absolute `wakeAt` or a relative `wakeAfterMs`.
+// Each may be a raw millisecond number or a human-readable string (ISO 8601
+// for `wakeAt`, `ms`-style duration for `wakeAfterMs`). Relative timers are
+// resolved against the moment the parent selected the state — captured as
+// `startedAt` in progress — so the wake stays stable across sleep/wake cycles
+// even though the controller re-enters the state.
+function resolveTimerWakeAt(
+  state: StateMachineTimerState,
+  session: StateMachineSession | undefined,
+): number {
+  if (state.wakeAt !== undefined) {
+    return parseWakeAtToMs(state.wakeAt, `timer "${state.name}" wakeAt`);
+  }
+  if (state.wakeAfterMs === undefined) {
+    throw new Error(`Timer state "${state.name}" must specify wakeAt or wakeAfterMs.`);
+  }
+  const wakeAfterMs = parseDurationToMs(state.wakeAfterMs, `timer "${state.name}" wakeAfterMs`);
+  const startedAt = session?.progress?.states[state.name]?.startedAt ?? Date.now();
+  return startedAt + wakeAfterMs;
 }
 
 function normalizeStructuredShellOutput(shellOutput: ShellCommandOutput): ShellCommandOutput & {

@@ -310,8 +310,12 @@ export interface StateMachineScriptState extends StateMachineBaseState {
 /** Performs one external check, then either records data or sleeps until the next attempt. */
 export interface StateMachinePollState extends StateMachineBaseState {
   kind: "poll";
-  /** Recurring delay between external check attempts. */
-  intervalMs: number;
+  /**
+   * Recurring delay between external check attempts. Accepts either a
+   * human-readable duration string parsed by the `ms` package (e.g. `"30s"`,
+   * `"15m"`, `"3h"`, `"5d"`) or a raw number of milliseconds.
+   */
+  intervalMs: number | string;
   /** Maximum time the state machine can remain in this poll state before failing the session. */
   timeoutMs?: number;
   /**
@@ -330,11 +334,26 @@ export interface StateMachinePollState extends StateMachineBaseState {
   successCodes?: number[];
 }
 
-/** Sleeps until one absolute time, then lets the parent choose the next state. */
+/** Sleeps until a future time, then lets the parent choose the next state. */
 export interface StateMachineTimerState extends StateMachineBaseState {
   kind: "timer";
-  /** Absolute Unix epoch millisecond time when this timer state should complete. */
-  wakeAt: number;
+  /**
+   * Absolute time when this timer state should complete. Accepts either an
+   * ISO 8601 date string (e.g. `"2026-05-24T18:00:00Z"`) or a raw Unix-epoch
+   * millisecond number. Mutually exclusive with `wakeAfterMs` — exactly one of
+   * the two must be set.
+   */
+  wakeAt?: number | string;
+  /**
+   * Relative duration measured from the moment the parent selects this timer
+   * state, after which the timer should complete. Accepts either a
+   * human-readable duration string parsed by the `ms` package (e.g. `"3h"`,
+   * `"5d"`) or a raw number of milliseconds. Useful when the wait length is
+   * known up front but the absolute wake time is not (for example reusable
+   * definitions, or transitions where the start time is decided by the parent
+   * at selection time). Mutually exclusive with `wakeAt`.
+   */
+  wakeAfterMs?: number | string;
 }
 
 /** Finalizes the session when reached. Terminal outcomes are just state machine states. */

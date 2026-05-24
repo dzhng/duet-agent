@@ -888,6 +888,102 @@ describe("TurnRunner protocol scenarios", () => {
     });
   });
 
+  test("timer state with wakeAfterMs sleeps for the relative duration from selection time", async () => {
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("wait_before_retry");
+    const wakeAfterMs = 45_000;
+    if (!turnState.stateMachine) throw new Error("Expected state machine session");
+    turnState.stateMachine.definition = {
+      ...turnState.stateMachine.definition,
+      states: turnState.stateMachine.definition.states.map((state) =>
+        state.name === "wait_before_retry" && state.kind === "timer"
+          ? { kind: "timer", name: state.name, wakeAfterMs }
+          : state,
+      ),
+    };
+    await runner.start({ type: "start", state: turnState });
+    runner.controlResults.push({
+      type: "select_state_machine_state",
+      decision: { state: "wait_before_retry" },
+    });
+
+    const before = Date.now();
+    const sleeping = await runner.turn({
+      type: "prompt",
+      message: "Wait for a relative duration.",
+      behavior: "follow_up",
+    });
+    const after = Date.now();
+
+    expect(sleeping.type).toBe("sleep");
+    if (sleeping.type !== "sleep") throw new Error("Expected sleep terminal");
+    expect(sleeping.wakeAt).toBeGreaterThanOrEqual(before + wakeAfterMs);
+    expect(sleeping.wakeAt).toBeLessThanOrEqual(after + wakeAfterMs);
+    expect(sleeping.state.stateMachine?.currentState).toBe("wait_before_retry");
+  });
+
+  test("timer state accepts a duration string for wakeAfterMs", async () => {
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("wait_before_retry");
+    if (!turnState.stateMachine) throw new Error("Expected state machine session");
+    turnState.stateMachine.definition = {
+      ...turnState.stateMachine.definition,
+      states: turnState.stateMachine.definition.states.map((state) =>
+        state.name === "wait_before_retry" && state.kind === "timer"
+          ? { kind: "timer", name: state.name, wakeAfterMs: "30s" }
+          : state,
+      ),
+    };
+    await runner.start({ type: "start", state: turnState });
+    runner.controlResults.push({
+      type: "select_state_machine_state",
+      decision: { state: "wait_before_retry" },
+    });
+
+    const before = Date.now();
+    const sleeping = await runner.turn({
+      type: "prompt",
+      message: "Wait for a duration-string interval.",
+      behavior: "follow_up",
+    });
+    const after = Date.now();
+
+    expect(sleeping.type).toBe("sleep");
+    if (sleeping.type !== "sleep") throw new Error("Expected sleep terminal");
+    expect(sleeping.wakeAt).toBeGreaterThanOrEqual(before + 30_000);
+    expect(sleeping.wakeAt).toBeLessThanOrEqual(after + 30_000);
+  });
+
+  test("timer state accepts an ISO 8601 string for wakeAt", async () => {
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("wait_before_retry");
+    if (!turnState.stateMachine) throw new Error("Expected state machine session");
+    const wakeAtIso = new Date(Date.now() + 90_000).toISOString();
+    turnState.stateMachine.definition = {
+      ...turnState.stateMachine.definition,
+      states: turnState.stateMachine.definition.states.map((state) =>
+        state.name === "wait_before_retry" && state.kind === "timer"
+          ? { kind: "timer", name: state.name, wakeAt: wakeAtIso }
+          : state,
+      ),
+    };
+    await runner.start({ type: "start", state: turnState });
+    runner.controlResults.push({
+      type: "select_state_machine_state",
+      decision: { state: "wait_before_retry" },
+    });
+
+    const sleeping = await runner.turn({
+      type: "prompt",
+      message: "Wait for an absolute ISO wakeAt.",
+      behavior: "follow_up",
+    });
+
+    expect(sleeping.type).toBe("sleep");
+    if (sleeping.type !== "sleep") throw new Error("Expected sleep terminal");
+    expect(sleeping.wakeAt).toBe(Date.parse(wakeAtIso));
+  });
+
   test("poll timeout fails after the maximum time in the poll state", async () => {
     const { runner } = createTurnRunner();
     const turnState = {

@@ -10,6 +10,7 @@ import dedent from "dedent";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { toXML } from "../lib/xml.js";
+import { parseDurationToMs, parseWakeAtToMs } from "./duration.js";
 import type { TurnMode, TurnQuestion, TurnTodo } from "../types/protocol.js";
 import type {
   StateMachineSession,
@@ -180,8 +181,9 @@ const scriptOverrideSchema = Type.Partial(
 
 const pollOverrideSchema = Type.Partial(
   Type.Object({
-    intervalMs: Type.Number({
-      description: "Replacement recurring delay between poll wake attempts.",
+    intervalMs: Type.Union([Type.Number(), Type.String()], {
+      description:
+        'Replacement recurring delay between poll wake attempts. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds.',
     }),
     timeoutMs: Type.Number({ description: "Replacement maximum poll-state runtime." }),
     command: Type.String({
@@ -200,8 +202,13 @@ const pollOverrideSchema = Type.Partial(
 
 const timerOverrideSchema = Type.Partial(
   Type.Object({
-    wakeAt: Type.Number({
-      description: "Replacement absolute Unix epoch millisecond time for this timer state.",
+    wakeAt: Type.Union([Type.Number(), Type.String()], {
+      description:
+        'Replacement absolute wake time for this timer state. Accepts an ISO 8601 date string like "2026-05-24T18:00:00Z" or a Unix-epoch millisecond number.',
+    }),
+    wakeAfterMs: Type.Union([Type.Number(), Type.String()], {
+      description:
+        'Replacement relative duration measured from the moment the parent selects this timer state. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds. Mutually exclusive with wakeAt.',
     }),
     inputSchema: Type.Record(Type.String(), Type.Any(), {
       description:
@@ -271,8 +278,9 @@ const scriptStateSchema = Type.Object({
 const pollStateSchema = Type.Object({
   ...baseStateSchema,
   kind: Type.Literal("poll", { description: "Perform one external wait/check attempt." }),
-  intervalMs: Type.Number({
-    description: "Recurring delay before the next scheduled poll attempt.",
+  intervalMs: Type.Union([Type.Number(), Type.String()], {
+    description:
+      'Recurring delay before the next scheduled poll attempt. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds.',
   }),
   timeoutMs: Type.Optional(
     Type.Number({ description: "Maximum time this state may remain polling." }),
@@ -293,11 +301,20 @@ const timerStateSchema = Type.Object({
   ...baseStateSchema,
   kind: Type.Literal("timer", {
     description:
-      "Sleep until one absolute Unix epoch millisecond time, then resume with elapsedMs and timestamp output.",
+      "Sleep until a future time, then resume with elapsedMs and timestamp output. Specify exactly one of wakeAt (absolute) or wakeAfterMs (relative).",
   }),
-  wakeAt: Type.Number({
-    description: "Absolute Unix epoch millisecond time when this timer state should complete.",
-  }),
+  wakeAt: Type.Optional(
+    Type.Union([Type.Number(), Type.String()], {
+      description:
+        'Absolute wake time when this timer state should complete. Accepts an ISO 8601 date string like "2026-05-24T18:00:00Z" or a Unix-epoch millisecond number. Mutually exclusive with wakeAfterMs.',
+    }),
+  ),
+  wakeAfterMs: Type.Optional(
+    Type.Union([Type.Number(), Type.String()], {
+      description:
+        'Relative duration measured from the moment the parent selects this timer state, after which the timer should complete. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds. Mutually exclusive with wakeAt.',
+    }),
+  ),
 });
 
 const terminalStateSchema = Type.Object({
@@ -334,7 +351,7 @@ export type StateMachinePollStateOverride = Partial<
   >
 >;
 export type StateMachineTimerStateOverride = Partial<
-  Pick<StateMachineTimerState, "wakeAt" | "inputSchema">
+  Pick<StateMachineTimerState, "wakeAt" | "wakeAfterMs" | "inputSchema">
 >;
 
 export type StateMachineStateOverride =
@@ -539,7 +556,19 @@ export function applyStateOverride(
     return state;
   }
 
-  return { ...state, ...override.state } as StateMachineState;
+  const merged = { ...state, ...override.state } as StateMachineState;
+  // Timer states must keep wakeAt and wakeAfterMs mutually exclusive: an
+  // override that introduces one field must drop the other so downstream
+  // validation and runtime resolution see exactly one schedule source.
+  if (merged.kind === "timer" && override.kind === "timer") {
+    const overrideState = override.state;
+    if ("wakeAt" in overrideState && overrideState.wakeAt !== undefined) {
+      delete (merged as StateMachineTimerState).wakeAfterMs;
+    } else if ("wakeAfterMs" in overrideState && overrideState.wakeAfterMs !== undefined) {
+      delete (merged as StateMachineTimerState).wakeAt;
+    }
+  }
+  return merged;
 }
 
 function createAskUserQuestionTool(): AgentTool<typeof askUserQuestionSchema> {
@@ -778,7 +807,7 @@ export function createTodoWriteTool(
 
       Prefer a state machine over this tool when the steps are well-scoped enough that a sub-agent or script could complete each one on its own ("do X with these inputs and return the result"). State-machine states run outside this transcript, so their intermediate output does not consume your context — using todo_write for that kind of work pollutes the parent context with tool output you do not actually need to keep.
 
-      Hard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt have the 15-minute floor. If you can already see the work will not fit in one session and you are tempted to recommend the user "continue in the next session," that is the signal that this tool was the wrong choice and a state machine was the right one.
+      Hard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 15-minute floor. If you can already see the work will not fit in one session and you are tempted to recommend the user "continue in the next session," that is the signal that this tool was the wrong choice and a state machine was the right one.
 
       How to use it well:
       - Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.
@@ -920,7 +949,7 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
         "firstState": "step-1"
       }
 
-      State \`kind\` is one of \`agent\`, \`script\`, \`poll\`, \`timer\`, \`terminal\`. Poll \`intervalMs\` and timer \`wakeAt\` must be ≥ 15 minutes; agent/script states have no minimum duration. Every definition needs at least one \`terminal\` state with status "completed"; "failed" and "cancelled" terminals are auto-injected if omitted.
+      State \`kind\` is one of \`agent\`, \`script\`, \`poll\`, \`timer\`, \`terminal\`. Poll \`intervalMs\`, timer \`wakeAt\`, and timer \`wakeAfterMs\` must be ≥ 15 minutes; agent/script states have no minimum duration. Durations accept human-readable strings like \`"3h"\` or \`"5d"\` parsed by the \`ms\` package, and \`wakeAt\` accepts ISO 8601 strings like \`"2026-05-24T18:00:00Z"\`; raw millisecond numbers still work as a fallback. Timer states must set exactly one of \`wakeAt\` (absolute) or \`wakeAfterMs\` (relative from selection time). Every definition needs at least one \`terminal\` state with status "completed"; "failed" and "cancelled" terminals are auto-injected if omitted.
 
       State prompts and script commands may use \`{{ input.foo }}\` templates — declare \`inputSchema\` on those states and pass matching \`input\` when selecting them via select_state_machine_state. Agent states may set \`allowedSkills\` to restrict the skill set for that sub-agent.
 
@@ -950,7 +979,7 @@ function createSelectStateTool(
     name: "select_state_machine_state",
     label: "Select state machine state",
     description: dedent`
-      Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt.
+      Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt or wakeAfterMs (exactly one).
 
       Carry forward what the orchestrator now knows. Each agent state runs in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — it only sees the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: the sub-agent has no way to read those findings.
 
@@ -1100,25 +1129,33 @@ function assertValidStateInputSchema(state: StateMachineState): void {
   throw new Error(`Invalid inputSchema for state "${state.name}": ${message}`);
 }
 
-// Shape validation: intervalMs / wakeAt must be present and finite. Runs at
+// Shape validation: intervalMs / wakeAt must be present and parseable. Runs at
 // both definition creation and state selection so malformed overrides are
-// rejected too.
+// rejected too. Duration strings like "3h" / "5d" are accepted alongside raw
+// millisecond numbers; ISO 8601 strings are accepted for absolute wakeAt.
 function assertValidStateSchedule(state: StateMachineState): void {
-  if (
-    state.kind === "poll" &&
-    (typeof state.intervalMs !== "number" ||
-      !Number.isFinite(state.intervalMs) ||
-      state.intervalMs <= 0)
-  ) {
-    throw new Error(
-      `Invalid poll schedule for state "${state.name}": intervalMs must be positive.`,
+  if (state.kind === "poll") {
+    parseDurationToMs(
+      state.intervalMs,
+      `Invalid poll schedule for state "${state.name}": intervalMs`,
     );
   }
-  if (
-    state.kind === "timer" &&
-    (typeof state.wakeAt !== "number" || !Number.isFinite(state.wakeAt))
-  ) {
-    throw new Error(`Invalid timer schedule for state "${state.name}": wakeAt must be finite.`);
+  if (state.kind === "timer") {
+    const hasWakeAt = state.wakeAt !== undefined;
+    const hasWakeAfter = state.wakeAfterMs !== undefined;
+    if (hasWakeAt === hasWakeAfter) {
+      throw new Error(
+        `Invalid timer schedule for state "${state.name}": specify exactly one of wakeAt or wakeAfterMs.`,
+      );
+    }
+    if (hasWakeAt) {
+      parseWakeAtToMs(state.wakeAt, `Invalid timer schedule for state "${state.name}": wakeAt`);
+    } else {
+      parseDurationToMs(
+        state.wakeAfterMs,
+        `Invalid timer schedule for state "${state.name}": wakeAfterMs`,
+      );
+    }
   }
 }
 
@@ -1127,18 +1164,37 @@ function assertValidStateSchedule(state: StateMachineState): void {
 // have shorter cadences from configuration the agent did not author, and the
 // runtime should run them as-is rather than re-litigating the boundary.
 function assertValidStateScheduleMinimum(state: StateMachineState): void {
-  if (state.kind === "poll" && typeof state.intervalMs === "number") {
-    if (state.intervalMs < MINIMUM_STATE_MACHINE_DELAY_MS) {
+  if (state.kind === "poll" && state.intervalMs !== undefined) {
+    const intervalMs = parseDurationToMs(
+      state.intervalMs,
+      `Invalid poll schedule for state "${state.name}": intervalMs`,
+    );
+    if (intervalMs < MINIMUM_STATE_MACHINE_DELAY_MS) {
       throw new Error(
         `Invalid poll schedule for state "${state.name}": intervalMs must be at least 15 minutes (${MINIMUM_STATE_MACHINE_DELAY_MS} ms). Anything shorter should run directly in the parent turn instead of through a state machine.`,
       );
     }
   }
-  if (state.kind === "timer" && typeof state.wakeAt === "number") {
+  if (state.kind === "timer" && state.wakeAt !== undefined) {
+    const wakeAt = parseWakeAtToMs(
+      state.wakeAt,
+      `Invalid timer schedule for state "${state.name}": wakeAt`,
+    );
     const minWakeAt = Date.now() + MINIMUM_STATE_MACHINE_DELAY_MS;
-    if (state.wakeAt < minWakeAt) {
+    if (wakeAt < minWakeAt) {
       throw new Error(
         `Invalid timer schedule for state "${state.name}": wakeAt must be at least 15 minutes in the future. Anything shorter should run directly in the parent turn instead of through a state machine.`,
+      );
+    }
+  }
+  if (state.kind === "timer" && state.wakeAfterMs !== undefined) {
+    const wakeAfterMs = parseDurationToMs(
+      state.wakeAfterMs,
+      `Invalid timer schedule for state "${state.name}": wakeAfterMs`,
+    );
+    if (wakeAfterMs < MINIMUM_STATE_MACHINE_DELAY_MS) {
+      throw new Error(
+        `Invalid timer schedule for state "${state.name}": wakeAfterMs must be at least 15 minutes (${MINIMUM_STATE_MACHINE_DELAY_MS} ms). Anything shorter should run directly in the parent turn instead of through a state machine.`,
       );
     }
   }
