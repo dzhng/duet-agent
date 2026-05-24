@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -546,6 +546,28 @@ describe("TurnRunner skills", () => {
         filePath: agentSkillPath,
       }),
     );
+  });
+
+  testIfDocker("walks up from cwd to discover ancestor project skills", async () => {
+    app = await createTestTurnRunner();
+    const ancestorSkillPath = await app.addProjectDuetSkill({
+      name: "ancestor-skill",
+      description: "Project skill installed at an ancestor directory of the cwd.",
+      body: "# Ancestor Skill\n\nVerify discovery walks up from cwd.",
+    });
+
+    const nestedCwd = join(app.projectRoot, "packages", "web", "src");
+    await mkdir(nestedCwd, { recursive: true });
+    const nestedRunner = new TurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      cwd: nestedCwd,
+    });
+
+    const skills = (await nestedRunner.getSkills()).filter((s) => !isBuiltInSkill(s));
+    expect(skills.map((skill) => skill.name)).toEqual(["ancestor-skill"]);
+    expect(skills[0]).toMatchObject({
+      filePath: ancestorSkillPath,
+    });
   });
 
   testIfDocker("discovers global skills from .duet in the home directory", async () => {
