@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  BUFFER_RATIO,
+  OBSERVATION_BUFFER_RATIO,
+  REFLECTION_BUFFER_RATIO,
   DEFAULT_EFFECTIVE_CONTEXT,
   deriveMemoryBudgets,
   FIXED_OBSERVER_BUDGETS,
@@ -42,7 +43,7 @@ describe("Memory budgets", () => {
       },
       reflection: {
         observationTokens: 65_000,
-        bufferActivation: 32_500,
+        bufferActivation: 26_000,
       },
       globalContextTokenBudget: GLOBAL_CONTEXT_TOKEN_BUDGET,
     });
@@ -82,14 +83,14 @@ describe("Memory budgets", () => {
     );
   });
 
-  test("buffer activations are exactly BUFFER_RATIO of their triggers across scales", () => {
+  test("buffer activations match their per-pipeline ratios across scales", () => {
     for (const effectiveContext of [10_000, 200_000, 500_000]) {
       const budgets = deriveMemoryBudgets(effectiveContext);
       expect(budgets.observation.bufferActivation).toBe(
-        Math.floor(BUFFER_RATIO * budgets.observation.messageTokens),
+        Math.floor(OBSERVATION_BUFFER_RATIO * budgets.observation.messageTokens),
       );
       expect(budgets.reflection.bufferActivation).toBe(
-        Math.floor(BUFFER_RATIO * budgets.reflection.observationTokens),
+        Math.floor(REFLECTION_BUFFER_RATIO * budgets.reflection.observationTokens),
       );
       expect(budgets.observation.bufferActivation).toBeLessThan(budgets.observation.messageTokens);
       expect(budgets.reflection.bufferActivation).toBeLessThan(

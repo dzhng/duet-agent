@@ -92,14 +92,28 @@ export const MEMORY_BUDGET_RATIOS = {
 export const GLOBAL_CONTEXT_TOKEN_BUDGET = 8_000;
 
 /**
- * Shared "keep half of the trigger" knob applied to both buffer activations.
- * Each compact/reflect event reclaims roughly half the trigger's worth of
- * space; the next event triggers sooner, trading larger condensation steps
- * for smaller, more frequent ones. Buffer activations don't count toward the
- * actor budget because they're bounded above by their respective triggers,
- * which already do.
+ * Post-observation wire-tail target as a fraction of the observation
+ * trigger (`observation.messageTokens`). When raw wire-tail tokens cross
+ * the trigger, the observer condenses the tail into observations and the
+ * eviction horizon advances until the surviving tail fits this target.
+ * 0.5 reclaims half the trigger each pass; the next observation fires
+ * sooner, trading larger condensation steps for smaller, more frequent
+ * ones. Doesn't count toward the actor budget because it's bounded above
+ * by the trigger, which already does.
  */
-export const BUFFER_RATIO = 0.5;
+export const OBSERVATION_BUFFER_RATIO = 0.5;
+
+/**
+ * Per-reflection condensation target as a fraction of the reflection
+ * trigger (`reflection.observationTokens`). Lower than
+ * `OBSERVATION_BUFFER_RATIO` because the reflector folds the previous
+ * reflection row back into the next pass, so a tighter per-pass target
+ * keeps the rolled-up row from creeping toward the trigger over many
+ * reflections. 0.4 reclaims 60% of the trigger each pass; the next
+ * reflection fires sooner but each pass is cheaper and the steady-state
+ * row stays denser.
+ */
+export const REFLECTION_BUFFER_RATIO = 0.4;
 
 /**
  * Token budgets that govern observer-call quality rather than actor-context
@@ -192,12 +206,12 @@ export function deriveMemoryBudgets(effectiveContext: number): DerivedMemoryBudg
       messageTokens,
       maxTranscriptTokens: FIXED_OBSERVER_BUDGETS.maxTranscriptTokens,
       maxObservationLogTokens: FIXED_OBSERVER_BUDGETS.maxObservationLogTokens,
-      bufferActivation: atLeastOne(BUFFER_RATIO * messageTokens),
+      bufferActivation: atLeastOne(OBSERVATION_BUFFER_RATIO * messageTokens),
       previousObserverTokens: FIXED_OBSERVER_BUDGETS.previousObserverTokens,
     },
     reflection: {
       observationTokens,
-      bufferActivation: atLeastOne(BUFFER_RATIO * observationTokens),
+      bufferActivation: atLeastOne(REFLECTION_BUFFER_RATIO * observationTokens),
     },
     globalContextTokenBudget,
   };

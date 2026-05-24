@@ -143,7 +143,7 @@ export interface ObservationalMemorySettings {
     maxObservationLogTokens: number;
     /**
      * Derived. Raw-tail token target after the wire-shaping horizon
-     * advances. `BUFFER_RATIO * messageTokens`. Does not count against
+     * advances. `OBSERVATION_BUFFER_RATIO * messageTokens`. Does not count against
      * `effectiveContext` since it is bounded above by `messageTokens`,
      * which already counts.
      */
@@ -169,8 +169,9 @@ export interface ObservationalMemorySettings {
     observationTokens: number;
     /**
      * Derived. Local-memory token target after a reflection event.
-     * `BUFFER_RATIO * observationTokens`. Does not count against
-     * `effectiveContext` since it is bounded above by `observationTokens`.
+     * `REFLECTION_BUFFER_RATIO * observationTokens` (40% of the trigger).
+     * Does not count against `effectiveContext` since it is bounded above
+     * by `observationTokens`.
      */
     bufferActivation: number;
     /** Additional instructions appended to the reflector system prompt. */
