@@ -165,9 +165,9 @@ describe("TurnRunner skills", () => {
       expect(systemPrompt).toContain("<skills>");
       // Each skill entry must include the SKILL.md `path` attribute so the
       // agent can read/edit the file directly without a discovery step.
-      expect(systemPrompt).toMatch(/<skill name="first-skill" path="[^"]+\/SKILL\.md">/);
+      expect(systemPrompt).toContain(`<skill name="first-skill" path="${firstSkillPath}">`);
       expect(systemPrompt).toContain("First skill description.");
-      expect(systemPrompt).toMatch(/<skill name="second-skill" path="[^"]+\/SKILL\.md">/);
+      expect(systemPrompt).toContain(`<skill name="second-skill" path="${secondSkillPath}">`);
       expect(systemPrompt).toContain("Second skill description.");
       expect(systemPrompt).toContain("Base instructions.");
       // Full SKILL.md bodies must NOT be inlined — they're loaded on demand
@@ -216,7 +216,7 @@ describe("TurnRunner skills", () => {
       expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       /review audit this diff
 
-      <skill name="review">
+      <skill name="review" path="${skillPath}">
       Use the following skill instructions for this request.
       <instructions>
       ---
@@ -292,7 +292,7 @@ describe("TurnRunner skills", () => {
     expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       /review /repo-map audit this diff
 
-      <skill name="review">
+      <skill name="review" path="${reviewPath}">
       Use the following skill instructions for this request.
       <instructions>
       ---
@@ -306,7 +306,7 @@ describe("TurnRunner skills", () => {
       </instructions>
       </skill>
 
-      <skill name="repo-map">
+      <skill name="repo-map" path="${repoMapPath}">
       Use the following skill instructions for this request.
       <instructions>
       ---
@@ -357,7 +357,7 @@ describe("TurnRunner skills", () => {
     expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       audit this diff /review carefully
 
-      <skill name="review">
+      <skill name="review" path="${skillPath}">
       Use the following skill instructions for this request.
       <instructions>
       ---
@@ -406,7 +406,7 @@ describe("TurnRunner skills", () => {
     expect(runner.workerInputs[0]?.prompt).toBe(dedent`
       /missing /review audit this diff
 
-      <skill name="review">
+      <skill name="review" path="${skillPath}">
       Use the following skill instructions for this request.
       <instructions>
       ---
@@ -472,12 +472,12 @@ describe("TurnRunner skills", () => {
       const sentPrompt = runner.workerInputs[0]?.prompt ?? "";
       expect(sentPrompt).toContain("Here are my answers to your questions.");
       expect(sentPrompt).toContain("/review tighten the diff");
-      expect(sentPrompt).toContain('<skill name="review">');
+      expect(sentPrompt).toContain('<skill name="review"');
       expect(sentPrompt).toContain("# Review Skill");
       // The skill block must follow the answer XML and the trailing prompt
       // text, not be spliced into them.
       expect(sentPrompt.indexOf("</answers>")).toBeLessThan(
-        sentPrompt.indexOf('<skill name="review">'),
+        sentPrompt.indexOf('<skill name="review"'),
       );
     },
   );

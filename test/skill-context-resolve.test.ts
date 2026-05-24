@@ -51,7 +51,7 @@ describe("SkillContext.resolveSlashSkillPrompt", () => {
 
       const resolved = ctx.resolveSlashSkillPrompt("/review go");
       expect(resolved).toContain("/review go");
-      expect(resolved).toContain('<skill name="review">');
+      expect(resolved).toContain('<skill name="review"');
       expect(resolved).toContain("<instructions>");
       expect(resolved).toContain("Audit changed code for naming, dead refs, and stale comments.");
       expect(resolved).toContain("</instructions>");
@@ -80,7 +80,7 @@ describe("SkillContext.resolveSlashSkillPrompt", () => {
       await ctx.ensureLoaded();
 
       const resolved = ctx.resolveSlashSkillPrompt("/review pass one /review pass two");
-      const matches = resolved.match(/<skill name="review">/g) ?? [];
+      const matches = resolved.match(/<skill name="review"/g) ?? [];
       expect(matches.length).toBeGreaterThanOrEqual(1);
       // Body is loaded from disk; assert it appears at least as many times as
       // the <skill> opening tag (defends against future dedup regressions: if
@@ -101,8 +101,8 @@ describe("SkillContext.resolveSlashSkillPrompt", () => {
     await ctx.ensureLoaded();
 
     const resolved = ctx.resolveSlashSkillPrompt("/release after /review");
-    const releaseIdx = resolved.indexOf('<skill name="release">');
-    const reviewIdx = resolved.indexOf('<skill name="review">');
+    const releaseIdx = resolved.indexOf('<skill name="release"');
+    const reviewIdx = resolved.indexOf('<skill name="review"');
     expect(releaseIdx).toBeGreaterThan(0);
     expect(reviewIdx).toBeGreaterThan(releaseIdx);
     expect(resolved).toContain("RELEASE_BODY");
@@ -148,7 +148,7 @@ describe("SkillContext.resolveSlashSkillPrompt", () => {
       expect(resolved.startsWith(userPrompt)).toBe(true);
 
       // Full XML envelope present, with the SKILL.md body inside <instructions>.
-      expect(resolved).toContain('<skill name="review">');
+      expect(resolved).toContain('<skill name="review"');
       expect(resolved).toContain("<instructions>");
       expect(resolved).toContain(skillBody);
       expect(resolved).toContain("</instructions>");
@@ -156,7 +156,7 @@ describe("SkillContext.resolveSlashSkillPrompt", () => {
 
       // Tag ordering: opening <skill> before <instructions> before body
       // before </instructions> before </skill>.
-      const skillOpen = resolved.indexOf('<skill name="review">');
+      const skillOpen = resolved.indexOf('<skill name="review"');
       const instrOpen = resolved.indexOf("<instructions>", skillOpen);
       const bodyAt = resolved.indexOf(skillBody, instrOpen);
       const instrClose = resolved.indexOf("</instructions>", bodyAt);
@@ -207,7 +207,7 @@ describe("SkillContext.resolveSlashSkillPrompt", () => {
 
       // Skill body must be injected in the same XML envelope used for the
       // bare `/review` slash form, so downstream consumers see one shape.
-      expect(resolved).toContain('<skill name="review">');
+      expect(resolved).toContain('<skill name="review"');
       expect(resolved).toContain("<instructions>");
       expect(resolved).toContain(skillBody);
       expect(resolved).toContain("</instructions>");
