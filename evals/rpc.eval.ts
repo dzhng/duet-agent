@@ -227,14 +227,15 @@ describe("RPC CLI mode", () => {
   );
 
   testIfDocker(
-    "discovers a workdir-local skill and lazy-loads it via read_skill",
+    "discovers a workdir-local skill and loads it via the path in the metadata",
     async () => {
       const workDir = await mkdtemp(join(tmpdir(), "duet-rpc-skill-"));
       try {
         const skillDir = join(workDir, ".duet", "skills", "rpc-ping-skill");
         await mkdir(skillDir, { recursive: true });
+        const skillPath = join(skillDir, "SKILL.md");
         await writeFile(
-          join(skillDir, "SKILL.md"),
+          skillPath,
           dedent`
             ---
             name: rpc-ping-skill
@@ -268,13 +269,18 @@ describe("RPC CLI mode", () => {
         const terminal = expectTerminal(session.events);
         expect(terminal.type).toBe("complete");
 
-        // The model should have lazy-loaded SKILL.md via the read_skill tool;
-        // its call shows up as a step event with toolName "read_skill".
-        const readSkillCalls = session.events
+        // The model should have loaded the SKILL.md at the path surfaced
+        // in its metadata. Any tool call whose input references the
+        // SKILL.md path counts (read, bash cat, etc.) so the assertion
+        // stays behavioral and is not coupled to a specific tool.
+        const skillReadCalls = session.events
           .filter((event): event is Extract<TurnEvent, { type: "step" }> => event.type === "step")
           .map((event) => event.step)
-          .filter((step) => step.type === "tool_call" && step.toolName === "read_skill");
-        expect(readSkillCalls.length).toBeGreaterThan(0);
+          .filter(
+            (step) =>
+              step.type === "tool_call" && JSON.stringify(step.input ?? {}).includes(skillPath),
+          );
+        expect(skillReadCalls.length).toBeGreaterThan(0);
 
         const text = terminalResult(terminal);
         expect(text).toContain("RPC_SKILL_PINGED");

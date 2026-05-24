@@ -88,7 +88,10 @@ export class SkillContext {
       const instructions = readSkillInstructions(skill).trim();
       skillBlocks.push(
         [
-          `<skill name="${skill.name}">`,
+          // path= lets the agent edit the SKILL.md directly without a
+          // discovery step when the user asks to modify the skill itself
+          // (e.g. "add this rule to /review").
+          `<skill name="${skill.name}" path="${skill.filePath}">`,
           "Use the following skill instructions for this request.",
           "<instructions>",
           instructions,

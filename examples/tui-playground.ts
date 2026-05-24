@@ -536,8 +536,8 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
         output: "wrote 56 bytes",
       },
       {
-        toolName: "read_skill",
-        input: { name: "release" },
+        toolName: "read",
+        input: { path: "/home/duet/.duet/skills/release/SKILL.md" },
         output:
           "# Release\n\nUse this workflow to publish a new version through the GitHub release workflow.",
       },

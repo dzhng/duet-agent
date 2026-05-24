@@ -163,15 +163,17 @@ describe("TurnRunner skills", () => {
 
       expect(systemPrompt).toContain("Available skills");
       expect(systemPrompt).toContain("<skills>");
-      expect(systemPrompt).toContain('<skill name="first-skill">');
+      // Each skill entry must include the SKILL.md `path` attribute so the
+      // agent can read/edit the file directly without a discovery step.
+      expect(systemPrompt).toMatch(/<skill name="first-skill" path="[^"]+\/SKILL\.md">/);
       expect(systemPrompt).toContain("First skill description.");
-      expect(systemPrompt).toContain('<skill name="second-skill">');
+      expect(systemPrompt).toMatch(/<skill name="second-skill" path="[^"]+\/SKILL\.md">/);
       expect(systemPrompt).toContain("Second skill description.");
       expect(systemPrompt).toContain("Base instructions.");
-      // Full SKILL.md bodies must NOT be inlined — they're loaded on demand via the read_skill tool.
+      // Full SKILL.md bodies must NOT be inlined — they're loaded on demand
+      // by `read`-ing the path surfaced in the skill metadata.
       expect(systemPrompt).not.toContain("First skill instructions.");
       expect(systemPrompt).not.toContain("Second skill instructions.");
-      expect(systemPrompt).toContain("read_skill");
     },
   );
 

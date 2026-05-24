@@ -310,7 +310,7 @@ In a TTY, `duet` opens an interactive TUI: live transcript on the left, a right-
 In the input box:
 
 - `@<query>` opens a file picker; ↑/↓ navigate, Enter / Tab inserts a markdown link like `[app.ts](./src/tui/app.ts)` (basename label, repo-relative target). The model can then read the file via the `read` tool.
-- `/<query>` opens a skill picker that inserts `/skill-name` so the model is primed to call `read_skill`.
+- `/<query>` opens a skill picker that inserts `/skill-name` so the model receives the full SKILL.md inline with its instructions for that turn.
 - Enter sends; **Shift+Enter** queues the message as a follow-up while the agent is running, instead of steering the active turn.
 - `Esc` cancels the current pickers; on its own it interrupts the active turn, or no-ops when idle. Use Ctrl+C (or close the terminal) to quit — both paths drain through the SessionManager so the local memory database (PGlite) flushes cleanly.
 
@@ -335,7 +335,7 @@ Type `/` in the composer to open the command picker, or send any of these as a m
 
 The inline form also works for the non-TUI one-shot CLI: `duet "hey can you review this /model gpt-5.5"` swaps the model and dispatches the stripped prompt to the agent; `duet "/model gpt-5.5"` applies the swap and exits without dispatching a turn.
 
-Slash commands are intercepted locally; they never reach the model unless the picker inserts a `/skill-name` skill reference for the agent to call `read_skill`.
+Slash commands are intercepted locally; they never reach the model unless the picker inserts a `/skill-name` skill reference, in which case the runner expands it into the matching skill's full SKILL.md inline for that turn.
 
 </details>
 
