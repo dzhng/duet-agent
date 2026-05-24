@@ -31,7 +31,6 @@ import { recallMemory, reciprocalRankFusion, type RecallScope } from "../memory/
 import type { Observation } from "../types/memory.js";
 import type { MemorySession } from "../memory/session.js";
 import type { ActiveStateOutput } from "./state-machine-controller.js";
-import { readSkillInstructions } from "./skills.js";
 import { withBundledRipgrep } from "./bundled-ripgrep.js";
 
 const jsonSchemaValidator = new Ajv({ strictSchema: false });
@@ -92,13 +91,6 @@ const askUserQuestionSchema = Type.Object({
 });
 
 type AskUserQuestionParams = Static<typeof askUserQuestionSchema>;
-
-const readSkillSchema = Type.Object({
-  name: Type.String({
-    description:
-      "Skill name from the available skills metadata in the system prompt. Returns the full SKILL.md instructions (with shell expansions resolved).",
-  }),
-});
 
 const todoStatusSchema = Type.Union(
   [
@@ -503,7 +495,6 @@ export interface RecallMemoryToolStorage {
 export function createDefaultTurnRunnerTools(
   cwd: string,
   todoStorage: TodoWriteToolStorage,
-  skills: readonly Skill[] = [],
   recallStorage?: RecallMemoryToolStorage,
 ): AgentTool[] {
   const tools: AgentTool[] = [
@@ -514,7 +505,6 @@ export function createDefaultTurnRunnerTools(
     }),
     createTodoWriteTool(todoStorage),
     createAskUserQuestionTool(),
-    createReadSkillTool(skills),
   ];
   if (recallStorage) {
     tools.push(createRecallMemoryTool(recallStorage));
@@ -524,12 +514,7 @@ export function createDefaultTurnRunnerTools(
 
 export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] {
   const tools = [
-    ...createDefaultTurnRunnerTools(
-      input.cwd,
-      input.todoStorage,
-      input.skills,
-      input.recallStorage,
-    ),
+    ...createDefaultTurnRunnerTools(input.cwd, input.todoStorage, input.recallStorage),
   ];
   if (input.mode === "agent") {
     return tools;
@@ -754,40 +739,6 @@ function formatRecallHit(observation: Observation): string {
   const priority =
     observation.priority === "high" ? "HIGH" : observation.priority === "medium" ? "MED" : "LOW";
   return `- ${priority} ${observation.kind} ${observation.observedDate}${time}${referenced}${session}\n  ${observation.content}`;
-}
-
-function createReadSkillTool(skills: readonly Skill[]): AgentTool<typeof readSkillSchema> {
-  return {
-    name: "read_skill",
-    label: "Read skill",
-    description: dedent`
-      Load the full SKILL.md instructions for one of the available skills listed in the system prompt.
-
-      The system prompt only lists skill names and one-line descriptions to keep the context small. When a skill's description matches the task at hand, call this tool with its name to fetch the full instructions, then follow them.
-
-      The response also includes the SKILL.md path so you can read sibling reference files (e.g. \`<dirname(path)>/reference/<file>\`) referenced by the instructions.
-    `,
-    parameters: readSkillSchema,
-    async execute(_toolCallId, params) {
-      const skill = skills.find((candidate) => candidate.name === params.name);
-      if (!skill) {
-        const available = skills.map((candidate) => candidate.name).join(", ") || "(none)";
-        throw new Error(`Unknown skill: ${params.name}. Available skills: ${available}`);
-      }
-
-      const instructions = readSkillInstructions(skill);
-      const header = dedent`
-        Skill: ${skill.name}
-        Path: ${skill.filePath}
-
-        ---
-      `;
-      return {
-        content: [{ type: "text", text: `${header}\n\n${instructions}` }],
-        details: { type: "read_skill", name: skill.name, filePath: skill.filePath },
-      };
-    },
-  };
 }
 
 export function createTodoWriteTool(

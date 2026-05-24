@@ -362,12 +362,6 @@ function todoStatusGlyph(status: string): string {
   }
 }
 
-const formatReadSkill: Formatter = (spec) => {
-  const input = pickObject(spec.input);
-  const name = stringField(input, "name") ?? "?";
-  return { header: `read skill: ${name}`, result: buildDefaultResult(spec) };
-};
-
 /**
  * Kind glyphs for state-machine states. Picked so each state kind is
  * scannable in a column without relying on color: agent uses the runner's
@@ -598,7 +592,6 @@ const TOOL_FORMATTERS: Record<string, Formatter> = {
   find: formatFind,
   ask_user_question: formatAskUserQuestion,
   todo_write: formatTodoWrite,
-  read_skill: formatReadSkill,
   create_state_machine_definition: formatCreateStateMachine,
   select_state_machine_state: formatSelectStateMachineState,
   get_current_state_machine_state: formatGetCurrentStateMachineState,

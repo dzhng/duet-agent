@@ -11,11 +11,11 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
 
 const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
 
-describe("read_skill tool", () => {
+describe("skill metadata + path-based loading", () => {
   testIfDocker(
-    "system prompt lists skill metadata only and the model lazy-loads instructions via read_skill",
+    "system prompt lists skill metadata with path and the model reads the SKILL.md from disk",
     async () => {
-      const tempDir = await mkdtemp(join(tmpdir(), "duet-read-skill-eval-"));
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-skill-path-eval-"));
       const skillPath = join(tempDir, "SKILL.md");
       await writeFile(
         skillPath,
@@ -54,15 +54,19 @@ describe("read_skill tool", () => {
         skills,
       });
 
-      const readSkillCalls: Array<{ name?: string }> = [];
+      // The model should `read` (or `bash cat`) the SKILL.md from the path
+      // surfaced in the system prompt's skill metadata. Either way produces a
+      // tool call whose input mentions the absolute skill path.
+      const skillReads: Array<{ tool: string; input: unknown }> = [];
       runner.subscribe((event: TurnEvent) => {
         if (event.type !== "step") return;
         const step = event.step;
         if (step.type !== "tool_call") return;
-        if (step.toolName !== "read_skill") return;
         if (step.status !== "running") return;
-        const input = step.input as { name?: string } | undefined;
-        readSkillCalls.push({ name: input?.name });
+        const serialized = JSON.stringify(step.input ?? {});
+        if (serialized.includes(skillPath)) {
+          skillReads.push({ tool: step.toolName, input: step.input });
+        }
       });
 
       const terminal = await (
@@ -70,10 +74,11 @@ describe("read_skill tool", () => {
       ).turn;
 
       expect(terminal.type).toBe("complete");
-      // The model must call read_skill at least once with the exact skill name
-      // listed in the metadata — that's the whole point of lazy loading.
-      expect(readSkillCalls.length).toBeGreaterThanOrEqual(1);
-      expect(readSkillCalls.some((call) => call.name === "pong-skill")).toBe(true);
+      // The model must have loaded the SKILL.md from the path the metadata
+      // exposed — that's the path-based replacement for the old read_skill
+      // tool. Any tool whose input references the absolute SKILL.md path
+      // counts (read, bash, etc.), so we assert on behavior, not tool name.
+      expect(skillReads.length).toBeGreaterThanOrEqual(1);
       expect(terminal.type === "complete" ? terminal.result?.trim() : "").toBe(
         "PONG_SKILL_LAZY_LOADED",
       );

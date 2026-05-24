@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { SkillContext } from "../src/turn-runner/skill-context.js";
 import { discoverInstalledSkills, resolveSkillScope } from "../src/turn-runner/skills.js";
-import { createTurnRunnerTools } from "../src/turn-runner/tools.js";
 
 let tempDir: string;
 
@@ -34,45 +33,14 @@ describe("built-in skills surface through discovery", () => {
 
     // Token stays in the prompt verbatim.
     expect(resolved).toContain("monitor the inbox /relay every hour");
-    // Skill block was injected with the relay instructions.
-    expect(resolved).toContain('<skill name="relay">');
+    // Skill block was injected with the relay instructions, including the
+    // `path` attribute so the agent can read/edit the SKILL.md directly.
+    expect(resolved).toMatch(/<skill name="relay" path="[^"]+">/);
     expect(resolved).toContain("state-machine tools");
     expect(resolved).toContain("</skill>");
     // The legacy `<system-reminder>` wrapper is gone — the body must not
     // smuggle one in.
     expect(resolved).not.toContain("<system-reminder>");
-  });
-
-  test("read_skill returns the inline body for a built-in skill", async () => {
-    // Drive through the same factory the runner uses, so we exercise the
-    // exact tool wiring callers see — not the internal readSkillInstructions
-    // helper.
-    const { skills } = discoverInstalledSkills(tempDir);
-    const tools = createTurnRunnerTools({
-      cwd: tempDir,
-      mode: "agent",
-      skills,
-      todoStorage: { getTodos: () => [], setTodos: () => {} },
-    });
-    const readSkillTool = tools.find((tool) => tool.name === "read_skill");
-    expect(readSkillTool).toBeDefined();
-
-    const relay = skills.find((s) => s.name === "relay")!;
-    const result = await readSkillTool!.execute("tool-1", { name: "relay" });
-    const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-
-    // Header carries the synthetic built-in path so callers know where
-    // sibling files would live (there aren't any for built-ins, but the
-    // shape stays uniform with disk-resident skills).
-    expect(text).toContain("Skill: relay");
-    expect(text).toContain(`Path: ${relay.filePath}`);
-    // Body is the inline RELAY_INSTRUCTIONS, not a disk read.
-    expect(text).toContain("state-machine tools");
-    expect(result.details).toEqual({
-      type: "read_skill",
-      name: "relay",
-      filePath: relay.filePath,
-    });
   });
 
   test("a user-installed skill named 'relay' shadows the built-in", async () => {

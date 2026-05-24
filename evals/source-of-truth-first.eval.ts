@@ -48,7 +48,11 @@ afterEach(async () => {
 });
 
 interface RunResult {
-  readSkillNames: string[];
+  // Absolute paths to any SKILL.md files that the agent loaded (via
+  // `read`, `bash cat`, etc.). Replaces the old `readSkillNames` signal
+  // now that skills are discovered via the `path` attribute in the
+  // system-prompt metadata rather than a dedicated read_skill tool.
+  skillFileReads: string[];
   bashCommands: string[];
   recallQueries: string[];
   finalText: string;
@@ -75,10 +79,15 @@ async function runScenario(input: {
     cwd: input.cwd,
   });
 
-  const readSkillNames: string[] = [];
+  const skillFileReads: string[] = [];
   const bashCommands: string[] = [];
   const recallQueries: string[] = [];
   const assistantChunks: string[] = [];
+
+  // Matches the SKILL.md file at the top of a skill directory. Anything
+  // the agent reads (`read`, `bash cat`, etc.) whose input mentions a
+  // path of that shape counts as loading the skill.
+  const skillPathPattern = /(\/[^\s'"`]*\/SKILL\.md)/g;
 
   runner.subscribe((event: TurnEvent) => {
     if (event.type !== "step") return;
@@ -88,10 +97,11 @@ async function runScenario(input: {
     }
     if (step.type !== "tool_call") return;
     if (step.status !== "running") return;
-    if (step.toolName === "read_skill") {
-      const inp = step.input as { name?: string } | undefined;
-      if (inp?.name) readSkillNames.push(inp.name);
-    } else if (step.toolName === "bash") {
+    const serializedInput = JSON.stringify(step.input ?? {});
+    for (const match of serializedInput.matchAll(skillPathPattern)) {
+      skillFileReads.push(match[1]!);
+    }
+    if (step.toolName === "bash") {
       const inp = step.input as { command?: string } | undefined;
       if (inp?.command) bashCommands.push(inp.command);
     } else if (step.toolName === "recall_memory") {
@@ -113,7 +123,7 @@ async function runScenario(input: {
   }
 
   return {
-    readSkillNames,
+    skillFileReads,
     bashCommands,
     recallQueries,
     finalText: assistantChunks.join(""),
@@ -194,13 +204,14 @@ describe("source-of-truth-first lookups", () => {
       });
 
       console.log(
-        `\n[crm scenario] read_skill=${JSON.stringify(result.readSkillNames)} bash=${JSON.stringify(result.bashCommands)} recall=${JSON.stringify(result.recallQueries)}\nfinal=${result.finalText.slice(0, 400)}\n`,
+        `\n[crm scenario] skillFiles=${JSON.stringify(result.skillFileReads)} bash=${JSON.stringify(result.bashCommands)} recall=${JSON.stringify(result.recallQueries)}\nfinal=${result.finalText.slice(0, 400)}\n`,
       );
 
       // The crm skill is the named, advertised source of truth for
-      // person info. The agent must load it via `read_skill` before
-      // answering, even when memory looks confident.
-      expect(result.readSkillNames).toContain("crm");
+      // person info. The agent must load its SKILL.md (via the `path`
+      // surfaced in the metadata block) before answering, even when
+      // memory looks confident.
+      expect(result.skillFileReads.some((p) => p.endsWith("/crm/SKILL.md"))).toBe(true);
     },
     180_000,
   );
@@ -240,7 +251,7 @@ describe("source-of-truth-first lookups", () => {
       });
 
       console.log(
-        `\n[file scenario] bash=${JSON.stringify(result.bashCommands)} read_skill=${JSON.stringify(result.readSkillNames)} recall=${JSON.stringify(result.recallQueries)}\nfinal=${result.finalText.slice(0, 400)}\n`,
+        `\n[file scenario] bash=${JSON.stringify(result.bashCommands)} skillFiles=${JSON.stringify(result.skillFileReads)} recall=${JSON.stringify(result.recallQueries)}\nfinal=${result.finalText.slice(0, 400)}\n`,
       );
 
       // The agent must inspect the file before answering. A bash
@@ -283,10 +294,10 @@ describe("source-of-truth-first lookups", () => {
       });
 
       console.log(
-        `\n[negative scenario] read_skill=${JSON.stringify(result.readSkillNames)} bash=${JSON.stringify(result.bashCommands)} recall=${JSON.stringify(result.recallQueries)}\n`,
+        `\n[negative scenario] skillFiles=${JSON.stringify(result.skillFileReads)} bash=${JSON.stringify(result.bashCommands)} recall=${JSON.stringify(result.recallQueries)}\n`,
       );
 
-      expect(result.readSkillNames).toEqual([]);
+      expect(result.skillFileReads).toEqual([]);
       expect(result.recallQueries).toEqual([]);
     },
     120_000,

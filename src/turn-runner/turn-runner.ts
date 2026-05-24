@@ -1440,10 +1440,7 @@ export class TurnRunner {
     };
     if (mode === "agent") {
       return {
-        tools: [
-          ...createDefaultTurnRunnerTools(cwd, todoStorage, skills, recallStorage),
-          ...mcpTools,
-        ],
+        tools: [...createDefaultTurnRunnerTools(cwd, todoStorage, recallStorage), ...mcpTools],
       };
     }
 
