@@ -330,11 +330,22 @@ export interface StateMachinePollState extends StateMachineBaseState {
   successCodes?: number[];
 }
 
-/** Sleeps until one absolute time, then lets the parent choose the next state. */
+/** Sleeps until a future time, then lets the parent choose the next state. */
 export interface StateMachineTimerState extends StateMachineBaseState {
   kind: "timer";
-  /** Absolute Unix epoch millisecond time when this timer state should complete. */
-  wakeAt: number;
+  /**
+   * Absolute Unix epoch millisecond time when this timer state should complete.
+   * Mutually exclusive with `wakeAfterMs` — exactly one of the two must be set.
+   */
+  wakeAt?: number;
+  /**
+   * Relative duration in milliseconds, measured from the moment the parent
+   * selects this timer state, after which the timer should complete. Useful
+   * when the wait length is known up front but the absolute wake time is not
+   * (for example reusable definitions, or transitions where the start time is
+   * decided by the parent at selection time). Mutually exclusive with `wakeAt`.
+   */
+  wakeAfterMs?: number;
 }
 
 /** Finalizes the session when reached. Terminal outcomes are just state machine states. */

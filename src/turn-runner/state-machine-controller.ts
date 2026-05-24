@@ -379,9 +379,10 @@ export class StateMachineController {
   }
 
   private runTimerState(state: StateMachineTimerState, woke = false): StateMachineExecutionResult {
-    if (!woke && state.wakeAt > Date.now()) {
-      this.session = recordStateSleep(this.requireSession(), state, state.wakeAt);
-      return { type: "sleep", wakeAt: state.wakeAt };
+    const wakeAt = resolveTimerWakeAt(state, this.session);
+    if (!woke && wakeAt > Date.now()) {
+      this.session = recordStateSleep(this.requireSession(), state, wakeAt);
+      return { type: "sleep", wakeAt };
     }
 
     const output = {
@@ -458,6 +459,24 @@ export class StateMachineController {
     }
     return this.session;
   }
+}
+
+// Timer states accept either an absolute `wakeAt` or a relative `wakeAfterMs`.
+// Relative timers are resolved against the moment the parent selected the
+// state — captured as `startedAt` in progress — so the wake stays stable
+// across sleep/wake cycles even though the controller re-enters the state.
+function resolveTimerWakeAt(
+  state: StateMachineTimerState,
+  session: StateMachineSession | undefined,
+): number {
+  if (typeof state.wakeAt === "number") {
+    return state.wakeAt;
+  }
+  if (typeof state.wakeAfterMs !== "number") {
+    throw new Error(`Timer state "${state.name}" must specify wakeAt or wakeAfterMs.`);
+  }
+  const startedAt = session?.progress?.states[state.name]?.startedAt ?? Date.now();
+  return startedAt + state.wakeAfterMs;
 }
 
 function normalizeStructuredShellOutput(shellOutput: ShellCommandOutput): ShellCommandOutput & {

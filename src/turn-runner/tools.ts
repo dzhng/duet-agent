@@ -203,6 +203,10 @@ const timerOverrideSchema = Type.Partial(
     wakeAt: Type.Number({
       description: "Replacement absolute Unix epoch millisecond time for this timer state.",
     }),
+    wakeAfterMs: Type.Number({
+      description:
+        "Replacement relative duration in milliseconds, measured from the moment the parent selects this timer state. Mutually exclusive with wakeAt.",
+    }),
     inputSchema: Type.Record(Type.String(), Type.Any(), {
       description:
         'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "scheduledAt": { "type": "number" } }, "required": ["scheduledAt"] }. Fields omitted from required are optional.',
@@ -293,11 +297,20 @@ const timerStateSchema = Type.Object({
   ...baseStateSchema,
   kind: Type.Literal("timer", {
     description:
-      "Sleep until one absolute Unix epoch millisecond time, then resume with elapsedMs and timestamp output.",
+      "Sleep until a future time, then resume with elapsedMs and timestamp output. Specify exactly one of wakeAt (absolute) or wakeAfterMs (relative).",
   }),
-  wakeAt: Type.Number({
-    description: "Absolute Unix epoch millisecond time when this timer state should complete.",
-  }),
+  wakeAt: Type.Optional(
+    Type.Number({
+      description:
+        "Absolute Unix epoch millisecond time when this timer state should complete. Mutually exclusive with wakeAfterMs.",
+    }),
+  ),
+  wakeAfterMs: Type.Optional(
+    Type.Number({
+      description:
+        "Relative duration in milliseconds, measured from the moment the parent selects this timer state, after which the timer should complete. Mutually exclusive with wakeAt.",
+    }),
+  ),
 });
 
 const terminalStateSchema = Type.Object({
@@ -334,7 +347,7 @@ export type StateMachinePollStateOverride = Partial<
   >
 >;
 export type StateMachineTimerStateOverride = Partial<
-  Pick<StateMachineTimerState, "wakeAt" | "inputSchema">
+  Pick<StateMachineTimerState, "wakeAt" | "wakeAfterMs" | "inputSchema">
 >;
 
 export type StateMachineStateOverride =
@@ -539,7 +552,19 @@ export function applyStateOverride(
     return state;
   }
 
-  return { ...state, ...override.state } as StateMachineState;
+  const merged = { ...state, ...override.state } as StateMachineState;
+  // Timer states must keep wakeAt and wakeAfterMs mutually exclusive: an
+  // override that introduces one field must drop the other so downstream
+  // validation and runtime resolution see exactly one schedule source.
+  if (merged.kind === "timer" && override.kind === "timer") {
+    const overrideState = override.state;
+    if ("wakeAt" in overrideState && overrideState.wakeAt !== undefined) {
+      delete (merged as StateMachineTimerState).wakeAfterMs;
+    } else if ("wakeAfterMs" in overrideState && overrideState.wakeAfterMs !== undefined) {
+      delete (merged as StateMachineTimerState).wakeAt;
+    }
+  }
+  return merged;
 }
 
 function createAskUserQuestionTool(): AgentTool<typeof askUserQuestionSchema> {
@@ -778,7 +803,7 @@ export function createTodoWriteTool(
 
       Prefer a state machine over this tool when the steps are well-scoped enough that a sub-agent or script could complete each one on its own ("do X with these inputs and return the result"). State-machine states run outside this transcript, so their intermediate output does not consume your context — using todo_write for that kind of work pollutes the parent context with tool output you do not actually need to keep.
 
-      Hard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt have the 15-minute floor. If you can already see the work will not fit in one session and you are tempted to recommend the user "continue in the next session," that is the signal that this tool was the wrong choice and a state machine was the right one.
+      Hard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 15-minute floor. If you can already see the work will not fit in one session and you are tempted to recommend the user "continue in the next session," that is the signal that this tool was the wrong choice and a state machine was the right one.
 
       How to use it well:
       - Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.
@@ -920,7 +945,7 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
         "firstState": "step-1"
       }
 
-      State \`kind\` is one of \`agent\`, \`script\`, \`poll\`, \`timer\`, \`terminal\`. Poll \`intervalMs\` and timer \`wakeAt\` must be ≥ 15 minutes; agent/script states have no minimum duration. Every definition needs at least one \`terminal\` state with status "completed"; "failed" and "cancelled" terminals are auto-injected if omitted.
+      State \`kind\` is one of \`agent\`, \`script\`, \`poll\`, \`timer\`, \`terminal\`. Poll \`intervalMs\`, timer \`wakeAt\`, and timer \`wakeAfterMs\` must be ≥ 15 minutes; agent/script states have no minimum duration. Timer states must set exactly one of \`wakeAt\` (absolute Unix epoch ms) or \`wakeAfterMs\` (relative ms from selection time). Every definition needs at least one \`terminal\` state with status "completed"; "failed" and "cancelled" terminals are auto-injected if omitted.
 
       State prompts and script commands may use \`{{ input.foo }}\` templates — declare \`inputSchema\` on those states and pass matching \`input\` when selecting them via select_state_machine_state. Agent states may set \`allowedSkills\` to restrict the skill set for that sub-agent.
 
@@ -950,7 +975,7 @@ function createSelectStateTool(
     name: "select_state_machine_state",
     label: "Select state machine state",
     description: dedent`
-      Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt.
+      Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt or wakeAfterMs (exactly one).
 
       Carry forward what the orchestrator now knows. Each agent state runs in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — it only sees the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: the sub-agent has no way to read those findings.
 
@@ -1114,11 +1139,25 @@ function assertValidStateSchedule(state: StateMachineState): void {
       `Invalid poll schedule for state "${state.name}": intervalMs must be positive.`,
     );
   }
-  if (
-    state.kind === "timer" &&
-    (typeof state.wakeAt !== "number" || !Number.isFinite(state.wakeAt))
-  ) {
-    throw new Error(`Invalid timer schedule for state "${state.name}": wakeAt must be finite.`);
+  if (state.kind === "timer") {
+    const hasWakeAt = typeof state.wakeAt === "number";
+    const hasWakeAfter = typeof state.wakeAfterMs === "number";
+    if (hasWakeAt === hasWakeAfter) {
+      throw new Error(
+        `Invalid timer schedule for state "${state.name}": specify exactly one of wakeAt or wakeAfterMs.`,
+      );
+    }
+    if (hasWakeAt && !Number.isFinite(state.wakeAt as number)) {
+      throw new Error(`Invalid timer schedule for state "${state.name}": wakeAt must be finite.`);
+    }
+    if (hasWakeAfter) {
+      const wakeAfterMs = state.wakeAfterMs as number;
+      if (!Number.isFinite(wakeAfterMs) || wakeAfterMs <= 0) {
+        throw new Error(
+          `Invalid timer schedule for state "${state.name}": wakeAfterMs must be a positive, finite number of milliseconds.`,
+        );
+      }
+    }
   }
 }
 
@@ -1139,6 +1178,13 @@ function assertValidStateScheduleMinimum(state: StateMachineState): void {
     if (state.wakeAt < minWakeAt) {
       throw new Error(
         `Invalid timer schedule for state "${state.name}": wakeAt must be at least 15 minutes in the future. Anything shorter should run directly in the parent turn instead of through a state machine.`,
+      );
+    }
+  }
+  if (state.kind === "timer" && typeof state.wakeAfterMs === "number") {
+    if (state.wakeAfterMs < MINIMUM_STATE_MACHINE_DELAY_MS) {
+      throw new Error(
+        `Invalid timer schedule for state "${state.name}": wakeAfterMs must be at least 15 minutes (${MINIMUM_STATE_MACHINE_DELAY_MS} ms). Anything shorter should run directly in the parent turn instead of through a state machine.`,
       );
     }
   }
