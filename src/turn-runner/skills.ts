@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
 import { loadSkills } from "@earendil-works/pi-coding-agent";
 import type { SkillDiscoveryOptions } from "../types/config.js";
@@ -48,11 +48,36 @@ function buildSkillDiscoveryOptions(options: SkillDiscoveryOptions | undefined, 
 function defaultSkillPaths(globalSkillRoots: string[], cwd: string): string[] {
   // Project before global so a project-local skill can shadow a same-named
   // global one. Within each scope, .duet > .agents > .claude (first scanned
-  // wins on name collisions).
-  return [
-    ...DEFAULT_SKILL_DIR_NAMES.map((dirName) => join(cwd, dirName, "skills")),
-    ...globalSkillRoots.map((root) => join(root, "skills")),
-  ];
+  // wins on name collisions). Project scope walks from cwd up to the
+  // filesystem root so skills declared in any ancestor directory (e.g. a
+  // repo root or workspace root above the current package) are discovered
+  // — nearer directories win on collisions because they appear first.
+  const ancestorPaths: string[] = [];
+  for (const ancestor of walkAncestors(cwd)) {
+    for (const dirName of DEFAULT_SKILL_DIR_NAMES) {
+      ancestorPaths.push(join(ancestor, dirName, "skills"));
+    }
+  }
+  return [...ancestorPaths, ...globalSkillRoots.map((root) => join(root, "skills"))];
+}
+
+// Yields cwd, its parent, grandparent, ... up to the filesystem root. The
+// home directory is excluded so global skills do not get double-counted as
+// project skills when cwd lives somewhere inside $HOME.
+function walkAncestors(cwd: string): string[] {
+  const home = resolve(homedir());
+  const seen = new Set<string>();
+  const result: string[] = [];
+  let current = resolve(cwd);
+  while (true) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    if (current !== home) result.push(current);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return result;
 }
 
 function uniquePaths(paths: string[]): string[] {
@@ -179,8 +204,10 @@ export function resolveSkillScope(
   for (const dirName of DEFAULT_SKILL_DIR_NAMES) {
     if (isUnderPath(baseDir, join(home, dirName, "skills"))) return "user";
   }
-  for (const dirName of DEFAULT_SKILL_DIR_NAMES) {
-    if (isUnderPath(baseDir, join(cwd, dirName, "skills"))) return "project";
+  for (const ancestor of walkAncestors(cwd)) {
+    for (const dirName of DEFAULT_SKILL_DIR_NAMES) {
+      if (isUnderPath(baseDir, join(ancestor, dirName, "skills"))) return "project";
+    }
   }
   return "temporary";
 }
