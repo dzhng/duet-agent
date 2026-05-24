@@ -74,10 +74,10 @@ describe("skill metadata + path-based loading", () => {
       ).turn;
 
       expect(terminal.type).toBe("complete");
-      // The model must have loaded the SKILL.md from the path the metadata
-      // exposed — that's the path-based replacement for the old read_skill
-      // tool. Any tool whose input references the absolute SKILL.md path
-      // counts (read, bash, etc.), so we assert on behavior, not tool name.
+      // The model must have loaded the SKILL.md at the path surfaced in
+      // its metadata. We accept any tool whose input references the
+      // absolute path (read, bash cat, etc.) so the assertion stays
+      // behavioral and is not coupled to a specific tool implementation.
       expect(skillReads.length).toBeGreaterThanOrEqual(1);
       expect(terminal.type === "complete" ? terminal.result?.trim() : "").toBe(
         "PONG_SKILL_LAZY_LOADED",

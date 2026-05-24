@@ -40,9 +40,10 @@ duet --rpc \
   `--workdir`. Pass `--no-system-prompt-files` to disable, or repeat
   `--system-prompt-file` for multiple files.
 - Skills are discovered from `--workdir/.duet/skills`, `--workdir/.agents/skills`,
-  and the same directories under `$HOME` by default. Skills appear in the
-  runner's system prompt as metadata; the model lazy-loads each
-  `SKILL.md` via the `read_skill` tool.
+  and the same directories under `$HOME` by default. Each skill appears in
+  the runner's system prompt as metadata with a `path` attribute pointing
+  at its `SKILL.md`; the model loads full instructions on demand by
+  `read`ing that path.
 
 The process writes a one-line banner to **stderr** on start:
 
@@ -191,10 +192,10 @@ override the model, pick one that does.
   The model sees them as part of its system prompt. Use
   `--no-system-prompt-files` to skip, or override with `--system-prompt-file`.
 - **Skills**: discovered from `--workdir` and `$HOME` by default. Each skill's
-  metadata (name, description) appears in the system prompt; the body is
-  loaded on-demand by the model via the `read_skill` tool. To bundle skills
-  with your tool, drop them under `<workdir>/.duet/skills/<name>/SKILL.md`
-  before spawning `duet --rpc`.
+  metadata (name, description, SKILL.md `path`) appears in the system
+  prompt; the body is loaded on-demand by the model `read`ing the path.
+  To bundle skills with your tool, drop them under
+  `<workdir>/.duet/skills/<name>/SKILL.md` before spawning `duet --rpc`.
 
 ## Event types you will see
 

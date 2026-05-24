@@ -48,10 +48,9 @@ afterEach(async () => {
 });
 
 interface RunResult {
-  // Absolute paths to any SKILL.md files that the agent loaded (via
-  // `read`, `bash cat`, etc.). Replaces the old `readSkillNames` signal
-  // now that skills are discovered via the `path` attribute in the
-  // system-prompt metadata rather than a dedicated read_skill tool.
+  // Absolute paths to any SKILL.md files the agent loaded during the
+  // scenario (via `read`, `bash cat`, etc.). A non-empty entry proves
+  // the agent consulted the named source-of-truth skill before answering.
   skillFileReads: string[];
   bashCommands: string[];
   recallQueries: string[];

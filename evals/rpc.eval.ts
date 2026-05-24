@@ -269,10 +269,10 @@ describe("RPC CLI mode", () => {
         const terminal = expectTerminal(session.events);
         expect(terminal.type).toBe("complete");
 
-        // The model should have loaded the SKILL.md from the path the
-        // metadata exposed (replacing the old read_skill tool). Any tool
-        // call whose input references the SKILL.md path counts (read,
-        // bash cat, etc.) — assert on behavior, not tool name.
+        // The model should have loaded the SKILL.md at the path surfaced
+        // in its metadata. Any tool call whose input references the
+        // SKILL.md path counts (read, bash cat, etc.) so the assertion
+        // stays behavioral and is not coupled to a specific tool.
         const skillReadCalls = session.events
           .filter((event): event is Extract<TurnEvent, { type: "step" }> => event.type === "step")
           .map((event) => event.step)
