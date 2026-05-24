@@ -358,7 +358,7 @@ describe("TurnRunner tools", () => {
     });
 
     await expect(result).rejects.toThrow(
-      'Invalid poll schedule for state "wait_for_reply": intervalMs must be positive.',
+      'Invalid poll schedule for state "wait_for_reply": intervalMs must be a duration string (e.g. "3h") or a positive number of milliseconds.',
     );
   });
 
@@ -525,7 +525,7 @@ describe("TurnRunner tools", () => {
     });
 
     await expect(result).rejects.toThrow(
-      'Invalid timer schedule for state "wait_for_reply": wakeAt must be finite.',
+      'Invalid timer schedule for state "wait_for_reply": wakeAt must be a finite Unix-epoch millisecond timestamp.',
     );
   });
 

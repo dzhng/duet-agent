@@ -28,6 +28,7 @@ import type {
   TurnUsageFields,
 } from "../types/protocol.js";
 import type { StateMachinePollState, StateMachineTimerState } from "../types/state-machine.js";
+import { scheduledStateFallbackWakeAt } from "../turn-runner/duration.js";
 
 /**
  * How often `scheduleWake` checks the wall clock against `wakeAt`. Polling — instead of relying
@@ -223,11 +224,7 @@ export class Session {
   private async replaySleepFromResumedState(state: TurnState): Promise<void> {
     const scheduled = this.currentScheduledState(state);
     const progress = scheduled ? state.stateMachine?.progress?.states[scheduled.name] : undefined;
-    const wakeAt =
-      progress?.nextWakeAt ??
-      (scheduled?.kind === "poll"
-        ? Date.now() + scheduled.intervalMs
-        : (scheduled?.wakeAt ?? Date.now()));
+    const wakeAt = progress?.nextWakeAt ?? scheduledStateFallbackWakeAt(scheduled);
     await this.handleTurnEvent({ type: "sleep", wakeAt, state });
   }
 
@@ -548,9 +545,7 @@ export class Session {
       }
       const state = this.currentScheduledState(event.state);
       const progress = state ? event.state.stateMachine?.progress?.states[state.name] : undefined;
-      const wakeAt =
-        progress?.nextWakeAt ??
-        (state?.kind === "poll" ? Date.now() + state.intervalMs : (state?.wakeAt ?? Date.now()));
+      const wakeAt = progress?.nextWakeAt ?? scheduledStateFallbackWakeAt(state);
       return {
         type: "sleep",
         wakeAt,
