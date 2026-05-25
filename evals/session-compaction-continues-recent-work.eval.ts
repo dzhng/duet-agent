@@ -35,7 +35,7 @@ import { judgeContinuesRecentWork } from "./helpers/continuation-judge.js";
  *
  *   docker run --rm -v "$PWD:/src:ro" -w /work -e HOME=/tmp/home \
  *     -e DUET_TEST_IN_DOCKER=1 \
- *     -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+ *     -e DUET_API_KEY="$DUET_API_KEY" \
  *     oven/bun:1.3.11 sh -lc 'cp -R /src/. /work && \
  *     bun install --frozen-lockfile >/dev/null 2>&1 && \
  *     bun test ./evals/session-compaction-continues-recent-work.eval.ts'
