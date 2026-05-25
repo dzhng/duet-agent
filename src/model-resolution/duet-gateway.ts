@@ -35,12 +35,12 @@ export function getDuetGatewayBaseUrl(): string {
  * semantics, so the TUI never sees reasoning/thinking events.
  *
  * Auth: the duet.so proxy only accepts `DUET_API_KEY`-style tokens and 500s on
- * a Vercel `vck_...` key. We force `AI_GATEWAY_API_KEY` to the Duet token here
- * so the underlying vercel-ai-gateway transport sends the right credential
- * even when the user has both keys set in their env file.
+ * a Vercel `vck_...` key. `resolveProviderApiKey("duet-gateway")` returns the
+ * Duet token directly so the underlying transport always sends the right
+ * credential, even when the user also has a real `AI_GATEWAY_API_KEY=vck_...`
+ * set for explicit `vercel-ai-gateway:*` pins.
  */
 export function resolveDuetGatewayModel(modelId: string): Model<any> | undefined {
-  forceDuetGatewayAuth();
   const upstream = resolveDuetGatewayUpstream(modelId);
   if (!upstream) return undefined;
 
@@ -70,28 +70,15 @@ function getDuetGatewayBaseUrlForModel(model: Model<any>): string {
 
 /**
  * If `DUET_API_KEY` is set but `AI_GATEWAY_API_KEY` is not, copy it across so
- * the underlying vercel-ai-gateway provider auth path resolves.
- *
- * Called early in CLI startup. Conservative: does not clobber an existing
- * `AI_GATEWAY_API_KEY`, so a user who explicitly pinned `vercel-ai-gateway:*`
- * with a real Vercel key still works. The duet-gateway model path takes a
- * stricter route via `forceDuetGatewayAuth` because the duet.so proxy will
- * not accept a Vercel-issued key.
+ * an explicit `vercel-ai-gateway:*` model pin still resolves auth via pi-ai's
+ * env-key map. Called once at CLI startup. Conservative: does not clobber an
+ * existing `AI_GATEWAY_API_KEY`, so a user with a real Vercel `vck_...` key
+ * keeps the right credential for that provider. The `duet-gateway` provider
+ * has its own per-call auth path via `resolveProviderApiKey` and does not
+ * depend on this shim.
  */
 export function shimDuetApiKeyToAiGateway(): void {
   if (process.env.AI_GATEWAY_API_KEY) return;
-  const duetKey = process.env[DUET_GATEWAY_API_KEY_ENV];
-  if (!duetKey) return;
-  process.env.AI_GATEWAY_API_KEY = duetKey;
-}
-
-/**
- * Overwrite `AI_GATEWAY_API_KEY` with `DUET_API_KEY` so vercel-ai-gateway's
- * transport authenticates against the Duet proxy with the right token. Called
- * only when we're about to issue a request to duet.so, where a `vck_...` key
- * produces an opaque 500.
- */
-function forceDuetGatewayAuth(): void {
   const duetKey = process.env[DUET_GATEWAY_API_KEY_ENV];
   if (!duetKey) return;
   process.env.AI_GATEWAY_API_KEY = duetKey;

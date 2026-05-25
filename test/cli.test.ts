@@ -300,6 +300,22 @@ describe("CLI model inference", () => {
     expect(resolveProviderApiKey("anthropic")).toBe("test-anthropic");
   });
 
+  test("resolving a duet-gateway model does not clobber an existing AI_GATEWAY_API_KEY", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "duet_gt_x";
+    process.env.AI_GATEWAY_API_KEY = "vck_real_vercel_key";
+
+    // Authoring a duet-gateway model used to overwrite AI_GATEWAY_API_KEY as
+    // a side effect (forceDuetGatewayAuth), which silently destroyed a real
+    // Vercel key the user might still need for an explicit
+    // `vercel-ai-gateway:*` pin later in the same process. Per-call auth now
+    // flows through resolveProviderApiKey, so resolution must be a pure
+    // env-read.
+    resolveModelName("opus-4.7");
+
+    expect(process.env.AI_GATEWAY_API_KEY).toBe("vck_real_vercel_key");
+  });
+
   test("rejects model shorthand when no supported provider credentials are configured", () => {
     clearModelEnv();
 
