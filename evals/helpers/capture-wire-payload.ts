@@ -109,13 +109,20 @@ export interface CapturedWirePayloadOptions {
 
 export interface CapturedWirePayload {
   /**
-   * Full system prompt the runner would have sent on this turn,
-   * composed via the production `createSystemPromptWithAppendedLayers`
-   * over the captured `cwd`'s AGENTS.md and discovered skills.
-   * Pair with `dispatched` to reproduce the exact provider request.
+   * Full system prompt the runner would have sent on this turn.
+   * When `systemPromptOverride` is set on the options, this is
+   * that pinned string verbatim; otherwise it is composed via the
+   * production `createSystemPromptWithAppendedLayers` over the
+   * captured `cwd`'s AGENTS.md and discovered skills. Pair with
+   * `dispatched` to reproduce the exact provider request.
    */
   systemPrompt: string;
-  /** Absolute paths of every AGENTS.md / system-prompt file that resolved on disk for this capture. */
+  /**
+   * Absolute paths of every AGENTS.md / system-prompt file that
+   * resolved on disk for this capture. Empty when
+   * `systemPromptOverride` skipped the live rebuild, since a pinned
+   * snapshot has no on-disk provenance.
+   */
   systemPromptFiles: string[];
   /** Eviction horizon read off the input state before the transform ran. */
   horizonBefore: number;
