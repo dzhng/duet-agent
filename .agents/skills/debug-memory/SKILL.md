@@ -118,6 +118,96 @@ Concrete rules:
 
 This matters because observational memory runs over every kind of user content — not just code. A prompt that only ever shows dev-shaped examples will under-perform on a hiring, planning, or personal turn.
 
+## Reproducing a session's exact wire payload
+
+When the bug is shaped like "the model lost its footing after
+compaction" or "the model is responding as if it never saw my last
+turn", the failure is in what the wire-shaping transform actually
+dispatched, not in the observations themselves. Reach for the
+wire-capture harness:
+
+1. **Copy the failing session's state.json.** Sessions live at
+   `~/.duet/sessions/<session_id>/state.json`. Drop it into
+   `evals/fixtures/<session_id>/state.json` exactly as-is — don't trim
+   messages, the wire shaper cares about every timestamp and role.
+
+2. **Dump the FULL memory store as a sibling fixture.** Both the local
+   pack (rows stamped with this session id) AND the global pack (every
+   other row) go on the wire, and `loadGlobalPack` ranks against the
+   whole table. A filtered dump is the wrong shape:
+
+   ```bash
+   bun run scripts/dump-memory.ts --pretty --stats \
+     --out evals/fixtures/<session_id>/memory-dump.json
+   ```
+
+   If the dump may contain PII and you plan to commit, redact before
+   committing (see `evals/fixtures/global-reflect/sandbox-memories.ts`
+   for the redaction precedent). For host-only iteration the raw dump
+   is fine.
+
+3. **Reproduce the wire bytes.** `evals/helpers/capture-wire-payload.ts`
+   wires together a fresh `MemorySession`, `rebuildMemoryContextPack`,
+   and `createObservationalContextTransform` exactly the way
+   `TurnRunner.createMemoryTransform()` does. It returns the same
+   `AgentMessage[]` pi-agent would have sent plus structured metadata:
+
+   ```ts
+   import { capturedWirePayload } from "./helpers/capture-wire-payload.js";
+
+   const { payload, dispose } = await capturedWirePayload({
+     turnState: JSON.parse(await readFile(".../state.json", "utf8")),
+     memoryDump: JSON.parse(await readFile(".../memory-dump.json", "utf8")),
+     sessionId: "session_VO5yjfS1vV6_",
+   });
+   try {
+     expect(payload.retainedMessageCount).toBeGreaterThan(0);
+     expect(payload.dispatchedHasRealUser).toBe(true);
+   } finally {
+     await dispose();
+   }
+   ```
+
+   Key fields on the returned `payload`:
+   - `horizonBefore` / `horizonAfter`: the sticky eviction horizon as
+     read off the state and after the transform ran. Equal means the
+     transform did not advance further on this turn.
+   - `rawMessageCount` / `retainedMessageCount`: how many real
+     transcript messages existed before the horizon and how many
+     survived it. `retainedMessageCount === 0` is the starvation
+     shape.
+   - `dispatched`: the exact `AgentMessage[]` that would have been
+     sent, including the two synthetic memory prepends.
+   - `dispatchedHasRealUser`: `false` is the smoking gun — the model
+     was asked to "continue the conversation" with no real user turn
+     in scope.
+   - `syntheticPrepends`: byte size + preview of the
+     `observation-context` and `continuation-hint` user messages the
+     transform injects from the durable pack.
+
+4. **Lock the failure shape with an eval.** Write the failing assertions
+   first (`retainedMessageCount === 0`, `dispatchedHasRealUser === false`,
+   or whatever describes the bug). Use `testIfDocker`. The reference
+   eval is `evals/session-compaction-wire-starvation.eval.ts` and the
+   reference fixture pair is
+   `evals/fixtures/session_VO5yjfS1vV6_/{state.json, memory-dump.json,
+reproduce_and_diagnose.txt}`. The diagnose file is also a useful
+   template — dump the empirical horizon, message counts, and rendered
+   prepend sizes there before tuning the fix so you can see exactly
+   what changed.
+
+For a quick read-only inspection without writing an eval, the same
+helper works inline:
+
+    bun -e 'import { readFile } from "node:fs/promises"; \
+      import { capturedWirePayload } from "./evals/helpers/capture-wire-payload.js"; \
+      const dir = "evals/fixtures/<session_id>"; \
+      const { payload, dispose } = await capturedWirePayload({ \
+        turnState: JSON.parse(await readFile(`${dir}/state.json`, "utf8")), \
+        memoryDump: JSON.parse(await readFile(`${dir}/memory-dump.json`, "utf8")), \
+        sessionId: "<session_id>", \
+      }); console.log(payload); await dispose();'
+
 ## Tips
 
 - The dump is read-only; you can run it while `duet` is open (it waits up to 60s on the cross-process open-lock).

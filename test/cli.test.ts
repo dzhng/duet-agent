@@ -267,6 +267,19 @@ describe("CLI model inference", () => {
     expect(resolveModelName("gpt-5.5").id).toBe("openai/gpt-5.5");
   });
 
+  test("routes Duet OpenAI models through an OpenAI-compatible API", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+
+    const model = resolveModelName("gpt-5.5");
+
+    expect(model.provider).toBe("duet-gateway");
+    expect(model.id).toBe("openai/gpt-5.5");
+    expect(model.api).toBe("openai-responses");
+    expect(model.baseUrl).toBe("https://duet.so/api/v1/ai-gateway/v1");
+    expect(model.reasoning).toBe(true);
+  });
+
   test("rejects model shorthand when no supported provider credentials are configured", () => {
     clearModelEnv();
 

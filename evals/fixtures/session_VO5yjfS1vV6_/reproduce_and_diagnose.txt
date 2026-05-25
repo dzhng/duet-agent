@@ -1,0 +1,222 @@
+# session_VO5yjfS1vV6_ — "lost its footing after compaction"
+
+## Symptom
+
+The user's last assistant turn (message 174) is:
+
+    "I'm here — what would you like to work on next?"
+
+This comes immediately after a multi-tool grep/read chain through
+`apiProviderRegistry` / model-resolution code (messages 167–173). The
+assistant did not say "I'm done" or summarize — it reset to a cold
+greeting as if it had no transcript at all.
+
+## State shape
+
+    totalMessages: 175
+    roles:        { assistant: 63, toolResult: 110, user: 2 }
+    wireGuardHorizon.evictionHorizon: 1779695315774 (ms epoch)
+
+The only two `user` messages in the entire transcript are:
+
+    [0]  ts=1779695127999  "I'm not seeing any thinking trackes from gpt-5.5 ..."
+    [80] ts=1779695299237  "thinking traces*"
+
+Both timestamps are STRICTLY LESS THAN the eviction horizon
+(1779695315774). The horizon equals the timestamp of message 79, a
+`toolResult` that landed ~16.5s after message 78 but, crucially, AFTER
+the user's steer at message 80.
+
+## Out-of-order timestamps around the horizon
+
+    [78] assistant   ts=1779695299114  ( -16660ms vs horizon)
+    [79] toolResult  ts=1779695315774  (    0     vs horizon)  <- horizon
+    [80] user        ts=1779695299237  ( -16537ms vs horizon)  <- "thinking traces*"
+    [81] assistant   ts=1779695315775  (    +1ms  vs horizon)
+
+The user message at index 80 arrived AS A STEER while the tool call
+that produced message 79 was in flight. The array stores it at index 80
+(insertion order), but its timestamp (~ms 299237) predates the
+toolResult that returned at ms 315774. So in `applyEvictionHorizon`,
+which filters purely by `timestamp <= horizon`, the steer is treated as
+"older than the cut" even though it is the freshest user intent in the
+whole session.
+
+## What the wire dispatcher actually sees
+
+The observational context transform composes the dispatch as:
+
+    [ <synthetic user: <global_observations>...</global_observations>
+                       <local_observations>...</local_observations}>>   (ts = Date.now()),
+      <synthetic user: <continuation hint>>                             (ts = Date.now()),
+      ...applyEvictionHorizon(observableMessages, horizon) ]
+
+so there ARE user-shaped messages on the wire — two synthetic ones,
+both freshly minted at request time and populated from durable
+memory (`MemoryStore.getContextPack()` → `renderContextPack`). The
+third slot, the actual transcript, is what collapses:
+
+1. `applyEvictionHorizon` drops every message with `ts <= horizon`.
+   That removes indices 0..80 — including BOTH real user messages
+   (`I'm not seeing thinking tracks...` at 0, `thinking traces*` at
+   80). Message 80 is collateral damage because it arrived as a steer
+   during a long tool call and carries a timestamp ~16.5s OLDER than
+   the toolResult right before it in the array (see the out-of-order
+   table above).
+2. The orphan-head skip advances past non-user messages so the
+   dispatch starts with a `user` turn. From index 81 onward, roles are
+   exclusively `assistant` and `toolResult` — no real user message
+   survives. `firstKept` walks to `messages.length` and the slice
+   returns `[]`.
+
+So `retainedMessages = []` and the model receives only the two
+synthetic memory messages and the continuation hint. The detail that
+matters for explaining the symptom is what the local pack actually
+contains here:
+
+    bun run scripts/dump-memory.ts --session session_VO5yjfS1vV6_ \
+      --pretty --stats
+
+    # 1 row
+    # observed 2026-05-25 07:52, priority high
+    # range = msg_user_1779695127999...:msg_assistant_gen_01KSF1XBYY...
+    # "🟡 ... user asked about thinking traces ...
+    #  → Added a red eval ... → Patched src/model-resolution/duet-gateway.ts ...
+    #  ✅ Verified the fix with bun test ... bun run check-types ... bun run lint."
+
+That is the WHOLE local pack for this session: a single in-session
+reflection covering the EARLY phase (the original thinking-tracks bug)
+that ends with a green ✅. It does NOT cover the recent grep through
+`apiProviderRegistry` / model-resolution code in messages 81–173,
+because those messages were never re-observed after the horizon
+advance — the observer reads from the same retained-history slice the
+wire shaper does, and that slice is empty.
+
+So the model's effective view at the moment of message 174 is:
+
+    system prompt
+    user: <global_observations>
+            ... lots of cross-session work this user has done ...
+          </global_observations>
+          <local_observations>
+            (one row) "thinking traces investigation, fix landed, ✅ verified"
+          </local_observations>
+    user: <continuation hint: "continue the conversation so far">
+
+From that view the rational reply IS basically "that work is done, what
+next?". The model isn't broken; it's accurately reading what it was
+given. The bug is that what it was given drops the live thread: the
+user's `thinking traces*` steer, every subsequent tool call, and the
+~90 messages of grep/read work were all silently elided. The local
+pack covers the completed early phase, the global pack covers other
+sessions, and the raw transcript is empty — so "lost its footing" is
+exactly the right description.
+
+## Why compaction landed here
+
+No `/compact` slash command appears in the message contents, so the
+horizon was almost certainly set by `tryRecoverFromContextOverflow`
+in `src/turn-runner/turn-runner.ts` (around line 1623):
+
+- The parent agent failed with a context-overflow error.
+- The recovery code called `findEvictionHorizon` with a half-history
+  target, walked oldest-first by timestamp, and stopped at the smallest
+  horizon that produced `<= n/2` observable messages.
+- That horizon happened to be message 79's timestamp.
+- Because user message 80's timestamp is older than 79's (insertion
+  arrived while a tool was running), it was swept under the cut too.
+
+## Three bugs, one outcome
+
+1. **Timestamp-only eviction is not array-position safe.** A user
+   message that arrives as a steer during a long tool round-trip can
+   carry a timestamp earlier than messages that appear before it in the
+   array. `applyEvictionHorizon` filters purely by `ts <= horizon`, so
+   such a steer gets evicted any time the horizon advances past the
+   surrounding tool result. The latest user intent should be impossible
+   to evict — `MIN_HISTORY_TAIL = 1` protects array position, not user
+   intent.
+
+2. **Orphan-head skip silently drops the entire tail.** When no real
+   `user` message survives after the horizon, the orphan-head walk
+   advances `firstKept` all the way to `messages.length` and
+   `applyEvictionHorizon` returns `[]`. The transform still prepends
+   its synthetic memory/continuation user messages, so the wire is not
+   formally empty — but the model loses 100% of this session's raw
+   transcript. The recovery path that advanced the horizon does not
+   detect this collapse.
+
+3. **Local pack is the only fallback for evicted history, and it
+   lags.** The transform's design contract is that aggressive eviction
+   is safe because the durable observation memory "prepends" the lost
+   context. For cross-session continuity that's true (global pack). For
+   in-session continuity it's only true once the in-session reflector
+   has actually written a local observation covering the evicted
+   range. Here the only local row covers msgs ~0–80 and was committed
+   before the recent grep chain. Messages 81–173 — the work the user
+   most wants the model to remember at this exact moment — live
+   nowhere: not in the local pack, not in the retained transcript.
+   Compaction should not be allowed to evict a contiguous range that
+   has not yet been summarized into a local observation, or the
+   recovery path needs to force an in-session reflection before
+   advancing the horizon.
+
+## Empirical wire-payload capture
+
+`evals/helpers/capture-wire-payload.ts` reconstructs the exact
+`AgentMessage[]` pi-agent would have dispatched for the next turn by
+replaying `state.json` + `memory-dump.json` through the production
+`createObservationalContextTransform`. Running it against this fixture
+produces:
+
+    horizonBefore:           1779695315774
+    horizonAfter:            1779695315774  (transform did not advance further)
+    rawMessageCount:         175
+    retainedMessageCount:    0    ← every real message evicted
+    dispatched.length:       2    ← only the two synthetic prepends
+    dispatchedBytes:         25,975
+    dispatchedTokens:        8,119
+    dispatchedHasRealUser:   false
+    syntheticPrepends:
+      - { kind: observation-context, bytes: 25,485,
+          preview: "<system-reminder>The following observations block contains your memory of past conversations with this user..." }
+      - { kind: continuation-hint,   bytes:    490,
+          preview: "<system-reminder>Please continue naturally with the conversation so far and respond to the latest message..." }
+
+The provider received ~8k tokens, ~25KB. 25,485 of those 25,975 bytes
+are the rendered durable-memory block; 490 bytes are the generic
+"continue the conversation" hint. Zero bytes from this session's
+175-message transcript made it onto the wire.
+
+## Smallest reproducing slice for an eval
+
+A minimal repro only needs to drive `applyEvictionHorizon` / the
+turn-runner wire shaping at this horizon:
+
+- Keep the user message at index 0 (ts 1779695127999) and 80 (ts
+  1779695299237), plus a single assistant→toolResult pair on either side
+  of the steer (indices 78, 79, 81, 82). Trim the rest.
+- Set `wireGuardHorizon.evictionHorizon = 1779695315774`.
+- Assert that `applyEvictionHorizon(messages, horizon)` either keeps the
+  latest user message OR refuses to return an empty list — pick whichever
+  invariant the fix encodes.
+
+## Likely fixes (one or more)
+
+- In `findEvictionHorizon` / `applyEvictionHorizon`: never advance the
+  horizon past the timestamp of the most recent `role: "user"` message
+  in the array. Or pin "the last user message in array order" as
+  un-evictable independent of its timestamp.
+- In `tryRecoverFromContextOverflow`: if the chosen horizon produces an
+  empty (or user-less) dispatch, fall back to a less aggressive horizon
+  rather than emitting the "dropped N older messages and retrying"
+  notice and proceeding to an empty wire.
+- In the observational context transform: refuse to advance the horizon
+  past a contiguous range that has not yet been summarized into a local
+  observation, or force a synchronous in-session reflection before
+  advancing past the range.
+
+The eval at `evals/session-compaction-wire-starvation.eval.ts` locks in
+the failure shape — `retainedMessageCount === 0` and
+`dispatchedHasRealUser === false` — so any fix that lands here flips
+the assertions green.

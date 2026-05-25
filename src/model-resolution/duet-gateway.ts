@@ -2,12 +2,12 @@ import { getModel, type Model } from "@earendil-works/pi-ai";
 import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
 
 const GATEWAY_PATH = "/api/v1/ai-gateway";
+const OPENAI_MODEL_PREFIX = "openai/";
 
 /**
- * The Duet gateway proxies Vercel's AI Gateway 1:1 — same path layout, same
- * request/response contract — and authenticates with a `DUET_API_KEY` token
- * scoped to a single org. Rather than ship a parallel model registry, the
- * `duet-gateway` provider piggybacks on the underlying `vercel-ai-gateway`
+ * The Duet gateway proxies Vercel's AI Gateway path layout and authenticates
+ * with a `DUET_API_KEY` token scoped to a single org. Rather than ship a
+ * parallel model registry, the `duet-gateway` provider piggybacks on upstream
  * model definitions and only swaps `baseUrl` to point at Duet.
  *
  * The base URL is `${DUET_APP_BASE_URL}${GATEWAY_PATH}`; users only need to
@@ -28,9 +28,11 @@ export function getDuetGatewayBaseUrl(): string {
 /**
  * Resolve a `duet-gateway:<modelId>` string to a Model.
  *
- * Looks up the matching vercel-ai-gateway model and clones it with a Duet
- * gateway baseUrl. Returns undefined when the underlying gateway model
- * doesn't exist, mirroring `getModel`'s contract.
+ * Anthropic models use pi-ai's Vercel AI Gateway catalog because that path is
+ * already Anthropic-native. OpenAI models intentionally use pi-ai's OpenAI
+ * catalog and the Duet gateway's OpenAI-compatible route instead; routing them
+ * through the Anthropic-compatible gateway path drops OpenAI reasoning stream
+ * semantics, so the TUI never sees reasoning/thinking events.
  *
  * Auth: the duet.so proxy only accepts `DUET_API_KEY`-style tokens and 500s on
  * a Vercel `vck_...` key. We force `AI_GATEWAY_API_KEY` to the Duet token here
@@ -39,13 +41,31 @@ export function getDuetGatewayBaseUrl(): string {
  */
 export function resolveDuetGatewayModel(modelId: string): Model<any> | undefined {
   forceDuetGatewayAuth();
-  const upstream = getModel("vercel-ai-gateway" as any, modelId as any) as Model<any> | undefined;
+  const upstream = resolveDuetGatewayUpstream(modelId);
   if (!upstream) return undefined;
 
   return {
     ...upstream,
-    baseUrl: getDuetGatewayBaseUrl(),
+    provider: "duet-gateway",
+    id: modelId,
+    baseUrl: getDuetGatewayBaseUrlForModel(upstream),
   };
+}
+
+function resolveDuetGatewayUpstream(modelId: string): Model<any> | undefined {
+  if (modelId.startsWith(OPENAI_MODEL_PREFIX)) {
+    return getModel("openai" as any, modelId.slice(OPENAI_MODEL_PREFIX.length) as any) as
+      | Model<any>
+      | undefined;
+  }
+  return getModel("vercel-ai-gateway" as any, modelId as any) as Model<any> | undefined;
+}
+
+function getDuetGatewayBaseUrlForModel(model: Model<any>): string {
+  if (model.api === "openai-completions" || model.api === "openai-responses") {
+    return `${getDuetGatewayBaseUrl()}/v1`;
+  }
+  return getDuetGatewayBaseUrl();
 }
 
 /**
