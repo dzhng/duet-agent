@@ -1,7 +1,6 @@
 import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
 import { loginWithBrowser } from "../lib/login.js";
 import { syncDefaultSkills } from "../lib/sync-skills.js";
-import { shimDuetApiKeyToAiGateway } from "../model-resolution/duet-gateway.js";
 import { printLoginHelp } from "./help.js";
 import { defaultDuetEnvFilePath, fail, mergeEnvEntries, resolveUserPath } from "./shared.js";
 
@@ -54,7 +53,6 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
   console.error(`Saved DUET_API_KEY for ${result.orgName} (${result.orgSlug}) to ${targetEnvFile}`);
 
   process.env.DUET_API_KEY = result.apiKey;
-  shimDuetApiKeyToAiGateway();
 
   await fetch(`${resolveDuetAppBaseUrl()}/api/v1/analytics/events`, {
     method: "POST",

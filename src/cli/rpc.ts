@@ -1,5 +1,4 @@
 import { createInterface } from "node:readline";
-import { shimDuetApiKeyToAiGateway } from "../model-resolution/duet-gateway.js";
 import {
   pinnedDefaultModel,
   pinnedMemoryModel,
@@ -63,7 +62,6 @@ export interface RpcRunner {
 export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promise<void> {
   const parsed = parseRpcArgs(args);
   const dotenvKeys = loadCliEnvFiles(parsed.workDir, parsed.envFilePath);
-  shimDuetApiKeyToAiGateway();
 
   // RPC mode never auto-upgrades: it is structurally non-interactive
   // (JSON-RPC over stdio) and is normally invoked by a host gateway that

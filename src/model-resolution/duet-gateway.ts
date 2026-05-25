@@ -69,22 +69,6 @@ function getDuetGatewayBaseUrlForModel(model: Model<any>): string {
 }
 
 /**
- * If `DUET_API_KEY` is set but `AI_GATEWAY_API_KEY` is not, copy it across so
- * an explicit `vercel-ai-gateway:*` model pin still resolves auth via pi-ai's
- * env-key map. Called once at CLI startup. Conservative: does not clobber an
- * existing `AI_GATEWAY_API_KEY`, so a user with a real Vercel `vck_...` key
- * keeps the right credential for that provider. The `duet-gateway` provider
- * has its own per-call auth path via `resolveProviderApiKey` and does not
- * depend on this shim.
- */
-export function shimDuetApiKeyToAiGateway(): void {
-  if (process.env.AI_GATEWAY_API_KEY) return;
-  const duetKey = process.env[DUET_GATEWAY_API_KEY_ENV];
-  if (!duetKey) return;
-  process.env.AI_GATEWAY_API_KEY = duetKey;
-}
-
-/**
  * Resolve the API key for a provider, including the project-local
  * `duet-gateway` provider that pi-ai's built-in env-key map does not
  * know about.

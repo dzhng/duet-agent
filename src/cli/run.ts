@@ -1,4 +1,3 @@
-import { shimDuetApiKeyToAiGateway } from "../model-resolution/duet-gateway.js";
 import { maybeAutoSyncDefaultSkills } from "../lib/sync-skills.js";
 import {
   pinnedDefaultModel,
@@ -237,7 +236,6 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   }
 
   const dotenvKeys = loadCliEnvFiles(workDir, envFilePath);
-  shimDuetApiKeyToAiGateway();
 
   // Probe the registry and (if newer) run the package manager in-process
   // while the TUI is already mounted. The TUI subscribes to upgradeStatus$

@@ -23,7 +23,6 @@ import { runRunCommand } from "./cli/run.js";
 import { runSendFeedbackCommand } from "./cli/send-feedback.js";
 import { runSkillsCommand } from "./cli/skills.js";
 import { runUpgradeCommand } from "./cli/upgrade.js";
-import { shimDuetApiKeyToAiGateway } from "./model-resolution/duet-gateway.js";
 
 // ---- public re-exports ----------------------------------------------------
 // External tests and callers historically import these helpers from
@@ -65,11 +64,6 @@ const PACKAGE_METADATA = {
 } as const;
 
 async function main(): Promise<void> {
-  // Bridge DUET_API_KEY → AI_GATEWAY_API_KEY so the duet-gateway provider
-  // resolves auth through pi-ai's vercel-ai-gateway path. Idempotent — caller's
-  // explicit AI_GATEWAY_API_KEY wins.
-  shimDuetApiKeyToAiGateway();
-
   const args = process.argv.slice(2);
   const subcommand = args[0];
 
