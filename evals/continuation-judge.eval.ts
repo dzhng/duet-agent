@@ -19,7 +19,7 @@ The user asked about missing OpenAI "thinking traces" from \`gpt-5.5\`.
 Investigation showed \`resolveModelName("gpt-5.5")\` was routing
 Duet/OpenAI models through \`vercel-ai-gateway\` with
 \`api: "anthropic-messages"\`, which would drop OpenAI reasoning
-events. A red eval was added at \`evals/openai-thinking-tracks.eval.ts\`
+events. A red eval was added at \`evals/openai-thinking-traces.eval.ts\`
 to reproduce. The fix in \`src/model-resolution/duet-gateway.ts\`
 overrides Duet-hosted OpenAI-prefixed models to the OpenAI-compatible
 API path while leaving Anthropic models on the Anthropic path. The
@@ -45,7 +45,7 @@ The grep through \`apiProviderRegistry\` in
 \`openai-responses\` API path is the one that surfaces reasoning
 deltas, so the override in \`src/model-resolution/duet-gateway.ts\`
 should resolve the missing-thinking-traces symptom for \`gpt-5.5\`.
-Next step: re-run \`evals/openai-thinking-tracks.eval.ts\` against
+Next step: re-run \`evals/openai-thinking-traces.eval.ts\` against
 the duet-gateway provider and assert \`hasReasoningRequest(payload)\`
 is true. Want me to also add a regression in \`test/cli.test.ts\`
 pinning the resolved API to \`openai-responses\`?

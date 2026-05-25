@@ -82,7 +82,7 @@ describe("session_VO5yjfS1vV6_ wire starvation after compaction", () => {
         // of KB) and high enough to fail loudly if the pack is empty.
         expect(observationsBlock!.bytes).toBeGreaterThan(4_000);
 
-        // The local pack still mentions the EARLY thinking-tracks
+        // The local pack still mentions the EARLY thinking-traces
         // investigation, which is the misleading signal the model
         // anchors to when it generates "what would you like to work
         // on next?" \u2014 it sees a green \u2705 on completed work and no

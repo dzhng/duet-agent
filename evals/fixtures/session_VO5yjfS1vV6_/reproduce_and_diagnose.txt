@@ -85,7 +85,7 @@ contains here:
     #  ✅ Verified the fix with bun test ... bun run check-types ... bun run lint."
 
 That is the WHOLE local pack for this session: a single in-session
-reflection covering the EARLY phase (the original thinking-tracks bug)
+reflection covering the EARLY phase (the original thinking-traces bug)
 that ends with a green ✅. It does NOT cover the recent grep through
 `apiProviderRegistry` / model-resolution code in messages 81–173,
 because those messages were never re-observed after the horizon

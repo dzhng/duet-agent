@@ -49,7 +49,7 @@ const SESSION_ID = "session_VO5yjfS1vV6_";
 // before the cold-greeting reply. Kept verbatim so the judge can
 // match concrete anchors (`apiProviderRegistry`,
 // `src/model-resolution/duet-gateway.ts`,
-// `evals/openai-thinking-tracks.eval.ts`) regardless of which way
+// `evals/openai-thinking-traces.eval.ts`) regardless of which way
 // the model phrases its continuation.
 const RECENT_WORK = dedent`
   The user asked about missing OpenAI "thinking traces" from
@@ -57,7 +57,7 @@ const RECENT_WORK = dedent`
   was routing Duet/OpenAI models through \`vercel-ai-gateway\` with
   \`api: "anthropic-messages"\`, which would drop OpenAI reasoning
   events. A red eval was added at
-  \`evals/openai-thinking-tracks.eval.ts\` to reproduce. The fix in
+  \`evals/openai-thinking-traces.eval.ts\` to reproduce. The fix in
   \`src/model-resolution/duet-gateway.ts\` overrides Duet-hosted
   OpenAI-prefixed models to the OpenAI-compatible API path while
   leaving Anthropic models on the Anthropic path. The most recent

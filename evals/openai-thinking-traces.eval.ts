@@ -4,7 +4,7 @@ import { resolveModelName } from "../src/model-resolution/resolver.js";
 
 const openAiModel = process.env.EVAL_MODEL ?? "gpt-5.5";
 
-describe("OpenAI thinking track routing", () => {
+describe("OpenAI thinking trace routing", () => {
   test("gpt-5.5 shorthand resolves to an OpenAI-compatible provider that can emit reasoning events", async () => {
     const model = resolveModelName(openAiModel);
 
