@@ -629,6 +629,28 @@ export function quarantineDataDirectory(path: string): string {
 }
 
 /**
+ * Peek at `<dataDir>/.duet-open.lock` without touching it. Returns the
+ * holder pid when a live *foreign* process owns the lock, `null`
+ * otherwise (file missing, our own pid, unparseable contents, or a dead
+ * pid we would treat as stale on the next acquire). Used by
+ * auto-upgrade to skip itself when another duet CLI is already using
+ * the memory db — npm rewriting `node_modules` mid-flight is the
+ * documented trigger for the `memory.db.corrupted-*` recovery path, so
+ * the safe default is to not upgrade at all when a peer holds the db.
+ */
+export function peekOpenLockHolderPid(dataDir: string): number | null {
+  const lockPath = join(dataDir, OPEN_LOCK_FILE);
+  const contents = tryReadFile(lockPath);
+  if (contents === undefined) return null;
+  const firstLine = contents.split("\n", 1)[0]?.trim() ?? "";
+  const holderPid = Number.parseInt(firstLine, 10);
+  if (!Number.isFinite(holderPid) || holderPid <= 0) return null;
+  if (holderPid === process.pid) return null;
+  if (!isProcessAlive(holderPid)) return null;
+  return holderPid;
+}
+
+/**
  * Try once to acquire the cross-process open-lock at
  * `<dataDir>/.duet-open.lock`. Returns `{ lockPath }` on success
  * (including after a stale-pid takeover) or `{ holderPid }` when a live

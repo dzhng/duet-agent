@@ -1,3 +1,5 @@
+import { peekOpenLockHolderPid } from "../memory/pglite.js";
+import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
 import {
   detectPackageManager,
   globalUpgradeCommand,
@@ -16,9 +18,21 @@ import { printUpgradeHelp } from "./help.js";
  * builds the right global-install command for the detected manager,
  * prints it under --dry-run, and otherwise spawns it inheriting stdio.
  */
-export async function runUpgradeCommand(args: string[], packageName: string): Promise<void> {
+export interface UpgradeCommandOptions {
+  /** Override for tests; defaults to `peekOpenLockHolderPid`. */
+  peekMemoryHolder?: typeof peekOpenLockHolderPid;
+  /** Override for tests; defaults to `DEFAULT_MEMORY_DB_PATH`. */
+  memoryDbPath?: string;
+}
+
+export async function runUpgradeCommand(
+  args: string[],
+  packageName: string,
+  options: UpgradeCommandOptions = {},
+): Promise<void> {
   let packageManager: PackageManager = detectPackageManager();
   let dryRun = false;
+  let force = false;
   let targetVersion: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
@@ -29,6 +43,9 @@ export async function runUpgradeCommand(args: string[], packageName: string): Pr
         break;
       case "--dry-run":
         dryRun = true;
+        break;
+      case "--force":
+        force = true;
         break;
       case "--version":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
@@ -51,6 +68,25 @@ export async function runUpgradeCommand(args: string[], packageName: string): Pr
   if (dryRun) {
     console.log(commandText);
     return;
+  }
+
+  // Refuse to run while another duet CLI holds the memory db open. npm
+  // rewriting `node_modules` mid-flight under a live peer is the
+  // documented trigger for the `memory.db.corrupted-*` recovery path —
+  // surface that as an actionable error instead of letting the user
+  // re-create the corruption they just recovered from. `--force` is the
+  // escape hatch for the rare case where the user knows what they are
+  // doing (e.g. peer is wedged and they accept the risk).
+  if (!force) {
+    const peek = options.peekMemoryHolder ?? peekOpenLockHolderPid;
+    const memoryDbPath = options.memoryDbPath ?? DEFAULT_MEMORY_DB_PATH;
+    const holderPid = peek(memoryDbPath);
+    if (holderPid !== null) {
+      fail(
+        `Another duet process (pid ${holderPid}) is using ${memoryDbPath}. ` +
+          `Quit it first, or rerun with --force to upgrade anyway (risks corrupting the memory db).`,
+      );
+    }
   }
 
   console.error(`Upgrading ${packageName} to ${targetVersion} with ${packageManager}...`);

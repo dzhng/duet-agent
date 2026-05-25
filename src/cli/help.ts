@@ -263,12 +263,14 @@ export function printUpgradeHelp(packageName: string): void {
 duet upgrade — Upgrade the global ${packageName} installation
 
 USAGE
-  duet upgrade [--manager npm|bun|pnpm|yarn] [--version <version>]
+  duet upgrade [--manager npm|bun|pnpm|yarn] [--version <version>] [--force]
 
 OPTIONS
   --manager <name>         Package manager to use (default: detected, fallback: npm)
   --version <version>      Install an exact version instead of npm's latest dist-tag
   --dry-run                Print the upgrade command without running it
+  --force                  Upgrade even if another duet CLI is using the memory db
+                           (risks corrupting the db while npm rewrites node_modules)
   -h, --help               Show this help
 `);
 }

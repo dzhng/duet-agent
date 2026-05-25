@@ -14,6 +14,8 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { peekOpenLockHolderPid } from "../memory/pglite.js";
+import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
 import {
   detectPackageManagerFromContext,
   globalUpgradeCommand,
@@ -74,7 +76,18 @@ export type UpgradeStatus =
   | { kind: "locked" }
   | {
       kind: "skipped";
-      reason: "disabled" | "source-checkout" | "registry-unreachable";
+      reason:
+        | "disabled"
+        | "source-checkout"
+        | "registry-unreachable"
+        /**
+         * Another duet process holds the cross-process open-lock on
+         * `~/.duet/memory.db`. npm rewriting `node_modules` mid-flight
+         * while that peer is live is the documented trigger for the
+         * PGlite quarantine recovery path, so we skip the upgrade
+         * entirely and let the next solo-CLI launch perform it.
+         */
+        | "memory-in-use";
     };
 
 export type UpgradeStatusListener = (status: UpgradeStatus) => void;
@@ -143,6 +156,15 @@ export interface RunAutoUpgradeInput {
   now?: () => number;
   /** Override for tests. */
   detectManager?: () => PackageManager;
+  /**
+   * Path of the memory db data directory to probe before upgrading.
+   * When another live duet process holds its open-lock, the upgrade is
+   * skipped with reason "memory-in-use". Defaults to
+   * `~/.duet/memory.db`; tests inject a scratch dir.
+   */
+  memoryDbPath?: string;
+  /** Override for tests; defaults to `peekOpenLockHolderPid`. */
+  peekMemoryHolder?: typeof peekOpenLockHolderPid;
 }
 
 /**
@@ -167,6 +189,23 @@ export async function runAutoUpgrade(input: RunAutoUpgradeInput): Promise<Upgrad
   const scriptPath = input.scriptPath ?? process.argv[1];
   if (!scriptPath || !isLikelyGlobalInstall(scriptPath)) {
     return emit({ kind: "skipped", reason: "source-checkout" });
+  }
+
+  // Skip when another live duet process is using the memory db. Running
+  // `npm install -g` against the package while a peer CLI has PGlite
+  // open is the documented trigger for the `memory.db.corrupted-*`
+  // recovery path (node_modules gets half-rewritten under the peer's
+  // feet, its next PGlite reopen sees a torn WASM, and the retry-then-
+  // quarantine fallback eventually fires). The next solo-CLI launch
+  // will pick the upgrade back up.
+  const memoryDbPath = input.memoryDbPath ?? DEFAULT_MEMORY_DB_PATH;
+  const peekMemoryHolder = input.peekMemoryHolder ?? peekOpenLockHolderPid;
+  const memoryHolderPid = peekMemoryHolder(memoryDbPath);
+  if (memoryHolderPid !== null) {
+    appendLog(
+      `skip memory-in-use package=${input.packageName} current=${input.currentVersion} holder=${memoryHolderPid}`,
+    );
+    return emit({ kind: "skipped", reason: "memory-in-use" });
   }
 
   const now = input.now ?? (() => Date.now());

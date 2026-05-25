@@ -258,6 +258,57 @@ describe("runAutoUpgrade", () => {
     });
     expect(final).toEqual({ kind: "skipped", reason: "source-checkout" });
   });
+
+  testIfDocker(
+    "returns skipped with reason memory-in-use when another duet holds the memory db open-lock",
+    async () => {
+      let fetchCalled = false;
+      let upgradeCalled = false;
+      const final = await runAutoUpgrade({
+        packageName: "@duetso/agent",
+        currentVersion: "0.1.62",
+        scriptPath: GLOBAL_PATH,
+        env: { ...process.env, [NO_AUTO_UPGRADE_ENV]: undefined },
+        peekMemoryHolder: () => 999_999,
+        fetchLatest: async () => {
+          fetchCalled = true;
+          return "0.1.63";
+        },
+        runUpgrade: async () => {
+          upgradeCalled = true;
+          return { ok: true };
+        },
+      });
+      expect(final).toEqual({ kind: "skipped", reason: "memory-in-use" });
+      // Skipping must short-circuit before any registry probe or install.
+      expect(fetchCalled).toBe(false);
+      expect(upgradeCalled).toBe(false);
+    },
+  );
+
+  testIfDocker("proceeds when no peer holds the memory db open-lock", async () => {
+    let upgradeCalled = false;
+    const final = await runAutoUpgrade({
+      packageName: "@duetso/agent",
+      currentVersion: "0.1.62",
+      scriptPath: GLOBAL_PATH,
+      env: { ...process.env, [NO_AUTO_UPGRADE_ENV]: undefined },
+      peekMemoryHolder: () => null,
+      detectManager: () => "npm",
+      fetchLatest: async () => "0.1.63",
+      runUpgrade: async () => {
+        upgradeCalled = true;
+        return { ok: true };
+      },
+    });
+    expect(final).toEqual({
+      kind: "upgraded",
+      from: "0.1.62",
+      to: "0.1.63",
+      manager: "npm",
+    });
+    expect(upgradeCalled).toBe(true);
+  });
 });
 
 interface FakeChild extends EventEmitter {
