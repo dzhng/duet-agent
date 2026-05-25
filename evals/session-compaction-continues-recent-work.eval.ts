@@ -5,6 +5,7 @@ import dedent from "dedent";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveModelName } from "../src/model-resolution/resolver.js";
+import { resolveProviderApiKey } from "../src/model-resolution/duet-gateway.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { capturedWirePayload } from "./helpers/capture-wire-payload.js";
 import { judgeContinuesRecentWork } from "./helpers/continuation-judge.js";
@@ -98,7 +99,11 @@ describe("session_VO5yjfS1vV6_ wire-starvation continuation", () => {
           systemPrompt: payload.systemPrompt,
           messages: convertToLlm(payload.dispatched),
         };
-        const response = await complete(model, context);
+        // pi-ai's built-in env-key map does not know the project-local
+        // `duet-gateway` provider, so a bare `complete()` would resolve
+        // an empty apiKey. Pass it explicitly via the project shim.
+        const apiKey = resolveProviderApiKey(model.provider);
+        const response = await complete(model, context, apiKey ? { apiKey } : undefined);
         const replyText = response.content
           .filter((block): block is { type: "text"; text: string } => block.type === "text")
           .map((block) => block.text)

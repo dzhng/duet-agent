@@ -1,4 +1,4 @@
-import { getModel, type Model } from "@earendil-works/pi-ai";
+import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai";
 import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
 
 const GATEWAY_PATH = "/api/v1/ai-gateway";
@@ -95,4 +95,29 @@ function forceDuetGatewayAuth(): void {
   const duetKey = process.env[DUET_GATEWAY_API_KEY_ENV];
   if (!duetKey) return;
   process.env.AI_GATEWAY_API_KEY = duetKey;
+}
+
+/**
+ * Resolve the API key for a provider, including the project-local
+ * `duet-gateway` provider that pi-ai's built-in env-key map does not
+ * know about.
+ *
+ * `resolveDuetGatewayModel` deliberately overrides `model.provider` to
+ * `"duet-gateway"` so cost and usage telemetry attribute the call to
+ * the Duet proxy rather than the upstream vercel-ai-gateway. The
+ * tradeoff is that pi-ai's `getEnvApiKey(provider)` returns `undefined`
+ * for `"duet-gateway"`, so the agent-loop's `getApiKey` callback and
+ * any direct `complete()` call would silently send an empty API key
+ * and fail with `Could not resolve authentication method` even when
+ * `DUET_API_KEY` is set.
+ *
+ * This wrapper closes the gap: `"duet-gateway"` returns the Duet token
+ * directly, every other provider falls through to pi-ai's normal
+ * env-key resolution unchanged.
+ */
+export function resolveProviderApiKey(provider: string): string | undefined {
+  if (provider === "duet-gateway") {
+    return process.env[DUET_GATEWAY_API_KEY_ENV];
+  }
+  return getEnvApiKey(provider as Parameters<typeof getEnvApiKey>[0]);
 }

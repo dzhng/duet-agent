@@ -280,6 +280,26 @@ describe("CLI model inference", () => {
     expect(model.reasoning).toBe(true);
   });
 
+  test("resolveProviderApiKey maps the project-local duet-gateway provider to DUET_API_KEY", async () => {
+    const { resolveProviderApiKey } = await import("../src/model-resolution/duet-gateway.js");
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+    // pi-ai's built-in env-key map does not know `duet-gateway`, so
+    // without this shim every live-model eval that authenticates via
+    // `DUET_API_KEY` alone would silently send an empty API key and
+    // fail with `Could not resolve authentication method`.
+    expect(resolveProviderApiKey("duet-gateway")).toBe("test-duet");
+  });
+
+  test("resolveProviderApiKey falls through to pi-ai env-key resolution for other providers", async () => {
+    const { resolveProviderApiKey } = await import("../src/model-resolution/duet-gateway.js");
+    clearModelEnv();
+    process.env.AI_GATEWAY_API_KEY = "test-gateway";
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+    expect(resolveProviderApiKey("vercel-ai-gateway")).toBe("test-gateway");
+    expect(resolveProviderApiKey("anthropic")).toBe("test-anthropic");
+  });
+
   test("rejects model shorthand when no supported provider credentials are configured", () => {
     clearModelEnv();
 

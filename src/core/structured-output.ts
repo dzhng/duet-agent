@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { Static, TSchema } from "typebox";
 import { resolveModelName } from "../model-resolution/resolver.js";
+import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
 
 export type StructuredOutputPrompt = string | Array<TextContent | ImageContent>;
 
@@ -27,6 +28,12 @@ export async function generateStructuredOutput<TSchemaValue extends TSchema>(
   options: StructuredOutputOptions<TSchemaValue>,
 ): Promise<Static<TSchemaValue>> {
   const model = resolveModelName(options.model);
+  // pi-ai's `getEnvApiKey(provider)` does not know the project-local
+  // `duet-gateway` provider, so an unpinned `complete()` call here
+  // would silently send an empty API key. `resolveProviderApiKey`
+  // closes that gap; we still let an explicit `callOptions.apiKey`
+  // win so callers can override per-request.
+  const resolvedApiKey = options.callOptions?.apiKey ?? resolveProviderApiKey(model.provider);
   const response = await complete(
     model,
     {
@@ -36,6 +43,7 @@ export async function generateStructuredOutput<TSchemaValue extends TSchema>(
     },
     {
       ...options.callOptions,
+      ...(resolvedApiKey ? { apiKey: resolvedApiKey } : {}),
       toolChoice: forcedToolChoice(model, options.tool.name),
     },
   );

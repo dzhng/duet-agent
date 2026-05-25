@@ -4,12 +4,8 @@ import {
   type AgentMessage,
   type AgentTool,
 } from "@earendil-works/pi-agent-core";
-import {
-  getEnvApiKey,
-  isContextOverflow,
-  type ImageContent,
-  type Usage,
-} from "@earendil-works/pi-ai";
+import { isContextOverflow, type ImageContent, type Usage } from "@earendil-works/pi-ai";
+import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
@@ -1805,7 +1801,7 @@ export class TurnRunner {
         }
         return undefined;
       },
-      getApiKey: getEnvApiKey,
+      getApiKey: resolveProviderApiKey,
     });
   }
 
