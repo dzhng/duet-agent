@@ -71,15 +71,25 @@ describe("session_VO5yjfS1vV6_ wire-starvation continuation", () => {
   testIfDocker(
     "the next turn produces a substantive continuation of the in-flight work",
     async () => {
-      const [stateJson, dumpJson] = await Promise.all([
+      // The system-prompt snapshot is committed alongside state.json
+      // and memory-dump.json so the eval reproduces what the original
+      // session actually saw on the wire, not whatever
+      // `createSystemPromptWithAppendedLayers` would render against
+      // the CURRENT AGENTS.md + installed skills. AGENTS.md drifts
+      // and skill discovery is environment-sensitive (docker /work
+      // vs host cwd produced ~10KB vs ~21KB at capture time), so a
+      // live rebuild would silently change what the model sees.
+      const [stateJson, dumpJson, systemPromptSnapshot] = await Promise.all([
         readFile(join(FIXTURE_DIR, "state.json"), "utf8"),
         readFile(join(FIXTURE_DIR, "memory-dump.json"), "utf8"),
+        readFile(join(FIXTURE_DIR, "system-prompt.txt"), "utf8"),
       ]);
 
       const { payload, dispose } = await capturedWirePayload({
         turnState: JSON.parse(stateJson),
         memoryDump: JSON.parse(dumpJson),
         sessionId: SESSION_ID,
+        systemPromptOverride: systemPromptSnapshot,
       });
 
       try {

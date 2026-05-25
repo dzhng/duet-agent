@@ -146,7 +146,46 @@ wire-capture harness:
    for the redaction precedent). For host-only iteration the raw dump
    is fine.
 
-3. **Reproduce the wire bytes.** `evals/helpers/capture-wire-payload.ts`
+3. **Snapshot the rendered system prompt as a third fixture file.**
+   `state.json` does NOT carry the system prompt — the runner
+   rebuilds it every turn from the session's cwd + AGENTS.md +
+   discovered skills. Both AGENTS.md and the installed skill set
+   drift over time, and skill discovery is environment-sensitive
+   (e.g. docker `/work` vs host cwd resolved ~10KB vs ~21KB for the
+   same session). If the eval rebuilds live, the model silently sees
+   a different prompt than the original session ever saw. Pin it:
+
+   ```bash
+   bun -e 'import { readFile, writeFile } from "node:fs/promises"; \
+     import { capturedWirePayload } from "./evals/helpers/capture-wire-payload.js"; \
+     const dir = "evals/fixtures/<session_id>"; \
+     const { payload, dispose } = await capturedWirePayload({ \
+       turnState: JSON.parse(await readFile(`${dir}/state.json`, "utf8")), \
+       memoryDump: JSON.parse(await readFile(`${dir}/memory-dump.json`, "utf8")), \
+       sessionId: "<session_id>", \
+     }); \
+     await writeFile(`${dir}/system-prompt.txt`, payload.systemPrompt); \
+     await dispose();'
+   ```
+
+   Run the snapshot from a checkout whose AGENTS.md + skill set
+   most closely matches the original session (usually the commit
+   that was checked out when the session ran). Commit
+   `system-prompt.txt` alongside the other fixture files. Evals
+   should load it and pass it as `systemPromptOverride` so the
+   harness skips the live rebuild:
+
+   ```ts
+   const systemPromptSnapshot = await readFile(join(dir, "system-prompt.txt"), "utf8");
+   const { payload, dispose } = await capturedWirePayload({
+     turnState,
+     memoryDump,
+     sessionId,
+     systemPromptOverride: systemPromptSnapshot,
+   });
+   ```
+
+4. **Reproduce the wire bytes.** `evals/helpers/capture-wire-payload.ts`
    wires together a fresh `MemorySession`, `rebuildMemoryContextPack`,
    and `createObservationalContextTransform` exactly the way
    `TurnRunner.createMemoryTransform()` does. It returns the same
@@ -195,7 +234,7 @@ wire-capture harness:
      `observation-context` and `continuation-hint` user messages the
      transform injects from the durable pack.
 
-4. **Lock the failure shape with an eval.** Write the failing assertions
+5. **Lock the failure shape with an eval.** Write the failing assertions
    first (`retainedMessageCount === 0`, `dispatchedHasRealUser === false`,
    or whatever describes the bug). Use `testIfDocker`. The reference
    eval is `evals/session-compaction-wire-starvation.eval.ts` and the
@@ -206,7 +245,7 @@ reproduce_and_diagnose.txt}`. The diagnose file is also a useful
    prepend sizes there before tuning the fix so you can see exactly
    what changed.
 
-5. **Optional: live-model red/green eval.** When the bug is about
+6. **Optional: live-model red/green eval.** When the bug is about
    what the MODEL produces from a degenerate wire shape (not just
    the shape itself), pair the wire-shape eval with a live-model
    eval that calls `complete()` from `@earendil-works/pi-ai` against

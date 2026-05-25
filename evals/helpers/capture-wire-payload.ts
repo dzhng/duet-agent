@@ -94,6 +94,17 @@ export interface CapturedWirePayloadOptions {
    * on skills.
    */
   skillDiscovery?: TurnRunnerConfig["skillDiscovery"];
+  /**
+   * Pinned system prompt string. When set, the harness skips the
+   * live `createSystemPromptWithAppendedLayers` rebuild and returns
+   * this exact string as `payload.systemPrompt` (with an empty
+   * `systemPromptFiles`). Pass the contents of a committed
+   * `system-prompt.txt` fixture so the eval reproduces what the
+   * model actually saw at capture time — otherwise the rebuild
+   * walks the CURRENT cwd's AGENTS.md and discovered skills, which
+   * drift independently of the captured session.
+   */
+  systemPromptOverride?: string;
 }
 
 export interface CapturedWirePayload {
@@ -263,13 +274,18 @@ export async function capturedWirePayload(
       horizon.evictionHorizon,
     );
 
-    const { systemPrompt, systemPromptFiles } = await buildSystemPrompt({
-      cwd: options.cwd ?? process.cwd(),
-      ...(options.systemInstructions !== undefined
-        ? { systemInstructions: options.systemInstructions }
-        : {}),
-      ...(options.skillDiscovery !== undefined ? { skillDiscovery: options.skillDiscovery } : {}),
-    });
+    const { systemPrompt, systemPromptFiles } =
+      options.systemPromptOverride !== undefined
+        ? { systemPrompt: options.systemPromptOverride, systemPromptFiles: [] as string[] }
+        : await buildSystemPrompt({
+            cwd: options.cwd ?? process.cwd(),
+            ...(options.systemInstructions !== undefined
+              ? { systemInstructions: options.systemInstructions }
+              : {}),
+            ...(options.skillDiscovery !== undefined
+              ? { skillDiscovery: options.skillDiscovery }
+              : {}),
+          });
 
     const payload: CapturedWirePayload = {
       systemPrompt,

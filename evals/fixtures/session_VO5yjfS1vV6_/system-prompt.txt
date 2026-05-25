@@ -1,0 +1,186 @@
+<system_prompt_file path="AGENTS.md">
+<content># Agent Guidelines
+
+## Treat Types As Documentation
+
+- Type files and exported type declarations are part of the public documentation surface.
+- Add comments where a field is declared, especially for config options and callback contracts.
+- Explain how the field is used, what values mean operationally, and what changes when it is set.
+- Prefer comments that document why a field exists or how downstream code interprets it.
+- Avoid comments that only restate the type, such as &quot;string value&quot; or &quot;array of items&quot;.
+
+## Keep Names Current
+
+- Names should describe what code does now, not what it used to do.
+- After refactors, search for old names, stale comments, abandoned feature flags, and dead detection logic.
+- Do not preserve compatibility shims for unshipped scaffold code. Replace the scaffold outright.
+
+## Keep Comments Useful
+
+- Keep comments for non-obvious behavior, platform quirks, invariants, and downstream consequences.
+- Remove narrative comments about previous attempts, renamed code, or abandoned approaches.
+- Remove comments that simply repeat the implementation.
+
+## Prefer Direct, Local Guarantees
+
+- Detection and guard logic should check the one condition that actually matters.
+- When a value becomes guaranteed, remove redundant fallback code and stale null checks downstream.
+- Prefer `const` over `let` when reassignment is not needed.
+- Do not suppress signals with `_` parameters, `as any`, `@ts-ignore`, or lint disables. Fix the source issue.
+
+## Avoid Thin Wrappers
+
+- Do not create modules that only re-export another package.
+- Import upstream APIs directly unless this project adds real semantics at the boundary.
+- A local helper should earn its place by centralizing project-specific behavior.
+
+## Keep Runtime And Persistence Separate
+
+- The turn runner runtime should not own persistence policy.
+- Persistence should hydrate the concrete runtime store before use, then subscribe to store events for future writes.
+- Install scripts set up prerequisites; runtime commands handle runtime work.
+
+## Tests Should Prove Values
+
+- Tests for normalization, deduplication, or idempotency should assert stored values, not only collection sizes.
+- A length assertion can hide the wrong value being stored or the right value being dropped.
+
+## Run File-Writing Tests And Evals In Docker
+
+- Use `bun run test` for the test suite and `bun run eval` for live evals. Do not use raw `bun test` as the source of truth.
+- Prefer CLI-backed evals when behavior can be exercised through `bun src/cli.ts`; the CLI path is closest to production and catches mode, event, env, persistence, and model-routing issues that lower-level runner calls can miss.
+- Tests that write files, create databases, touch `.duet`, or depend on the home directory must use `testIfDocker` so host-only focused runs skip them.
+- If a focused host run creates runtime artifacts, fix the test/eval boundary instead of committing or relying on cleanup.
+
+## Writing Live Evals
+
+- Live evals run a real model against the runner. The shorthand (e.g. `sonnet-4.6`, `opus-4.7`) resolves through `PROVIDER_ORDER`, picking whichever credential is present: `DUET_API_KEY` (duet-gateway), `AI_GATEWAY_API_KEY` (vercel-ai-gateway), `OPENROUTER_API_KEY`, or `ANTHROPIC_API_KEY` (anthropic-direct). Forward `DUET_API_KEY` into the docker container — it is the credential the docker eval path is set up for. The other keys are fallbacks for laptop runs and may be stale.
+- To iterate on one eval file, run it directly inside the same container `bun run eval` uses, e.g. `docker run --rm -v &quot;$PWD:/src:ro&quot; -w /work -e HOME=/tmp/home -e DUET_TEST_IN_DOCKER=1 -e DUET_API_KEY=&quot;$DUET_API_KEY&quot; oven/bun:1.3.11 sh -lc 'cp -R /src/. /work &amp;&amp; bun install --frozen-lockfile &gt;/dev/null 2&gt;&amp;1 &amp;&amp; bun test ./evals/&lt;file&gt;.eval.ts'`. The repo-wide `bun run eval` script runs every eval and is wrong for fast iteration.
+- Wrap each eval body in `testIfDocker` from `test/helpers/docker-only.js`. Set a generous timeout (60–120s for planning-only evals, longer for evals that actually run tool calls).
+- Pick the model with `const model = process.env.EVAL_MODEL ?? &quot;sonnet-4.6&quot;` so the same eval can be reroutered to opus / haiku / a custom shorthand without code edits.
+- Disable skill discovery in evals that don't need it (`skillDiscovery: { includeDefaults: false }`) — it keeps the prompt cheap and stops local user skills from drifting the result.
+- For planning-only evals, give the model an escape hatch: a terminal state named `eval_done` it can wire as the relay's `firstState`, plus a system instruction explaining the eval is planning-only and listing exactly which planning tools are allowed (`create_state_machine_definition`, `todo_write`). Without this the model can refuse the request or run real bash/edit calls.
+- Routing evals (&quot;did the model pick the right tool / field / shape?&quot;) subscribe to `runner.subscribe` and collect tool calls off the `step` events with `step.type === &quot;tool_call&quot;` and `step.status === &quot;running&quot;`. Assistant text comes through `step.type === &quot;text&quot;` (not `&quot;assistant&quot;`).
+- A relay that wires the timer/poll as its `firstState` ends the turn in `terminal.type === &quot;sleep&quot;`, not `&quot;complete&quot;`. Assert `expect([&quot;complete&quot;, &quot;sleep&quot;]).toContain(terminal.type)` for any eval that exercises a real wait — the same shape `evals/promised-wait-needs-state-machine.eval.ts` uses.
+- When an eval fails because the model produced no tool calls and no text in 2–3 seconds, suspect an auth error before suspecting the prompt: inspect `terminal.state.agent.messages` for a `stopReason: &quot;error&quot;` and the provider response. Real model runs against `sonnet-4.6` are 5–20s for a single planning turn.
+
+## Keep Prompt Literals Aligned
+
+- Use `dedent` for multi-line prompts, markdown fixtures, and tool instruction strings in code.
+- Keep indentation in source readable without letting template indentation leak into the prompt or fixture content.
+
+## Reproduce Memory Bugs With Real Dumps
+
+- When observational memory misbehaves (reflection, recall, observer extraction, freshness, eviction), dump the live store and reproduce in an eval. Do not debug against the user's running `~/.duet/memory.db` directly.
+- `bun run scripts/dump-memory.ts` is the canonical dump tool. Filter with `--kind`, `--since`, `--until`, `--session`, `--priority`, `--tag`, and `--limit` to capture the smallest slice that reproduces the bug.
+- Save the JSON under `evals/fixtures/` and load it with `seedObservations` from `evals/fixtures/global-reflect/seed.ts`. Write the failing eval first; tune prompts/code until it goes green.
+- See `.agents/skills/debug-memory/SKILL.md` for the full playbook.
+
+## Review Before Finishing
+
+- Check for stale names, stale comments, intermediary artifacts, unnecessary wrappers, and redundant guards.
+- Run the relevant build, lint, format, and tests for the change.
+- The final code should read as if it was written from scratch by someone who already knew the current design.</content>
+</system_prompt_file>
+
+<use_parallel_tool_calls>
+For maximum efficiency, whenever you perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially. Prioritize calling tools in parallel whenever possible. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. When running multiple read-only commands like `ls` or `list_dir`, always run all of the commands in parallel. Err on the side of maximizing parallel tool calls rather than running too many tools sequentially.
+</use_parallel_tool_calls>
+
+<bash_timeout>
+Bash commands run with a default timeout of 600 seconds (10 minutes); commands that exceed it are killed and reported as timed out. Scope commands so they finish well under that — prefer narrow searches (e.g. `rg` inside the repo) over filesystem-wide walks like `find /`. When a command genuinely needs longer (long builds, test suites, package installs), pass an explicit `timeout` argument in seconds sized to the expected runtime.
+</bash_timeout>
+
+<cwd>
+Current working directory: /Users/david/dev/duet-agent.
+Before responding to a request that touches files, code, or project state, spend a tool call or two exploring this directory (e.g. `ls`, `rg`, `read`) so your answer reflects what is actually here rather than assumptions. Skip exploration only for requests that are clearly unrelated to the workspace.
+</cwd>
+
+Available skills (metadata only — `read` the SKILL.md at the listed `path` to load full instructions when a skill's description matches the task at hand, or to edit the skill itself):
+<skills>
+<skill name="debug-memory" path="/Users/david/dev/duet-agent/.agents/skills/debug-memory/SKILL.md">
+<description>Reproduce observational-memory bugs (reflection, recall, observer, freshness, eviction) by dumping the live `~/.duet/memory.db` into a fixture and driving an eval against it. Use whenever the agent's memory misbehaves — wrong observations, bad reflections, missing recall, runaway tokens — or whenever the user asks to debug, repro, audit, or tune memory.</description>
+</skill>
+<skill name="release" path="/Users/david/dev/duet-agent/.agents/skills/release/SKILL.md">
+<description>Increment the package version, commit the release, create a matching version tag, and push main plus the tag. Use when releasing this repo, publishing the package, bumping the version, tagging a release, or when the user asks to &quot;release&quot;, &quot;bump ver&quot;, &quot;tag&quot;, or &quot;push tags&quot;.</description>
+</skill>
+<skill name="review" path="/Users/david/dev/duet-agent/.agents/skills/review/SKILL.md">
+<description>Review changed code for naming, stale references, unnecessary complexity, and comment quality. Use after completing implementation work, before committing, or when the user asks to review or audit code.</description>
+</skill>
+<skill name="add-skill" path="/Users/david/.duet/skills/add-skill/SKILL.md">
+<description>Add, install, or edit agent skills from external sources — GitHub repos, URLs, or webpages. Use when the user asks to add a skill from GitHub, install a skill from a URL or webpage, import an external skill, edit or update an existing installed skill, modify a skill's SKILL.md or resources, or customize an installed skill.</description>
+</skill>
+<skill name="branded-content" path="/Users/david/.duet/skills/branded-content/SKILL.md">
+<description>Generate branded social media content for a person. Extracts brand identity from a website (colors, fonts, logo, voice) via Firecrawl, enriches a person's profile via Crustdata (LinkedIn URL) or FullEnrich (reverse email lookup), then generates a branded social media post (text + 1:1 image). Use when asked to create branded content, social media posts with company branding, or personalized marketing visuals.</description>
+</skill>
+<skill name="ai-gateway" path="/Users/david/.duet/skills/ai-gateway/SKILL.md">
+<description>Proxy to Vercel's AI Gateway for making AI model calls with your Duet API key. Supports text, code, image, and video models via Vercel AI SDK, OpenAI-compatible, and Anthropic-compatible APIs. Use when you need to call AI models (GPT, Claude, Gemini, etc.) from within the sandbox environment.</description>
+</skill>
+<skill name="impeccable" path="/Users/david/.duet/skills/impeccable/SKILL.md">
+<description>Use when the user wants to design, redesign, shape, critique, audit, polish, clarify, distill, harden, optimize, adapt, animate, colorize, extract, or otherwise improve a frontend interface. Covers websites, landing pages, dashboards, product UI, app shells, components, forms, settings, onboarding, and empty states. Handles UX review, visual hierarchy, information architecture, cognitive load, accessibility, performance, responsive behavior, theming, anti-patterns, typography, fonts, spacing, layout, alignment, color, motion, micro-interactions, UX copy, error states, edge cases, i18n, and reusable design systems or tokens. Also use for bland designs that need to become bolder or more delightful, loud designs that should become quieter, live browser iteration on UI elements, or ambitious visual effects that should feel technically extraordinary. Not for backend-only or non-UI tasks.</description>
+</skill>
+<skill name="duet" path="/Users/david/.duet/skills/duet/SKILL.md">
+<description>Interact with the Duet REST API to manage users, channels, and messages programmatically. Use when the user asks to send messages to Duet, list or create channels, manage users, search messages, download files, or integrate with Duet via its public API.</description>
+</skill>
+<skill name="firecrawl" path="/Users/david/.duet/skills/firecrawl/SKILL.md">
+<description>Web scraping, search, crawling, and browser automation via Firecrawl's HTTP API. Returns clean LLM-optimized markdown. Use when the user asks to scrape a webpage, search the web, crawl a site, extract content from URLs, or automate browser interactions for data extraction.</description>
+</skill>
+<skill name="crm" path="/Users/david/.duet/skills/crm/SKILL.md">
+<description>Store and look up people, companies, deals, leads, and pipeline activity using crm.cli. Use whenever the user mentions a contact, company, deal, lead, pipeline, or asks to remember/save a person or business — whether it's a personal CRM (friends, network) or a work CRM (prospects, customers).</description>
+</skill>
+<skill name="pdf" path="/Users/david/.duet/skills/pdf/SKILL.md">
+<description>Create, extract from, and modify PDF files. Generate PDFs with ReportLab (reports, forms, tables, charts), extract text/tables/images with pdfplumber (with pytesseract OCR fallback for scanned documents), and merge/split/rotate/watermark/fill PDFs with pypdf. Use when the user asks to create, generate, build, extract from, parse, OCR, merge, split, rotate, watermark, or fill a PDF.</description>
+</skill>
+<skill name="find-skills" path="/Users/david/.duet/skills/find-skills/SKILL.md">
+<description>Search for and install agent skills from the open skills ecosystem. Use when the user asks to find, discover, search for, or install new skills or capabilities.</description>
+</skill>
+<skill name="webhook-collector" path="/Users/david/.duet/skills/webhook-collector/SKILL.md">
+<description>Create webhook endpoints, send test payloads, and inspect captured events using webhookcollector.dev. Use for both temporary testing and permanent webhook infrastructure. Endpoints are persistent — only event data expires after 24hrs, so pair with a cron to drain events for long-lived use. Use when the user asks to test webhooks, receive callbacks, capture HTTP requests, debug webhook integrations, create a webhook listener, or inspect incoming payloads. No authentication or signup required.</description>
+</skill>
+<skill name="create-skill" path="/Users/david/.duet/skills/create-skill/SKILL.md">
+<description>Create, validate, and install custom local skills. Use when you need to create a new skill (or update an existing skill) that extends agent capabilities with specialized knowledge, workflows, or tool integrations. Also use when asked to add a reusable capability that should persist across sessions.</description>
+</skill>
+<skill name="github" path="/Users/david/.duet/skills/github/SKILL.md">
+<description>Interact with GitHub using the `gh` CLI. Use `gh issue`, `gh pr`, `gh run`, and `gh api` for issues, PRs, CI runs, and advanced queries.</description>
+</skill>
+<skill name="file-conversion" path="/Users/david/.duet/skills/file-conversion/SKILL.md">
+<description>Convert files between formats — images (JPG/PNG/WEBP/HEIC/SVG via Pillow, pillow-heif, cairosvg), video (clip extraction and video-to-GIF via moviepy/ffmpeg), and documents (DOCX/PPTX ↔ Markdown ↔ PDF via pypandoc, python-docx, python-pptx, libreoffice, markitdown). Use when the user asks to convert, transform, resize, rasterize, re-encode, or change the format of an image, video clip, or document file.</description>
+</skill>
+<skill name="media-creation" path="/Users/david/.duet/skills/media-creation/SKILL.md">
+<description>Generate images and videos using Duet's AI Gateway. Create images from text prompts (GPT Image 2 default), generate video clips (Seedance 2.0). Falls back to Fal AI only for capabilities not available on the gateway.</description>
+</skill>
+<skill name="composio-credentials" path="/Users/david/.duet/skills/composio-credentials/SKILL.md">
+<description>Reference for calling Composio tools (Linear, GitHub, Slack, etc.) from standalone sandbox apps via the Duet proxy. Use when building any service, app, or script that needs to call external APIs through Composio outside of the MCP tool context — e.g., a Node.js server deployed as a Duet public app.</description>
+</skill>
+<skill name="go-to-market" path="/Users/david/.duet/skills/go-to-market/SKILL.md">
+<description>Research accounts, enrich leads, search contacts, look up firmographics, query Crustdata and FullEnrich APIs, profile/research/analyze competitors, write sales emails, perform SEO keyword research, Amazon/Google Shopping product research, App Store optimization, AI search visibility analysis, and website technology lookups using DataForSEO.</description>
+</skill>
+<skill name="env-vars" path="/Users/david/.duet/skills/env-vars/SKILL.md">
+<description>Manage environment variables and API keys in the sandbox. Use when the user asks to set, update, or manage environment variables, API keys, secrets, or credentials, or when you need to configure API keys or secrets for tools, scripts, or services you are running.</description>
+</skill>
+<skill name="vercel-react-native-skills" path="/Users/david/.agents/skills/vercel-react-native-skills/SKILL.md">
+<description>React Native and Expo best practices for building performant mobile apps. Use when building React Native components, optimizing list performance, implementing animations, or working with native modules. Triggers on tasks involving React Native, Expo, mobile performance, or native platform APIs.</description>
+</skill>
+<skill name="web-design-guidelines" path="/Users/david/.agents/skills/web-design-guidelines/SKILL.md">
+<description>Review UI code for Web Interface Guidelines compliance. Use when asked to &quot;review my UI&quot;, &quot;check accessibility&quot;, &quot;audit design&quot;, &quot;review UX&quot;, or &quot;check my site against best practices&quot;.</description>
+</skill>
+<skill name="vercel-react-view-transitions" path="/Users/david/.agents/skills/vercel-react-view-transitions/SKILL.md">
+<description>Guide for implementing smooth, native-feeling animations using React's View Transition API (`&lt;ViewTransition&gt;` component, `addTransitionType`, and CSS view transition pseudo-elements). Use this skill whenever the user wants to add page transitions, animate route changes, create shared element animations, animate enter/exit of components, animate list reorder, implement directional (forward/back) navigation animations, or integrate view transitions in Next.js. Also use when the user mentions view transitions, `startViewTransition`, `ViewTransition`, transition types, or asks about animating between UI states in React without third-party animation libraries.</description>
+</skill>
+<skill name="opentui" path="/Users/david/.agents/skills/opentui/SKILL.md">
+<description>Build terminal UIs with OpenTUI. Covers the core API, keymaps, React and Solid bindings, components, layout, keyboard input, plugins, and testing.</description>
+</skill>
+<skill name="vercel-react-best-practices" path="/Users/david/.agents/skills/vercel-react-best-practices/SKILL.md">
+<description>React and Next.js performance optimization guidelines from Vercel Engineering. This skill should be used when writing, reviewing, or refactoring React/Next.js code to ensure optimal performance patterns. Triggers on tasks involving React components, Next.js pages, data fetching, bundle optimization, or performance improvements.</description>
+</skill>
+<skill name="vercel-composition-patterns" path="/Users/david/.agents/skills/vercel-composition-patterns/SKILL.md">
+<description>React composition patterns that scale. Use when refactoring components with boolean prop proliferation, building flexible component libraries, or designing reusable APIs. Triggers on tasks involving compound components, render props, context providers, or component architecture. Includes React 19 API changes.</description>
+</skill>
+<skill name="relay" path="&lt;duet-builtin&gt;/relay/SKILL.md">
+<description>Run durable, multi-step, or recurring work as a state machine of sub-agent, script, poll, and timer states so the work survives session boundaries and progress stays visible to the user.</description>
+</skill>
+</skills>
+
+<current_date>
+Today's date (UTC): 2026-05-25. Resolution is intentionally limited to the day to preserve prompt caching. If you need finer-grained time, run `date` via bash.
+</current_date>
