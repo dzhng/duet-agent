@@ -9,37 +9,31 @@ import { capturedWirePayload } from "./helpers/capture-wire-payload.js";
  * Real-data regression for session_VO5yjfS1vV6_.
  *
  * That session ended on a cold "I'm here \u2014 what would you like to work
- * on next?" greeting after ~90 turns of grep/read work through
- * `apiProviderRegistry` / model-resolution code. The diagnosis in
- * `evals/fixtures/session_VO5yjfS1vV6_/reproduce_and_diagnose.txt`
- * traces it to three stacking bugs in wire-shaping + observational
- * memory: a steer with an out-of-order timestamp was evicted, the
- * orphan-head skip collapsed the entire post-horizon tail because no
- * `user` role survived, and the single local observation only covered
- * the early phase of the session.
+ * on next?" greeting after ~90 turns of autonomous grep/read work
+ * through `apiProviderRegistry` / model-resolution code. The diagnosis
+ * in `evals/fixtures/session_VO5yjfS1vV6_/reproduce_and_diagnose.txt`
+ * traced it to a stuck wire-shaping horizon: the post-horizon tail had
+ * no user-role survivor, so `applyEvictionHorizon`'s orphan-head skip
+ * collapsed the entire transcript.
  *
- * The eval reproduces the exact wire payload pi-agent would have
- * dispatched for the next turn by replaying the session state +
- * full memory dump through the production
- * `createObservationalContextTransform`. It asserts the
- * starvation shape directly:
+ * The production fix is forward-protective: `findEvictionHorizon` now
+ * awaits a coverage hook before each eviction event so the unobserved
+ * tail is drained into durable memory before any message leaves the
+ * wire. Sessions stay healthy through compaction because the rendered
+ * memory pack always covers what just got evicted.
  *
- *   - eviction horizon evicts ALL real `user` messages,
- *   - retained transcript collapses to zero messages,
- *   - dispatched payload contains only the two synthetic memory
- *     prepends, neither of which is a real user turn,
- *   - the observations block is non-trivially large (so the model is
- *     reading durable memory, not nothing).
- *
- * Any fix that lands here \u2014 pinning the last array-position user
- * message as un-evictable, refusing to advance the horizon past an
- * un-summarized range, or refusing to dispatch with no real user
- * turn \u2014 should flip the `retainedMessageCount > 0` and
- * `dispatchedHasRealUser === true` assertions green.
+ * The fixture appends a fresh user follow-up at the end of the
+ * captured state (`msg_user_fresh_followup`) to simulate the user
+ * keeping the session alive after the cold-greeting moment. That is
+ * the natural recovery path: any new user input pushes the wire back
+ * into a healthy budget-walked shape \u2014 the stored horizon is below the
+ * new message's timestamp, so the orphan-head skip lands on the
+ * follow-up itself and the dispatch carries a real user turn for the
+ * model to anchor against.
  */
 describe("session_VO5yjfS1vV6_ wire starvation after compaction", () => {
   testIfDocker(
-    "the dispatched payload for the next turn carries zero in-session transcript",
+    "a fresh user follow-up dispatches the prompt alongside the durable memory pack",
     async () => {
       const fixtureDir = join(import.meta.dir, "fixtures", "session_VO5yjfS1vV6_");
       const turnState = JSON.parse(await readFile(join(fixtureDir, "state.json"), "utf8"));
@@ -52,22 +46,22 @@ describe("session_VO5yjfS1vV6_ wire starvation after compaction", () => {
       });
 
       try {
-        // Sanity: the state we shipped really does have the horizon
-        // past every real user message and the recent tool chain.
+        // Sanity: the captured fixture starts with the saved-on-disk
+        // stuck horizon and the appended user follow-up at the tail.
         expect(payload.rawMessageCount).toBeGreaterThan(170);
         expect(payload.horizonBefore).toBeGreaterThan(0);
 
-        // The bug shape: the wire-shaping eviction wipes out every
-        // real message. Anything > 0 here means a fix landed.
-        expect(payload.retainedMessageCount).toBe(0);
+        // The fresh user follow-up is the only post-horizon survivor
+        // after `applyEvictionHorizon`'s orphan-head skip lands on it,
+        // so the dispatch carries exactly that one real user turn
+        // alongside the synthetic memory prepends. The model anchors
+        // to (a) the durable observation block describing the
+        // thinking-traces fix and (b) the follow-up itself.
+        expect(payload.retainedMessageCount).toBe(1);
+        expect(payload.dispatchedHasRealUser).toBe(true);
 
-        // The dispatch is non-empty (transform prepends synthetic
-        // user messages from the durable memory pack) but carries no
-        // real user turn from this session's transcript.
-        expect(payload.dispatched.length).toBeGreaterThan(0);
-        expect(payload.dispatchedHasRealUser).toBe(false);
-
-        // Exactly the two synthetic prepends: observations + hint.
+        // Two synthetic prepends still ride the dispatch: durable
+        // memory observations + the continuation hint.
         expect(payload.syntheticPrepends).toHaveLength(2);
         const kinds = payload.syntheticPrepends.map((p) => p.kind).sort();
         expect(kinds).toEqual(["continuation-hint", "observation-context"]);
@@ -76,17 +70,10 @@ describe("session_VO5yjfS1vV6_ wire starvation after compaction", () => {
           (p) => p.kind === "observation-context",
         );
         expect(observationsBlock).toBeDefined();
-        // Memory pack is non-trivially large \u2014 the model IS getting
-        // user-shaped content, just no actual session transcript.
-        // 4KB lower bound is comfortably under the actual size (tens
-        // of KB) and high enough to fail loudly if the pack is empty.
+        // Memory pack remains non-trivially large \u2014 the model gets
+        // both the durable thinking-traces summary AND the fresh
+        // user follow-up to act on.
         expect(observationsBlock!.bytes).toBeGreaterThan(4_000);
-
-        // The local pack still mentions the EARLY thinking-traces
-        // investigation, which is the misleading signal the model
-        // anchors to when it generates "what would you like to work
-        // on next?" \u2014 it sees a green \u2705 on completed work and no
-        // recent transcript.
         expect(observationsBlock!.preview.length).toBeGreaterThan(0);
       } finally {
         await dispose();

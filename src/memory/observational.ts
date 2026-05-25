@@ -393,13 +393,16 @@ export interface ObservationalContextTransformOptions {
   effectiveContext: number;
   settings?: ObservationalMemorySettingsInput;
   /**
-   * Compaction trigger fired when the wire-shaping eviction horizon
-   * advances mid-turn. The runner uses it to rebuild the frozen memory
-   * context pack — the prompt cache is already invalidating because
-   * eviction changed the message tail, so refreshing the prefix at the
-   * same moment piggybacks on a cache miss the model is already paying.
+   * Awaited inside the budget-trigger block, before the eviction walk
+   * advances the horizon. The runner wires it to drain unobserved
+   * messages into durable memory and refresh the frozen context pack,
+   * so the post-eviction render carries an observation that covers
+   * what just got dropped. The prompt cache is already invalidating
+   * because eviction changes the message tail, so paying the drain +
+   * refresh at this boundary piggybacks on a cache miss the model is
+   * already paying.
    */
-  onCompaction?: () => void;
+  onCompaction?: (messages: AgentMessage[]) => Promise<void>;
   /**
    * Sticky eviction point. The transform applies this horizon to the
    * message list before checking either budget, then advances it in place
@@ -561,7 +564,11 @@ export function createObservationalContextTransform(options: ObservationalContex
     const tokenTarget = settings.observation.bufferActivation;
 
     if (candidateTokens >= tokenTrigger || candidateBytes >= WIRE_BYTE_TRIGGER) {
-      const previousHorizon = options.horizon.evictionHorizon;
+      // Drain unobserved messages into durable memory before the
+      // horizon walks past them so the post-eviction render sees an
+      // observation that covers the dropped span. The handler swallows
+      // its own failures — budget compliance below is unconditional.
+      await options.onCompaction?.(observableMessages);
       options.horizon.evictionHorizon = findEvictionHorizon(
         observableMessages,
         options.horizon.evictionHorizon,
@@ -572,12 +579,6 @@ export function createObservationalContextTransform(options: ObservationalContex
         },
       );
       retainedMessages = applyEvictionHorizon(observableMessages, options.horizon.evictionHorizon);
-      // Compaction trigger: piggyback on the cache miss the eviction
-      // already forced. The handler is fire-and-forget; the runner
-      // wires it to refresh the frozen memory pack in the background.
-      if (options.horizon.evictionHorizon !== previousHorizon) {
-        options.onCompaction?.();
-      }
     }
 
     // Render the frozen context pack rather than every observation
