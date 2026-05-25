@@ -169,6 +169,16 @@ wire-capture harness:
    ```
 
    Key fields on the returned `payload`:
+   - `systemPrompt` / `systemPromptFiles`: the runner-shaped system
+     prompt the model would have seen on this turn, assembled by
+     `createSystemPromptWithAppendedLayers` over the captured cwd's
+     AGENTS.md plus discovered skills. Pair with `dispatched` to
+     drive a real `complete()` call that reproduces the exact wire
+     bytes. Pass `{ cwd, systemInstructions, skillDiscovery }` to
+     pin known historical values when fidelity matters — the
+     default discovers from `process.cwd()`, so running the harness
+     from a checkout of the same repo reproduces that repo's
+     AGENTS.md verbatim.
    - `horizonBefore` / `horizonAfter`: the sticky eviction horizon as
      read off the state and after the transform ran. Equal means the
      transform did not advance further on this turn.
@@ -195,6 +205,19 @@ reproduce_and_diagnose.txt}`. The diagnose file is also a useful
    template — dump the empirical horizon, message counts, and rendered
    prepend sizes there before tuning the fix so you can see exactly
    what changed.
+
+5. **Optional: live-model red/green eval.** When the bug is about
+   what the MODEL produces from a degenerate wire shape (not just
+   the shape itself), pair the wire-shape eval with a live-model
+   eval that calls `complete()` from `@earendil-works/pi-ai` against
+   `payload.systemPrompt` + `convertToLlm(payload.dispatched)` and
+   grades the reply with a focused judge. Judge-the-judge against
+   hand-crafted positive/negative replies before running it against
+   the live model so a judge drift doesn't masquerade as a fix.
+   `evals/session-compaction-continues-recent-work.eval.ts` plus
+   `evals/continuation-judge.eval.ts` are the reference pair — the
+   live eval is RED today and turns GREEN automatically once the
+   wire-shaping fix lands.
 
 For a quick read-only inspection without writing an eval, the same
 helper works inline:

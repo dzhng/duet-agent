@@ -1,6 +1,9 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { existsSync } from "node:fs";
 
 import { rebuildMemoryContextPack } from "../../src/memory/context-pack.js";
+import { SkillContext } from "../../src/turn-runner/skill-context.js";
+import type { TurnRunnerConfig } from "../../src/types/config.js";
 import {
   DEFAULT_EFFECTIVE_CONTEXT,
   createObservationalContextTransform,
@@ -67,9 +70,42 @@ export interface CapturedWirePayloadOptions {
    * 200k-window behavior most sessions experience.
    */
   effectiveContext?: number;
+  /**
+   * Working directory the original session ran from. Used to rebuild
+   * the AGENTS.md system-prompt layer the same way the runner did.
+   * Defaults to `process.cwd()` so calling the harness from inside
+   * the same repo reproduces that repo's AGENTS.md verbatim.
+   * Observations on the session usually carry `cwd="..."` attributes
+   * that name the path explicitly.
+   */
+  cwd?: string;
+  /**
+   * `systemInstructions` the runner was started with. Most sessions
+   * leave this unset (the CLI does not inject extra instructions),
+   * but evals can pass a verbatim copy when they know the session
+   * was launched with a non-default value.
+   */
+  systemInstructions?: string;
+  /**
+   * Skill-discovery overrides. Defaults to production discovery so
+   * the captured system prompt includes the same skill block the
+   * runner would have rendered. Pass `{ includeDefaults: false }` to
+   * keep the prompt cheap when the bug under test does not depend
+   * on skills.
+   */
+  skillDiscovery?: TurnRunnerConfig["skillDiscovery"];
 }
 
 export interface CapturedWirePayload {
+  /**
+   * Full system prompt the runner would have sent on this turn,
+   * composed via the production `createSystemPromptWithAppendedLayers`
+   * over the captured `cwd`'s AGENTS.md and discovered skills.
+   * Pair with `dispatched` to reproduce the exact provider request.
+   */
+  systemPrompt: string;
+  /** Absolute paths of every AGENTS.md / system-prompt file that resolved on disk for this capture. */
+  systemPromptFiles: string[];
   /** Eviction horizon read off the input state before the transform ran. */
   horizonBefore: number;
   /** Eviction horizon after the transform ran. Differs only when the transform itself advanced it (token/byte trigger fired). */
@@ -227,7 +263,17 @@ export async function capturedWirePayload(
       horizon.evictionHorizon,
     );
 
+    const { systemPrompt, systemPromptFiles } = await buildSystemPrompt({
+      cwd: options.cwd ?? process.cwd(),
+      ...(options.systemInstructions !== undefined
+        ? { systemInstructions: options.systemInstructions }
+        : {}),
+      ...(options.skillDiscovery !== undefined ? { skillDiscovery: options.skillDiscovery } : {}),
+    });
+
     const payload: CapturedWirePayload = {
+      systemPrompt,
+      systemPromptFiles,
       horizonBefore,
       horizonAfter: horizon.evictionHorizon,
       rawMessageCount: turnState.agent.messages.length,
@@ -254,4 +300,44 @@ export async function capturedWirePayload(
     await fixture.dispose();
     throw error;
   }
+}
+
+/**
+ * Reproduce the runner-shaped system prompt for a captured session.
+ *
+ * Mirrors what `TurnRunner.createBaseSystemPromptWithAppendedLayers`
+ * does: assemble `systemInstructions` + the resolved AGENTS.md layers
+ * (walked from the captured cwd) + the tool-execution prompt + the
+ * skills block + the current-date layer, via the same exported
+ * `createSystemPromptWithAppendedLayers` the runner uses. The skills
+ * are discovered with production defaults so the rendered prompt
+ * matches what the runner would have sent for the same cwd today.
+ *
+ * Note: this is a best-effort snapshot — if AGENTS.md or installed
+ * skills changed between the original session and the capture run,
+ * the system prompt will reflect the current state rather than the
+ * historical one. Pin known historical values via `systemInstructions`
+ * or commit the original AGENTS.md alongside the fixture when fidelity
+ * matters.
+ */
+async function buildSystemPrompt(input: {
+  cwd: string;
+  systemInstructions?: string;
+  skillDiscovery?: TurnRunnerConfig["skillDiscovery"];
+}): Promise<{ systemPrompt: string; systemPromptFiles: string[] }> {
+  const config: TurnRunnerConfig = {
+    cwd: input.cwd,
+    ...(input.systemInstructions !== undefined
+      ? { systemInstructions: input.systemInstructions }
+      : {}),
+    ...(input.skillDiscovery !== undefined ? { skillDiscovery: input.skillDiscovery } : {}),
+  };
+  const skillContext = new SkillContext(config);
+  await skillContext.ensureLoaded();
+  const systemPrompt = skillContext.createSystemPromptWithAppendedLayers();
+  const systemPromptFiles = skillContext
+    .getResolvedAgentFiles()
+    .map((file) => file.path)
+    .filter((path) => existsSync(path));
+  return { systemPrompt, systemPromptFiles };
 }

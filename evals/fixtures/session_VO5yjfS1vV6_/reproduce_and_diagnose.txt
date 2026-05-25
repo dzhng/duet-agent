@@ -220,3 +220,19 @@ The eval at `evals/session-compaction-wire-starvation.eval.ts` locks in
 the failure shape — `retainedMessageCount === 0` and
 `dispatchedHasRealUser === false` — so any fix that lands here flips
 the assertions green.
+
+## Red/green TDD eval against a real model
+
+`evals/session-compaction-continues-recent-work.eval.ts` drives the
+same captured wire payload through a live model call via pi-ai's
+`complete()` and grades the reply with `judgeContinuesRecentWork`
+(judge-the-judge in `evals/continuation-judge.eval.ts`). The capture
+harness now also reconstructs the runner-shaped system prompt by
+running `createSystemPromptWithAppendedLayers` over the AGENTS.md at
+the captured cwd plus discovered skills, so the system prompt the
+model sees is byte-for-byte what `TurnRunner` would have sent. On
+today's bug the model produces a cold "I don't see a message yet —
+what would you like to work on?" reply and the judge returns
+`valid=false`; once the wire-shaping fix restores transcript on the
+wire, the same run flips to `valid=true` without any change to the
+eval or the judge.
