@@ -63,6 +63,39 @@ class HarnessRunner extends TurnRunner {
     const observable = stripObservationalContextMessages(state.agent.messages);
     return applyEvictionHorizon(observable, this.getWireHorizon().evictionHorizon).length;
   }
+
+  /**
+   * Seed the protected `lastParentUsageSnapshot` so tests can verify how
+   * compact rewrites the bar payload without standing up a real parent
+   * agent. Mirrors the shape `emitParentAgentEvent` would have written
+   * after a `message_end`, including the rescaled breakdown.
+   */
+  seedParentUsageSnapshot(snapshot: {
+    effectiveContextWindow: number;
+    contextWindowUsage: {
+      systemPrompt: number;
+      messages: number;
+      localMemory: number;
+      globalMemory: number;
+    };
+    lastMessageUsage: {
+      input: number;
+      output: number;
+      cacheRead: number;
+      cacheWrite: number;
+      totalTokens: number;
+      cost: {
+        input: number;
+        output: number;
+        cacheRead: number;
+        cacheWrite: number;
+        total: number;
+      };
+    };
+  }): void {
+    (this as unknown as { lastParentUsageSnapshot: typeof snapshot }).lastParentUsageSnapshot =
+      snapshot;
+  }
 }
 
 function userMessage(text: string, timestamp: number): AgentMessage {
@@ -453,6 +486,77 @@ describe("TurnRunner auto state compaction", () => {
     expect(runner.getState()!.agent.messages.length).toBe(1);
     const systemEvents = events.filter((e) => e.type === "system");
     expect(systemEvents.some((e) => e.message.startsWith("compact: nothing to evict"))).toBe(true);
+  });
+
+  test("compact emits a usage event so the context bar reflects the new horizon", async () => {
+    // After `/compact` advances the eviction horizon, the sidebar still
+    // anchors its bar on the most recent parent `lastMessageUsage`, which
+    // was captured pre-compact. Without a fresh `usage` event the bar
+    // keeps showing the pre-compact slice even though the next request
+    // will dispatch a much smaller wire tail. The runner must re-estimate
+    // the breakdown and emit a `usage` tick so the UI updates immediately.
+    const runner = new HarnessRunner({
+      autoStateCompaction: false,
+      effectiveContext: 1000,
+    });
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+    await runner.start({ type: "start" });
+    runner.seedParentMessages(fatState(12, 2));
+    // Snapshot the pre-compact wire-tail tokens so the test can assert
+    // the refreshed bar tracks the new horizon instead of the seeded
+    // pre-compact total.
+    const wireBefore = runner.getWireTailTokens();
+    runner.seedParentUsageSnapshot({
+      effectiveContextWindow: 1000,
+      contextWindowUsage: {
+        systemPrompt: 50,
+        messages: wireBefore,
+        localMemory: 30,
+        globalMemory: 20,
+      },
+      lastMessageUsage: {
+        input: wireBefore + 100,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: wireBefore + 100,
+        cost: {
+          input: 0.01,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0.01,
+        },
+      },
+    });
+
+    await runner.compact();
+    const wireAfter = runner.getWireTailTokens();
+
+    const usageEvents = events.filter((e) => e.type === "usage");
+    expect(usageEvents.length).toBe(1);
+    const post = usageEvents[0]!;
+    // The refreshed breakdown sums to the new lastMessageUsage.totalTokens
+    // so the bar's numerator and segment widths stay self-consistent.
+    const breakdownSum =
+      post.contextWindowUsage.systemPrompt +
+      post.contextWindowUsage.messages +
+      post.contextWindowUsage.localMemory +
+      post.contextWindowUsage.globalMemory;
+    expect(breakdownSum).toBe(post.lastMessageUsage.totalTokens);
+    // The compacted wire tail must be strictly smaller than the
+    // pre-compact wire tokens — that is the user-visible behaviour the
+    // bar needs to reflect.
+    expect(wireAfter).toBeLessThan(wireBefore);
+    // The refreshed `messages` segment anchors on the post-compact wire
+    // tail, so it must be strictly smaller than the pre-compact wire
+    // tokens — that is what makes the bar shrink.
+    expect(post.contextWindowUsage.messages).toBeGreaterThan(0);
+    expect(post.contextWindowUsage.messages).toBeLessThan(wireBefore);
+    // Historical cost is preserved on the refreshed message usage; the
+    // provider already billed the pre-compact call.
+    expect(post.lastMessageUsage.cost.total).toBe(0.01);
   });
 
   test("emitted events reflect the compacted state, not the raw input", async () => {

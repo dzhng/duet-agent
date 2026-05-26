@@ -430,6 +430,12 @@ export class TurnRunner {
         level: "info",
         message: `compact: dropped ${dropped} older wire message(s); wire-tail ~${beforeTokens} → ~${afterTokens} tokens (${targetLabel}).`,
       });
+      // Refresh the sidebar's context bar so the breakdown reflects the
+      // new horizon immediately rather than waiting for the next parent
+      // `message_end` to re-anchor `lastMessageUsage`. Without this the
+      // bar keeps showing the pre-compact `184k / 200k` slice even though
+      // the next request will dispatch a much smaller wire tail.
+      this.emitPostCompactUsage();
     } catch (error) {
       // The drain and pack-refresh have their own try/catch; this outer
       // catch guards against an unexpected throw in the horizon-advance
@@ -2013,6 +2019,71 @@ export class TurnRunner {
       ),
       lastMessageUsage: event.message.usage,
     };
+  }
+
+  /**
+   * Re-emit the context-window breakdown after `compact()` advances the
+   * eviction horizon. The bar's numerator is the latest parent
+   * `lastMessageUsage.totalTokens`, which still reflects the pre-compact
+   * wire tail; we re-estimate the per-segment occupancy against the new
+   * horizon, sum it for a synthetic total, and proportionally rescale the
+   * snapshot's `lastMessageUsage` so the bar moves immediately. The
+   * snapshot is updated in place so a follow-up state-agent emission
+   * before the next parent message_end keeps reading the post-compact
+   * shape instead of jittering back to stale values.
+   */
+  private emitPostCompactUsage(): void {
+    if (!this.lastParentUsageSnapshot) return;
+    const rawBreakdown = this.estimateContextWindowUsage();
+    const newTotal =
+      rawBreakdown.systemPrompt +
+      rawBreakdown.messages +
+      rawBreakdown.localMemory +
+      rawBreakdown.globalMemory;
+    const prior = this.lastParentUsageSnapshot.lastMessageUsage;
+    const priorTotal = Math.max(1, prior.totalTokens);
+    const ratio = newTotal / priorTotal;
+    const scale = (value: number) => Math.max(0, Math.round(value * ratio));
+    const refreshedMessageUsage: TurnTokenUsage = {
+      input: scale(prior.input),
+      output: scale(prior.output),
+      cacheRead: scale(prior.cacheRead),
+      cacheWrite: scale(prior.cacheWrite),
+      totalTokens: newTotal,
+      // Cost is historical: the provider already billed for the
+      // pre-compact call, so we leave it intact rather than fabricating a
+      // smaller cost the user was never charged.
+      cost: prior.cost,
+    };
+    const refreshedContextWindowUsage = scaleContextWindowUsageToTotalTokens(
+      rawBreakdown,
+      newTotal,
+    );
+    this.lastParentUsageSnapshot = {
+      effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
+      contextWindowUsage: refreshedContextWindowUsage,
+      lastMessageUsage: refreshedMessageUsage,
+    };
+    // `compact()` only runs between turns, so `this.turnUsage` is
+    // undefined here; emit a zero aggregate so `Session.applyUsageEvent`
+    // can still refresh `lastUsage`. Session cost was already credited
+    // at the prior terminal, so a zero `turnUsage.cost.total` does not
+    // lose any spend.
+    const turnUsage: TurnTokenUsage = this.turnUsage ?? {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+    this.emit({
+      type: "usage",
+      turnUsage,
+      lastMessageUsage: refreshedMessageUsage,
+      effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
+      contextWindowUsage: refreshedContextWindowUsage,
+    });
   }
 
   /**

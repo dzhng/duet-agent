@@ -95,6 +95,42 @@ describe("compact RPC command", () => {
         expect(compactedHorizon, "post-compact terminal must carry wireGuardHorizon").toBeDefined();
         expect(compactedHorizon!.evictionHorizon).toBeGreaterThan(0);
 
+        // Compact must also republish the context-bar payload so the
+        // sidebar updates before the next prompt lands. The runner
+        // emits a `usage` event right after the horizon advance, before
+        // the M3 prompt's parent worker fires. That tick must carry a
+        // strictly smaller `messages` segment than the pre-compact
+        // parent emission from process 1; otherwise the TUI keeps
+        // showing the pre-compact slice until the next `message_end`.
+        const lastBuiltUsage = lastParentUsageEvent(built.events);
+        expect(
+          lastBuiltUsage,
+          "process 1 must have emitted at least one parent usage event",
+        ).toBeDefined();
+        const compactUsageIdx = compacted.events.findIndex(isCompactSystemEvent);
+        expect(compactUsageIdx).toBeGreaterThanOrEqual(0);
+        const postCompactUsage = compacted.events
+          .slice(compactUsageIdx + 1)
+          .find((event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage");
+        expect(
+          postCompactUsage,
+          "expected a usage event immediately after the compact system event",
+        ).toBeDefined();
+        // Sanity: the breakdown is rescaled to sum to totalTokens so the
+        // bar's numerator and segment widths stay self-consistent.
+        const sum =
+          postCompactUsage!.contextWindowUsage.systemPrompt +
+          postCompactUsage!.contextWindowUsage.messages +
+          postCompactUsage!.contextWindowUsage.localMemory +
+          postCompactUsage!.contextWindowUsage.globalMemory;
+        expect(sum).toBe(postCompactUsage!.lastMessageUsage.totalTokens);
+        // The bar-visible behaviour: the messages segment shrinks vs the
+        // last pre-compact parent emission. This is the assertion that
+        // would have failed before `emitPostCompactUsage` was wired in.
+        expect(postCompactUsage!.contextWindowUsage.messages).toBeLessThan(
+          lastBuiltUsage!.contextWindowUsage.messages,
+        );
+
         // The durable transcript is preserved: the M1 marker from
         // process 1 still lives somewhere in `state.agent.messages`
         // after the compact. Compact is wire-shaping, not
@@ -149,6 +185,21 @@ function isCompactSystemEvent(event: TurnEvent): event is Extract<TurnEvent, { t
     typeof event.message === "string" &&
     event.message.startsWith("compact:")
   );
+}
+
+/**
+ * Find the most recent parent `usage` event in `events`. Parent ticks
+ * have no `origin` field; state-agent ticks set `origin.agentStateName`.
+ * Returns undefined when the transcript carries no parent emission yet.
+ */
+function lastParentUsageEvent(
+  events: TurnEvent[],
+): Extract<TurnEvent, { type: "usage" }> | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type === "usage" && event.origin === undefined) return event;
+  }
+  return undefined;
 }
 
 interface RpcSessionResult {
