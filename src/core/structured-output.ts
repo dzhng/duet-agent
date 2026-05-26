@@ -34,6 +34,7 @@ export async function generateStructuredOutput<TSchemaValue extends TSchema>(
   // closes that gap; we still let an explicit `callOptions.apiKey`
   // win so callers can override per-request.
   const resolvedApiKey = options.callOptions?.apiKey ?? resolveProviderApiKey(model.provider);
+  const callerOnPayload = options.callOptions?.onPayload;
   const response = await complete(
     model,
     {
@@ -45,6 +46,11 @@ export async function generateStructuredOutput<TSchemaValue extends TSchema>(
       ...options.callOptions,
       ...(resolvedApiKey ? { apiKey: resolvedApiKey } : {}),
       toolChoice: forcedToolChoice(model, options.tool.name),
+      onPayload: async (payload, payloadModel) => {
+        const next = callerOnPayload ? await callerOnPayload(payload, payloadModel) : undefined;
+        const base = next ?? payload;
+        return injectResponsesToolChoice(payloadModel, base, options.tool.name);
+      },
     },
   );
   options.onUsage?.(response.usage);
@@ -82,5 +88,29 @@ function forcedToolChoice(model: Model<any>, toolName: string): Record<string, u
   return {
     type: "function",
     function: { name: toolName },
+  };
+}
+
+/**
+ * pi-ai's `openai-responses` provider does not read `options.toolChoice`,
+ * so the {@link forcedToolChoice} value never reaches the OpenAI Responses
+ * API. Without `tool_choice` the model is free to answer with text, and on
+ * large inputs (e.g. the full memory-reflect pool) it does, which surfaces
+ * as `Model did not call required structured output tool`.
+ *
+ * We close the gap through `onPayload`, which lets us mutate the params
+ * pi-ai is about to send. The Responses API expects a flat
+ * `{ type: "function", name: "<tool>" }` shape (not the Chat Completions
+ * nested `{ function: { name } }`), so we inject that directly when the
+ * payload looks like the Responses request shape.
+ */
+function injectResponsesToolChoice(model: Model<any>, payload: unknown, toolName: string): unknown {
+  if (model.api !== "openai-responses" && model.api !== "azure-openai-responses") {
+    return payload;
+  }
+  if (payload === null || typeof payload !== "object") return payload;
+  return {
+    ...(payload as Record<string, unknown>),
+    tool_choice: { type: "function", name: toolName },
   };
 }
