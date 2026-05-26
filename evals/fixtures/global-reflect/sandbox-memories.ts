@@ -99,9 +99,22 @@ export const VIEW_TRANSITIONS_SLICE = byAny([
   "#1341",
 ]);
 export const PWA_NATIVE_SLICE = byAny(["PWA", "#1340", "service worker", "share_target"]);
+/**
+ * Three durable strategic decisions from the real dump:
+ *   - Web Push intentionally deferred (a NEGATIVE decision — chose not
+ *     to ship something, with explicit rationale).
+ *   - Bottom-tab crossfade removed so peer-tab nav stays plain while
+ *     drill-ins animate (an architectural rule about motion scope).
+ *   - `/use-cases` nav bundle split from the long-form persona spec
+ *     into a dedicated lightweight nav source (a separation-of-data
+ *     decision driven by review feedback).
+ *
+ * A future agent that loses any of these will relitigate the call.
+ * The slice filters the real dump for rows mentioning each decision.
+ */
 export const STRATEGIC_DECISION_SLICE = byAny([
-  "Plan mode removed",
-  "Hyperframes",
-  "duet-gateway",
-  "skills/",
+  "Web Push",
+  "crossfade from bottom",
+  "nav bundle",
+  "nav-bundle",
 ]);
