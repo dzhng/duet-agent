@@ -395,29 +395,6 @@ export class TurnRunner {
   private async runCompact(): Promise<void> {
     try {
       const state = this.requireRunnerState();
-      // Drain: observe any unobserved tail before evicting it from the
-      // wire. `updateObservationalMemory` internally computes the
-      // unobserved tail via `getUnobservedMessageTail`, so this is
-      // idempotent when the observer already ran on those turns and
-      // does real work only when there's something new to capture.
-      // Wrapped because memory-model calls can fail; a failed drain
-      // should still let the user's compact request advance the horizon.
-      try {
-        await this.updateMemoryAfterAgentRun(state.agent.messages, state.options);
-      } catch (error) {
-        this.emit({
-          type: "system",
-          level: "warn",
-          message: `compact: observation drain failed (${truncateForSystemMessage(
-            error instanceof Error ? error.message : String(error),
-          )}); evicting anyway.`,
-        });
-      }
-      // Rebuild the rendered pack so the new observations from the
-      // drain (and anything else freshly written) are part of the
-      // prefix the next turn ships with the trimmed wire-tail.
-      await this.refreshMemoryContextPack();
-
       const observable = stripObservationalContextMessages(state.agent.messages);
       const previousHorizon = this.wireGuardHorizon.evictionHorizon;
       const currentRetained = applyEvictionHorizon(observable, previousHorizon);
@@ -429,6 +406,8 @@ export class TurnRunner {
       const targetLabel = overCeiling
         ? `target ${target} = 20% of ${contextWindow}`
         : `target ${target} = 50% of current ${beforeTokens}`;
+      // Preserve the unobserved tail before the horizon walks past it.
+      await this.ensureMemoryCoverageForCompaction(observable);
       const newHorizon = findEvictionHorizon(
         observable,
         previousHorizon,
@@ -1501,7 +1480,7 @@ export class TurnRunner {
       // message at the tail instead of appending a duplicate. A
       // still-too-big second attempt falls through as `failed` — no
       // further retries.
-      if (this.tryRecoverFromContextOverflow(agent)) {
+      if (await this.tryRecoverFromContextOverflow(agent)) {
         await agent.continue();
       }
       await this.retryTransientServerErrors(agent);
@@ -1614,7 +1593,7 @@ export class TurnRunner {
    *   same context would still overflow, so we accept the failure
    *   instead of paying a second pointless request.
    */
-  protected tryRecoverFromContextOverflow(agent: Agent): boolean {
+  protected async tryRecoverFromContextOverflow(agent: Agent): Promise<boolean> {
     if (!agent.state.errorMessage) return false;
     const messages = agent.state.messages;
     const lastMessage = messages[messages.length - 1];
@@ -1627,6 +1606,7 @@ export class TurnRunner {
     const observable = stripObservationalContextMessages(messages.slice(0, -1));
     const target = Math.floor(observable.length / 2);
     const previousHorizon = this.wireGuardHorizon.evictionHorizon;
+    await this.ensureMemoryCoverageForCompaction(observable);
     const newHorizon = findEvictionHorizon(
       observable,
       previousHorizon,
@@ -1744,6 +1724,38 @@ export class TurnRunner {
     }
   }
 
+  /**
+   * Drain the unobserved tail into durable memory and refresh the
+   * frozen context pack so the post-eviction render carries an
+   * `<observation-group range=“…”>` covering what is about to be
+   * dropped. Called from every `findEvictionHorizon` site — the
+   * wire-shaping transform's `onCompaction`, `/compact`, and the
+   * context-overflow recovery path — so each one writes through the
+   * same observer with the same best-effort failure policy: a failed
+   * drain logs a `system` warning and eviction proceeds anyway.
+   *
+   * Actor model resolution always uses the session config default
+   * (`config.memoryModel → DEFAULT_CLI_MEMORY_MODEL`) so every
+   * compaction path writes through the same observer regardless of
+   * which entry point triggered it. `/compact` does not honor a
+   * per-turn `--memory-model` override here — that override only
+   * affects the agent's reply, not the drain.
+   */
+  private async ensureMemoryCoverageForCompaction(messages: AgentMessage[]): Promise<void> {
+    try {
+      await this.updateMemoryAfterAgentRun(messages, undefined);
+    } catch (error) {
+      this.emit({
+        type: "system",
+        level: "warn",
+        message: `compact: observation drain failed (${truncateForSystemMessage(
+          error instanceof Error ? error.message : String(error),
+        )}); evicting anyway.`,
+      });
+    }
+    await this.refreshMemoryContextPack();
+  }
+
   private async refreshMemoryContextPack(): Promise<void> {
     const session = this.memoryPersistence?.session;
     if (!session) return;
@@ -1816,13 +1828,7 @@ export class TurnRunner {
       effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
       settings: this.config.memory,
       horizon: this.wireGuardHorizon,
-      // Compaction trigger #3: when wire-shaping advances the eviction
-      // horizon the prompt cache is already invalidating, so refresh
-      // the frozen memory pack at the same moment to piggyback the
-      // cache miss instead of paying it twice.
-      onCompaction: () => {
-        void this.refreshMemoryContextPack();
-      },
+      onCompaction: (messages) => this.ensureMemoryCoverageForCompaction(messages),
     });
   }
 

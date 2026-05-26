@@ -185,8 +185,14 @@ export function applyEvictionHorizon(messages: AgentMessage[], horizon: number):
 /**
  * Walk oldest-first, advance the horizon past each message in turn, and
  * stop when the caller-supplied predicate reports both budgets satisfied.
- * Will not trim below {@link MIN_HISTORY_TAIL} recent messages. Returns a
- * horizon at least as advanced as `current` (advance-only).
+ * Will not trim below {@link MIN_HISTORY_TAIL} recent messages. Returns
+ * a horizon at least as advanced as `current` (advance-only).
+ *
+ * Callers that need to preserve the evictable span into durable memory
+ * must do so before invoking this function — advancing the horizon
+ * here will drop messages whose content is only readable through the
+ * memory store, so the runner's `ensureMemoryCoverageForCompaction`
+ * runs first on every path that reaches this walk.
  */
 export function findEvictionHorizon(
   messages: AgentMessage[],

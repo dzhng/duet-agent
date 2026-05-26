@@ -82,8 +82,7 @@ describe("applyEvictionHorizon", () => {
 
 describe("findEvictionHorizon", () => {
   test("does not advance when only the latest message would remain (MIN_HISTORY_TAIL floor)", () => {
-    const horizon = findEvictionHorizon([userText("only", 1)], 0, () => false);
-    expect(horizon).toBe(0);
+    expect(findEvictionHorizon([userText("only", 1)], 0, () => false)).toBe(0);
   });
 
   test("advances just past as many oldest messages as the predicate requires", () => {
@@ -96,8 +95,8 @@ describe("findEvictionHorizon", () => {
     ];
     // Satisfy predicate only when at most 2 messages remain.
     const horizon = findEvictionHorizon(messages, 0, (candidate) => candidate.length <= 2);
-    // Horizon should sit at message c's timestamp (30): dropping a, b, c
-    // leaves [d, e] and the predicate returns true on that step.
+    // Horizon sits at message c's timestamp (30): dropping a, b, c leaves
+    // [d, e] and the predicate returns true on that step.
     expect(horizon).toBe(30);
     expect(applyEvictionHorizon(messages, horizon)).toHaveLength(2);
   });
@@ -105,9 +104,7 @@ describe("findEvictionHorizon", () => {
   test("never retreats from the caller's existing horizon", () => {
     const messages = [userText("a", 10), userText("b", 20), userText("c", 30)];
     // Predicate is already satisfied, but caller's horizon is past message a.
-    // Returned horizon must be >= 15.
-    const horizon = findEvictionHorizon(messages, 15, () => true);
-    expect(horizon).toBeGreaterThanOrEqual(15);
+    expect(findEvictionHorizon(messages, 15, () => true)).toBeGreaterThanOrEqual(15);
   });
 });
 
