@@ -492,7 +492,12 @@ const formatSelectStateMachineState: Formatter = (spec) => {
   }
   if (override) {
     const overrideKind = stringField(override, "kind");
-    bodyParts.push(`override: ${overrideKind ?? "unknown"}`);
+    // persistOverride defaults to true, so only the explicit opt-out is
+    // worth surfacing — a persisted override is the common case and
+    // adding a label to it would be visual noise on every transition.
+    const persistOverride = booleanField(decision, "persistOverride");
+    const suffix = persistOverride === false ? " (one-shot)" : "";
+    bodyParts.push(`override: ${overrideKind ?? "unknown"}${suffix}`);
   }
   return {
     header: `→ ${target}`,
