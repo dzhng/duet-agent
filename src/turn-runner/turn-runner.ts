@@ -1030,22 +1030,15 @@ export class TurnRunner {
             },
           })}
 
+          <system-reminder>
+          You are the orchestrator and are responsible for this sub-agent's output. Treat the state_completed block above as a claim, not as verified truth. The sub-agent may have hallucinated success, skipped steps, swallowed errors, or misreported what it did. Before transitioning, review the output against reality: read the files it claims to have changed, run the build/test/lint it claims to have passed, and confirm any IDs, paths, counts, or statuses it asserts. If the output is wrong, incomplete, or unverifiable, do not just blindly re-select the same state — the sub-agent will hallucinate the same result a second time. Re-select the state with an override.state.prompt that addresses the specific failure (require a verification step, name the exact file path or tool to use, forbid the hallucinated phrasing), or select a different state. Tuning the sub-agent's prompt is the orchestrator's lever — use it. Do not silently take over the sub-agent's job by running its tools yourself; that hides the broken state from future runs. Do not propagate an unverified claim into the next state's prompt as fact, and do not relay it to the user as finished work. The orchestrator owns correctness; the sub-agent only owns effort.
+
           ${retryInstruction ?? ""}
 
-          If the state produced output the user would want to see — a written
-          artifact (poem, summary, draft), a finding, a status the user is
-          watching, or anything else the background work was meant to surface
-          — post that content to the user in this turn before or alongside the
-          tool call. The user does not see state output, transcripts, or tool
-          results from background states; if you do not relay it here, they
-          never see it. Skip the user-facing message only when the state
-          output is purely internal plumbing (an ack, a control signal, a
-          value that only matters to the next state).
+          If the state produced output the user would want to see — a written artifact (poem, summary, draft), a finding, a status the user is watching, or anything else the background work was meant to surface — post that content to the user in this turn before or alongside the tool call. The user does not see state output, transcripts, or tool results from background states; if you do not relay it here, they never see it. Skip the user-facing message only when the state output is purely internal plumbing (an ack, a control signal, a value that only matters to the next state).
 
-          Either way, you must end this turn by calling the
-          select_state_machine_state tool to choose the next state, terminal
-          state, or failure outcome. Text without the tool call is not a
-          valid response.
+          Either way, you must end this turn by calling the select_state_machine_state tool to choose the next state, terminal state, or failure outcome. Text without the tool call is not a valid response.
+          </system-reminder>
         `,
         ...this.createTools(turnState.mode),
       });
