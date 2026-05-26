@@ -538,7 +538,7 @@ describe("TurnRunner protocol scenarios", () => {
     expect(error.includes("meeting_scheduled")).toBe(true);
   });
 
-  test("uses transition overrides for one state attempt without mutating the definition", async () => {
+  test("persists transition overrides into the active definition by default", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("research_prospect");
     await runner.start({ type: "start", state: turnState });
@@ -547,6 +547,34 @@ describe("TurnRunner protocol scenarios", () => {
       decision: {
         state: "research_prospect",
         override: { kind: "agent", state: { prompt: "Research Grace Hopper." } },
+      },
+    });
+
+    const terminal = await runner.turn({
+      type: "prompt",
+      message: "Focus on Grace.",
+      behavior: "steer",
+    });
+
+    expect(runner.workerInputs[1]?.prompt).toBe("Research Grace Hopper.");
+    // Default persistOverride writes the tuned prompt back into the
+    // definition so the next run of research_prospect picks it up
+    // automatically without re-passing the override.
+    expect(terminal.state.stateMachine?.definition.states[0]).toMatchObject({
+      prompt: "Research Grace Hopper.",
+    });
+  });
+
+  test("persistOverride: false applies the override one-shot and leaves the definition unchanged", async () => {
+    const { runner } = createTurnRunner();
+    const turnState = createStateMachineState("research_prospect");
+    await runner.start({ type: "start", state: turnState });
+    runner.controlResults.push({
+      type: "select_state_machine_state",
+      decision: {
+        state: "research_prospect",
+        override: { kind: "agent", state: { prompt: "Research Grace Hopper." } },
+        persistOverride: false,
       },
     });
 

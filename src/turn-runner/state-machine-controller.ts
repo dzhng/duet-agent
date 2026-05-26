@@ -23,6 +23,7 @@ import {
   recordStateStarted,
   recordStateSleep,
   createStateMachineSession,
+  persistStateDefinition,
 } from "./state-machine-session.js";
 import {
   createShellStateHandle,
@@ -238,6 +239,21 @@ export class StateMachineController {
     const effectiveState = isTerminal
       ? selectedState
       : applyStateOverride(selectedState, decision.override);
+    // Persist the override into the active definition by default so that
+    // future runs of the same state pick up the tuned prompt/command/
+    // schedule. The orchestrator opts out with persistOverride: false when
+    // it wants to probe a variation without committing it. Skip the
+    // persist when the override is a no-op (effectiveState === selectedState)
+    // because applyStateOverride returns the original reference when there
+    // was nothing to merge — in that case there is no drift to record.
+    const shouldPersistOverride =
+      !isTerminal &&
+      decision.override !== undefined &&
+      decision.persistOverride !== false &&
+      effectiveState !== selectedState;
+    if (shouldPersistOverride) {
+      this.session = persistStateDefinition(this.session, effectiveState);
+    }
     this.session = recordStateStarted(
       this.session,
       effectiveState,

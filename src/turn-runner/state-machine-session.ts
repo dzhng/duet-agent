@@ -88,6 +88,35 @@ export function recordRunnerDecision(
   };
 }
 
+/**
+ * Replace one state in the active definition with a merged version,
+ * recording a state_definition_updated event so the persistence is
+ * visible in session history. Callers should pass the already-merged
+ * state (typically produced by `applyStateOverride`). The session's
+ * `definition.states` array is rebuilt immutably; any other reference to
+ * the previous definition object is unaffected.
+ */
+export function persistStateDefinition(
+  stateMachine: StateMachineSession,
+  updatedState: StateMachineState,
+): StateMachineSession {
+  const now = Date.now();
+  const states = stateMachine.definition.states.map((state) =>
+    state.name === updatedState.name ? updatedState : state,
+  );
+  return {
+    ...stateMachine,
+    definition: { ...stateMachine.definition, states },
+    history: appendHistory(stateMachine.history, {
+      type: "state_definition_updated",
+      timestamp: now,
+      state: updatedState.name,
+      updatedState,
+    }),
+    updatedAt: now,
+  };
+}
+
 export function recordStateStarted(
   stateMachine: StateMachineSession,
   state: StateMachineState,

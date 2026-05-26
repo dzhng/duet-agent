@@ -398,4 +398,15 @@ export type StateMachineSessionEvent =
       state: string;
       questions: TurnQuestion[];
     }
+  | {
+      // Emitted when select_state_machine_state persists an override into
+      // the active definition (decision.persistOverride !== false). Captures
+      // the merged state so anyone replaying history can see when and how
+      // the definition drifted from its original create_state_machine_definition
+      // shape.
+      type: "state_definition_updated";
+      timestamp: number;
+      state: string;
+      updatedState: StateMachineState;
+    }
   | { type: "state_machine_completed"; timestamp: number; terminal: StateMachineTerminalResult };

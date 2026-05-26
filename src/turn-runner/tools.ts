@@ -392,6 +392,12 @@ const selectStateSchema = Type.Object({
         }),
       ),
       override: Type.Optional(stateOverrideSchema),
+      persistOverride: Type.Optional(
+        Type.Boolean({
+          description:
+            "When `override` is set, controls whether the override is merged into the active state-machine definition (so the change sticks for every future run of this state) or applied as a one-shot just for this transition. Defaults to true — the orchestrator's typical reason to override is to tune a sub-agent prompt or fix a script command, and that tuning should persist. Set to false when you want to try a variation without committing it, e.g. probing a different prompt to see if the sub-agent recovers before deciding whether to keep the change. Ignored when `override` is omitted or when selecting a terminal state.",
+        }),
+      ),
       input: Type.Optional(
         Type.Record(Type.String(), Type.Any(), {
           description:
@@ -428,6 +434,14 @@ export interface StateMachineRunnerDecision {
   state: string;
   reason?: string;
   override?: StateMachineStateOverride;
+  /**
+   * When true (the default), an `override` is merged into the active
+   * state-machine definition so future runs of the same state see the
+   * tuned prompt/command/schedule. When false, the override applies only
+   * to this transition and the stored definition is unchanged. Ignored
+   * when `override` is undefined or when the target state is terminal.
+   */
+  persistOverride?: boolean;
   input?: Record<string, unknown>;
 }
 
@@ -934,6 +948,8 @@ function createSelectStateTool(
 
       Carry forward what the orchestrator now knows. Each agent state runs in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — it only sees the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: the sub-agent has no way to read those findings.
 
+      Overrides persist by default. When you pass \`override\`, the merged state (prompt, command, schedule — whichever fields you set) is written back into the active definition, so every future run of that state uses the tuned version. This is the right shape when you are tightening a sub-agent prompt that hallucinated, fixing a script command that misbehaved, or tuning poll/timer cadence. Set \`persistOverride: false\` when you want a one-shot variation that does not commit — for example, probing a different prompt to see if the sub-agent recovers before deciding whether to keep the change. Persistence is a no-op for terminal states and for overrides whose fields exactly match the existing state.
+
       Selecting a terminal state ends the state machine. Every definition is guaranteed to have the auto-injected \`failed\` and \`cancelled\` terminals available, so to fail or cancel, just select one of those by name and optionally attach a \`reason\`. After a terminal you will be woken once more for an acknowledgment turn — the runner re-prompts you with the terminal details (state, status, reason) so you can reply to the user in plain text and, if appropriate, kick off a follow-up state machine via create_state_machine_definition. Do not call select_state_machine_state on that acknowledgment turn; the state machine is already terminal.
     `,
     parameters: selectStateSchema,
@@ -943,6 +959,7 @@ function createSelectStateTool(
         state: params.decision.state,
         reason: params.decision.reason,
         override: params.decision.override as StateMachineStateOverride | undefined,
+        persistOverride: params.decision.persistOverride,
         input: params.decision.input,
       };
       assertValidSelectedState(decision, definition);
