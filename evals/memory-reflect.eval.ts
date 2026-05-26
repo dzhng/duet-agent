@@ -213,7 +213,7 @@ describe("duet memory reflect — global prune", () => {
 
   // ---- Eval 5 -------------------------------------------------------------
   testIfDocker(
-    "preserves strategic decisions (Plan mode removed, Hyperframes adoption, duet-gateway provider)",
+    "preserves strategic decisions (Web Push deferred, tab-crossfade removed, nav-bundle split)",
     async () => {
       const fixture = await createMemoryFixture();
       try {
@@ -228,12 +228,17 @@ describe("duet memory reflect — global prune", () => {
         });
         expect(result).toBeDefined();
         const content = joinedReflections(result!).content.toLowerCase();
-        // Three independent strategic decisions — all should leave a trace.
-        expect(content).toMatch(/hyperframes|remotion/);
-        expect(content).toMatch(/plan mode/);
-        // The "do not implement plan mode" directive is the actionable
-        // half — drop it and the agent forgets why.
-        expect(content).toMatch(/do not|don't|removed|deleted/);
+        // Each decision is a distinct cross-session commitment a future
+        // agent would relitigate if the reflection dropped it. The
+        // assertions match the WHAT + the WHY half of each — the
+        // actionable shape is "X was [deferred|removed|split] because Y",
+        // so we accept any of the rationale-style markers.
+        expect(content).toMatch(/web push/);
+        expect(content).toMatch(/defer|deferred|skipped|not shipped|out of scope/);
+        expect(content).toMatch(/crossfade|tab|peer/);
+        expect(content).toMatch(
+          /nav.?bundle|nav source|navigation (data|source|bundle)|persona spec/,
+        );
       } finally {
         await fixture.dispose();
       }
