@@ -35,6 +35,7 @@ Review the diff or specified files against these principles.
   - Bad: `// Wrapper added because FUSE-T was zero-padding (see commit abc123)`
   - Bad: `// Previously this was called fuseAvailable but we renamed it`
 - **Remove:** comments that just restate what the code does without adding reasoning.
+- **One explanation, one location.** When the same fact (a flag's contract, an invariant, a tri-state field's semantics) is documented at three call sites, pick the single best one — usually the leaf where the value is applied or the field where it's declared — and delete the other copies. Transparent forwarders, intermediate hops, and re-exporters don't need to re-document what they pass through. Same rule across files: if the schema's field doc, a domain doc-comment, and a const's preamble all say "this is parent-only and dynamic", keep the one closest to the data and trim the rest.
 - Often no comment is needed at all.
 
 ## 5. Separate install-time from runtime
