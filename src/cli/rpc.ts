@@ -104,6 +104,34 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
   };
   runner.subscribe(writeEvent);
 
+  // Without these handlers, an unhandled rejection or uncaught exception
+  // anywhere in start()/turn() setup (memory load, skill load, state
+  // hydration, MCP connect) kills the process under Node's default policy
+  // with no terminal event written and nothing on stderr. Hosts then see
+  // `code=null stderr=` and have no way to surface a real error to the
+  // user. Emit a system error event with the cause, then — if the runner
+  // already has a hydrated state — also emit a `complete` terminal so the
+  // host can settle the in-flight turn cleanly. The system event alone is
+  // the floor; the terminal is best-effort because TurnCompletedEvent
+  // requires `state`, which doesn't exist if we died before `start()`
+  // finished hydrating.
+  const emitFatalAndExit = (reason: unknown): void => {
+    const message = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+    try {
+      writeEvent({ type: "system", level: "error", message: `fatal: ${message}` });
+      const state = runner.getState();
+      if (state) {
+        writeEvent({ type: "complete", status: "failed", error: message, state });
+      }
+    } catch {
+      // stdout may be closed if the parent already gave up on us; nothing
+      // useful to do at this point besides exiting.
+    }
+    process.exit(1);
+  };
+  process.on("unhandledRejection", emitFatalAndExit);
+  process.on("uncaughtException", emitFatalAndExit);
+
   const removeShutdownHandlers = installShutdownHandlers(() => runner.dispose());
 
   try {
