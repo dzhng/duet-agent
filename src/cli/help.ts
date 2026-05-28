@@ -62,7 +62,7 @@ INTERACTIVE
   filename to insert a repo-relative path into the prompt.
 
 MODELS
-  Prefer shorthands like opus-4.7, sonnet-4.6, haiku-4.5, and gpt-5.5.
+  Prefer shorthands like opus-4.8, opus-4.7, sonnet-4.6, haiku-4.5, and gpt-5.5.
   They map to the first configured provider that supports that model.
   Full provider:modelId syntax is also supported, e.g. anthropic:claude-opus-4-7.
   If omitted, duet infers a default from ANTHROPIC_API_KEY,

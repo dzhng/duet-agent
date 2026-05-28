@@ -1,6 +1,6 @@
 {
   "name": "@duetso/agent",
-  "version": "0.1.162",
+  "version": "0.1.163",
   "description": "An opinionated full-stack agent turn runner with native memories, interrupts, and multi-agent orchestration",
   "keywords": [
     "agent",
@@ -56,8 +56,8 @@
     "build:compile": "bun build src/cli.ts --compile --outfile dist/duet"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.74.0",
-    "@earendil-works/pi-ai": "^0.74.0",
+    "@earendil-works/pi-agent-core": "^0.76.0",
+    "@earendil-works/pi-ai": "^0.76.0",
     "@earendil-works/pi-coding-agent": "^0.74.0",
     "@electric-sql/pglite": "^0.4.5",
     "@modelcontextprotocol/sdk": "^1.29.0",

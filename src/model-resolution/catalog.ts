@@ -64,6 +64,22 @@ const MEMORY_MODEL_BY_PROVIDER: Record<ProviderName, string> = {
 
 const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   {
+    // Only routed through `duet-gateway` for now: the Duet proxy already
+    // recognizes `anthropic/claude-opus-4.8`, but pi-ai's upstream
+    // vercel-ai-gateway / openrouter / anthropic catalogs do not yet ship a
+    // 4.8 entry. Add the other providers here once their catalogs catch up.
+    shorthand: "opus-4.8",
+    aliases: [
+      "claude-opus-4.8",
+      "claude-opus-4-8",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-opus-4-8",
+    ],
+    modelsByProvider: {
+      "duet-gateway": "anthropic/claude-opus-4.8",
+    },
+  },
+  {
     shorthand: "opus-4.7",
     aliases: [
       "claude-opus-4.7",
