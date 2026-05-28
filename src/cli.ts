@@ -63,7 +63,7 @@ const PACKAGE_METADATA = {
   version: packageJson.version,
 } as const;
 
-async function main(): Promise<void> {
+export async function runCli(): Promise<void> {
   const args = process.argv.slice(2);
   const subcommand = args[0];
 
@@ -109,5 +109,5 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  void main();
+  void runCli();
 }

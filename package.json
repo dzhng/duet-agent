@@ -1,6 +1,6 @@
 {
   "name": "@duetso/agent",
-  "version": "0.1.163",
+  "version": "0.1.164",
   "description": "An opinionated full-stack agent turn runner with native memories, interrupts, and multi-agent orchestration",
   "keywords": [
     "agent",
@@ -16,7 +16,7 @@
     "url": "https://github.com/dzhng/duet-agent"
   },
   "bin": {
-    "duet": "dist/src/cli.js"
+    "duet": "dist/src/cli-entry.js"
   },
   "files": [
     "dist/package.json",
@@ -53,7 +53,7 @@
     "example:state-machine": "bun examples/state-machine.ts",
     "example:tui-playground": "bun examples/tui-playground.ts",
     "prepare": "husky",
-    "build:compile": "bun build src/cli.ts --compile --outfile dist/duet"
+    "build:compile": "bun build src/cli-entry.ts --compile --outfile dist/duet"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.76.0",
