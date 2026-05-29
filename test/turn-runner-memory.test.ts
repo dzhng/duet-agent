@@ -658,7 +658,7 @@ describe("TurnRunner memory", () => {
 
     const unconfigured = new TurnRunner({ skillDiscovery: { includeDefaults: false } });
     expect(unconfigured.resolveTurnOptions()).toMatchObject({
-      model: "opus-4.7",
+      model: "opus-4.8",
       thinkingLevel: undefined,
     });
   });
