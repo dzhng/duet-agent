@@ -27,7 +27,7 @@ interface ModelDefinition {
   modelsByProvider: Partial<Record<ProviderName, string>>;
 }
 
-export const DEFAULT_CLI_MODEL = "opus-4.7";
+export const DEFAULT_CLI_MODEL = "opus-4.8";
 export const DEFAULT_CLI_MEMORY_MODEL = "gpt-5.4-mini";
 
 /**
@@ -64,10 +64,6 @@ const MEMORY_MODEL_BY_PROVIDER: Record<ProviderName, string> = {
 
 const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   {
-    // Only routed through `duet-gateway` for now: the Duet proxy already
-    // recognizes `anthropic/claude-opus-4.8`, but pi-ai's upstream
-    // vercel-ai-gateway / openrouter / anthropic catalogs do not yet ship a
-    // 4.8 entry. Add the other providers here once their catalogs catch up.
     shorthand: "opus-4.8",
     aliases: [
       "claude-opus-4.8",
@@ -77,6 +73,9 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     ],
     modelsByProvider: {
       "duet-gateway": "anthropic/claude-opus-4.8",
+      "vercel-ai-gateway": "anthropic/claude-opus-4.8",
+      openrouter: "anthropic/claude-opus-4.8",
+      anthropic: "claude-opus-4-8",
     },
   },
   {

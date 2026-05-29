@@ -58,22 +58,7 @@ function resolveDuetGatewayUpstream(modelId: string): Model<any> | undefined {
       | Model<any>
       | undefined;
   }
-  const fromCatalog = getModel("vercel-ai-gateway" as any, modelId as any) as
-    | Model<any>
-    | undefined;
-  if (fromCatalog) return fromCatalog;
-  // pi-ai 0.76's vercel-ai-gateway catalog does not yet ship
-  // `anthropic/claude-opus-4.8`. The Duet proxy already routes it, and
-  // Anthropic kept the transport shape, cost, and context window unchanged
-  // from 4.7, so cloning the 4.7 entry and swapping the id gives a correct
-  // Model spec. Delete this branch once pi-ai ships a real 4.8 entry.
-  if (modelId === "anthropic/claude-opus-4.8") {
-    const sibling = getModel("vercel-ai-gateway" as any, "anthropic/claude-opus-4.7" as any) as
-      | Model<any>
-      | undefined;
-    if (sibling) return { ...sibling, id: modelId, name: modelId };
-  }
-  return undefined;
+  return getModel("vercel-ai-gateway" as any, modelId as any) as Model<any> | undefined;
 }
 
 function getDuetGatewayBaseUrlForModel(model: Model<any>): string {

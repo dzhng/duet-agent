@@ -91,7 +91,7 @@ describe("CLI model inference", () => {
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.7",
+      modelName: "opus-4.8",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
@@ -112,7 +112,7 @@ describe("CLI model inference", () => {
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.7",
+      modelName: "opus-4.8",
       source: "inferred",
       envVar: "AI_GATEWAY_API_KEY",
       fromDotenv: false,
@@ -132,7 +132,7 @@ describe("CLI model inference", () => {
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.7",
+      modelName: "opus-4.8",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
@@ -151,7 +151,7 @@ describe("CLI model inference", () => {
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.7",
+      modelName: "opus-4.8",
       source: "inferred",
       envVar: "ANTHROPIC_API_KEY",
       fromDotenv: false,
@@ -174,7 +174,7 @@ describe("CLI model inference", () => {
     process.env.DUET_API_KEY = "duet_gt_test";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.7",
+      modelName: "opus-4.8",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
@@ -209,7 +209,7 @@ describe("CLI model inference", () => {
     clearModelEnv();
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.7",
+      modelName: "opus-4.8",
       source: "default",
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
@@ -231,7 +231,7 @@ describe("CLI model inference", () => {
 
     expect(pinnedDefaultModel("openai")).toBe("openai:gpt-5.5");
     expect(pinnedMemoryModel("openai")).toBe("openai:gpt-5.4-mini");
-    expect(pinnedDefaultModel("anthropic")).toBe("anthropic:claude-opus-4-7");
+    expect(pinnedDefaultModel("anthropic")).toBe("anthropic:claude-opus-4-8");
   });
 
   test("keeps an explicitly provided model", () => {
