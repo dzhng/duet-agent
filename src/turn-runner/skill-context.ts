@@ -76,13 +76,22 @@ export class SkillContext {
     return state.allowedSkills.map((name) => skillsByName.get(name)!);
   }
 
-  resolveSlashSkillPrompt(prompt: string): string {
+  /**
+   * Expand `/skill` slash commands in a prompt into injected `<skill>` blocks.
+   * `skills` scopes which skills are eligible to expand; callers pass a
+   * restricted set (e.g. a state's `allowedSkills`) so a background agent only
+   * expands skills it actually has. Defaults to every discovered skill, which
+   * is what the parent prompt path wants. Passing `undefined` (the result of
+   * `resolveStateAgentSkills` for an unrestricted state) also falls through to
+   * the full set.
+   */
+  resolveSlashSkillPrompt(prompt: string, skills: readonly Skill[] = this.skills): string {
     const slash = parseSlashCommands(prompt);
     if (slash.commands.length === 0) return prompt;
 
     const skillBlocks: string[] = [];
     for (const command of slash.commands) {
-      const skill = this.skills.find((item) => item.name === command);
+      const skill = skills.find((item) => item.name === command);
       if (!skill) continue;
 
       const instructions = readSkillInstructions(skill).trim();
