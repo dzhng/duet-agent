@@ -62,6 +62,28 @@ describe("SkillContext.resolveSlashSkillPrompt", () => {
     },
   );
 
+  testIfDocker(
+    "only expands skills in the scoped list when one is passed (state allowedSkills)",
+    async () => {
+      const review = await writeSkill("review", "REVIEW_BODY");
+      const release = await writeSkill("release", "RELEASE_BODY");
+      const ctx = new SkillContext({
+        skills: [review, release],
+        skillDiscovery: { includeDefaults: false },
+      });
+      await ctx.ensureLoaded();
+
+      // Scope to just `review` — mirrors a state whose allowedSkills omits
+      // `release`. The /release token must NOT expand even though the skill
+      // exists in the session, because the state agent cannot use it.
+      const resolved = ctx.resolveSlashSkillPrompt("/review then /release", [review]);
+      expect(resolved).toContain('<skill name="review"');
+      expect(resolved).toContain("REVIEW_BODY");
+      expect(resolved).not.toContain('<skill name="release"');
+      expect(resolved).not.toContain("RELEASE_BODY");
+    },
+  );
+
   testIfDocker("returns the prompt unchanged when no slash command matches a skill", async () => {
     const skill = await writeSkill("review", "body");
     const ctx = new SkillContext({ skills: [skill], skillDiscovery: { includeDefaults: false } });

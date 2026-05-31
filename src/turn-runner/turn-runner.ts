@@ -1077,11 +1077,17 @@ export class TurnRunner {
       options: this.requireRunnerState().options,
       agent: { status: "running", messages: [] },
     };
+    const stateSkills = this.skillContext.resolveStateAgentSkills(input.state);
+    // Expand `/skill` slash commands the same way the parent prompt path does,
+    // scoped to the skills this state is actually allowed to use. Lets state
+    // prompts say "use the /foo skill to do xyz" and have the skill body
+    // injected, instead of shipping the literal `/foo` text to the model.
+    const expandedPrompt = this.skillContext.resolveSlashSkillPrompt(input.prompt, stateSkills);
     const agent = this.createAgent(
       {
         state,
         appendSystemPrompt: input.state.systemPrompt,
-        skills: this.skillContext.resolveStateAgentSkills(input.state),
+        skills: stateSkills,
         // Per-state cwd lets one agent state operate on a different
         // repository or subdirectory than the parent runner without
         // mutating shared config.
@@ -1111,7 +1117,7 @@ export class TurnRunner {
       prompt: async () => {
         unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event, origin));
         try {
-          await agent.prompt(input.prompt);
+          await agent.prompt(expandedPrompt);
           await this.retryTransientServerErrors(agent);
           return interruptedReason ? { type: "interrupted" } : finish();
         } catch (error) {
