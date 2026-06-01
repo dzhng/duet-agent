@@ -11,9 +11,11 @@ import type {
 import { INTERRUPTED_STATE_MACHINE_STATE } from "../types/state-machine.js";
 import { parseDurationToMs, parseWakeAtToMs } from "./duration.js";
 import {
+  consecutivePollGateSuccesses,
   currentScheduledState,
   elapsedSinceStateStarted,
   findState,
+  MISCONFIGURED_POLL_GATE_THRESHOLD,
   recordRunnerDecision,
   recordStateAskedUser,
   recordStateCompleted,
@@ -378,6 +380,20 @@ export class StateMachineController {
       // that parse does NOT affect whether the poll completes.
       const shellOutput = await shell.run();
       const rawOutput = normalizePollShellOutput(shellOutput);
+      // Guard against a misconfigured poll gate that exits success on every
+      // tick: it is read as "condition met" and handed back to the orchestrator,
+      // which re-selects it and hot-loops without ever honoring intervalMs.
+      // Enough back-to-back successes of the same poll is the signature of an
+      // always-true gate (the `echo`/`exit 0` human-wait footgun), so fail fast
+      // with an actionable message instead of spinning. See
+      // consecutivePollGateSuccesses for why healthy polls cannot reach the
+      // threshold. The current success is not recorded yet, hence the +1.
+      const successStreak = consecutivePollGateSuccesses(this.requireSession(), state.name) + 1;
+      if (successStreak >= MISCONFIGURED_POLL_GATE_THRESHOLD) {
+        const message = misconfiguredPollGateMessage(state.name, successStreak);
+        this.session = recordStateFailed(this.requireSession(), state.name, message);
+        return { type: "terminal", status: "failed", error: message };
+      }
       this.session = recordStateCompleted(this.requireSession(), state.name, rawOutput);
       return { type: "state_completed", stateName: state.name, output: rawOutput };
     } catch (error) {
@@ -520,6 +536,15 @@ function normalizePollShellOutput(
     stderr: shellOutput.stderr.trim(),
     parsed: parseJsonObject(shellOutput.stdout),
   };
+}
+
+function misconfiguredPollGateMessage(stateName: string, successStreak: number): string {
+  return (
+    `Poll state "${stateName}" completed successfully ${successStreak} times in a row with no state change in between. ` +
+    "A poll's command must exit success ONLY when the awaited condition is actually met and exit non-success otherwise, so intervalMs can space out re-checks; " +
+    'a command that exits 0 on every tick (e.g. `echo waiting for review`) is read as "condition met" and hot-loops the relay instead of waiting. ' +
+    "If this gate is waiting on a human approval or reply, model it as an agent state that asks the user a question and stops — the reply wakes the relay — rather than as a poll."
+  );
 }
 
 function shellPartialOutput(error: unknown): { stdout: string; stderr: string } | undefined {
