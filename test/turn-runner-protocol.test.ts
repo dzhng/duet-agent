@@ -441,14 +441,20 @@ describe("TurnRunner protocol scenarios", () => {
     });
     const terminal = await turn;
 
+    // Reaching the `failed` terminal is still a successful turn outcome, so the
+    // turn-completion status is "completed"; the terminal's own `failed` status
+    // survives on stateMachine.terminal for board column resolution.
     expect(terminal).toMatchObject({
       type: "complete",
-      status: "failed",
+      status: "completed",
       state: {
-        status: "failed",
+        status: "completed",
         mode: "auto",
         agent: { status: "completed" },
-        stateMachine: { currentState: "send_email" },
+        stateMachine: {
+          currentState: "send_email",
+          terminal: { state: "send_email", status: "failed" },
+        },
       },
     });
   });
@@ -530,7 +536,11 @@ describe("TurnRunner protocol scenarios", () => {
     if (terminal.type !== "complete") {
       throw new Error("Expected complete event");
     }
-    expect(terminal.status).toBe("failed");
+    // The unknown-state error settles into a `failed` terminal, which is a
+    // successful turn outcome — the turn reports "completed" while the failure
+    // detail rides on terminal.error and stateMachine.terminal.status.
+    expect(terminal.status).toBe("completed");
+    expect(terminal.state.stateMachine?.terminal?.status).toBe("failed");
     const error = terminal.error ?? "";
     expect(error.includes("Unknown state: invented_state")).toBe(true);
     expect(error.includes("research_prospect")).toBe(true);
@@ -1041,7 +1051,7 @@ describe("TurnRunner protocol scenarios", () => {
 
     expect(terminal).toMatchObject({
       type: "complete",
-      status: "failed",
+      status: "completed",
       error: expect.stringContaining('Poll state "poll_email_reply" timed out'),
     });
     expect(terminal.state.stateMachine?.history).toContainEqual(
@@ -1125,7 +1135,7 @@ describe("TurnRunner protocol scenarios", () => {
     expect(runner.workerInputs[4]?.prompt).toContain("retry 3 of 3");
     expect(terminal).toMatchObject({
       type: "complete",
-      status: "failed",
+      status: "completed",
       error: "State completed, but the runner did not call select_state_machine_state.",
     });
   });
@@ -1166,7 +1176,7 @@ describe("TurnRunner protocol scenarios", () => {
 
     expect(terminal).toMatchObject({
       type: "complete",
-      status: "failed",
+      status: "completed",
       error:
         "Cannot create a new state-machine definition while the current state machine is still active.",
     });
