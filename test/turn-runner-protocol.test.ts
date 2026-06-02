@@ -441,19 +441,19 @@ describe("TurnRunner protocol scenarios", () => {
     });
     const terminal = await turn;
 
-    // Reaching the `failed` terminal is still a successful turn outcome, so the
-    // turn-completion status is "completed"; the terminal's own `failed` status
-    // survives on stateMachine.terminal for board column resolution.
+    // "failed" is not a defined state in this definition, so selecting it is a
+    // runtime error: the machine records an `error` terminal against the
+    // current state and the turn fails, with the message on terminal.error.
     expect(terminal).toMatchObject({
       type: "complete",
-      status: "completed",
+      status: "failed",
       state: {
-        status: "completed",
+        status: "failed",
         mode: "auto",
         agent: { status: "completed" },
         stateMachine: {
           currentState: "send_email",
-          terminal: { state: "send_email", status: "failed" },
+          terminal: { state: "send_email", status: "error" },
         },
       },
     });
@@ -536,11 +536,11 @@ describe("TurnRunner protocol scenarios", () => {
     if (terminal.type !== "complete") {
       throw new Error("Expected complete event");
     }
-    // The unknown-state error settles into a `failed` terminal, which is a
-    // successful turn outcome — the turn reports "completed" while the failure
-    // detail rides on terminal.error and stateMachine.terminal.status.
-    expect(terminal.status).toBe("completed");
-    expect(terminal.state.stateMachine?.terminal?.status).toBe("failed");
+    // Selecting an unknown state is a runtime failure, not a deliberate
+    // terminal: it settles into an `error` terminal on the machine and fails
+    // the turn. The user-facing detail rides on terminal.error.
+    expect(terminal.status).toBe("failed");
+    expect(terminal.state.stateMachine?.terminal?.status).toBe("error");
     const error = terminal.error ?? "";
     expect(error.includes("Unknown state: invented_state")).toBe(true);
     expect(error.includes("research_prospect")).toBe(true);
@@ -1051,7 +1051,7 @@ describe("TurnRunner protocol scenarios", () => {
 
     expect(terminal).toMatchObject({
       type: "complete",
-      status: "completed",
+      status: "failed",
       error: expect.stringContaining('Poll state "poll_email_reply" timed out'),
     });
     expect(terminal.state.stateMachine?.history).toContainEqual(
@@ -1064,7 +1064,7 @@ describe("TurnRunner protocol scenarios", () => {
       type: "state_machine_completed",
       terminal: {
         state: "poll_email_reply",
-        status: "failed",
+        status: "error",
       },
     });
   });
@@ -1129,19 +1129,24 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
-    expect(runner.workerInputs).toHaveLength(5);
+    // [0] parent turn, [1] research_prospect agent state, [2]-[4] the three
+    // bounded select attempts, [5] the terminal acknowledgment turn (the
+    // recorded error terminal is acknowledged like any other runtime failure).
+    expect(runner.workerInputs).toHaveLength(6);
     expect(runner.workerInputs[2]?.prompt).toContain("select_state_machine_state");
     expect(runner.workerInputs[3]?.prompt).toContain("retry 2 of 3");
     expect(runner.workerInputs[4]?.prompt).toContain("retry 3 of 3");
+    // Exhausting the bounded recovery budget is a runtime failure: the turn
+    // fails and the reason rides on terminal.error.
     expect(terminal).toMatchObject({
       type: "complete",
-      status: "completed",
+      status: "failed",
       error: "State completed, but the runner did not call select_state_machine_state.",
     });
   });
 
-  test("cannot create a new state-machine definition while one is active", async () => {
-    const { runner } = createTurnRunner();
+  test("create-while-active supersedes the running machine and starts the new one", async () => {
+    const { runner, events } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
     await runner.start({ type: "start", state: turnState });
     const definition = {
@@ -1160,7 +1165,12 @@ describe("TurnRunner protocol scenarios", () => {
         type: "select_state_machine_state",
         decision: { state: "research_prospect" },
       },
+      // The research_prospect agent state itself draws one control result.
       { type: "none" },
+      // After research_prospect completes the parent creates a brand-new
+      // machine while this one is still active. The tool only emits this
+      // control result when the agent opted into replaceActive, so the runner
+      // supersedes the running machine and starts the new one in its place.
       {
         type: "create_state_machine_definition",
         definition,
@@ -1174,12 +1184,30 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
+    // The superseded machine resolves to a `cancelled` terminal before being
+    // replaced, so its board/relay card does not dangle at "research_prospect".
+    const supersededCancel = events.find(
+      (event) =>
+        event.type === "state_machine" &&
+        event.stateMachine.definition.name === "conference_outreach" &&
+        event.stateMachine.terminal?.status === "cancelled",
+    );
+    expect(supersededCancel).toBeDefined();
+
+    // The new machine becomes the running session and reaches its own terminal;
+    // the turn completes cleanly with no protocol error surfaced.
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
-      error:
-        "Cannot create a new state-machine definition while the current state machine is still active.",
+      state: {
+        stateMachine: {
+          definition: { name: "follow_up_flow" },
+          terminal: { state: "done", status: "completed" },
+        },
+      },
     });
+    if (terminal.type !== "complete") throw new Error("Expected complete event");
+    expect(terminal.error).toBeUndefined();
   });
 
   test("can create a new state-machine definition after the previous one is terminal", async () => {

@@ -103,7 +103,9 @@ describe("misconfigured poll-gate guard", () => {
     const tripped = await controller.runDecision({ state: "check" });
     expect(tripped.type).toBe("terminal");
     if (tripped.type === "terminal") {
-      expect(tripped.status).toBe("failed");
+      // The misconfigured-gate trip is a runtime failure, so it surfaces as an
+      // `error` terminal (which fails the turn), not a deliberate `failed`.
+      expect(tripped.status).toBe("error");
       expect(tripped.error).toContain("no state change");
       expect(tripped.error).toContain("agent state");
     }

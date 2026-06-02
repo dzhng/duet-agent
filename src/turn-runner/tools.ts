@@ -373,6 +373,12 @@ const createDefinitionSchema = Type.Object({
   firstState: Type.Optional(
     Type.String({ description: "Optional state name to run first after creating the definition." }),
   ),
+  replaceActive: Type.Optional(
+    Type.Boolean({
+      description:
+        "Set to true ONLY to deliberately abandon the state machine that is currently running and replace it with this new one. Creating a definition while a machine is still active is otherwise rejected: the active machine must first reach a terminal (advance or end it with select_state_machine_state). When this is true the runner cancels the active machine and starts this one in its place. Defaults to false, so an agent that did not realize a machine was running cannot clobber it by accident.",
+    }),
+  ),
 });
 
 type CreateDefinitionParams = Static<typeof createDefinitionSchema>;
@@ -535,7 +541,7 @@ export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] 
   }
 
   if (input.mode === "auto") {
-    tools.push(createStateMachineDefinitionTool());
+    tools.push(createStateMachineDefinitionTool(input.getStateMachine));
   }
 
   const getDefinition =
@@ -545,6 +551,28 @@ export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] 
   tools.push(createSelectStateTool(getDefinition));
   tools.push(createCurrentStateMachineStateTool(input.getStateMachine, input.getActiveStateOutput));
   return tools;
+}
+
+/**
+ * Builds the agent-facing error thrown when `create_state_machine_definition`
+ * is called while a machine is still running and `replaceActive` was not set.
+ * The message names the active machine and its current state so the agent —
+ * which may not have realized a machine was running — can decide whether to
+ * advance/end it with select_state_machine_state or deliberately replace it
+ * with `replaceActive: true`.
+ */
+function activeStateMachineCreateError(session: StateMachineSession): string {
+  const name = session.definition.name;
+  const currentState = session.currentState ?? "unknown";
+  const kind = session.definition.states.find((state) => state.name === currentState)?.kind;
+  const stateDescription = kind ? `${currentState} (${kind})` : currentState;
+  return dedent`
+    Cannot create a new state machine: a state machine is already active.
+
+    Active machine: "${name}", currently at state "${stateDescription}".
+
+    Advance or end it with select_state_machine_state before creating a new one. If you instead intend to abandon this machine and run a different one in its place, call create_state_machine_definition again with replaceActive: true to cancel the active machine and replace it.
+  `;
 }
 
 export function applyStateOverride(
@@ -893,7 +921,9 @@ export function formatCarriedTodosReminder(todos: TurnTodo[] | undefined): strin
   `;
 }
 
-function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSchema> {
+function createStateMachineDefinitionTool(
+  getStateMachine: (() => StateMachineSession | undefined) | undefined,
+): AgentTool<typeof createDefinitionSchema> {
   return {
     name: "create_state_machine_definition",
     label: "Create state machine definition",
@@ -918,10 +948,22 @@ function createStateMachineDefinitionTool(): AgentTool<typeof createDefinitionSc
 
       State prompts and script commands may use \`{{ input.foo }}\` templates — declare \`inputSchema\` on those states and pass matching \`input\` when selecting them via select_state_machine_state. Agent states may set \`allowedSkills\` to restrict the skill set for that sub-agent.
 
-      Only use this when no state machine is active or the previous one has reached a terminal state; otherwise call select_state_machine_state.
+      Only use this when no state machine is active or the previous one has reached a terminal state; otherwise call select_state_machine_state. Creating a definition while a machine is still active is rejected unless you set \`replaceActive: true\` to deliberately cancel the running machine and replace it.
     `,
     parameters: createDefinitionSchema,
     async execute(_toolCallId, params) {
+      // Reject create-while-active unless the agent explicitly opts into
+      // replacing the running machine. The control tools terminate the worker
+      // turn after one call, so the agent could not end the old machine in this
+      // same turn — requiring replaceActive forces it to acknowledge the active
+      // machine instead of clobbering one it may not know is running. Throwing
+      // (rather than returning) keeps the worker turn alive so the agent can
+      // react to the error and either advance the active machine or retry with
+      // replaceActive: true.
+      const active = getStateMachine?.();
+      if (active && !active.terminal && params.replaceActive !== true) {
+        throw new Error(activeStateMachineCreateError(active));
+      }
       assertValidDefinition(params.definition);
       const result: TurnRunnerControlResult = {
         type: "create_state_machine_definition",

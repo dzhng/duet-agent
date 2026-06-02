@@ -218,6 +218,127 @@ describe("TurnRunner tools", () => {
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
   });
 
+  test("rejects create-while-active without replaceActive, naming the active machine", async () => {
+    const activeSession = {
+      definition: {
+        name: "conference_outreach",
+        prompt: "Outreach flow.",
+        states: [
+          { kind: "poll" as const, name: "poll_email_reply", intervalMs: 300_000, command: "x" },
+          { kind: "terminal" as const, name: "done", status: "completed" as const },
+        ],
+      },
+      prompt: "Prospect Ada.",
+      currentState: "poll_email_reply",
+      history: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: "auto",
+      getStateMachine: () => activeSession,
+    });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "follow_up_flow",
+        prompt: "New flow.",
+        states: [{ kind: "terminal", name: "done", status: "completed" }],
+      },
+      firstState: "done",
+    });
+
+    // The error names the active machine and its current state so the agent can
+    // decide whether to advance it or deliberately replace it.
+    await expect(result).rejects.toThrow("conference_outreach");
+    await expect(result).rejects.toThrow("poll_email_reply");
+    await expect(result).rejects.toThrow("replaceActive: true");
+  });
+
+  test("allows create-while-active when replaceActive is set", async () => {
+    const activeSession = {
+      definition: {
+        name: "conference_outreach",
+        prompt: "Outreach flow.",
+        states: [{ kind: "terminal" as const, name: "done", status: "completed" as const }],
+      },
+      prompt: "Prospect Ada.",
+      currentState: "research_prospect",
+      history: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: "auto",
+      getStateMachine: () => activeSession,
+    });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = await createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "follow_up_flow",
+        prompt: "New flow.",
+        states: [{ kind: "terminal", name: "done", status: "completed" }],
+      },
+      firstState: "done",
+      replaceActive: true,
+    });
+
+    const details: TurnRunnerControlResult = result.details;
+    expect(details).toMatchObject({
+      type: "create_state_machine_definition",
+      definition: { name: "follow_up_flow" },
+      firstState: "done",
+    });
+    expect(result.terminate).toBe(true);
+  });
+
+  test("allows create when the active session has already terminated", async () => {
+    const terminalSession = {
+      definition: {
+        name: "conference_outreach",
+        prompt: "Outreach flow.",
+        states: [{ kind: "terminal" as const, name: "done", status: "completed" as const }],
+      },
+      prompt: "Prospect Ada.",
+      currentState: "done",
+      history: [],
+      terminal: { state: "done", status: "completed" as const },
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: "auto",
+      getStateMachine: () => terminalSession,
+    });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = await createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "follow_up_flow",
+        prompt: "New flow.",
+        states: [{ kind: "terminal", name: "done", status: "completed" }],
+      },
+      firstState: "done",
+    });
+
+    expect(result.terminate).toBe(true);
+    expect(result.details).toMatchObject({ type: "create_state_machine_definition" });
+  });
+
   test("accepts dynamically created definitions with required and optional input fields", async () => {
     const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
     const createDefinitionTool = tools.find(

@@ -257,7 +257,7 @@ export function recordStateFailed(
   error: string,
 ): StateMachineSession {
   const now = Date.now();
-  const terminal = { state, status: "failed" as const, reason: error };
+  const terminal = { state, status: "error" as const, reason: error };
   const kind = findState(stateMachine, state)?.kind;
   return {
     ...stateMachine,

@@ -909,16 +909,26 @@ export class TurnRunner {
       case "interrupted":
         return { type: "interrupted", state: { ...state, status: "interrupted" } };
       case "terminal":
-        // A state machine reaching ANY terminal (completed/failed/cancelled,
-        // incl. the auto-injected `cancelled` that `wont do` maps to) is a
-        // deliberate, successful turn outcome — not a user abort. Report
-        // turn-completion status as "completed" so the backend does not surface
-        // the "Error: cancelled — try again" system message. The terminal's own
-        // status survives on state.stateMachine.terminal.status (set by
-        // recordStateMachineCompleted), which is what the board column resolves
-        // from. Only an explicit user stop — which emits type:"interrupted" via
-        // interrupt() — can still surface the cancel message.
-        return completeTurn(state, "completed", result.result, result.error);
+        if (result.status === "error") {
+          // A runtime failure (poll timeout, unknown/invalid selected state,
+          // agent/script state failure, misconfigured-poll gate, or exhausted
+          // protocol-violation retries) is the ONLY state-machine outcome that
+          // fails the turn. The user-facing message rides on event.error; the
+          // same string is also recorded on state.stateMachine.terminal.reason
+          // by recordStateFailed, so the parent's acknowledgment turn and the
+          // board/relay see the identical reason.
+          return completeTurn(state, "failed", undefined, result.error);
+        }
+        // A deliberately selected terminal (completed/failed/cancelled, incl.
+        // the auto-injected `cancelled` that `wont do` maps to) is a
+        // successful turn outcome — not a user abort. Report turn-completion
+        // status "completed" so the backend never surfaces "Error: cancelled —
+        // try again". The machine's own status survives on
+        // state.stateMachine.terminal.status (set by recordStateMachineCompleted),
+        // which is what the board column resolves from. Only an explicit user
+        // stop — type:"interrupted" via interrupt() — surfaces the cancel
+        // message.
+        return completeTurn(state, "completed", result.result);
     }
   }
 
@@ -1020,7 +1030,14 @@ export class TurnRunner {
       workerResult,
       workerResult.outcome.state,
     );
-    if (followUp) return this.driveStateMachineResult(followUp, workerResult.outcome.state);
+    // On the acknowledgment turn the prior machine is already terminal, so a
+    // create_state_machine_definition here is legal follow-up work, not a
+    // violation — controllerResultFromWorkerResult returns it as a result.
+    // A plain-text reply returns undefined so the caller renders the original
+    // terminal with the parent's summary as the final assistant message.
+    if (followUp) {
+      return this.driveStateMachineResult(followUp, workerResult.outcome.state);
+    }
     return undefined;
   }
 
@@ -1062,17 +1079,17 @@ export class TurnRunner {
         workerResult,
         workerResult.outcome.state,
       );
-      if (!result) {
-        continue;
-      }
+      if (!result) continue;
       return result;
     }
 
-    return {
-      type: "terminal",
-      status: "failed",
-      error: "State completed, but the runner did not call select_state_machine_state.",
-    };
+    // The parent owed a select_state_machine_state after the state completed
+    // but never emitted one across the bounded retry budget. That is a runtime
+    // failure of the machine, so record an `error` terminal on the session.
+    return this.stateMachineController.failActiveSession(
+      this.stateMachineController.getSession()?.currentState ?? "",
+      "State completed, but the runner did not call select_state_machine_state.",
+    );
   }
 
   protected createStateAgentHandle(input: {
@@ -1352,55 +1369,54 @@ export class TurnRunner {
     return this.driveStateMachineResult(result, workerResult.outcome.state);
   }
 
+  /**
+   * Turns a parent worker turn's control output into the state-machine
+   * execution result the turn runner should drive next, or `undefined` when
+   * the parent emitted no control tool call. Whether that `undefined` is
+   * benign (a top-level agent turn just answering) or a violation (it owed a
+   * select_state_machine_state) is the caller's decision. A valid control
+   * action — select a state, ask the user, or create a machine (including a
+   * replaceActive reset of an active machine) — returns its result.
+   */
   private async controllerResultFromWorkerResult(
     workerResult: AgentWorkerResult,
     state: TurnState,
   ): Promise<StateMachineExecutionResult | undefined> {
-    if (workerResult.control.type === "none") return undefined;
-    if (workerResult.control.type === "ask_user_question") {
-      return { type: "ask", questions: workerResult.control.questions };
+    const control = workerResult.control;
+    if (control.type === "none") return undefined;
+    if (control.type === "ask_user_question") {
+      return { type: "ask", questions: control.questions };
     }
-    if (workerResult.control.type === "create_state_machine_definition") {
-      if (
-        this.stateMachineController.getSession() &&
-        !this.stateMachineController.getSession()?.terminal
-      ) {
-        return {
-          type: "terminal",
-          status: "failed",
-          error:
-            "Cannot create a new state-machine definition while the current state machine is still active.",
-        };
+    if (control.type === "create_state_machine_definition") {
+      // A create that reaches here was authorized by the tool: it only emits
+      // this control result when no machine is active OR the agent opted into
+      // replaceActive. So an active, non-terminal session at this point means
+      // the agent deliberately chose to replace it — supersede it (recording a
+      // `cancelled` terminal) before installing the new machine in its place.
+      const active = this.stateMachineController.getSession();
+      if (active && !active.terminal) {
+        this.stateMachineController.supersedeActiveSession(
+          `Superseded by a new state machine ("${control.definition.name}").`,
+        );
       }
 
-      const firstState =
-        workerResult.control.firstState ?? workerResult.control.definition.states[0]?.name ?? "";
+      const firstState = control.firstState ?? control.definition.states[0]?.name ?? "";
       this.stateMachineController.startSession({
         prompt: workerResult.outcome.type === "complete" ? (workerResult.outcome.result ?? "") : "",
-        definition: workerResult.control.definition,
+        definition: control.definition,
         currentState: firstState,
       });
-      return this.stateMachineController.runDecision({
-        state: firstState,
-      });
-    }
-
-    if (workerResult.control.type !== "select_state_machine_state") {
-      return {
-        type: "terminal",
-        status: "failed",
-        error: "Unsupported state-machine control result.",
-      };
+      return this.stateMachineController.runDecision({ state: firstState });
     }
 
     if (!this.stateMachineController.getSession() && typeof state.mode === "object") {
       this.stateMachineController.startSession({
         prompt: workerResult.outcome.type === "complete" ? (workerResult.outcome.result ?? "") : "",
         definition: state.mode as Exclude<TurnMode, "agent" | "auto">,
-        currentState: workerResult.control.decision.state,
+        currentState: control.decision.state,
       });
     }
-    return this.stateMachineController.runDecision(workerResult.control.decision);
+    return this.stateMachineController.runDecision(control.decision);
   }
 
   protected createTools(

@@ -1,10 +1,11 @@
-import type { TurnQuestion, TurnRunnerTerminalStatus } from "../types/protocol.js";
+import type { TurnQuestion } from "../types/protocol.js";
 import type {
   StateMachineAgentState,
   StateMachineDefinition,
   StateMachinePollState,
   StateMachineScriptState,
   StateMachineSession,
+  StateMachineTerminalResult,
   StateMachineTerminalState,
   StateMachineTimerState,
 } from "../types/state-machine.js";
@@ -41,7 +42,12 @@ import { applyStateOverride, type StateMachineRunnerDecision } from "./tools.js"
 
 export type StateMachineExecutionResult =
   | { type: "state_completed"; stateName: string; output?: unknown }
-  | { type: "terminal"; status: TurnRunnerTerminalStatus; result?: string; error?: string }
+  | {
+      type: "terminal";
+      status: StateMachineTerminalResult["status"];
+      result?: string;
+      error?: string;
+    }
   | { type: "ask"; questions: TurnQuestion[] }
   | { type: "sleep"; wakeAt: number }
   | { type: "interrupted" };
@@ -151,6 +157,20 @@ export class StateMachineController {
     };
   }
 
+  /**
+   * Records a runtime failure on the active session and returns the matching
+   * `error` terminal. Used by the turn runner when a protocol violation cannot
+   * be recovered (e.g. the parent exhausted its re-prompt budget without
+   * calling select_state_machine_state). Recording it here — rather than
+   * returning a terminal the runner never persists — keeps the failure on
+   * `session.terminal.reason` so the terminal acknowledgment turn and the
+   * board/relay see the same outcome the turn event reports.
+   */
+  failActiveSession(state: string, error: string): StateMachineExecutionResult {
+    this.session = recordStateFailed(this.requireSession(), state, error);
+    return { type: "terminal", status: "error", error };
+  }
+
   hasActiveWork(): boolean {
     return Boolean(this.activeRun);
   }
@@ -182,6 +202,32 @@ export class StateMachineController {
     currentState: string;
   }): void {
     this.session = createStateMachineSession(input.prompt, input.definition, input.currentState);
+  }
+
+  /**
+   * Supersedes the active session because the parent is replacing it with a
+   * brand-new state machine (a create_state_machine_definition with
+   * replaceActive: true issued while a machine is still running). Records a
+   * `cancelled` terminal and broadcasts the final snapshot so the superseded
+   * machine's board/relay card resolves instead of dangling at its last running
+   * state; the caller follows with `startSession` to install the replacement.
+   * Any in-flight state work is aborted first. No-op when there is no active,
+   * non-terminal session.
+   */
+  supersedeActiveSession(reason: string): void {
+    const session = this.session;
+    if (!session || session.terminal) return;
+    // interrupt() may rewrite this.session (recording an interrupted state for
+    // in-flight work), so read the current session after it, not the captured
+    // pre-interrupt reference.
+    this.interrupt("Replaced by a new state machine.");
+    const current = this.requireSession();
+    this.session = recordStateMachineCompleted(current, {
+      state: current.currentState ?? "",
+      status: "cancelled",
+      reason,
+    });
+    this.config.onSessionChanged?.(this.session);
   }
 
   interrupt(reason = "Interrupted"): void {
@@ -231,7 +277,7 @@ export class StateMachineController {
         this.session.currentState ?? decision.state,
         message,
       );
-      return { type: "terminal", status: "failed", error: message };
+      return { type: "terminal", status: "error", error: message };
     }
 
     // Terminal states ignore overrides/inputs — they just record their
@@ -305,7 +351,7 @@ export class StateMachineController {
       }
       if (terminal.type === "failed") {
         this.session = recordStateFailed(this.requireSession(), state.name, terminal.error);
-        return { type: "terminal", status: "failed", error: terminal.error };
+        return { type: "terminal", status: "error", error: terminal.error };
       }
 
       const output = { result: terminal.result };
@@ -347,7 +393,7 @@ export class StateMachineController {
       }
       const message = error instanceof Error ? error.message : String(error);
       this.session = recordStateFailed(this.requireSession(), state.name, message);
-      return { type: "terminal", status: "failed", error: message };
+      return { type: "terminal", status: "error", error: message };
     } finally {
       if (this.activeRun === run) this.activeRun = undefined;
       finished.resolve();
@@ -359,7 +405,7 @@ export class StateMachineController {
     if (state.timeoutMs !== undefined && elapsedMs >= state.timeoutMs) {
       const message = `Poll state "${state.name}" timed out after ${elapsedMs}ms.`;
       this.session = recordStateFailed(this.requireSession(), state.name, message);
-      return { type: "terminal", status: "failed", error: message };
+      return { type: "terminal", status: "error", error: message };
     }
 
     const command = renderTemplate(state.command, this.session?.currentInput ?? {});
@@ -392,7 +438,7 @@ export class StateMachineController {
       if (successStreak >= MISCONFIGURED_POLL_GATE_THRESHOLD) {
         const message = misconfiguredPollGateMessage(state.name, successStreak);
         this.session = recordStateFailed(this.requireSession(), state.name, message);
-        return { type: "terminal", status: "failed", error: message };
+        return { type: "terminal", status: "error", error: message };
       }
       this.session = recordStateCompleted(this.requireSession(), state.name, rawOutput);
       return { type: "state_completed", stateName: state.name, output: rawOutput };
