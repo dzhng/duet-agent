@@ -88,12 +88,14 @@ describe("misconfigured poll-gate guard (live)", () => {
         const terminal = await started.turn;
 
         // The runner tripped the guard and failed the relay rather than
-        // letting the orchestrator spin on the always-true gate.
+        // letting the orchestrator spin on the always-true gate. Tripping the
+        // gate is a runtime failure, so the turn fails (status "failed") and
+        // the machine records an `error` terminal against the poll state.
         expect(terminal.type).toBe("complete");
         expect(terminal.type === "complete" ? terminal.status : undefined).toBe("failed");
         expect(terminal.state.stateMachine?.terminal).toMatchObject({
           state: "await_review",
-          status: "failed",
+          status: "error",
         });
 
         // The failure message must be the actionable human-wait guidance, not

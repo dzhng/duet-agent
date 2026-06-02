@@ -206,17 +206,18 @@ describe("state-machine terminal acknowledgment", () => {
 
       expect(terminal.type).toBe("complete");
       if (terminal.type === "complete") {
-        // For a failed runtime terminal the public `terminal.result` is
+        // For a runtime-error terminal the public `terminal.result` is
         // not set — the runner surfaces `error` plus the controller's
         // terminal status and leaves `result` undefined. The parent's
         // acknowledgment reply lives in the parent transcript instead.
         const assistantTexts = allAssistantText(terminal.state.agent?.messages ?? []);
         expect(assistantTexts).toContain("RUNTIME_FAILURE_ACK");
         expect(assistantTexts).toContain("always_fails");
-        // The state-machine session itself ended as failed; the parent
-        // turn's acknowledgment reply did not change that — the public
-        // turn status preserves the failure.
-        expect(terminal.state.stateMachine?.terminal?.status).toBe("failed");
+        // The state-machine session itself ended as a runtime `error` (the
+        // script state exited non-zero); the parent's acknowledgment reply
+        // did not change that. Runtime failures use `error`, distinct from a
+        // deliberately selected `failed` terminal.
+        expect(terminal.state.stateMachine?.terminal?.status).toBe("error");
         expect(terminal.state.stateMachine?.terminalAcknowledged).toBe(true);
       }
     },
