@@ -191,6 +191,58 @@ export function recordStateSleep(
   };
 }
 
+/**
+ * Threshold for the misconfigured poll-gate heuristic: how many back-to-back
+ * successful completions of the same poll state — with no other state running
+ * in between — we treat as a runaway always-succeeds poll rather than
+ * legitimate fast polling. Kept small but >1 so a poll that genuinely
+ * completes once and is re-selected once does not trip the guard.
+ */
+export const MISCONFIGURED_POLL_GATE_THRESHOLD = 3;
+
+/**
+ * Count how many times in a row the given poll state has already completed
+ * successfully with no *other* state running in between.
+ *
+ * Why this shape catches the footgun without false positives: a healthy poll
+ * either exits non-success — which records a sleep in `progress`, never a
+ * `state_completed` in `history`, so it cannot inflate this count — or it
+ * eventually drives the machine into a different state, whose event breaks the
+ * streak. The only way to accumulate consecutive same-poll completions is an
+ * always-exit-0 command (e.g. `echo waiting for review`) being re-selected as
+ * the same gate, which is exactly the hot-loop we want to surface. The
+ * current in-flight success is not yet recorded when the controller calls
+ * this, so the returned count reflects only prior completions.
+ */
+export function consecutivePollGateSuccesses(
+  stateMachine: StateMachineSession,
+  pollName: string,
+): number {
+  let streak = 0;
+  for (let i = stateMachine.history.length - 1; i >= 0; i--) {
+    const event = stateMachine.history[i];
+    if (event.type === "state_completed") {
+      if (event.state !== pollName) break;
+      streak++;
+      continue;
+    }
+    // Events naming this same poll (its own selection/run cycle) are noise
+    // between two of its completions; an event naming a *different* state
+    // means the machine actually moved on, so the streak is over.
+    if (
+      (event.type === "state_started" ||
+        event.type === "state_failed" ||
+        event.type === "state_interrupted" ||
+        event.type === "state_asked_user" ||
+        event.type === "state_definition_updated") &&
+      event.state !== pollName
+    ) {
+      break;
+    }
+  }
+  return streak;
+}
+
 export function elapsedSinceStateStarted(
   stateMachine: StateMachineSession | undefined,
   state: string,
