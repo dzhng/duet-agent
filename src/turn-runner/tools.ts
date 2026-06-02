@@ -147,7 +147,7 @@ const agentOverrideSchema = Type.Partial(
     }),
     cwd: Type.String({
       description:
-        "Replacement working directory for this sub-agent's coding tools (bash, read, write, edit).",
+        "Replacement working directory for this sub-agent's coding tools (bash, read, write, edit). Set this whenever the work happens outside the session cwd — a git worktree, clone, or scratch dir a previous state created — instead of telling the sub-agent to `cd` in the prompt; the tools start here, so a path written into the prompt does not redirect them.",
     }),
     inputSchema: Type.Record(Type.String(), Type.Any(), {
       description:
@@ -159,7 +159,9 @@ const agentOverrideSchema = Type.Partial(
 const scriptOverrideSchema = Type.Partial(
   Type.Object({
     command: Type.String({ description: "Replacement shell command for this script state." }),
-    cwd: Type.String({ description: "Replacement working directory for the command." }),
+    cwd: Type.String({
+      description: "Replacement working directory for the command.",
+    }),
     timeoutMs: Type.Number({ description: "Replacement command timeout in milliseconds." }),
     successCodes: Type.Array(Type.Number(), {
       description: "Replacement exit codes treated as successful completion.",
@@ -181,7 +183,9 @@ const pollOverrideSchema = Type.Partial(
     command: Type.String({
       description: "Replacement shell command for one poll attempt.",
     }),
-    cwd: Type.String({ description: "Replacement working directory for the poll command." }),
+    cwd: Type.String({
+      description: "Replacement working directory for the poll command.",
+    }),
     successCodes: Type.Array(Type.Number(), {
       description: "Replacement exit codes that mean this poll attempt found a result.",
     }),
@@ -247,7 +251,7 @@ const agentStateSchema = Type.Object({
   cwd: Type.Optional(
     Type.String({
       description:
-        "Working directory for this sub-agent's coding tools. Defaults to the state-machine session cwd.",
+        "Working directory for this sub-agent's coding tools (bash, read, write, edit). Set this whenever the work happens outside the session cwd — a git worktree, clone, or scratch dir a previous state created — instead of telling the sub-agent to `cd` in the prompt; the tools start here, so a path written into the prompt does not redirect them. Defaults to the state-machine session cwd.",
     }),
   ),
 });
@@ -258,7 +262,11 @@ const scriptStateSchema = Type.Object({
   command: Type.String({
     description: "Shell command to execute. May use templates like {{ input.email }}.",
   }),
-  cwd: Type.Optional(Type.String({ description: "Working directory for the command." })),
+  cwd: Type.Optional(
+    Type.String({
+      description: "Working directory for the command. Defaults to the state-machine session cwd.",
+    }),
+  ),
   timeoutMs: Type.Optional(Type.Number({ description: "Command timeout in milliseconds." })),
   successCodes: Type.Optional(
     Type.Array(Type.Number(), {
@@ -281,7 +289,12 @@ const pollStateSchema = Type.Object({
     description:
       "Shell command for one poll attempt. Return non-empty JSON only when polling found a result.",
   }),
-  cwd: Type.Optional(Type.String({ description: "Working directory for the poll command." })),
+  cwd: Type.Optional(
+    Type.String({
+      description:
+        "Working directory for the poll command. Defaults to the state-machine session cwd.",
+    }),
+  ),
   successCodes: Type.Optional(
     Type.Array(Type.Number(), {
       description: "Exit codes that mean this poll attempt found a result.",
@@ -989,6 +1002,8 @@ function createSelectStateTool(
       Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt or wakeAfterMs (exactly one).
 
       Carry forward what the orchestrator now knows. Each agent state runs in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — it only sees the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: the sub-agent has no way to read those findings.
+
+      The working directory is part of that carry-forward, and the most common thing orchestrators get wrong. The moment a state operates anywhere other than the session cwd — a git worktree, clone, sub-package, or scratch directory whose path an earlier state returned — set \`override.cwd\` (agent states) or the script/poll \`cwd\` to that path. Do this aggressively and by default for any out-of-tree work rather than waiting for the sub-agent to orient itself. Do NOT convey the location by writing "cd into /path" or "work in the worktree at /path" in the prompt: a sub-agent's coding tools (bash, read, write, edit) start in the \`cwd\` you set, not wherever the prompt mentions, so an inlined path leaves the tools pointed at the wrong tree while the narration reads correct. The path almost always comes from a previous state's output (e.g. a worktree path printed by an implement step) — capture it and pass it as \`override.cwd\` on that transition.
 
       Overrides persist by default. When you pass \`override\`, the merged state (prompt, command, schedule — whichever fields you set) is written back into the active definition, so every future run of that state uses the tuned version. This is the right shape when you are tightening a sub-agent prompt that hallucinated, fixing a script command that misbehaved, or tuning poll/timer cadence. Set \`persistOverride: false\` when you want a one-shot variation that does not commit — for example, probing a different prompt to see if the sub-agent recovers before deciding whether to keep the change. Persistence is a no-op for terminal states and for overrides whose \`kind\` does not match the target state's kind (in that case the override itself is ignored).
 
