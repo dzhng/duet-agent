@@ -909,7 +909,16 @@ export class TurnRunner {
       case "interrupted":
         return { type: "interrupted", state: { ...state, status: "interrupted" } };
       case "terminal":
-        return completeTurn(state, result.status, result.result, result.error);
+        // A state machine reaching ANY terminal (completed/failed/cancelled,
+        // incl. the auto-injected `cancelled` that `wont do` maps to) is a
+        // deliberate, successful turn outcome — not a user abort. Report
+        // turn-completion status as "completed" so the backend does not surface
+        // the "Error: cancelled — try again" system message. The terminal's own
+        // status survives on state.stateMachine.terminal.status (set by
+        // recordStateMachineCompleted), which is what the board column resolves
+        // from. Only an explicit user stop — which emits type:"interrupted" via
+        // interrupt() — can still surface the cancel message.
+        return completeTurn(state, "completed", result.result, result.error);
     }
   }
 
