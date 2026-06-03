@@ -62,6 +62,7 @@ import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
 import {
   createRecallMemorySystemPromptLayer,
   createSourceOfTruthSystemPromptLayer,
+  createStateAgentSystemPromptLayer,
   createStateMachineSystemPromptLayer,
 } from "./prompts.js";
 import {
@@ -117,6 +118,8 @@ export interface AgentWorkerInput {
 
 export interface AgentConfigInput {
   state: TurnState;
+  /** System-prompt layer placed before the host systemInstructions; see createSystemPromptWithAppendedLayers. */
+  prependSystemPrompt?: string;
   appendSystemPrompt?: string;
   skills?: Skill[];
   tools: AgentTool[];
@@ -1167,6 +1170,11 @@ export class TurnRunner {
     const agent = this.createAgent(
       {
         state,
+        // Lead with the worker identity so it is the sub-agent's primary role,
+        // ahead of the inherited chat-assistant persona that would otherwise
+        // pull it into "there's no user message here" mode. The per-state
+        // systemPrompt refines that identity, so it stays an append.
+        prependSystemPrompt: createStateAgentSystemPromptLayer(),
         appendSystemPrompt: input.state.systemPrompt,
         skills: stateSkills,
         // Per-state cwd lets one agent state operate on a different
@@ -1892,6 +1900,7 @@ export class TurnRunner {
         model,
         thinkingLevel: options.thinkingLevel ?? "medium",
         systemPrompt: this.createBaseSystemPromptWithAppendedLayers({
+          prepend: [input.prependSystemPrompt],
           append: [input.appendSystemPrompt],
           skills: input.skills,
         }),
@@ -2031,6 +2040,7 @@ export class TurnRunner {
   }
 
   protected createBaseSystemPromptWithAppendedLayers(input?: {
+    prepend?: Array<string | undefined>;
     append?: Array<string | undefined>;
     skills?: readonly Skill[];
   }): string {

@@ -40,9 +40,14 @@ export function createSystemPromptWithAppendedLayers(input: {
   config: TurnRunnerConfig;
   skills: readonly Skill[];
   systemPromptFiles: string[];
+  // Layers placed before the host's systemInstructions, so they establish the
+  // agent's primary role ahead of host-provided instructions.
+  prepend?: Array<string | undefined>;
+  // Layers placed after the base prompt (files/tools/cwd/skills).
   append: Array<string | undefined>;
 }): string {
   return [
+    ...(input.prepend ?? []),
     input.config.systemInstructions,
     ...input.systemPromptFiles,
     TOOL_EXECUTION_SYSTEM_PROMPT,
@@ -53,6 +58,41 @@ export function createSystemPromptWithAppendedLayers(input: {
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/**
+ * Identity-anchoring layer prepended to every state-machine *sub-agent*
+ * (agent-state) system prompt.
+ *
+ * A state agent is created in `agent` mode and inherits the host's full
+ * `systemInstructions` persona — which, in production, is the Duet
+ * chat-assistant identity ("respond to the user's latest message in this
+ * thread; if there is no new message, don't invent work"). Nothing else in
+ * the base prompt tells the sub-agent it is *not* a live chat assistant, so
+ * when its task involves empty threads, missing messages, or repro fixtures
+ * about absent user input, the sub-agent can stop treating that material as
+ * its *subject* and start treating it as its *own* situation. It then flips
+ * into chat-agent mode, hunts for a "missing" user message, and gives up with
+ * "I don't see a new message to act on" instead of finishing its task — and a
+ * parent that believes that report can cancel the whole relay.
+ *
+ * This layer re-anchors the sub-agent's identity: its task lives entirely in
+ * the prompt it was handed, there is no live thread to service, and any
+ * empty-/missing-message material it sees is data to operate on, never a
+ * reason to stand down. It is placed *before* `systemInstructions` so the
+ * worker identity is the sub-agent's primary role and the inherited chat
+ * persona reads as secondary context, not the top-level instruction.
+ */
+export function createStateAgentSystemPromptLayer(): string {
+  return dedent`
+    <state_agent_identity>
+    You are a sub-agent executing a single state of a state machine, not a chat assistant in a live conversation. Your complete and only task is the instruction you were handed in this turn's prompt. There is no separate "latest user message" to look for, no thread to pull, and no one to wait on — the prompt IS the task.
+
+    Carry that identity all the way through. If your task references an empty thread, a missing or blank user message, zero tool calls, a quiet channel, or any other kind of absent input — whether in instructions, fixtures, transcripts, logs, or test data — that material is the SUBJECT you are working on, never a description of your own situation. Do not adopt it as your own context, do not conclude there is "nothing to act on," and never reply that you don't see a message to respond to. You always have a task: the one in this prompt.
+
+    Do the task and report what you did and what you found as your final message. If you are genuinely blocked, say exactly what blocked you and what you tried — that is itself completing the task. Standing down because your context resembles an empty chat is the one failure mode that is never correct here.
+    </state_agent_identity>
+  `;
 }
 
 export function createStateMachineSystemPromptLayer(input: {

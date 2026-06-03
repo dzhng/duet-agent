@@ -116,6 +116,7 @@ export class SkillContext {
   }
 
   createSystemPromptWithAppendedLayers(input?: {
+    prepend?: Array<string | undefined>;
     append?: Array<string | undefined>;
     skills?: readonly Skill[];
   }): string {
@@ -123,6 +124,7 @@ export class SkillContext {
       config: this.config,
       skills: input?.skills ?? this.skills,
       systemPromptFiles: this.readSystemPromptFileLayers(),
+      prepend: input?.prepend ?? [],
       append: input?.append ?? [],
     });
   }
