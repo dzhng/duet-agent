@@ -2,7 +2,7 @@ import { describe, expect } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { buildLayout } from "../src/tui/layout.js";
 import { COLORS } from "../src/tui/theme.js";
-import { TranscriptWriter } from "../src/tui/transcript-writer.js";
+import { MAX_TRANSCRIPT_RENDERABLES, TranscriptWriter } from "../src/tui/transcript-writer.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 /**
@@ -21,9 +21,7 @@ import { testIfDocker } from "./helpers/docker-only.js";
  * scrolled up so history they are reading is never yanked out from under them.
  */
 describe("transcript renderable cap", () => {
-  // Mirrors MAX_TRANSCRIPT_RENDERABLES in transcript-writer.ts; the constant
-  // is intentionally private, so we assert against the same generous bound.
-  const CAP = 1500;
+  const CAP = MAX_TRANSCRIPT_RENDERABLES;
 
   testIfDocker("bottom-pinned streaming caps live renderables", async () => {
     const { renderer, renderOnce } = await createTestRenderer({

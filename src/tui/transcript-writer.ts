@@ -23,7 +23,7 @@ import type { TranscriptEntry } from "./transcript-log.js";
  * is invisible in normal use while keeping a steady-state frame well under
  * the responsiveness budget.
  */
-const MAX_TRANSCRIPT_RENDERABLES = 1500;
+export const MAX_TRANSCRIPT_RENDERABLES = 1500;
 
 export interface TranscriptWriterOptions {
   /** Reads the last drag-selected text; surfaced in `/diag` key dumps so we
