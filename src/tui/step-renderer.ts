@@ -1,4 +1,4 @@
-import { type CliRenderer, type ScrollBoxRenderable, TextRenderable } from "@opentui/core";
+import { type CliRenderer, TextRenderable } from "@opentui/core";
 import { formatElapsed, runningMarker, StatusController } from "./status-controller.js";
 import { SIDEBAR_WIDTH } from "./sidebar.js";
 import { COLORS } from "./theme.js";
@@ -40,7 +40,6 @@ interface ToolBlock {
 
 export interface StepRendererOptions {
   renderer: CliRenderer;
-  transcript: ScrollBoxRenderable;
   transcriptWriter: TranscriptWriter;
   statusController: StatusController;
   /** Invoked at the start of `renderStep` so a stale question picker
@@ -210,7 +209,7 @@ export class StepRenderer {
       } satisfies StreamingBlock);
     if (!block) {
       this.opts.transcriptWriter.beginBlock();
-      this.opts.transcript.add(next.line);
+      this.opts.transcriptWriter.mount(next.line);
     }
     next.body += delta;
     updateStreamingBlock(next);
@@ -252,7 +251,7 @@ export class StepRenderer {
       fg,
     });
     this.opts.transcriptWriter.beginBlock();
-    this.opts.transcript.add(line);
+    this.opts.transcriptWriter.mount(line);
     const block: ToolBlock = {
       line,
       header: formatted.header,
