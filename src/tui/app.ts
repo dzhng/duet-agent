@@ -203,7 +203,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const stepRenderer = new StepRenderer({
     renderer,
-    transcript: ui.transcript,
     transcriptWriter,
     statusController,
     onStepStart: () => {

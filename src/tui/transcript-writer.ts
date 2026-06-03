@@ -7,6 +7,24 @@ import {
 import { COLORS } from "./theme.js";
 import type { TranscriptEntry } from "./transcript-log.js";
 
+/**
+ * Hard cap on the number of renderables kept in the transcript ScrollBox.
+ *
+ * OpenTUI runs a full Yoga layout pass over every transcript child on each
+ * frame, so an unbounded content tree makes per-frame layout O(n). Long
+ * sessions append thousands of lines; once the tree grows tall enough, a
+ * single frame (or a single streaming append, which re-lays out the whole
+ * tree) costs hundreds of milliseconds to over a second, which starves the
+ * event loop and makes mouse-wheel scrolling stop responding entirely — the
+ * v0.1.171 long-transcript freeze. Capping the live node count keeps layout
+ * cost constant regardless of session length.
+ *
+ * 1500 rows is a generous scrollback bound — dozens of screens — so eviction
+ * is invisible in normal use while keeping a steady-state frame well under
+ * the responsiveness budget.
+ */
+export const MAX_TRANSCRIPT_RENDERABLES = 1500;
+
 export interface TranscriptWriterOptions {
   /** Reads the last drag-selected text; surfaced in `/diag` key dumps so we
    *  can correlate "key fired" with "selection state at that moment". */
@@ -55,7 +73,7 @@ export class TranscriptWriter {
     if (this.destroyed) return undefined;
     try {
       const line = new TextRenderable(this.renderer, { content, fg });
-      this.transcript.add(line);
+      this.mount(line);
       return line;
     } catch (error) {
       if (isTextBufferDestroyedError(error)) {
@@ -91,8 +109,51 @@ export class TranscriptWriter {
    *  space for empty content so the renderable still occupies a row. */
   addLine(content: string, fg: string): TextRenderable {
     const line = new TextRenderable(this.renderer, { content: content || " ", fg });
-    this.transcript.add(line);
+    this.mount(line);
     return line;
+  }
+
+  /** Mount a renderable into the transcript ScrollBox and enforce the
+   *  renderable cap. Every transcript write — this writer's own lines plus
+   *  the step renderer's streaming / tool-call lines — funnels through here
+   *  so the eviction policy lives in exactly one place. */
+  mount(line: TextRenderable): void {
+    this.transcript.add(line);
+    this.evictOverflow();
+  }
+
+  /** Drop the oldest renderables once the tree grows past
+   *  {@link MAX_TRANSCRIPT_RENDERABLES} so per-frame Yoga layout stays O(1)
+   *  in session length (see the constant's doc for the freeze it prevents).
+   *
+   *  Eviction only runs while the view is pinned to the bottom. When the
+   *  user has scrolled up to read history, removing lines from the top
+   *  shifts the content under the viewport and yanks what they are reading;
+   *  deferring until they return to the bottom keeps scrolled-up reading
+   *  stable. The freeze this guards against happens during bottom-pinned
+   *  streaming, so trimming there is both sufficient and invisible. */
+  private evictOverflow(): void {
+    if (!this.isPinnedToBottom()) return;
+    const children = this.transcript.getChildren();
+    const overflow = children.length - MAX_TRANSCRIPT_RENDERABLES;
+    if (overflow <= 0) return;
+    // Snapshot the victims before mutating the live children array.
+    for (const victim of children.slice(0, overflow)) {
+      this.transcript.remove(victim.id);
+      victim.destroyRecursively();
+    }
+  }
+
+  /** Whether the transcript is scrolled to (or pinned at) the bottom, using
+   *  the same `scrollTop >= maxScrollTop` test OpenTUI applies internally for
+   *  `stickyStart: "bottom"`. Reads last-rendered scroll geometry, which is
+   *  exactly the "was the user at the bottom" signal eviction needs. */
+  private isPinnedToBottom(): boolean {
+    const maxScrollTop = Math.max(
+      0,
+      this.transcript.scrollHeight - this.transcript.viewport.height,
+    );
+    return this.transcript.scrollTop >= maxScrollTop;
   }
 
   // ---- transcript log ------------------------------------------------------
