@@ -125,12 +125,18 @@ describe("state cwd resolves against the runner base cwd (--workDir)", () => {
     expect(await bashPwd(runner, ".")).toBe(workDir);
   });
 
-  testIfDocker("agent coding tools resolve a relative subdirectory cwd against config.cwd", async () => {
-    const workDir = makeWorkDir();
-    mkdirSync(join(workDir, "nested"));
-    const runner = new CwdProbeRunner({ skillDiscovery: { includeDefaults: false }, cwd: workDir });
-    expect(await bashPwd(runner, "nested")).toBe(join(workDir, "nested"));
-  });
+  testIfDocker(
+    "agent coding tools resolve a relative subdirectory cwd against config.cwd",
+    async () => {
+      const workDir = makeWorkDir();
+      mkdirSync(join(workDir, "nested"));
+      const runner = new CwdProbeRunner({
+        skillDiscovery: { includeDefaults: false },
+        cwd: workDir,
+      });
+      expect(await bashPwd(runner, "nested")).toBe(join(workDir, "nested"));
+    },
+  );
 
   testIfDocker("an absolute state cwd is honored verbatim", async () => {
     const workDir = makeWorkDir();
