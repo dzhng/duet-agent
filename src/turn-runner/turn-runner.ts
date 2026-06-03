@@ -73,6 +73,7 @@ import {
 import {
   createDefaultTurnRunnerTools,
   createTurnRunnerTools,
+  resolveStateCwd,
   formatCarriedTodosReminder,
   formatStateMachineTerminalAcknowledgmentPrompt,
   type RecallMemoryToolStorage,
@@ -1425,7 +1426,7 @@ export class TurnRunner {
   ): {
     tools: AgentTool[];
   } {
-    const cwd = cwdOverride ?? this.config.cwd ?? process.cwd();
+    const cwd = resolveStateCwd(cwdOverride, this.config.cwd ?? process.cwd());
     const todoStorage = {
       getTodos: () => this.getTodos(),
       setTodos: (todos: TurnTodo[]) => {

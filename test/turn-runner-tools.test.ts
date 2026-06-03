@@ -218,6 +218,38 @@ describe("TurnRunner tools", () => {
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
   });
 
+  test("rejects a definition whose state cwd does not exist", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = createDefinitionTool.execute("tool-1", {
+      definition: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          {
+            kind: "agent",
+            name: "implement",
+            prompt: "Do the work.",
+            cwd: "/nonexistent/worktree/path",
+          },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+      firstState: "implement",
+    });
+
+    await expect(result).rejects.toThrow(
+      'cwd "/nonexistent/worktree/path" for state "implement" does not exist',
+    );
+    // The creation-time guidance points the model at the omit-now/set-later
+    // pattern rather than the selection-time "already created" phrasing.
+    await expect(result).rejects.toThrow("omit cwd here and set it via override.cwd");
+  });
+
   test("rejects create-while-active without replaceActive, naming the active machine", async () => {
     const activeSession = {
       definition: {
@@ -1033,6 +1065,94 @@ describe("TurnRunner tools", () => {
     await expect(result).rejects.toThrow(
       "Unknown state: invented_state. Valid states: research, done",
     );
+  });
+
+  test("rejects an override whose kind does not match the selected state", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          { kind: "agent", name: "research", prompt: "Research the prospect." },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = selectStateTool.execute("tool-1", {
+      decision: {
+        state: "research",
+        override: { kind: "script", state: { command: "echo nope" } },
+      },
+    });
+
+    await expect(result).rejects.toThrow(
+      'Override kind "script" does not match state "research", which is a "agent" state.',
+    );
+  });
+
+  test("rejects a selected state whose cwd does not exist", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          { kind: "agent", name: "research", prompt: "Research the prospect." },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = selectStateTool.execute("tool-1", {
+      decision: {
+        state: "research",
+        override: { kind: "agent", state: { cwd: "/nonexistent/worktree/path" } },
+      },
+    });
+
+    await expect(result).rejects.toThrow(
+      'cwd "/nonexistent/worktree/path" for state "research" does not exist',
+    );
+  });
+
+  test("accepts a matching-kind override pointing at an existing cwd", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "outreach",
+        prompt: "Use for outreach work.",
+        states: [
+          { kind: "agent", name: "research", prompt: "Research the prospect." },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+
+    expect(selectStateTool).toBeDefined();
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = await selectStateTool.execute("tool-1", {
+      decision: {
+        state: "research",
+        override: { kind: "agent", state: { prompt: "Tuned prompt.", cwd: process.cwd() } },
+      },
+    });
+
+    expect(result.details).toMatchObject({
+      type: "select_state_machine_state",
+      decision: { state: "research" },
+    });
   });
 
   test("rejects invalid states from dynamically created auto-mode definitions", async () => {

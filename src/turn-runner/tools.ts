@@ -7,6 +7,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Ajv } from "ajv";
 import dedent from "dedent";
+import { statSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 import { toXML } from "../lib/xml.js";
@@ -554,14 +556,14 @@ export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] 
   }
 
   if (input.mode === "auto") {
-    tools.push(createStateMachineDefinitionTool(input.getStateMachine));
+    tools.push(createStateMachineDefinitionTool(input.getStateMachine, input.cwd));
   }
 
   const getDefinition =
     typeof input.mode === "object"
       ? () => input.mode as StateMachineDefinition
       : input.getDefinition;
-  tools.push(createSelectStateTool(getDefinition));
+  tools.push(createSelectStateTool(getDefinition, input.cwd));
   tools.push(createCurrentStateMachineStateTool(input.getStateMachine, input.getActiveStateOutput));
   return tools;
 }
@@ -936,6 +938,9 @@ export function formatCarriedTodosReminder(todos: TurnTodo[] | undefined): strin
 
 function createStateMachineDefinitionTool(
   getStateMachine: (() => StateMachineSession | undefined) | undefined,
+  // Base directory used to resolve a relative state `cwd` before checking it
+  // exists, matching the resolution used when the state actually runs.
+  baseCwd: string,
 ): AgentTool<typeof createDefinitionSchema> {
   return {
     name: "create_state_machine_definition",
@@ -961,6 +966,8 @@ function createStateMachineDefinitionTool(
 
       State prompts and script commands may use \`{{ input.foo }}\` templates — declare \`inputSchema\` on those states and pass matching \`input\` when selecting them via select_state_machine_state. Agent states may set \`allowedSkills\` to restrict the skill set for that sub-agent.
 
+      A per-state \`cwd\` must resolve to an existing directory at creation time, and a relative \`cwd\` resolves against the session working directory shown in the \`<cwd>\` block of the system prompt. If an earlier state creates that directory at runtime (a worktree, clone, or scratch dir), omit \`cwd\` here and set it via \`override.cwd\` on select_state_machine_state once the directory exists — do not point \`cwd\` at a path that does not exist yet.
+
       Only use this when no state machine is active or the previous one has reached a terminal state; otherwise call select_state_machine_state. Creating a definition while a machine is still active is rejected unless you set \`replaceActive: true\` to deliberately cancel the running machine and replace it.
     `,
     parameters: createDefinitionSchema,
@@ -977,7 +984,7 @@ function createStateMachineDefinitionTool(
       if (active && !active.terminal && params.replaceActive !== true) {
         throw new Error(activeStateMachineCreateError(active));
       }
-      assertValidDefinition(params.definition);
+      assertValidDefinition(params.definition, baseCwd);
       const result: TurnRunnerControlResult = {
         type: "create_state_machine_definition",
         definition: params.definition,
@@ -994,6 +1001,11 @@ function createStateMachineDefinitionTool(
 
 function createSelectStateTool(
   getDefinition: (() => StateMachineDefinition | undefined) | undefined,
+  // Base directory used to resolve a relative state/override `cwd` before
+  // checking it exists. Mirrors how the runner resolves a per-state cwd
+  // (`cwdOverride ?? config.cwd ?? process.cwd()`) so validation rejects the
+  // same missing directory the sub-agent's tools would otherwise start in.
+  baseCwd: string,
 ): AgentTool<typeof selectStateSchema> {
   return {
     name: "select_state_machine_state",
@@ -1003,9 +1015,9 @@ function createSelectStateTool(
 
       Carry forward what the orchestrator now knows. Each agent state runs in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — it only sees the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: the sub-agent has no way to read those findings.
 
-      The working directory is part of that carry-forward, and the most common thing orchestrators get wrong. The moment a state operates anywhere other than the session cwd — a git worktree, clone, sub-package, or scratch directory whose path an earlier state returned — set \`override.cwd\` (agent states) or the script/poll \`cwd\` to that path. Do this aggressively and by default for any out-of-tree work rather than waiting for the sub-agent to orient itself. Do NOT convey the location by writing "cd into /path" or "work in the worktree at /path" in the prompt: a sub-agent's coding tools (bash, read, write, edit) start in the \`cwd\` you set, not wherever the prompt mentions, so an inlined path leaves the tools pointed at the wrong tree while the narration reads correct. The path almost always comes from a previous state's output (e.g. a worktree path printed by an implement step) — capture it and pass it as \`override.cwd\` on that transition.
+      The working directory is part of that carry-forward, and the most common thing orchestrators get wrong. The moment a state operates anywhere other than the session cwd — a git worktree, clone, sub-package, or scratch directory whose path an earlier state returned — set \`override.cwd\` (agent states) or the script/poll \`cwd\` to that path. Do this aggressively and by default for any out-of-tree work rather than waiting for the sub-agent to orient itself. Do NOT convey the location by writing "cd into /path" or "work in the worktree at /path" in the prompt: a sub-agent's coding tools (bash, read, write, edit) start in the \`cwd\` you set, not wherever the prompt mentions, so an inlined path leaves the tools pointed at the wrong tree while the narration reads correct. The path almost always comes from a previous state's output (e.g. a worktree path printed by an implement step) — capture it and pass it as \`override.cwd\` on that transition. A relative cwd resolves against the session working directory shown in the \`<cwd>\` block of the system prompt, so prefer an absolute path for a worktree or clone that lives outside it.
 
-      Overrides persist by default. When you pass \`override\`, the merged state (prompt, command, schedule — whichever fields you set) is written back into the active definition, so every future run of that state uses the tuned version. This is the right shape when you are tightening a sub-agent prompt that hallucinated, fixing a script command that misbehaved, or tuning poll/timer cadence. Set \`persistOverride: false\` when you want a one-shot variation that does not commit — for example, probing a different prompt to see if the sub-agent recovers before deciding whether to keep the change. Persistence is a no-op for terminal states and for overrides whose \`kind\` does not match the target state's kind (in that case the override itself is ignored).
+      Overrides persist by default. When you pass \`override\`, the merged state (prompt, command, schedule — whichever fields you set) is written back into the active definition, so every future run of that state uses the tuned version. This is the right shape when you are tightening a sub-agent prompt that hallucinated, fixing a script command that misbehaved, or tuning poll/timer cadence. Set \`persistOverride: false\` when you want a one-shot variation that does not commit — for example, probing a different prompt to see if the sub-agent recovers before deciding whether to keep the change. Persistence is a no-op for terminal states. \`override.kind\` must match the target state's kind; a mismatch is rejected outright (rather than silently dropping the override), and a per-state \`cwd\` that does not resolve to an existing directory is rejected too — fix the kind or the path before re-selecting.
 
       Selecting a terminal state ends the state machine. Every definition is guaranteed to have the auto-injected \`failed\` and \`cancelled\` terminals available, so to fail or cancel, just select one of those by name and optionally attach a \`reason\`. After a terminal you will be woken once more for an acknowledgment turn — the runner re-prompts you with the terminal details (state, status, reason) so you can reply to the user in plain text and, if appropriate, kick off a follow-up state machine via create_state_machine_definition. Do not call select_state_machine_state on that acknowledgment turn; the state machine is already terminal.
     `,
@@ -1019,7 +1031,7 @@ function createSelectStateTool(
         persistOverride: params.decision.persistOverride,
         input: params.decision.input,
       };
-      assertValidSelectedState(decision, definition);
+      assertValidSelectedState(decision, definition, baseCwd);
 
       const result: TurnRunnerControlResult = { type: "select_state_machine_state", decision };
       return {
@@ -1066,6 +1078,7 @@ function createCurrentStateMachineStateTool(
 function assertValidSelectedState(
   decision: StateMachineRunnerDecision,
   definition: StateMachineDefinition | undefined,
+  baseCwd: string,
 ): void {
   if (!definition) return;
 
@@ -1081,10 +1094,72 @@ function assertValidSelectedState(
   // decision is always accepted.
   if (selectedState.kind === "terminal") return;
 
+  // A kind-mismatched override is silently discarded by applyStateOverride —
+  // prompt, cwd, and all — leaving the sub-agent to run with the original
+  // definition state instead of the tuned one the caller thought they sent.
+  // Reject it loudly so the caller fixes the override kind rather than
+  // shipping work the runner quietly ignored.
+  if (decision.override && decision.override.kind !== selectedState.kind) {
+    throw new Error(
+      `Override kind "${decision.override.kind}" does not match state "${selectedState.name}", which is a "${selectedState.kind}" state. Set override.kind to "${selectedState.kind}" so the override is applied instead of silently dropped.`,
+    );
+  }
+
   const effectiveState = applyStateOverride(selectedState, decision.override);
   assertValidStateInputSchema(effectiveState);
   assertValidStateSchedule(effectiveState);
   assertValidStateInput(effectiveState, decision.input);
+  assertValidStateCwd(effectiveState, baseCwd, SELECT_CWD_GUIDANCE);
+}
+
+// Appended to the "cwd does not exist" error depending on where validation
+// runs. At selection time the directory should already exist (an earlier
+// state had a chance to create it). At creation time it often does not exist
+// yet, so the right move is usually to omit cwd now and set it via
+// override.cwd on select_state_machine_state once the directory is created.
+const SELECT_CWD_GUIDANCE =
+  "Set the override/state cwd to a directory that exists — typically the worktree or clone an earlier state created.";
+const CREATE_CWD_GUIDANCE =
+  "If an earlier state creates this directory at runtime, omit cwd here and set it via override.cwd on select_state_machine_state once the directory exists. Otherwise point it at a directory that already exists.";
+
+// Resolve a per-state `cwd` (from a state definition or an override) against
+// the runner's base cwd. A relative path resolves against `baseCwd` — the
+// runner's config.cwd, set by --workDir, falling back to process.cwd() — so it
+// lands in the directory the `<cwd>` system-prompt block advertises rather than
+// the launching process's cwd, which Node would otherwise use. Used by both the
+// runtime (agent/script/poll execution) and the select/create validators so a
+// cwd is resolved identically wherever it is checked or run. `undefined`
+// (no per-state cwd) falls back to the base.
+export function resolveStateCwd(cwd: string | undefined, baseCwd: string): string {
+  if (cwd === undefined) return baseCwd;
+  return isAbsolute(cwd) ? cwd : resolve(baseCwd, cwd);
+}
+
+// A per-state `cwd` (from the definition or an override) becomes the working
+// directory the sub-agent's coding tools start in. A path that does not exist
+// or is not a directory lands the sub-agent in a broken/empty tree where it
+// finds none of the files it was told to work on and reports "nothing to do".
+function assertValidStateCwd(state: StateMachineState, baseCwd: string, guidance: string): void {
+  const cwd =
+    state.kind === "agent" || state.kind === "script" || state.kind === "poll"
+      ? state.cwd
+      : undefined;
+  if (!cwd) return;
+
+  const resolved = resolveStateCwd(cwd, baseCwd);
+  let stats: ReturnType<typeof statSync>;
+  try {
+    stats = statSync(resolved);
+  } catch {
+    throw new Error(
+      `cwd "${cwd}" for state "${state.name}" does not exist (resolved to "${resolved}"). ${guidance}`,
+    );
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(
+      `cwd "${cwd}" for state "${state.name}" is not a directory (resolved to "${resolved}").`,
+    );
+  }
 }
 
 function assertValidStateInput(state: StateMachineState, input: unknown): void {
@@ -1106,7 +1181,7 @@ function assertValidStateInput(state: StateMachineState, input: unknown): void {
 // for with the orchestration overhead of a state machine.
 const MINIMUM_STATE_MACHINE_DELAY_MS = 15 * 60 * 1000;
 
-function assertValidDefinition(definition: StateMachineDefinition): void {
+function assertValidDefinition(definition: StateMachineDefinition, baseCwd: string): void {
   for (const state of definition.states) {
     if (state.name === INTERRUPTED_STATE_MACHINE_STATE) {
       throw new Error(`State name "${INTERRUPTED_STATE_MACHINE_STATE}" is reserved.`);
@@ -1114,6 +1189,7 @@ function assertValidDefinition(definition: StateMachineDefinition): void {
     assertValidStateInputSchema(state);
     assertValidStateSchedule(state);
     assertValidStateScheduleMinimum(state);
+    assertValidStateCwd(state, baseCwd, CREATE_CWD_GUIDANCE);
   }
   injectMissingTerminalEscapeHatches(definition);
   assertHasCompletedTerminal(definition);

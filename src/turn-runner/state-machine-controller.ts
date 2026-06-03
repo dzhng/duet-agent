@@ -38,7 +38,7 @@ import {
   type ShellPartialOutput,
   type ShellStateHandle,
 } from "./shell-state-handle.js";
-import { applyStateOverride, type StateMachineRunnerDecision } from "./tools.js";
+import { applyStateOverride, resolveStateCwd, type StateMachineRunnerDecision } from "./tools.js";
 
 export type StateMachineExecutionResult =
   | { type: "state_completed"; stateName: string; output?: unknown }
@@ -369,7 +369,7 @@ export class StateMachineController {
     const command = renderTemplate(state.command, this.session?.currentInput ?? {});
     const shell = createShellStateHandle({
       command,
-      cwd: state.cwd ?? this.config.cwd,
+      cwd: resolveStateCwd(state.cwd, this.config.cwd),
       timeoutMs: state.timeoutMs,
       successCodes: state.successCodes,
     });
@@ -411,7 +411,7 @@ export class StateMachineController {
     const command = renderTemplate(state.command, this.session?.currentInput ?? {});
     const shell = createShellStateHandle({
       command,
-      cwd: state.cwd ?? this.config.cwd,
+      cwd: resolveStateCwd(state.cwd, this.config.cwd),
       successCodes: state.successCodes,
     });
     const finished = createDeferredVoid();
