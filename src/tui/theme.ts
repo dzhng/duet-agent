@@ -15,9 +15,16 @@ export const COLORS = {
 } as const;
 
 // Esc is intentionally absent from the idle hint: when no turn is running
-// it is a no-op (it only closes open pickers, which is self-evident). Use
-// Ctrl+C to quit the TUI — the universal terminal convention.
-export const HINT_IDLE = "Enter: send · Shift+Enter: newline · PgUp/PgDn: scroll · Ctrl+C: quit";
+// it is a no-op (it only closes open pickers, which is self-evident).
+// The label is "exit" not "quit" because Ctrl+C on an empty idle composer
+// asks for confirmation first (see HINT_EXIT_CONFIRM) rather than quitting
+// on the first press.
+export const HINT_IDLE = "Enter: send · Shift+Enter: newline · PgUp/PgDn: scroll · Ctrl+C: exit";
+
+// Persistent prompt shown in the status line after a bare Ctrl+C on an
+// empty, idle composer. It does not auto-dismiss: the user either confirms
+// (Ctrl+C again or Enter) or cancels by pressing any other key.
+export const HINT_EXIT_CONFIRM = "Press Ctrl+C again or Enter to exit";
 // Ctrl+Enter surfaces in the running hint only; advertising it on the
 // idle hint would be noise (idle has nothing to steer against). The
 // keystroke is a no-op when the composer is empty, so a single line
