@@ -82,7 +82,11 @@ import {
 } from "./tools.js";
 import { connectMcpServers, type McpRuntime } from "./mcp.js";
 import { SkillContext } from "./skill-context.js";
-import { currentScheduledState, isWaitingOnScheduledState } from "./state-machine-session.js";
+import {
+  currentScheduledState,
+  isAwaitingUserAnswer,
+  isWaitingOnScheduledState,
+} from "./state-machine-session.js";
 import {
   StateMachineController,
   type StateAgentHandle,
@@ -139,6 +143,15 @@ export interface AgentWorkerResult {
   control: TurnRunnerControlResult;
   parentUsage?: TurnTokenUsage;
 }
+
+/**
+ * How many times the parent is re-prompted to emit the
+ * select_state_machine_state it owes (after a state completes or after the
+ * user answers a state's question) before the runner gives up and records an
+ * `error` terminal. Bounds the protocol-violation retry loop so a parent that
+ * never transitions can't spin forever.
+ */
+const PARENT_TRANSITION_RETRY_BUDGET = 3;
 
 /** Order matches `TurnContextWindowUsage` fields; indexes map to `scaled[0..3]`. */
 const CONTEXT_USAGE_KEYS = [
@@ -1046,33 +1059,78 @@ export class TurnRunner {
     stateName: string,
     output?: unknown,
   ): Promise<StateMachineExecutionResult> {
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    return this.enforceParentTransition(
+      (retryInstruction) => dedent`
+        The state "${stateName}" finished.
+
+        ${toXML({
+          state_completed: {
+            output: output ?? null,
+          },
+        })}
+
+        <system-reminder>
+        THIS TURN MUST END WITH A select_state_machine_state TOOL CALL. The state machine only advances when the tool call is actually emitted — nothing else, including text, thinking, or narration, advances it. Even if your conclusion is obvious ("this is internal plumbing, transition to X"), the conclusion is not the action; you must emit the select_state_machine_state tool call for state X in this same turn. Responses that narrate the transition without the tool call ("I should transition to X", "no user-facing post needed, moving on to Y", "the next state is Z") will be rejected and you will be re-prompted. This rule holds whether the state output is a user-facing artifact or purely internal plumbing — internal plumbing still requires the tool call to advance the machine, it just skips the user-facing message.
+
+        ${retryInstruction ?? ""}
+
+        If the state produced output the user would want to see — a written artifact (poem, summary, draft), a finding, a status the user is watching, or anything else the background work was meant to surface — post that content to the user in this turn before or alongside the tool call. The user does not see state output, transcripts, or tool results from background states; if you do not relay it here, they never see it. Skip the user-facing message only when the state output is purely internal plumbing (an ack, a control signal, a value that only matters to the next state).
+
+        You are the orchestrator and are responsible for this sub-agent's output. Treat the state_completed block above as a claim, not as verified truth. The sub-agent may have hallucinated success, skipped steps, swallowed errors, or misreported what it did. Before transitioning, review the output against reality: read the files it claims to have changed, run the build/test/lint it claims to have passed, and confirm any IDs, paths, counts, or statuses it asserts. If the output is wrong, incomplete, or unverifiable, do not just blindly re-select the same state — the sub-agent will hallucinate the same result a second time. Re-select the state with an override.state.prompt that addresses the specific failure (require a verification step, name the exact file path or tool to use, forbid the hallucinated phrasing), or select a different state. Tuning the sub-agent's prompt is the orchestrator's lever — use it. Do not silently take over the sub-agent's job by running its tools yourself; that hides the broken state from future runs. Do not propagate an unverified claim into the next state's prompt as fact, and do not relay it to the user as finished work. The orchestrator owns correctness; the sub-agent only owns effort.
+        </system-reminder>
+      `,
+      "State completed, but the runner did not call select_state_machine_state.",
+    );
+  }
+
+  /**
+   * Enforce the transition owed after an agent state asked the user a question
+   * and the user answered without the parent advancing the machine.
+   *
+   * The user's answer already ran as an ordinary parent prompt; reaching here
+   * means that turn emitted no `select_state_machine_state`, so the machine is
+   * still suspended at the asking state. Re-prompt under the same bounded
+   * budget as a completed state, then record an `error` terminal if the parent
+   * still refuses to advance.
+   */
+  private async enforceTransitionAfterAnsweredAsk(): Promise<StateMachineExecutionResult> {
+    const stateName = this.stateMachineController.getSession()?.currentState ?? "";
+    return this.enforceParentTransition(
+      (retryInstruction) => dedent`
+        You received the user's answer to the question asked by the "${stateName}" state, but you did not call select_state_machine_state. The machine is still suspended at that state and will not advance on its own.
+
+        <system-reminder>
+        THIS TURN MUST END WITH A select_state_machine_state TOOL CALL. The user's answer is the input you route on: pick the next state (or a terminal, including a cancelled terminal if the answer means the work should stop) and pass the answer forward via input or override.prompt. Narration without the tool call ("the user chose X, so I'll move to Y") does not advance the machine and will be rejected and re-prompted.
+
+        ${retryInstruction ?? ""}
+        </system-reminder>
+      `,
+      "User answered the question, but the runner did not call select_state_machine_state.",
+    );
+  }
+
+  /**
+   * Shared bounded-retry loop for transitions the parent owes the machine.
+   * Re-prompts up to `PARENT_TRANSITION_RETRY_BUDGET` times with `buildPrompt`
+   * (the second and later attempts carry a retry reminder); the first attempt
+   * that emits a control action returns its result. When the budget is
+   * exhausted with no control action, records an `error` terminal carrying
+   * `failureReason` — a runtime failure of the machine, not a deliberate
+   * `failed` selection.
+   */
+  private async enforceParentTransition(
+    buildPrompt: (retryInstruction: string | undefined) => string,
+    failureReason: string,
+  ): Promise<StateMachineExecutionResult> {
+    for (let attempt = 1; attempt <= PARENT_TRANSITION_RETRY_BUDGET; attempt++) {
       const retryInstruction =
         attempt === 1
           ? undefined
-          : `This is retry ${attempt} of 3. You did not call select_state_machine_state last time. You must call select_state_machine_state now.`;
+          : `This is retry ${attempt} of ${PARENT_TRANSITION_RETRY_BUDGET}. You did not call select_state_machine_state last time. You must call select_state_machine_state now.`;
       const turnState = this.snapshotState({ ...this.requireRunnerState(), status: "running" });
       const workerResult = await this.runAgentWorkerWithUsage({
         state: turnState,
-        prompt: dedent`
-          The state "${stateName}" finished.
-
-          ${toXML({
-            state_completed: {
-              output: output ?? null,
-            },
-          })}
-
-          <system-reminder>
-          THIS TURN MUST END WITH A select_state_machine_state TOOL CALL. The state machine only advances when the tool call is actually emitted — nothing else, including text, thinking, or narration, advances it. Even if your conclusion is obvious ("this is internal plumbing, transition to X"), the conclusion is not the action; you must emit the select_state_machine_state tool call for state X in this same turn. Responses that narrate the transition without the tool call ("I should transition to X", "no user-facing post needed, moving on to Y", "the next state is Z") will be rejected and you will be re-prompted. This rule holds whether the state output is a user-facing artifact or purely internal plumbing — internal plumbing still requires the tool call to advance the machine, it just skips the user-facing message.
-
-          ${retryInstruction ?? ""}
-
-          If the state produced output the user would want to see — a written artifact (poem, summary, draft), a finding, a status the user is watching, or anything else the background work was meant to surface — post that content to the user in this turn before or alongside the tool call. The user does not see state output, transcripts, or tool results from background states; if you do not relay it here, they never see it. Skip the user-facing message only when the state output is purely internal plumbing (an ack, a control signal, a value that only matters to the next state).
-
-          You are the orchestrator and are responsible for this sub-agent's output. Treat the state_completed block above as a claim, not as verified truth. The sub-agent may have hallucinated success, skipped steps, swallowed errors, or misreported what it did. Before transitioning, review the output against reality: read the files it claims to have changed, run the build/test/lint it claims to have passed, and confirm any IDs, paths, counts, or statuses it asserts. If the output is wrong, incomplete, or unverifiable, do not just blindly re-select the same state — the sub-agent will hallucinate the same result a second time. Re-select the state with an override.state.prompt that addresses the specific failure (require a verification step, name the exact file path or tool to use, forbid the hallucinated phrasing), or select a different state. Tuning the sub-agent's prompt is the orchestrator's lever — use it. Do not silently take over the sub-agent's job by running its tools yourself; that hides the broken state from future runs. Do not propagate an unverified claim into the next state's prompt as fact, and do not relay it to the user as finished work. The orchestrator owns correctness; the sub-agent only owns effort.
-          </system-reminder>
-        `,
+        prompt: buildPrompt(retryInstruction),
         ...this.createTools(turnState.mode),
       });
       this.setState(workerResult.outcome.state);
@@ -1080,16 +1138,12 @@ export class TurnRunner {
         workerResult,
         workerResult.outcome.state,
       );
-      if (!result) continue;
-      return result;
+      if (result) return result;
     }
 
-    // The parent owed a select_state_machine_state after the state completed
-    // but never emitted one across the bounded retry budget. That is a runtime
-    // failure of the machine, so record an `error` terminal on the session.
     return this.stateMachineController.failActiveSession(
       this.stateMachineController.getSession()?.currentState ?? "",
-      "State completed, but the runner did not call select_state_machine_state.",
+      failureReason,
     );
   }
 
@@ -1366,8 +1420,17 @@ export class TurnRunner {
     });
 
     const result = await this.controllerResultFromWorkerResult(workerResult, input.state);
-    if (!result) return this.outcomeToTerminal(workerResult.outcome);
-    return this.driveStateMachineResult(result, workerResult.outcome.state);
+    if (result) return this.driveStateMachineResult(result, workerResult.outcome.state);
+    // The parent emitted no control action. If the machine is suspended at a
+    // state that asked the user a question, the parent owed a transition to
+    // advance it (the user's answer arrives as an ordinary parent prompt).
+    // Enforce it the same way a completed state does, so an answered ask can
+    // never silently stall the machine.
+    if (isAwaitingUserAnswer(this.stateMachineController.getSession())) {
+      const enforced = await this.enforceTransitionAfterAnsweredAsk();
+      return this.driveStateMachineResult(enforced, this.requireRunnerState());
+    }
+    return this.outcomeToTerminal(workerResult.outcome);
   }
 
   /**

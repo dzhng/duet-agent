@@ -73,6 +73,39 @@ export function isWaitingOnScheduledState(stateMachine: StateMachineSession | un
   return Boolean(currentScheduledState(stateMachine) && !stateMachine?.terminal);
 }
 
+/**
+ * True when an agent state called `ask_user_question` and the machine is still
+ * suspended at that state — i.e. scanning history from the tail, the first
+ * state-lifecycle event is `state_asked_user`, with no later state start,
+ * completion, failure, interruption, or terminal.
+ *
+ * When this holds, the parent owes a `select_state_machine_state` to advance
+ * the machine: the user's answer comes back as an ordinary parent prompt, and
+ * if the parent replies in text without selecting a state the machine would
+ * silently stall at the asking state. The turn runner uses this to enforce the
+ * transition the same way it does after a state completes. Bookkeeping events
+ * that don't move the machine (`runner_decided`, `state_definition_updated`,
+ * `state_machine_started`) are skipped as noise; a real lifecycle move ends
+ * the wait.
+ */
+export function isAwaitingUserAnswer(stateMachine: StateMachineSession | undefined): boolean {
+  if (!stateMachine || stateMachine.terminal) return false;
+  for (let i = stateMachine.history.length - 1; i >= 0; i--) {
+    const event = stateMachine.history[i];
+    if (event.type === "state_asked_user") return true;
+    if (
+      event.type === "state_started" ||
+      event.type === "state_completed" ||
+      event.type === "state_failed" ||
+      event.type === "state_interrupted" ||
+      event.type === "state_machine_completed"
+    ) {
+      return false;
+    }
+  }
+  return false;
+}
+
 export function recordRunnerDecision(
   stateMachine: StateMachineSession,
   decision: StateMachineRunnerDecision,
