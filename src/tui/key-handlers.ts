@@ -17,6 +17,27 @@ export interface EscapeSuppressionFlag {
   suppress: boolean;
 }
 
+/**
+ * Mutable dedupe flag for Ctrl+C, mirroring {@link EscapeSuppressionFlag}.
+ * The composer's `onKeyDown` hook runs before the renderer's global
+ * keypress handler, so when it consumes a Ctrl+C it sets `suppress = true`
+ * to stop the global fallback from running the state machine a second time
+ * for the same press.
+ */
+export interface CtrlCSuppressionFlag {
+  suppress: boolean;
+}
+
+/** A *plain* Ctrl+C keystroke, by name or by the raw 0x03 byte legacy
+ *  terminals send. Shared by the global handler and the composer hook so
+ *  both agree on what counts as Ctrl+C. Shift is excluded so Ctrl+Shift+C
+ *  (the copy keystroke, which some kitty parsers report as `name:"c"`
+ *  with `shift:true`) is left for the copy handler rather than triggering
+ *  the exit state machine. */
+function isCtrlCKey(key: KeyEvent): boolean {
+  return Boolean(key.ctrl) && !key.shift && (key.name === "c" || key.sequence === "\u0003");
+}
+
 interface InternalKeyHandlerLike {
   onInternal(event: "keypress", handler: (key: KeyEvent) => void): void;
 }
@@ -36,6 +57,18 @@ export interface KeyHandlerDeps {
   onSubmit(value: string): void;
   /** Cancel any in-flight turn (Escape when running). */
   onEscape(): void;
+  /** Dedupe flag shared with the global Ctrl+C fallback. */
+  ctrlCState: CtrlCSuppressionFlag;
+  /** Run the Ctrl+C state machine: interrupt a running turn, else clear a
+   *  non-empty composer, else arm/confirm the exit prompt. */
+  onCtrlC(): void;
+  /** Whether the persistent exit-confirm prompt is currently showing. */
+  isExitConfirmActive(): boolean;
+  /** Confirm the pending exit and tear the TUI down via the normal quit
+   *  teardown path. */
+  onExitConfirmAccept(): void;
+  /** Cancel the pending exit prompt and return to normal editing. */
+  onExitConfirmCancel(): void;
   /** Dispatch the composer text with behavior:"steer" (Ctrl+Enter). */
   onSteer(): void;
   /** Dino mini-game panel. The panel always owns Ctrl-G, which
@@ -75,6 +108,11 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
     onEscape,
     onSteer,
     dinoPanel,
+    ctrlCState,
+    onCtrlC,
+    isExitConfirmActive,
+    onExitConfirmAccept,
+    onExitConfirmCancel,
   } = deps;
 
   const keyHandler = (renderer as unknown as { _keyHandler: InternalKeyHandlerLike })._keyHandler;
@@ -86,6 +124,19 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
     // path stops firing right when the user has something to copy. The
     // global handler always fires regardless of focus.
     if (copyController.handleCopyKeystroke(key)) return;
+    // Ctrl+C. Normally the composer's onKeyDown (below) handles it first and
+    // sets `ctrlCState.suppress`; this branch is the fallback for when focus
+    // has drifted off the textarea (e.g. mid drag-select) so onKeyDown never
+    // fired.
+    if (isCtrlCKey(key)) {
+      key.preventDefault();
+      if (ctrlCState.suppress) {
+        ctrlCState.suppress = false;
+        return;
+      }
+      onCtrlC();
+      return;
+    }
     if (key.name !== "escape") return;
     if (escapeState.suppress) {
       escapeState.suppress = false;
@@ -125,6 +176,30 @@ export function installKeyHandlers(deps: KeyHandlerDeps): void {
   // fires, so we intercept at the Renderable's onKeyDown hook which runs first.
   inputField.onKeyDown = (key: KeyEvent) => {
     transcriptWriter.logKey("keydown", key);
+
+    // Ctrl+C owns the highest priority: it must beat submit, newline, and the
+    // dino toggle. The state machine (interrupt / clear / arm-or-confirm exit)
+    // lives in `onCtrlC`. We set `ctrlCState.suppress` so the global keypress
+    // fallback does not double-fire for the same press.
+    if (isCtrlCKey(key)) {
+      key.preventDefault();
+      ctrlCState.suppress = true;
+      onCtrlC();
+      return;
+    }
+
+    // While the exit-confirm prompt is up (idle + empty composer), Enter
+    // confirms the exit and any other keystroke cancels the prompt and
+    // resumes normal editing. A second Ctrl+C also confirms, handled above.
+    if (isExitConfirmActive()) {
+      if (key.name === "return" || key.name === "enter") {
+        key.preventDefault();
+        onExitConfirmAccept();
+        return;
+      }
+      onExitConfirmCancel();
+      // Fall through so the cancelling keystroke is processed normally.
+    }
 
     // Ctrl-G: the dino panel always owns this keystroke regardless of
     // focus, the agent's running state, or whether the composer has

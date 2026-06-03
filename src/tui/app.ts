@@ -10,7 +10,11 @@ import { createTuiControllers } from "./controllers.js";
 import { createDinoPanel } from "./dino/index.js";
 import { replayResumeHistory } from "./history-replay.js";
 import { bootstrapInitialPrompt } from "./initial-prompt.js";
-import { type EscapeSuppressionFlag, installKeyHandlers } from "./key-handlers.js";
+import {
+  type CtrlCSuppressionFlag,
+  type EscapeSuppressionFlag,
+  installKeyHandlers,
+} from "./key-handlers.js";
 import { buildLayout } from "./layout.js";
 import { acquireRenderer, waitForRendererDestroy } from "./renderer-lifecycle.js";
 import { bindSessionToUi } from "./session-subscription.js";
@@ -227,6 +231,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   };
 
   const escapeState: EscapeSuppressionFlag = { suppress: false };
+  const ctrlCState: CtrlCSuppressionFlag = { suppress: false };
   const setEscapeSuppress = () => {
     escapeState.suppress = true;
   };
@@ -284,10 +289,34 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     appendUserBlock,
   });
 
-  // Esc cancels the in-flight turn; idle Esc is a no-op (Ctrl+C quits).
+  // Esc cancels the in-flight turn; idle Esc is a no-op.
   function handleEscape(): void {
     if (!statusController.isRunning()) return;
     void input.session.interrupt().catch(reportError);
+  }
+
+  // Ctrl+C is a small state machine rather than an immediate quit:
+  //   1. running turn  → interrupt it (identical to Esc), no exit prompt.
+  //   2. composer text → clear the composer (multiline included) only;
+  //                       attachments, autocomplete, and picker state stay.
+  //   3. idle + empty  → first press arms a persistent exit confirmation,
+  //                       a second press (or Enter) quits.
+  // The exit itself reuses `renderer.destroy()`, the same teardown the old
+  // OpenTUI exitOnCtrlC handler used, so shutdown semantics are unchanged.
+  function handleCtrlC(): void {
+    if (statusController.isRunning()) {
+      handleEscape();
+      return;
+    }
+    if (ui.inputField.plainText.length > 0) {
+      ui.inputField.clear();
+      return;
+    }
+    if (statusController.isExitConfirmActive()) {
+      renderer.destroy();
+      return;
+    }
+    statusController.showExitConfirm();
   }
 
   // Shared dispatch for submit (follow_up) and Ctrl+Enter (steer): log the
@@ -389,6 +418,11 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     onEscape: handleEscape,
     onSteer: handleSteer,
     dinoPanel,
+    ctrlCState,
+    onCtrlC: handleCtrlC,
+    isExitConfirmActive: () => statusController.isExitConfirmActive(),
+    onExitConfirmAccept: () => renderer.destroy(),
+    onExitConfirmCancel: () => statusController.clearExitConfirm(),
   });
 
   // Typing hides starter chrome; backspacing empty brings it back until

@@ -2,9 +2,15 @@ import { type CliRenderer, createCliRenderer } from "@opentui/core";
 
 /**
  * useMouse: true so the scroll wheel reaches the transcript and OpenTUI
- * receives drag events for in-app text selection. Bare Ctrl+C is the
- * always-exit keystroke (via exitOnCtrlC) so the convention every other
- * interactive Linux/Windows terminal app follows still works here.
+ * receives drag events for in-app text selection.
+ *
+ * exitOnCtrlC is deliberately FALSE: OpenTUI's built-in handler would
+ * call `renderer.destroy()` the instant it sees Ctrl+C, which is too
+ * eager. We route Ctrl+C through our own key handlers instead so it can
+ * interrupt a running turn, clear a non-empty composer, or require a
+ * confirmation before quitting (see `installKeyHandlers`). The actual
+ * exit still goes through `renderer.destroy()` — the same teardown path
+ * OpenTUI's handler used — so shutdown semantics are unchanged.
  *
  * Tests inject a `createTestRenderer` instance via `input.renderer`; in
  * that mode we skip the production renderer construction and the
@@ -15,7 +21,7 @@ export async function acquireRenderer(injected?: CliRenderer): Promise<CliRender
   if (injected) return injected;
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const renderer = await createCliRenderer({
-    exitOnCtrlC: true,
+    exitOnCtrlC: false,
     useMouse: true,
     useKittyKeyboard: {},
     targetFps: 60,

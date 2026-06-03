@@ -1,5 +1,11 @@
 import { type CliRenderer, type TextRenderable } from "@opentui/core";
-import { HINT_IDLE, HINT_RUNNING, HINT_SELECTION_COPY } from "./theme.js";
+import {
+  COLORS,
+  HINT_EXIT_CONFIRM,
+  HINT_IDLE,
+  HINT_RUNNING,
+  HINT_SELECTION_COPY,
+} from "./theme.js";
 import { isTextBufferDestroyedError } from "./transcript-writer.js";
 import type { TurnTerminalEvent } from "../types/protocol.js";
 
@@ -38,6 +44,11 @@ export interface StatusControllerOptions {
 export class StatusController {
   private destroyed = false;
   private running = false;
+  /** True while the bare-Ctrl+C exit confirmation is showing. Set by
+   *  `showExitConfirm`, cleared by `clearExitConfirm`. While active the
+   *  status line is pinned to the confirm prompt and other refreshes are
+   *  suppressed so an unrelated chrome write cannot wipe it. */
+  private exitConfirmActive = false;
   /** Subscribers notified on every running→idle / idle→running transition.
    *  Used by the dino panel to drive its freeze (idle) / resume (running)
    *  lifecycle without coupling the panel to the session event stream. */
@@ -54,6 +65,33 @@ export class StatusController {
 
   isRunning(): boolean {
     return this.running;
+  }
+
+  /** Whether the bare-Ctrl+C exit confirmation prompt is currently shown. */
+  isExitConfirmActive(): boolean {
+    return this.exitConfirmActive;
+  }
+
+  /** Pin the persistent "press Ctrl+C again or Enter to exit" prompt to the
+   *  status line. Only reached from an idle, empty composer, so the status
+   *  line is otherwise blank and free to host it. Painted amber so it reads
+   *  as a prompt rather than the green working-status line. */
+  showExitConfirm(): void {
+    if (this.destroyed) return;
+    this.exitConfirmActive = true;
+    this.opts.status.fg = COLORS.system;
+    this.setStatus(HINT_EXIT_CONFIRM);
+  }
+
+  /** Tear the exit prompt down and restore the normal status/hint surface.
+   *  Idempotent so callers can fire it on any cancelling keystroke without
+   *  first checking whether the prompt was up. */
+  clearExitConfirm(): void {
+    if (!this.exitConfirmActive) return;
+    this.exitConfirmActive = false;
+    if (!this.destroyed) this.opts.status.fg = COLORS.status;
+    this.refreshWorkingStatus();
+    this.refreshHint();
   }
 
   lastTerminal(): TurnTerminalEvent | undefined {
@@ -163,7 +201,7 @@ export class StatusController {
    *  input that changes a hint segment (attachments, selection) and from
    *  the running-state transitions in `markRunning` / `markIdle`. */
   refreshHint(): void {
-    if (this.destroyed) return;
+    if (this.destroyed || this.exitConfirmActive) return;
     const base = this.running ? HINT_RUNNING : HINT_IDLE;
     const segments: string[] = [];
     if (this.pendingImageCount > 0) segments.push(this.attachmentHint());
@@ -182,6 +220,9 @@ export class StatusController {
 
   refreshWorkingStatus(): void {
     if (this.destroyed) return;
+    // The exit-confirm prompt owns the status line while it is up; do not
+    // let a ticker tick or a queued-follow-up update paint over it.
+    if (this.exitConfirmActive) return;
     this.opts.refreshActiveToolBlocks();
     if (this.workingStartedAt === undefined) {
       this.setStatus(this.queuedFollowUps > 0 ? `queued follow-ups: ${this.queuedFollowUps}` : "");

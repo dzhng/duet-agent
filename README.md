@@ -312,7 +312,8 @@ In the input box:
 - `@<query>` opens a file picker; ↑/↓ navigate, Enter / Tab inserts a markdown link like `[app.ts](./src/tui/app.ts)` (basename label, repo-relative target). The model can then read the file via the `read` tool.
 - `/<query>` opens a skill picker that inserts `/skill-name` so the model receives the full SKILL.md inline with its instructions for that turn.
 - Enter sends; **Shift+Enter** queues the message as a follow-up while the agent is running, instead of steering the active turn.
-- `Esc` cancels the current pickers; on its own it interrupts the active turn, or no-ops when idle. Use Ctrl+C (or close the terminal) to quit — both paths drain through the SessionManager so the local memory database (PGlite) flushes cleanly.
+- `Esc` cancels the current pickers; on its own it interrupts the active turn, or no-ops when idle.
+- `Ctrl+C` is contextual rather than an instant quit: it interrupts the active turn while one is running, clears the composer when it has text, and on an idle empty composer asks for confirmation first ("Press Ctrl+C again or Enter to exit"). Confirming — or closing the terminal — drains through the SessionManager so the local memory database (PGlite) flushes cleanly.
 
 Tool calls render with custom per-tool headers (e.g. `$ <command>`, `read <path> (lines a–b)`, `edit <path> (N edits)`, `[question]`). Resumed sessions render history through the same formatters so live and replay match.
 

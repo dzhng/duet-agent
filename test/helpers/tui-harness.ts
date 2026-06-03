@@ -52,6 +52,15 @@ export interface TuiHarness {
   interruptCalls: number;
   /** Number of times the TUI fired its `onResetRequest` callback. */
   resetRequestCalls: number;
+  /** True once `runTui` has resolved (the renderer was destroyed / the TUI
+   *  exited). Lets Ctrl+C tests assert a clean quit happened. */
+  exited: boolean;
+  /**
+   * Resolve once the TUI has exited (renderer destroyed), or throw on
+   * timeout. Use after pressing a confirming Ctrl+C / Enter to prove the
+   * quit path fired without the harness's own `dispose()` triggering it.
+   */
+  waitForExit(options?: { timeoutMs?: number }): Promise<void>;
   /**
    * Wait until either:
    *  - `session.answer` has been called at least `count` times (default 1), or
@@ -160,6 +169,11 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     width,
     height,
     kittyKeyboard: true,
+    // Mirror production (`acquireRenderer`): Ctrl+C is routed through our
+    // own key handlers, not OpenTUI's built-in destroy-on-Ctrl+C. Without
+    // this the test renderer would default to exitOnCtrlC:true and tear
+    // down before the Ctrl+C state machine ran.
+    exitOnCtrlC: false,
   });
 
   const sessionPath = await mkdtemp(join(tmpdir(), "duet-tui-harness-"));
@@ -215,6 +229,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
   // `renderer.destroy()` resolves `runTui` normally; only a real crash
   // populates `tuiError`.
   let tuiError: unknown;
+  let exited = false;
   const tuiPromise = runTui({
     session,
     workDir,
@@ -228,9 +243,13 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     onResetRequest: () => {
       resetRequestCalls += 1;
     },
-  }).catch((error) => {
-    tuiError = error;
-  });
+  })
+    .catch((error) => {
+      tuiError = error;
+    })
+    .finally(() => {
+      exited = true;
+    });
 
   // Give runTui time to subscribe to the session and render the initial
   // frame before the test starts driving keys. Without this, the first
@@ -275,6 +294,18 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     },
     get resetRequestCalls() {
       return resetRequestCalls;
+    },
+    get exited() {
+      return exited;
+    },
+    async waitForExit({ timeoutMs = 2000 } = {}) {
+      const start = Date.now();
+      while (!exited) {
+        if (Date.now() - start > timeoutMs) {
+          throw new Error(`waitForExit: TUI did not exit within ${timeoutMs}ms`);
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      }
     },
     async waitForAnswer({ count = 1, timeoutMs = 1000 } = {}) {
       await waitForCount(() => answerCalls.length, count, timeoutMs, "waitForAnswer");
@@ -353,6 +384,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
       await yieldToEventLoop();
     },
     async dispose() {
+      // Idempotent: a Ctrl+C test may have already destroyed the renderer.
       renderer.destroy();
       await tuiPromise;
       await session.dispose();
