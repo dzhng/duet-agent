@@ -880,18 +880,21 @@ function formatTodoWriteResult(todos: TurnTodo[]): string {
 /**
  * Build the prompt body delivered to the parent on its acknowledgment
  * turn — the extra parent prompt run by the turn runner after every
- * state-machine terminal so the parent gets to react in natural
- * language (or take a follow-up control action).
+ * state-machine terminal so the parent gets to react to the outcome in
+ * natural language before control returns to the user.
  *
  * The framing is deliberately neutral on "decided vs runtime failure":
  * the parent's own transcript already shows whether it selected the
  * terminal (its preceding `select_state_machine_state` tool call) or
  * whether the state machine ended on its own, and the terminal
  * `status`/`reason` carry the rest of what the parent needs to phrase
- * the reply. The prompt only has to steer the parent away from
- * `select_state_machine_state` (the state machine has already ended)
- * and toward either plain-text reply or
- * `create_state_machine_definition` for follow-up work.
+ * the reply. The prompt steers the parent toward a plain-text summary
+ * and, by default, away from a control action on this turn: the machine
+ * has ended, so the parent normally summarizes and returns control
+ * rather than proactively starting more work. Follow-up work (new
+ * machine or reactivation) is user-driven — it waits for the user's
+ * request or a standing instruction to keep going, not the parent's own
+ * initiative.
  */
 export function formatStateMachineTerminalAcknowledgmentPrompt(input: {
   session: StateMachineSession;
@@ -912,11 +915,9 @@ export function formatStateMachineTerminalAcknowledgmentPrompt(input: {
       },
     })}
 
-    Respond now:
-    - If you want to start follow-up work (retry, remediation, next business process), call create_state_machine_definition.
-    - Otherwise reply to the user in plain text summarizing what happened and what you recommend next.
+    Usually: reply to the user in plain text — summarize what happened and recommend what to do next, then let control return to them. Don't proactively spin up new work or resume this machine just because the tools are available.
 
-    Do not call select_state_machine_state — there is no active state machine to advance.
+    The exception is a standing instruction the user already gave: if they told you to keep going until the work is finished (or asked for follow-up this terminal does not yet satisfy), continuing is fine — call create_state_machine_definition for new work, or select a non-terminal state to reactivate and continue this machine. Absent that signal, default to summarizing and handing back.
   `;
 }
 
@@ -1019,7 +1020,9 @@ function createSelectStateTool(
 
       Overrides persist by default. When you pass \`override\`, the merged state (prompt, command, schedule — whichever fields you set) is written back into the active definition, so every future run of that state uses the tuned version. This is the right shape when you are tightening a sub-agent prompt that hallucinated, fixing a script command that misbehaved, or tuning poll/timer cadence. Set \`persistOverride: false\` when you want a one-shot variation that does not commit — for example, probing a different prompt to see if the sub-agent recovers before deciding whether to keep the change. Persistence is a no-op for terminal states. \`override.kind\` must match the target state's kind; a mismatch is rejected outright (rather than silently dropping the override), and a per-state \`cwd\` that does not resolve to an existing directory is rejected too — fix the kind or the path before re-selecting.
 
-      Selecting a terminal state ends the state machine. Every definition is guaranteed to have the auto-injected \`failed\` and \`cancelled\` terminals available, so to fail or cancel, just select one of those by name and optionally attach a \`reason\`. After a terminal you will be woken once more for an acknowledgment turn — the runner re-prompts you with the terminal details (state, status, reason) so you can reply to the user in plain text and, if appropriate, kick off a follow-up state machine via create_state_machine_definition. Do not call select_state_machine_state on that acknowledgment turn; the state machine is already terminal.
+      Selecting a terminal state ends the state machine. Every definition is guaranteed to have the auto-injected \`failed\` and \`cancelled\` terminals available, so to fail or cancel, just select one of those by name and optionally attach a \`reason\`. After a terminal you will be woken once more for an acknowledgment turn — the runner re-prompts you with the terminal details (state, status, reason) so you can summarize the outcome to the user in plain text. Default to that summary and let control return to the user; don't proactively start new work or call select_state_machine_state on the acknowledgment turn just because the tools are available.
+
+      Follow-up is user-driven, not your own initiative. When the user asks to redo or continue a finished machine ("that's wrong, run X again"), reactivate it by selecting a non-terminal state, which clears the prior terminal and runs it live again from that state; for unrelated new work, call create_state_machine_definition. A standing instruction counts as that ask — if the user already told you to keep going until the work is done, continuing is appropriate.
     `,
     parameters: selectStateSchema,
     async execute(_toolCallId, params) {

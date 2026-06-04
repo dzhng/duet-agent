@@ -979,8 +979,8 @@ export class TurnRunner {
       // `terminate: true` on the state-machine tools means the parent's
       // prompt loop ends right after it selects a terminal (or a state
       // that then errors at runtime) — without this pass the parent has
-      // no transcript entry for the outcome, cannot summarize it to the
-      // user, and cannot kick off a follow-up state machine in response.
+      // no transcript entry for the outcome and cannot summarize it to
+      // the user before control returns to them.
       const acknowledged = await this.runStateMachineTerminalAcknowledgment();
       if (acknowledged) return acknowledged;
       state = this.requireRunnerState();
@@ -1006,9 +1006,11 @@ export class TurnRunner {
    *   neutral with respect to "decided vs runtime failure" — the
    *   parent's own transcript already shows whether it selected the
    *   terminal, and `status`/`reason` carry the rest of the framing.
-   * - Runs one parent worker pass with full state-machine tool access
-   *   so the parent can either reply in plain text or call
-   *   `create_state_machine_definition` to start follow-up work.
+   * - Runs one parent worker pass with full state-machine tool access.
+   *   The parent is steered to reply in plain text and let control
+   *   return to the user; full tool access only means a control action
+   *   on this turn (e.g. an explicitly instructed create) is handled
+   *   rather than silently dropped, per the next bullet.
    * - On interruption, surfaces an `interrupted` terminal event for
    *   the whole turn.
    * - When the parent's reply carries a control action, drives that

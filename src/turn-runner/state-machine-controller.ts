@@ -23,6 +23,7 @@ import {
   recordStateFailed,
   recordStateInterrupted,
   recordStateMachineCompleted,
+  recordStateMachineReactivated,
   recordStateStarted,
   recordStateSleep,
   createStateMachineSession,
@@ -284,6 +285,12 @@ export class StateMachineController {
     // status and any caller-supplied reason. Every other state kind
     // honors the override + input so the caller can steer the next run.
     const isTerminal = selectedState.kind === "terminal";
+    // A non-terminal selection on an already-terminal session is an explicit
+    // user-driven resume; recordStateMachineReactivated clears the prior
+    // terminal so the machine runs live again before the new state starts.
+    if (!isTerminal && this.session.terminal) {
+      this.session = recordStateMachineReactivated(this.session, selectedState.name);
+    }
     const effectiveState = isTerminal
       ? selectedState
       : applyStateOverride(selectedState, decision.override);

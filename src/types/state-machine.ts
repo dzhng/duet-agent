@@ -441,4 +441,14 @@ export type StateMachineSessionEvent =
       state: string;
       updatedState: StateMachineState;
     }
-  | { type: "state_machine_completed"; timestamp: number; terminal: StateMachineTerminalResult };
+  | { type: "state_machine_completed"; timestamp: number; terminal: StateMachineTerminalResult }
+  | {
+      // Recorded when a finished session is resumed (see
+      // recordStateMachineReactivated for when this is legal). `state` is the
+      // resumed state's name; `priorTerminal` preserves the outcome that was
+      // cleared so replay still shows the completed→running transition.
+      type: "state_machine_reactivated";
+      timestamp: number;
+      state: string;
+      priorTerminal: StateMachineTerminalResult;
+    };
