@@ -3,7 +3,7 @@ import { Agent } from "@earendil-works/pi-agent-core";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import { createStateAgentSystemPromptLayer } from "../src/turn-runner/prompts.js";
-import type { StateMachineAgentState } from "../src/types/state-machine.js";
+import type { StateMachineAgentState, StateMachineDefinition } from "../src/types/state-machine.js";
 import type { TurnState } from "../src/types/protocol.js";
 
 /**
@@ -30,9 +30,14 @@ const RUNNING_STATE: TurnState = {
 
 /**
  * Builds a sub-agent through the real createStateAgentHandle path and returns
- * the fully composed system prompt that the sub-agent would run under.
+ * the fully composed system prompt that the sub-agent would run under. Pass
+ * `machineContext` to install an active session first, exercising the wiring
+ * that threads the running machine into the sub-agent's prompt.
  */
-function composeSubAgentSystemPrompt(state: StateMachineAgentState): string {
+function composeSubAgentSystemPrompt(
+  state: StateMachineAgentState,
+  machineContext?: { definition: StateMachineDefinition; currentState: string },
+): string {
   let composed: string | undefined;
 
   class CapturingTurnRunner extends TurnRunner {
@@ -60,6 +65,26 @@ function composeSubAgentSystemPrompt(state: StateMachineAgentState): string {
 
   const runner = new CapturingTurnRunner();
   (runner as unknown as { state: TurnState }).state = RUNNING_STATE;
+  // Optionally install an active state-machine session so the production wiring
+  // (turn-runner reading getSession() and threading it into the layer) is the
+  // path under test, not just the layer function in isolation.
+  if (machineContext) {
+    (
+      runner as unknown as {
+        stateMachineController: {
+          startSession(input: {
+            prompt: string;
+            definition: StateMachineDefinition;
+            currentState: string;
+          }): void;
+        };
+      }
+    ).stateMachineController.startSession({
+      prompt: "Start.",
+      definition: machineContext.definition,
+      currentState: machineContext.currentState,
+    });
+  }
   (
     runner as unknown as {
       createStateAgentHandle: (input: { state: StateMachineAgentState; prompt: string }) => unknown;
@@ -97,6 +122,38 @@ describe("state agent identity layer", () => {
     expect(identityIndex).toBeLessThan(personaIndex);
   });
 
+  test("the layer situates the sub-agent in the machine and names its current state", () => {
+    const layer = createStateAgentSystemPromptLayer({
+      definition: {
+        name: "Ship the feature",
+        prompt: "Plan, implement, and verify the requested change.",
+        states: [
+          { kind: "agent", name: "plan", prompt: "Draft the plan.", when: "before any code" },
+          { kind: "agent", name: "implement", prompt: "Write the code." },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+      currentState: "plan",
+    });
+
+    // Overall goal and machine name give the sub-agent the bigger picture.
+    expect(layer).toContain("Ship the feature");
+    expect(layer).toContain("Plan, implement, and verify the requested change.");
+    // Every state is listed by name and kind, with `when` guidance carried through.
+    expect(layer).toContain("- plan (agent) — before any code");
+    expect(layer).toContain("- implement (agent)");
+    expect(layer).toContain("- done (terminal)");
+    // The current state is marked and named so the sub-agent knows its boundary.
+    expect(layer).toContain("← YOU ARE HERE");
+    expect(layer).toContain('executing ONLY the "plan" state');
+    // The downstream over-reach this prevents: a planning state implementing.
+    expect(layer).toContain("do not start implementing what a later state is meant to build");
+  });
+
+  test("the machine context is only emitted with an active definition", () => {
+    expect(createStateAgentSystemPromptLayer()).not.toContain("state_machine_context");
+  });
+
   test("a per-state systemPrompt refines the identity rather than replacing it", () => {
     const stateSystemPrompt = "STATE_SPECIFIC_FRAMING_42";
     const composed = composeSubAgentSystemPrompt({
@@ -116,5 +173,30 @@ describe("state agent identity layer", () => {
     expect(identityIndex).toBeGreaterThanOrEqual(0);
     expect(stateIndex).toBeGreaterThan(personaIndex);
     expect(identityIndex).toBeLessThan(stateIndex);
+  });
+
+  test("createStateAgentHandle threads the active machine into the sub-agent prompt", () => {
+    const definition: StateMachineDefinition = {
+      name: "Ship the feature",
+      prompt: "Plan, implement, and verify the requested change.",
+      states: [
+        { kind: "agent", name: "plan", prompt: "Draft the plan.", when: "before any code" },
+        { kind: "agent", name: "implement", prompt: "Write the code." },
+        { kind: "terminal", name: "done", status: "completed" },
+      ],
+    };
+    const composed = composeSubAgentSystemPrompt(
+      { kind: "agent", name: "plan", prompt: "Draft the plan." },
+      { definition, currentState: "plan" },
+    );
+
+    // The wiring — not just the layer function — surfaces the machine context:
+    // turn-runner reads the active session and passes it through, so reverting
+    // that call to the no-arg form fails here, offline, instead of only in the
+    // slow live eval.
+    expect(composed).toContain("state_machine_context");
+    expect(composed).toContain("Ship the feature");
+    expect(composed).toContain("- implement (agent)");
+    expect(composed).toContain('executing ONLY the "plan" state');
   });
 });

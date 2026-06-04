@@ -1167,6 +1167,14 @@ export class TurnRunner {
     // prompts say "use the /foo skill to do xyz" and have the skill body
     // injected, instead of shipping the literal `/foo` text to the model.
     const expandedPrompt = this.skillContext.resolveSlashSkillPrompt(input.prompt, stateSkills);
+    // Hand the sub-agent the machine's overall goal, the full state list, and
+    // which state it is running so it scopes its work to this state instead of
+    // running the whole process (a common over-reach on smaller models). The
+    // session always exists while an agent state is executing.
+    const session = this.stateMachineController.getSession();
+    const machineContext = session
+      ? { definition: session.definition, currentState: input.state.name }
+      : undefined;
     const agent = this.createAgent(
       {
         state,
@@ -1174,7 +1182,7 @@ export class TurnRunner {
         // ahead of the inherited chat-assistant persona that would otherwise
         // pull it into "there's no user message here" mode. The per-state
         // systemPrompt refines that identity, so it stays an append.
-        prependSystemPrompt: createStateAgentSystemPromptLayer(),
+        prependSystemPrompt: createStateAgentSystemPromptLayer(machineContext),
         appendSystemPrompt: input.state.systemPrompt,
         skills: stateSkills,
         // Per-state cwd lets one agent state operate on a different

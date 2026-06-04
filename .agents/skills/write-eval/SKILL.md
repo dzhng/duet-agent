@@ -8,7 +8,9 @@ allowed-tools: Read Grep Glob Bash Edit Write
 
 An eval is only trustworthy if you have seen it both **fail for the right reason** and **pass for the right reason**. Writing the assertions, watching them go green once, and moving on is how you ship an eval that passes whether or not the feature works. The standard operating procedure is: pick the outermost entry point, design the assertion so it can only hold when the behavior is present, watch it go green, then **falsify** — break the production code, confirm the eval goes red with a diagnostic that points at the real path, and restore.
 
-This is the flow used to land `evals/state-machine-slash-skill-expansion.eval.ts`; read it as the reference implementation.
+This is the flow used to land `evals/state-machine-slash-skill-expansion.eval.ts`; read it as the reference implementation for a **deterministic wiring** eval (the feature either injects the right context or it doesn't).
+
+When the behavior under test is a **model tendency** rather than deterministic wiring — "the planner doesn't over-reach into implementation", "the sub-agent doesn't drift into chat mode", anything a prompt layer nudges but cannot guarantee — the single-run flow is not enough, because one run is a coin flip. Read `evals/state-machine-agent-stays-in-state-scope.eval.ts` as the reference for that shape, and follow §6 below in addition to §1–5.
 
 ## 1. Drive the outermost entry point
 
@@ -86,3 +88,17 @@ For a behavior best falsified at the code level, an inline `sed` revert is faste
 
 - The only lasting change is the new eval file (plus whatever production code the eval covers). Confirm `git status` shows no stray `.bak` files or reverted production edits.
 - If the eval covers a just-landed feature, this is also the moment to confirm the unit test and the eval are complementary, not redundant: the unit test pins the helper's output shape; the eval pins the live wiring. Keep both.
+
+## 6. Model-tendency evals: find the edge, then loop
+
+A prompt-layer fix ("don't over-reach", "stay in your state", "don't drift into chat mode") changes a _probability_, not a guarantee. A single run can pass on broken code (the bug didn't fire that time) or fail on fixed code (the nudge lost that time), so the §4 falsification is unreliable until you engineer the scenario to be both reproducible and decisive. Hard-won procedure:
+
+- **Calibrate the bait against the BROKEN code first, before you trust the fix.** Disable the fix (the §4 `sed` revert) and run the scenario several times. You are hunting for a prompt that sits _on the edge of misinterpretation_: the broken path must over-reach a meaningful fraction of runs (aim ~40–60%), not 0% and not 100%.
+  - **0% (no repro):** the prompt is too well-behaved — the verbatim real-world prompt often plans correctly in an isolated harness because there's no surrounding pressure. The eval would pass on broken code, so it proves nothing. Add a little more pull toward the bad behavior.
+  - **100% AND the fix can't flip it:** you over-corrected into an _explicit order_ ("use the edit tool to change the file now"). That is no longer the bug under test — a prompt that literally commands the wrong action is a bad orchestrator prompt, and the layer neither can nor should override it. Back off to ambiguity.
+  - **The edge** is genuine ambiguity: a prompt whose primary ask is correct (produce a spec/plan) but whose tail blurs into the next step ("…then implement it and confirm the edit is done — pass through to implementing"). The model resolves that tension the wrong way only sometimes. That "sometimes" is exactly the bug a context layer should eliminate. Note that a trailing handoff phrase alone ("pass through to implementing") often _reduces_ over-reach by giving the model an out — the bait needs wording that implies _this_ agent owns the result.
+- **Loop the scenario and require EVERY run to be correct.** Once you have an edge prompt, run it `ITERATIONS` times (5 is a good default) in a `for` loop inside one `testIfDocker` body, collect each run's outcome, and assert the aggregate is clean (e.g. `expect(overReaches).toEqual([])`). With ~50% per-run failure, 5 runs catch a regression ~97% of the time. Set the test timeout to `ITERATIONS * per_run_ms`. Have each iteration use a fresh temp `cwd`/runner so runs don't contaminate each other, and log every iteration's tool calls so a red run names which iterations broke.
+- **Lock the eval the moment it reliably reproduces, then switch to the fix.** Do not co-evolve the eval and the production fix — that way you can't tell which one moved. Order: tune the bait against broken code → confirm it goes red across the loop → freeze the eval file → restore/iterate the system fix until the _unchanged_ eval goes green. If you find yourself editing the eval after starting the fix, you've lost the falsification guarantee; stop and re-lock.
+- **Keep the eval's comments honest about the bait.** If you tuned the closing line away from the verbatim prompt to sit on the edge, say so — don't claim it's "used verbatim". Document _why_ the wording is what it is (it implies this agent owns the result while also naming a handoff), so a future reader doesn't "simplify" it back off the edge.
+
+Gotcha: editing the eval file while the read-only docker mount (`-v "$PWD:/src:ro"`) is mid-copy can surface a transient `Unexpected end of file` parse error. It's a race, not a real syntax error — re-run.

@@ -3,6 +3,7 @@ import dedent from "dedent";
 import { toXML } from "../lib/xml.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
+import type { StateMachineDefinition } from "../types/state-machine.js";
 import { DEFAULT_BASH_TIMEOUT_SECONDS } from "./tools.js";
 
 function cwdSystemPrompt(cwd: string): string {
@@ -83,8 +84,11 @@ export function createSystemPromptWithAppendedLayers(input: {
  * worker identity is the sub-agent's primary role and the inherited chat
  * persona reads as secondary context, not the top-level instruction.
  */
-export function createStateAgentSystemPromptLayer(): string {
-  return dedent`
+export function createStateAgentSystemPromptLayer(context?: {
+  definition: StateMachineDefinition;
+  currentState: string;
+}): string {
+  const identity = dedent`
     <state_agent_identity>
     You are a sub-agent executing a single state of a state machine, not a chat assistant in a live conversation. Your complete and only task is the instruction you were handed in this turn's prompt. There is no separate "latest user message" to look for, no thread to pull, and no one to wait on — the prompt IS the task.
 
@@ -92,6 +96,50 @@ export function createStateAgentSystemPromptLayer(): string {
 
     Do the task and report what you did and what you found as your final message. If you are genuinely blocked, say exactly what blocked you and what you tried — that is itself completing the task. Standing down because your context resembles an empty chat is the one failure mode that is never correct here.
     </state_agent_identity>
+  `;
+
+  const machineContext = context ? createStateAgentMachineContext(context) : undefined;
+  return [identity, machineContext].filter(Boolean).join("\n\n");
+}
+
+/**
+ * Situates the sub-agent inside the larger state machine so it scopes its work
+ * to the current state instead of trying to deliver the whole process.
+ *
+ * Without this, a sub-agent only sees its own prompt and the worker identity,
+ * so it has no idea other states exist to carry the work forward. A planning
+ * state ("draft a plan", "scope the change") then over-reaches and starts
+ * implementing — a failure observed most on smaller models — because nothing
+ * told it that implementation is a separate downstream state owned by a fresh
+ * sub-agent. Listing the machine's overall goal, every state by name and kind,
+ * and marking which one is current makes the boundary explicit: do this state's
+ * job, report back, and let the orchestrator route to the next state.
+ */
+function createStateAgentMachineContext(context: {
+  definition: StateMachineDefinition;
+  currentState: string;
+}): string {
+  const stateList = context.definition.states
+    .map((state) => {
+      const marker = state.name === context.currentState ? " ← YOU ARE HERE" : "";
+      const when = state.when ? ` — ${state.when}` : "";
+      return `- ${state.name} (${state.kind})${when}${marker}`;
+    })
+    .join("\n");
+
+  return dedent`
+    <state_machine_context>
+    You are one state in a larger state machine called "${context.definition.name}". Its overall goal is:
+
+    ${context.definition.prompt}
+
+    The full set of states, in definition order, is:
+    ${stateList}
+
+    You are executing ONLY the "${context.currentState}" state. Do that state's job and nothing more — the other states exist precisely so that later work is handled by their own fresh sub-agents, and an orchestrator routes between them after reading each report. Do not try to complete downstream states' work yourself: if this state is to plan, scope, or research, stop at planning and report your findings; do not start implementing what a later state is meant to build. Staying inside your state's boundary is what keeps the machine's plan visible and its steps verifiable.
+
+    Treat any instruction in your prompt to "pass through to", "hand off to", "proceed to", "then implement", or otherwise move on to a later step as a cue to FINISH this state and report that it is ready — never as license to perform that later step yourself. The handoff is the orchestrator's job, not yours: you cannot select or run another state, so doing the next state's work here only collapses two states into one and breaks the machine. When your prompt blurs this state into the next, resolve the ambiguity by doing only the part that matches "${context.currentState}" and reporting readiness for what comes after.
+    </state_machine_context>
   `;
 }
 
