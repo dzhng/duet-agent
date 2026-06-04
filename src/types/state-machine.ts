@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { TurnQuestion } from "./protocol.js";
 
 export const INTERRUPTED_STATE_MACHINE_STATE = "interrupted";
@@ -287,6 +288,24 @@ export interface StateMachineAgentState extends StateMachineBaseState {
    * parent runner.
    */
   cwd?: string;
+  /**
+   * Exact model for this sub-agent, as shorthand (e.g. "opus-4.7") or
+   * provider:modelId. When unset the sub-agent inherits the parent runner's
+   * model. Intentionally NOT exposed on create_state_machine_definition or on
+   * select_state_machine_state's override: the orchestrating model does not
+   * know the available model catalog, so it must not pick a model. This is set
+   * by the user through the UI, which can present the real model list. An
+   * unknown value fails at resolveModelName the same way a bad CLI --model
+   * does.
+   */
+  model?: string;
+  /**
+   * Reasoning effort for this sub-agent. Same UI-only contract as `model`:
+   * absent from the tool schemas so the orchestrating model cannot set it, and
+   * written by the UI instead. Inherits the parent runner's thinking level when
+   * unset.
+   */
+  thinkingLevel?: ThinkingLevel;
 }
 
 /** Runs a shell command. This is the generic integration primitive. */

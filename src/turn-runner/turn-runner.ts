@@ -1158,7 +1158,14 @@ export class TurnRunner {
     const state: TurnState = {
       status: "running",
       mode: "agent",
-      options: this.requireRunnerState().options,
+      // Layer the agent state's optional per-state model/thinkingLevel over the
+      // inherited parent options; see StateMachineAgentState for why these are
+      // UI-set rather than model-chosen.
+      options: {
+        ...this.requireRunnerState().options,
+        ...(input.state.model ? { model: input.state.model } : {}),
+        ...(input.state.thinkingLevel ? { thinkingLevel: input.state.thinkingLevel } : {}),
+      },
       agent: { status: "running", messages: [] },
     };
     const stateSkills = this.skillContext.resolveStateAgentSkills(input.state);
