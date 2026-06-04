@@ -89,6 +89,7 @@ EXAMPLES
   duet login
   duet env
   duet memory
+  duet train ./docs/my-project
   duet send-feedback "the TUI flickers when..."
   duet upgrade
 `);
@@ -236,6 +237,44 @@ OPTIONS
   --wait <seconds>         Seconds to wait for the cross-process open-lock
                            (default: 30; 0 fails immediately)
   -h, --help               Show this help
+`);
+}
+
+export function printTrainHelp(): void {
+  console.log(`
+duet train — Ingest a project corpus into one durable memory + AGENTS.md
+
+USAGE
+  duet train <folder> [--slug <name>] [--model <name>] [--db <path>] [--wait <seconds>]
+
+DESCRIPTION
+  Launches a duet agent with the corpus folder as its working directory.
+  The agent reads the corpus using its native file-reading tools (any
+  format the duet agent normally reads — markdown, plain text, CSVs, PDFs,
+  spreadsheets, source code) and writes two files at the corpus root:
+
+    AGENTS.md         — full project guidance, Markdown.
+    .duet-train.json  — structured handoff with headline + observation.
+
+  'train' then persists the observation into ~/.duet/memory.db tagged
+  'train' and 'train:<slug>', archives the corpus under
+  ~/.duet/train/<memory-id>/, and removes the handoff file. AGENTS.md is
+  left in place at the corpus root.
+
+  Subsequent runs against the same slug replace the prior row in place,
+  so the memory pool does not bloat.
+
+OPTIONS
+  --slug <name>            Override the corpus slug (default: sanitized folder basename)
+  --model <name>           Model used by the synthesis sub-agent (default: same resolution as 'duet run')
+  --db <path>              Memory database path (default: ~/.duet/memory.db)
+  --wait <seconds>         Seconds to wait for the cross-process open-lock
+                           (default: 30; 0 fails immediately)
+  -h, --help               Show this help
+
+EXAMPLES
+  duet train ./docs/my-project
+  duet train ./research --slug acme-research --model sonnet-4.6
 `);
 }
 

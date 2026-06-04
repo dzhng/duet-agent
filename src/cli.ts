@@ -22,6 +22,7 @@ import { runRpcCommand } from "./cli/rpc.js";
 import { runRunCommand } from "./cli/run.js";
 import { runSendFeedbackCommand } from "./cli/send-feedback.js";
 import { runSkillsCommand } from "./cli/skills.js";
+import { runTrainCommand } from "./cli/train.js";
 import { runUpgradeCommand } from "./cli/upgrade.js";
 
 // ---- public re-exports ----------------------------------------------------
@@ -39,6 +40,7 @@ export { runSkillsCommand } from "./cli/skills.js";
 export { runUpgradeCommand } from "./cli/upgrade.js";
 export { runMemoryCommand } from "./cli/memory.js";
 export { runMemoryReflectCommand } from "./cli/memory-reflect.js";
+export { runTrainCommand } from "./cli/train.js";
 export { runSendFeedbackCommand } from "./cli/send-feedback.js";
 export type { SendFeedbackCommandIO } from "./cli/send-feedback.js";
 export {
@@ -86,6 +88,10 @@ export async function runCli(): Promise<void> {
     }
     if (subcommand === "memory" || subcommand === "memories") {
       await runMemoryCommand(args.slice(1));
+      return;
+    }
+    if (subcommand === "train") {
+      await runTrainCommand(args.slice(1));
       return;
     }
     if (subcommand === "send-feedback") {
