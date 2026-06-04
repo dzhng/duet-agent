@@ -51,6 +51,7 @@ import type {
   TurnPromptImage,
   TurnState,
   TurnTokenUsage,
+  ModelUsageEntry,
   TurnStartCommand,
   TurnTerminalEvent,
   TurnCommand,
@@ -101,7 +102,7 @@ import {
   transientRetryDelayMs,
   type TransientRetryPolicy,
 } from "./transient-error.js";
-import { addUsage, usageFromMessages } from "./usage-accounting.js";
+import { addUsage, addUsageByModel, usageFromMessages } from "./usage-accounting.js";
 
 export type TurnEventHandler = (event: TurnEvent) => void;
 
@@ -283,6 +284,8 @@ export class TurnRunner {
   private started = false;
   /** Aggregates model usage across parent agents, state agents, and memory work for one turn chain. */
   private turnUsage?: TurnTokenUsage;
+  /** Per-model partition of `turnUsage`; reset and populated in lockstep with it via `recordUsage`. */
+  private turnUsageByModel?: ModelUsageEntry[];
   /**
    * Snapshot of the latest parent assistant `message_end`'s bar fields.
    * State-agent and terminal emissions reuse these so the bar/breakdown
@@ -538,6 +541,7 @@ export class TurnRunner {
 
   private async runTurnChain(command: TurnCommand): Promise<TurnTerminalEvent> {
     this.turnUsage = undefined;
+    this.turnUsageByModel = undefined;
     try {
       let terminal: TurnTerminalEvent;
       terminal = await this.executeTurnCommand(command);
@@ -547,6 +551,7 @@ export class TurnRunner {
         terminal = {
           ...terminal,
           turnUsage: this.turnUsage,
+          usageByModel: this.turnUsageByModel ?? [],
           ...(this.lastParentUsageSnapshot
             ? {
                 effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
@@ -561,6 +566,7 @@ export class TurnRunner {
       return terminal;
     } finally {
       this.turnUsage = undefined;
+      this.turnUsageByModel = undefined;
     }
   }
 
@@ -1234,7 +1240,7 @@ export class TurnRunner {
           // Record state-agent usage on every exit path — success, error, or
           // interrupt — so partial work still flows into the turn aggregate
           // and ticks the sidebar cost via the emitted `usage` event.
-          this.recordUsage(usageFromMessages(agent.state.messages));
+          this.recordUsage(usageFromMessages(agent.state.messages), agent.state.model.id);
           this.emitTurnUsage(origin);
           unsubscribe?.();
         }
@@ -1667,7 +1673,7 @@ export class TurnRunner {
    */
   private async runAgentWorkerWithUsage(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     const result = await this.runAgentWorker(input);
-    this.recordUsage(result.parentUsage);
+    this.recordUsage(result.parentUsage, this.requireParentAgent().state.model.id);
     this.emitTurnUsage();
     return result;
   }
@@ -1829,7 +1835,7 @@ export class TurnRunner {
       settings: this.config.memory,
       messages,
       cwd: this.config.cwd ?? process.cwd(),
-      onUsage: (usage) => this.recordUsage(usage),
+      onUsage: (usage) => this.recordUsage(usage, this.resolveMemoryActorModel(options)),
       onActivity: (event) => this.emit({ type: "memory", ...event }),
     });
 
@@ -2110,8 +2116,11 @@ export class TurnRunner {
     };
   }
 
-  protected recordUsage(usage?: TurnTokenUsage | Usage): void {
+  protected recordUsage(usage?: TurnTokenUsage | Usage, modelId?: string): void {
     this.turnUsage = addUsage(this.turnUsage, usage);
+    if (usage && modelId) {
+      this.turnUsageByModel = addUsageByModel(this.turnUsageByModel, modelId, usage);
+    }
   }
 
   protected emitAgentEvent(event: AgentEvent, origin?: TurnEventOrigin): void {
@@ -2202,6 +2211,7 @@ export class TurnRunner {
     this.emit({
       type: "usage",
       turnUsage,
+      usageByModel: this.turnUsageByModel ?? [],
       lastMessageUsage: refreshedMessageUsage,
       effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
       contextWindowUsage: refreshedContextWindowUsage,
@@ -2223,6 +2233,7 @@ export class TurnRunner {
     this.emit({
       type: "usage",
       turnUsage: this.turnUsage,
+      usageByModel: this.turnUsageByModel ?? [],
       lastMessageUsage: this.lastParentUsageSnapshot.lastMessageUsage,
       effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
       contextWindowUsage: this.lastParentUsageSnapshot.contextWindowUsage,

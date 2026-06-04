@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { TurnTokenUsage } from "../types/protocol.js";
+import type { ModelUsageEntry, TurnTokenUsage } from "../types/protocol.js";
 
 /**
  * Returns a new `TurnTokenUsage` equal to `a + b`, treating either operand
@@ -30,6 +30,33 @@ export function addUsage(
       total: a.cost.total + b.cost.total,
     },
   };
+}
+
+/**
+ * Returns a new per-model usage breakdown equal to `list` with `usage`
+ * folded into the entry for `model` (summed via {@link addUsage}, appended
+ * when the model is not present yet). Pure: never mutates `list`. A falsy
+ * `usage` returns a cloned copy of `list` unchanged, so the invariant
+ * `sum(result[].usage.cost.total) === addUsage(turnUsage, usage).cost.total`
+ * holds whenever the same `usage` is also folded into the turn aggregate.
+ */
+export function addUsageByModel(
+  list: readonly ModelUsageEntry[] | undefined,
+  model: string,
+  usage: TurnTokenUsage | undefined,
+): ModelUsageEntry[] {
+  const next: ModelUsageEntry[] = (list ?? []).map((entry) => ({
+    model: entry.model,
+    usage: cloneUsage(entry.usage),
+  }));
+  if (!usage) return next;
+  const existing = next.find((entry) => entry.model === model);
+  if (existing) {
+    existing.usage = addUsage(existing.usage, usage)!;
+  } else {
+    next.push({ model, usage: cloneUsage(usage) });
+  }
+  return next;
 }
 
 function cloneUsage(usage: TurnTokenUsage): TurnTokenUsage {

@@ -49,6 +49,7 @@ export function refreshSidebarFromSession(deps: { session: Session; sidebar: Sid
       ? {
           type: "usage",
           turnUsage: snap.turnUsage,
+          usageByModel: snap.usageByModel,
           lastMessageUsage: snap.lastMessageUsage,
           effectiveContextWindow: snap.effectiveContextWindow,
           contextWindowUsage: snap.contextWindowUsage,

@@ -6,7 +6,12 @@ import {
   runShellCommand,
   ShellCommandError,
 } from "../src/turn-runner/shell-state-handle.js";
-import { addUsage, usageFromMessages } from "../src/turn-runner/usage-accounting.js";
+import {
+  addUsage,
+  addUsageByModel,
+  usageFromMessages,
+} from "../src/turn-runner/usage-accounting.js";
+import type { ModelUsageEntry, TurnTokenUsage } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 
 describe("turn-runner shell execution utilities", () => {
@@ -140,6 +145,102 @@ describe("turn-runner usage accounting", () => {
       cacheWrite: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.13 },
     });
+  });
+
+  test("folds two distinct models into separate entries whose costs sum to the combined total", () => {
+    const opus: TurnTokenUsage = {
+      input: 100,
+      output: 20,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 120,
+      cost: { input: 0.1, output: 0.05, cacheRead: 0, cacheWrite: 0, total: 0.15 },
+    };
+    const haiku: TurnTokenUsage = {
+      input: 40,
+      output: 8,
+      cacheRead: 2,
+      cacheWrite: 0,
+      totalTokens: 48,
+      cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+    };
+
+    const afterFirst = addUsageByModel(undefined, "anthropic/opus", opus);
+    const breakdown = addUsageByModel(afterFirst, "anthropic/haiku", haiku);
+
+    expect(breakdown).toHaveLength(2);
+    expect(breakdown.find((e) => e.model === "anthropic/opus")?.usage).toEqual(opus);
+    expect(breakdown.find((e) => e.model === "anthropic/haiku")?.usage).toEqual(haiku);
+
+    // Core invariant: per-model cost totals sum to the combined turn total.
+    const combined = addUsage(opus, haiku)!;
+    const summed = breakdown.reduce((acc, e) => acc + e.usage.cost.total, 0);
+    expect(summed).toBeCloseTo(combined.cost.total, 10);
+    expect(summed).toBeCloseTo(0.18, 10);
+  });
+
+  test("merges repeated usage for the same model into a single entry", () => {
+    const first: TurnTokenUsage = {
+      input: 10,
+      output: 5,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 15,
+      cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.02 },
+    };
+    const second: TurnTokenUsage = {
+      input: 30,
+      output: 15,
+      cacheRead: 7,
+      cacheWrite: 0,
+      totalTokens: 45,
+      cost: { input: 0.03, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.05 },
+    };
+
+    const breakdown = addUsageByModel(
+      addUsageByModel(undefined, "anthropic/opus", first),
+      "anthropic/opus",
+      second,
+    );
+
+    expect(breakdown).toHaveLength(1);
+    expect(breakdown[0]).toEqual({
+      model: "anthropic/opus",
+      usage: addUsage(first, second)!,
+    });
+    expect(breakdown[0]!.usage.cost.total).toBeCloseTo(0.07, 10);
+  });
+
+  test("never mutates the input list and clones it unchanged for falsy usage", () => {
+    const original: ModelUsageEntry[] = [
+      {
+        model: "anthropic/opus",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.01 },
+        },
+      },
+    ];
+    const snapshot = JSON.parse(JSON.stringify(original));
+
+    const unchanged = addUsageByModel(original, "anthropic/opus", undefined);
+    expect(unchanged).toEqual(original);
+    expect(unchanged).not.toBe(original);
+
+    // Folding new usage must not write back into the source list.
+    addUsageByModel(original, "anthropic/opus", {
+      input: 9,
+      output: 9,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 18,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.99 },
+    });
+    expect(original).toEqual(snapshot);
   });
 
   test("extracts usage from assistant messages", () => {
