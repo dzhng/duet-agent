@@ -816,7 +816,7 @@ export function createTodoWriteTool(
 
       Prefer a state machine over this tool when the steps are well-scoped enough that a sub-agent or script could complete each one on its own ("do X with these inputs and return the result"). State-machine states run outside this transcript, so their intermediate output does not consume your context — using todo_write for that kind of work pollutes the parent context with tool output you do not actually need to keep.
 
-      Hard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 15-minute floor. If you can already see the work will not fit in one session and you are tempted to recommend the user "continue in the next session," that is the signal that this tool was the wrong choice and a state machine was the right one.
+      Hard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 15-minute floor. If you can already see the work will not fit in one session and you are tempted to recommend the user "continue in the next session," that is the signal that this tool was the wrong choice and a state machine was the right one. When work meets this cutoff it goes to create_state_machine_definition, and once it does, do NOT also call todo_write to mirror or track it: the state machine's states ARE the visible, live plan, so a parallel todo list duplicating those same phases is redundant and wrong. Dropping the todo list is the fix here, never dropping the state machine — session-spanning many-unit work still requires the state machine.
 
       How to use it well:
       - Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.
@@ -948,7 +948,7 @@ function createStateMachineDefinitionTool(
     name: "create_state_machine_definition",
     label: "Create state machine definition",
     description: dedent`
-      Create a new state-machine definition for durable, multi-step, or recurring work. See the system prompt for full routing rules (when to choose this over todo_write, how states resume, terminal acknowledgment, etc.). This description only covers the call shape.
+      Create a new state-machine definition for durable, multi-step, or recurring work. See the system prompt for full routing rules (when to choose this over todo_write, how states resume, terminal acknowledgment, etc.). This description only covers the call shape. The states you define here ARE the visible plan for this work, so do not also call todo_write to mirror or track the same phases; the state machine is already the plan surface.
 
       Call shape (top-level keys are \`definition\` and \`firstState\` ONLY — every state goes inside \`definition.states\`, never at the top level):
       {
