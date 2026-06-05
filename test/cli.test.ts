@@ -299,6 +299,16 @@ describe("CLI model inference", () => {
     expect(resolveModelName("glm-4.7").maxTokens).toBe(40000);
   });
 
+  test("forwards a provider-pinned id that is absent from the catalog without throwing", () => {
+    clearModelEnv();
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+
+    // pi-ai returns undefined for catalog-absent ids; resolution must pass the
+    // model through (the id is sent to the provider at request time) rather than
+    // dereference a missing model while clamping output tokens.
+    expect(() => resolveModelName("anthropic:claude-sonnet-5-1")).not.toThrow();
+  });
+
   test("resolveProviderApiKey maps the project-local duet-gateway provider to DUET_API_KEY", async () => {
     const { resolveProviderApiKey } = await import("../src/model-resolution/duet-gateway.js");
     clearModelEnv();

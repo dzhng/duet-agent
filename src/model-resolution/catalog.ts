@@ -203,6 +203,10 @@ export function isProviderPinnedModelName(modelName: string): boolean {
  * models pass through untouched.
  */
 export function clampModelOutputTokens<T extends { id: string; maxTokens: number }>(model: T): T {
+  // `getModel` returns undefined at runtime for pass-through provider:modelId
+  // values that are not in the catalog; resolution must forward those untouched
+  // rather than dereference a missing model.
+  if (!model) return model;
   const cap = findModelDefinition(model.id)?.maxOutputTokens;
   if (cap === undefined || model.maxTokens <= cap) return model;
   return { ...model, maxTokens: cap };
