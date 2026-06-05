@@ -164,13 +164,13 @@ export const FIXED_OBSERVER_BUDGETS = {
  * chatter decay out of the global pack. Tunable per-caller via
  * `ObservationalMemorySettingsInput.recencyHalfLifeMs`.
  */
-const DEFAULT_RECENCY_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
+export const DEFAULT_RECENCY_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * 1.3 keeps reflections preferred at matched priority/recency without
  * shutting raw observations out of the global pack entirely.
  */
-const DEFAULT_REFLECTION_BIAS = 1.3;
+export const DEFAULT_REFLECTION_BIAS = 1.3;
 
 export interface DerivedMemoryBudgets {
   observation: {
