@@ -4,6 +4,7 @@ import { resolveDuetGatewayModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
   canonicalizeProviderModelId,
+  clampModelOutputTokens,
   DEFAULT_CLI_MEMORY_MODEL,
   DEFAULT_CLI_MODEL,
   getModelCandidates,
@@ -54,11 +55,10 @@ export function resolveModelName(model: string): Model<any> {
     if (!resolved) {
       throw new Error(`Unknown duet-gateway model: ${modelId}`);
     }
-    return resolved;
+    return clampModelOutputTokens(resolved);
   }
-  return getModel(
-    provider as Parameters<typeof getModel>[0],
-    modelId as Parameters<typeof getModel>[1],
+  return clampModelOutputTokens(
+    getModel(provider as Parameters<typeof getModel>[0], modelId as Parameters<typeof getModel>[1]),
   );
 }
 

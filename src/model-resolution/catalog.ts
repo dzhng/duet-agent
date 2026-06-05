@@ -25,6 +25,13 @@ interface ModelDefinition {
   shorthand: string;
   aliases: readonly string[];
   modelsByProvider: Partial<Record<ProviderName, string>>;
+  /**
+   * Hard cap on output tokens, applied when it is lower than the `maxTokens`
+   * the upstream pi-ai catalog reports. Some gateway models advertise a larger
+   * window than the backend they actually route to accepts, so the request 400s
+   * unless we clamp. Leave unset when the catalog value is already correct.
+   */
+  maxOutputTokens?: number;
 }
 
 export const DEFAULT_CLI_MODEL = "opus-4.8";
@@ -167,6 +174,9 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "vercel-ai-gateway": "deepseek/deepseek-v4-pro",
       openrouter: "deepseek/deepseek-v4-pro",
     },
+    // The gateways route this model to baseten, whose API rejects max_tokens
+    // above 262144 even though pi-ai's catalog advertises 384000.
+    maxOutputTokens: 262144,
   },
   {
     // Zhipu's GLM 4.7 is routed through the duet/vercel gateways under the
@@ -184,6 +194,18 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
 
 export function isProviderPinnedModelName(modelName: string): boolean {
   return modelName.includes(":");
+}
+
+/**
+ * Clamp a resolved model's output-token ceiling to the catalog's
+ * `maxOutputTokens` when one is set and lower than the upstream value. Returns
+ * the input unchanged when no override applies, so unknown or already-correct
+ * models pass through untouched.
+ */
+export function clampModelOutputTokens<T extends { id: string; maxTokens: number }>(model: T): T {
+  const cap = findModelDefinition(model.id)?.maxOutputTokens;
+  if (cap === undefined || model.maxTokens <= cap) return model;
+  return { ...model, maxTokens: cap };
 }
 
 export function getProviderDefaultModel(provider: ProviderName): string {
