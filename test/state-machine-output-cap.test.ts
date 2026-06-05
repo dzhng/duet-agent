@@ -19,8 +19,9 @@ describe("script/poll output cap", () => {
   testIfDocker(
     "caps oversized script stdout and writes the full output to a recoverable file",
     async () => {
-      // 200k characters of unique-per-line content so we can prove the full
-      // output survived on disk while the inlined value was truncated.
+      // ~90k characters of unique-per-line content (well over the cap) so we
+      // can prove the full output survived on disk while the inlined value was
+      // truncated.
       const lineCount = 5_000;
       const command = `for i in $(seq 1 ${lineCount}); do echo "duet-cap-line-$i"; done`;
       const definition: StateMachineDefinition = {
@@ -39,14 +40,12 @@ describe("script/poll output cap", () => {
       if (result.type !== "state_completed") return;
 
       const output = result.output as { stdout: string; parsed: { result?: string } };
-      const fullLength = `duet-cap-line-1\n`.length; // sanity anchor
 
       // The inlined stdout is bounded and no longer carries the whole log.
       expect(output.stdout.length).toBeLessThan(20_000);
       expect(output.stdout).toContain("duet-cap-line-1");
       expect(output.stdout).toContain(`duet-cap-line-${lineCount}`);
       expect(output.stdout).toContain("truncated for the orchestrator");
-      expect(fullLength).toBeGreaterThan(0);
 
       // The pointer references a real file that holds the complete, untruncated
       // output (head, tail, and the middle the prompt dropped).
