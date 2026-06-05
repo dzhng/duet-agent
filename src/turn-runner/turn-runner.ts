@@ -1495,7 +1495,7 @@ export class TurnRunner {
         );
       }
 
-      const firstState = control.firstState ?? control.definition.states[0]?.name ?? "";
+      const firstState = control.firstState;
       this.stateMachineController.startSession({
         prompt: workerResult.outcome.type === "complete" ? (workerResult.outcome.result ?? "") : "",
         definition: control.definition,

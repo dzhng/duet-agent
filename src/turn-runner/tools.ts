@@ -385,9 +385,10 @@ const stateMachineDefinitionSchema = Type.Object(
 
 const createDefinitionSchema = Type.Object({
   definition: stateMachineDefinitionSchema,
-  firstState: Type.Optional(
-    Type.String({ description: "Optional state name to run first after creating the definition." }),
-  ),
+  firstState: Type.String({
+    description:
+      "Name of the state in `definition.states` to run first after creating the definition. A top-level key alongside `definition`, never nested inside it.",
+  }),
   replaceActive: Type.Optional(
     Type.Boolean({
       description:
