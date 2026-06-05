@@ -45,16 +45,12 @@ export async function removeArchive(memoryId: string): Promise<void> {
 
 /**
  * Skip rules for the corpus walk. We omit dotfiles/dirs, version control
- * and dependency caches, the AGENTS.md we just wrote (it is the synthesis
- * output, not a source file), any timestamped backups left by older
- * train runs, and the JSON handoff file the sub-agent uses to return
- * structured fields to the CLI.
+ * and dependency caches, and the JSON handoff file the sub-agent uses to
+ * return structured fields to the CLI.
  */
 function isSkippedName(name: string): boolean {
   if (name.startsWith(".")) return true;
   if (name === "node_modules" || name === ".git") return true;
-  if (name === "AGENTS.md") return true;
-  if (name.startsWith("AGENTS.md.bak-")) return true;
   if (name === ".duet-train.json") return true;
   return false;
 }

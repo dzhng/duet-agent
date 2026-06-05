@@ -356,10 +356,9 @@ The interactive TUI accepts image attachments (PNG, JPEG, GIF, WebP):
 <details>
 <summary><b>Train a folder of docs into durable memory</b></summary>
 
-`duet train <folder>` launches a sub-agent inside the folder, lets it read whatever is there with its native tools (markdown, CSVs, PDFs, spreadsheets, screenshots, source — anything the agent can open), and produces three artifacts:
+`duet train <folder>` launches a sub-agent inside the folder, lets it read whatever is there with its native tools (markdown, CSVs, PDFs, spreadsheets, screenshots, source — anything the agent can open), and produces two artifacts:
 
 - **One high-priority observation** in `~/.duet/memory.db`, tagged `train` and `train:<slug>`. Every fresh `duet` session loads it into its initial memory pack.
-- **`<folder>/AGENTS.md`** — a fresh guidance doc the agent writes from scratch. Any existing `AGENTS.md` in the folder is overwritten.
 - **`~/.duet/train/<memory-id>/`** — a hidden archive: a copy of every source file plus a `manifest.json`. Provenance only; the DB row is the source of truth.
 
 ```bash
@@ -371,11 +370,12 @@ duet train ./snowflake-notes --db /tmp/scratch.db  # write to a throwaway DB ins
 
 Re-running `train` on the same slug **replaces** the prior row and its archive — there is at most one `train:<slug>` observation at a time.
 
-Three things to know:
+Two things to know:
 
-- **`AGENTS.md` gets clobbered.** Don't point `train` at a repo whose `AGENTS.md` you care about. Use a scratch corpus folder.
 - **The current session won't see the new memory.** Memory loads at session start. Start a fresh `duet` session to test recall.
 - **Synthesis needs an API key.** `DUET_API_KEY` (recommended), or any of the provider keys covered above.
+
+The CLI also prints the observation content to stdout, so it's pipeable: `duet train ./docs | tee notes.txt`.
 
 </details>
 

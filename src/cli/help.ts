@@ -242,7 +242,7 @@ OPTIONS
 
 export function printTrainHelp(): void {
   console.log(`
-duet train — Ingest a project corpus into one durable memory + AGENTS.md
+duet train — Ingest a project corpus into one durable memory observation
 
 USAGE
   duet train <folder> [--slug <name>] [--model <name>] [--db <path>] [--wait <seconds>]
@@ -251,15 +251,15 @@ DESCRIPTION
   Launches a duet agent with the corpus folder as its working directory.
   The agent reads the corpus using its native file-reading tools (any
   format the duet agent normally reads — markdown, plain text, CSVs, PDFs,
-  spreadsheets, source code) and writes two files at the corpus root:
+  spreadsheets, source code) and writes a single handoff file at the
+  corpus root:
 
-    AGENTS.md         — full project guidance, Markdown.
     .duet-train.json  — structured handoff with headline + observation.
 
   'train' then persists the observation into ~/.duet/memory.db tagged
   'train' and 'train:<slug>', archives the corpus under
-  ~/.duet/train/<memory-id>/, and removes the handoff file. AGENTS.md is
-  left in place at the corpus root.
+  ~/.duet/train/<memory-id>/, removes the handoff file, and prints the
+  observation content to stdout so what you see is what landed in memory.
 
   Subsequent runs against the same slug replace the prior row in place,
   so the memory pool does not bloat.

@@ -14,8 +14,6 @@ export interface SynthesisResult {
   headline: string;
   /** Durable memory text inserted as one high-priority observation. */
   observationContent: string;
-  /** Rendered AGENTS.md body. Written verbatim to <folder>/AGENTS.md by the sub-agent. */
-  agentsMd: string;
 }
 
 export interface TrainManifest {
@@ -30,6 +28,4 @@ export interface TrainManifest {
   model: string;
   headline: string;
   files: Array<Pick<ArchivedFile, "relPath" | "bytes" | "sha256">>;
-  /** Absolute path of the AGENTS.md the sub-agent wrote. */
-  agentsMdPath: string;
 }

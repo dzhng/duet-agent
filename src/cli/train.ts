@@ -113,7 +113,8 @@ interface QueriedRow {
  * it directly.
  */
 const TRAIN_SYSTEM_PROMPT = dedent`
-  You are synthesizing a project corpus into durable agent knowledge.
+  You are synthesizing a project corpus into a single durable memory
+  observation.
 
   The working directory IS the corpus. Read every file that looks
   substantive — markdown, plain text, CSVs, PDFs, spreadsheets, images,
@@ -122,30 +123,25 @@ const TRAIN_SYSTEM_PROMPT = dedent`
   explore until you understand what this corpus is about.
 
   When you have read enough to write an accurate synthesis, produce
-  EXACTLY two files at the cwd root:
+  EXACTLY one file at the cwd root and nothing else:
 
-  1. \`AGENTS.md\` — a complete AGENTS.md body in Markdown, with headings
-     that fit what the corpus actually covers (conventions, key facts,
-     glossary, guidelines, etc.). Ground every rule in the corpus. Do not
-     invent. Overwrite any existing file.
+    \`.duet-train.json\` — a JSON object with exactly two string fields:
+      {
+        "headline": "<short title for this corpus, under 120 characters, no trailing punctuation>",
+        "observationContent": "<one or two paragraphs of concrete, durable, high-priority knowledge an agent would need to act on this material — no preamble, no 'this corpus contains' framing, write it as a standalone memory entry>"
+      }
 
-  2. \`.duet-train.json\` — a JSON object with exactly two string fields:
-       {
-         "headline": "<short title for this corpus, under 120 characters, no trailing punctuation>",
-         "observationContent": "<one or two paragraphs of concrete, durable, high-priority knowledge an agent would need to act on this material — no preamble, no 'this corpus contains' framing, write it as a standalone memory entry>"
-       }
-
-  Both files are required. Neither may be empty. After writing both,
+  Do NOT write \`AGENTS.md\` or any other file. The JSON handoff is the
+  only deliverable. Neither field may be empty. After writing the file,
   stop. You do not need to say anything else.
 `;
 
 /**
- * Launch the duet agent inside the corpus folder and let it produce
- * `AGENTS.md` plus a `.duet-train.json` handoff file. Returns the parsed
- * synthesis result. The handoff file is removed before launch (so a
- * leftover from a failed run can't be mistaken for fresh output) and
- * after a successful read (so it doesn't leak into the corpus or the
- * archive).
+ * Launch the duet agent inside the corpus folder and let it produce a
+ * `.duet-train.json` handoff file. Returns the parsed synthesis result.
+ * The handoff file is removed before launch (so a leftover from a failed
+ * run can't be mistaken for fresh output) and after a successful read
+ * (so it doesn't leak into the corpus or the archive).
  */
 async function runAgentSynthesis(
   options: { folder: string; slug: string; model: string },
@@ -160,7 +156,8 @@ async function runAgentSynthesis(
     // Don't write to the durable memory DB during synthesis; the train
     // command owns the single observation row that lands at the end.
     memoryDbPath: false,
-    // The corpus's own AGENTS.md is the OUTPUT — never load it as input.
+    // Synthesis must not be steered by the corpus's own AGENTS.md (if
+    // present) — the agent reads files as data, not as instructions.
     systemPromptFiles: [],
     // Avoid local user-skill drift influencing what the sub-agent does.
     skillDiscovery: { includeDefaults: false },
@@ -199,12 +196,6 @@ async function runAgentSynthesis(
     await manager.dispose();
   }
 
-  const agentsMdPath = path.join(options.folder, "AGENTS.md");
-  const agentsMd = await readFile(agentsMdPath, "utf8").catch(() => {
-    throw new Error(
-      `train: agent did not produce ${agentsMdPath}. Re-run with --model <stronger model> if the model is too small.`,
-    );
-  });
   const raw = await readFile(handoffPath, "utf8").catch(() => {
     throw new Error(
       `train: agent did not produce ${handoffPath}. Re-run with --model <stronger model> if the model is too small.`,
@@ -228,20 +219,16 @@ async function runAgentSynthesis(
   if (typeof observationContent !== "string" || observationContent.trim().length === 0) {
     throw new Error(`train: .duet-train.json missing non-empty string "observationContent"`);
   }
-  if (agentsMd.trim().length === 0) {
-    throw new Error(`train: AGENTS.md at ${agentsMdPath} is empty`);
-  }
 
   return {
     headline: headline.trim(),
     observationContent: observationContent.trim(),
-    agentsMd,
   };
 }
 
 /**
  * Run `duet train <folder>` — launch a sub-agent that reads the corpus
- * and writes AGENTS.md + a structured handoff file, persist the
+ * and writes a structured handoff file (.duet-train.json), persist the
  * synthesized observation into durable memory (replacing any prior
  * `train:<slug>` row), archive the corpus under `~/.duet/train/<memoryId>/`,
  * and verify both side effects landed.
@@ -331,12 +318,9 @@ export async function runTrainCommand(
     const replacedSuffix = priorIds.length > 0 ? ` (replaced ${priorIds.length} prior row(s))` : "";
     io.stderr.write(`[persist] memory id=${observation.id}${replacedSuffix}\n`);
 
-    // Walk the corpus AFTER the sub-agent run so the just-written
-    // AGENTS.md is included in the archive. (`runAgentSynthesis` already
-    // removed `.duet-train.json`; the walker's skip list is defense in
-    // depth.)
+    // `runAgentSynthesis` already removed `.duet-train.json`; the
+    // walker's skip list is defense in depth.
     const archivedFiles = await collectArchiveFiles(options.folder);
-    const agentsMdPath = path.join(options.folder, "AGENTS.md");
     const manifest: TrainManifest = {
       memoryId: observation.id,
       slug: options.slug,
@@ -349,7 +333,6 @@ export async function runTrainCommand(
         bytes: file.bytes,
         sha256: file.sha256,
       })),
-      agentsMdPath,
     };
     const archivePath = await writeArchive({
       memoryId: observation.id,
@@ -368,17 +351,13 @@ export async function runTrainCommand(
     if (verifyRows.rows[0]?.content !== synthesis.observationContent) {
       fail(`Verification failed: observation ${observation.id} did not round-trip through the DB.`);
     }
-    const agentsStat = await stat(agentsMdPath);
-    if (agentsStat.size === 0) {
-      fail(`Verification failed: AGENTS.md at ${agentsMdPath} is empty.`);
-    }
 
     io.stdout.write(`Trained "${synthesis.headline}"\n`);
     io.stdout.write(`  memory id  : ${observation.id}\n`);
     io.stdout.write(`  archive    : ${archivePath}\n`);
-    io.stdout.write(`  agents.md  : ${agentsMdPath}\n`);
     io.stdout.write(`  files      : ${archivedFiles.length} file(s)\n`);
     io.stdout.write(`  model      : ${resolvedModel}\n`);
+    io.stdout.write(`\n${synthesis.observationContent}\n`);
   } catch (error) {
     if (error instanceof MemoryLockTimeoutError) {
       fail(
