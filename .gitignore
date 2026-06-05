@@ -56,3 +56,4 @@ mocks/
 
 # Local-only design notes / scratch (never tracked)
 .agents/notes/
+scripts/debug-sm*.ts
