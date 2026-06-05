@@ -155,6 +155,31 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       openrouter: "x-ai/grok-4.3",
     },
   },
+  {
+    // DeepSeek V4 Pro is routed through the duet/vercel gateways and OpenRouter
+    // under the shared `deepseek/deepseek-v4-pro` model id. We do not configure
+    // a direct DeepSeek provider, so the gateway and OpenRouter entries are the
+    // only routes.
+    shorthand: "deepseek-v4-pro",
+    aliases: ["deepseek/deepseek-v4-pro"],
+    modelsByProvider: {
+      "duet-gateway": "deepseek/deepseek-v4-pro",
+      "vercel-ai-gateway": "deepseek/deepseek-v4-pro",
+      openrouter: "deepseek/deepseek-v4-pro",
+    },
+  },
+  {
+    // Zhipu's GLM 4.7 is routed through the duet/vercel gateways under the
+    // `zai/glm-4.7` model id and through OpenRouter as `z-ai/glm-4.7`. We do not
+    // configure a direct Zhipu provider, so these are the only routes.
+    shorthand: "glm-4.7",
+    aliases: ["zai/glm-4.7", "z-ai/glm-4.7", "glm-4-7"],
+    modelsByProvider: {
+      "duet-gateway": "zai/glm-4.7",
+      "vercel-ai-gateway": "zai/glm-4.7",
+      openrouter: "z-ai/glm-4.7",
+    },
+  },
 ];
 
 export function isProviderPinnedModelName(modelName: string): boolean {
