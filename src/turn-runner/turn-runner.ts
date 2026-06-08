@@ -1828,16 +1828,22 @@ export class TurnRunner {
     }
     const session = this.memoryPersistence?.session;
     if (!session) return;
+    // The observer takes the model name and resolves it internally, but usage
+    // is attributed by resolved id so the memory slice matches the parent and
+    // state-agent entries in `usageByModel` (e.g. `openai/gpt-5.4-mini`) rather
+    // than mixing a shorthand in among resolved ids.
+    const memoryModel = this.resolveMemoryActorModel(options);
+    const memoryModelId = resolveModelName(memoryModel).id;
     const result = await updateObservationalMemory({
       session,
       memory: this.memory,
       sessionId: this.config.sessionId,
       effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
-      actorModel: this.resolveMemoryActorModel(options),
+      actorModel: memoryModel,
       settings: this.config.memory,
       messages,
       cwd: this.config.cwd ?? process.cwd(),
-      onUsage: (usage) => this.recordUsage(usage, this.resolveMemoryActorModel(options)),
+      onUsage: (usage) => this.recordUsage(usage, memoryModelId),
       onActivity: (event) => this.emit({ type: "memory", ...event }),
     });
 
