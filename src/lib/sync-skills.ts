@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { resolveDuetAppBaseUrl } from "./duet-app-url.js";
@@ -154,22 +154,88 @@ export async function syncDefaultSkills(options: SyncSkillsOptions): Promise<Syn
     return { status: "unchanged", hash: fetched.hash };
   }
 
-  await rm(skillsDir, { recursive: true, force: true });
-  await mkdir(skillsDir, { recursive: true });
+  // Stage the new tree in a sibling directory and swap it into place with a
+  // single rename, rather than rewriting `skillsDir` in place. A second `duet`
+  // process sharing this HOME can sync or read concurrently; an in-place
+  // rebuild lets it observe a half-written tree, or rm the directory out from
+  // under another sync's writes (`ENOENT ... open '.../<skill>'`). With staging
+  // + rename an observer only ever sees the complete old tree or the new one.
+  //
+  // The token is unique per call, not per process: two syncs in the same
+  // process and millisecond must not share scratch dirs or they stomp each
+  // other's writes.
+  const swapToken = randomUUID();
+  const stagingDir = `${skillsDir}.staging-${swapToken}`;
+  const retiredDir = `${skillsDir}.old-${swapToken}`;
 
-  for (const skill of fetched.skills) {
-    const target = resolve(skillsDir, skill.path);
-    if (!isInsideDirectory(skillsDir, target)) {
-      throw new Error(`Refusing to write skill outside ${skillsDir}: ${skill.path}`);
+  await rm(stagingDir, { recursive: true, force: true });
+  await mkdir(stagingDir, { recursive: true });
+  try {
+    for (const skill of fetched.skills) {
+      const target = resolve(stagingDir, skill.path);
+      if (!isInsideDirectory(stagingDir, target)) {
+        throw new Error(`Refusing to write skill outside ${skillsDir}: ${skill.path}`);
+      }
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, skill.content);
     }
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, skill.content);
+
+    await mkdir(dirname(skillsDir), { recursive: true });
+    await swapIntoPlace(stagingDir, skillsDir, retiredDir);
+  } finally {
+    // Always clear scratch dirs: the retired tree on success, the staging tree
+    // if we threw before the swap. force:true keeps this a no-op when absent.
+    await rm(retiredDir, { recursive: true, force: true });
+    await rm(stagingDir, { recursive: true, force: true });
   }
 
   await mkdir(dirname(hashFilePath), { recursive: true });
   await writeFile(hashFilePath, fetched.hash);
 
   return { status: "synced", hash: fetched.hash, count: fetched.skills.length };
+}
+
+/**
+ * Replace `skillsDir` with the freshly built `stagingDir`. rename cannot
+ * overwrite a non-empty directory, so the live tree is moved aside to
+ * `retiredDir` first and then the staging tree is moved into place.
+ *
+ * Without a cross-process lock two concurrent syncs can race on the final
+ * rename: the loser finds `skillsDir` already repopulated by the winner and
+ * gets EEXIST/ENOTEMPTY. Since every default-skill sync fetches the same
+ * payload, the winner's tree is a complete, correct result, so a lost race is
+ * success, not failure — we retry the move-aside/swap a few times and then
+ * accept a peer-installed tree rather than throwing. The destructive window is
+ * a single rename, so a reader at worst momentarily sees `skillsDir` absent
+ * (treated as "no skills") instead of a half-written tree.
+ */
+async function swapIntoPlace(
+  stagingDir: string,
+  skillsDir: string,
+  retiredDir: string,
+): Promise<void> {
+  const maxAttempts = 5;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // Each attempt reuses retiredDir, so clear whatever a prior attempt parked
+    // there before moving the live tree aside again.
+    await rm(retiredDir, { recursive: true, force: true });
+    try {
+      await rename(skillsDir, retiredDir);
+    } catch (err) {
+      // ENOENT: no live tree to move aside (first sync, or a peer is mid-swap).
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    try {
+      await rename(stagingDir, skillsDir);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // A peer repopulated skillsDir between our move-aside and swap. Retry,
+      // and on the final attempt accept their complete tree as the result.
+      if (code !== "EEXIST" && code !== "ENOTEMPTY") throw err;
+      if (attempt === maxAttempts - 1) return;
+    }
+  }
 }
 
 async function readExistingHash(path: string): Promise<string | null> {

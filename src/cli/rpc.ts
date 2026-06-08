@@ -75,6 +75,10 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
   // --no-skill-sync (e.g. a sandbox host that already manages its own skill
   // bundle). Conditional GET keeps the steady-state cost to a single 304
   // round-trip.
+  //
+  // Awaited (not backgrounded): the parent agent's system prompt captures the
+  // skill set at session start, so the sync must finish before the session
+  // starts or the agent runs the whole session unaware of the synced skills.
   if (process.env.DUET_API_KEY && !parsed.noSkillSync) {
     await maybeAutoSyncDefaultSkills({ apiKey: process.env.DUET_API_KEY });
   }

@@ -265,6 +265,10 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   // in with --skip-skill-sync leaves no hash, so this stays a no-op until
   // the user explicitly syncs at least once. The conditional GET hits 304
   // in steady state, so the cost is one cheap round-trip.
+  //
+  // Awaited (not backgrounded): the parent agent's system prompt captures the
+  // skill set at session start, so the sync must finish before the session
+  // starts or the agent runs the whole session unaware of the synced skills.
   if (process.env.DUET_API_KEY && !noSkillSync) {
     await maybeAutoSyncDefaultSkills({ apiKey: process.env.DUET_API_KEY });
   }
