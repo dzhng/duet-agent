@@ -58,7 +58,38 @@ function resolveDuetGatewayUpstream(modelId: string): Model<any> | undefined {
       | Model<any>
       | undefined;
   }
-  return getModel("vercel-ai-gateway" as any, modelId as any) as Model<any> | undefined;
+  return (
+    (getModel("vercel-ai-gateway" as any, modelId as any) as Model<any> | undefined) ??
+    resolveMissingModel("vercel-ai-gateway", modelId)
+  );
+}
+
+/**
+ * Opus 4.8 siblings cloned to synthesize Claude Fable 5, which the Duet/Vercel
+ * gateways and Anthropic direct already serve but pi-ai's catalog has not
+ * shipped. Fable 5 reuses Opus 4.8's anthropic-messages transport, 1M context
+ * window, and 128k output cap unchanged, so swapping the id yields a correct
+ * spec. Keyed by the provider the sibling loads from; the `duet-gateway` route
+ * resolves through the `vercel-ai-gateway` catalog so it needs no entry. `to`
+ * scopes the clone to Fable 5 so other catalog-missing ids are not rewritten.
+ */
+const FABLE_5_CLONE_SOURCES: Record<string, { from: string; to: string }> = {
+  "vercel-ai-gateway": { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-fable-5" },
+  anthropic: { from: "claude-opus-4-8", to: "claude-fable-5" },
+};
+
+/**
+ * Clone a known sibling on the same provider to build a Model pi-ai has not
+ * shipped yet; returns undefined when the provider/modelId pair is not a
+ * pending clone. The `duet-gateway` path (above) and the
+ * `vercel-ai-gateway`/`anthropic` paths in resolver.ts share it. Delete the
+ * Fable 5 entries once pi-ai ships them and the catalog resolves directly.
+ */
+export function resolveMissingModel(provider: string, modelId: string): Model<any> | undefined {
+  const clone = FABLE_5_CLONE_SOURCES[provider];
+  if (!clone || modelId !== clone.to) return undefined;
+  const sibling = getModel(provider as any, clone.from as any) as Model<any> | undefined;
+  return sibling ? { ...sibling, id: modelId, name: modelId } : undefined;
 }
 
 function getDuetGatewayBaseUrlForModel(model: Model<any>): string {

@@ -1,6 +1,6 @@
 import { findEnvKeys, getModel, type Model } from "@earendil-works/pi-ai";
 
-import { resolveDuetGatewayModel } from "./duet-gateway.js";
+import { resolveDuetGatewayModel, resolveMissingModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
   canonicalizeProviderModelId,
@@ -57,9 +57,15 @@ export function resolveModelName(model: string): Model<any> {
     }
     return clampModelOutputTokens(resolved);
   }
-  return clampModelOutputTokens(
-    getModel(provider as Parameters<typeof getModel>[0], modelId as Parameters<typeof getModel>[1]),
-  );
+  // getModel returns undefined for models the upstream catalog has not shipped
+  // yet; fall back to a synthesized clone (e.g. Fable 5) before forwarding.
+  // clampModelOutputTokens forwards a missing model untouched at runtime.
+  const resolved =
+    getModel(
+      provider as Parameters<typeof getModel>[0],
+      modelId as Parameters<typeof getModel>[1],
+    ) ?? (resolveMissingModel(provider, modelId) as Model<any>);
+  return clampModelOutputTokens(resolved);
 }
 
 function isKnownProvider(provider: string): provider is ProviderName {
