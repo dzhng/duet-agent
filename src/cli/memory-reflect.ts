@@ -49,7 +49,7 @@ export async function runMemoryReflectCommand(
         await runMigrations(db);
       },
     },
-    ...(options.waitBudgetMs !== undefined ? { waitBudgetMs: options.waitBudgetMs } : {}),
+    ...(options.waitBudgetMs !== undefined ? { lockWaitBudgetMs: options.waitBudgetMs } : {}),
     idleCloseMs: 60_000,
   });
   const removeShutdownHandlers = installShutdownHandlers(() => session.dispose());
@@ -90,7 +90,7 @@ export async function runMemoryReflectCommand(
 
     if (result.reflections.length === 0) {
       io.stdout.write(
-        `\nNothing eligible: ${result.preserved.length} row(s) preserved (too fresh or already a global reflection).\n`,
+        `\nNothing eligible: ${result.preserved.length} row(s) preserved (too fresh, pinned, or already a global reflection).\n`,
       );
       return;
     }

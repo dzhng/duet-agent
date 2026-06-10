@@ -3,6 +3,7 @@ import {
   DEFAULT_EFFECTIVE_CONTEXT,
   DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS,
   DEFAULT_GLOBAL_REFLECT_MIN_AGE_MS,
+  PINNED_TAG,
   planReflectionBatches,
   reflectAllObservations,
   resolveObservationalMemorySettings,
@@ -96,6 +97,45 @@ describe("planReflectionBatches", () => {
     expect(preserved.map((o) => o.id)).toEqual(["global-refl"]);
     expect(batches).toHaveLength(1);
     expect(batches[0]!.observations.map((o) => o.id).sort()).toEqual(["local-refl", "raw-old"]);
+  });
+
+  test("preserves pinned rows regardless of age", () => {
+    // Curated durable rows (e.g. `duet train` syntheses) carry the
+    // `pinned` tag; the prune must never fold them no matter how old.
+    const pinned = makeObservation({
+      id: "pinned-old",
+      createdAt: NOW - 365 * DAY_MS,
+      priority: "high",
+      tags: ["train", "train:my-corpus", PINNED_TAG],
+    });
+    const oldRaw = makeObservation({ id: "raw-old", createdAt: NOW - 10 * DAY_MS });
+
+    const { preserved, batches } = planReflectionBatches([pinned, oldRaw], {
+      cutoff,
+      batchTokens: 1_000_000,
+    });
+
+    expect(preserved.map((o) => o.id)).toEqual(["pinned-old"]);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]!.observations.map((o) => o.id)).toEqual(["raw-old"]);
+  });
+
+  test("pinned wins even for local reflection rows that would otherwise be eligible", () => {
+    const pinnedLocalReflection = makeObservation({
+      id: "pinned-refl",
+      kind: "reflection",
+      sessionId: "session_a",
+      createdAt: NOW - 30 * DAY_MS,
+      tags: ["observational-memory", "reflection", PINNED_TAG],
+    });
+
+    const { preserved, batches } = planReflectionBatches([pinnedLocalReflection], {
+      cutoff,
+      batchTokens: 1_000_000,
+    });
+
+    expect(preserved.map((o) => o.id)).toEqual(["pinned-refl"]);
+    expect(batches).toEqual([]);
   });
 
   test("packs eligible rows greedily up to batchTokens, then rolls over", () => {

@@ -21,6 +21,7 @@ describe("train stripe", () => {
 
       expect(result.observation.priority).toBe("high");
       expect(result.observation.tags).toContain("train");
+      expect(result.observation.tags).toContain("pinned");
       expect(result.observation.tags).toContain(`train:${slug}`);
       expect(result.observation.content.length).toBeGreaterThan(200);
 

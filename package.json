@@ -43,7 +43,7 @@
     "check-types": "tsc --noEmit",
     "cli": "bun src/cli.ts",
     "dev": "tsc --watch",
-    "eval": "docker run --rm -v \"$PWD:/src:ro\" -w /work -e HOME=/tmp/home -e DUET_TEST_IN_DOCKER=1 oven/bun:1.3.11 sh -lc 'cp -R /src/. /work && bun install --frozen-lockfile && bun test ./evals/*.eval.ts'",
+    "eval": "docker run --rm -v \"$PWD:/src:ro\" -w /work -e HOME=/tmp/home -e DUET_TEST_IN_DOCKER=1 -e DUET_API_KEY -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e EVAL_MODEL -e JUDGE_MODEL -e COVERAGE_THRESHOLD oven/bun:1.3.11 sh -lc 'cp -R /src/. /work && bun install --frozen-lockfile && bun test ./evals/*.eval.ts'",
     "format": "oxfmt --write --no-error-on-unmatched-pattern",
     "format:check": "oxfmt --check --no-error-on-unmatched-pattern",
     "lint": "oxlint src/",

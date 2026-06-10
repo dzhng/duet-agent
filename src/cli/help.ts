@@ -257,12 +257,15 @@ DESCRIPTION
     .duet-train.json  — structured handoff with headline + observation.
 
   'train' then persists the observation into ~/.duet/memory.db tagged
-  'train' and 'train:<slug>', archives the corpus under
+  'train', 'train:<slug>', and 'pinned', archives the corpus under
   ~/.duet/train/<memory-id>/, removes the handoff file, and prints the
   observation content to stdout so what you see is what landed in memory.
 
   Subsequent runs against the same slug replace the prior row in place,
-  so the memory pool does not bloat.
+  so the memory pool does not bloat. The 'pinned' tag exempts the row
+  from 'duet memory reflect'; deleting it via 'duet memory' also removes
+  its archive. Note: train loads the corpus folder's .env (for provider
+  credentials), so check folders you did not author before training.
 
 OPTIONS
   --slug <name>            Override the corpus slug (default: sanitized folder basename)

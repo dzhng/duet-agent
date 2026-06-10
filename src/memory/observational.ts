@@ -968,6 +968,16 @@ async function reflectObservations(
 export const GLOBAL_REFLECTION_SESSION_ID = "__global_reflection__";
 
 /**
+ * Rows carrying this tag are curated, durable memories whose lifecycle
+ * is owned by whatever produced them (e.g. `duet train` corpus
+ * syntheses) rather than transient session residue. The global reflect
+ * prune preserves them verbatim regardless of age: folding a curated
+ * row into a generic reflection would destroy exactly the knowledge the
+ * user deliberately put there.
+ */
+export const PINNED_TAG = "pinned";
+
+/**
  * Default minimum age, in days, that a raw observation must reach before
  * the global reflect prune (`duet memory reflect`) is allowed to fold it
  * into a reflection row and delete the original.
@@ -1130,6 +1140,9 @@ export interface PlanReflectionBatchesOptions {
  *     them up into atomic global reflection rows. Once folded, the
  *     resulting global rows carry `sessionId === GLOBAL_REFLECTION_SESSION_ID`
  *     and are preserved on subsequent runs.
+ *   - Rows tagged {@link PINNED_TAG} are always preserved, regardless of
+ *     age or kind. They are curated durable memories (e.g. `duet train`
+ *     syntheses) whose lifecycle belongs to their producer, not the prune.
  *   - Non-reflection rows with `createdAt > cutoff` are preserved (too
  *     fresh; resume-info-loss risk too high).
  *   - Everything else is eligible. Eligible rows are sorted by
@@ -1145,6 +1158,11 @@ export function planReflectionBatches(
   const preserved: Observation[] = [];
   const eligible: Observation[] = [];
   for (const observation of observations) {
+    if (observation.tags.includes(PINNED_TAG)) {
+      // Curated durable rows are never compacted (see PINNED_TAG).
+      preserved.push(observation);
+      continue;
+    }
     if (
       observation.kind === "reflection" &&
       observation.sessionId === GLOBAL_REFLECTION_SESSION_ID

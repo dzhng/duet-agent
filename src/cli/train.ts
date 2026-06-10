@@ -4,6 +4,7 @@ import path from "node:path";
 import dedent from "dedent";
 
 import { runMigrations } from "../memory/migrations.js";
+import { PINNED_TAG } from "../memory/observational.js";
 import { MemoryLockTimeoutError } from "../memory/pglite.js";
 import { MemorySession } from "../memory/session.js";
 import { appendObservation } from "../memory/storage.js";
@@ -240,9 +241,12 @@ export async function runTrainCommand(
   const options = parseTrainArgs(args);
   if (!options) return;
 
+  // Post-parse failures throw instead of calling `fail()`: the CLI entry
+  // (`runCli`) prints them identically, while in-process callers (the
+  // eval harness, the model sweep) can catch them and run their cleanup.
   const folderStat = await stat(options.folder).catch(() => undefined);
   if (!folderStat || !folderStat.isDirectory()) {
-    fail(`Folder not found or not a directory: ${options.folder}`);
+    throw new Error(`Folder not found or not a directory: ${options.folder}`);
   }
 
   // Resolve the model the same way `duet run` does so shorthands and
@@ -259,7 +263,7 @@ export async function runTrainCommand(
         await runMigrations(db);
       },
     },
-    ...(options.waitBudgetMs !== undefined ? { waitBudgetMs: options.waitBudgetMs } : {}),
+    ...(options.waitBudgetMs !== undefined ? { lockWaitBudgetMs: options.waitBudgetMs } : {}),
     idleCloseMs: 60_000,
   });
   const removeShutdownHandlers = installShutdownHandlers(() => session.dispose());
@@ -273,14 +277,33 @@ export async function runTrainCommand(
       io,
     );
 
+    // Insert the new row BEFORE deleting priors: if the process dies
+    // between the two steps the worst case is a duplicate `train:<slug>`
+    // row (cleaned up by the next train run), never zero rows. The
+    // `pinned` tag exempts the row from `duet memory reflect`'s prune.
+    const trainTag = `train:${options.slug}`;
+    const observedDate = new Date().toISOString().slice(0, 10);
+    const observation = await appendObservation(session, {
+      kind: "observation",
+      priority: "high",
+      source: { kind: "system" },
+      content: synthesis.observationContent,
+      tags: ["train", trainTag, PINNED_TAG],
+      observedDate,
+    });
+    if (!observation) {
+      throw new Error(`Could not write training memory to ${options.dbPath} (lock contention).`);
+    }
+
     // SELECT + DELETE share one `withDb` so the replace step is atomic
     // against peer writers and lock failure surfaces in one place.
-    // Invariant after this block: exactly zero `train:<slug>` rows in the DB.
-    const trainTag = `train:${options.slug}`;
+    // Invariant after this block: exactly one `train:<slug>` row — the
+    // one written above.
     const priorIds = await session.withDb(async (db) => {
       const result = await db.query<QueriedRow>("SELECT id, tags_json FROM observations");
       const ids: string[] = [];
       for (const row of result.rows) {
+        if (row.id === observation.id) continue;
         let tags: unknown;
         try {
           tags = JSON.parse(row.tags_json);
@@ -297,23 +320,13 @@ export async function runTrainCommand(
       return ids;
     });
     if (priorIds === undefined) {
-      fail(`Could not read prior training rows from ${options.dbPath} (lock contention).`);
+      throw new Error(
+        `Could not remove prior training rows from ${options.dbPath} (lock contention); ` +
+          `the new row ${observation.id} was written. Re-run train to clean up the duplicate.`,
+      );
     }
     for (const id of priorIds) {
       await removeArchive(id);
-    }
-
-    const observedDate = new Date().toISOString().slice(0, 10);
-    const observation = await appendObservation(session, {
-      kind: "observation",
-      priority: "high",
-      source: { kind: "system" },
-      content: synthesis.observationContent,
-      tags: ["train", trainTag],
-      observedDate,
-    });
-    if (!observation) {
-      fail(`Could not write training memory to ${options.dbPath} (lock contention).`);
     }
     const replacedSuffix = priorIds.length > 0 ? ` (replaced ${priorIds.length} prior row(s))` : "";
     io.stderr.write(`[persist] memory id=${observation.id}${replacedSuffix}\n`);
@@ -346,10 +359,12 @@ export async function runTrainCommand(
       ]),
     );
     if (verifyRows === undefined) {
-      fail(`Could not verify training memory at ${options.dbPath} (lock contention).`);
+      throw new Error(`Could not verify training memory at ${options.dbPath} (lock contention).`);
     }
     if (verifyRows.rows[0]?.content !== synthesis.observationContent) {
-      fail(`Verification failed: observation ${observation.id} did not round-trip through the DB.`);
+      throw new Error(
+        `Verification failed: observation ${observation.id} did not round-trip through the DB.`,
+      );
     }
 
     io.stdout.write(`Trained "${synthesis.headline}"\n`);
@@ -360,7 +375,7 @@ export async function runTrainCommand(
     io.stdout.write(`\n${synthesis.observationContent}\n`);
   } catch (error) {
     if (error instanceof MemoryLockTimeoutError) {
-      fail(
+      throw new Error(
         `Memory database at ${error.dataDir} is still locked by duet pid ${error.holderPid} after ${
           error.budgetMs / 1000
         }s. Stop that process (or pass --wait <seconds> to wait longer) and retry.`,
