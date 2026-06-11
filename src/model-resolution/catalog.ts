@@ -25,6 +25,13 @@ interface ModelDefinition {
   shorthand: string;
   aliases: readonly string[];
   modelsByProvider: Partial<Record<ProviderName, string>>;
+  /**
+   * Hard cap on output tokens, applied when it is lower than the `maxTokens`
+   * the upstream pi-ai catalog reports. Some gateway models advertise a larger
+   * window than the backend they actually route to accepts, so the request 400s
+   * unless we clamp. Leave unset when the catalog value is already correct.
+   */
+  maxOutputTokens?: number;
 }
 
 export const DEFAULT_CLI_MODEL = "opus-4.8";
@@ -155,10 +162,68 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       openrouter: "x-ai/grok-4.3",
     },
   },
+  {
+    // DeepSeek V4 Pro is routed through the duet/vercel gateways and OpenRouter
+    // under the shared `deepseek/deepseek-v4-pro` model id. We do not configure
+    // a direct DeepSeek provider, so the gateway and OpenRouter entries are the
+    // only routes.
+    shorthand: "deepseek-v4-pro",
+    aliases: ["deepseek/deepseek-v4-pro"],
+    modelsByProvider: {
+      "duet-gateway": "deepseek/deepseek-v4-pro",
+      "vercel-ai-gateway": "deepseek/deepseek-v4-pro",
+      openrouter: "deepseek/deepseek-v4-pro",
+    },
+    // The gateways route this model to baseten, whose API rejects max_tokens
+    // above 262144 even though pi-ai's catalog advertises 384000.
+    maxOutputTokens: 262144,
+  },
+  {
+    // Anthropic's Claude Fable 5 is routed through the duet/vercel gateways
+    // under the `anthropic/claude-fable-5` model id. pi-ai's catalog does not
+    // ship it yet, so resolution clones the Opus 4.8 gateway entry (identical
+    // anthropic-messages transport, 1M context, 128k output cap) until it does;
+    // see `resolveMissingModel` in duet-gateway.ts.
+    shorthand: "fable-5",
+    aliases: ["claude-fable-5", "anthropic/claude-fable-5"],
+    modelsByProvider: {
+      "duet-gateway": "anthropic/claude-fable-5",
+      "vercel-ai-gateway": "anthropic/claude-fable-5",
+      anthropic: "claude-fable-5",
+    },
+  },
+  {
+    // Zhipu's GLM 4.7 is routed through the duet/vercel gateways under the
+    // `zai/glm-4.7` model id and through OpenRouter as `z-ai/glm-4.7`. We do not
+    // configure a direct Zhipu provider, so these are the only routes.
+    shorthand: "glm-4.7",
+    aliases: ["zai/glm-4.7", "z-ai/glm-4.7", "glm-4-7"],
+    modelsByProvider: {
+      "duet-gateway": "zai/glm-4.7",
+      "vercel-ai-gateway": "zai/glm-4.7",
+      openrouter: "z-ai/glm-4.7",
+    },
+  },
 ];
 
 export function isProviderPinnedModelName(modelName: string): boolean {
   return modelName.includes(":");
+}
+
+/**
+ * Clamp a resolved model's output-token ceiling to the catalog's
+ * `maxOutputTokens` when one is set and lower than the upstream value. Returns
+ * the input unchanged when no override applies, so unknown or already-correct
+ * models pass through untouched.
+ */
+export function clampModelOutputTokens<T extends { id: string; maxTokens: number }>(model: T): T {
+  // `getModel` returns undefined at runtime for pass-through provider:modelId
+  // values that are not in the catalog; resolution must forward those untouched
+  // rather than dereference a missing model.
+  if (!model) return model;
+  const cap = findModelDefinition(model.id)?.maxOutputTokens;
+  if (cap === undefined || model.maxTokens <= cap) return model;
+  return { ...model, maxTokens: cap };
 }
 
 export function getProviderDefaultModel(provider: ProviderName): string {

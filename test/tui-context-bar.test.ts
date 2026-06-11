@@ -32,6 +32,7 @@ describe("sidebar context bar", () => {
     };
     await harness.pushUsage({
       turnUsage: usage,
+      usageByModel: [{ model: "test-model", usage }],
       lastMessageUsage: usage,
       effectiveContextWindow: 200_000,
       contextWindowUsage: {
@@ -78,6 +79,7 @@ describe("sidebar context bar", () => {
     };
     await harness.pushUsage({
       turnUsage: zero,
+      usageByModel: [{ model: "test-model", usage: zero }],
       lastMessageUsage: zero,
       effectiveContextWindow: 200_000,
       contextWindowUsage: {

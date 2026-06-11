@@ -5,28 +5,36 @@ import type { EmbedFn } from "./embedding.js";
 import type { MemorySession } from "./session.js";
 
 /**
- * Background worker that fills missing embeddings while the CLI is
- * running. Started by `loadStoredMemory()`, stopped on dispose. Never
- * blocks a turn: the observer/reflector can write a new row and return
- * to the user immediately; the embedding lands within a few seconds in
- * the background, after which the row becomes hybrid-retrievable.
+ * Background worker that fills missing embeddings. Started by
+ * `loadStoredMemory()` to drain any backlog left by prior runs, then
+ * event-driven: it stops once the backlog is empty and is re-kicked by
+ * the storage write helpers when new observations land. Never blocks a
+ * turn: the observer/reflector can write a new row and return to the
+ * user immediately; the embedding lands within seconds in the
+ * background, after which the row becomes hybrid-retrievable.
  *
- * Tick shape:
+ * Drain shape:
  *   1. Acquire the memory session via one `withDb`. Inside that open,
  *      drain unembedded rows in `BATCH_SIZE` chunks until a select
  *      returns zero rows, then exit `withDb` so the cross-process lock
  *      releases shortly after via the session's idle-close timer.
- *   2. Sleep `IDLE_SLEEP_MS` between ticks. Long enough that a peer
- *      duet CLI can acquire the lock between drains, short enough that
- *      a newly-written observation becomes searchable within seconds.
- *   3. On error (rate limit, transient network), back off for
- *      `ERROR_SLEEP_MS` before retrying.
+ *   2. If the drain came back empty and no `kick()` arrived meanwhile,
+ *      the loop exits. A perpetual idle tick is deliberately avoided:
+ *      each tick re-opens WASM Postgres once the session idle-closes,
+ *      which burned a steady ~8% CPU per resident CLI when several
+ *      sessions sat parked in a sandbox.
+ *   3. When the only unembedded rows are inside the per-id attempt
+ *      cooldown, retry after `ATTEMPT_COOLDOWN_MS` instead of exiting
+ *      so a churned row still gets re-embedded eventually.
+ *   4. On error (rate limit, transient network), back off for
+ *      `ERROR_SLEEP_MS` before retrying. A lock-busy `withDb` skip
+ *      retries after `RETRY_SLEEP_MS`.
  *
  * Failure modes are local: any error inside the loop logs and resumes
  * after a backoff. The worker never throws to the caller.
  */
 const BATCH_SIZE = 50;
-const DEFAULT_IDLE_SLEEP_MS = 10_000;
+const DEFAULT_RETRY_SLEEP_MS = 10_000;
 const DEFAULT_ERROR_SLEEP_MS = 60_000;
 // Cap how often a single observation may be re-embedded. The production
 // memory store can churn rows (the reflector deletes and re-inserts a
@@ -49,11 +57,11 @@ export interface EmbeddingBackfillWorkerOptions {
   /** Path to append progress lines to. Optional; when omitted the worker logs nothing. */
   logPath?: string;
   /**
-   * Idle delay between outer drain ticks in milliseconds. Defaults to
-   * 10s, which gives a peer duet CLI room to acquire the lock between
-   * drains. Tests override this to drive several ticks per second.
+   * Delay before retrying a drain that could not run because the
+   * cross-process lock was busy, in milliseconds. Defaults to 10s,
+   * which gives the peer duet CLI holding the lock room to finish.
    */
-  idleSleepMs?: number;
+  retrySleepMs?: number;
   /**
    * Backoff after a failed drain in milliseconds. Defaults to 60s.
    * Tests override this so a transient-error case does not block the
@@ -82,7 +90,7 @@ const DEFAULT_LOG_MAX_BYTES = 1024 * 1024;
 
 export class EmbeddingBackfillWorker {
   private readonly options: EmbeddingBackfillWorkerOptions;
-  private readonly idleSleepMs: number;
+  private readonly retrySleepMs: number;
   private readonly errorSleepMs: number;
   private readonly attemptCooldownMs: number;
   private readonly logMaxBytes: number;
@@ -93,20 +101,56 @@ export class EmbeddingBackfillWorker {
   private readonly recentAttempts = new Map<string, number>();
   private abortController?: AbortController;
   private runningPromise?: Promise<void>;
+  // Set by `kick()` while a drain is in flight so the loop runs one
+  // more drain instead of exiting on an empty result, closing the race
+  // where a write lands between the final select and the loop exit.
+  private pendingKick = false;
+  // Resolver for the currently in-flight backoff sleep, when any.
+  // `kick()` invokes it so a new write cuts a cooldown/retry/error
+  // backoff short instead of waiting it out.
+  private wakeFromSleep?: () => void;
+  // Set by `stop()` so a late `kick()` (a write racing dispose) cannot
+  // restart the loop against a session that is about to close.
+  private stopped = false;
 
   constructor(options: EmbeddingBackfillWorkerOptions) {
     this.options = options;
-    this.idleSleepMs = options.idleSleepMs ?? DEFAULT_IDLE_SLEEP_MS;
+    this.retrySleepMs = options.retrySleepMs ?? DEFAULT_RETRY_SLEEP_MS;
     this.errorSleepMs = options.errorSleepMs ?? DEFAULT_ERROR_SLEEP_MS;
     this.attemptCooldownMs = options.attemptCooldownMs ?? DEFAULT_ATTEMPT_COOLDOWN_MS;
     this.logMaxBytes = options.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES;
   }
 
-  /** Start the background loop. Idempotent — a second call is a no-op. */
+  /** Start a drain loop. Idempotent — a second call while running is a no-op. */
   start(): void {
     if (this.runningPromise) return;
-    this.abortController = new AbortController();
-    this.runningPromise = this.run(this.abortController.signal);
+    this.stopped = false;
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.runningPromise = this.run(controller.signal).finally(() => {
+      if (this.abortController !== controller) return;
+      this.runningPromise = undefined;
+      this.abortController = undefined;
+      // A kick that landed between the loop's final empty-drain check
+      // and this cleanup would otherwise be lost; restart to honor it.
+      if (this.pendingKick && !controller.signal.aborted) this.start();
+    });
+  }
+
+  /**
+   * Signal that new observations were written. Restarts the drain loop
+   * if it has exited, or schedules one more drain (and cuts any backoff
+   * sleep short) if it is still running. Called by the storage write
+   * helpers via `MemorySession.onWrite`.
+   */
+  kick(): void {
+    if (this.stopped) return;
+    this.pendingKick = true;
+    if (this.runningPromise) {
+      this.wakeFromSleep?.();
+      return;
+    }
+    this.start();
   }
 
   /**
@@ -115,48 +159,104 @@ export class EmbeddingBackfillWorker {
    * for any open the worker holds to drain and the lock to release.
    */
   async stop(): Promise<void> {
+    this.stopped = true;
     this.abortController?.abort();
+    // The finally attached in start() clears abortController and
+    // runningPromise once the loop settles, so awaiting is all the
+    // cleanup stop needs.
     await this.runningPromise;
-    this.abortController = undefined;
-    this.runningPromise = undefined;
   }
 
   private async run(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
+      this.pendingKick = false;
       try {
-        // One withDb per tick: drain everything that's currently
+        // One withDb per drain: embed everything that's currently
         // outstanding while we hold the lock, then exit so the
         // session can idle-close and another duet CLI can take a
         // turn. A returned `undefined` means the lock could not be
-        // acquired in time — fall through to the idle sleep and
-        // retry the same tick later.
-        await this.options.session.withDb(async (db) => {
-          while (!signal.aborted) {
-            const batch = await this.selectBatch(db);
-            if (batch.length === 0) return;
-            // Stamp the attempt before we await the embedding so a
-            // failure mid-call still counts as an attempt and the same
-            // ids do not get retried in a tight loop on the next drain.
-            const attemptAt = Date.now();
-            for (const row of batch) this.recentAttempts.set(row.id, attemptAt);
-            const result = await this.options.embed(batch.map((row) => row.content));
-            if (result.embeddings.length !== batch.length) {
-              throw new Error(
-                `Embedding response length (${result.embeddings.length}) did not match batch size (${batch.length})`,
-              );
-            }
-            await this.persistBatch(db, batch, result.embeddings, result.model);
-            this.log(`Embedded ${batch.length} observations`);
-          }
-        });
+        // acquired in time — retry after a short sleep.
+        const outcome = await this.options.session.withDb((db) => this.drain(db, signal));
         if (signal.aborted) return;
-        await sleep(this.idleSleepMs, signal);
+        if (outcome === "drained") {
+          if (!this.pendingKick) return;
+          continue;
+        }
+        // "cooling": the only unembedded rows were attempted recently.
+        // Retry once the cooldown can have expired rather than exiting,
+        // so a churned row is not stranded until the next write kick.
+        await this.sleep(
+          outcome === "cooling" ? this.attemptCooldownMs : this.retrySleepMs,
+          signal,
+        );
       } catch (error) {
         if (signal.aborted) return;
         this.log(`Embedding batch failed: ${summarizeError(error)}`);
-        await sleep(this.errorSleepMs, signal);
+        await this.sleep(this.errorSleepMs, signal);
       }
     }
+  }
+
+  private async drain(db: PGlite, signal: AbortSignal): Promise<"drained" | "cooling"> {
+    while (!signal.aborted) {
+      const batch = await this.selectBatch(db);
+      if (batch.length === 0) {
+        return (await this.hasCooledBacklog(db)) ? "cooling" : "drained";
+      }
+      // Stamp the attempt before we await the embedding so a
+      // failure mid-call still counts as an attempt and the same
+      // ids do not get retried in a tight loop on the next drain.
+      const attemptAt = Date.now();
+      for (const row of batch) this.recentAttempts.set(row.id, attemptAt);
+      const result = await this.options.embed(batch.map((row) => row.content));
+      if (result.embeddings.length !== batch.length) {
+        throw new Error(
+          `Embedding response length (${result.embeddings.length}) did not match batch size (${batch.length})`,
+        );
+      }
+      await this.persistBatch(db, batch, result.embeddings, result.model);
+      this.log(`Embedded ${batch.length} observations`);
+    }
+    // Aborted mid-drain; the caller returns on the aborted signal
+    // before reading this, so the value only needs to typecheck.
+    return "cooling";
+  }
+
+  /**
+   * True when unembedded rows exist that `selectBatch` could not see
+   * because every one of them is inside the attempt cooldown. Only
+   * worth querying when the cooldown exclusion list is non-empty — an
+   * empty list means the empty batch already proved a full drain.
+   */
+  private async hasCooledBacklog(db: PGlite): Promise<boolean> {
+    if (this.collectCooledIds().length === 0) return false;
+    const result = await db.query<{ pending: boolean }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM observations o
+         LEFT JOIN observation_embeddings e ON e.observation_id = o.id
+         WHERE e.observation_id IS NULL
+       ) AS pending`,
+    );
+    return result.rows[0]?.pending ?? false;
+  }
+
+  /** Backoff sleep that resolves early on abort or on `kick()`. */
+  private sleep(ms: number, signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal.aborted || this.pendingKick) {
+        resolve();
+        return;
+      }
+      const finish = (): void => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", finish);
+        this.wakeFromSleep = undefined;
+        resolve();
+      };
+      const timer = setTimeout(finish, ms);
+      this.wakeFromSleep = finish;
+      signal.addEventListener("abort", finish, { once: true });
+    });
   }
 
   private async selectBatch(db: PGlite): Promise<{ id: string; content: string }[]> {
@@ -295,23 +395,4 @@ function summarizeError(error: unknown): string {
     .trim();
   if (collapsed.length <= ERROR_BODY_LOG_MAX) return collapsed;
   return `${collapsed.slice(0, ERROR_BODY_LOG_MAX)}… (truncated ${collapsed.length - ERROR_BODY_LOG_MAX} chars)`;
-}
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
 }

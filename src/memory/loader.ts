@@ -40,11 +40,40 @@ import { estimateTokens } from "./observational.js";
  * only does the final greedy token-budget fit.
  */
 
-const PRIORITY_WEIGHT: Record<ObservationPriority, number> = {
+export const PRIORITY_WEIGHT: Record<ObservationPriority, number> = {
   high: 3,
   medium: 2,
   low: 1,
 };
+
+/** Tunable inputs to {@link observationScore}; mirror the loader's ranking config. */
+export interface ObservationScoreOptions {
+  /** Half-life in milliseconds applied to time since `lastUsedAt`. */
+  recencyHalfLifeMs: number;
+  /** Multiplier applied to `kind = 'reflection'` rows. */
+  reflectionBias: number;
+}
+
+/**
+ * Compute the absolute global-pack score for one observation:
+ * `priorityWeight * 0.5^((now - lastUsedAt)/halfLife) * kindBias`.
+ *
+ * {@link loadGlobalPack}'s SQL ranking only needs the monotone log-space form
+ * because the `0.5^(now/h)` term is constant within a single ranking pass.
+ * Callers that want the real numeric value per row — e.g. the `duet memory`
+ * TUI rendering a score column, which orders by this exact score — use this so
+ * the displayed number matches the formula the runner ranks by.
+ */
+export function observationScore(
+  observation: Pick<Observation, "priority" | "kind" | "lastUsedAt">,
+  now: number,
+  options: ObservationScoreOptions,
+): number {
+  const priorityWeight = PRIORITY_WEIGHT[observation.priority];
+  const kindBias = observation.kind === "reflection" ? options.reflectionBias : 1.0;
+  const decay = Math.pow(0.5, (now - observation.lastUsedAt) / options.recencyHalfLifeMs);
+  return priorityWeight * decay * kindBias;
+}
 
 export interface LoadGlobalPackOptions {
   /**

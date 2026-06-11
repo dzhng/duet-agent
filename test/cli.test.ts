@@ -280,6 +280,35 @@ describe("CLI model inference", () => {
     expect(model.reasoning).toBe(true);
   });
 
+  test("clamps deepseek-v4-pro output tokens to the baseten backend limit", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+
+    // pi-ai's catalog advertises 384000, but the gateway routes to baseten,
+    // which rejects max_tokens above 262144.
+    expect(resolveModelName("deepseek-v4-pro").maxTokens).toBe(262144);
+    expect(resolveModelName("vercel:deepseek/deepseek-v4-pro").maxTokens).toBe(262144);
+  });
+
+  test("leaves output tokens untouched for models within the backend limit", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+
+    // glm-4.7's catalog maxTokens (40000) is already under any backend cap, so
+    // resolution must not alter it.
+    expect(resolveModelName("glm-4.7").maxTokens).toBe(40000);
+  });
+
+  test("forwards a provider-pinned id that is absent from the catalog without throwing", () => {
+    clearModelEnv();
+    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+
+    // pi-ai returns undefined for catalog-absent ids; resolution must pass the
+    // model through (the id is sent to the provider at request time) rather than
+    // dereference a missing model while clamping output tokens.
+    expect(() => resolveModelName("anthropic:claude-sonnet-5-1")).not.toThrow();
+  });
+
   test("resolveProviderApiKey maps the project-local duet-gateway provider to DUET_API_KEY", async () => {
     const { resolveProviderApiKey } = await import("../src/model-resolution/duet-gateway.js");
     clearModelEnv();

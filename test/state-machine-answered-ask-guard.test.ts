@@ -223,7 +223,11 @@ describe("answered-ask guard leaves legitimate control actions alone", () => {
       // supersedes the asking session and runs the new machine's first
       // state (a terminal), so the answer turn completes via the new
       // machine instead of the guard's error path.
-      { type: "create_state_machine_definition", definition: replacement },
+      {
+        type: "create_state_machine_definition",
+        definition: replacement,
+        firstState: "replaced_done",
+      },
     );
 
     await (

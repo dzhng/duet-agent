@@ -1,3 +1,6 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { TurnQuestion } from "../types/protocol.js";
 import type {
   StateMachineAgentState,
@@ -23,6 +26,7 @@ import {
   recordStateFailed,
   recordStateInterrupted,
   recordStateMachineCompleted,
+  recordStateMachineReactivated,
   recordStateStarted,
   recordStateSleep,
   createStateMachineSession,
@@ -284,6 +288,12 @@ export class StateMachineController {
     // status and any caller-supplied reason. Every other state kind
     // honors the override + input so the caller can steer the next run.
     const isTerminal = selectedState.kind === "terminal";
+    // A non-terminal selection on an already-terminal session is an explicit
+    // user-driven resume; recordStateMachineReactivated clears the prior
+    // terminal so the machine runs live again before the new state starts.
+    if (!isTerminal && this.session.terminal) {
+      this.session = recordStateMachineReactivated(this.session, selectedState.name);
+    }
     const effectiveState = isTerminal
       ? selectedState
       : applyStateOverride(selectedState, decision.override);
@@ -383,7 +393,7 @@ export class StateMachineController {
     this.activeRun = run;
     try {
       const shellOutput = await shell.run();
-      const rawOutput = normalizeStructuredShellOutput(shellOutput);
+      const rawOutput = normalizeStructuredShellOutput(shellOutput, state.name);
       this.session = recordStateCompleted(this.requireSession(), state.name, rawOutput);
       return { type: "state_completed", stateName: state.name, output: rawOutput };
     } catch (error) {
@@ -425,7 +435,7 @@ export class StateMachineController {
       // parsed as JSON when possible for convenience, but the result of
       // that parse does NOT affect whether the poll completes.
       const shellOutput = await shell.run();
-      const rawOutput = normalizePollShellOutput(shellOutput);
+      const rawOutput = normalizePollShellOutput(shellOutput, state.name);
       // Guard against a misconfigured poll gate that exits success on every
       // tick: it is read as "condition met" and handed back to the orchestrator,
       // which re-selects it and hot-loops without ever honoring intervalMs.
@@ -562,26 +572,85 @@ function resolveTimerWakeAt(
   return startedAt + wakeAfterMs;
 }
 
-function normalizeStructuredShellOutput(shellOutput: ShellCommandOutput): ShellCommandOutput & {
+function normalizeStructuredShellOutput(
+  shellOutput: ShellCommandOutput,
+  stateName: string,
+): ShellCommandOutput & {
   parsed: Record<string, unknown>;
 } {
+  const stdout = shellOutput.stdout.trim();
+  const stderr = shellOutput.stderr.trim();
+  const cappedStdout = capStreamForPrompt(stdout, stateName, "stdout");
+  // `parseStructuredOutput` returns the original text under `result` for
+  // non-JSON stdout, so an uncapped fallback would smuggle the full firehose
+  // back into the prompt through `parsed` even after we capped `stdout`.
+  // Detect that exact fallback (`result` is the full trimmed stdout) and reuse
+  // the already-capped string; genuine JSON output is small and passes through.
+  const parsed = parseStructuredOutput(stdout);
   return {
     ...shellOutput,
-    stdout: shellOutput.stdout.trim(),
-    stderr: shellOutput.stderr.trim(),
-    parsed: parseStructuredOutput(shellOutput.stdout),
+    stdout: cappedStdout,
+    stderr: capStreamForPrompt(stderr, stateName, "stderr"),
+    parsed: parsed.result === stdout ? { result: cappedStdout } : parsed,
   };
 }
 
 function normalizePollShellOutput(
   shellOutput: ShellCommandOutput,
+  stateName: string,
 ): ShellCommandOutput & { parsed: Record<string, unknown> } {
   return {
     ...shellOutput,
-    stdout: shellOutput.stdout.trim(),
-    stderr: shellOutput.stderr.trim(),
+    stdout: capStreamForPrompt(shellOutput.stdout.trim(), stateName, "stdout"),
+    stderr: capStreamForPrompt(shellOutput.stderr.trim(), stateName, "stderr"),
+    // Poll `parsed` only keeps JSON objects (`{}` otherwise), so it can never
+    // re-inject raw text the way the structured fallback can — no cap needed.
     parsed: parseJsonObject(shellOutput.stdout),
   };
+}
+
+/**
+ * Maximum characters of a single script/poll output stream (stdout or stderr)
+ * that the controller will inline into the orchestrator's state-completion
+ * wake prompt. A state that pipes a whole test log or build transcript back
+ * through stdout can otherwise bloat the decision turn to tens of thousands of
+ * tokens, which both wastes context and makes the decision request fragile
+ * enough to abort and loop. The orchestrator only needs enough to route; the
+ * consuming agent state reads the full artifact from disk.
+ */
+const MAX_STATE_OUTPUT_STREAM_CHARS = 16_000;
+
+/**
+ * Caps one output stream for the wake prompt. Below the limit the stream is
+ * returned unchanged. Above it, the full stream is written to a file under the
+ * OS temp dir and the inlined value is replaced with a head+tail excerpt plus a
+ * pointer to that file, so the orchestrator (or a downstream state) can read
+ * the complete output on demand without it ever entering the prompt verbatim.
+ */
+function capStreamForPrompt(stream: string, stateName: string, label: string): string {
+  if (stream.length <= MAX_STATE_OUTPUT_STREAM_CHARS) return stream;
+  const overflowPath = writeOverflowFile(stream, stateName, label);
+  const headChars = Math.floor(MAX_STATE_OUTPUT_STREAM_CHARS * 0.3);
+  const tailChars = MAX_STATE_OUTPUT_STREAM_CHARS - headChars;
+  const head = stream.slice(0, headChars);
+  const tail = stream.slice(stream.length - tailChars);
+  const omitted = stream.length - headChars - tailChars;
+  return (
+    `${head}\n\n` +
+    `…[${label} truncated for the orchestrator: ${omitted} of ${stream.length} ` +
+    `characters omitted. Full ${label} written to ${overflowPath} — read that file ` +
+    `(or hand its path to a downstream state) if you need the complete output.]…\n\n` +
+    `${tail}`
+  );
+}
+
+function writeOverflowFile(content: string, stateName: string, label: string): string {
+  const dir = join(tmpdir(), "duet-relay-output");
+  mkdirSync(dir, { recursive: true });
+  const safeState = stateName.replace(/[^A-Za-z0-9_.-]/g, "_");
+  const file = join(dir, `${safeState}-${label}-${Date.now()}.log`);
+  writeFileSync(file, content, "utf8");
+  return file;
 }
 
 function misconfiguredPollGateMessage(stateName: string, successStreak: number): string {

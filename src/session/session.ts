@@ -482,6 +482,7 @@ export class Session {
   private applyUsageEvent(event: TurnUsageEvent): void {
     this.lastUsage = {
       turnUsage: event.turnUsage,
+      usageByModel: event.usageByModel,
       lastMessageUsage: event.lastMessageUsage,
       effectiveContextWindow: event.effectiveContextWindow,
       contextWindowUsage: event.contextWindowUsage,
@@ -509,6 +510,7 @@ export class Session {
     ) {
       this.lastUsage = {
         turnUsage: terminal.turnUsage,
+        usageByModel: terminal.usageByModel ?? [],
         lastMessageUsage: terminal.lastMessageUsage,
         effectiveContextWindow: terminal.effectiveContextWindow,
         contextWindowUsage: terminal.contextWindowUsage,

@@ -78,11 +78,13 @@ export async function loadStoredMemory(
     ...(options.onWarn ? { onWarn: options.onWarn } : {}),
   });
 
-  // The backfill worker runs whenever the CLI is up. Observers and
-  // reflectors write rows during turns; embeddings catch up in the
-  // background within a few batches, never blocking the foreground.
-  // Skipping the worker (no `embed` option) is intentional for tests
-  // and one-shot tools that do not call recall_memory.
+  // The backfill worker drains any embedding backlog left by prior
+  // runs at startup, then stops until a write kicks it: observers and
+  // reflectors write rows during turns, the write helpers call
+  // `session.notifyWrite()`, and the embedding lands within seconds in
+  // the background. Skipping the worker (no `embed` option) is
+  // intentional for tests and one-shot tools that do not call
+  // recall_memory.
   const worker = options.embed
     ? new EmbeddingBackfillWorker({
         session,
@@ -90,7 +92,10 @@ export async function loadStoredMemory(
         logPath: options.embeddingLogPath ?? defaultEmbeddingLogPath(),
       })
     : undefined;
-  worker?.start();
+  if (worker) {
+    session.onWrite(() => worker.kick());
+    worker.start();
+  }
 
   // Eager probe: open + run migrations once at startup. This keeps
   // the "fail fast on corruption" property of the old eager loader
@@ -157,6 +162,7 @@ export async function appendObservation(
     await upsertObservation(db, observation);
     return observation;
   });
+  if (result) session.notifyWrite();
   return result;
 }
 
@@ -174,7 +180,7 @@ export async function replaceSessionObservations(
   observations: readonly Observation[],
 ): Promise<void> {
   const ids = observations.map((observation) => observation.id);
-  await session.withDb(async (db) => {
+  const wrote = await session.withDb(async (db) => {
     await db.transaction(async (tx) => {
       if (ids.length === 0) {
         await tx.query("DELETE FROM observations WHERE session_id = $1", [sessionId]);
@@ -188,7 +194,11 @@ export async function replaceSessionObservations(
         await upsertObservation(tx, observation);
       }
     });
+    return true;
   });
+  // Pure deletes need no embedding work, so only upserted rows kick
+  // the backfill worker.
+  if (wrote && observations.length > 0) session.notifyWrite();
 }
 
 /**
@@ -244,7 +254,7 @@ export async function replaceAllObservations(
   observations: readonly Observation[],
 ): Promise<void> {
   const ids = observations.map((observation) => observation.id);
-  await session.withDb(async (db) => {
+  const wrote = await session.withDb(async (db) => {
     await db.transaction(async (tx) => {
       if (ids.length === 0) {
         await tx.query("DELETE FROM observations");
@@ -255,7 +265,9 @@ export async function replaceAllObservations(
         await upsertObservation(tx, observation);
       }
     });
+    return true;
   });
+  if (wrote && observations.length > 0) session.notifyWrite();
 }
 
 export async function readSessionObservations(

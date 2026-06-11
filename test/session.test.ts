@@ -192,6 +192,7 @@ function buildUsageEvent(costTotal: number): TurnUsageEvent {
   return {
     type: "usage",
     turnUsage: usage,
+    usageByModel: [{ model: "test-model", usage }],
     lastMessageUsage: usage,
     effectiveContextWindow: 200_000,
     contextWindowUsage: { systemPrompt: 10, messages: 90, localMemory: 20, globalMemory: 30 },
@@ -485,6 +486,7 @@ describe("Session", () => {
     };
     const persistedUsage = {
       turnUsage: persistedUsageTokens,
+      usageByModel: [{ model: "test-model", usage: persistedUsageTokens }],
       lastMessageUsage: persistedUsageTokens,
       effectiveContextWindow: 200_000,
       contextWindowUsage: {

@@ -65,6 +65,7 @@ export class MemorySession {
   private readonly lockWaitBudgetMs: number;
   private readonly onWarn?: (message: string) => void;
 
+  private readonly writeListeners = new Set<() => void>();
   private db: PGlite | undefined;
   private lockPath: string | undefined;
   private opening: Promise<PGlite | undefined> | undefined;
@@ -112,6 +113,29 @@ export class MemorySession {
         this.scheduleIdleClose();
       }
     }
+  }
+
+  /**
+   * Subscribe to observation-write notifications. The storage write
+   * helpers call `notifyWrite()` after landing new observation rows;
+   * `loadStoredMemory` uses this to kick the embedding backfill worker
+   * awake instead of having it poll the database on a timer. Returns an
+   * unsubscribe function.
+   */
+  onWrite(listener: () => void): () => void {
+    this.writeListeners.add(listener);
+    return () => this.writeListeners.delete(listener);
+  }
+
+  /**
+   * Notify subscribers that observation rows were written. Called by
+   * the storage write helpers after a successful write so background
+   * consumers (the embedding backfill worker) wake event-driven rather
+   * than polling.
+   */
+  notifyWrite(): void {
+    if (this.disposed) return;
+    for (const listener of this.writeListeners) listener();
   }
 
   /**

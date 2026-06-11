@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "bun:test";
@@ -273,6 +273,54 @@ describe("syncDefaultSkills", () => {
       }),
     ).rejects.toThrow(/Refusing to write skill outside/);
   });
+
+  testIfDocker(
+    "concurrent syncs converge on a complete tree with no scratch leftovers",
+    async () => {
+      const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
+      const skillsDir = join(root, "skills");
+      const hashFilePath = join(root, ".skills-hash");
+
+      // Two `duet` processes sharing one HOME can sync concurrently. The atomic
+      // swap builds each run in a per-call staging dir and renames it into place,
+      // so overlapping syncs must converge: every run resolves, the surviving
+      // tree is whole, and no `.staging-`/`.old-` scratch dir is orphaned. This
+      // exercises the swap's concurrency safety; it is not a deterministic
+      // reproduction of the pre-fix ENOENT, which needed a precise interleave.
+      const skills = Array.from({ length: 30 }, (_, i) => ({
+        path: `media-creation/reference/file-${i}.md`,
+        content: "x".repeat(2048),
+      }));
+      const { fetchFn } = makeFetch(() => skillsResponse(skills));
+
+      const runs = await Promise.allSettled(
+        Array.from({ length: 4 }, () =>
+          syncDefaultSkills({
+            apiKey: "duet_gt_x",
+            appBaseUrl: "https://test",
+            skillsDir,
+            hashFilePath,
+            fetchFn,
+          }),
+        ),
+      );
+
+      for (const run of runs) {
+        expect(run.status).toBe("fulfilled");
+      }
+      // Every skill landed intact, and the swap left no scratch dirs behind.
+      expect(await readFile(join(skillsDir, "media-creation/reference/file-0.md"), "utf8")).toBe(
+        "x".repeat(2048),
+      );
+      expect(await readFile(join(skillsDir, "media-creation/reference/file-29.md"), "utf8")).toBe(
+        "x".repeat(2048),
+      );
+      const leftovers = (await readdir(root)).filter(
+        (entry) => entry.includes(".staging-") || entry.includes(".old-"),
+      );
+      expect(leftovers).toEqual([]);
+    },
+  );
 });
 
 describe("maybeAutoSyncDefaultSkills", () => {

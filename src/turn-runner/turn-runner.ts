@@ -51,6 +51,7 @@ import type {
   TurnPromptImage,
   TurnState,
   TurnTokenUsage,
+  ModelUsageEntry,
   TurnStartCommand,
   TurnTerminalEvent,
   TurnCommand,
@@ -62,6 +63,7 @@ import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
 import {
   createRecallMemorySystemPromptLayer,
   createSourceOfTruthSystemPromptLayer,
+  createStateAgentSystemPromptLayer,
   createStateMachineSystemPromptLayer,
 } from "./prompts.js";
 import {
@@ -100,7 +102,7 @@ import {
   transientRetryDelayMs,
   type TransientRetryPolicy,
 } from "./transient-error.js";
-import { addUsage, usageFromMessages } from "./usage-accounting.js";
+import { addUsage, addUsageByModel, usageFromMessages } from "./usage-accounting.js";
 
 export type TurnEventHandler = (event: TurnEvent) => void;
 
@@ -117,6 +119,8 @@ export interface AgentWorkerInput {
 
 export interface AgentConfigInput {
   state: TurnState;
+  /** System-prompt layer placed before the host systemInstructions; see createSystemPromptWithAppendedLayers. */
+  prependSystemPrompt?: string;
   appendSystemPrompt?: string;
   skills?: Skill[];
   tools: AgentTool[];
@@ -280,6 +284,8 @@ export class TurnRunner {
   private started = false;
   /** Aggregates model usage across parent agents, state agents, and memory work for one turn chain. */
   private turnUsage?: TurnTokenUsage;
+  /** Per-model partition of `turnUsage`; reset and populated in lockstep with it via `recordUsage`. */
+  private turnUsageByModel?: ModelUsageEntry[];
   /**
    * Snapshot of the latest parent assistant `message_end`'s bar fields.
    * State-agent and terminal emissions reuse these so the bar/breakdown
@@ -535,6 +541,7 @@ export class TurnRunner {
 
   private async runTurnChain(command: TurnCommand): Promise<TurnTerminalEvent> {
     this.turnUsage = undefined;
+    this.turnUsageByModel = undefined;
     try {
       let terminal: TurnTerminalEvent;
       terminal = await this.executeTurnCommand(command);
@@ -544,6 +551,7 @@ export class TurnRunner {
         terminal = {
           ...terminal,
           turnUsage: this.turnUsage,
+          usageByModel: this.turnUsageByModel ?? [],
           ...(this.lastParentUsageSnapshot
             ? {
                 effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
@@ -558,6 +566,7 @@ export class TurnRunner {
       return terminal;
     } finally {
       this.turnUsage = undefined;
+      this.turnUsageByModel = undefined;
     }
   }
 
@@ -976,8 +985,8 @@ export class TurnRunner {
       // `terminate: true` on the state-machine tools means the parent's
       // prompt loop ends right after it selects a terminal (or a state
       // that then errors at runtime) — without this pass the parent has
-      // no transcript entry for the outcome, cannot summarize it to the
-      // user, and cannot kick off a follow-up state machine in response.
+      // no transcript entry for the outcome and cannot summarize it to
+      // the user before control returns to them.
       const acknowledged = await this.runStateMachineTerminalAcknowledgment();
       if (acknowledged) return acknowledged;
       state = this.requireRunnerState();
@@ -1003,9 +1012,11 @@ export class TurnRunner {
    *   neutral with respect to "decided vs runtime failure" — the
    *   parent's own transcript already shows whether it selected the
    *   terminal, and `status`/`reason` carry the rest of the framing.
-   * - Runs one parent worker pass with full state-machine tool access
-   *   so the parent can either reply in plain text or call
-   *   `create_state_machine_definition` to start follow-up work.
+   * - Runs one parent worker pass with full state-machine tool access.
+   *   The parent is steered to reply in plain text and let control
+   *   return to the user; full tool access only means a control action
+   *   on this turn (e.g. an explicitly instructed create) is handled
+   *   rather than silently dropped, per the next bullet.
    * - On interruption, surfaces an `interrupted` terminal event for
    *   the whole turn.
    * - When the parent's reply carries a control action, drives that
@@ -1077,6 +1088,8 @@ export class TurnRunner {
         If the state produced output the user would want to see — a written artifact (poem, summary, draft), a finding, a status the user is watching, or anything else the background work was meant to surface — post that content to the user in this turn before or alongside the tool call. The user does not see state output, transcripts, or tool results from background states; if you do not relay it here, they never see it. Skip the user-facing message only when the state output is purely internal plumbing (an ack, a control signal, a value that only matters to the next state).
 
         You are the orchestrator and are responsible for this sub-agent's output. Treat the state_completed block above as a claim, not as verified truth. The sub-agent may have hallucinated success, skipped steps, swallowed errors, or misreported what it did. Before transitioning, review the output against reality: read the files it claims to have changed, run the build/test/lint it claims to have passed, and confirm any IDs, paths, counts, or statuses it asserts. If the output is wrong, incomplete, or unverifiable, do not just blindly re-select the same state — the sub-agent will hallucinate the same result a second time. Re-select the state with an override.state.prompt that addresses the specific failure (require a verification step, name the exact file path or tool to use, forbid the hallucinated phrasing), or select a different state. Tuning the sub-agent's prompt is the orchestrator's lever — use it. Do not silently take over the sub-agent's job by running its tools yourself; that hides the broken state from future runs. Do not propagate an unverified claim into the next state's prompt as fact, and do not relay it to the user as finished work. The orchestrator owns correctness; the sub-agent only owns effort.
+
+        CARRY FORWARD BEFORE YOU SELECT. The next state runs in a fresh sub-agent that cannot see this state_completed output, your reasoning, or your reply text — the ONLY thing it receives is the \`input\` and \`override.prompt\` you pass in the select call. So if the next state's job depends on anything this state just produced (a root cause, file path, diagnosis, ID, count, decision), inline those exact facts into the select's \`input\`/\`override.prompt\` on the FIRST transition into it. Do not select it bare and let it come back confused, then add the context on a retry — a select that advances to a finding-dependent state carrying none of the finding is already wrong, even with the right state name. Summarizing the finding in your message to the user does not carry it forward.
         </system-reminder>
       `,
       "State completed, but the runner did not call select_state_machine_state.",
@@ -1155,7 +1168,14 @@ export class TurnRunner {
     const state: TurnState = {
       status: "running",
       mode: "agent",
-      options: this.requireRunnerState().options,
+      // Layer the agent state's optional per-state model/thinkingLevel over the
+      // inherited parent options; see StateMachineAgentState for why these are
+      // UI-set rather than model-chosen.
+      options: {
+        ...this.requireRunnerState().options,
+        ...(input.state.model ? { model: input.state.model } : {}),
+        ...(input.state.thinkingLevel ? { thinkingLevel: input.state.thinkingLevel } : {}),
+      },
       agent: { status: "running", messages: [] },
     };
     const stateSkills = this.skillContext.resolveStateAgentSkills(input.state);
@@ -1164,9 +1184,22 @@ export class TurnRunner {
     // prompts say "use the /foo skill to do xyz" and have the skill body
     // injected, instead of shipping the literal `/foo` text to the model.
     const expandedPrompt = this.skillContext.resolveSlashSkillPrompt(input.prompt, stateSkills);
+    // Hand the sub-agent the machine's overall goal, the full state list, and
+    // which state it is running so it scopes its work to this state instead of
+    // running the whole process (a common over-reach on smaller models). The
+    // session always exists while an agent state is executing.
+    const session = this.stateMachineController.getSession();
+    const machineContext = session
+      ? { definition: session.definition, currentState: input.state.name }
+      : undefined;
     const agent = this.createAgent(
       {
         state,
+        // Lead with the worker identity so it is the sub-agent's primary role,
+        // ahead of the inherited chat-assistant persona that would otherwise
+        // pull it into "there's no user message here" mode. The per-state
+        // systemPrompt refines that identity, so it stays an append.
+        prependSystemPrompt: createStateAgentSystemPromptLayer(machineContext),
         appendSystemPrompt: input.state.systemPrompt,
         skills: stateSkills,
         // Per-state cwd lets one agent state operate on a different
@@ -1209,7 +1242,7 @@ export class TurnRunner {
           // Record state-agent usage on every exit path — success, error, or
           // interrupt — so partial work still flows into the turn aggregate
           // and ticks the sidebar cost via the emitted `usage` event.
-          this.recordUsage(usageFromMessages(agent.state.messages));
+          this.recordUsage(usageFromMessages(agent.state.messages), agent.state.model.id);
           this.emitTurnUsage(origin);
           unsubscribe?.();
         }
@@ -1464,7 +1497,7 @@ export class TurnRunner {
         );
       }
 
-      const firstState = control.firstState ?? control.definition.states[0]?.name ?? "";
+      const firstState = control.firstState;
       this.stateMachineController.startSession({
         prompt: workerResult.outcome.type === "complete" ? (workerResult.outcome.result ?? "") : "",
         definition: control.definition,
@@ -1642,7 +1675,7 @@ export class TurnRunner {
    */
   private async runAgentWorkerWithUsage(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     const result = await this.runAgentWorker(input);
-    this.recordUsage(result.parentUsage);
+    this.recordUsage(result.parentUsage, this.requireParentAgent().state.model.id);
     this.emitTurnUsage();
     return result;
   }
@@ -1795,16 +1828,22 @@ export class TurnRunner {
     }
     const session = this.memoryPersistence?.session;
     if (!session) return;
+    // The observer takes the model name and resolves it internally, but usage
+    // is attributed by resolved id so the memory slice matches the parent and
+    // state-agent entries in `usageByModel` (e.g. `openai/gpt-5.4-mini`) rather
+    // than mixing a shorthand in among resolved ids.
+    const memoryModel = this.resolveMemoryActorModel(options);
+    const memoryModelId = resolveModelName(memoryModel).id;
     const result = await updateObservationalMemory({
       session,
       memory: this.memory,
       sessionId: this.config.sessionId,
       effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
-      actorModel: this.resolveMemoryActorModel(options),
+      actorModel: memoryModel,
       settings: this.config.memory,
       messages,
       cwd: this.config.cwd ?? process.cwd(),
-      onUsage: (usage) => this.recordUsage(usage),
+      onUsage: (usage) => this.recordUsage(usage, memoryModelId),
       onActivity: (event) => this.emit({ type: "memory", ...event }),
     });
 
@@ -1892,6 +1931,7 @@ export class TurnRunner {
         model,
         thinkingLevel: options.thinkingLevel ?? "medium",
         systemPrompt: this.createBaseSystemPromptWithAppendedLayers({
+          prepend: [input.prependSystemPrompt],
           append: [input.appendSystemPrompt],
           skills: input.skills,
         }),
@@ -2031,6 +2071,7 @@ export class TurnRunner {
   }
 
   protected createBaseSystemPromptWithAppendedLayers(input?: {
+    prepend?: Array<string | undefined>;
     append?: Array<string | undefined>;
     skills?: readonly Skill[];
   }): string {
@@ -2083,8 +2124,11 @@ export class TurnRunner {
     };
   }
 
-  protected recordUsage(usage?: TurnTokenUsage | Usage): void {
+  protected recordUsage(usage?: TurnTokenUsage | Usage, modelId?: string): void {
     this.turnUsage = addUsage(this.turnUsage, usage);
+    if (usage && modelId) {
+      this.turnUsageByModel = addUsageByModel(this.turnUsageByModel, modelId, usage);
+    }
   }
 
   protected emitAgentEvent(event: AgentEvent, origin?: TurnEventOrigin): void {
@@ -2175,6 +2219,7 @@ export class TurnRunner {
     this.emit({
       type: "usage",
       turnUsage,
+      usageByModel: this.turnUsageByModel ?? [],
       lastMessageUsage: refreshedMessageUsage,
       effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
       contextWindowUsage: refreshedContextWindowUsage,
@@ -2196,6 +2241,7 @@ export class TurnRunner {
     this.emit({
       type: "usage",
       turnUsage: this.turnUsage,
+      usageByModel: this.turnUsageByModel ?? [],
       lastMessageUsage: this.lastParentUsageSnapshot.lastMessageUsage,
       effectiveContextWindow: this.lastParentUsageSnapshot.effectiveContextWindow,
       contextWindowUsage: this.lastParentUsageSnapshot.contextWindowUsage,

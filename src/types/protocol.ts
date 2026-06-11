@@ -657,6 +657,14 @@ export interface TurnUsageFields {
    */
   turnUsage: TurnTokenUsage;
   /**
+   * Same aggregate as `turnUsage`, partitioned by the model that produced
+   * each call — so a relay turn whose state agents ran on a different model
+   * than the parent can be attributed per model. The invariant
+   * `sum(usageByModel[].usage.cost.total) === turnUsage.cost.total` holds.
+   * Empty array when no usage has been recorded yet.
+   */
+  usageByModel: ModelUsageEntry[];
+  /**
    * Provider-reported usage from the latest parent assistant message.
    * Refreshed on every parent `message_end` and held stable while only
    * state agents advance `turnUsage`. This is the accurate number to
@@ -688,6 +696,16 @@ export interface TurnUsageFields {
    * state-agent ticks.
    */
   contextWindowUsage: TurnContextWindowUsage;
+}
+
+/**
+ * One model's slice of a turn's usage: the model `id` (pi-ai `Model.id`,
+ * e.g. the duet-gateway slug `anthropic/claude-opus-4.8`) and the summed
+ * `TurnTokenUsage` attributed to it this turn.
+ */
+export interface ModelUsageEntry {
+  model: string;
+  usage: TurnTokenUsage;
 }
 
 /**

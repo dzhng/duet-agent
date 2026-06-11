@@ -385,9 +385,10 @@ const stateMachineDefinitionSchema = Type.Object(
 
 const createDefinitionSchema = Type.Object({
   definition: stateMachineDefinitionSchema,
-  firstState: Type.Optional(
-    Type.String({ description: "Optional state name to run first after creating the definition." }),
-  ),
+  firstState: Type.String({
+    description:
+      "Name of the state in `definition.states` to run first after creating the definition.",
+  }),
   replaceActive: Type.Optional(
     Type.Boolean({
       description:
@@ -815,7 +816,7 @@ export function createTodoWriteTool(
 
       Prefer a state machine over this tool when the steps are well-scoped enough that a sub-agent or script could complete each one on its own ("do X with these inputs and return the result"). State-machine states run outside this transcript, so their intermediate output does not consume your context — using todo_write for that kind of work pollutes the parent context with tool output you do not actually need to keep.
 
-      Hard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 15-minute floor. If you can already see the work will not fit in one session and you are tempted to recommend the user "continue in the next session," that is the signal that this tool was the wrong choice and a state machine was the right one.
+      Hard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 15-minute floor. If you can already see the work will not fit in one session and you are tempted to recommend the user "continue in the next session," that is the signal that this tool was the wrong choice and a state machine was the right one. When work meets this cutoff it goes to create_state_machine_definition, and once it does, do NOT also call todo_write to mirror or track it: the state machine's states ARE the visible, live plan, so a parallel todo list duplicating those same phases is redundant and wrong. Dropping the todo list is the fix here, never dropping the state machine — session-spanning many-unit work still requires the state machine.
 
       How to use it well:
       - Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.
@@ -880,18 +881,21 @@ function formatTodoWriteResult(todos: TurnTodo[]): string {
 /**
  * Build the prompt body delivered to the parent on its acknowledgment
  * turn — the extra parent prompt run by the turn runner after every
- * state-machine terminal so the parent gets to react in natural
- * language (or take a follow-up control action).
+ * state-machine terminal so the parent gets to react to the outcome in
+ * natural language before control returns to the user.
  *
  * The framing is deliberately neutral on "decided vs runtime failure":
  * the parent's own transcript already shows whether it selected the
  * terminal (its preceding `select_state_machine_state` tool call) or
  * whether the state machine ended on its own, and the terminal
  * `status`/`reason` carry the rest of what the parent needs to phrase
- * the reply. The prompt only has to steer the parent away from
- * `select_state_machine_state` (the state machine has already ended)
- * and toward either plain-text reply or
- * `create_state_machine_definition` for follow-up work.
+ * the reply. The prompt steers the parent toward a plain-text summary
+ * and, by default, away from a control action on this turn: the machine
+ * has ended, so the parent normally summarizes and returns control
+ * rather than proactively starting more work. Follow-up work (new
+ * machine or reactivation) is user-driven — it waits for the user's
+ * request or a standing instruction to keep going, not the parent's own
+ * initiative.
  */
 export function formatStateMachineTerminalAcknowledgmentPrompt(input: {
   session: StateMachineSession;
@@ -912,11 +916,9 @@ export function formatStateMachineTerminalAcknowledgmentPrompt(input: {
       },
     })}
 
-    Respond now:
-    - If you want to start follow-up work (retry, remediation, next business process), call create_state_machine_definition.
-    - Otherwise reply to the user in plain text summarizing what happened and what you recommend next.
+    Usually: reply to the user in plain text — summarize what happened and recommend what to do next, then let control return to them. Don't proactively spin up new work or resume this machine just because the tools are available.
 
-    Do not call select_state_machine_state — there is no active state machine to advance.
+    The exception is a standing instruction the user already gave: if they told you to keep going until the work is finished (or asked for follow-up this terminal does not yet satisfy), continuing is fine — call create_state_machine_definition for new work, or select a non-terminal state to reactivate and continue this machine. Absent that signal, default to summarizing and handing back.
   `;
 }
 
@@ -946,7 +948,7 @@ function createStateMachineDefinitionTool(
     name: "create_state_machine_definition",
     label: "Create state machine definition",
     description: dedent`
-      Create a new state-machine definition for durable, multi-step, or recurring work. See the system prompt for full routing rules (when to choose this over todo_write, how states resume, terminal acknowledgment, etc.). This description only covers the call shape.
+      Create a new state-machine definition for durable, multi-step, or recurring work. See the system prompt for full routing rules (when to choose this over todo_write, how states resume, terminal acknowledgment, etc.). This description only covers the call shape. The states you define here ARE the visible plan for this work, so do not also call todo_write to mirror or track the same phases; the state machine is already the plan surface.
 
       Call shape (top-level keys are \`definition\` and \`firstState\` ONLY — every state goes inside \`definition.states\`, never at the top level):
       {
@@ -1013,13 +1015,15 @@ function createSelectStateTool(
     description: dedent`
       Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt or wakeAfterMs (exactly one).
 
-      Carry forward what the orchestrator now knows. Each agent state runs in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — it only sees the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: the sub-agent has no way to read those findings.
+      Carry forward what the orchestrator now knows. Each agent state runs in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — it only sees the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: the sub-agent has no way to read those findings, and neither your reasoning nor your reply text reaches it — this call's \`input\`/\`override.prompt\` is its only channel. Put the facts there on the FIRST select into a finding-dependent state; selecting it bare and adding context only after it comes back confused is the failure mode, not the fix.
 
       The working directory is part of that carry-forward, and the most common thing orchestrators get wrong. The moment a state operates anywhere other than the session cwd — a git worktree, clone, sub-package, or scratch directory whose path an earlier state returned — set \`override.cwd\` (agent states) or the script/poll \`cwd\` to that path. Do this aggressively and by default for any out-of-tree work rather than waiting for the sub-agent to orient itself. Do NOT convey the location by writing "cd into /path" or "work in the worktree at /path" in the prompt: a sub-agent's coding tools (bash, read, write, edit) start in the \`cwd\` you set, not wherever the prompt mentions, so an inlined path leaves the tools pointed at the wrong tree while the narration reads correct. The path almost always comes from a previous state's output (e.g. a worktree path printed by an implement step) — capture it and pass it as \`override.cwd\` on that transition. A relative cwd resolves against the session working directory shown in the \`<cwd>\` block of the system prompt, so prefer an absolute path for a worktree or clone that lives outside it.
 
       Overrides persist by default. When you pass \`override\`, the merged state (prompt, command, schedule — whichever fields you set) is written back into the active definition, so every future run of that state uses the tuned version. This is the right shape when you are tightening a sub-agent prompt that hallucinated, fixing a script command that misbehaved, or tuning poll/timer cadence. Set \`persistOverride: false\` when you want a one-shot variation that does not commit — for example, probing a different prompt to see if the sub-agent recovers before deciding whether to keep the change. Persistence is a no-op for terminal states. \`override.kind\` must match the target state's kind; a mismatch is rejected outright (rather than silently dropping the override), and a per-state \`cwd\` that does not resolve to an existing directory is rejected too — fix the kind or the path before re-selecting.
 
-      Selecting a terminal state ends the state machine. Every definition is guaranteed to have the auto-injected \`failed\` and \`cancelled\` terminals available, so to fail or cancel, just select one of those by name and optionally attach a \`reason\`. After a terminal you will be woken once more for an acknowledgment turn — the runner re-prompts you with the terminal details (state, status, reason) so you can reply to the user in plain text and, if appropriate, kick off a follow-up state machine via create_state_machine_definition. Do not call select_state_machine_state on that acknowledgment turn; the state machine is already terminal.
+      Selecting a terminal state ends the state machine. Every definition is guaranteed to have the auto-injected \`failed\` and \`cancelled\` terminals available, so to fail or cancel, just select one of those by name and optionally attach a \`reason\`. After a terminal you will be woken once more for an acknowledgment turn — the runner re-prompts you with the terminal details (state, status, reason) so you can summarize the outcome to the user in plain text. Default to that summary and let control return to the user; don't proactively start new work or call select_state_machine_state on the acknowledgment turn just because the tools are available.
+
+      Follow-up is user-driven, not your own initiative. When the user asks to redo or continue a finished machine ("that's wrong, run X again"), reactivate it by selecting a non-terminal state, which clears the prior terminal and runs it live again from that state; for unrelated new work, call create_state_machine_definition. A standing instruction counts as that ask — if the user already told you to keep going until the work is done, continuing is appropriate.
     `,
     parameters: selectStateSchema,
     async execute(_toolCallId, params) {

@@ -370,6 +370,37 @@ export function recordStateMachineCompleted(
   };
 }
 
+/**
+ * Clear the terminal record so a previously-finished session runs as live
+ * again. Reactivation is only legal as an explicit user-driven resume: the
+ * parent selects a non-terminal state on a session whose `terminal` is set
+ * because the user asked it to redo or continue the finished work. Both
+ * `terminal` and the one-shot `terminalAcknowledged` flag are dropped so the
+ * next terminal this session reaches gets its own acknowledgment turn, and the
+ * prior outcome is preserved on a `state_machine_reactivated` event so replay
+ * shows the completed→running transition rather than a silent rewrite.
+ */
+export function recordStateMachineReactivated(
+  stateMachine: StateMachineSession,
+  state: string,
+): StateMachineSession {
+  const priorTerminal = stateMachine.terminal;
+  if (!priorTerminal) return stateMachine;
+  const now = Date.now();
+  return {
+    ...stateMachine,
+    terminal: undefined,
+    terminalAcknowledged: undefined,
+    history: appendHistory(stateMachine.history, {
+      type: "state_machine_reactivated",
+      timestamp: now,
+      state,
+      priorTerminal,
+    }),
+    updatedAt: now,
+  };
+}
+
 function updateStateProgress(
   stateMachine: StateMachineSession,
   state: string,

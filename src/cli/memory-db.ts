@@ -1,8 +1,27 @@
 import type { PGlite } from "@electric-sql/pglite";
+import { observationScore, PRIORITY_WEIGHT } from "../memory/loader.js";
 import { runMigrations } from "../memory/migrations.js";
+import { DEFAULT_RECENCY_HALF_LIFE_MS, DEFAULT_REFLECTION_BIAS } from "../memory/observational.js";
 import { DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS, openPGliteWaitingForLock } from "../memory/pglite.js";
 import { removeArchive } from "../train/archive.js";
 import type { Observation } from "../types/memory.js";
+
+/** Rows fetched per page by the ranked, lazily-paginated TUI list. */
+export const MEMORY_PAGE_SIZE = 25;
+
+/**
+ * Absolute global-pack score for one observation under the CLI defaults.
+ * Reuses the shared {@link observationScore} formula so the displayed value
+ * tracks the runner's ranking exactly. Hardcoded to the runner's global-pack
+ * defaults so the TUI ordering and the per-row score number match what the
+ * runtime ranking would produce (loader.ts), with no flags to drift out of sync.
+ */
+export function scoreObservation(observation: Observation, now: number = Date.now()): number {
+  return observationScore(observation, now, {
+    recencyHalfLifeMs: DEFAULT_RECENCY_HALF_LIFE_MS,
+    reflectionBias: DEFAULT_REFLECTION_BIAS,
+  });
+}
 
 /**
  * Thin read/edit/delete wrapper over the PGlite database the memory pipeline writes
@@ -42,13 +61,60 @@ export class MemoryDb {
     return new MemoryDb(db);
   }
 
-  /** Load all observations ordered most recent first. */
-  async list(): Promise<Observation[]> {
+  /** Total number of observations across every session. */
+  async count(): Promise<number> {
+    const result = await this.db.query<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM observations`,
+    );
+    return result.rows[0]?.count ?? 0;
+  }
+
+  /**
+   * Load one page of observations as a single flat list across every session,
+   * ordered by descending global-pack score (highest first). The ORDER BY
+   * materializes the exact score {@link observationScore} computes —
+   * `priorityWeight * 0.5^((now - lastUsedAt)/halfLife) * kindBias` — so the
+   * row order always agrees with the score number the TUI renders per row.
+   *
+   * `now` is passed in (not read from SQL `now()`) so it stays fixed across
+   * every page fetch in a TUI session: pagination with LIMIT/OFFSET is only
+   * stable if the sort key does not drift between calls, and the displayed
+   * score must use the same `now`. Paged with LIMIT/OFFSET so the TUI lazily
+   * fetches and appends pages instead of loading the whole table up front.
+   */
+  async listRanked({
+    limit,
+    offset,
+    now = Date.now(),
+  }: {
+    limit: number;
+    offset: number;
+    now?: number;
+  }): Promise<Observation[]> {
     const result = await this.db.query<ObservationRow>(
       `SELECT id, created_at, last_used_at, session_id, kind, observed_date, referenced_date, relative_date,
               time_of_day, priority, source_json, content, tags_json
        FROM observations
-       ORDER BY created_at DESC`,
+       ORDER BY
+         (CASE priority WHEN 'high' THEN $1::float
+                        WHEN 'medium' THEN $2::float
+                        ELSE $3::float END)
+         * power(0.5::float, ($6::float - last_used_at::float) / $5::float)
+         * (CASE kind WHEN 'reflection' THEN $4::float ELSE 1.0 END)
+         DESC,
+         created_at DESC,
+         id ASC
+       LIMIT $7 OFFSET $8`,
+      [
+        PRIORITY_WEIGHT.high,
+        PRIORITY_WEIGHT.medium,
+        PRIORITY_WEIGHT.low,
+        DEFAULT_REFLECTION_BIAS,
+        DEFAULT_RECENCY_HALF_LIFE_MS,
+        now,
+        limit,
+        offset,
+      ],
     );
     return result.rows.map(rowToObservation);
   }

@@ -3,6 +3,7 @@ import dedent from "dedent";
 import { toXML } from "../lib/xml.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
+import type { StateMachineDefinition } from "../types/state-machine.js";
 import { DEFAULT_BASH_TIMEOUT_SECONDS } from "./tools.js";
 
 function cwdSystemPrompt(cwd: string): string {
@@ -40,9 +41,14 @@ export function createSystemPromptWithAppendedLayers(input: {
   config: TurnRunnerConfig;
   skills: readonly Skill[];
   systemPromptFiles: string[];
+  // Layers placed before the host's systemInstructions, so they establish the
+  // agent's primary role ahead of host-provided instructions.
+  prepend?: Array<string | undefined>;
+  // Layers placed after the base prompt (files/tools/cwd/skills).
   append: Array<string | undefined>;
 }): string {
   return [
+    ...(input.prepend ?? []),
     input.config.systemInstructions,
     ...input.systemPromptFiles,
     TOOL_EXECUTION_SYSTEM_PROMPT,
@@ -53,6 +59,88 @@ export function createSystemPromptWithAppendedLayers(input: {
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/**
+ * Identity-anchoring layer prepended to every state-machine *sub-agent*
+ * (agent-state) system prompt.
+ *
+ * A state agent is created in `agent` mode and inherits the host's full
+ * `systemInstructions` persona — which, in production, is the Duet
+ * chat-assistant identity ("respond to the user's latest message in this
+ * thread; if there is no new message, don't invent work"). Nothing else in
+ * the base prompt tells the sub-agent it is *not* a live chat assistant, so
+ * when its task involves empty threads, missing messages, or repro fixtures
+ * about absent user input, the sub-agent can stop treating that material as
+ * its *subject* and start treating it as its *own* situation. It then flips
+ * into chat-agent mode, hunts for a "missing" user message, and gives up with
+ * "I don't see a new message to act on" instead of finishing its task — and a
+ * parent that believes that report can cancel the whole relay.
+ *
+ * This layer re-anchors the sub-agent's identity: its task lives entirely in
+ * the prompt it was handed, there is no live thread to service, and any
+ * empty-/missing-message material it sees is data to operate on, never a
+ * reason to stand down. It is placed *before* `systemInstructions` so the
+ * worker identity is the sub-agent's primary role and the inherited chat
+ * persona reads as secondary context, not the top-level instruction.
+ */
+export function createStateAgentSystemPromptLayer(context?: {
+  definition: StateMachineDefinition;
+  currentState: string;
+}): string {
+  const identity = dedent`
+    <state_agent_identity>
+    You are a sub-agent executing a single state of a state machine, not a chat assistant in a live conversation. Your complete and only task is the instruction you were handed in this turn's prompt. There is no separate "latest user message" to look for, no thread to pull, and no one to wait on — the prompt IS the task.
+
+    Carry that identity all the way through. If your task references an empty thread, a missing or blank user message, zero tool calls, a quiet channel, or any other kind of absent input — whether in instructions, fixtures, transcripts, logs, or test data — that material is the SUBJECT you are working on, never a description of your own situation. Do not adopt it as your own context, do not conclude there is "nothing to act on," and never reply that you don't see a message to respond to. You always have a task: the one in this prompt.
+
+    Do the task and report what you did and what you found as your final message. If you are genuinely blocked, say exactly what blocked you and what you tried — that is itself completing the task. Standing down because your context resembles an empty chat is the one failure mode that is never correct here.
+    </state_agent_identity>
+  `;
+
+  const machineContext = context ? createStateAgentMachineContext(context) : undefined;
+  return [identity, machineContext].filter(Boolean).join("\n\n");
+}
+
+/**
+ * Situates the sub-agent inside the larger state machine so it scopes its work
+ * to the current state instead of trying to deliver the whole process.
+ *
+ * Without this, a sub-agent only sees its own prompt and the worker identity,
+ * so it has no idea other states exist to carry the work forward. A planning
+ * state ("draft a plan", "scope the change") then over-reaches and starts
+ * implementing — a failure observed most on smaller models — because nothing
+ * told it that implementation is a separate downstream state owned by a fresh
+ * sub-agent. Listing the machine's overall goal, every state by name and kind,
+ * and marking which one is current makes the boundary explicit: do this state's
+ * job, report back, and let the orchestrator route to the next state.
+ */
+function createStateAgentMachineContext(context: {
+  definition: StateMachineDefinition;
+  currentState: string;
+}): string {
+  const stateList = context.definition.states
+    .map((state) => {
+      const marker = state.name === context.currentState ? " ← YOU ARE HERE" : "";
+      const when = state.when ? ` — ${state.when}` : "";
+      return `- ${state.name} (${state.kind})${when}${marker}`;
+    })
+    .join("\n");
+
+  return dedent`
+    <state_machine_context>
+    You are one state in a larger state machine called "${context.definition.name}". Its overall goal is:
+
+    ${context.definition.prompt}
+
+    The full set of states, in definition order, is:
+    ${stateList}
+
+    You are executing ONLY the "${context.currentState}" state. Do that state's job and nothing more — the other states exist precisely so that later work is handled by their own fresh sub-agents, and an orchestrator routes between them after reading each report. Do not try to complete downstream states' work yourself: if this state is to plan, scope, or research, stop at planning and report your findings; do not start implementing what a later state is meant to build. Staying inside your state's boundary is what keeps the machine's plan visible and its steps verifiable.
+
+    Treat any instruction in your prompt to "pass through to", "hand off to", "proceed to", "then implement", or otherwise move on to a later step as a cue to FINISH this state and report that it is ready — never as license to perform that later step yourself. The handoff is the orchestrator's job, not yours: you cannot select or run another state, so doing the next state's work here only collapses two states into one and breaks the machine. When your prompt blurs this state into the next, resolve the ambiguity by doing only the part that matches "${context.currentState}" and reporting readiness for what comes after.
+    </state_machine_context>
+  `;
 }
 
 export function createStateMachineSystemPromptLayer(input: {
@@ -83,7 +171,7 @@ export function createStateMachineSystemPromptLayer(input: {
     'In the UI, state machines are surfaced to the user as "relays" (plural) — refer to them that way in user-facing replies, while keeping the underlying tool and concept names (state machine, state, transition) intact when discussing implementation.',
     'You are the orchestrator and you alone route. You select states; the runner runs each one outside your turn — agent states in a fresh sub-agent context, scripts as commands — then wakes you with a compact result, and you decide every transition. Sub-agents and scripts NEVER route: they do the per-state work and report back, and you read that report and pick the next state. So never write a state prompt that tells the sub-agent to "route to X if approved" or "go to state Y" — it has no way to do that. Tell each state what to do and what to report back; you map its report to the next state yourself.',
     'Create a state machine for two shapes of work. (1) Recurring or unbounded tasks — "monitor X", "watch for Y", "every N minutes do Z", anything with no finish line in one turn: use a poll for repeating checks and a timer for a single future wake. (2) Multi-step work that decomposes into self-contained units a sub-agent or script can finish on its own ("do X with these inputs and return the result"). Each state runs outside this conversation and only a compact result returns to you, so a state machine is how you keep the parent context clean and give the user a live, rendered plan. Agent/script states have no minimum duration, so a machine of pure agent states is also right for large in-conversation efforts: one state per module extracted, test file written, batch migrated, or area audited.',
-    'Routing signal: if a plan has roughly seven or more items, or any single item is itself multi-step ("split 2750 lines into 10 modules", "write ~30 tests across 5 files"), it is a state machine of agent states, not a todo_write list. todo_write is only for work you will personally finish this turn. Never start a long todo list, do part of it, and tell the user to "pick this up in a fresh session" — if you can see it will not fit, build the state machine up front with one state per remaining unit. For genuinely one-shot or simple requests, just answer; do not invent a state machine.',
+    'Routing signal: if a plan has roughly seven or more items, or any single item is itself multi-step ("split 2750 lines into 10 modules", "write ~30 tests across 5 files"), it is a state machine of agent states, not a todo_write list. When a phase the user describes itself contains several independent units — "carve ten controller modules", "write thirty tests across five files" — give each unit its own state; do not collapse a multi-unit phase into a single "do phase 2" state, or the plan ends up with too few states to land in clean per-unit diffs. todo_write is only for work you will personally finish this turn. Never start a long todo list, do part of it, and tell the user to "pick this up in a fresh session" — if you can see it will not fit, build the state machine up front with one state per remaining unit. For genuinely one-shot or simple requests, just answer; do not invent a state machine.',
     "The user sees only your messages — never a sub-agent's output, the files it touched, values it computed, or findings it returned. Whenever a state produces something the user should see (a summary, path, number, artifact, result), restate it yourself in plain text; never tell the user to \"see the sub-agent's output\". On the wake turn after a state completes, post any user-facing artifact it produced, then call select_state_machine_state to advance.",
     "Each agent state starts fresh: it sees only the prompt and the input you pass, not the prior state's transcript or output. Carry forward everything the next state needs — file paths, IDs, errors, decisions, summaries — via `input` (when its inputSchema has matching fields) or `override.prompt`. A static \"using the findings from the previous step\" means nothing to a fresh sub-agent. The working directory is the most-missed case: whenever a state works anywhere other than the session cwd (a worktree, clone, sub-package, or scratch dir from an earlier state, whose path usually comes from a prior state's output), set that path as the state's cwd — `override.cwd` for agent states, `cwd` for script/poll. A relative cwd resolves against the session working directory shown in the `<cwd>` block; prefer an absolute path for a worktree or clone that lives outside it. Never just write \"cd into /path\" in the prompt: the sub-agent's tools start in the cwd you set, not where the prompt points, so a narrated path leaves the tools in the wrong tree.",
     'A sub-agent\'s result is a claim, not truth — it may hallucinate success, skip steps, swallow errors, or report itself lost. Before transitioning, verify: read the files it claims to have changed, run the build/test/lint it claims passed, confirm any IDs, paths, or counts. If it is wrong or unverifiable, re-select the same state with a corrected `override.prompt` or pick a different state — do not propagate an unverified claim into the next prompt or relay it as finished work. Avoid the opposite error too: a self-deprecating result ("nothing to do here", "I ran with no task", "I don\'t see a request") is a claim about the sub-agent\'s confusion, not proof the state did not run. The runner recorded the state as executed the moment you selected it. So never cancel the machine, route to a cancel/failed terminal, or hand back to the user as if nothing ran on the strength of such prose alone — call get_current_state_machine_state, confirm the state executed, then advance to the next real state (carrying forward what you know) or re-run it with a corrected prompt. And when the user contradicts something you relayed ("it didn\'t work", "that file isn\'t there"), the user is right and the sub-agent was wrong — do not make excuses or take over the work manually; restart via create_state_machine_definition with a tuned prompt that prevents the same hallucination.',
@@ -92,7 +180,7 @@ export function createStateMachineSystemPromptLayer(input: {
     'While states run in the background the user can keep messaging you, and you reply without waiting for the machine. Only call select_state_machine_state when the user actually wants to redirect the running work — selecting a state while another runs replaces it, so use the same state with updated input or a different state. Answer questions, status checks ("have you done X?", "is it running?"), and side conversations in plain text, including any artifacts the user has not seen yet. A "steer" message interrupts you immediately (for redirects or time-sensitive input); a "follow_up" is queued until your turn settles.',
     "State prompts and script commands may use templates like {{ input.email }}; add inputSchema to states that need them and pass matching input when selecting that state.",
     "`override` merges into the active definition by default, so a tuned sub-agent prompt, fixed command, or adjusted cadence sticks for every future run — set `persistOverride: false` only for a one-shot probe you do not want to keep.",
-    'Every definition needs at least one terminal with status "completed"; the runner auto-injects "failed" and "cancelled". Selecting a terminal ends the machine and then wakes you once more with the terminal details (state, status, reason) so you can summarize the outcome to the user and, when useful, start follow-up work with create_state_machine_definition — do not call select_state_machine_state on that acknowledgment turn. Use allowedSkills on an agent state only to restrict its skill set.',
+    'Every definition needs at least one terminal with status "completed"; the runner auto-injects "failed" and "cancelled". Selecting a terminal ends the machine and then wakes you once more with the terminal details (state, status, reason) so you can summarize the outcome to the user — default to that summary and let control return to them rather than proactively starting more work on the acknowledgment turn. Follow-up is user-driven: when the user asks to redo or continue the machine (a standing "keep going until it is done" counts), reactivate it by selecting a non-terminal state (clears the prior terminal and runs it live again); for unrelated new work, call create_state_machine_definition. Don\'t spin up follow-up work on your own initiative absent that signal. Use allowedSkills on an agent state only to restrict its skill set.',
     'Call get_current_state_machine_state before selecting the next state when resuming, after an interruption, or when unsure of progress, and before answering any user question about progress, background work, or wake status. If currentState is "interrupted", find the interrupted state in history and rerun it when appropriate.',
     constraint,
     definitionPrompt,

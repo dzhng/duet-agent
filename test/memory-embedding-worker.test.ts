@@ -138,7 +138,7 @@ describe("EmbeddingBackfillWorker", () => {
       // Reproduces the production hot-loop: a row's embedding gets
       // cascade-deleted between drains (e.g. the reflector deletes the
       // parent observation and re-inserts it). The worker re-selects
-      // the same id every iteration, burning embedding-API calls on a
+      // the same id every drain, burning embedding-API calls on a
       // row that immediately loses its embedding again. The per-id
       // attempt cooldown caps re-embeds to once per `attemptCooldownMs`
       // so a chronic churn turns into one call per cooldown instead of
@@ -154,12 +154,8 @@ describe("EmbeddingBackfillWorker", () => {
               model: "test-model",
             };
           },
-          // Drive ticks fast so the test can drive multiple drains in
-          // under a second instead of waiting for the production
-          // 10-second cadence. The cooldown stays much larger than the
-          // tick so a row whose embedding disappears is still skipped
-          // across drains.
-          idleSleepMs: 20,
+          // The cooldown stays much larger than the test runtime so a
+          // row whose embedding disappears is skipped across drains.
           attemptCooldownMs: 60_000,
         });
 
@@ -170,13 +166,14 @@ describe("EmbeddingBackfillWorker", () => {
 
         // Simulate the FK-cascade churn that happened in production:
         // something deletes the embedding rows between worker drains.
-        // With the cooldown in place, subsequent drains within the
+        // With the cooldown in place, kicked drains within the
         // cooldown window must NOT re-embed the same ids.
         await session.withDb(async (db) => {
           await db.exec(`DELETE FROM observation_embeddings`);
         });
 
-        // Give the worker several ticks of opportunity to re-embed.
+        // Kick the worker so it gets a real opportunity to re-embed.
+        worker.kick();
         await sleep(200);
         await worker.stop();
 
@@ -207,9 +204,8 @@ describe("EmbeddingBackfillWorker", () => {
             throw new Error(`Embedding endpoint returned 404: ${htmlBody}`);
           },
           logPath,
-          // Keep ticks fast and bypass the long error backoff so the
-          // worker writes exactly one failure line before we stop it.
-          idleSleepMs: 20,
+          // Bypass the long error backoff so the worker writes its
+          // failure lines before we stop it.
           errorSleepMs: 20,
         });
         worker.start();
@@ -253,7 +249,6 @@ describe("EmbeddingBackfillWorker", () => {
         }),
         logPath,
         logMaxBytes: 256 * 1024,
-        idleSleepMs: 20,
       });
       worker.start();
       await waitFor(async () => (await embeddingCount(session)) === 3);
@@ -287,7 +282,6 @@ describe("EmbeddingBackfillWorker", () => {
             embeddings: inputs.map(() => fillVector(3072, 1)),
             model: "test-model",
           }),
-          idleSleepMs: 20,
         });
 
         worker.start();
@@ -312,11 +306,12 @@ describe("EmbeddingBackfillWorker", () => {
           `);
         });
 
-        // Give the worker tens of drains (idleSleepMs is 20 ms, so
-        // 500 ms = ~25 ticks). It must NOT pick the reinserted parent
-        // for re-embedding because the embedding row never vanished;
-        // a regression that drops the orphan would force the cooldown
+        // Kick the worker as the real write path would and give it
+        // time to drain. It must NOT pick the reinserted parent for
+        // re-embedding because the embedding row never vanished; a
+        // regression that drops the orphan would force the cooldown
         // path and fail the assertion below.
+        worker.kick();
         await sleep(500);
         await worker.stop();
 
@@ -337,6 +332,53 @@ describe("EmbeddingBackfillWorker", () => {
       });
     },
   );
+
+  testIfDocker("stops once the backlog is drained and restarts on kick", async () => {
+    await withSeededDb(async (session) => {
+      let embedCalls = 0;
+      const worker = new EmbeddingBackfillWorker({
+        session,
+        embed: async (inputs) => {
+          embedCalls++;
+          return {
+            embeddings: inputs.map(() => fillVector(3072, 1)),
+            model: "test-model",
+          };
+        },
+      });
+
+      worker.start();
+      await waitFor(async () => (await embeddingCount(session)) === 3);
+      const callsAfterFirstDrain = embedCalls;
+
+      // Insert a fourth observation without notifying the session.
+      // The drained worker must stay stopped — no polling loop may
+      // discover the row on its own.
+      await session.withDb(async (db) => {
+        await db.exec(`
+          INSERT INTO observations (
+            id, created_at, last_used_at, kind, observed_date, priority, source_json, content, tags_json
+          ) VALUES (
+            'mem_late', 4, 4, 'observation', '2026-05-04', 'high',
+            '{"kind":"system"}', 'Late-arriving memory.', '[]'
+          )
+        `);
+      });
+      await sleep(200);
+      expect(embedCalls).toBe(callsAfterFirstDrain);
+      expect(await embeddingCount(session)).toBe(3);
+
+      // The write-path kick wakes the worker and the new row gets
+      // embedded with the expected content.
+      worker.kick();
+      await waitFor(async () => (await embeddingCount(session)) === 4);
+      await worker.stop();
+
+      expect(embedCalls).toBeGreaterThan(callsAfterFirstDrain);
+      const rows = await readEmbeddingRows(session);
+      expect(rows.map((row) => row.observation_id)).toContain("mem_late");
+    });
+  });
 
   testIfDocker("survives an embed failure and continues on the next batch", async () => {
     await withSeededDb(async (session) => {
