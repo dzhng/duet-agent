@@ -358,7 +358,7 @@ The interactive TUI accepts image attachments (PNG, JPEG, GIF, WebP):
 
 `duet train <folder>` launches a sub-agent inside the folder, lets it read whatever is there with its native tools (markdown, CSVs, PDFs, spreadsheets, screenshots, source — anything the agent can open), and produces two artifacts:
 
-- **One high-priority observation** in `~/.duet/memory.db`, tagged `train`, `train:<slug>`, and `pinned`. Fresh `duet` sessions load it into their initial memory pack, and the `pinned` tag means `duet memory reflect` never compacts it away.
+- **One high-priority manual (user-curated) row** in `~/.duet/memory.db`, tagged `train` and `train:<slug>`. Fresh `duet` sessions load it into their initial memory pack with a ranking boost (via `manualBias`), and writing it as a `manual` row means `duet memory reflect` never compacts it away.
 - **`~/.duet/train/<memory-id>/`** — a hidden archive: a copy of every source file plus a `manifest.json`. Provenance only; the DB row is the source of truth. Deleting the memory via `duet memory` removes the archive too.
 
 ```bash

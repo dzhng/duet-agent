@@ -2,12 +2,18 @@
 export type ObservationPriority = "high" | "medium" | "low";
 
 /**
- * Whether a row is a raw observation or a reflection synthesized by the
- * reflector. Reflections rank higher by default (see `reflectionBias`)
- * because they are condensed cross-observation summaries that survived a
- * curation pass; the loader prefers them when the global budget tightens.
+ * Whether a row is a raw observation, a reflection synthesized by the
+ * reflector, or a manually curated row. Reflections rank higher than raw
+ * observations by default (see `reflectionBias`) because they are condensed
+ * cross-observation summaries that survived a curation pass; the loader
+ * prefers them when the global budget tightens.
+ *
+ * `manual` rows are ones a user deliberately curated (e.g. `duet train`
+ * corpus syntheses), distinct from raw `observation` rows and
+ * auto-synthesized `reflection` rows. They rank above both via `manualBias`
+ * and are never compacted by the reflect prune.
  */
-export type ObservationKind = "observation" | "reflection";
+export type ObservationKind = "observation" | "reflection" | "manual";
 
 /**
  * Where an observation came from. Used for auditability and downstream
@@ -45,10 +51,11 @@ export interface Observation {
    */
   sessionId?: string;
   /**
-   * Whether this row is a raw observation or a reflection. The reflector
-   * replaces a batch of observations with a single condensed reflection;
-   * downstream ranking gives reflections a multiplier to match their
-   * higher signal-per-token.
+   * Whether this row is a raw observation, a reflection, or a manually
+   * curated row. The reflector replaces a batch of observations with a
+   * single condensed reflection; downstream ranking gives reflections a
+   * multiplier (`reflectionBias`) and manual rows a larger one
+   * (`manualBias`) to match their higher signal-per-token.
    */
   kind: ObservationKind;
   /** Calendar date the observation is anchored to, usually the day it was observed. */
@@ -208,6 +215,13 @@ export interface ObservationalMemorySettings {
    * observations out of the global pack.
    */
   reflectionBias: number;
+  /**
+   * Multiplier applied to a row's score when `kind === 'manual'`,
+   * analogous to `reflectionBias`. Default 100 (see DEFAULT_MANUAL_BIAS)
+   * so curated rows sit at the top of the global pack — `ln(100) ≈ 4.6`,
+   * about 32 days of recency head start at the default half-life.
+   */
+  manualBias: number;
   /** Whether the recall_memory tool and embedding backfill are enabled. */
   retrieval: boolean;
 }
@@ -232,6 +246,8 @@ export interface ObservationalMemorySettingsInput {
   recencyHalfLifeMs?: number;
   /** Reflection-vs-observation score multiplier; see `ObservationalMemorySettings.reflectionBias`. */
   reflectionBias?: number;
+  /** Manual-row score multiplier; see `ObservationalMemorySettings.manualBias`. */
+  manualBias?: number;
   /** Whether the recall_memory tool and embedding backfill are enabled. */
   retrieval?: boolean;
 }

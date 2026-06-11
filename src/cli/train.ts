@@ -4,7 +4,6 @@ import path from "node:path";
 import dedent from "dedent";
 
 import { runMigrations } from "../memory/migrations.js";
-import { PINNED_TAG } from "../memory/observational.js";
 import { MemoryLockTimeoutError } from "../memory/pglite.js";
 import { MemorySession } from "../memory/session.js";
 import { appendObservation } from "../memory/storage.js";
@@ -279,16 +278,20 @@ export async function runTrainCommand(
 
     // Insert the new row BEFORE deleting priors: if the process dies
     // between the two steps the worst case is a duplicate `train:<slug>`
-    // row (cleaned up by the next train run), never zero rows. The
-    // `pinned` tag exempts the row from `duet memory reflect`'s prune.
+    // row (cleaned up by the next train run), never zero rows. The row is
+    // written as `kind: "manual"` so the loader's manualBias ranks it at
+    // the top of the global pack (a manual row with no sessionId never
+    // matches a live session, so it lands in the global pack via the
+    // loader's NULL-session handling), and `duet memory reflect`'s prune
+    // preserves it by kind regardless of age.
     const trainTag = `train:${options.slug}`;
     const observedDate = new Date().toISOString().slice(0, 10);
     const observation = await appendObservation(session, {
-      kind: "observation",
+      kind: "manual",
       priority: "high",
       source: { kind: "system" },
       content: synthesis.observationContent,
-      tags: ["train", trainTag, PINNED_TAG],
+      tags: ["train", trainTag],
       observedDate,
     });
     if (!observation) {

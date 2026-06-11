@@ -90,7 +90,7 @@ export async function runMemoryReflectCommand(
 
     if (result.reflections.length === 0) {
       io.stdout.write(
-        `\nNothing eligible: ${result.preserved.length} row(s) preserved (too fresh, pinned, or already a global reflection).\n`,
+        `\nNothing eligible: ${result.preserved.length} row(s) preserved (too fresh or already a global reflection).\n`,
       );
       return;
     }

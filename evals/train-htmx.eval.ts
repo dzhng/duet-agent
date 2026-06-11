@@ -21,7 +21,8 @@ describe("train htmx", () => {
 
       expect(result.observation.priority).toBe("high");
       expect(result.observation.tags).toContain("train");
-      expect(result.observation.tags).toContain("pinned");
+      expect(result.observation.kind).toBe("manual");
+      expect(result.observation.sessionId).toBeUndefined();
       expect(result.observation.tags).toContain(`train:${slug}`);
       expect(result.observation.content.length).toBeGreaterThan(200);
 

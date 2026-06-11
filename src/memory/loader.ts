@@ -16,7 +16,8 @@ import { estimateTokens } from "./observational.js";
  *
  *   - Global layer: every other session's rows, ranked by
  *     `priority * usageDecay * kindBias`. Reflections rank higher than
- *     raw observations through `reflectionBias`. Greedy-fitted to a
+ *     raw observations through `reflectionBias`, and manual (user-curated)
+ *     rows rank higher still through `manualBias`. Greedy-fitted to a
  *     fixed token budget so the prompt prefix stays bounded regardless
  *     of how big the durable memory database has grown.
  *
@@ -61,6 +62,8 @@ export interface LoadGlobalPackOptions {
   recencyHalfLifeMs: number;
   /** Reflection bias multiplier applied as a `kind = 'reflection'` factor. */
   reflectionBias: number;
+  /** Manual bias multiplier applied as a `kind = 'manual'` factor. */
+  manualBias: number;
 }
 
 /**
@@ -94,6 +97,7 @@ export async function loadGlobalPack(
     PRIORITY_WEIGHT.medium,
     PRIORITY_WEIGHT.low,
     options.reflectionBias,
+    options.manualBias,
     options.recencyHalfLifeMs,
   ];
   let scopeClause = "";
@@ -117,8 +121,10 @@ export async function loadGlobalPack(
          ln(CASE priority WHEN 'high' THEN $1::float
                           WHEN 'medium' THEN $2::float
                           ELSE $3::float END)
-         + ln(CASE kind WHEN 'reflection' THEN $4::float ELSE 1.0 END)
-         + last_used_at::float / $5::float
+         + ln(CASE kind WHEN 'reflection' THEN $4::float
+                        WHEN 'manual' THEN $5::float
+                        ELSE 1.0 END)
+         + last_used_at::float / $6::float
          DESC
        LIMIT $${limitParam}`;
 
