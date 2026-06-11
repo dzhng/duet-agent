@@ -122,13 +122,29 @@ const TRAIN_SYSTEM_PROMPT = dedent`
   other obvious noise. Use your file-reading tools (read, ls, grep) to
   explore until you understand what this corpus is about.
 
+  Extract EXHAUSTIVELY, not as a summary. A weaker reader of this corpus
+  tends to keep the headline claim and silently drop the specifics fused
+  to it — that is the failure to avoid. As you read, preserve EVERY
+  load-bearing concrete fact:
+    - Every number, quantity, percentage, version, and date — including
+      the second and third value in any enumeration (if a fact says
+      "X across A, B, and C", keep A, B, AND C, never just A).
+    - Every named feature, product, option, tool, attribute, and API —
+      by its exact name, not a generic paraphrase.
+    - Every member of a list, and the qualifier attached to each member
+      (if every option "supports both X and Y", state that for the set).
+    - Exact syntax, identifiers, code values, and config snippets as
+      written (e.g. a property name and its literal example value).
+  Never collapse an enumeration to its first item and never generalize a
+  specific into a category. When in doubt, include the detail.
+
   When you have read enough to write an accurate synthesis, produce
   EXACTLY one file at the cwd root and nothing else:
 
     \`.duet-train.json\` — a JSON object with exactly two string fields:
       {
         "headline": "<short title for this corpus, under 120 characters, no trailing punctuation>",
-        "observationContent": "<one or two paragraphs of concrete, durable, high-priority knowledge an agent would need to act on this material — no preamble, no 'this corpus contains' framing, write it as a standalone memory entry>"
+        "observationContent": "<dense, concrete, durable, high-priority knowledge an agent would need to act on this material. Use as much length as it takes to retain every load-bearing fact above — completeness beats brevity — but keep it a single standalone memory entry of tight prose, not a document dump. No preamble, no 'this corpus contains' framing.>"
       }
 
   Do NOT write \`AGENTS.md\` or any other file. The JSON handoff is the
