@@ -165,6 +165,46 @@ describe("Memory storage", () => {
     },
   );
 
+  testIfDocker(
+    "appendObservation kicks the embedding worker so new rows get embedded",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
+      const memoryPath = join(tempDir, "memory.db");
+
+      try {
+        const persistence = await loadStoredMemory(memoryPath, tempDir, {
+          embed: async (inputs) => ({
+            embeddings: inputs.map(() => Array(3072).fill(1)),
+            model: "test-model",
+          }),
+        });
+        const session = persistence.session!;
+        // The startup drain finds an empty database and the worker stops.
+        // This write must wake it through the session's write
+        // notification — there is no polling loop to find the row.
+        await appendObservation(session, observationInput("Kicked write.", "session_a"));
+
+        const deadline = Date.now() + 5_000;
+        let embedded: string[] = [];
+        while (Date.now() < deadline) {
+          const result = await session.withDb(async (db) =>
+            db.query<{ content: string }>(
+              `SELECT o.content FROM observation_embeddings e
+             JOIN observations o ON o.id = e.observation_id`,
+            ),
+          );
+          embedded = result?.rows.map((row) => row.content) ?? [];
+          if (embedded.length > 0) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        await persistence.dispose();
+        expect(embedded).toEqual(["Kicked write."]);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   testIfDocker("dispose closes the database and prevents further writes", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
     const memoryPath = join(tempDir, "memory.db");
