@@ -1,0 +1,77 @@
+{
+  "slug": "snowflake-eval",
+  "corpus": "train-corpus-snowflake",
+  "generatedBy": "opus-4.8",
+  "facts": [
+    {
+      "id": "f1",
+      "fact": "Snowflake's CEO is Sridhar Ramaswamy.",
+      "importance": "must"
+    },
+    {
+      "id": "f2",
+      "fact": "Snowflake reports 12,062 global customers on its About page.",
+      "importance": "must"
+    },
+    {
+      "id": "f3",
+      "fact": "Snowflake offers four pricing editions: Standard, Enterprise, Business Critical, and Virtual Private Snowflake (VPS).",
+      "importance": "must"
+    },
+    {
+      "id": "f4",
+      "fact": "Per-credit pricing (AWS, US East Northern Virginia) is $2.00 for Standard, $3.00 for Enterprise, and $4.00 for Business Critical; VPS pricing requires contacting Sales.",
+      "importance": "must"
+    },
+    {
+      "id": "f5",
+      "fact": "On-demand storage is priced at $23.00 per TB per month (AWS, US East Northern Virginia), billed on average monthly storage after compression.",
+      "importance": "must"
+    },
+    {
+      "id": "f6",
+      "fact": "Snowflake uses a consumption-based pricing model, with two ways to buy: On-demand or pre-paid capacity.",
+      "importance": "must"
+    },
+    {
+      "id": "f7",
+      "fact": "Business Critical edition adds features like Tri-Secret Secure, private connectivity access, and failover/failback for disaster recovery, intended for highly regulated industries.",
+      "importance": "nice"
+    },
+    {
+      "id": "f8",
+      "fact": "Snowflake's free trial offers a 30-day trial with $400 in free credits.",
+      "importance": "must"
+    },
+    {
+      "id": "f9",
+      "fact": "Snowflake is a fully managed service with serverless capabilities; users configure virtual warehouses while Snowflake handles infrastructure, scaling, and maintenance.",
+      "importance": "must"
+    },
+    {
+      "id": "f10",
+      "fact": "Snowflake's platform spans four benefit areas/workloads: Data Engineering, Analytics, AI, and Applications & Collaboration.",
+      "importance": "nice"
+    },
+    {
+      "id": "f11",
+      "fact": "Standard Warehouse - Generation 2 (Gen2) delivers about 2.0x faster performance for core analytics workloads, and Snowflake Adaptive Compute auto-selects right-sized compute with intelligent query routing.",
+      "importance": "nice"
+    },
+    {
+      "id": "f12",
+      "fact": "Snowflake Horizon Catalog provides security and governance, including read/write access for all Iceberg tables in open table formats.",
+      "importance": "nice"
+    },
+    {
+      "id": "f13",
+      "fact": "Snowflake reports more than 6,780 employees across over 40 offices worldwide (as of October 2023).",
+      "importance": "nice"
+    },
+    {
+      "id": "f14",
+      "fact": "The AT&T case study cites 84% savings on estimated annual costs (via results caching) and under 1 second to answer 90% of user queries.",
+      "importance": "nice"
+    }
+  ]
+}

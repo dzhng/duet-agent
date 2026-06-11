@@ -1,0 +1,77 @@
+{
+  "slug": "htmx-eval",
+  "corpus": "train-corpus-htmx",
+  "generatedBy": "opus-4.8",
+  "facts": [
+    {
+      "id": "f1",
+      "fact": "htmx lets you access AJAX, CSS Transitions, WebSockets, and Server Sent Events directly in HTML using attributes.",
+      "importance": "must"
+    },
+    {
+      "id": "f2",
+      "fact": "htmx is small (~16k min.gz'd) and dependency-free.",
+      "importance": "must"
+    },
+    {
+      "id": "f3",
+      "fact": "htmx v4 is in beta as of the 2026-06-04 scrape, with a target release date of Summer '26 (more details at four.htmx.org).",
+      "importance": "must"
+    },
+    {
+      "id": "f4",
+      "fact": "Core htmx attributes include hx-get, hx-post, hx-swap, hx-target, and hx-trigger, where hx-swap controls how content swaps in (e.g., outerHTML, beforeend, afterend) and hx-trigger specifies the event that triggers the request.",
+      "importance": "must"
+    },
+    {
+      "id": "f5",
+      "fact": "htmx supports issuing GET, POST, PUT, PATCH, and DELETE HTTP requests via hx-get, hx-post, hx-put, hx-patch, and hx-delete attributes.",
+      "importance": "must"
+    },
+    {
+      "id": "f6",
+      "fact": "htmx is the successor to intercooler.js.",
+      "importance": "must"
+    },
+    {
+      "id": "f7",
+      "fact": "htmx 2.x dropped Internet Explorer support; the 1.x code-line (v1.htmx.org) retains IE support and is supported in perpetuity.",
+      "importance": "must"
+    },
+    {
+      "id": "f8",
+      "fact": "htmx supports out-of-band swaps via hx-swap-oob and hx-select-oob, allowing content to be swapped somewhere other than the target.",
+      "importance": "must"
+    },
+    {
+      "id": "f9",
+      "fact": "The quick-start example uses htmx version 2.0.10 loaded from a jsDelivr CDN script tag.",
+      "importance": "nice"
+    },
+    {
+      "id": "f10",
+      "fact": "htmx defines CSS classes including htmx-request (applied during an ongoing request), htmx-indicator, htmx-swapping, htmx-settling, and htmx-added.",
+      "importance": "nice"
+    },
+    {
+      "id": "f11",
+      "fact": "htmx sends request headers such as HX-Request (always 'true'), HX-Trigger, HX-Target, HX-Current-URL, and HX-Boosted; and supports response headers like HX-Redirect, HX-Location, HX-Push-Url, HX-Retarget, HX-Reswap, and HX-Trigger.",
+      "importance": "nice"
+    },
+    {
+      "id": "f12",
+      "fact": "htmx fires a lifecycle of events around requests/swaps such as htmx:beforeRequest, htmx:configRequest, htmx:beforeSwap, htmx:afterSwap, and htmx:afterSettle, which can be used to customize or cancel behavior.",
+      "importance": "nice"
+    },
+    {
+      "id": "f13",
+      "fact": "An accompanying book, Hypermedia Systems (hypermedia.systems), teaches building Hypermedia-Driven Applications with htmx.",
+      "importance": "nice"
+    },
+    {
+      "id": "f14",
+      "fact": "htmx claims to have reduced code base sizes by 67% compared with React in a real-world port case study.",
+      "importance": "nice"
+    }
+  ]
+}
