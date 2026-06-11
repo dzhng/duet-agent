@@ -3,6 +3,7 @@ import {
   DEFAULT_EFFECTIVE_CONTEXT,
   DEFAULT_GLOBAL_REFLECT_MIN_AGE_DAYS,
   DEFAULT_GLOBAL_REFLECT_MIN_AGE_MS,
+  GLOBAL_REFLECTION_SESSION_ID,
   planReflectionBatches,
   reflectAllObservations,
   resolveObservationalMemorySettings,
@@ -70,7 +71,7 @@ describe("planReflectionBatches", () => {
     const globalReflection = makeObservation({
       id: "global-refl",
       kind: "reflection",
-      sessionId: "__global_reflection__",
+      sessionId: GLOBAL_REFLECTION_SESSION_ID,
       createdAt: NOW - 30 * DAY_MS,
       tags: ["observational-memory", "reflection", "global-prune"],
     });
@@ -96,6 +97,28 @@ describe("planReflectionBatches", () => {
     expect(preserved.map((o) => o.id)).toEqual(["global-refl"]);
     expect(batches).toHaveLength(1);
     expect(batches[0]!.observations.map((o) => o.id).sort()).toEqual(["local-refl", "raw-old"]);
+  });
+
+  test("preserves manual rows regardless of age", () => {
+    // Curated durable rows (e.g. `duet train` syntheses) are written as
+    // `kind: "manual"`; the prune must never fold them no matter how old.
+    const trainRow = makeObservation({
+      id: "train-old",
+      kind: "manual",
+      createdAt: NOW - 365 * DAY_MS,
+      priority: "high",
+      tags: ["train", "train:my-corpus"],
+    });
+    const oldRaw = makeObservation({ id: "raw-old", createdAt: NOW - 10 * DAY_MS });
+
+    const { preserved, batches } = planReflectionBatches([trainRow, oldRaw], {
+      cutoff,
+      batchTokens: 1_000_000,
+    });
+
+    expect(preserved.map((o) => o.id)).toEqual(["train-old"]);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]!.observations.map((o) => o.id)).toEqual(["raw-old"]);
   });
 
   test("packs eligible rows greedily up to batchTokens, then rolls over", () => {

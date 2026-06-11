@@ -57,3 +57,7 @@ mocks/
 # Local-only design notes / scratch (never tracked)
 .agents/notes/
 scripts/debug-sm*.ts
+
+# Extraction-prompt tuning scratch (relay)
+evals/scripts/.tune-last.json
+evals/scripts/.tune-log.md

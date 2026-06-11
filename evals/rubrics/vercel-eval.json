@@ -1,0 +1,77 @@
+{
+  "slug": "vercel-eval",
+  "corpus": "train-corpus-vercel",
+  "generatedBy": "opus-4.8",
+  "facts": [
+    {
+      "id": "f1",
+      "fact": "Vercel's CDN operates 126+ Points of Presence (PoPs) across 51 countries and 20+ Vercel regions.",
+      "importance": "must"
+    },
+    {
+      "id": "f2",
+      "fact": "Vercel's CDN is framework-aware: it reads routing, caching, and rendering configuration at build time, so caching policies are an output of the build process for supported frameworks (zero config).",
+      "importance": "must"
+    },
+    {
+      "id": "f3",
+      "fact": "Every Vercel deployment includes unmetered, always-on DDoS mitigation and network-level security at no extra cost.",
+      "importance": "must"
+    },
+    {
+      "id": "f4",
+      "fact": "Incremental Static Regeneration (ISR) serves cached pages while regenerating content in the background; Vercel manages caching, request collapsing, and purging automatically when ISR is used with Next.js, SvelteKit, Nuxt, or Astro.",
+      "importance": "must"
+    },
+    {
+      "id": "f5",
+      "fact": "Vercel maintains two distinct caches: the CDN cache (stores responses across regions near visitors) and the runtime cache (stores fetch results, database queries, and computed values inside functions).",
+      "importance": "must"
+    },
+    {
+      "id": "f6",
+      "fact": "Every Vercel deployment uses HTTPS with automatically provisioned SSL certificates and TLS 1.2/1.3 support, plus a platform-wide firewall and optional project-level Web Application Firewall (WAF) with custom rules.",
+      "importance": "must"
+    },
+    {
+      "id": "f7",
+      "fact": "In the Next.js App Router, ISR is enabled by adding a revalidate property (e.g. next: { revalidate: 10 } in seconds) to fetch requests.",
+      "importance": "must"
+    },
+    {
+      "id": "f8",
+      "fact": "On Vercel, framework-aware infrastructure enables global content updates (ISR page propagation) in 300ms, and generated pages are both cached and persisted to durable storage.",
+      "importance": "must"
+    },
+    {
+      "id": "f9",
+      "fact": "On Vercel, Next.js SSR runs through Vercel Functions which scale to zero when idle and scale automatically with traffic, with zero-config support for Cache-Control headers including stale-while-revalidate.",
+      "importance": "must"
+    },
+    {
+      "id": "f10",
+      "fact": "Vercel is positioned as 'the AI Cloud', a unified platform for building, deploying, and scaling AI-powered applications including AI SDK, AI Gateway (provider routing with automatic failover), v0, MCP servers, and Sandbox.",
+      "importance": "nice"
+    },
+    {
+      "id": "f11",
+      "fact": "Self-hosted Next.js ISR is limited to a single region and does not persist generated pages to durable storage by default (files live in the expiring Next.js cache).",
+      "importance": "nice"
+    },
+    {
+      "id": "f12",
+      "fact": "The CDN evaluates routing rules before checking any cache: redirects return a new URL to the client, rewrites map a public URL to a different backend path (including external rewrites to proxy/cache external backends), and header rules modify request/response metadata.",
+      "importance": "nice"
+    },
+    {
+      "id": "f13",
+      "fact": "Next.js streaming on Vercel is supported via Route Handlers, Vercel Functions, and React Server Components, using the loading file convention or React 18 Suspense components for loading states.",
+      "importance": "nice"
+    },
+    {
+      "id": "f14",
+      "fact": "Vercel can invalidate cached content by tag (purge) across all frameworks and backends, and offers image optimization to modern formats like WebP and AVIF cached on the CDN.",
+      "importance": "nice"
+    }
+  ]
+}

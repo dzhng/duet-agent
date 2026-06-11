@@ -89,6 +89,7 @@ EXAMPLES
   duet login
   duet env
   duet memory
+  duet train ./docs/my-project
   duet send-feedback "the TUI flickers when..."
   duet upgrade
 `);
@@ -236,6 +237,49 @@ OPTIONS
   --wait <seconds>         Seconds to wait for the cross-process open-lock
                            (default: 30; 0 fails immediately)
   -h, --help               Show this help
+`);
+}
+
+export function printTrainHelp(): void {
+  console.log(`
+duet train — Ingest a project corpus into one durable memory observation
+
+USAGE
+  duet train <folder> [--slug <name>] [--model <name>] [--db <path>] [--wait <seconds>]
+
+DESCRIPTION
+  Launches a duet agent with the corpus folder as its working directory.
+  The agent reads the corpus using its native file-reading tools (any
+  format the duet agent normally reads — markdown, plain text, CSVs, PDFs,
+  spreadsheets, source code) and writes a single handoff file at the
+  corpus root:
+
+    .duet-train.json  — structured handoff with headline + observation.
+
+  'train' then persists the synthesis into ~/.duet/memory.db as a manual
+  (user-curated) row (tagged 'train' and 'train:<slug>'), archives the
+  corpus under ~/.duet/train/<memory-id>/, removes the handoff file, and
+  prints the observation content to stdout so what you see is what landed
+  in memory.
+
+  Subsequent runs against the same slug replace the prior row in place,
+  so the memory pool does not bloat. Writing the row as a manual row
+  earns it a ranking boost in the memory pack (via manualBias) and exempts
+  it from 'duet memory reflect' compaction; deleting it via 'duet memory'
+  also removes its archive. Note: train loads the corpus folder's .env (for provider
+  credentials), so check folders you did not author before training.
+
+OPTIONS
+  --slug <name>            Override the corpus slug (default: sanitized folder basename)
+  --model <name>           Model used by the synthesis sub-agent (default: same resolution as 'duet run')
+  --db <path>              Memory database path (default: ~/.duet/memory.db)
+  --wait <seconds>         Seconds to wait for the cross-process open-lock
+                           (default: 30; 0 fails immediately)
+  -h, --help               Show this help
+
+EXAMPLES
+  duet train ./docs/my-project
+  duet train ./research --slug acme-research --model sonnet-4.6
 `);
 }
 

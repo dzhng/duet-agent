@@ -3,6 +3,7 @@ import { observationScore, PRIORITY_WEIGHT } from "../memory/loader.js";
 import { runMigrations } from "../memory/migrations.js";
 import { DEFAULT_RECENCY_HALF_LIFE_MS, DEFAULT_REFLECTION_BIAS } from "../memory/observational.js";
 import { DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS, openPGliteWaitingForLock } from "../memory/pglite.js";
+import { removeArchive } from "../train/archive.js";
 import type { Observation } from "../types/memory.js";
 
 /** Rows fetched per page by the ranked, lazily-paginated TUI list. */
@@ -123,9 +124,15 @@ export class MemoryDb {
     await this.db.query(`UPDATE observations SET content = $1 WHERE id = $2`, [content, id]);
   }
 
-  /** Permanently remove an observation. There is no undo. */
+  /**
+   * Permanently remove an observation. There is no undo. Rows written by
+   * `duet train` keep a corpus archive under `~/.duet/train/<id>/` that
+   * shares the row's lifecycle, so it is removed too (a no-op for every
+   * other row — there is simply no directory to delete).
+   */
   async delete(id: string): Promise<void> {
     await this.db.query(`DELETE FROM observations WHERE id = $1`, [id]);
+    await removeArchive(id);
   }
 
   async close(): Promise<void> {

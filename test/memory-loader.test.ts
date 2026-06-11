@@ -28,6 +28,7 @@ const NOW = Date.UTC(2026, 4, 9); // 2026-05-09 — anchors all `daysAgo` math
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HALF_LIFE_MS = 7 * DAY_MS;
 const REFLECTION_BIAS = 1.3;
+const MANUAL_BIAS = 100;
 
 describe("Memory loader", () => {
   describe("loadGlobalPack", () => {
@@ -38,6 +39,7 @@ describe("Memory loader", () => {
           tokenBudget: 100_000,
           recencyHalfLifeMs: HALF_LIFE_MS,
           reflectionBias: REFLECTION_BIAS,
+          manualBias: MANUAL_BIAS,
         });
 
         // Rank-1 invariant: the top fixture is a high reflection
@@ -67,6 +69,7 @@ describe("Memory loader", () => {
             tokenBudget: 100_000,
             recencyHalfLifeMs: HALF_LIFE_MS,
             reflectionBias: REFLECTION_BIAS,
+            manualBias: MANUAL_BIAS,
           });
           const ids = pack.map((o) => o.id);
           expect(ids.indexOf("g_high_obs_used_recently")).toBeLessThan(
@@ -86,6 +89,7 @@ describe("Memory loader", () => {
           tokenBudget,
           recencyHalfLifeMs: HALF_LIFE_MS,
           reflectionBias: REFLECTION_BIAS,
+          manualBias: MANUAL_BIAS,
         });
 
         const usedTokens = pack.reduce(
@@ -110,6 +114,7 @@ describe("Memory loader", () => {
             tokenBudget: 100_000,
             recencyHalfLifeMs: HALF_LIFE_MS,
             reflectionBias: REFLECTION_BIAS,
+            manualBias: MANUAL_BIAS,
           });
           const ids = pack.map((observation) => observation.id);
           for (const id of ids) {
@@ -126,6 +131,7 @@ describe("Memory loader", () => {
           tokenBudget: 100_000,
           recencyHalfLifeMs: HALF_LIFE_MS,
           reflectionBias: REFLECTION_BIAS,
+          manualBias: MANUAL_BIAS,
         });
         const ids = pack.map((observation) => observation.id);
         // Legacy rows pre-date sessionId tracking; they should still
@@ -135,6 +141,42 @@ describe("Memory loader", () => {
     });
 
     testIfDocker(
+      "ranks a manual row above an equal-priority reflection via manualBias",
+      async () => {
+        await withSeededDb(async (db) => {
+          // Seed a high-priority manual row last-used today. With
+          // manualBias (100) >> reflectionBias (1.3) it must outrank the
+          // otherwise rank-1 high reflection touched today.
+          await db.query(
+            `INSERT INTO observations (
+              id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
+              relative_date, time_of_day, priority, source_json, content, tags_json
+            ) VALUES ($1, $2, $2, NULL, 'manual', $3, NULL, NULL, NULL, 'high',
+                      '{"kind":"system"}', $4, '[]')`,
+            [
+              "g_manual_curated_today",
+              NOW,
+              new Date(NOW).toISOString().slice(0, 10),
+              "Curated train corpus synthesis for the duet platform.",
+            ],
+          );
+          const pack = await loadGlobalPack(db, {
+            excludeSessionId: "session_current",
+            tokenBudget: 100_000,
+            recencyHalfLifeMs: HALF_LIFE_MS,
+            reflectionBias: REFLECTION_BIAS,
+            manualBias: MANUAL_BIAS,
+          });
+          expect(pack[0]?.id).toBe("g_manual_curated_today");
+          const ids = pack.map((o) => o.id);
+          expect(ids.indexOf("g_manual_curated_today")).toBeLessThan(
+            ids.indexOf("g_high_reflection_today"),
+          );
+        });
+      },
+    );
+
+    testIfDocker(
       "includes every row when no exclusion is set (recall_memory all-session search)",
       async () => {
         await withSeededDb(async (db) => {
@@ -142,6 +184,7 @@ describe("Memory loader", () => {
             tokenBudget: 100_000,
             recencyHalfLifeMs: HALF_LIFE_MS,
             reflectionBias: REFLECTION_BIAS,
+            manualBias: MANUAL_BIAS,
           });
           const ids = pack.map((observation) => observation.id);
           expect(ids).toContain("local_observation_today");

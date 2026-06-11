@@ -43,6 +43,7 @@ export async function rebuildMemoryContextPack(options: {
         tokenBudget: options.settings.globalContextTokenBudget,
         recencyHalfLifeMs: options.settings.recencyHalfLifeMs,
         reflectionBias: options.settings.reflectionBias,
+        manualBias: options.settings.manualBias,
       }),
       options.sessionId !== undefined
         ? loadLocalPack(db, { sessionId: options.sessionId })

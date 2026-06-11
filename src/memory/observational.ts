@@ -172,6 +172,14 @@ export const DEFAULT_RECENCY_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export const DEFAULT_REFLECTION_BIAS = 1.3;
 
+/**
+ * 100 gives manual (user-curated) rows `ln(100) ≈ 4.6` of score, a ~32-day
+ * recency head start at the default half-life. Intentionally far above
+ * DEFAULT_REFLECTION_BIAS because curated rows should dominate the global
+ * pack rather than merely edge out raw observations.
+ */
+const DEFAULT_MANUAL_BIAS = 100;
+
 export interface DerivedMemoryBudgets {
   observation: {
     messageTokens: number;
@@ -477,6 +485,7 @@ export function resolveObservationalMemorySettings(
     globalContextTokenBudget: budgets.globalContextTokenBudget,
     recencyHalfLifeMs: partial.recencyHalfLifeMs ?? DEFAULT_RECENCY_HALF_LIFE_MS,
     reflectionBias: partial.reflectionBias ?? DEFAULT_REFLECTION_BIAS,
+    manualBias: partial.manualBias ?? DEFAULT_MANUAL_BIAS,
     observation: {
       messageTokens: budgets.observation.messageTokens,
       maxTranscriptTokens: budgets.observation.maxTranscriptTokens,
@@ -1117,6 +1126,9 @@ export interface PlanReflectionBatchesOptions {
  * batching/eligibility rules can be unit-tested without docker/LLM.
  *
  * Rules:
+ *   - Manual rows (`kind === "manual"`) are user-curated (e.g. `duet train`
+ *     corpus syntheses) and are always preserved regardless of age — the
+ *     reflect prune never compacts them.
  *   - GLOBAL reflection rows (`kind === "reflection"` AND
  *     `sessionId === GLOBAL_REFLECTION_SESSION_ID`) are always preserved.
  *     They are the output of prior `duet memory reflect` runs and
@@ -1145,6 +1157,11 @@ export function planReflectionBatches(
   const preserved: Observation[] = [];
   const eligible: Observation[] = [];
   for (const observation of observations) {
+    if (observation.kind === "manual") {
+      // Manual rows are user-curated (e.g. `duet train`); never compact them.
+      preserved.push(observation);
+      continue;
+    }
     if (
       observation.kind === "reflection" &&
       observation.sessionId === GLOBAL_REFLECTION_SESSION_ID

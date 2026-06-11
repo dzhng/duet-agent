@@ -49,7 +49,7 @@ export async function runMemoryReflectCommand(
         await runMigrations(db);
       },
     },
-    ...(options.waitBudgetMs !== undefined ? { waitBudgetMs: options.waitBudgetMs } : {}),
+    ...(options.waitBudgetMs !== undefined ? { lockWaitBudgetMs: options.waitBudgetMs } : {}),
     idleCloseMs: 60_000,
   });
   const removeShutdownHandlers = installShutdownHandlers(() => session.dispose());

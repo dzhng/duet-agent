@@ -1,0 +1,72 @@
+{
+  "slug": "stripe-eval",
+  "corpus": "train-corpus-stripe",
+  "generatedBy": "opus-4.8",
+  "facts": [
+    {
+      "id": "f1",
+      "fact": "The corpus consists of three Stripe product marketing pages scraped on 2026-06-04: Billing (stripe.com/billing), Checkout (stripe.com/checkout), and Payments (stripe.com/payments).",
+      "importance": "must"
+    },
+    {
+      "id": "f2",
+      "fact": "Stripe Billing unifies subscriptions and usage-based billing into one automated flow, supporting usage-based, tiered, flat-fee plus overage, and hybrid pricing models.",
+      "importance": "must"
+    },
+    {
+      "id": "f3",
+      "fact": "Stripe Billing's revenue recovery uses AI-powered tools (Smart Retries, card account updater, cancellation surveys), and businesses using Stripe recover 55% of failed payments on average.",
+      "importance": "must"
+    },
+    {
+      "id": "f4",
+      "fact": "Stripe Checkout offers four integration options—full-page hosted flow, embedded form, payment link, and Elements—each supporting one-time payments and subscriptions.",
+      "importance": "must"
+    },
+    {
+      "id": "f5",
+      "fact": "Stripe Checkout supports 30+ languages and 135+ currencies, and localizes pricing with Adaptive Pricing; early users saw up to a 46% increase in sales after enabling local payment methods.",
+      "importance": "must"
+    },
+    {
+      "id": "f6",
+      "fact": "Stripe Payments enables selling cross-border to 195+ countries across 135+ currencies, with access to 100+ payment methods, and has local acquiring coverage in 46 markets.",
+      "importance": "must"
+    },
+    {
+      "id": "f7",
+      "fact": "Link is Stripe's one-click checkout network that lets returning customers pay with a previously saved US bank account or credit card and check out in as little as six seconds.",
+      "importance": "must"
+    },
+    {
+      "id": "f8",
+      "fact": "Stripe reduces fraud and improves authorization rates using Stripe Radar and Authorization Boost, AI trained on billions of data points.",
+      "importance": "must"
+    },
+    {
+      "id": "f9",
+      "fact": "For complex usage-based or custom contract billing, Stripe points to Metronome (metronome.com) for real-time pricing, metering, billing, and reporting.",
+      "importance": "nice"
+    },
+    {
+      "id": "f10",
+      "fact": "Stripe Terminal provides pre-certified in-person payment devices (e.g., Stripe Reader S700) supporting countertop to curbside use cases, with customizable splash screens and custom POS apps.",
+      "importance": "nice"
+    },
+    {
+      "id": "f11",
+      "fact": "Gartner ranked Stripe as a Leader for ease of implementation in its 2025 billing Magic Quadrant.",
+      "importance": "nice"
+    },
+    {
+      "id": "f12",
+      "fact": "The pages cite customer outcomes: Airwallet implemented a new subscription model in two weeks and increased revenue by 30%; Dines saw a 150% jump in revenue per venue with Terminal.",
+      "importance": "nice"
+    },
+    {
+      "id": "f13",
+      "fact": "Supported payment methods listed include ACH Direct Debit, Alipay, Affirm, Afterpay/Clearpay, Apple Pay, Google Pay, Klarna, iDEAL, Przelewy24, SEPA Direct Debit, Stablecoins, WeChat Pay, OXXO, Konbini, and more.",
+      "importance": "nice"
+    }
+  ]
+}
