@@ -246,6 +246,10 @@ duet train — Ingest a project corpus into one durable memory observation
 
 USAGE
   duet train <folder> [--slug <name>] [--model <name>] [--db <path>] [--wait <seconds>]
+  duet train list [--db <path>] [--json]
+  duet train show <slug> [--db <path>] [--json]
+  duet train update <slug> --content-file <path> [--db <path>] [--json]
+  duet train delete <slug> [--db <path>] [--json]
 
 DESCRIPTION
   Launches a duet agent with the corpus folder as its working directory.
@@ -261,6 +265,19 @@ DESCRIPTION
   corpus under ~/.duet/train/<memory-id>/, removes the handoff file, and
   prints the observation content to stdout so what you see is what landed
   in memory.
+
+  The management subcommands all key on the user-facing <slug> (resolved
+  to the underlying row internally):
+    list    — every training (one row per slug), joined to its archive
+              manifest to show slug, headline, model, file count, date,
+              and memory id.
+    show    — the same metadata plus the full synthesized observation text.
+    update  — replace just the observation text from --content-file, in
+              place; the corpus archive is preserved untouched. Use this to
+              hand-correct a memory without re-running synthesis (re-running
+              'duet train <folder> --slug <slug>' is the re-synthesis path).
+    delete  — permanently remove the row and its corpus archive.
+  Pass --json to any of them for machine-readable output.
 
   Subsequent runs against the same slug replace the prior row in place,
   so the memory pool does not bloat. Writing the row as a manual row
@@ -280,6 +297,11 @@ OPTIONS
 EXAMPLES
   duet train ./docs/my-project
   duet train ./research --slug acme-research --model sonnet-4.6
+  duet train list
+  duet train list --json
+  duet train show acme-research
+  duet train update acme-research --content-file ./edited.md
+  duet train delete acme-research
 `);
 }
 

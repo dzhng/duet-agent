@@ -44,6 +44,20 @@ export async function removeArchive(memoryId: string): Promise<void> {
 }
 
 /**
+ * Read the manifest for an archived training, or `undefined` when the
+ * archive is absent or unreadable (e.g. it was pruned out of band). Keeps
+ * the archive-root layout owned here alongside `writeArchive`.
+ */
+export async function readArchiveManifest(memoryId: string): Promise<TrainManifest | undefined> {
+  try {
+    const raw = await readFile(join(archiveRootForMemoryId(memoryId), "manifest.json"), "utf8");
+    return JSON.parse(raw) as TrainManifest;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Skip rules for the corpus walk. We omit dotfiles/dirs, version control
  * and dependency caches, and the JSON handoff file the sub-agent uses to
  * return structured fields to the CLI.

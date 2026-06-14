@@ -10,9 +10,16 @@ import { appendObservation } from "../memory/storage.js";
 import { resolveCliModel } from "../model-resolution/resolver.js";
 import { DEFAULT_MEMORY_DB_PATH, SessionManager } from "../session/session-manager.js";
 import { collectArchiveFiles, removeArchive, writeArchive } from "../train/archive.js";
-import type { SynthesisResult, TrainManifest } from "../train/types.js";
+import { TRAIN_TAG, trainSlugTag } from "../train/tags.js";
+import type {
+  SynthesisResult,
+  TrainListEntry,
+  TrainManifest,
+  TrainRecord,
+} from "../train/types.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import { printTrainHelp } from "./help.js";
+import { MemoryDb } from "./memory-db.js";
 import { fail, loadCliEnvFiles, resolveUserPath } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
 
@@ -253,6 +260,21 @@ export async function runTrainCommand(
   args: string[],
   io: TrainCommandIO = { stdout: process.stdout, stderr: process.stderr },
 ): Promise<void> {
+  // The management subcommands are read/edit/delete siblings of the synthesis
+  // command. They route before the synthesis arg parser, which would otherwise
+  // treat the subcommand word as a corpus folder. Everything else falls
+  // through to the default `train <folder>` create flow.
+  switch (args[0]) {
+    case "list":
+      return runTrainListCommand(args.slice(1), io);
+    case "show":
+      return runTrainShowCommand(args.slice(1), io);
+    case "update":
+      return runTrainUpdateCommand(args.slice(1), io);
+    case "delete":
+      return runTrainDeleteCommand(args.slice(1), io);
+  }
+
   const options = parseTrainArgs(args);
   if (!options) return;
 
@@ -300,14 +322,14 @@ export async function runTrainCommand(
     // matches a live session, so it lands in the global pack via the
     // loader's NULL-session handling), and `duet memory reflect`'s prune
     // preserves it by kind regardless of age.
-    const trainTag = `train:${options.slug}`;
+    const trainTag = trainSlugTag(options.slug);
     const observedDate = new Date().toISOString().slice(0, 10);
     const observation = await appendObservation(session, {
       kind: "manual",
       priority: "high",
       source: { kind: "system" },
       content: synthesis.observationContent,
-      tags: ["train", trainTag],
+      tags: [TRAIN_TAG, trainTag],
       observedDate,
     });
     if (!observation) {
@@ -405,4 +427,209 @@ export async function runTrainCommand(
     removeShutdownHandlers();
     await session.dispose();
   }
+}
+
+function truncate(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+}
+
+/** Render the list as an aligned text table. Pure so it is unit-testable
+ *  without a database. */
+export function formatTrainList(entries: TrainListEntry[]): string {
+  if (entries.length === 0) {
+    return "No trainings found. Run `duet train <folder>` to create one.";
+  }
+  const rows = entries.map((entry) => ({
+    slug: entry.slug,
+    headline: entry.headline ?? (entry.hasArchive ? "—" : "(archive missing)"),
+    model: entry.model ?? "—",
+    files: entry.fileCount === undefined ? "—" : String(entry.fileCount),
+    trained: entry.observedDate,
+    id: entry.memoryId,
+  }));
+  const headers = {
+    slug: "SLUG",
+    headline: "HEADLINE",
+    model: "MODEL",
+    files: "FILES",
+    trained: "TRAINED",
+    id: "MEMORY ID",
+  };
+  const width = (key: keyof typeof headers, cap: number) =>
+    Math.min(cap, Math.max(headers[key].length, ...rows.map((row) => row[key].length)));
+  const w = {
+    slug: width("slug", 24),
+    headline: width("headline", 48),
+    model: width("model", 18),
+    files: width("files", 5),
+    trained: width("trained", 10),
+    id: width("id", 20),
+  };
+  const line = (cells: typeof headers) =>
+    [
+      truncate(cells.slug, w.slug).padEnd(w.slug),
+      truncate(cells.headline, w.headline).padEnd(w.headline),
+      truncate(cells.model, w.model).padEnd(w.model),
+      cells.files.padStart(w.files),
+      cells.trained.padEnd(w.trained),
+      cells.id,
+    ].join("  ");
+  return [line(headers), ...rows.map(line)].join("\n");
+}
+
+/** Multi-line detail view for a single training (`duet train show`). */
+function formatTrainRecord(record: TrainRecord): string {
+  return [
+    `slug       : ${record.slug}`,
+    `headline   : ${record.headline ?? "—"}`,
+    `memory id  : ${record.memoryId}`,
+    `model      : ${record.model ?? "—"}`,
+    `files      : ${record.fileCount ?? "—"}`,
+    `source     : ${record.sourceFolder ?? "—"}`,
+    `trained    : ${record.observedDate}`,
+    `archive    : ${record.hasArchive ? "present" : "missing"}`,
+    "",
+    record.content,
+  ].join("\n");
+}
+
+interface TrainSubOptions {
+  /** Positional slug argument; required by show/update/delete, unused by list. */
+  slug?: string;
+  dbPath: string;
+  json: boolean;
+  /** Path to the new observation text, for `update`. */
+  contentFile?: string;
+}
+
+/**
+ * Shared arg parser for the management subcommands. Each command validates
+ * which fields it actually requires (e.g. `show` needs a slug, `update` also
+ * needs `--content-file`); this only does the lexing.
+ */
+function parseTrainSubArgs(args: string[]): TrainSubOptions | undefined {
+  let slug: string | undefined;
+  let dbPath = DEFAULT_MEMORY_DB_PATH;
+  let json = false;
+  let contentFile: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    switch (arg) {
+      case "--db":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${arg}`);
+        dbPath = resolveUserPath(args[++i]!);
+        break;
+      case "--content-file":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${arg}`);
+        contentFile = resolveUserPath(args[++i]!);
+        break;
+      case "--json":
+        json = true;
+        break;
+      case "--help":
+      case "-h":
+        printTrainHelp();
+        return undefined;
+      default:
+        if (arg.startsWith("-")) fail(`Unknown train option: ${arg}`);
+        if (slug !== undefined) fail(`Unexpected extra argument: ${arg}`);
+        slug = arg;
+    }
+  }
+  return { slug, dbPath, json, contentFile };
+}
+
+/**
+ * Open the memory database for a management subcommand, run `fn`, and always
+ * close it. Lock contention surfaces as a friendly message (the same one the
+ * create flow uses) rather than a raw error.
+ */
+async function withTrainMemoryDb<T>(dbPath: string, fn: (db: MemoryDb) => Promise<T>): Promise<T> {
+  let db: MemoryDb;
+  try {
+    db = await MemoryDb.open(dbPath);
+  } catch (error) {
+    if (error instanceof MemoryLockTimeoutError) {
+      fail(
+        `Memory database at ${error.dataDir} is still locked by duet pid ${error.holderPid} after ${
+          error.budgetMs / 1000
+        }s. Stop that process (or pass --wait <seconds> to wait longer) and retry.`,
+      );
+    }
+    throw error;
+  }
+  const removeShutdownHandlers = installShutdownHandlers(() => db.close());
+  try {
+    return await fn(db);
+  } finally {
+    removeShutdownHandlers();
+    await db.close();
+  }
+}
+
+export async function runTrainListCommand(args: string[], io: TrainCommandIO): Promise<void> {
+  const options = parseTrainSubArgs(args);
+  if (!options) return;
+  if (options.slug !== undefined) fail(`Unexpected argument for train list: ${options.slug}`);
+  const entries = await withTrainMemoryDb(options.dbPath, (db) => db.listTrainings());
+  io.stdout.write(
+    options.json ? `${JSON.stringify(entries, null, 2)}\n` : `${formatTrainList(entries)}\n`,
+  );
+}
+
+export async function runTrainShowCommand(args: string[], io: TrainCommandIO): Promise<void> {
+  const options = parseTrainSubArgs(args);
+  if (!options) return;
+  if (!options.slug) fail("duet train show requires a <slug> argument");
+  const slug = options.slug;
+  const record = await withTrainMemoryDb(options.dbPath, (db) => db.findTrainingBySlug(slug));
+  if (!record) fail(`No training found for slug "${slug}".`);
+  io.stdout.write(
+    options.json ? `${JSON.stringify(record, null, 2)}\n` : `${formatTrainRecord(record)}\n`,
+  );
+}
+
+export async function runTrainUpdateCommand(args: string[], io: TrainCommandIO): Promise<void> {
+  const options = parseTrainSubArgs(args);
+  if (!options) return;
+  if (!options.slug) fail("duet train update requires a <slug> argument");
+  if (!options.contentFile) fail("duet train update requires --content-file <path>");
+  const slug = options.slug;
+  const content = await readFile(options.contentFile, "utf8");
+  if (content.trim().length === 0) {
+    fail(`Refusing to write empty content from ${options.contentFile}.`);
+  }
+  const updated = await withTrainMemoryDb(options.dbPath, async (db): Promise<TrainRecord> => {
+    const record = await db.findTrainingBySlug(slug);
+    if (!record) fail(`No training found for slug "${slug}".`);
+    await db.updateContent(record.memoryId, content);
+    // updateContent only touches `content`, so the stored row is the prior
+    // record with the new text.
+    return { ...record, content };
+  });
+  if (options.json) {
+    io.stdout.write(`${JSON.stringify(updated, null, 2)}\n`);
+    return;
+  }
+  io.stdout.write(`Updated "${slug}" (memory id ${updated.memoryId}).\n`);
+}
+
+export async function runTrainDeleteCommand(args: string[], io: TrainCommandIO): Promise<void> {
+  const options = parseTrainSubArgs(args);
+  if (!options) return;
+  if (!options.slug) fail("duet train delete requires a <slug> argument");
+  const slug = options.slug;
+  const deleted = await withTrainMemoryDb(options.dbPath, async (db): Promise<TrainRecord> => {
+    const record = await db.findTrainingBySlug(slug);
+    if (!record) fail(`No training found for slug "${slug}".`);
+    await db.delete(record.memoryId);
+    return record;
+  });
+  if (options.json) {
+    io.stdout.write(
+      `${JSON.stringify({ deleted: true, slug: deleted.slug, memoryId: deleted.memoryId }, null, 2)}\n`,
+    );
+    return;
+  }
+  io.stdout.write(`Deleted "${deleted.slug}" (memory id ${deleted.memoryId}) and its archive.\n`);
 }

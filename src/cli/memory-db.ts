@@ -3,7 +3,9 @@ import { observationScore, PRIORITY_WEIGHT } from "../memory/loader.js";
 import { runMigrations } from "../memory/migrations.js";
 import { DEFAULT_RECENCY_HALF_LIFE_MS, DEFAULT_REFLECTION_BIAS } from "../memory/observational.js";
 import { DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS, openPGliteWaitingForLock } from "../memory/pglite.js";
-import { removeArchive } from "../train/archive.js";
+import { readArchiveManifest, removeArchive } from "../train/archive.js";
+import { isTrainTagged, slugFromTags } from "../train/tags.js";
+import type { TrainListEntry, TrainRecord } from "../train/types.js";
 import type { Observation } from "../types/memory.js";
 
 /** Rows fetched per page by the ranked, lazily-paginated TUI list. */
@@ -117,6 +119,56 @@ export class MemoryDb {
       ],
     );
     return result.rows.map(rowToObservation);
+  }
+
+  /**
+   * Every `duet train` row (those tagged `train`), newest-first, joined to its
+   * archive manifest for headline/model/provenance. Backs `duet train list`.
+   */
+  async listTrainings(): Promise<TrainListEntry[]> {
+    const observations = await this.readTrainObservations();
+    const entries = await Promise.all(observations.map((row) => this.toTrainEntry(row)));
+    entries.sort((a, b) => b.createdAt - a.createdAt);
+    return entries;
+  }
+
+  /**
+   * Resolve a slug to its single training row plus the synthesized content,
+   * or `undefined` when no row carries `train:<slug>`. Backs `duet train
+   * show`, `update`, and `delete`, which all key on the user-facing slug
+   * rather than the internal observation id.
+   */
+  async findTrainingBySlug(slug: string): Promise<TrainRecord | undefined> {
+    const observations = await this.readTrainObservations();
+    const row = observations.find((observation) => slugFromTags(observation.tags) === slug);
+    if (!row) return undefined;
+    return { ...(await this.toTrainEntry(row)), content: row.content };
+  }
+
+  private async readTrainObservations(): Promise<Observation[]> {
+    const result = await this.db.query<ObservationRow>(
+      `SELECT id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
+              relative_date, time_of_day, priority, source_json, content, tags_json
+       FROM observations`,
+    );
+    return result.rows
+      .map(rowToObservation)
+      .filter((observation) => isTrainTagged(observation.tags));
+  }
+
+  private async toTrainEntry(observation: Observation): Promise<TrainListEntry> {
+    const manifest = await readArchiveManifest(observation.id);
+    return {
+      slug: slugFromTags(observation.tags) ?? "(unknown)",
+      memoryId: observation.id,
+      createdAt: observation.createdAt,
+      observedDate: observation.observedDate,
+      headline: manifest?.headline,
+      model: manifest?.model,
+      sourceFolder: manifest?.sourceFolder,
+      fileCount: manifest?.files.length,
+      hasArchive: manifest !== undefined,
+    };
   }
 
   /** Replace just the `content` of an observation, preserving everything else. */
