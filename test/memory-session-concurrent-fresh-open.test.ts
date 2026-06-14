@@ -121,9 +121,20 @@ try {
   const result = await session.withDb(async (db) => db.query("SELECT 1 AS ok"));
   process.stdout.write(JSON.stringify({ rows: result?.rows.length ?? 0 }) + "\\n");
 } catch (error) {
-  process.stdout.write(
-    JSON.stringify({ rows: 0, error: error instanceof Error ? error.message : String(error) }) + "\\n",
-  );
+  // Serialize the full shape, not just String(error): PGlite rejects with
+  // plain objects (wasm/Postgres errors) that would otherwise collapse to
+  // "[object Object]" and tell a CI failure reader nothing.
+  const detail =
+    error instanceof Error
+      ? \`\${error.name}: \${error.message}\\n\${error.stack ?? ""}\`
+      : (() => {
+          try {
+            return JSON.stringify(error, Object.getOwnPropertyNames(error ?? {}));
+          } catch {
+            return String(error);
+          }
+        })();
+  process.stdout.write(JSON.stringify({ rows: 0, error: detail }) + "\\n");
 } finally {
   await session.dispose();
 }
