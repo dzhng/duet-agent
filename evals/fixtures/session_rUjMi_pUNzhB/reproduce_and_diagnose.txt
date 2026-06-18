@@ -1,0 +1,156 @@
+# session_rUjMi_pUNzhB — infinite "pick up where we left off" loop
+
+## Symptom
+
+The session ran away into a tight, self-repeating loop. From message 334
+onward the assistant does the SAME thing every turn, 242 times in a row,
+never making forward progress and never finishing:
+
+    thinking: "Let me check the current state of the work in progress."
+    text:     "I'll pick up where we left off — the typecheck on the kanban refactor…"
+    bash:     cd /Users/david/dev/chat-app && git status && git diff --stat
+    read:     packages/backend/convex/domains/kanban/definitions.ts
+    (sometimes) bash: bunx turbo check-types --filter=@repo/shared … --filter=@repo/backend
+
+It re-orients, re-reads the same file, re-runs the same typecheck, decides
+to "continue," and loops. It never edits, never marks a todo done, never
+commits, never asks the user anything.
+
+This is the model-translation refactor (store kanban role ids, gateway as
+dumb pipe). The work was actually essentially DONE: at message 339 the
+typecheck reports `4 successful, 4 total` — green. The agent simply never
+recognized completion and kept re-checking forever.
+
+## State shape
+
+    totalMessages: 1299
+    roles:        { assistant: 478, toolResult: 806, user: 15 }
+    wireGuardHorizon.evictionHorizon: 1781811031668 (ms epoch)
+    status: interrupted / agent.status: cancelled  (the user killed it)
+    sessionCostUsd: 7.81   (the loop burned ~$7+ of opus-4.8)
+
+## The trigger: horizon landed exactly on the last user message
+
+The last real user turn is message 208 — the literal text "continue":
+
+    [206] user        ts=1781810892757
+    [207] assistant   ts=1781810896469
+    [208] user        ts=1781811031668   "continue"   <- horizon == this ts
+    [209] assistant   ts=1781811031682   (+14ms)
+    [210] toolResult  ts=1781811044236
+    ...
+    [1298] (loop tail) — assistant/toolResult only
+
+    evictionHorizon == 1781811031668 == msgs[208].timestamp EXACTLY.
+
+`applyEvictionHorizon` (src/turn-runner/wire-shaping.ts) drops every
+message with `timestamp <= horizon`, so the "continue" user message at
+208 is itself evicted. Everything after it — 1090 messages, indices
+209..1298 — is the agent's OWN autonomous loop:
+
+    roles in 209..end: { toolResult: 708, assistant: 382, user: 0 }
+
+There is not a single `user`-role message after the horizon. So the
+orphan-head skip in `applyEvictionHorizon`:
+
+    while (firstKept < messages.length && messages[firstKept].role !== "user")
+      firstKept += 1;
+
+walks from index 209 all the way to the end looking for a user turn,
+finds none, and returns an EMPTY list. The dispatched wire carries zero
+real messages.
+
+## Why it loops forever (self-reinforcing wire starvation)
+
+Captured wire payload for the next turn (capturedWirePayload helper):
+
+    rawMessageCount:       1299
+    retainedMessageCount:  0          <- entire transcript collapsed
+    dispatched.length:     2          <- only synthetic prepends
+    dispatchedHasRealUser:  false
+    synthetic prepends:    [observation-context, continuation-hint]
+
+The model sees NO transcript — only (a) the durable `<observations>`
+memory block and (b) the "Please continue naturally" continuation hint.
+The observations block describes the in-flight refactor and a todo list
+with "gateway-dumb-pipe in progress / typecheck needs rerun." That input
+is STATIC, so every turn the model reconstructs the identical plan, runs
+the identical read-only orientation (git status, read definitions.ts,
+re-run the now-green typecheck), and produces only assistant/toolResult
+messages — never a new `user` turn.
+
+Because no new user turn is ever appended, the horizon never gets a fresh
+user anchor below it, `applyEvictionHorizon`'s orphan-head skip keeps
+eating the whole tail, the wire stays starved at 0, and the loop is
+permanent. The agent literally cannot see that it already did this 242
+times.
+
+This is the same wire-starvation mechanism as session_VO5yjfS1vV6_
+(retained collapses to 0 when the post-horizon tail has no user
+survivor), but a worse manifestation: that session ended on a single
+cold greeting because the user was gone; here the runner kept driving
+autonomous turns, so the starved wire feeds an unbounded loop instead of
+one dead reply. The earlier "drain to memory before eviction" fix
+preserved CONTENT but did nothing to prevent the runaway loop when no
+user message ever follows.
+
+## Repro
+
+- evals/session-loop-wire-starvation.eval.ts — deterministic, the
+  regression guard. Replays this state through the production
+  wire-shaping transform. RED against the broken code: the starved shape
+  that enabled the loop (retainedMessageCount === 0) despite 1090
+  post-horizon messages, of which zero are user-role. GREEN after the
+  fix: the dispatch carries a bounded, provider-valid recent tail
+  (retained 70, ~69k tokens, head anchored on an assistant turn, well
+  under the 200k window). Falsified by reverting applyEvictionHorizon to
+  the skip-to-user-then-slice form, which re-collapses retained to 0.
+
+Why no live single-turn companion eval: a `complete()` call on the
+captured payload does NOT reliably fail when the bug is present, so it
+cannot serve as a guard. The rendered observation/memory pack rides the
+wire in BOTH the starved and fixed payloads and already describes the
+kanban refactor in detail, so even with retained=0 the model produces a
+plausible single-turn reply ("I'll rerun the typecheck on the kanban
+helper, let me check the current state of the files"). The real defect is
+multi-turn: with an empty tail the model's own actions never land on the
+wire, so every turn replays the identical re-orientation forever. A
+single forward turn looks fine either way; only the deterministic wire
+shape distinguishes broken from fixed. (Contrast session_VO5yjfS1vV6_,
+where the broken behavior IS a single-turn cold greeting and a live judge
+does discriminate.)
+
+Empirically, with the fix in place the model breaks the loop: it stops
+re-reading and asserts the prior edit is done — across 5 opus-4.8 runs it
+named the recent anchor (`toRunnerKanbanDefinition`, the structural cast
+fix) and moved to run the typecheck, rather than re-`cat`-ing the file as
+it did with the starved wire.
+
+## Fix (implemented on david/fix-wire-starvation-loop)
+
+The repair lives entirely in applyEvictionHorizon (the wire render), not
+in the stored horizon. It still prefers the next real user turn as the
+kept-window anchor. But when NO user turn survives the horizon — the
+runaway-autonomous-run case — it no longer skips to a user message and
+walks off the end into an empty list. It keeps the recent tail anchored
+on the first non-orphan message: it drops only leading `toolResult`
+messages (a tool result whose tool call was evicted is the one head shape
+the provider rejects) and anchors on the next assistant turn. The budget
+walk in findEvictionHorizon still bounds how much of that tail rides the
+wire, so this never reintroduces unbounded context growth — it only
+guarantees a non-empty, provider-valid payload.
+
+Why NOT "never advance the horizon past the last user turn": that pins
+the entire post-user tail on the wire permanently, so a long autonomous
+run (exactly this scenario) grows unbounded and trades the silent loop
+for a context-overflow error. It is also empirically insufficient as a
+stored-horizon floor: the in-transform budget walk (`findEvictionHorizon`,
+gated by `messageTokens` = 0.6 * 200k = 120k tokens) re-advances the
+horizon forward every turn because the 1090-message tail exceeds budget,
+climbing right back over the last user turn. Verified: replaying with the
+persisted horizon set to `msg208.ts - 1` still yields retained=0, while
+truncating the tail under budget yields retained=12 with a real user
+turn. Compaction into durable memory is unaffected either way — the
+`onCompaction` drain runs before the horizon advances, so the evicted
+tail is always preserved in memory regardless of how far the horizon
+moves. The defect and the fix are purely about what the WIRE renders.

@@ -166,8 +166,21 @@ export function calculateWireTokens(messages: AgentMessage[]): number {
 
 /**
  * Drop messages whose timestamp is at or before the eviction horizon, then
- * skip any orphan tool results or assistant messages at the new head so
- * the provider API receives a list that starts with a `user` turn.
+ * pick a provider-valid head for the surviving tail.
+ *
+ * Preferred anchor is the next real `user` turn: the cleanest head and the
+ * strongest context anchor. But a long autonomous run (a tool loop with no
+ * intervening user input) can leave a post-horizon tail with NO user turn
+ * at all. Skipping to a user message then would walk off the end and return
+ * an empty list — which starves the wire and lets the model loop forever,
+ * re-planning identically from durable memory every turn because it never
+ * sees its own recent work (see session_rUjMi_pUNzhB). When no user turn
+ * survives, fall back to keeping the recent tail anchored on the first
+ * non-orphan message: drop only leading `toolResult` messages, since a tool
+ * result whose matching tool call was evicted is the one head shape the
+ * provider rejects. The budget walk in {@link findEvictionHorizon} still
+ * bounds how much of that tail rides the wire, so this never reintroduces
+ * unbounded context growth — it only guarantees a non-empty, valid payload.
  */
 export function applyEvictionHorizon(messages: AgentMessage[], horizon: number): AgentMessage[] {
   if (horizon <= 0) return messages;
@@ -175,11 +188,24 @@ export function applyEvictionHorizon(messages: AgentMessage[], horizon: number):
   while (firstKept < messages.length && messageTimestamp(messages[firstKept]!) <= horizon) {
     firstKept += 1;
   }
-  while (firstKept < messages.length && messages[firstKept]!.role !== "user") {
-    firstKept += 1;
-  }
   if (firstKept === 0) return messages;
-  return messages.slice(firstKept);
+
+  let userAnchor = firstKept;
+  while (userAnchor < messages.length && messages[userAnchor]!.role !== "user") {
+    userAnchor += 1;
+  }
+  if (userAnchor < messages.length) return messages.slice(userAnchor);
+
+  let nonOrphan = firstKept;
+  while (nonOrphan < messages.length && messages[nonOrphan]!.role === "toolResult") {
+    nonOrphan += 1;
+  }
+  // Degenerate tail of nothing but orphan tool results: empty-after-skip and
+  // provider-invalid both lose, so keep the raw post-horizon slice — a
+  // non-empty payload is the lesser evil and effectively never happens in
+  // practice (tool results sit adjacent to the call that produced them).
+  if (nonOrphan >= messages.length) return messages.slice(firstKept);
+  return messages.slice(nonOrphan);
 }
 
 /**
