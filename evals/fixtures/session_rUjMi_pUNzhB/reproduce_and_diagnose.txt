@@ -23,6 +23,9 @@ recognized completion and kept re-checking forever.
 
 ## State shape
 
+Numbers below describe the ORIGINAL live session as captured. The
+committed `state.json` is trimmed (see "Committed fixture" before Repro):
+
     totalMessages: 1299
     roles:        { assistant: 478, toolResult: 806, user: 15 }
     wireGuardHorizon.evictionHorizon: 1781811031668 (ms epoch)
@@ -94,17 +97,30 @@ one dead reply. The earlier "drain to memory before eviction" fix
 preserved CONTENT but did nothing to prevent the runaway loop when no
 user message ever follows.
 
+## Committed fixture (trimmed)
+
+The live session reached 1299 messages, but the committed `state.json` is
+trimmed to the first 349 (indices 0..348): the legit refactor work
+(209..333) plus the FIRST few loop iterations (334..348, cut at a clean
+turn boundary right before the next assistant turn). This proves the fix
+engages the moment the loop begins rather than only after the full
+~1090-message pileup. The starvation trigger is preserved exactly — the
+horizon still equals msgs[208].timestamp and no post-horizon message is a
+user turn — so the broken code still collapses the wire to empty.
+
 ## Repro
 
 - evals/session-loop-wire-starvation.eval.ts — deterministic, the
-  regression guard. Replays this state through the production
+  regression guard. Replays the trimmed state through the production
   wire-shaping transform. RED against the broken code: the starved shape
-  that enabled the loop (retainedMessageCount === 0) despite 1090
-  post-horizon messages, of which zero are user-role. GREEN after the
-  fix: the dispatch carries a bounded, provider-valid recent tail
-  (retained 70, ~69k tokens, head anchored on an assistant turn, well
-  under the 200k window). Falsified by reverting applyEvictionHorizon to
-  the skip-to-user-then-slice form, which re-collapses retained to 0.
+  that enabled the loop (retainedMessageCount === 0) despite a
+  post-horizon tail with zero user-role messages. GREEN after the fix:
+  the dispatch carries a bounded, provider-valid recent tail (head
+  anchored on an assistant turn, well under the 120k message budget /
+  200k window). Falsified by reverting applyEvictionHorizon to the
+  skip-to-user-then-slice form, which re-collapses retained to 0 —
+  verified on the trimmed fixture, so the guard catches the regression at
+  the loop's onset, not just at full pileup.
 
 Why no live single-turn companion eval: a `complete()` call on the
 captured payload does NOT reliably fail when the bug is present, so it

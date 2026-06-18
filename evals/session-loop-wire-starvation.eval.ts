@@ -11,17 +11,24 @@ import { capturedWirePayload } from "./helpers/capture-wire-payload.js";
  *
  * That session ran away into a tight infinite loop: from message 334 on,
  * the assistant re-issued the SAME "let me check the current state / pick
- * up where we left off" orientation 242 times — git status, re-read
+ * up where we left off" orientation ~240 times — git status, re-read
  * `packages/backend/convex/domains/kanban/definitions.ts`, re-run the
  * (already green) typecheck — never editing, never finishing, until the
  * user killed it. Full write-up in
  * `evals/fixtures/session_rUjMi_pUNzhB/reproduce_and_diagnose.txt`.
  *
+ * The committed `state.json` is trimmed to message 348 — the legit
+ * refactor work (209–333) plus the FIRST few loop iterations (334+) — so
+ * the eval proves the fix engages the moment the loop begins, not only
+ * after the full ~1090-message pileup the live session reached. The
+ * starvation trigger is intact: the horizon still sits on the last user
+ * turn and no user turn survives it.
+ *
  * Root cause is wire starvation. The eviction horizon advanced to
  * EXACTLY the timestamp of the last user turn (message 208, the literal
  * text "continue"). `applyEvictionHorizon` drops messages with
  * `timestamp <= horizon`, so that user turn is itself evicted, and every
- * one of the 1090 messages after it is the agent's own autonomous loop —
+ * one of the messages after it is the agent's own autonomous loop —
  * zero user-role survivors. The broken orphan-head skip then walked the
  * entire tail looking for a `user` message, found none, and collapsed
  * the wire to zero real messages. The model saw only the durable
@@ -78,19 +85,19 @@ describe("session_rUjMi_pUNzhB infinite loop from wire starvation", () => {
         const messages: AgentMessage[] = turnState.state.agent.messages;
         const horizon: number = turnState.state.wireGuardHorizon.evictionHorizon;
 
-        // Fixture sanity: the runaway transcript is real and large — the
-        // loop appended ~1090 autonomous turns, and not one of them is a
-        // user turn. That zero-user tail is the structural trigger: the
-        // horizon sits on the last user message, so `applyEvictionHorizon`'s
+        // Fixture sanity: the trimmed transcript stops a few iterations
+        // into the loop, and not one post-horizon message is a user turn.
+        // That zero-user tail is the structural trigger: the horizon sits
+        // on the last user message (208), so `applyEvictionHorizon`'s
         // orphan-head skip has nothing to anchor on past it. These two are
         // properties of the captured data, not the code under test.
-        expect(payload.rawMessageCount).toBe(1299);
+        expect(payload.rawMessageCount).toBe(349);
         expect(postHorizonUserCount(messages, horizon)).toBe(0);
 
-        // The invariant the runner must hold: a session with this much
-        // post-horizon history must NOT be dispatched an empty transcript.
-        // Against the broken code the transform collapsed all 1090 tail
-        // messages to zero real messages and shipped only the two static
+        // The invariant the runner must hold: a session whose post-horizon
+        // history has no user turn must NOT be dispatched an empty
+        // transcript. Against the broken code the transform collapsed the
+        // whole tail to zero real messages and shipped only the two static
         // synthetic prepends, so the model re-planned identically every
         // turn and looped forever. The fix keeps a recent, budget-bounded
         // tail anchored on a provider-valid head, so the model sees its
@@ -111,11 +118,12 @@ describe("session_rUjMi_pUNzhB infinite loop from wire starvation", () => {
         const firstReal = payload.dispatched[payload.syntheticPrepends.length];
         expect(firstReal?.role).not.toBe("toolResult");
 
-        // Not overflowing: the budget walk still evicts the bulk of the
-        // 1090-message tail, so the dispatch stays far under the effective
-        // context window. Retaining a tail does NOT reintroduce unbounded
-        // growth — it is bounded by the same `messageTokens` budget that
-        // drove eviction in the first place.
+        // Not overflowing: the dispatch stays far under the effective
+        // context window. On the full untrimmed session the budget walk
+        // evicts the bulk of the 1090-message tail to hold this bound;
+        // here the trimmed tail is already well within it. Retaining a
+        // tail does NOT reintroduce unbounded growth — it is bounded by
+        // the same `messageTokens` budget that drove eviction.
         expect(payload.retainedMessageCount).toBeLessThan(payload.rawMessageCount);
         expect(payload.dispatchedTokens).toBeLessThan(120_000);
       } finally {
