@@ -48,11 +48,11 @@ describe("applyEvictionHorizon", () => {
     ]);
   });
 
-  test("sweeps past orphan toolResult and assistant at the new head when the cut splits a tool pair", () => {
-    // Cut falls right after the assistant tool_use. Without the sweep the
-    // dispatched list would start with `toolResult` (no matching assistant
-    // tool_use earlier in the conversation) and the provider API would
-    // reject the request.
+  test("anchors on the next user turn when one survives the horizon", () => {
+    // Cut falls right after the assistant tool_use. The dispatched list
+    // must not start with `toolResult` (no matching assistant tool_use
+    // earlier in the conversation) or the provider API rejects it. A real
+    // user turn survives downstream, so it is the preferred anchor.
     const messages = [
       userText("user1", 1),
       assistantToolCall("toolu_1", 2),
@@ -70,13 +70,38 @@ describe("applyEvictionHorizon", () => {
     expect(out).toHaveLength(4);
   });
 
-  test("returns an empty list when no user message remains after the horizon", () => {
+  test("keeps the assistant-anchored tail when no user turn survives the horizon", () => {
+    // A long autonomous run (tool loop, no intervening user input) leaves a
+    // post-horizon tail with no user turn. Skipping to a user message would
+    // walk off the end and return [], starving the wire and letting the
+    // model loop forever (session_rUjMi_pUNzhB). Anchor on the first
+    // non-orphan message instead: here that is the surviving assistant
+    // tool_use, whose result follows it, so the head is provider-valid.
     const messages = [
       userText("only-user", 1),
       assistantToolCall("toolu_1", 2),
       toolResultText("toolu_1", "ok", 3),
     ];
-    expect(applyEvictionHorizon(messages, 1)).toEqual([]);
+    const out = applyEvictionHorizon(messages, 1);
+    expect(out.map((m) => m.role)).toEqual(["assistant", "toolResult"]);
+  });
+
+  test("drops leading orphan tool results when no user turn survives the horizon", () => {
+    // The cut splits a tool pair AND no user turn follows. The leading
+    // toolResult is an orphan (its tool_use was evicted), so it must be
+    // dropped; the next assistant tool_use is the first valid head.
+    const messages = [
+      userText("only-user", 1),
+      assistantToolCall("toolu_1", 2),
+      toolResultText("toolu_1", "ok", 3),
+      assistantToolCall("toolu_2", 4),
+      toolResultText("toolu_2", "ok", 5),
+    ];
+    // horizon=2 drops user + first assistant, leaving an orphan toolResult
+    // at the head.
+    const out = applyEvictionHorizon(messages, 2);
+    expect(out[0]?.role).toBe("assistant");
+    expect(out.map((m) => m.role)).toEqual(["assistant", "toolResult"]);
   });
 });
 
