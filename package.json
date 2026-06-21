@@ -56,9 +56,9 @@
     "build:compile": "bun build src/cli-entry.ts --compile --outfile dist/duet"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.77.0",
-    "@earendil-works/pi-ai": "^0.77.0",
-    "@earendil-works/pi-coding-agent": "^0.77.0",
+    "@earendil-works/pi-agent-core": "^0.79.9",
+    "@earendil-works/pi-ai": "^0.79.9",
+    "@earendil-works/pi-coding-agent": "^0.79.9",
     "@electric-sql/pglite": "^0.4.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentui/core": "^0.2.5",

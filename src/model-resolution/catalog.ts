@@ -204,6 +204,18 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       openrouter: "z-ai/glm-4.7",
     },
   },
+  {
+    // Zhipu's GLM 5.2 is routed through the duet/vercel gateways under the
+    // `zai/glm-5.2` model id and through OpenRouter as `z-ai/glm-5.2`. We do not
+    // configure a direct Zhipu provider, so these are the only routes.
+    shorthand: "glm-5.2",
+    aliases: ["zai/glm-5.2", "z-ai/glm-5.2", "glm-5-2"],
+    modelsByProvider: {
+      "duet-gateway": "zai/glm-5.2",
+      "vercel-ai-gateway": "zai/glm-5.2",
+      openrouter: "z-ai/glm-5.2",
+    },
+  },
 ];
 
 export function isProviderPinnedModelName(modelName: string): boolean {

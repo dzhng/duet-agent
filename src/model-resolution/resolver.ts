@@ -51,11 +51,10 @@ export function resolveModelName(model: string): Model<any> {
     ? canonicalizeProviderModelId(provider, rawModelId)
     : rawModelId;
   if (provider === "duet-gateway") {
-    const resolved = resolveDuetGatewayModel(modelId);
-    if (!resolved) {
-      throw new Error(`Unknown duet-gateway model: ${modelId}`);
-    }
-    return clampModelOutputTokens(resolved);
+    // resolveDuetGatewayModel always returns a model: it falls back to a
+    // synthesized pass-through spec for gateway ids pi-ai's catalog has not
+    // shipped yet, so new gateway models work without a code change here.
+    return clampModelOutputTokens(resolveDuetGatewayModel(modelId));
   }
   // getModel returns undefined for models the upstream catalog has not shipped
   // yet; fall back to a synthesized clone (e.g. Fable 5) before forwarding.

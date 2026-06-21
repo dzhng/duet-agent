@@ -3,6 +3,8 @@ import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
 
 const GATEWAY_PATH = "/api/v1/ai-gateway";
 const OPENAI_MODEL_PREFIX = "openai/";
+const VERCEL_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const OPENAI_BASE_URL = "https://api.openai.com/v1";
 
 /**
  * The Duet gateway proxies Vercel's AI Gateway path layout and authenticates
@@ -40,9 +42,8 @@ export function getDuetGatewayBaseUrl(): string {
  * credential, even when the user also has a real `AI_GATEWAY_API_KEY=vck_...`
  * set for explicit `vercel-ai-gateway:*` pins.
  */
-export function resolveDuetGatewayModel(modelId: string): Model<any> | undefined {
+export function resolveDuetGatewayModel(modelId: string): Model<any> {
   const upstream = resolveDuetGatewayUpstream(modelId);
-  if (!upstream) return undefined;
 
   return {
     ...upstream,
@@ -52,16 +53,57 @@ export function resolveDuetGatewayModel(modelId: string): Model<any> | undefined
   };
 }
 
-function resolveDuetGatewayUpstream(modelId: string): Model<any> | undefined {
+/**
+ * Resolve a gateway model id to its upstream spec, preferring pi-ai's catalog
+ * and synthesizing a pass-through model when the catalog has not shipped the id
+ * yet. The Duet gateway proxies Vercel's AI Gateway, which serves every
+ * `provider/model` id over the anthropic-messages transport (OpenAI models keep
+ * their native openai-responses transport for reasoning stream semantics), so a
+ * newly listed model works the moment Vercel serves it — without a catalog or
+ * code change here. When pi-ai later ships the model its real spec takes
+ * precedence over the synthesized placeholder automatically.
+ */
+function resolveDuetGatewayUpstream(modelId: string): Model<any> {
   if (modelId.startsWith(OPENAI_MODEL_PREFIX)) {
-    return getModel("openai" as any, modelId.slice(OPENAI_MODEL_PREFIX.length) as any) as
-      | Model<any>
-      | undefined;
+    const slug = modelId.slice(OPENAI_MODEL_PREFIX.length);
+    return (
+      (getModel("openai" as any, slug as any) as Model<any> | undefined) ??
+      synthesizePassthroughModel(modelId, "openai-responses")
+    );
   }
   return (
     (getModel("vercel-ai-gateway" as any, modelId as any) as Model<any> | undefined) ??
-    resolveMissingModel("vercel-ai-gateway", modelId)
+    resolveMissingModel("vercel-ai-gateway", modelId) ??
+    synthesizePassthroughModel(modelId, "anthropic-messages")
   );
+}
+
+/**
+ * Build a minimal spec for a gateway model pi-ai's catalog has not shipped yet.
+ * The context/output ceilings are intentionally conservative so an unknown
+ * model never 400s on an over-advertised window; a model that needs a tighter
+ * cap can still set `maxOutputTokens` in the catalog, and once pi-ai ships the
+ * real spec this placeholder is bypassed entirely. `provider`/`baseUrl` are
+ * placeholders that `resolveDuetGatewayModel` overwrites with the Duet proxy
+ * route, so only `api` (which picks that route) and the limits matter here.
+ */
+function synthesizePassthroughModel(
+  modelId: string,
+  api: "anthropic-messages" | "openai-responses",
+): Model<any> {
+  const isOpenAI = api === "openai-responses";
+  return {
+    id: modelId,
+    name: modelId,
+    api,
+    provider: isOpenAI ? "openai" : "vercel-ai-gateway",
+    baseUrl: isOpenAI ? OPENAI_BASE_URL : VERCEL_GATEWAY_BASE_URL,
+    reasoning: true,
+    input: isOpenAI ? ["text", "image"] : ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 256_000,
+    maxTokens: 64_000,
+  };
 }
 
 /**

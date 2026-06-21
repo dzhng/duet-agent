@@ -299,6 +299,34 @@ describe("CLI model inference", () => {
     expect(resolveModelName("glm-4.7").maxTokens).toBe(40000);
   });
 
+  test("resolves the glm-5.2 shorthand through the duet gateway", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+
+    expect(resolveModelName("glm-5.2").id).toBe("zai/glm-5.2");
+    expect(resolveModelName("duet:zai/glm-5.2").id).toBe("zai/glm-5.2");
+  });
+
+  test("synthesizes a pass-through model for gateway ids absent from the catalog", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "test-duet";
+
+    // The duet gateway proxies Vercel's AI Gateway, so a model id the pinned
+    // pi-ai catalog has not shipped yet must still resolve (over the
+    // anthropic-messages transport) rather than throwing "Unknown duet-gateway
+    // model" — new gateway models work without a catalog/code change here.
+    const synthesized = resolveModelName("duet:zai/glm-9.9-not-in-catalog");
+    expect(synthesized.id).toBe("zai/glm-9.9-not-in-catalog");
+    expect(synthesized.provider).toBe("duet-gateway");
+    expect(synthesized.api).toBe("anthropic-messages");
+
+    // OpenAI-prefixed ids keep the openai-responses transport so reasoning
+    // stream semantics survive, and route through the gateway's /v1 path.
+    const synthesizedOpenAI = resolveModelName("duet:openai/gpt-future");
+    expect(synthesizedOpenAI.api).toBe("openai-responses");
+    expect(synthesizedOpenAI.baseUrl.endsWith("/v1")).toBe(true);
+  });
+
   test("forwards a provider-pinned id that is absent from the catalog without throwing", () => {
     clearModelEnv();
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
