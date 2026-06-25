@@ -276,6 +276,95 @@ export function consecutivePollGateSuccesses(
   return streak;
 }
 
+/**
+ * Threshold for the no-progress re-selection guard: how many times in a row the
+ * orchestrator may select the SAME state — with no different state running in
+ * between — before the runner injects a loop warning into the next decision
+ * prompt. Set above a normal retry-with-correction streak (re-running a state
+ * two or three times with a fixed `override.prompt` is legitimate) so the
+ * warning targets idle "holding" loops where the parent re-selects a state to
+ * "keep waiting" — which never suspends anything — rather than productive retries.
+ */
+export const REPEATED_SELECTION_LOOP_THRESHOLD = 5;
+
+/**
+ * Time window for the no-progress re-selection guard. Repeated selections only
+ * read as a hot loop when they happen close together; a state deliberately
+ * re-run hours apart is normal cadence, not a loop. Only a streak whose span
+ * stays within this window triggers the warning, so a slow, legitimate revisit
+ * pattern is never flagged.
+ */
+export const REPEATED_SELECTION_LOOP_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * Measure the current run of back-to-back selections of `stateName` with no
+ * other state started in between, returning the streak length and the elapsed
+ * span from the streak's first selection to its most recent.
+ *
+ * This surfaces the idle-loop footgun where the orchestrator re-selects a
+ * "holding" state again and again to "keep waiting" — a no-op, since selecting a
+ * state runs it immediately rather than suspending the machine. Unlike
+ * `consecutivePollGateSuccesses` (which counts completions of an always-true
+ * poll), this counts `state_started` events for any state kind, because the
+ * idle loop is driven by the parent re-selecting, not by a poll's exit code. A
+ * lifecycle event naming a *different* state means the machine actually moved
+ * on, so the streak resets and a normal plan that revisits a state after doing
+ * other work never accumulates.
+ */
+export function repeatedStateSelectionStreak(
+  stateMachine: StateMachineSession,
+  stateName: string,
+): { count: number; spanMs: number } {
+  let count = 0;
+  let earliest: number | undefined;
+  let latest: number | undefined;
+  for (let i = stateMachine.history.length - 1; i >= 0; i--) {
+    const event = stateMachine.history[i];
+    if (event.type === "state_started") {
+      if (event.state !== stateName) break;
+      count++;
+      earliest = event.timestamp;
+      if (latest === undefined) latest = event.timestamp;
+      continue;
+    }
+    // Lifecycle events naming this same state are noise inside one run cycle;
+    // an event naming a *different* state means the machine moved on, ending
+    // the streak. runner_decided / state_machine_* carry no comparable state.
+    if (
+      (event.type === "state_completed" ||
+        event.type === "state_failed" ||
+        event.type === "state_interrupted" ||
+        event.type === "state_asked_user" ||
+        event.type === "state_definition_updated" ||
+        event.type === "state_machine_reactivated") &&
+      event.state !== stateName
+    ) {
+      break;
+    }
+  }
+  const spanMs = earliest !== undefined && latest !== undefined ? latest - earliest : 0;
+  return { count, spanMs };
+}
+
+/**
+ * Apply the no-progress loop policy to a session: return the streak length when
+ * `stateName` has just been re-selected enough times in a tight enough window to
+ * read as an idle hot loop, or undefined otherwise. This is the single source of
+ * truth for the trip condition — the turn runner uses the returned count to word
+ * its loop-warning reminder, and tests assert against this same function rather
+ * than re-deriving the threshold/window comparison.
+ */
+export function repeatedSelectionLoopCount(
+  stateMachine: StateMachineSession,
+  stateName: string,
+): number | undefined {
+  const { count, spanMs } = repeatedStateSelectionStreak(stateMachine, stateName);
+  if (count < REPEATED_SELECTION_LOOP_THRESHOLD || spanMs > REPEATED_SELECTION_LOOP_WINDOW_MS) {
+    return undefined;
+  }
+  return count;
+}
+
 export function elapsedSinceStateStarted(
   stateMachine: StateMachineSession | undefined,
   state: string,

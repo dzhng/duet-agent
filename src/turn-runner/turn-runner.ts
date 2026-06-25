@@ -88,6 +88,7 @@ import {
   currentScheduledState,
   isAwaitingUserAnswer,
   isWaitingOnScheduledState,
+  repeatedSelectionLoopCount,
 } from "./state-machine-session.js";
 import {
   StateMachineController,
@@ -1066,10 +1067,40 @@ export class TurnRunner {
     return undefined;
   }
 
+  /**
+   * Build a loop-warning system reminder when the orchestrator has selected the
+   * same state many times in a row within a short window with no other state
+   * running in between. This is the idle-"holding" hot loop: re-selecting a
+   * state to "keep waiting" is a no-op because selecting runs the state again
+   * immediately rather than suspending. The reminder re-teaches the only
+   * primitives that actually wait — ask_user_question for a human reply, a poll
+   * for a checkable condition, a timer for a fixed time — and tells the parent
+   * to stop re-selecting the same state unchanged. Returns undefined when the
+   * streak is below threshold or spread over too long a span to be a hot loop.
+   */
+  private repeatedSelectionLoopWarning(stateName: string): string | undefined {
+    const session = this.stateMachineController.getSession();
+    const count = session ? repeatedSelectionLoopCount(session, stateName) : undefined;
+    if (count === undefined) return undefined;
+    return dedent`
+      <system-reminder>
+      LOOP DETECTED: you have selected the "${stateName}" state ${count} times in a row, with no other state running in between, in quick succession. Selecting a state is NOT how you wait — every select_state_machine_state call runs the state again immediately and returns, so re-selecting the same "holding" state over and over is a no-op hot loop that suspends nothing.
+
+      If you are waiting on something, back it with the primitive that actually suspends, chosen by WHAT you are waiting for:
+      - a human reply or approval → an agent state that calls ask_user_question, then END YOUR TURN. The user's answer arrives as a fresh turn, and only then do you select the next state. Do not re-select to "keep waiting", and if the user sends an unrelated message while the question is open, answer it in plain text and end the turn rather than re-parking this state.
+      - a condition a command can check (CI finished, a file appeared, a deploy went ready) → a poll state whose command exits success only when the condition is actually met.
+      - a fixed future time → a timer state (wakeAt or wakeAfterMs).
+
+      If you are not waiting but re-running "${stateName}" to fix a failure, change override.prompt to address the specific failure before selecting again — selecting it unchanged reproduces the same result. If there is nothing left to do here, advance to the next real state or a terminal. Do NOT select "${stateName}" again unchanged.
+      </system-reminder>
+    `;
+  }
+
   private async selectNextStateAfterCompletion(
     stateName: string,
     output?: unknown,
   ): Promise<StateMachineExecutionResult> {
+    const loopWarning = this.repeatedSelectionLoopWarning(stateName);
     return this.enforceParentTransition(
       (retryInstruction) => dedent`
         The state "${stateName}" finished.
@@ -1079,6 +1110,8 @@ export class TurnRunner {
             output: output ?? null,
           },
         })}
+
+        ${loopWarning ?? ""}
 
         <system-reminder>
         THIS TURN MUST END WITH A select_state_machine_state TOOL CALL. The state machine only advances when the tool call is actually emitted — nothing else, including text, thinking, or narration, advances it. Even if your conclusion is obvious ("this is internal plumbing, transition to X"), the conclusion is not the action; you must emit the select_state_machine_state tool call for state X in this same turn. Responses that narrate the transition without the tool call ("I should transition to X", "no user-facing post needed, moving on to Y", "the next state is Z") will be rejected and you will be re-prompted. This rule holds whether the state output is a user-facing artifact or purely internal plumbing — internal plumbing still requires the tool call to advance the machine, it just skips the user-facing message.
