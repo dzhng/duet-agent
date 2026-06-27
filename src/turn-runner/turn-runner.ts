@@ -1209,6 +1209,13 @@ export class TurnRunner {
   }): StateAgentHandle {
     let control: TurnRunnerControlResult = { type: "none" };
     const seedMessages = this.resolveStateAgentSeedMessages(input.state);
+    // Capture the seeded prefix length up front. The sub-agent's result,
+    // partial text, and recorded usage are all computed by slicing this prefix
+    // off agent.state.messages so a forked parent transcript isn't folded into
+    // this run. Reading `seedMessages.length` lazily at each call site would be
+    // wrong if the agent ever appended into the seed array in place, so snapshot
+    // the count once.
+    const seedMessageCount = seedMessages.length;
     const state: TurnState = {
       status: "running",
       mode: "agent",
@@ -1240,8 +1247,20 @@ export class TurnRunner {
       ? { definition: session.definition, currentState: input.state.name }
       : undefined;
     const forkContext = input.state.forkContext === true;
-    const parentSystemPrompt = forkContext ? this.parentAgent?.state.systemPrompt : undefined;
     const identityLayer = createStateAgentSystemPromptLayer(machineContext);
+    // When forking, the sub-agent's identity + per-state systemPrompt layers
+    // ride in the tail user turn so the system prompt can stay byte-identical to
+    // the parent's and preserve the provider prompt-cache prefix. There is one
+    // exception: a state that restricts skills via allowedSkills must NOT inherit
+    // the parent's full skill catalog. resolveStateAgentSkills returns undefined
+    // only for an unrestricted state; when it returns a concrete allowlist we
+    // rebuild the system prompt around that allowlist instead of reusing the
+    // parent's verbatim, trading the cache prefix for the allowlist contract.
+    const forkSystemPrompt = forkContext
+      ? stateSkills === undefined
+        ? this.parentAgent?.state.systemPrompt
+        : this.createBaseSystemPromptWithAppendedLayers({ skills: stateSkills })
+      : undefined;
     const tailPrompt = forkContext
       ? [identityLayer, input.state.systemPrompt, expandedPrompt]
           .filter((part): part is string => Boolean(part))
@@ -1250,7 +1269,7 @@ export class TurnRunner {
     const agent = this.createAgent(
       {
         state,
-        ...(parentSystemPrompt ? { systemPrompt: parentSystemPrompt } : {}),
+        ...(forkSystemPrompt ? { systemPrompt: forkSystemPrompt } : {}),
         prependSystemPrompt: forkContext ? undefined : identityLayer,
         appendSystemPrompt: forkContext ? undefined : input.state.systemPrompt,
         skills: stateSkills,
@@ -1274,7 +1293,7 @@ export class TurnRunner {
       }
       return {
         type: "complete",
-        result: assistantText(agent.state.messages.slice(seedMessages.length)),
+        result: assistantText(agent.state.messages.slice(seedMessageCount)),
       };
     };
 
@@ -1315,7 +1334,7 @@ export class TurnRunner {
           // the parent turn).
           if (!recordedMessageUsage) {
             this.recordUsage(
-              usageFromMessages(agent.state.messages.slice(seedMessages.length)),
+              usageFromMessages(agent.state.messages.slice(seedMessageCount)),
               agent.state.model.id,
             );
             this.emitTurnUsage(origin);
@@ -1330,7 +1349,7 @@ export class TurnRunner {
         unsubscribe?.();
       },
       partialAssistantText: () =>
-        assistantText(agent.state.messages.slice(seedMessages.length)) || undefined,
+        assistantText(agent.state.messages.slice(seedMessageCount)) || undefined,
       interruptedReason: () => interruptedReason,
     };
   }

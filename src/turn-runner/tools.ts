@@ -155,6 +155,10 @@ const agentOverrideSchema = Type.Partial(
       description:
         'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "email": { "type": "string" }, "followUpCount": { "type": "integer" } }, "required": ["email"] }. Fields omitted from required are optional.',
     }),
+    forkContext: Type.Boolean({
+      description:
+        "When true, this sub-agent starts with a verbatim copy of the parent runner's full conversation context (prior discussion, decisions, tool history) instead of a fresh empty transcript. Defaults to false (fresh context), which is right for narrow, self-contained tasks. Set true only when the task depends on prior thread context that would be tedious or lossy to restate via prompt/input — forking copies the entire parent transcript, so leave it off for self-contained work.",
+    }),
   }),
 );
 
