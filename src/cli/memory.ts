@@ -1,69 +1,44 @@
 import { MemoryLockTimeoutError } from "../memory/pglite.js";
-import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
-import { printMemoryHelp } from "./help.js";
 import { runMemoryAddCommand } from "./memory-add.js";
 import { MemoryDb } from "./memory-db.js";
+import { parseMemoryArgs, runMemoryQuery } from "./memory-query.js";
 import { runMemoryReflectCommand } from "./memory-reflect.js";
 import { runMemoryTui } from "./memory-tui.js";
-import { fail, resolveUserPath } from "./shared.js";
+import { fail } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
 
 /**
- * Run `duet memory` (alias: `duet memories`) — open the memory database in a TUI for browsing,
- * editing, and deleting durable observations.
+ * Run `duet memory` (alias: `duet memories`).
+ *
+ * One entry point for fetching and viewing durable memories: bare `duet
+ * memory` opens the interactive TUI for browsing/editing/deleting, while
+ * passing `--json` or any filter flag (`--type`/`--kind`/`--priority`/
+ * `--source`/`--from`/`--to`) turns the same invocation into a non-TUI,
+ * scriptable query. `duet memory reflect` remains a separate subcommand.
  *
  * Defaults to the same `~/.duet/memory.db` the runner writes to so changes
  * propagate to the next session immediately.
  */
 export async function runMemoryCommand(args: string[]): Promise<void> {
-  // Route `duet memory reflect ...` to the cross-session reflect command.
-  // Kept as a subcommand under `memory` so the existing TUI entry stays
-  // the bare `duet memory` invocation.
   if (args[0] === "reflect") {
     await runMemoryReflectCommand(args.slice(1));
     return;
   }
 
-  // Route `duet memory add ...` to the manual-write command. Kept as a
-  // subcommand under `memory` so the bare `duet memory` invocation stays
-  // the TUI browser.
   if (args[0] === "add") {
     await runMemoryAddCommand(args.slice(1));
     return;
   }
 
-  let dbPath = DEFAULT_MEMORY_DB_PATH;
-  // Wait budget for the cross-process open-lock, in seconds. Defaults to the shared
-  // `DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS` (30s) inside `MemoryDb.open`; `--wait 0` opts out
-  // entirely for scripts that prefer an immediate failure when a peer is holding the lock.
-  let waitBudgetMs: number | undefined;
+  const options = parseMemoryArgs(args);
+  if (!options) return;
 
-  for (let i = 0; i < args.length; i++) {
-    switch (args[i]) {
-      case "--db":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
-        dbPath = resolveUserPath(args[++i]!);
-        break;
-      case "--wait": {
-        const raw = args[i + 1];
-        if (!raw || raw.startsWith("-")) fail(`Missing value for ${args[i]}`);
-        const seconds = Number(raw);
-        if (!Number.isFinite(seconds) || seconds < 0) {
-          fail(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
-        }
-        waitBudgetMs = Math.round(seconds * 1000);
-        i++;
-        break;
-      }
-      case "--help":
-      case "-h":
-        printMemoryHelp();
-        return;
-      default:
-        fail(`Unknown memory option: ${args[i]}`);
-    }
+  if (options.queryMode) {
+    await runMemoryQuery(options);
+    return;
   }
 
+  const { dbPath, waitBudgetMs } = options;
   let db: MemoryDb;
   try {
     db = await MemoryDb.open(dbPath, { waitBudgetMs });

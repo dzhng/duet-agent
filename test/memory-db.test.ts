@@ -3,11 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryDb, MEMORY_PAGE_SIZE, scoreObservation } from "../src/cli/memory-db.js";
-import {
-  DEFAULT_MANUAL_BIAS,
-  DEFAULT_RECENCY_HALF_LIFE_MS,
-  DEFAULT_REFLECTION_BIAS,
-} from "../src/memory/observational.js";
+import { DEFAULT_MANUAL_BIAS, DEFAULT_RECENCY_HALF_LIFE_MS } from "../src/memory/observational.js";
 import { PRIORITY_WEIGHT } from "../src/memory/loader.js";
 import type { Observation } from "../src/types/memory.js";
 import { testIfDocker } from "./helpers/docker-only.js";
@@ -33,9 +29,6 @@ describe("MemoryDb ranked paging", () => {
 
   testIfDocker("listRanked returns one flat list ordered by score descending", async () => {
     await withDb(async (db) => {
-      // A high-priority reflection used today must outrank a low-priority
-      // observation that has not been touched in 60 days, regardless of
-      // which session each came from or its created_at.
       await seed(db, [
         fixture({ id: "low_old", priority: "low", kind: "observation", lastUsedAt: ago(60) }),
         fixture({
@@ -51,17 +44,26 @@ describe("MemoryDb ranked paging", () => {
           kind: "observation",
           lastUsedAt: ago(2),
         }),
+        fixture({
+          id: "manual_old",
+          priority: "high",
+          kind: "manual",
+          lastUsedAt: ago(10),
+        }),
       ]);
 
       const rows = await db.listRanked({ limit: 25, offset: 0, now: NOW });
-      expect(rows.map((r) => r.id)).toEqual(["high_reflection_today", "medium_recent", "low_old"]);
+      expect(rows.map((r) => r.id)).toEqual([
+        "manual_old",
+        "high_reflection_today",
+        "medium_recent",
+        "low_old",
+      ]);
 
-      // The displayed score is the real numeric formula, not the SQL
-      // log-space rank. Verify the top row matches the hand-computed value.
       const top = rows[0]!;
       const expected =
         PRIORITY_WEIGHT.high *
-        DEFAULT_REFLECTION_BIAS *
+        DEFAULT_MANUAL_BIAS *
         Math.pow(0.5, (NOW - top.lastUsedAt) / DEFAULT_RECENCY_HALF_LIFE_MS);
       expect(scoreObservation(top, NOW)).toBeCloseTo(expected, 6);
     });
