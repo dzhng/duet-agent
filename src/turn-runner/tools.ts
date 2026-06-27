@@ -256,6 +256,12 @@ const agentStateSchema = Type.Object({
         "Working directory for this sub-agent's coding tools (bash, read, write, edit). Set this whenever the work happens outside the session cwd — a git worktree, clone, or scratch dir a previous state created — instead of telling the sub-agent to `cd` in the prompt; the tools start here, so a path written into the prompt does not redirect them. Defaults to the state-machine session cwd.",
     }),
   ),
+  forkContext: Type.Optional(
+    Type.Boolean({
+      description:
+        "When true, the sub-agent starts with a verbatim copy of the parent runner's full conversation context (prior discussion, decisions, tool history) instead of a fresh empty transcript. Defaults to false (fresh context), which is right for narrow, self-contained tasks. Set true only when the task depends on prior thread context that would be tedious or lossy to restate in the prompt — forking copies the entire parent transcript, so leave it off for self-contained work to keep the delegation cheaper and cleaner.",
+    }),
+  ),
 });
 
 const scriptStateSchema = Type.Object({
@@ -344,7 +350,10 @@ const stateMachineStateSchema = Type.Union([
 ]);
 
 export type StateMachineAgentStateOverride = Partial<
-  Pick<StateMachineAgentState, "prompt" | "systemPrompt" | "allowedSkills" | "cwd" | "inputSchema">
+  Pick<
+    StateMachineAgentState,
+    "prompt" | "systemPrompt" | "allowedSkills" | "cwd" | "inputSchema" | "forkContext"
+  >
 >;
 
 export type StateMachineScriptStateOverride = Partial<

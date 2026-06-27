@@ -123,6 +123,17 @@ export interface AgentConfigInput {
   /** System-prompt layer placed before the host systemInstructions; see createSystemPromptWithAppendedLayers. */
   prependSystemPrompt?: string;
   appendSystemPrompt?: string;
+  /**
+   * Optional pre-built system prompt used verbatim, bypassing the rebuild
+   * in `createBaseSystemPromptWithAppendedLayers`. Set this when the agent
+   * must reuse an existing system prompt byte-for-byte to preserve a
+   * provider prompt-cache prefix — most importantly a forked state-machine
+   * sub-agent that starts with a copy of the parent's transcript: the
+   * parent's system prompt is the cached prefix, so the sub-agent must use
+   * that exact string rather than a freshly built one. When unset, the
+   * system prompt is built from `prepend`/`append`/`skills` as usual.
+   */
+  systemPrompt?: string;
   skills?: Skill[];
   tools: AgentTool[];
 }
@@ -1217,7 +1228,12 @@ export class TurnRunner {
         ...(input.state.model ? { model: input.state.model } : {}),
         ...(input.state.thinkingLevel ? { thinkingLevel: input.state.thinkingLevel } : {}),
       },
-      agent: { status: "running", messages: [] },
+      // forkContext seeds the sub-agent with the parent's messages when true;
+      // see resolveStateAgentSeedMessages for the caching-aware rationale.
+      agent: {
+        status: "running",
+        messages: this.resolveStateAgentSeedMessages(input.state),
+      },
     };
     const stateSkills = this.skillContext.resolveStateAgentSkills(input.state);
     // Expand `/skill` slash commands the same way the parent prompt path does,
@@ -1233,15 +1249,27 @@ export class TurnRunner {
     const machineContext = session
       ? { definition: session.definition, currentState: input.state.name }
       : undefined;
+    // When forkContext is on, the sub-agent reuses the parent's exact system
+    // prompt and message history as the provider's cached prefix, so the
+    // worker-identity and per-state systemPrompt layers (which would otherwise
+    // diverge that prefix) ride in the new tail user turn instead. The non-fork
+    // path keeps the historical shape: identity in the system prompt prepend,
+    // state.systemPrompt as the append, and the state prompt as the only tail.
+    // See StateMachineAgentState.forkContext and resolveStateAgentSeedMessages.
+    const forkContext = input.state.forkContext === true;
+    const parentSystemPrompt = forkContext ? this.parentAgent?.state.systemPrompt : undefined;
+    const identityLayer = createStateAgentSystemPromptLayer(machineContext);
+    const tailPrompt = forkContext
+      ? [identityLayer, input.state.systemPrompt, expandedPrompt]
+          .filter((part): part is string => Boolean(part))
+          .join("\n\n")
+      : expandedPrompt;
     const agent = this.createAgent(
       {
         state,
-        // Lead with the worker identity so it is the sub-agent's primary role,
-        // ahead of the inherited chat-assistant persona that would otherwise
-        // pull it into "there's no user message here" mode. The per-state
-        // systemPrompt refines that identity, so it stays an append.
-        prependSystemPrompt: createStateAgentSystemPromptLayer(machineContext),
-        appendSystemPrompt: input.state.systemPrompt,
+        ...(parentSystemPrompt ? { systemPrompt: parentSystemPrompt } : {}),
+        prependSystemPrompt: forkContext ? undefined : identityLayer,
+        appendSystemPrompt: forkContext ? undefined : input.state.systemPrompt,
         skills: stateSkills,
         // Per-state cwd lets one agent state operate on a different
         // repository or subdirectory than the parent runner without
@@ -1285,7 +1313,7 @@ export class TurnRunner {
           if (event.message.usage.totalTokens > 0) this.emitTurnUsage(origin);
         });
         try {
-          await agent.prompt(expandedPrompt);
+          await agent.prompt(tailPrompt);
           await this.retryTransientServerErrors(agent);
           return interruptedReason ? { type: "interrupted" } : finish();
         } catch (error) {
@@ -1319,6 +1347,32 @@ export class TurnRunner {
       throw new Error("Turn runner has not been started.");
     }
     return this.state;
+  }
+
+  /**
+   * Resolves the initial message transcript a state-machine sub-agent starts
+   * with, honoring the agent state's `forkContext` flag.
+   *
+   * Owns the *message* half of the fork; the *system-prompt* half (reusing the
+   * parent's system prompt verbatim so the forked transcript stays under the
+   * provider's prompt-cache prefix) is handled in `createStateAgentHandle`.
+   * See `StateMachineAgentState.forkContext` for the full caching rationale.
+   *
+   * Returns an empty array when forkContext is off (the default), when the
+   * parent agent has not been created yet, or when the parent has no messages
+   * to fork. The last two keep forkContext a no-op rather than a crash when the
+   * parent happens to be empty (e.g. the very first turn of a session) — the
+   * right fallback is a sub-agent that wanted context starting fresh.
+   *
+   * The copy is shallow (references into a new array): pi-agent treats messages
+   * as immutable and appends rather than mutates in place, so the sub-agent's
+   * new turns land in the copied array without touching the parent's history.
+   */
+  private resolveStateAgentSeedMessages(state: StateMachineAgentState): AgentMessage[] {
+    if (!state.forkContext) return [];
+    const parentMessages = this.parentAgent?.state.messages;
+    if (!parentMessages || parentMessages.length === 0) return [];
+    return [...parentMessages];
   }
 
   getState(): TurnState | undefined {
@@ -1976,11 +2030,16 @@ export class TurnRunner {
       initialState: {
         model,
         thinkingLevel: options.thinkingLevel ?? "medium",
-        systemPrompt: this.createBaseSystemPromptWithAppendedLayers({
-          prepend: [input.prependSystemPrompt],
-          append: [input.appendSystemPrompt],
-          skills: input.skills,
-        }),
+        // Reuse a caller-supplied system prompt verbatim when present so a
+        // forked sub-agent can preserve the parent's cached prefix; otherwise
+        // build from the prepend/append/skill layers as usual.
+        systemPrompt:
+          input.systemPrompt ??
+          this.createBaseSystemPromptWithAppendedLayers({
+            prepend: [input.prependSystemPrompt],
+            append: [input.appendSystemPrompt],
+            skills: input.skills,
+          }),
         messages: input.state.agent.messages,
         tools: input.tools,
       },
