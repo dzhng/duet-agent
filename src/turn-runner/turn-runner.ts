@@ -123,16 +123,7 @@ export interface AgentConfigInput {
   /** System-prompt layer placed before the host systemInstructions; see createSystemPromptWithAppendedLayers. */
   prependSystemPrompt?: string;
   appendSystemPrompt?: string;
-  /**
-   * Optional pre-built system prompt used verbatim, bypassing the rebuild
-   * in `createBaseSystemPromptWithAppendedLayers`. Set this when the agent
-   * must reuse an existing system prompt byte-for-byte to preserve a
-   * provider prompt-cache prefix — most importantly a forked state-machine
-   * sub-agent that starts with a copy of the parent's transcript: the
-   * parent's system prompt is the cached prefix, so the sub-agent must use
-   * that exact string rather than a freshly built one. When unset, the
-   * system prompt is built from `prepend`/`append`/`skills` as usual.
-   */
+  /** Reuse an existing rendered system prompt verbatim instead of rebuilding it from layers. */
   systemPrompt?: string;
   skills?: Skill[];
   tools: AgentTool[];
@@ -1217,6 +1208,7 @@ export class TurnRunner {
     prompt: string;
   }): StateAgentHandle {
     let control: TurnRunnerControlResult = { type: "none" };
+    const seedMessages = this.resolveStateAgentSeedMessages(input.state);
     const state: TurnState = {
       status: "running",
       mode: "agent",
@@ -1228,11 +1220,9 @@ export class TurnRunner {
         ...(input.state.model ? { model: input.state.model } : {}),
         ...(input.state.thinkingLevel ? { thinkingLevel: input.state.thinkingLevel } : {}),
       },
-      // forkContext seeds the sub-agent with the parent's messages when true;
-      // see resolveStateAgentSeedMessages for the caching-aware rationale.
       agent: {
         status: "running",
-        messages: this.resolveStateAgentSeedMessages(input.state),
+        messages: seedMessages,
       },
     };
     const stateSkills = this.skillContext.resolveStateAgentSkills(input.state);
@@ -1249,13 +1239,6 @@ export class TurnRunner {
     const machineContext = session
       ? { definition: session.definition, currentState: input.state.name }
       : undefined;
-    // When forkContext is on, the sub-agent reuses the parent's exact system
-    // prompt and message history as the provider's cached prefix, so the
-    // worker-identity and per-state systemPrompt layers (which would otherwise
-    // diverge that prefix) ride in the new tail user turn instead. The non-fork
-    // path keeps the historical shape: identity in the system prompt prepend,
-    // state.systemPrompt as the append, and the state prompt as the only tail.
-    // See StateMachineAgentState.forkContext and resolveStateAgentSeedMessages.
     const forkContext = input.state.forkContext === true;
     const parentSystemPrompt = forkContext ? this.parentAgent?.state.systemPrompt : undefined;
     const identityLayer = createStateAgentSystemPromptLayer(machineContext);
@@ -1289,7 +1272,10 @@ export class TurnRunner {
       if (agent.state.errorMessage) {
         return { type: "failed", error: agent.state.errorMessage };
       }
-      return { type: "complete", result: assistantText(agent.state.messages) };
+      return {
+        type: "complete",
+        result: assistantText(agent.state.messages.slice(seedMessages.length)),
+      };
     };
 
     const origin: TurnEventOrigin = {
@@ -1324,8 +1310,14 @@ export class TurnRunner {
           // Fallback for the stubbed-agent path: when no `message_end` streamed,
           // fold the message list's usage in on every exit path — success,
           // error, or interrupt — so partial work still reaches the aggregate.
+          // Slice off the seeded prefix so a forked parent transcript's usage
+          // isn't double-counted (parent messages may already carry usage from
+          // the parent turn).
           if (!recordedMessageUsage) {
-            this.recordUsage(usageFromMessages(agent.state.messages), agent.state.model.id);
+            this.recordUsage(
+              usageFromMessages(agent.state.messages.slice(seedMessages.length)),
+              agent.state.model.id,
+            );
             this.emitTurnUsage(origin);
           }
           unsubscribe?.();
@@ -1337,7 +1329,8 @@ export class TurnRunner {
         agent.clearAllQueues();
         unsubscribe?.();
       },
-      partialAssistantText: () => assistantText(agent.state.messages) || undefined,
+      partialAssistantText: () =>
+        assistantText(agent.state.messages.slice(seedMessages.length)) || undefined,
       interruptedReason: () => interruptedReason,
     };
   }
@@ -1349,30 +1342,9 @@ export class TurnRunner {
     return this.state;
   }
 
-  /**
-   * Resolves the initial message transcript a state-machine sub-agent starts
-   * with, honoring the agent state's `forkContext` flag.
-   *
-   * Owns the *message* half of the fork; the *system-prompt* half (reusing the
-   * parent's system prompt verbatim so the forked transcript stays under the
-   * provider's prompt-cache prefix) is handled in `createStateAgentHandle`.
-   * See `StateMachineAgentState.forkContext` for the full caching rationale.
-   *
-   * Returns an empty array when forkContext is off (the default), when the
-   * parent agent has not been created yet, or when the parent has no messages
-   * to fork. The last two keep forkContext a no-op rather than a crash when the
-   * parent happens to be empty (e.g. the very first turn of a session) — the
-   * right fallback is a sub-agent that wanted context starting fresh.
-   *
-   * The copy is shallow (references into a new array): pi-agent treats messages
-   * as immutable and appends rather than mutates in place, so the sub-agent's
-   * new turns land in the copied array without touching the parent's history.
-   */
   private resolveStateAgentSeedMessages(state: StateMachineAgentState): AgentMessage[] {
     if (!state.forkContext) return [];
-    const parentMessages = this.parentAgent?.state.messages;
-    if (!parentMessages || parentMessages.length === 0) return [];
-    return [...parentMessages];
+    return [...(this.parentAgent?.state.messages ?? [])];
   }
 
   getState(): TurnState | undefined {
@@ -2030,9 +2002,6 @@ export class TurnRunner {
       initialState: {
         model,
         thinkingLevel: options.thinkingLevel ?? "medium",
-        // Reuse a caller-supplied system prompt verbatim when present so a
-        // forked sub-agent can preserve the parent's cached prefix; otherwise
-        // build from the prepend/append/skill layers as usual.
         systemPrompt:
           input.systemPrompt ??
           this.createBaseSystemPromptWithAppendedLayers({

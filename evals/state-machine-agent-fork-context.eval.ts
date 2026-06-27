@@ -1,10 +1,11 @@
 import { describe, expect } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
-import type { TurnEvent, TurnState, TurnTerminalEvent } from "../src/types/protocol.js";
+import type { TurnEvent, TurnTerminalEvent } from "../src/types/protocol.js";
 import type {
   StateMachineDefinition,
   StateMachineSessionEvent,
@@ -27,10 +28,9 @@ const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
  * sub-agent to reply with the sentinel it should find "in the conversation
  * above" and forbids tool use. A forked sub-agent sees the parent's messages
  * and can reply with the sentinel using zero tool calls. A fresh sub-agent
- * has no transcript to read, so the only way it could produce the exact
- * random sentinel is a tool call (which the state prompt forbids and the
- * assertion rejects) or a hallucination that happens to match 16 hex chars
- * (which cannot happen). So:
+ * has no transcript to read, so the only realistic ways it could produce the
+ * exact sentinel are a tool call (which the assertion rejects) or a random
+ * hallucination collision. So:
  *   - forkContext true  ⟹ output contains the sentinel AND zero tool calls.
  *   - forkContext false ⟹ output does NOT contain the sentinel (fresh context).
  *   - override flips false→true ⟹ output contains the sentinel.
@@ -45,9 +45,8 @@ describe("state machine agent state forkContext", () => {
   testIfDocker(
     "seeds the sub-agent with the parent transcript when forkContext is true",
     async () => {
-      const workDir = await mkdtemp(join(tmpdir(), "sm-fork-true-"));
-      // Unguessable: lives only in the parent prompt that starts the turn.
-      const sentinel = "FORK_SENTINEL_4f9c2a1e8b7d6053";
+      const workDir = await createTempWorkDir("sm-fork-true-");
+      const sentinel = createSentinel("FORK");
       try {
         const definition: StateMachineDefinition = {
           name: "fork_context_true_eval",
@@ -109,10 +108,10 @@ describe("state machine agent state forkContext", () => {
         // Only a sub-agent that inherited the parent transcript can echo the
         // exact sentinel, and only without resorting to tools (which the state
         // prompt forbids and this assertion rejects).
-        expect(completedOutput(terminal.state, "recall_secret")).toContain(sentinel);
+        expect(completedOutput(terminal, "recall_secret")).toContain(sentinel);
         expect(subAgentToolCalls).toEqual([]);
       } finally {
-        await rm(workDir, { recursive: true, force: true });
+        await removeTempWorkDir(workDir);
       }
     },
     150_000,
@@ -121,8 +120,8 @@ describe("state machine agent state forkContext", () => {
   testIfDocker(
     "starts the sub-agent with a fresh transcript when forkContext is omitted",
     async () => {
-      const workDir = await mkdtemp(join(tmpdir(), "sm-fork-default-"));
-      const sentinel = "FRESH_SENTINEL_7a3c9e1d4b8f0526";
+      const workDir = await createTempWorkDir("sm-fork-default-");
+      const sentinel = createSentinel("FRESH");
       try {
         const definition: StateMachineDefinition = {
           name: "fork_context_default_eval",
@@ -186,10 +185,10 @@ describe("state machine agent state forkContext", () => {
         // the exact random sentinel from the parent prompt. This is the
         // falsification leg: if forkContext silently defaulted to true (or
         // the fork path fired when it should not), the sentinel would appear.
-        expect(completedOutput(terminal.state, "recall_secret")).not.toContain(sentinel);
+        expect(completedOutput(terminal, "recall_secret")).not.toContain(sentinel);
         expect(subAgentToolCalls).toEqual([]);
       } finally {
-        await rm(workDir, { recursive: true, force: true });
+        await removeTempWorkDir(workDir);
       }
     },
     150_000,
@@ -198,8 +197,8 @@ describe("state machine agent state forkContext", () => {
   testIfDocker(
     "flips forkContext on at transition time via select_state_machine_state override",
     async () => {
-      const workDir = await mkdtemp(join(tmpdir(), "sm-fork-override-"));
-      const sentinel = "OVERRIDE_SENTINEL_2b1f8c6a9d4e7053";
+      const workDir = await createTempWorkDir("sm-fork-override-");
+      const sentinel = createSentinel("OVERRIDE");
       try {
         const definition: StateMachineDefinition = {
           name: "fork_context_override_eval",
@@ -259,10 +258,10 @@ describe("state machine agent state forkContext", () => {
           state: "done",
           status: "completed",
         });
-        expect(completedOutput(terminal.state, "recall_secret")).toContain(sentinel);
+        expect(completedOutput(terminal, "recall_secret")).toContain(sentinel);
         expect(subAgentToolCalls).toEqual([]);
       } finally {
-        await rm(workDir, { recursive: true, force: true });
+        await removeTempWorkDir(workDir);
       }
     },
     150_000,
@@ -274,22 +273,36 @@ function expectCompleted(event: TurnTerminalEvent): void {
   expect(event.type === "complete" ? event.status : undefined).toBe("completed");
 }
 
-function completedOutput(state: TurnState, selectedState: string): string {
-  const history = state.stateMachine?.history ?? [];
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const event = history[index] as StateMachineSessionEvent;
-    if (event.type === "state_completed" && event.state === selectedState) {
-      const output = event.output;
-      if (
-        output &&
-        typeof output === "object" &&
-        "result" in output &&
-        typeof output.result === "string"
-      ) {
-        return output.result;
-      }
-      return output === undefined ? "" : JSON.stringify(output);
-    }
+function completedOutput(event: TurnTerminalEvent, selectedState: string): string {
+  const stateCompleted = [...(event.state.stateMachine?.history ?? [])]
+    .reverse()
+    .find(
+      (historyEvent): historyEvent is StateMachineSessionEvent & { type: "state_completed" } =>
+        historyEvent.type === "state_completed" && historyEvent.state === selectedState,
+    );
+  if (!stateCompleted) {
+    throw new Error(`Expected state_completed for ${selectedState}`);
   }
-  throw new Error(`Expected state_completed for ${selectedState}`);
+  const output = stateCompleted.output;
+  if (
+    output &&
+    typeof output === "object" &&
+    "result" in output &&
+    typeof output.result === "string"
+  ) {
+    return output.result;
+  }
+  return output === undefined ? "" : JSON.stringify(output);
+}
+
+function createSentinel(prefix: string): string {
+  return `${prefix}_SENTINEL_${randomUUID().replaceAll("-", "")}`;
+}
+
+async function createTempWorkDir(prefix: string): Promise<string> {
+  return mkdtemp(join(tmpdir(), prefix));
+}
+
+async function removeTempWorkDir(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true });
 }
