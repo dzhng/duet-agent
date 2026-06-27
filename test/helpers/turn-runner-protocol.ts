@@ -39,11 +39,17 @@ export class TestTurnRunner extends TurnRunner {
   ) => Promise<AgentWorkerResult>;
 
   protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
-    if (this.worker) {
-      return this.worker(input, () => this.runDefaultWorker(input));
+    const result = this.worker
+      ? await this.worker(input, () => this.runDefaultWorker(input))
+      : await this.runDefaultWorker(input);
+    // Production records parent usage only from a real `Agent`'s `message_end`
+    // events. This stub bypasses the live `Agent`, so the harness folds the
+    // worker's fabricated `parentUsage` into the turn aggregate itself.
+    if (result.parentUsage) {
+      this.recordUsage(result.parentUsage, this.requireParentAgent().state.model.id);
+      this.emitTurnUsage();
     }
-
-    return this.runDefaultWorker(input);
+    return result;
   }
 
   protected override createAgent(

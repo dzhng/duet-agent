@@ -31,8 +31,8 @@ const STATE_USAGE: TurnTokenUsage = {
 
 /**
  * Drives the real `TurnRunner` turn loop with two stubbed model boundaries:
- * the parent worker reports `PARENT_USAGE` (attributed to the configured
- * parent model via the real `runAgentWorkerWithUsage` path), and a
+ * the parent worker records `PARENT_USAGE` (attributed to the configured
+ * parent model via the real `recordUsage` path), and a
  * state-machine agent state reports `STATE_USAGE` under a *different* model id
  * through the real `recordUsage` per-model accumulation path. This exercises
  * the outermost per-model attribution wiring without standing up a live LLM,
@@ -52,7 +52,12 @@ class MultiModelTurnRunner extends TurnRunner {
   protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     this.workerCalls += 1;
     if (this.workerCalls === 1) {
-      // First parent turn: select the agent state and report parent usage.
+      // First parent turn: select the agent state and record parent usage the
+      // way a real parent run would — production folds usage in from the live
+      // `Agent`'s `message_end`, so this stub attributes it to the parent model
+      // itself rather than leaning on any worker-boundary accounting.
+      this.recordUsage(PARENT_USAGE, this.requireParentAgent().state.model.id);
+      this.emitTurnUsage();
       return {
         control: {
           type: "select_state_machine_state",
@@ -64,7 +69,6 @@ class MultiModelTurnRunner extends TurnRunner {
           result: "Selected research state.",
           state: { ...input.state, status: "completed" },
         },
-        parentUsage: PARENT_USAGE,
       };
     }
     // Wrap-up turn after the state agent runs; no further parent usage.

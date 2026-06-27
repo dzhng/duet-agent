@@ -146,6 +146,14 @@ export type AgentWorkerOutcome =
 export interface AgentWorkerResult {
   outcome: AgentWorkerOutcome;
   control: TurnRunnerControlResult;
+  /**
+   * Usage a stubbed worker fabricated for this parent call. A real parent run
+   * never sets this: it streams each completion's usage from the live `Agent`'s
+   * `message_end` events, so the aggregate is already recorded by the time the
+   * worker returns. Test harnesses that bypass the real `Agent` report usage
+   * here and record it themselves (see `TestTurnRunner.runAgentWorker`), which
+   * is why production carries no boundary-level usage accounting.
+   */
   parentUsage?: TurnTokenUsage;
 }
 
@@ -1043,7 +1051,7 @@ export class TurnRunner {
     // state includes the parent's transcript through the terminal-selecting
     // tool call without a separate refresh step.
     const turnState = this.snapshotState({ ...this.requireRunnerState(), status: "running" });
-    const workerResult = await this.runAgentWorkerWithUsage({
+    const workerResult = await this.runAgentWorker({
       state: turnState,
       prompt: acknowledgmentPrompt,
       ...this.createTools(turnState.mode),
@@ -1174,7 +1182,7 @@ export class TurnRunner {
           ? undefined
           : `This is retry ${attempt} of ${PARENT_TRANSITION_RETRY_BUDGET}. You did not call select_state_machine_state last time. You must call select_state_machine_state now.`;
       const turnState = this.snapshotState({ ...this.requireRunnerState(), status: "running" });
-      const workerResult = await this.runAgentWorkerWithUsage({
+      const workerResult = await this.runAgentWorker({
         state: turnState,
         prompt: buildPrompt(retryInstruction),
         ...this.createTools(turnState.mode),
@@ -1260,9 +1268,22 @@ export class TurnRunner {
       kind: "state_machine_agent",
       state: input.state.name,
     };
+    // A state agent runs a turn just like the parent — a loop of completion
+    // calls — so it streams a `usage` event per completion from its own
+    // `message_end` events. The finally block falls back to summing the whole
+    // message list only when no `message_end` fired (stubbed-agent test path).
+    let recordedMessageUsage = false;
     return {
       prompt: async () => {
-        unsubscribe = agent.subscribe((event) => this.emitAgentEvent(event, origin));
+        unsubscribe = agent.subscribe((event) => {
+          this.emitAgentEvent(event, origin);
+          if (event.type !== "message_end" || event.message.role !== "assistant") return;
+          // Record always; tick only on a completion that consumed tokens (see
+          // the parent path for why a zero-usage attempt must not emit).
+          this.recordUsage(event.message.usage, agent.state.model.id);
+          recordedMessageUsage = true;
+          if (event.message.usage.totalTokens > 0) this.emitTurnUsage(origin);
+        });
         try {
           await agent.prompt(expandedPrompt);
           await this.retryTransientServerErrors(agent);
@@ -1272,11 +1293,13 @@ export class TurnRunner {
           if (error instanceof Error) return { type: "failed", error: error.message };
           return { type: "failed", error: String(error) };
         } finally {
-          // Record state-agent usage on every exit path — success, error, or
-          // interrupt — so partial work still flows into the turn aggregate
-          // and ticks the sidebar cost via the emitted `usage` event.
-          this.recordUsage(usageFromMessages(agent.state.messages), agent.state.model.id);
-          this.emitTurnUsage(origin);
+          // Fallback for the stubbed-agent path: when no `message_end` streamed,
+          // fold the message list's usage in on every exit path — success,
+          // error, or interrupt — so partial work still reaches the aggregate.
+          if (!recordedMessageUsage) {
+            this.recordUsage(usageFromMessages(agent.state.messages), agent.state.model.id);
+            this.emitTurnUsage(origin);
+          }
           unsubscribe?.();
         }
       },
@@ -1479,7 +1502,7 @@ export class TurnRunner {
     images?: ImageContent[];
     mode: Exclude<TurnMode, "agent">;
   }): Promise<TurnTerminalEvent> {
-    const workerResult = await this.runAgentWorkerWithUsage({
+    const workerResult = await this.runAgentWorker({
       state: input.state,
       prompt: input.prompt,
       images: input.images,
@@ -1607,7 +1630,7 @@ export class TurnRunner {
     prompt: string,
     images?: ImageContent[],
   ): Promise<TurnTerminalEvent> {
-    const workerResult = await this.runAgentWorkerWithUsage({
+    const workerResult = await this.runAgentWorker({
       state,
       prompt,
       images,
@@ -1625,7 +1648,6 @@ export class TurnRunner {
 
     const agent = this.requireParentAgent();
     this.parentControlResult = { type: "none" };
-    const previousMessageCount = agent.state.messages.length;
     this.setParentAgentRunning(true);
 
     const unsubscribe = agent.subscribe((event) => this.emitParentAgentEvent(event));
@@ -1661,7 +1683,6 @@ export class TurnRunner {
     }
 
     const messages = agent.state.messages;
-    const parentUsage = usageFromMessages(messages.slice(previousMessageCount));
     const status = agent.state.errorMessage ? "failed" : "completed";
     const live = this.state;
     const state = {
@@ -1689,28 +1710,12 @@ export class TurnRunner {
         result: assistantText(messages),
         error: agent.state.errorMessage,
       },
-      parentUsage,
     };
   }
 
   private setParentAgentRunning(running: boolean): void {
     this.parentAgentRunning = running;
     this.snapshotActiveAgentState();
-  }
-
-  /**
-   * Records the parent worker's per-call usage into the running turn
-   * aggregate and emits a `usage` event so consumers see cost tick after
-   * each parent agent boundary. Recording at the worker boundary (instead
-   * of per `message_end`) keeps the same behavior when test harnesses
-   * stub `runAgentWorker` and supply `parentUsage` directly without
-   * running a real pi `Agent`.
-   */
-  private async runAgentWorkerWithUsage(input: AgentWorkerInput): Promise<AgentWorkerResult> {
-    const result = await this.runAgentWorker(input);
-    this.recordUsage(result.parentUsage, this.requireParentAgent().state.model.id);
-    this.emitTurnUsage();
-    return result;
   }
 
   /**
@@ -1876,7 +1881,15 @@ export class TurnRunner {
       settings: this.config.memory,
       messages,
       cwd: this.config.cwd ?? process.cwd(),
-      onUsage: (usage) => this.recordUsage(usage, memoryModelId),
+      // Observation/reflection work is part of the turn's cost. Fold it into
+      // the aggregate and emit a `usage` event so memory spend streams like
+      // every completion does — and so the last streamed event still equals
+      // the terminal aggregate even though memory runs after the parent's
+      // final `message_end`.
+      onUsage: (usage) => {
+        this.recordUsage(usage, memoryModelId);
+        this.emitTurnUsage();
+      },
       onActivity: (event) => this.emit({ type: "memory", ...event }),
     });
 
@@ -2179,10 +2192,6 @@ export class TurnRunner {
 
     // Cache the parent's latest bar/breakdown so subsequent state-agent and
     // terminal emissions can reuse it without rescaling against a stale base.
-    // Usage *recording* and `usage` event emission happen at worker / state-agent
-    // boundaries (see `runAgentWorkerWithUsage` and `createStateAgentHandle`)
-    // instead of per message, so test harnesses that stub `runAgentWorker`
-    // — without ever firing `message_end` — still get correct accounting.
     this.lastParentUsageSnapshot = {
       effectiveContextWindow: this.effectiveContextWindow(),
       contextWindowUsage: scaleContextWindowUsageToTotalTokens(
@@ -2191,6 +2200,16 @@ export class TurnRunner {
       ),
       lastMessageUsage: event.message.usage,
     };
+
+    // A turn is a loop of completion calls; fold this completion's usage into
+    // the running aggregate and emit a `usage` event now so a tool-heavy turn
+    // ticks cost per completion. This is the only place a real parent run
+    // records usage — a completion only ticks a `usage` event when it actually
+    // consumed tokens, so a rejected attempt (e.g. a provider context-overflow
+    // error the turn then recovers from) carries no usage and would otherwise
+    // emit a degenerate all-zero bar.
+    this.recordUsage(event.message.usage, this.requireParentAgent().state.model.id);
+    if (event.message.usage.totalTokens > 0) this.emitTurnUsage();
   }
 
   /**
