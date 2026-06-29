@@ -166,7 +166,7 @@ describe("Session model-switch persistence", () => {
         appendBlock: (label: string | null, body: string) => {
           blocks.push({ label, body });
         },
-        onReset: () => {},
+        onClear: () => {},
         setModel: (model: string) => session.setModel(model),
         setThinkingLevel: (level: string) => session.setThinkingLevel(level),
       };
@@ -220,7 +220,7 @@ describe("Session model-switch persistence", () => {
         appendBlock: (label: string | null, body: string) => {
           blocks.push({ label, body });
         },
-        onReset: () => {},
+        onClear: () => {},
         setModel: (model: string) => session.setModel(model),
         setThinkingLevel: (level: string) => session.setThinkingLevel(level),
       };
@@ -262,7 +262,7 @@ describe("Session model-switch persistence", () => {
         appendBlock: (label: string | null, body: string) => {
           blocks.push({ label, body });
         },
-        onReset: () => {},
+        onClear: () => {},
         setModel: (model: string) => session.setModel(model),
         setThinkingLevel: (level: string) => session.setThinkingLevel(level),
       };

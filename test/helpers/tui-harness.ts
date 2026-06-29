@@ -50,8 +50,8 @@ export interface TuiHarness {
   answerCalls: SessionAnswerInput[];
   /** Number of times `session.interrupt()` has been invoked. */
   interruptCalls: number;
-  /** Number of times the TUI fired its `onResetRequest` callback. */
-  resetRequestCalls: number;
+  /** Number of times the TUI fired its `onClearRequest` callback. */
+  clearRequestCalls: number;
   /** True once `runTui` has resolved (the renderer was destroyed / the TUI
    *  exited). Lets Ctrl+C tests assert a clean quit happened. */
   exited: boolean;
@@ -186,7 +186,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
   const promptCalls: SessionPromptInput[] = [];
   const answerCalls: SessionAnswerInput[] = [];
   let interruptCalls = 0;
-  let resetRequestCalls = 0;
+  let clearRequestCalls = 0;
   // Mirror every event the Session emits so `pushAskTerminal` can wait
   // until the runner's `ask` has actually flowed Runner → Session → TUI
   // before returning. `Session.emit` iterates handlers synchronously, so
@@ -240,8 +240,8 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     memoryModelName: "harness",
     upgradeStatus$,
     renderer,
-    onResetRequest: () => {
-      resetRequestCalls += 1;
+    onClearRequest: () => {
+      clearRequestCalls += 1;
     },
   })
     .catch((error) => {
@@ -292,8 +292,8 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
     get interruptCalls() {
       return interruptCalls;
     },
-    get resetRequestCalls() {
-      return resetRequestCalls;
+    get clearRequestCalls() {
+      return clearRequestCalls;
     },
     get exited() {
       return exited;

@@ -327,12 +327,12 @@ Type `/` in the composer to open the command picker, or send any of these as a m
 - **`/model <name>`** — switch the model used for **subsequent** turns. Accepts the same shorthands and `provider:modelId` forms as the `--model` flag (e.g. `/model sonnet-4.6`, `/model anthropic:claude-opus-4-7`). Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with.
 - **`/thinking <level>`** — switch the thinking level for the **next** turn. One of `minimal`, `low`, `medium`, `high`, `xhigh`. The runner clamps to the active model's supported range at use-time. The in-flight turn (if any) keeps its level.
 - **`/feedback <message>`** — send free-form feedback to the Duet team.
-- **`/reset`** — dispose the current session and start a fresh one.
+- **`/clear`** — dispose the current session and start a fresh one.
 - **`/copy [last|all|<N>]`** — copy transcript text to the system clipboard (default: last agent reply).
 - **`/paste`**, **`/image <path>`**, **`/clear-images`** — image-attachment helpers, covered in the next section.
 - **`/diag`** — toggle key and selection event logging when triaging terminal-specific issues.
 
-`/model`, `/thinking`, `/reset`, `/paste`, `/clear-images`, and `/diag` also work **anywhere inside a longer prompt**. `hey can you review this /model gpt-5.5` swaps the model for the very turn that delivers the message; the slash form is stripped from what the agent sees, so the model receives `hey can you review this`. When the whole prompt is just slash commands, no agent turn runs at all. Commands that take rest-of-line arguments (`/feedback`, `/copy`, `/image`) only fire when they own the whole message.
+`/model`, `/thinking`, `/clear`, `/paste`, `/clear-images`, and `/diag` also work **anywhere inside a longer prompt**. `hey can you review this /model gpt-5.5` swaps the model for the very turn that delivers the message; the slash form is stripped from what the agent sees, so the model receives `hey can you review this`. When the whole prompt is just slash commands, no agent turn runs at all. Commands that take rest-of-line arguments (`/feedback`, `/copy`, `/image`) only fire when they own the whole message.
 
 The inline form also works for the non-TUI one-shot CLI: `duet "hey can you review this /model gpt-5.5"` swaps the model and dispatches the stripped prompt to the agent; `duet "/model gpt-5.5"` applies the swap and exits without dispatching a turn.
 

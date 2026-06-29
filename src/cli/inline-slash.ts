@@ -3,7 +3,7 @@ import { validateThinkingLevel } from "../session/thinking-level.js";
 import { applyInlineSlashCommands, type SlashCommandContext } from "../tui/slash-commands.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 
-/** Slash commands the non-TUI CLI applies inline. /reset, /paste, /clear-images, /diag
+/** Slash commands the non-TUI CLI applies inline. /clear, /paste, /clear-images, /diag
  *  have no meaning in a one-shot run so the CLI intentionally ignores them. */
 const CLI_INLINE_COMMANDS: ReadonlySet<string> = new Set(["model", "thinking"]);
 

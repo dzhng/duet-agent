@@ -13,7 +13,8 @@ import { testIfDocker } from "./helpers/docker-only.js";
  * locks the *visible* picker contract:
  *
  *  - `/` opens the slash picker with a "commands" header.
- *  - `/cl` narrows to `clear-images` (built-in prefix match).
+ *  - `/cl` narrows to both `/clear` and `/clear-images` (built-in prefix
+ *    match — both commands share the `cl` prefix after the rename).
  *  - Tab completes the highlighted row into the composer.
  *  - Esc closes the picker without exiting the TUI.
  *  - `@` opens the file picker against a seeded `workDir` fixture and Tab
@@ -46,14 +47,16 @@ describe("TUI autocomplete pickers", () => {
       expect(frame).toContain("/clear-images");
     });
 
-    testIfDocker("typing `/cl` narrows the picker to `clear-images`", async () => {
+    testIfDocker("typing `/cl` narrows the picker to `clear` and `clear-images`", async () => {
       await harness.mockInput.typeText("/cl");
       await harness.flush();
 
       const frame = await harness.captureCharFrame();
-      // The narrowed picker must show `/clear-images` and must not show
+      // After the `/reset` → `/clear` rename, `/cl` matches BOTH `/clear` and
+      // `/clear-images`. The narrowed picker must show both and must not show
       // other built-ins whose names do not start with `cl` (e.g. `/image`,
-      // `/copy`, `/diag`).
+      // `/diag`, `/feedback`).
+      expect(frame).toContain("/clear");
       expect(frame).toContain("/clear-images");
       expect(frame).not.toContain("/image\n");
       expect(frame).not.toContain("/diag");
@@ -61,13 +64,18 @@ describe("TUI autocomplete pickers", () => {
     });
 
     testIfDocker("Tab completes the highlighted slash row into the composer", async () => {
-      await harness.mockInput.typeText("/cl");
+      // Use `/pa`, whose first letter `p` is unique among the built-in
+      // commands, so it resolves to exactly `/paste`. A unique-first-letter
+      // command avoids the `/clear` vs `/clear-images` shared-prefix ambiguity
+      // (any prefix of `clear` matches both, and `clear` sorts first) and stays
+      // robust even if a partial flush settles only the first typed char.
+      await harness.mockInput.typeText("/pa");
       await harness.flush();
       // Picker auto-highlights the first match; Tab inserts the full name.
       harness.mockInput.pressTab();
       await harness.flush();
 
-      expect(harness.inputField.plainText).toBe("/clear-images ");
+      expect(harness.inputField.plainText).toBe("/paste ");
       // Picker must close after completion so the next Enter submits.
       const frame = await harness.captureCharFrame();
       expect(frame).not.toContain("commands");
