@@ -306,6 +306,32 @@ export interface StateMachineAgentState extends StateMachineBaseState {
    * unset.
    */
   thinkingLevel?: ThinkingLevel;
+  /**
+   * Whether this sub-agent starts with a copy of the parent runner's
+   * conversation context instead of a fresh, empty transcript.
+   *
+   * When `false` (the default, and the historical behavior), the sub-agent
+   * starts clean: it sees only the `prompt` rendered for this state, the
+   * worker-identity system-prompt layer, and the transition `input` you pass.
+   * Use this for narrow, self-contained tasks where a crisp prompt carries
+   * everything the sub-agent needs and prior context would distract or bias.
+   *
+   * When `true`, the runner seeds the sub-agent with a verbatim copy of the
+   * parent runner's full context — the parent's system prompt AND its message
+   * history — so the sub-agent inherits prior discussion, decisions,
+   * constraints, and tool history. To keep this economical the fork preserves
+   * the parent's exact cached prefix (same system prompt + same leading
+   * messages), and everything state-specific — the worker-identity layer, the
+   * per-state `systemPrompt`, and the state's own `prompt` — is delivered as a
+   * new tail user turn, the only uncached part. Use this when the task depends
+   * on prior thread decisions or user preferences that would be tedious or
+   * lossy to restate in the state prompt, or when continuing a complex thread.
+   *
+   * The forked transcript is transient: it is not persisted into the
+   * state-machine session history (only the state's compact final output is),
+   * so forking does not bloat the durable session.
+   */
+  forkContext?: boolean;
 }
 
 /** Runs a shell command. This is the generic integration primitive. */

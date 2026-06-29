@@ -123,6 +123,8 @@ export interface AgentConfigInput {
   /** System-prompt layer placed before the host systemInstructions; see createSystemPromptWithAppendedLayers. */
   prependSystemPrompt?: string;
   appendSystemPrompt?: string;
+  /** Reuse an existing rendered system prompt verbatim instead of rebuilding it from layers. */
+  systemPrompt?: string;
   skills?: Skill[];
   tools: AgentTool[];
 }
@@ -1206,6 +1208,14 @@ export class TurnRunner {
     prompt: string;
   }): StateAgentHandle {
     let control: TurnRunnerControlResult = { type: "none" };
+    const seedMessages = this.resolveStateAgentSeedMessages(input.state);
+    // Capture the seeded prefix length up front. The sub-agent's result,
+    // partial text, and recorded usage are all computed by slicing this prefix
+    // off agent.state.messages so a forked parent transcript isn't folded into
+    // this run. Reading `seedMessages.length` lazily at each call site would be
+    // wrong if the agent ever appended into the seed array in place, so snapshot
+    // the count once.
+    const seedMessageCount = seedMessages.length;
     const state: TurnState = {
       status: "running",
       mode: "agent",
@@ -1217,7 +1227,10 @@ export class TurnRunner {
         ...(input.state.model ? { model: input.state.model } : {}),
         ...(input.state.thinkingLevel ? { thinkingLevel: input.state.thinkingLevel } : {}),
       },
-      agent: { status: "running", messages: [] },
+      agent: {
+        status: "running",
+        messages: seedMessages,
+      },
     };
     const stateSkills = this.skillContext.resolveStateAgentSkills(input.state);
     // Expand `/skill` slash commands the same way the parent prompt path does,
@@ -1233,15 +1246,32 @@ export class TurnRunner {
     const machineContext = session
       ? { definition: session.definition, currentState: input.state.name }
       : undefined;
+    const forkContext = input.state.forkContext === true;
+    const identityLayer = createStateAgentSystemPromptLayer(machineContext);
+    // When forking, the sub-agent's identity + per-state systemPrompt layers
+    // ride in the tail user turn so the system prompt can stay byte-identical to
+    // the parent's and preserve the provider prompt-cache prefix. There is one
+    // exception: a state that restricts skills via allowedSkills must NOT inherit
+    // the parent's full skill catalog. resolveStateAgentSkills returns undefined
+    // only for an unrestricted state; when it returns a concrete allowlist we
+    // rebuild the system prompt around that allowlist instead of reusing the
+    // parent's verbatim, trading the cache prefix for the allowlist contract.
+    const forkSystemPrompt = forkContext
+      ? stateSkills === undefined
+        ? this.parentAgent?.state.systemPrompt
+        : this.createBaseSystemPromptWithAppendedLayers({ skills: stateSkills })
+      : undefined;
+    const tailPrompt = forkContext
+      ? [identityLayer, input.state.systemPrompt, expandedPrompt]
+          .filter((part): part is string => Boolean(part))
+          .join("\n\n")
+      : expandedPrompt;
     const agent = this.createAgent(
       {
         state,
-        // Lead with the worker identity so it is the sub-agent's primary role,
-        // ahead of the inherited chat-assistant persona that would otherwise
-        // pull it into "there's no user message here" mode. The per-state
-        // systemPrompt refines that identity, so it stays an append.
-        prependSystemPrompt: createStateAgentSystemPromptLayer(machineContext),
-        appendSystemPrompt: input.state.systemPrompt,
+        ...(forkSystemPrompt ? { systemPrompt: forkSystemPrompt } : {}),
+        prependSystemPrompt: forkContext ? undefined : identityLayer,
+        appendSystemPrompt: forkContext ? undefined : input.state.systemPrompt,
         skills: stateSkills,
         // Per-state cwd lets one agent state operate on a different
         // repository or subdirectory than the parent runner without
@@ -1261,7 +1291,10 @@ export class TurnRunner {
       if (agent.state.errorMessage) {
         return { type: "failed", error: agent.state.errorMessage };
       }
-      return { type: "complete", result: assistantText(agent.state.messages) };
+      return {
+        type: "complete",
+        result: assistantText(agent.state.messages.slice(seedMessageCount)),
+      };
     };
 
     const origin: TurnEventOrigin = {
@@ -1285,7 +1318,7 @@ export class TurnRunner {
           if (event.message.usage.totalTokens > 0) this.emitTurnUsage(origin);
         });
         try {
-          await agent.prompt(expandedPrompt);
+          await agent.prompt(tailPrompt);
           await this.retryTransientServerErrors(agent);
           return interruptedReason ? { type: "interrupted" } : finish();
         } catch (error) {
@@ -1296,8 +1329,14 @@ export class TurnRunner {
           // Fallback for the stubbed-agent path: when no `message_end` streamed,
           // fold the message list's usage in on every exit path — success,
           // error, or interrupt — so partial work still reaches the aggregate.
+          // Slice off the seeded prefix so a forked parent transcript's usage
+          // isn't double-counted (parent messages may already carry usage from
+          // the parent turn).
           if (!recordedMessageUsage) {
-            this.recordUsage(usageFromMessages(agent.state.messages), agent.state.model.id);
+            this.recordUsage(
+              usageFromMessages(agent.state.messages.slice(seedMessageCount)),
+              agent.state.model.id,
+            );
             this.emitTurnUsage(origin);
           }
           unsubscribe?.();
@@ -1309,7 +1348,8 @@ export class TurnRunner {
         agent.clearAllQueues();
         unsubscribe?.();
       },
-      partialAssistantText: () => assistantText(agent.state.messages) || undefined,
+      partialAssistantText: () =>
+        assistantText(agent.state.messages.slice(seedMessageCount)) || undefined,
       interruptedReason: () => interruptedReason,
     };
   }
@@ -1319,6 +1359,11 @@ export class TurnRunner {
       throw new Error("Turn runner has not been started.");
     }
     return this.state;
+  }
+
+  private resolveStateAgentSeedMessages(state: StateMachineAgentState): AgentMessage[] {
+    if (!state.forkContext) return [];
+    return [...(this.parentAgent?.state.messages ?? [])];
   }
 
   getState(): TurnState | undefined {
@@ -1976,11 +2021,13 @@ export class TurnRunner {
       initialState: {
         model,
         thinkingLevel: options.thinkingLevel ?? "medium",
-        systemPrompt: this.createBaseSystemPromptWithAppendedLayers({
-          prepend: [input.prependSystemPrompt],
-          append: [input.appendSystemPrompt],
-          skills: input.skills,
-        }),
+        systemPrompt:
+          input.systemPrompt ??
+          this.createBaseSystemPromptWithAppendedLayers({
+            prepend: [input.prependSystemPrompt],
+            append: [input.appendSystemPrompt],
+            skills: input.skills,
+          }),
         messages: input.state.agent.messages,
         tools: input.tools,
       },
