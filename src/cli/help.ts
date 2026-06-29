@@ -17,7 +17,7 @@ USAGE
   duet login [--no-browser] [--skip-skill-sync]
   duet env [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
-  duet memory [--db <path>]
+  duet memory [--db <path>] [--json] [filters]
   duet model -m <model> [--type text|image|video] [prompt]
   duet send-feedback [--file <path>] [text...]
   duet upgrade [--manager npm|bun|pnpm|yarn]
@@ -27,7 +27,7 @@ COMMANDS
   login                    Sign in via browser; saves DUET_API_KEY and syncs default skills (recommended)
   env                      Manually create or update the shared duet env file with provider API keys
   skills                   List installed skills + collisions as JSON
-  memory                   Open a TUI to view, edit, and delete observational memories (alias: memories)
+  memory                   Browse memories in a TUI, or query them with --json/filters (alias: memories)
   model                    Call a gateway model directly (text/image/video) via the AI SDK
   send-feedback            Send free-form markdown feedback to the Duet team
   upgrade                  Upgrade the global ${packageName} installation
@@ -176,14 +176,29 @@ OUTPUT
 
 export function printMemoryHelp(): void {
   console.log(`
-duet memory — Browse, edit, and delete observational memories
+duet memory — Browse, query, edit, and delete observational memories
 
 USAGE
   duet memory [--db <path>] [--wait <seconds>]
+  duet memory [--json] [--type <kind>] [--priority <level>] [--source <origin>]
+              [--from <date>] [--to <date>]
   duet memory reflect [options]
 
 ALIASES
   duet memories
+
+DESCRIPTION
+  Bare \`duet memory\` opens an interactive TUI to browse, edit, and delete
+  durable observations. Passing --json or any filter flag instead runs a
+  non-TUI, scriptable query: it prints a flat, chronological list (newest
+  createdAt first) of the matching observations, each carrying a computed
+  \`score\` field matching the runner's global-pack ranking. With --json the
+  output is a machine-readable array; otherwise an aligned table is printed.
+
+  Examples:
+    duet memory
+    duet memory --json --type reflection --from 2026-06-26
+    duet memory --json --from "$(date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%S)"
 
 SUBCOMMANDS
   add                      Write a single user-added note memory
@@ -191,13 +206,24 @@ SUBCOMMANDS
   reflect                  Condense old global observations into reflection rows
                            (run \`duet memory reflect --help\` for reflect-specific options)
 
+QUERY OPTIONS
+  --json                   Emit a JSON array instead of a table (also enables query mode)
+  --type <kind>            Filter by kind: observation | reflection | manual
+  --kind <kind>            Alias for --type
+  --priority <level>       Filter by priority: high | medium | low
+  --source <origin>        Filter by source: user | agent | system
+  --from <date>            Inclusive lower bound on createdAt. Accepts
+                           YYYY-MM-DD (start of day UTC) or YYYY-MM-DDTHH:MM:SS (UTC)
+  --to <date>              Inclusive upper bound on createdAt. Accepts
+                           YYYY-MM-DD (end of day UTC) or YYYY-MM-DDTHH:MM:SS (UTC)
+
 OPTIONS
   --db <path>              Memory database path (default: ~/.duet/memory.db)
   --wait <seconds>         Seconds to wait for the cross-process open-lock when a peer
                            duet process is holding it (default: 30; 0 fails immediately)
   -h, --help               Show this help
 
-KEYS
+KEYS (TUI)
   ↑ / ↓                    Move selection
   e                        Edit selected memory in $EDITOR
   d                        Delete selected memory
@@ -319,10 +345,10 @@ duet train — Ingest a project corpus into one durable memory observation
 
 USAGE
   duet train <folder> [--slug <name>] [--model <name>] [--db <path>] [--wait <seconds>]
-  duet train list [--db <path>] [--json]
-  duet train show <slug> [--db <path>] [--json]
-  duet train update <slug> --content-file <path> [--db <path>] [--json]
-  duet train delete <slug> [--db <path>] [--json]
+  duet train list [--db <path>] [--json] [--wait <seconds>]
+  duet train show <slug> [--db <path>] [--json] [--wait <seconds>]
+  duet train update <slug> --content-file <path> [--db <path>] [--json] [--wait <seconds>]
+  duet train delete <slug> [--db <path>] [--json] [--wait <seconds>]
 
 DESCRIPTION
   Launches a duet agent with the corpus folder as its working directory.

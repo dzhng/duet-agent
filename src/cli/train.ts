@@ -19,7 +19,7 @@ import type {
 } from "../train/types.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import { printTrainHelp } from "./help.js";
-import { MemoryDb } from "./memory-db.js";
+import { withMemoryDb } from "./memory-db.js";
 import { fail, loadCliEnvFiles, resolveUserPath } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
 
@@ -500,6 +500,7 @@ interface TrainSubOptions {
   json: boolean;
   /** Path to the new observation text, for `update`. */
   contentFile?: string;
+  waitBudgetMs?: number;
 }
 
 /**
@@ -512,6 +513,7 @@ function parseTrainSubArgs(args: string[]): TrainSubOptions | undefined {
   let dbPath = DEFAULT_MEMORY_DB_PATH;
   let json = false;
   let contentFile: string | undefined;
+  let waitBudgetMs: number | undefined;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     switch (arg) {
@@ -526,6 +528,15 @@ function parseTrainSubArgs(args: string[]): TrainSubOptions | undefined {
       case "--json":
         json = true;
         break;
+      case "--wait": {
+        const raw = args[++i];
+        const seconds = Number(raw);
+        if (!Number.isFinite(seconds) || seconds < 0) {
+          fail(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
+        }
+        waitBudgetMs = seconds * 1000;
+        break;
+      }
       case "--help":
       case "-h":
         printTrainHelp();
@@ -536,42 +547,16 @@ function parseTrainSubArgs(args: string[]): TrainSubOptions | undefined {
         slug = arg;
     }
   }
-  return { slug, dbPath, json, contentFile };
-}
-
-/**
- * Open the memory database for a management subcommand, run `fn`, and always
- * close it. Lock contention surfaces as a friendly message (the same one the
- * create flow uses) rather than a raw error.
- */
-async function withTrainMemoryDb<T>(dbPath: string, fn: (db: MemoryDb) => Promise<T>): Promise<T> {
-  let db: MemoryDb;
-  try {
-    db = await MemoryDb.open(dbPath);
-  } catch (error) {
-    if (error instanceof MemoryLockTimeoutError) {
-      fail(
-        `Memory database at ${error.dataDir} is still locked by duet pid ${error.holderPid} after ${
-          error.budgetMs / 1000
-        }s. Stop that process (or pass --wait <seconds> to wait longer) and retry.`,
-      );
-    }
-    throw error;
-  }
-  const removeShutdownHandlers = installShutdownHandlers(() => db.close());
-  try {
-    return await fn(db);
-  } finally {
-    removeShutdownHandlers();
-    await db.close();
-  }
+  return { slug, dbPath, json, contentFile, waitBudgetMs };
 }
 
 export async function runTrainListCommand(args: string[], io: TrainCommandIO): Promise<void> {
   const options = parseTrainSubArgs(args);
   if (!options) return;
   if (options.slug !== undefined) fail(`Unexpected argument for train list: ${options.slug}`);
-  const entries = await withTrainMemoryDb(options.dbPath, (db) => db.listTrainings());
+  const entries = await withMemoryDb(options.dbPath, (db) => db.listTrainings(), {
+    waitBudgetMs: options.waitBudgetMs,
+  });
   io.stdout.write(
     options.json ? `${JSON.stringify(entries, null, 2)}\n` : `${formatTrainList(entries)}\n`,
   );
@@ -582,7 +567,9 @@ export async function runTrainShowCommand(args: string[], io: TrainCommandIO): P
   if (!options) return;
   if (!options.slug) fail("duet train show requires a <slug> argument");
   const slug = options.slug;
-  const record = await withTrainMemoryDb(options.dbPath, (db) => db.findTrainingBySlug(slug));
+  const record = await withMemoryDb(options.dbPath, (db) => db.findTrainingBySlug(slug), {
+    waitBudgetMs: options.waitBudgetMs,
+  });
   if (!record) fail(`No training found for slug "${slug}".`);
   io.stdout.write(
     options.json ? `${JSON.stringify(record, null, 2)}\n` : `${formatTrainRecord(record)}\n`,
@@ -599,14 +586,16 @@ export async function runTrainUpdateCommand(args: string[], io: TrainCommandIO):
   if (content.trim().length === 0) {
     fail(`Refusing to write empty content from ${options.contentFile}.`);
   }
-  const updated = await withTrainMemoryDb(options.dbPath, async (db): Promise<TrainRecord> => {
-    const record = await db.findTrainingBySlug(slug);
-    if (!record) fail(`No training found for slug "${slug}".`);
-    await db.updateContent(record.memoryId, content);
-    // updateContent only touches `content`, so the stored row is the prior
-    // record with the new text.
-    return { ...record, content };
-  });
+  const updated = await withMemoryDb(
+    options.dbPath,
+    async (db): Promise<TrainRecord> => {
+      const record = await db.findTrainingBySlug(slug);
+      if (!record) fail(`No training found for slug "${slug}".`);
+      await db.updateContent(record.memoryId, content);
+      return { ...record, content };
+    },
+    { waitBudgetMs: options.waitBudgetMs },
+  );
   if (options.json) {
     io.stdout.write(`${JSON.stringify(updated, null, 2)}\n`);
     return;
@@ -619,12 +608,16 @@ export async function runTrainDeleteCommand(args: string[], io: TrainCommandIO):
   if (!options) return;
   if (!options.slug) fail("duet train delete requires a <slug> argument");
   const slug = options.slug;
-  const deleted = await withTrainMemoryDb(options.dbPath, async (db): Promise<TrainRecord> => {
-    const record = await db.findTrainingBySlug(slug);
-    if (!record) fail(`No training found for slug "${slug}".`);
-    await db.delete(record.memoryId);
-    return record;
-  });
+  const deleted = await withMemoryDb(
+    options.dbPath,
+    async (db): Promise<TrainRecord> => {
+      const record = await db.findTrainingBySlug(slug);
+      if (!record) fail(`No training found for slug "${slug}".`);
+      await db.delete(record.memoryId);
+      return record;
+    },
+    { waitBudgetMs: options.waitBudgetMs },
+  );
   if (options.json) {
     io.stdout.write(
       `${JSON.stringify({ deleted: true, slug: deleted.slug, memoryId: deleted.memoryId }, null, 2)}\n`,

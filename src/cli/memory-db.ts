@@ -7,21 +7,38 @@ import {
   DEFAULT_RECENCY_HALF_LIFE_MS,
   DEFAULT_REFLECTION_BIAS,
 } from "../memory/observational.js";
-import { DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS, openPGliteWaitingForLock } from "../memory/pglite.js";
+import {
+  DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS,
+  MemoryLockTimeoutError,
+  openPGliteWaitingForLock,
+} from "../memory/pglite.js";
 import { readArchiveManifest, removeArchive } from "../train/archive.js";
 import { isTrainTagged, slugFromTags } from "../train/tags.js";
 import type { TrainListEntry, TrainRecord } from "../train/types.js";
-import type { Observation } from "../types/memory.js";
+import type { Observation, ObservationSource } from "../types/memory.js";
+import { fail } from "./shared.js";
+import { installShutdownHandlers } from "./shutdown.js";
 
 /** Rows fetched per page by the ranked, lazily-paginated TUI list. */
 export const MEMORY_PAGE_SIZE = 25;
 
+export interface MemoryQueryFilters {
+  kind?: Observation["kind"];
+  priority?: Observation["priority"];
+  source?: ObservationSource["kind"];
+  fromMs?: number;
+  toMs?: number;
+}
+
 /**
  * Absolute global-pack score for one observation under the CLI defaults.
- * Reuses the shared {@link observationScore} formula so the displayed value
- * tracks the runner's ranking exactly. Hardcoded to the runner's global-pack
- * defaults so the TUI ordering and the per-row score number match what the
- * runtime ranking would produce (loader.ts), with no flags to drift out of sync.
+ * Reuses the shared {@link observationScore} formula but layers the manual
+ * multiplier on top — `observationScore` only applies `reflectionBias`, so
+ * calling it directly would under-report curated/manual rows by the manual
+ * multiplier. The runner's `loadGlobalPack` applies `manualBias` to
+ * `kind === "manual"` as a separate factor, and the value surfaced here must
+ * match that ranking so the TUI ordering and the per-row score number agree
+ * with the runtime ranking across every kind, including manual rows.
  */
 export function scoreObservation(observation: Observation, now: number = Date.now()): number {
   return observationScore(observation, now, {
@@ -133,6 +150,31 @@ export class MemoryDb {
     return result.rows.map(rowToObservation);
   }
 
+  /** Query observations newest-first with the optional `duet memory` query filters. */
+  async queryObservations(filters: MemoryQueryFilters = {}): Promise<Observation[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    const bind = (clause: string, value: unknown): void => {
+      params.push(value);
+      conditions.push(clause.replace("$?", `$${params.length}`));
+    };
+    if (filters.kind !== undefined) bind("kind = $?", filters.kind);
+    if (filters.priority !== undefined) bind("priority = $?", filters.priority);
+    if (filters.source !== undefined) bind("(source_json::json->>'kind') = $?", filters.source);
+    if (filters.fromMs !== undefined) bind("created_at >= $?", filters.fromMs);
+    if (filters.toMs !== undefined) bind("created_at <= $?", filters.toMs);
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    const result = await this.db.query<ObservationRow>(
+      `SELECT id, created_at, last_used_at, session_id, kind, observed_date, referenced_date, relative_date,
+              time_of_day, priority, source_json, content, tags_json
+       FROM observations
+       ${where}
+       ORDER BY created_at DESC, id ASC`,
+      params,
+    );
+    return result.rows.map(rowToObservation);
+  }
+
   /**
    * Every `duet train` row (those tagged `train`), newest-first, joined to its
    * archive manifest for headline/model/provenance. Backs `duet train list`.
@@ -201,6 +243,39 @@ export class MemoryDb {
 
   async close(): Promise<void> {
     await this.db.close();
+  }
+}
+
+/**
+ * Open the memory database for a one-shot CLI subcommand, run `fn`, and always
+ * close it. Cross-process lock contention surfaces as the same friendly,
+ * actionable message every memory/train subcommand uses rather than a raw
+ * error. Shared by `duet train` management commands and `duet memory` queries.
+ */
+export async function withMemoryDb<T>(
+  dbPath: string,
+  fn: (db: MemoryDb) => Promise<T>,
+  { waitBudgetMs }: { waitBudgetMs?: number } = {},
+): Promise<T> {
+  let db: MemoryDb;
+  try {
+    db = await MemoryDb.open(dbPath, { waitBudgetMs });
+  } catch (error) {
+    if (error instanceof MemoryLockTimeoutError) {
+      fail(
+        `Memory database at ${error.dataDir} is still locked by duet pid ${error.holderPid} after ${
+          error.budgetMs / 1000
+        }s. Stop that process (or pass --wait <seconds> to wait longer) and retry.`,
+      );
+    }
+    throw error;
+  }
+  const removeShutdownHandlers = installShutdownHandlers(() => db.close());
+  try {
+    return await fn(db);
+  } finally {
+    removeShutdownHandlers();
+    await db.close();
   }
 }
 
