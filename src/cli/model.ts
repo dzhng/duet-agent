@@ -339,7 +339,7 @@ export function parseArgs(args: string[]): ModelArgs {
     const arg = args[i]!;
     const next = () => {
       const value = args[++i];
-      if (value === undefined) fail(`Missing value for ${arg}`);
+      if (value === undefined || value.startsWith("-")) fail(`Missing value for ${arg}`);
       return value;
     };
     switch (arg) {

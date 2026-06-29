@@ -80,6 +80,10 @@ describe("parseArgs", () => {
   test("rejects a flag missing its value", () => {
     expect(() => parseArgs(["--model"])).toThrow(ExitCalled);
   });
+
+  test("rejects a value option followed by another flag", () => {
+    expect(() => parseArgs(["-m", "--type", "image"])).toThrow(ExitCalled);
+  });
 });
 
 describe("requestTypeForCapability", () => {
