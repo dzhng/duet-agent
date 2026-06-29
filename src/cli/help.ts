@@ -208,7 +208,7 @@ SUBCOMMANDS
 
 QUERY OPTIONS
   --json                   Emit a JSON array instead of a table (also enables query mode)
-  --type <kind>            Filter by kind: observation | reflection | manual
+  --type <kind>            Filter by kind: observation | reflection | note | manual
   --kind <kind>            Alias for --type
   --priority <level>       Filter by priority: high | medium | low
   --source <origin>        Filter by source: user | agent | system

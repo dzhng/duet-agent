@@ -233,6 +233,9 @@ describe("parseMemoryArgs", () => {
   test("parses --type/--kind as the same axis", () => {
     expect(parse(["--type", "reflection"])?.filters.kind).toBe("reflection");
     expect(parse(["--kind", "manual"])?.filters.kind).toBe("manual");
+    // `note` is a real ObservationKind (user-added `duet memory add` rows);
+    // it must be filterable like any other kind.
+    expect(parse(["--type", "note"])?.filters.kind).toBe("note");
   });
 
   test("parses a date-only --from as start-of-day UTC", () => {

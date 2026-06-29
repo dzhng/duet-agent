@@ -10,10 +10,22 @@ interface MemoryQueryIO {
 
 type ScoredObservation = Observation & { score: number };
 
-const KINDS = ["observation", "reflection", "manual"] as const satisfies readonly ObservationKind[];
-const PRIORITIES = ["high", "medium", "low"] as const satisfies readonly ObservationPriority[];
+/**
+ * Build a runtime filter list that must enumerate *every* member of `T`.
+ * A bare `satisfies readonly T[]` only checks each element is a valid `T`; it
+ * silently tolerates a missing member — that gap is how `note` dropped out of
+ * the kind filter and made `--type note` get rejected. This helper fails to
+ * compile when the array omits any union member, so adding a new
+ * `ObservationKind`/priority/source forces the matching filter to grow with it.
+ */
+function exhaustiveList<T extends string>() {
+  return <L extends readonly T[]>(list: [T] extends [L[number]] ? L : never): L => list;
+}
+
+const KINDS = exhaustiveList<ObservationKind>()(["observation", "reflection", "note", "manual"]);
+const PRIORITIES = exhaustiveList<ObservationPriority>()(["high", "medium", "low"]);
 type SourceKind = Observation["source"]["kind"];
-const SOURCES = ["user", "agent", "system"] as const satisfies readonly SourceKind[];
+const SOURCES = exhaustiveList<SourceKind>()(["user", "agent", "system"]);
 
 export interface MemoryQueryOptions {
   dbPath: string;
