@@ -10,6 +10,7 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
 const textModel = process.env.EVAL_MODEL ?? "anthropic/claude-haiku-4.5";
 const imageModel = process.env.EVAL_IMAGE_MODEL ?? "openai/gpt-image-1-mini";
 const videoModel = process.env.EVAL_VIDEO_MODEL ?? "bytedance/seedance-2.0-fast";
+const nanoBananaModel = process.env.EVAL_NANO_BANANA_MODEL ?? "google/gemini-2.5-flash-image";
 
 /**
  * `duet model` talks to a gateway model directly through the AI SDK, bypassing
@@ -51,6 +52,45 @@ describe("duet model direct CLI", () => {
       expect((await stat(out)).size).toBeGreaterThan(1000);
     },
     180_000,
+  );
+
+  // Nano-banana is a `language` model that emits images, so --type image routes
+  // through generateText + result.files, and --image must inline the source so
+  // the model edits it. Generate a source image, then edit it through that path.
+  testIfDocker(
+    "edits an image through a nano-banana language model with --image",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "duet-model-"));
+      const src = join(dir, "fox.png");
+      const edited = join(dir, "edited.png");
+      const gen = Bun.spawn(
+        ["bun", "src/cli.ts", "model", "-m", imageModel, "--type", "image", "-o", src, "a red fox"],
+        { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+      );
+      expect(await gen.exited, await new Response(gen.stderr).text()).toBe(0);
+
+      const proc = Bun.spawn(
+        [
+          "bun",
+          "src/cli.ts",
+          "model",
+          "-m",
+          nanoBananaModel,
+          "--type",
+          "image",
+          "--image",
+          src,
+          "-o",
+          edited,
+          "add a blue hat",
+        ],
+        { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" },
+      );
+      const [stderr, exitCode] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+      expect(exitCode, stderr).toBe(0);
+      expect((await stat(edited)).size).toBeGreaterThan(1000);
+    },
+    240_000,
   );
 
   testIfDocker(
