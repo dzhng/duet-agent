@@ -63,6 +63,7 @@ import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
 import {
   createRecallMemorySystemPromptLayer,
   createSourceOfTruthSystemPromptLayer,
+  createForkContextReminder,
   createStateAgentSystemPromptLayer,
   createStateMachineSystemPromptLayer,
 } from "./prompts.js";
@@ -1262,7 +1263,7 @@ export class TurnRunner {
         : this.createBaseSystemPromptWithAppendedLayers({ skills: stateSkills })
       : undefined;
     const tailPrompt = forkContext
-      ? [identityLayer, input.state.systemPrompt, expandedPrompt]
+      ? [createForkContextReminder(), identityLayer, input.state.systemPrompt, expandedPrompt]
           .filter((part): part is string => Boolean(part))
           .join("\n\n")
       : expandedPrompt;

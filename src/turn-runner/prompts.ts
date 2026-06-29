@@ -103,6 +103,25 @@ export function createStateAgentSystemPromptLayer(context?: {
 }
 
 /**
+ * Reminder injected at the head of a forked agent state's tail user turn. When
+ * `forkContext` is on, the sub-agent is seeded with a verbatim copy of the
+ * parent (orchestrator) agent's transcript, so the model opens onto a full
+ * conversation it can mistake for its own — concluding it is the parent still
+ * mid-turn and continuing that thread instead of running this state. This block
+ * draws the line explicitly: everything above is inherited parent context to
+ * read, the task is only what follows, and the sub-agent cannot route. It rides
+ * in the user turn (not the system prompt) so the forked system prompt stays
+ * byte-identical to the parent's and preserves the provider prompt-cache prefix.
+ */
+export function createForkContextReminder(): string {
+  return dedent`
+    <system-reminder>
+    The conversation above is a copy of the parent (orchestrator) agent's transcript, handed to you only as background context. You are NOT the parent agent and you are not continuing that conversation — you are now a fresh sub-agent running a single state of the state machine. Read the transcript above as reference material about what has happened; do not treat its last message as something you just said or were about to answer. Your one task is the instruction that follows this reminder. Do that task, report what you did and found, and remember you cannot select or route to other states — the orchestrator does that after reading your report.
+    </system-reminder>
+  `;
+}
+
+/**
  * Situates the sub-agent inside the larger state machine so it scopes its work
  * to the current state instead of trying to deliver the whole process.
  *
