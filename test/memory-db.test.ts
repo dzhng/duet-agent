@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryDb, MEMORY_PAGE_SIZE, scoreObservation } from "../src/cli/memory-db.js";
 import {
+  DEFAULT_MANUAL_BIAS,
   DEFAULT_RECENCY_HALF_LIFE_MS,
   DEFAULT_REFLECTION_BIAS,
 } from "../src/memory/observational.js";
@@ -99,6 +100,40 @@ describe("MemoryDb ranked paging", () => {
       for (let i = 1; i < scores.length; i++) {
         expect(scores[i]!).toBeLessThanOrEqual(scores[i - 1]! + 1e-9);
       }
+    });
+  });
+
+  testIfDocker("listRanked ranks a manual row above an equal-priority reflection", async () => {
+    await withDb(async (db) => {
+      // manualBias (100) dominates reflectionBias (1.3), so a manual row used
+      // at the same instant as a high-priority reflection still sorts first.
+      await seed(db, [
+        fixture({ id: "refl", priority: "high", kind: "reflection", lastUsedAt: NOW }),
+        fixture({ id: "man", priority: "high", kind: "manual", lastUsedAt: NOW }),
+      ]);
+
+      const rows = await db.listRanked({ limit: 25, offset: 0, now: NOW });
+      expect(rows.map((r) => r.id)).toEqual(["man", "refl"]);
+      // The displayed score reflects manualBias, not the default 1.0 kindBias.
+      expect(scoreObservation(rows[0]!, NOW)).toBeCloseTo(
+        PRIORITY_WEIGHT.high * DEFAULT_MANUAL_BIAS,
+        6,
+      );
+    });
+  });
+
+  testIfDocker("listRanked ranks a note between a manual row and a reflection", async () => {
+    await withDb(async (db) => {
+      // noteBias (1.5) sits just above reflectionBias (1.3); manualBias (100)
+      // dominates both, so a manual/note/reflection trio sorts in that order.
+      await seed(db, [
+        fixture({ id: "refl", priority: "high", kind: "reflection", lastUsedAt: NOW }),
+        fixture({ id: "note", priority: "high", kind: "note", lastUsedAt: NOW }),
+        fixture({ id: "man", priority: "high", kind: "manual", lastUsedAt: NOW }),
+      ]);
+
+      const rows = await db.listRanked({ limit: 25, offset: 0, now: NOW });
+      expect(rows.map((r) => r.id)).toEqual(["man", "note", "refl"]);
     });
   });
 

@@ -39,6 +39,7 @@ export type { LoginCommandIO } from "./cli/login.js";
 export { runSkillsCommand } from "./cli/skills.js";
 export { runUpgradeCommand } from "./cli/upgrade.js";
 export { runMemoryCommand } from "./cli/memory.js";
+export { runMemoryAddCommand } from "./cli/memory-add.js";
 export { runMemoryReflectCommand } from "./cli/memory-reflect.js";
 export { runTrainCommand } from "./cli/train.js";
 export { runSendFeedbackCommand } from "./cli/send-feedback.js";

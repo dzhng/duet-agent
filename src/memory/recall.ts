@@ -35,6 +35,31 @@ const PER_PATH_TOP_K = 30;
  */
 const RRF_K = 60;
 
+/**
+ * Gentle kind prior applied to the fused recall score so curated rows edge
+ * out comparable matches without steamrolling relevance.
+ *
+ * Deliberately far smaller than the loader's `manualBias` (100): the global
+ * pack uses a huge factor because it is an always-on, relevance-free ranking
+ * where curated rows *should* dominate, but recall is a relevance-first
+ * search. A 100x factor here would float any weakly-matching manual row to
+ * the top and defeat the point of the query, so the prior is sized to act as
+ * a tiebreaker among rows that already matched on keyword/vector.
+ */
+const RECALL_KIND_BIAS: Record<ObservationKind, number> = {
+  manual: 1.5,
+  note: 1.3,
+  reflection: 1.25,
+  observation: 1.0,
+};
+
+/** Gentle priority prior, same tiebreaker rationale as {@link RECALL_KIND_BIAS}. */
+const RECALL_PRIORITY_BIAS: Record<ObservationPriority, number> = {
+  high: 1.2,
+  medium: 1.0,
+  low: 0.9,
+};
+
 export type RecallScope = "session" | "global" | "all";
 
 export interface RecallMemoryOptions {
@@ -113,6 +138,10 @@ export async function recallMemory(options: RecallMemoryOptions): Promise<Recall
 interface ScoredHit {
   id: string;
   rank: number;
+  /** Row kind, used by {@link reciprocalRankFusion} to apply the recall prior. Optional so callers (and tests) may fuse on rank alone. */
+  kind?: ObservationKind;
+  /** Row priority, used by {@link reciprocalRankFusion} to apply the recall prior. Optional so callers may fuse on rank alone. */
+  priority?: ObservationPriority;
 }
 
 async function keywordSearch(
@@ -128,7 +157,7 @@ async function keywordSearch(
   // syntax, the same shape a user would type into a search box. ts_rank
   // against the GIN index gives a relevance order rather than a uniform
   // "matched" set.
-  const baseSql = `SELECT id
+  const baseSql = `SELECT id, kind, priority
      FROM observations
      WHERE to_tsvector('english', content) @@ websearch_to_tsquery('english', $1)`;
   const orderSql = `
@@ -136,15 +165,13 @@ async function keywordSearch(
               created_at DESC
      LIMIT ${PER_PATH_TOP_K}`;
 
-  const { rows } = await runScopedQuery<{ id: string }>(
-    db,
-    baseSql,
-    orderSql,
-    [trimmed],
-    scope,
-    sessionId,
-  );
-  return rows.map((row, index) => ({ id: row.id, rank: index }));
+  const { rows } = await runScopedQuery<HitRow>(db, baseSql, orderSql, [trimmed], scope, sessionId);
+  return rows.map((row, index) => ({
+    id: row.id,
+    rank: index,
+    kind: row.kind,
+    priority: row.priority,
+  }));
 }
 
 async function vectorSearch(
@@ -161,7 +188,7 @@ async function vectorSearch(
   const vector = embeddings[0];
   if (!vector) return [];
 
-  const baseSql = `SELECT o.id
+  const baseSql = `SELECT o.id, o.kind, o.priority
      FROM observation_embeddings e
      JOIN observations o ON o.id = e.observation_id
      WHERE TRUE`;
@@ -169,7 +196,7 @@ async function vectorSearch(
      ORDER BY e.vector <=> $1::vector
      LIMIT ${PER_PATH_TOP_K}`;
 
-  const { rows } = await runScopedQuery<{ id: string }>(
+  const { rows } = await runScopedQuery<HitRow>(
     db,
     baseSql,
     orderSql,
@@ -180,7 +207,12 @@ async function vectorSearch(
     // predicate has to follow.
     "o.",
   );
-  return rows.map((row, index) => ({ id: row.id, rank: index }));
+  return rows.map((row, index) => ({
+    id: row.id,
+    rank: index,
+    kind: row.kind,
+    priority: row.priority,
+  }));
 }
 
 /**
@@ -222,12 +254,19 @@ async function runScopedQuery<TRow>(
  * dominating mediocre rows from the other does not steamroll a row
  * that ranks well across both.
  *
- * Returns ids ordered by descending fused score. Ties (same score)
+ * The fused score is then multiplied by a gentle prior derived from the
+ * row's kind and priority ({@link RECALL_KIND_BIAS} / {@link
+ * RECALL_PRIORITY_BIAS}) so curated and high-priority rows edge out
+ * comparable matches — a tiebreaker on top of relevance, not a replacement
+ * for it. Hits without kind/priority metadata get a neutral 1.0 prior, so
+ * fusing on rank alone keeps the pure-RRF behavior.
+ *
+ * Returns ids ordered by descending biased score. Ties (same score)
  * resolve by first appearance, which mirrors gbrain's insertion-order
  * tiebreak.
  */
 export function reciprocalRankFusion(rankedLists: ScoredHit[][]): string[] {
-  const scores = new Map<string, { score: number; firstSeen: number }>();
+  const scores = new Map<string, { score: number; firstSeen: number; prior: number }>();
   let order = 0;
   for (const list of rankedLists) {
     for (const hit of list) {
@@ -236,17 +275,35 @@ export function reciprocalRankFusion(rankedLists: ScoredHit[][]): string[] {
       if (existing) {
         existing.score += contribution;
       } else {
-        scores.set(hit.id, { score: contribution, firstSeen: order++ });
+        scores.set(hit.id, { score: contribution, firstSeen: order++, prior: recallPrior(hit) });
       }
     }
   }
 
   return Array.from(scores.entries())
     .sort((a, b) => {
-      if (b[1].score !== a[1].score) return b[1].score - a[1].score;
+      const scoreA = a[1].score * a[1].prior;
+      const scoreB = b[1].score * b[1].prior;
+      if (scoreB !== scoreA) return scoreB - scoreA;
       return a[1].firstSeen - b[1].firstSeen;
     })
     .map(([id]) => id);
+}
+
+/**
+ * Multiplicative recall prior for one hit: `kindBias * priorityBias`, each
+ * defaulting to 1.0 when the corresponding metadata is absent.
+ */
+function recallPrior(hit: Pick<ScoredHit, "kind" | "priority">): number {
+  const kindBias = hit.kind ? RECALL_KIND_BIAS[hit.kind] : 1.0;
+  const priorityBias = hit.priority ? RECALL_PRIORITY_BIAS[hit.priority] : 1.0;
+  return kindBias * priorityBias;
+}
+
+interface HitRow {
+  id: string;
+  kind: ObservationKind;
+  priority: ObservationPriority;
 }
 
 async function hydrate(db: PGlite, ids: string[]): Promise<Observation[]> {

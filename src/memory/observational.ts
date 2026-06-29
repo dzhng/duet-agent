@@ -178,7 +178,15 @@ export const DEFAULT_REFLECTION_BIAS = 1.3;
  * DEFAULT_REFLECTION_BIAS because curated rows should dominate the global
  * pack rather than merely edge out raw observations.
  */
-const DEFAULT_MANUAL_BIAS = 100;
+export const DEFAULT_MANUAL_BIAS = 100;
+
+/**
+ * 1.5 gives single user-added (`note`) rows just above DEFAULT_REFLECTION_BIAS:
+ * a hand-vouched note edges out auto-synthesized reflections without the 100x
+ * dominance of a `duet train` corpus, and notes stay reflect-eligible so they
+ * age and fold normally.
+ */
+export const DEFAULT_NOTE_BIAS = 1.5;
 
 export interface DerivedMemoryBudgets {
   observation: {
@@ -486,6 +494,7 @@ export function resolveObservationalMemorySettings(
     recencyHalfLifeMs: partial.recencyHalfLifeMs ?? DEFAULT_RECENCY_HALF_LIFE_MS,
     reflectionBias: partial.reflectionBias ?? DEFAULT_REFLECTION_BIAS,
     manualBias: partial.manualBias ?? DEFAULT_MANUAL_BIAS,
+    noteBias: partial.noteBias ?? DEFAULT_NOTE_BIAS,
     observation: {
       messageTokens: budgets.observation.messageTokens,
       maxTranscriptTokens: budgets.observation.maxTranscriptTokens,
@@ -1126,9 +1135,11 @@ export interface PlanReflectionBatchesOptions {
  * batching/eligibility rules can be unit-tested without docker/LLM.
  *
  * Rules:
- *   - Manual rows (`kind === "manual"`) are user-curated (e.g. `duet train`
+ *   - Manual rows (`kind === "manual"`) are bulk-curated (`duet train`
  *     corpus syntheses) and are always preserved regardless of age — the
- *     reflect prune never compacts them.
+ *     reflect prune never compacts them. `note` rows (`duet memory add`)
+ *     are NOT exempt: they fall through to the freshness check and fold
+ *     like raw observations once aged, so a single note ages normally.
  *   - GLOBAL reflection rows (`kind === "reflection"` AND
  *     `sessionId === GLOBAL_REFLECTION_SESSION_ID`) are always preserved.
  *     They are the output of prior `duet memory reflect` runs and
@@ -1158,7 +1169,8 @@ export function planReflectionBatches(
   const eligible: Observation[] = [];
   for (const observation of observations) {
     if (observation.kind === "manual") {
-      // Manual rows are user-curated (e.g. `duet train`); never compact them.
+      // Bulk-curated corpus rows (`duet train`); never compact them. `note`
+      // rows (`duet memory add`) are intentionally absent here so they age.
       preserved.push(observation);
       continue;
     }

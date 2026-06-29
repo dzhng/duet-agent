@@ -1,6 +1,6 @@
 {
   "name": "@duetso/agent",
-  "version": "0.1.196",
+  "version": "0.1.197",
   "description": "An opinionated full-stack agent turn runner with native memories, interrupts, and multi-agent orchestration",
   "keywords": [
     "agent",

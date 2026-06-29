@@ -44,6 +44,7 @@ export async function rebuildMemoryContextPack(options: {
         recencyHalfLifeMs: options.settings.recencyHalfLifeMs,
         reflectionBias: options.settings.reflectionBias,
         manualBias: options.settings.manualBias,
+        noteBias: options.settings.noteBias,
       }),
       options.sessionId !== undefined
         ? loadLocalPack(db, { sessionId: options.sessionId })

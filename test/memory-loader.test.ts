@@ -29,6 +29,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const HALF_LIFE_MS = 7 * DAY_MS;
 const REFLECTION_BIAS = 1.3;
 const MANUAL_BIAS = 100;
+const NOTE_BIAS = 1.5;
 
 describe("Memory loader", () => {
   describe("loadGlobalPack", () => {
@@ -40,6 +41,7 @@ describe("Memory loader", () => {
           recencyHalfLifeMs: HALF_LIFE_MS,
           reflectionBias: REFLECTION_BIAS,
           manualBias: MANUAL_BIAS,
+          noteBias: NOTE_BIAS,
         });
 
         // Rank-1 invariant: the top fixture is a high reflection
@@ -70,6 +72,7 @@ describe("Memory loader", () => {
             recencyHalfLifeMs: HALF_LIFE_MS,
             reflectionBias: REFLECTION_BIAS,
             manualBias: MANUAL_BIAS,
+            noteBias: NOTE_BIAS,
           });
           const ids = pack.map((o) => o.id);
           expect(ids.indexOf("g_high_obs_used_recently")).toBeLessThan(
@@ -90,6 +93,7 @@ describe("Memory loader", () => {
           recencyHalfLifeMs: HALF_LIFE_MS,
           reflectionBias: REFLECTION_BIAS,
           manualBias: MANUAL_BIAS,
+          noteBias: NOTE_BIAS,
         });
 
         const usedTokens = pack.reduce(
@@ -115,6 +119,7 @@ describe("Memory loader", () => {
             recencyHalfLifeMs: HALF_LIFE_MS,
             reflectionBias: REFLECTION_BIAS,
             manualBias: MANUAL_BIAS,
+            noteBias: NOTE_BIAS,
           });
           const ids = pack.map((observation) => observation.id);
           for (const id of ids) {
@@ -132,6 +137,7 @@ describe("Memory loader", () => {
           recencyHalfLifeMs: HALF_LIFE_MS,
           reflectionBias: REFLECTION_BIAS,
           manualBias: MANUAL_BIAS,
+          noteBias: NOTE_BIAS,
         });
         const ids = pack.map((observation) => observation.id);
         // Legacy rows pre-date sessionId tracking; they should still
@@ -166,12 +172,43 @@ describe("Memory loader", () => {
             recencyHalfLifeMs: HALF_LIFE_MS,
             reflectionBias: REFLECTION_BIAS,
             manualBias: MANUAL_BIAS,
+            noteBias: NOTE_BIAS,
           });
           expect(pack[0]?.id).toBe("g_manual_curated_today");
           const ids = pack.map((o) => o.id);
           expect(ids.indexOf("g_manual_curated_today")).toBeLessThan(
             ids.indexOf("g_high_reflection_today"),
           );
+        });
+      },
+    );
+
+    testIfDocker(
+      "ranks a note above an equal-priority reflection but below a manual row",
+      async () => {
+        await withSeededDb(async (db) => {
+          const day = new Date(NOW).toISOString().slice(0, 10);
+          await db.query(
+            `INSERT INTO observations (
+              id, created_at, last_used_at, session_id, kind, observed_date, referenced_date,
+              relative_date, time_of_day, priority, source_json, content, tags_json
+            ) VALUES
+              ('g_manual_today', $1, $1, NULL, 'manual', $2, NULL, NULL, NULL, 'high', '{"kind":"user"}', 'manual', '[]'),
+              ('g_note_today', $1, $1, NULL, 'note', $2, NULL, NULL, NULL, 'high', '{"kind":"user"}', 'note', '[]')`,
+            [NOW, day],
+          );
+          const pack = await loadGlobalPack(db, {
+            excludeSessionId: "session_current",
+            tokenBudget: 100_000,
+            recencyHalfLifeMs: HALF_LIFE_MS,
+            reflectionBias: REFLECTION_BIAS,
+            manualBias: MANUAL_BIAS,
+            noteBias: NOTE_BIAS,
+          });
+          const ids = pack.map((o) => o.id);
+          // noteBias (1.5) > reflectionBias (1.3), manualBias (100) on top.
+          expect(ids.indexOf("g_manual_today")).toBeLessThan(ids.indexOf("g_note_today"));
+          expect(ids.indexOf("g_note_today")).toBeLessThan(ids.indexOf("g_high_reflection_today"));
         });
       },
     );
@@ -185,6 +222,7 @@ describe("Memory loader", () => {
             recencyHalfLifeMs: HALF_LIFE_MS,
             reflectionBias: REFLECTION_BIAS,
             manualBias: MANUAL_BIAS,
+            noteBias: NOTE_BIAS,
           });
           const ids = pack.map((observation) => observation.id);
           expect(ids).toContain("local_observation_today");

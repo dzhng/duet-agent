@@ -121,6 +121,48 @@ describe("planReflectionBatches", () => {
     expect(batches[0]!.observations.map((o) => o.id)).toEqual(["raw-old"]);
   });
 
+  test("contract: equally-aged manual pins forever, note folds", () => {
+    // The whole point of the manual/note split: train corpus rows are
+    // pinned permanently, hand-added notes age into the prune. Lock both
+    // halves in one call so neither can drift independently.
+    const oldManual = makeObservation({
+      id: "train",
+      kind: "manual",
+      createdAt: NOW - 90 * DAY_MS,
+      tags: ["train", "train:corpus"],
+    });
+    const oldNote = makeObservation({ id: "note", kind: "note", createdAt: NOW - 90 * DAY_MS });
+
+    const { preserved, batches } = planReflectionBatches([oldManual, oldNote], {
+      cutoff,
+      batchTokens: 1_000_000,
+    });
+
+    expect(preserved.map((o) => o.id)).toEqual(["train"]);
+    expect(batches.flatMap((b) => b.observations).map((o) => o.id)).toEqual(["note"]);
+  });
+
+  test("folds aged note rows like observations (not pinned like manual)", () => {
+    // `duet memory add` rows are kind: "note" — they get a small ranking bump
+    // but, unlike manual corpus rows, must age into the reflect prune.
+    const oldNote = makeObservation({
+      id: "note-old",
+      kind: "note",
+      createdAt: NOW - 30 * DAY_MS,
+      priority: "high",
+    });
+    const freshNote = makeObservation({ id: "note-fresh", kind: "note", createdAt: NOW });
+
+    const { preserved, batches } = planReflectionBatches([oldNote, freshNote], {
+      cutoff,
+      batchTokens: 1_000_000,
+    });
+
+    // Fresh note preserved by the cutoff; aged note folds.
+    expect(preserved.map((o) => o.id)).toEqual(["note-fresh"]);
+    expect(batches[0]!.observations.map((o) => o.id)).toEqual(["note-old"]);
+  });
+
   test("packs eligible rows greedily up to batchTokens, then rolls over", () => {
     // Each content is 40 chars => 13 tokens via the CHARS_PER_TOKEN=3.2 heuristic.
     const content = "x".repeat(40);

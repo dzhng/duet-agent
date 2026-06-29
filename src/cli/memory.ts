@@ -1,6 +1,7 @@
 import { MemoryLockTimeoutError } from "../memory/pglite.js";
 import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
 import { printMemoryHelp } from "./help.js";
+import { runMemoryAddCommand } from "./memory-add.js";
 import { MemoryDb } from "./memory-db.js";
 import { runMemoryReflectCommand } from "./memory-reflect.js";
 import { runMemoryTui } from "./memory-tui.js";
@@ -20,6 +21,14 @@ export async function runMemoryCommand(args: string[]): Promise<void> {
   // the bare `duet memory` invocation.
   if (args[0] === "reflect") {
     await runMemoryReflectCommand(args.slice(1));
+    return;
+  }
+
+  // Route `duet memory add ...` to the manual-write command. Kept as a
+  // subcommand under `memory` so the bare `duet memory` invocation stays
+  // the TUI browser.
+  if (args[0] === "add") {
+    await runMemoryAddCommand(args.slice(1));
     return;
   }
 

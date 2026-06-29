@@ -182,6 +182,8 @@ ALIASES
   duet memories
 
 SUBCOMMANDS
+  add                      Write a single user-added note memory
+                           (run \`duet memory add --help\` for add-specific options)
   reflect                  Condense old global observations into reflection rows
                            (run \`duet memory reflect --help\` for reflect-specific options)
 
@@ -196,6 +198,33 @@ KEYS
   e                        Edit selected memory in $EDITOR
   d                        Delete selected memory
   q / Esc                  Quit
+`);
+}
+
+export function printMemoryAddHelp(): void {
+  console.log(`
+duet memory add — Write a single user-added note memory
+
+USAGE
+  duet memory add [options] <content>
+  echo "<content>" | duet memory add [options]
+
+DESCRIPTION
+  Stores a note memory into the same ~/.duet/memory.db the runner reads, so
+  it surfaces in the next session. Notes get a small ranking bump above
+  reflections (far below a 'duet train' corpus) and stay eligible for
+  'duet memory reflect' compaction, folding like any observation once aged.
+
+  Content comes from the positional arguments, or from stdin when none are
+  given so longer memories can be piped in.
+
+OPTIONS
+  --priority <level>       high, medium, or low (default: medium)
+  --tag <tag>              Attach a label; repeat to add several
+  --db <path>              Memory database path (default: ~/.duet/memory.db)
+  --wait <seconds>         Seconds to wait for the cross-process open-lock
+                           (default: 30; 0 fails immediately)
+  -h, --help               Show this help
 `);
 }
 

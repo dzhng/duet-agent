@@ -3,17 +3,20 @@ export type ObservationPriority = "high" | "medium" | "low";
 
 /**
  * Whether a row is a raw observation, a reflection synthesized by the
- * reflector, or a manually curated row. Reflections rank higher than raw
+ * reflector, a single user-added `note`, or a bulk-curated `manual` corpus
+ * row. Reflections rank higher than raw
  * observations by default (see `reflectionBias`) because they are condensed
  * cross-observation summaries that survived a curation pass; the loader
  * prefers them when the global budget tightens.
  *
- * `manual` rows are ones a user deliberately curated (e.g. `duet train`
- * corpus syntheses), distinct from raw `observation` rows and
- * auto-synthesized `reflection` rows. They rank above both via `manualBias`
- * and are never compacted by the reflect prune.
+ * `manual` rows are bulk-curated corpus syntheses (e.g. `duet train`): they
+ * rank far above everything via `manualBias` and are never compacted by the
+ * reflect prune. `note` rows are single user-added memories (`duet memory
+ * add`): they get only a small `noteBias` bump above reflections and stay
+ * eligible for the reflect prune, so a quick note ages and folds like any
+ * other observation rather than pinning itself forever.
  */
-export type ObservationKind = "observation" | "reflection" | "manual";
+export type ObservationKind = "observation" | "reflection" | "manual" | "note";
 
 /**
  * Where an observation came from. Used for auditability and downstream
@@ -51,11 +54,12 @@ export interface Observation {
    */
   sessionId?: string;
   /**
-   * Whether this row is a raw observation, a reflection, or a manually
-   * curated row. The reflector replaces a batch of observations with a
+   * Whether this row is a raw observation, a reflection, a note, or a
+   * manual corpus row. The reflector replaces a batch of observations with a
    * single condensed reflection; downstream ranking gives reflections a
-   * multiplier (`reflectionBias`) and manual rows a larger one
-   * (`manualBias`) to match their higher signal-per-token.
+   * multiplier (`reflectionBias`), notes a slightly larger one
+   * (`noteBias`), and manual corpus rows the largest (`manualBias`) to
+   * match their higher signal-per-token.
    */
   kind: ObservationKind;
   /** Calendar date the observation is anchored to, usually the day it was observed. */
@@ -222,6 +226,13 @@ export interface ObservationalMemorySettings {
    * about 32 days of recency head start at the default half-life.
    */
   manualBias: number;
+  /**
+   * Multiplier applied to a row's score when `kind === 'note'` (a single
+   * `duet memory add` row). Default 1.5: a small bump just above
+   * reflections so a user-vouched note edges out auto-synthesized rows,
+   * far below `manualBias` so it never dominates the pack like a train corpus.
+   */
+  noteBias: number;
   /** Whether the recall_memory tool and embedding backfill are enabled. */
   retrieval: boolean;
 }
@@ -248,6 +259,8 @@ export interface ObservationalMemorySettingsInput {
   reflectionBias?: number;
   /** Manual-row score multiplier; see `ObservationalMemorySettings.manualBias`. */
   manualBias?: number;
+  /** Note-row score multiplier; see `ObservationalMemorySettings.noteBias`. */
+  noteBias?: number;
   /** Whether the recall_memory tool and embedding backfill are enabled. */
   retrieval?: boolean;
 }

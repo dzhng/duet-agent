@@ -52,6 +52,10 @@ export interface ObservationScoreOptions {
   recencyHalfLifeMs: number;
   /** Multiplier applied to `kind = 'reflection'` rows. */
   reflectionBias: number;
+  /** Multiplier applied to `kind = 'manual'` rows. */
+  manualBias: number;
+  /** Multiplier applied to `kind = 'note'` rows. */
+  noteBias: number;
 }
 
 /**
@@ -70,7 +74,14 @@ export function observationScore(
   options: ObservationScoreOptions,
 ): number {
   const priorityWeight = PRIORITY_WEIGHT[observation.priority];
-  const kindBias = observation.kind === "reflection" ? options.reflectionBias : 1.0;
+  const kindBias =
+    observation.kind === "reflection"
+      ? options.reflectionBias
+      : observation.kind === "manual"
+        ? options.manualBias
+        : observation.kind === "note"
+          ? options.noteBias
+          : 1.0;
   const decay = Math.pow(0.5, (now - observation.lastUsedAt) / options.recencyHalfLifeMs);
   return priorityWeight * decay * kindBias;
 }
@@ -93,6 +104,8 @@ export interface LoadGlobalPackOptions {
   reflectionBias: number;
   /** Manual bias multiplier applied as a `kind = 'manual'` factor. */
   manualBias: number;
+  /** Note bias multiplier applied as a `kind = 'note'` factor. */
+  noteBias: number;
 }
 
 /**
@@ -127,6 +140,7 @@ export async function loadGlobalPack(
     PRIORITY_WEIGHT.low,
     options.reflectionBias,
     options.manualBias,
+    options.noteBias,
     options.recencyHalfLifeMs,
   ];
   let scopeClause = "";
@@ -152,8 +166,9 @@ export async function loadGlobalPack(
                           ELSE $3::float END)
          + ln(CASE kind WHEN 'reflection' THEN $4::float
                         WHEN 'manual' THEN $5::float
+                        WHEN 'note' THEN $6::float
                         ELSE 1.0 END)
-         + last_used_at::float / $6::float
+         + last_used_at::float / $7::float
          DESC
        LIMIT $${limitParam}`;
 

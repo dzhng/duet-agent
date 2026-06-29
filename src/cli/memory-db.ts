@@ -1,7 +1,12 @@
 import type { PGlite } from "@electric-sql/pglite";
 import { observationScore, PRIORITY_WEIGHT } from "../memory/loader.js";
 import { runMigrations } from "../memory/migrations.js";
-import { DEFAULT_RECENCY_HALF_LIFE_MS, DEFAULT_REFLECTION_BIAS } from "../memory/observational.js";
+import {
+  DEFAULT_MANUAL_BIAS,
+  DEFAULT_NOTE_BIAS,
+  DEFAULT_RECENCY_HALF_LIFE_MS,
+  DEFAULT_REFLECTION_BIAS,
+} from "../memory/observational.js";
 import { DEFAULT_OPEN_LOCK_WAIT_BUDGET_MS, openPGliteWaitingForLock } from "../memory/pglite.js";
 import { readArchiveManifest, removeArchive } from "../train/archive.js";
 import { isTrainTagged, slugFromTags } from "../train/tags.js";
@@ -22,6 +27,8 @@ export function scoreObservation(observation: Observation, now: number = Date.no
   return observationScore(observation, now, {
     recencyHalfLifeMs: DEFAULT_RECENCY_HALF_LIFE_MS,
     reflectionBias: DEFAULT_REFLECTION_BIAS,
+    manualBias: DEFAULT_MANUAL_BIAS,
+    noteBias: DEFAULT_NOTE_BIAS,
   });
 }
 
@@ -101,17 +108,22 @@ export class MemoryDb {
          (CASE priority WHEN 'high' THEN $1::float
                         WHEN 'medium' THEN $2::float
                         ELSE $3::float END)
-         * power(0.5::float, ($6::float - last_used_at::float) / $5::float)
-         * (CASE kind WHEN 'reflection' THEN $4::float ELSE 1.0 END)
+         * power(0.5::float, ($8::float - last_used_at::float) / $7::float)
+         * (CASE kind WHEN 'reflection' THEN $4::float
+                      WHEN 'manual' THEN $5::float
+                      WHEN 'note' THEN $6::float
+                      ELSE 1.0 END)
          DESC,
          created_at DESC,
          id ASC
-       LIMIT $7 OFFSET $8`,
+       LIMIT $9 OFFSET $10`,
       [
         PRIORITY_WEIGHT.high,
         PRIORITY_WEIGHT.medium,
         PRIORITY_WEIGHT.low,
         DEFAULT_REFLECTION_BIAS,
+        DEFAULT_MANUAL_BIAS,
+        DEFAULT_NOTE_BIAS,
         DEFAULT_RECENCY_HALF_LIFE_MS,
         now,
         limit,

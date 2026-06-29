@@ -26,6 +26,44 @@ describe("recall_memory", () => {
       expect(order[0]).toBe("a");
     });
 
+    test("breaks an RRF tie toward the manual row via the kind prior", () => {
+      // Both rows rank 0 in their own list, so the raw RRF scores tie. The
+      // manual row's kind prior (1.5) lifts it above the plain observation.
+      const order = reciprocalRankFusion([
+        [{ id: "obs", rank: 0, kind: "observation", priority: "medium" }],
+        [{ id: "man", rank: 0, kind: "manual", priority: "medium" }],
+      ]);
+      expect(order).toEqual(["man", "obs"]);
+    });
+
+    test("prior is a tiebreaker, not a dominator: strong relevance still wins", () => {
+      // The observation appears at rank 0 in both lists (fused ~0.0333); the
+      // manual+high row appears once at rank 5 (fused ~0.0154). Even with its
+      // full prior (1.5 * 1.2 = 1.8 → ~0.0277) the strongly-matching
+      // observation stays on top — the prior cannot override a clear
+      // relevance gap.
+      const order = reciprocalRankFusion([
+        [
+          { id: "obs", rank: 0, kind: "observation", priority: "medium" },
+          { id: "man", rank: 5, kind: "manual", priority: "high" },
+        ],
+        [{ id: "obs", rank: 0, kind: "observation", priority: "medium" }],
+      ]);
+      expect(order[0]).toBe("obs");
+    });
+
+    test("orders kind priors note above reflection, below manual at equal rank", () => {
+      const order = reciprocalRankFusion([
+        [
+          { id: "refl", rank: 0, kind: "reflection", priority: "medium" },
+          { id: "note", rank: 0, kind: "note", priority: "medium" },
+          { id: "man", rank: 0, kind: "manual", priority: "medium" },
+        ],
+      ]);
+      // manual (1.5) > note (1.3) > reflection (1.25) at the same fused rank.
+      expect(order).toEqual(["man", "note", "refl"]);
+    });
+
     test("preserves first-seen order when scores tie", () => {
       const order = reciprocalRankFusion([
         [
