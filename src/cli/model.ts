@@ -93,9 +93,16 @@ export async function runModelCommand(args: string[]): Promise<void> {
   const prompt = parsed.prompt ?? (await readStdin());
   if (!prompt.trim()) fail("Missing prompt (pass as an argument or via stdin)");
 
-  const requestType = parsed.type ?? (await resolveType(model));
+  // The catalog is only needed to auto-detect the type or to tell a dedicated
+  // image model from a language model that emits images; forced text/video skip
+  // it. Fetch at most once and thread the result into the image path.
+  const capability =
+    parsed.type === undefined || parsed.type === "image"
+      ? await lookupCapability(model)
+      : undefined;
+  const requestType = parsed.type ?? requestTypeForCapability(capability);
   if (requestType === "image") {
-    await runImagePath({ ...parsed, model, prompt });
+    await runImagePath({ ...parsed, model, prompt, capability });
     return;
   }
   if (requestType === "video") {
@@ -107,11 +114,13 @@ export async function runModelCommand(args: string[]): Promise<void> {
 }
 
 /** Generate one or more images, writing each to disk and reporting warnings. */
-async function runImagePath(parsed: ModelArgs & { model: string; prompt: string }): Promise<void> {
+async function runImagePath(
+  parsed: ModelArgs & { model: string; prompt: string; capability: ModelType | undefined },
+): Promise<void> {
   // Some catalog `language` models (e.g. google/gemini-2.5-flash-image) emit
   // images as message files rather than via the image-generation endpoint, so a
   // `--type image` request on a language model routes through generateText.
-  if (usesLanguageImagePath(await lookupCapability(parsed.model))) {
+  if (usesLanguageImagePath(parsed.capability)) {
     await runLanguageImagePath(parsed);
     return;
   }
@@ -123,7 +132,7 @@ async function runImagePath(parsed: ModelArgs & { model: string; prompt: string 
     aspectRatio: parseAspect(parsed.aspect),
     n: parsed.n,
     seed: parsed.seed,
-  });
+  }).catch(failOnBillingError);
 
   for (const warning of result.warnings) {
     process.stderr.write(`warning: ${JSON.stringify(warning)}\n`);
@@ -132,7 +141,7 @@ async function runImagePath(parsed: ModelArgs & { model: string; prompt: string 
   const single = result.images.length === 1;
   for (const [index, image] of result.images.entries()) {
     const extension = mediaTypeExtension(image.mediaType);
-    const path = resolveImageOut(parsed.out, extension, index + 1, single);
+    const path = resolveOutputPath(parsed.out, extension, index + 1, single);
     await writeFile(path, image.uint8Array);
     process.stdout.write(`${path}\n`);
   }
@@ -148,7 +157,7 @@ async function runLanguageImagePath(
     model: gateway(parsed.model),
     system: parsed.system,
     messages,
-  });
+  }).catch(failOnBillingError);
 
   const images = result.files.filter((file) => file.mediaType.startsWith("image/"));
   if (images.length === 0) fail(`Model ${parsed.model} returned no images`);
@@ -156,7 +165,7 @@ async function runLanguageImagePath(
   const single = images.length === 1;
   for (const [index, image] of images.entries()) {
     const extension = mediaTypeExtension(image.mediaType);
-    const path = resolveImageOut(parsed.out, extension, index + 1, single);
+    const path = resolveOutputPath(parsed.out, extension, index + 1, single);
     await writeFile(path, image.uint8Array);
     process.stdout.write(`${path}\n`);
   }
@@ -183,7 +192,7 @@ async function runVideoPath(parsed: ModelArgs & { model: string; prompt: string 
   const single = result.videos.length === 1;
   for (const [index, video] of result.videos.entries()) {
     const extension = mediaTypeExtension(video.mediaType);
-    const path = resolveImageOut(parsed.out, extension, index + 1, single);
+    const path = resolveOutputPath(parsed.out, extension, index + 1, single);
     await writeFile(path, video.uint8Array);
     process.stdout.write(`${path}\n`);
   }
@@ -200,9 +209,10 @@ async function buildVideoPrompt(parsed: ModelArgs & { prompt: string }) {
 }
 
 /**
- * Gateway billing gates (402 video-requires-payment, 403 forbidden) carry a
+ * Gateway billing gates (402 requires-payment, 403 forbidden) carry a
  * plain-English body; surface it verbatim so the user knows to pay rather than
- * seeing an opaque SDK stack. Anything else rethrows unchanged.
+ * seeing an opaque SDK stack. Shared by the image, language-image, and video
+ * paths since any paid model can hit it. Anything else rethrows unchanged.
  */
 function failOnBillingError(error: unknown): never {
   const status = (error as { statusCode?: number })?.statusCode;
@@ -225,7 +235,7 @@ async function buildImagePrompt(parsed: ModelArgs & { prompt: string }) {
 }
 
 /** Pick a single `--out` path, or auto-name; suffix the index when n>1. */
-function resolveImageOut(
+function resolveOutputPath(
   out: string | undefined,
   extension: string,
   index: number,
@@ -303,11 +313,6 @@ async function buildContent(parsed: ModelArgs & { prompt: string }) {
   if (!mediaType) fail(`Unsupported image type: ${path}`);
   const imagePart: ImagePart = { type: "image", image: await readFile(path), mediaType };
   return [{ type: "text" as const, text: parsed.prompt }, imagePart];
-}
-
-/** Map a catalog capability to the CLI's request type; default to text. */
-async function resolveType(model: string): Promise<RequestType> {
-  return requestTypeForCapability(await lookupCapability(model));
 }
 
 async function lookupCapability(model: string): Promise<ModelType | undefined> {

@@ -322,20 +322,20 @@ OPTIONS
   -o, --out <path>         Write output here; image/video auto-name when omitted
   --system <text>          System prompt for text/image-language models
   --size <WxH>             Image size, e.g. 1024x1024
-  --aspect <W:H>          Aspect ratio, e.g. 16:9
+  --aspect <W:H>           Aspect ratio, e.g. 16:9
   --n <count>              Number of outputs to generate
-  --seed <int>            Generation seed
-  --duration <seconds>    Video length
-  --resolution <WxH>      Video resolution, e.g. 1280x720
-  --fps <int>             Video frames per second
-  --env-file <path>       Shared env file to load after cwd .env
-  -h, --help              Show this help
+  --seed <int>             Generation seed
+  --duration <seconds>     Video length
+  --resolution <WxH>       Video resolution, e.g. 1280x720
+  --fps <int>              Video frames per second
+  --env-file <path>        Shared env file to load after cwd .env
+  -h, --help               Show this help
 
 EXAMPLES
   duet model -m openai/gpt-5.5 "write a haiku about gateways"
-  duet model -m black-forest-labs/flux-1.1-pro -o art.png "a fox in snow"
+  duet model -m bfl/flux-pro-1.1 -o art.png "a fox in snow"
   duet model -m google/gemini-2.5-flash-image --type image --image src.png "add a hat"
-  duet model -m bytedance/seedance-1.0 --type video -o clip.mp4 "slow pan over dunes"
+  duet model -m bytedance/seedance-2.0 --type video -o clip.mp4 "slow pan over dunes"
 `);
 }
 
