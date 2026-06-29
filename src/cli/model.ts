@@ -1,7 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { extname } from "node:path";
 import {
-  createDownload,
   experimental_generateVideo as generateVideo,
   generateImage,
   generateText,
@@ -163,10 +162,6 @@ async function runLanguageImagePath(
   }
 }
 
-// Video files are large; cap downloads at 512 MiB rather than the SDK's 2 GiB
-// default so a runaway URL response fails fast instead of filling the disk.
-const VIDEO_MAX_BYTES = 512 * 1024 * 1024;
-
 /** Generate one or more videos, writing each to disk. Supports image->video. */
 async function runVideoPath(parsed: ModelArgs & { model: string; prompt: string }): Promise<void> {
   const gateway = createDuetModelGateway();
@@ -179,9 +174,6 @@ async function runVideoPath(parsed: ModelArgs & { model: string; prompt: string 
     fps: parsed.fps,
     n: parsed.n,
     seed: parsed.seed,
-    // Some video models return a URL the SDK must fetch; reuse the gateway's
-    // 15-minute fetch indirectly and bound the body to VIDEO_MAX_BYTES.
-    download: createDownload({ maxBytes: VIDEO_MAX_BYTES }),
   }).catch(failOnBillingError);
 
   for (const warning of result.warnings) {
