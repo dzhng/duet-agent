@@ -34,7 +34,6 @@ interface ModelArgs {
   duration?: number;
   resolution?: string;
   fps?: number;
-  json: boolean;
   envFile?: string;
   prompt?: string;
   help: boolean;
@@ -335,7 +334,7 @@ async function readStdin(): Promise<string> {
 }
 
 export function parseArgs(args: string[]): ModelArgs {
-  const out: ModelArgs = { json: false, help: false };
+  const out: ModelArgs = { help: false };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     const next = () => {
@@ -381,9 +380,6 @@ export function parseArgs(args: string[]): ModelArgs {
         break;
       case "--fps":
         out.fps = Number(next());
-        break;
-      case "--json":
-        out.json = true;
         break;
       case "--env-file":
         out.envFile = next();

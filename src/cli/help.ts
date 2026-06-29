@@ -302,7 +302,6 @@ OPTIONS
   --duration <seconds>    Video length
   --resolution <WxH>      Video resolution, e.g. 1280x720
   --fps <int>             Video frames per second
-  --json                  Reserved for machine-readable output
   --env-file <path>       Shared env file to load after cwd .env
   -h, --help              Show this help
 

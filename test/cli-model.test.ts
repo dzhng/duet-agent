@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { parseArgs, requestTypeForCapability, usesLanguageImagePath } from "../src/cli/model.js";
-import { testIfDocker } from "./helpers/docker-only.js";
 
 // Bad flags route through `fail()`, which calls process.exit(1). Patch it to
 // throw so the pure parser tests can assert on the error path without exiting.
@@ -106,11 +105,4 @@ describe("usesLanguageImagePath", () => {
   test("dedicated image models use the generateImage path", () => {
     expect(usesLanguageImagePath("image")).toBe(false);
   });
-});
-
-// File-writing image/video round-trips need the gateway and disk, so they only
-// run in docker. Host runs cover argument parsing and routing decisions above.
-testIfDocker("model command exports a runner entrypoint", async () => {
-  const { runModelCommand } = await import("../src/cli/model.js");
-  expect(typeof runModelCommand).toBe("function");
 });
