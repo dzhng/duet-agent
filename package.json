@@ -63,6 +63,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opentui/core": "^0.2.5",
     "@vscode/ripgrep": "^1.18.0",
+    "ai": "^7",
     "ajv": "^8.20.0",
     "dedent": "^1.7.2",
     "dotenv": "^17.4.2",

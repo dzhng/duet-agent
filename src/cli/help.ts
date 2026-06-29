@@ -18,6 +18,7 @@ USAGE
   duet env [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
   duet memory [--db <path>]
+  duet model -m <model> [--type text|image|video] [prompt]
   duet send-feedback [--file <path>] [text...]
   duet upgrade [--manager npm|bun|pnpm|yarn]
   echo "prompt" | duet
@@ -27,6 +28,7 @@ COMMANDS
   env                      Manually create or update the shared duet env file with provider API keys
   skills                   List installed skills + collisions as JSON
   memory                   Open a TUI to view, edit, and delete observational memories (alias: memories)
+  model                    Call a gateway model directly (text/image/video) via the AI SDK
   send-feedback            Send free-form markdown feedback to the Duet team
   upgrade                  Upgrade the global ${packageName} installation
 
@@ -89,6 +91,8 @@ EXAMPLES
   duet login
   duet env
   duet memory
+  duet model -m openai/gpt-5.5 "write a haiku about gateways"
+  duet model -m black-forest-labs/flux-1.1-pro -o art.png "a fox in snow"
   duet train ./docs/my-project
   duet send-feedback "the TUI flickers when..."
   duet upgrade
@@ -266,6 +270,47 @@ OPTIONS
   --wait <seconds>         Seconds to wait for the cross-process open-lock
                            (default: 30; 0 fails immediately)
   -h, --help               Show this help
+`);
+}
+
+export function printModelHelp(): void {
+  console.log(`
+duet model — Call a gateway model directly via the AI SDK
+
+USAGE
+  duet model -m <model> [options] [prompt]
+  echo "prompt" | duet model -m <model>
+
+DESCRIPTION
+  Talks to a model directly through the Vercel AI SDK pointed at the Duet
+  gateway, bypassing the agent harness. The request type is inferred from
+  the gateway model catalog (language→text, image→image, video→video) and
+  can be overridden with --type. Text streams to stdout; image and video
+  generations write files and print each path. Auth uses DUET_API_KEY.
+
+OPTIONS
+  -m, --model <name>       Gateway model id, e.g. openai/gpt-5.5 (required)
+  --type text|image|video  Override the catalog-inferred request type
+  --image <path>           Input image: vision context (text), edit source
+                           (image), or still to animate (video)
+  -o, --out <path>         Write output here; image/video auto-name when omitted
+  --system <text>          System prompt for text/image-language models
+  --size <WxH>             Image size, e.g. 1024x1024
+  --aspect <W:H>          Aspect ratio, e.g. 16:9
+  --n <count>              Number of outputs to generate
+  --seed <int>            Generation seed
+  --duration <seconds>    Video length
+  --resolution <WxH>      Video resolution, e.g. 1280x720
+  --fps <int>             Video frames per second
+  --json                  Reserved for machine-readable output
+  --env-file <path>       Shared env file to load after cwd .env
+  -h, --help              Show this help
+
+EXAMPLES
+  duet model -m openai/gpt-5.5 "write a haiku about gateways"
+  duet model -m black-forest-labs/flux-1.1-pro -o art.png "a fox in snow"
+  duet model -m google/gemini-2.5-flash-image --type image --image src.png "add a hat"
+  duet model -m bytedance/seedance-1.0 --type video -o clip.mp4 "slow pan over dunes"
 `);
 }
 
