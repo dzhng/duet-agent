@@ -18,6 +18,7 @@ import packageJson from "../package.json" with { type: "json" };
 import { runEnvCommand } from "./cli/env.js";
 import { runLoginCommand } from "./cli/login.js";
 import { runMemoryCommand } from "./cli/memory.js";
+import { runModelCommand } from "./cli/model.js";
 import { runRpcCommand } from "./cli/rpc.js";
 import { runRunCommand } from "./cli/run.js";
 import { runSendFeedbackCommand } from "./cli/send-feedback.js";
@@ -39,6 +40,7 @@ export type { LoginCommandIO } from "./cli/login.js";
 export { runSkillsCommand } from "./cli/skills.js";
 export { runUpgradeCommand } from "./cli/upgrade.js";
 export { runMemoryCommand } from "./cli/memory.js";
+export { runModelCommand } from "./cli/model.js";
 export { runMemoryAddCommand } from "./cli/memory-add.js";
 export { runMemoryReflectCommand } from "./cli/memory-reflect.js";
 export { runTrainCommand } from "./cli/train.js";
@@ -89,6 +91,10 @@ export async function runCli(): Promise<void> {
     }
     if (subcommand === "memory" || subcommand === "memories") {
       await runMemoryCommand(args.slice(1));
+      return;
+    }
+    if (subcommand === "model") {
+      await runModelCommand(args.slice(1));
       return;
     }
     if (subcommand === "train") {
