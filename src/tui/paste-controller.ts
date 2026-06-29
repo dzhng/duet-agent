@@ -14,6 +14,7 @@ import {
 } from "./paste.js";
 import type { StatusController } from "./status-controller.js";
 import { COLORS } from "./theme.js";
+import type { TurnPromptImage } from "../types/protocol.js";
 
 export interface PasteControllerOptions {
   /** Composer textarea. The controller inserts `[Image #N]` placeholders
@@ -95,6 +96,21 @@ export class PasteController {
     this.pendingImages = [];
     this.nextImageId = 1;
     this.statusController.setPendingImageCount(0);
+  }
+
+  /** Re-stage already-built image attachments from a queued follow-up. */
+  stageImages(images: readonly TurnPromptImage[]): void {
+    if (images.length === 0) return;
+    for (const attachment of images) {
+      this.pendingImages.push({
+        id: this.nextImageId,
+        label: `[Image #${this.nextImageId}]`,
+        path: "",
+        attachment,
+      });
+      this.nextImageId += 1;
+    }
+    this.statusController.setPendingImageCount(this.pendingImages.length);
   }
 
   /**

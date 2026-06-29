@@ -223,6 +223,12 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
   // ---- scenario plumbing ---------------------------------------------------
 
   private emit(event: TurnEvent): void {
+    // Keep the snapshot returned by getState() consistent with the queue
+    // events we emit, mirroring the production runner so consumers that read
+    // state.followUpQueue (e.g. the Ctrl+C pop handler) see the live queue.
+    if (event.type === "follow_up_queue") {
+      this.state = { ...this.state, followUpQueue: [...event.followUpQueue] };
+    }
     for (const handler of this.handlers) handler(event);
   }
 
