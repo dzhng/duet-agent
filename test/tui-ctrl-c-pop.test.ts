@@ -159,6 +159,28 @@ describe("TUI Ctrl+C pops queued follow-up", () => {
     });
   });
 
+  testIfDocker(
+    "popping a follow-up whose text references its on-disk image does not double-send it",
+    async () => {
+      const fixture = makePngFixture("ondisk");
+      await startLongRunningTurn();
+      harness.session.editFollowUpQueue({
+        prompts: [{ message: `describe ${fixture}`, images: [TINY_PNG] }],
+      });
+      await harness.flush();
+
+      harness.mockInput.pressCtrlC();
+      await harness.flush();
+      expect(harness.inputField.plainText).toBe(`describe ${fixture}`);
+
+      harness.mockInput.pressEnter();
+      await harness.flush();
+
+      const lastPrompt = harness.promptCalls.at(-1);
+      expect(lastPrompt?.images).toEqual([TINY_PNG]);
+    },
+  );
+
   testIfDocker("pop suppression matches duplicate text by attachment payload", async () => {
     const otherPng = { ...TINY_PNG, data: Buffer.from("other").toString("base64") };
     await startLongRunningTurn();

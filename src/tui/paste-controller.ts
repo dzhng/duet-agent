@@ -282,6 +282,11 @@ export class PasteController {
     const candidates = extractImagePathCandidates(message);
     if (candidates.length === 0) return;
     const alreadyAttached = new Set(this.pendingImages.map((p) => p.path));
+    // Re-staged follow-up images keep their bytes but not their source path,
+    // so path-only dedup misses popped prompts that still mention that path.
+    const alreadyAttachedContent = new Set(
+      this.pendingImages.map((p) => imageContentKey(p.attachment)),
+    );
     const seen = new Set<string>();
     for (const candidate of candidates) {
       // Normalize each extracted substring through the same shell-escape /
@@ -306,6 +311,9 @@ export class PasteController {
           rawPath: normalized,
           id: this.nextImageId,
         });
+        const contentKey = imageContentKey(pending.attachment);
+        if (alreadyAttachedContent.has(contentKey)) continue;
+        alreadyAttachedContent.add(contentKey);
         alreadyAttached.add(pending.path);
         this.nextImageId += 1;
         this.pendingImages.push(pending);
@@ -384,6 +392,10 @@ export class PasteController {
       );
     }
   }
+}
+
+function imageContentKey(attachment: TurnPromptImage): string {
+  return `${attachment.mimeType}:${attachment.data}`;
 }
 
 function formatBytes(n: number): string {
