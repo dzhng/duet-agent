@@ -101,6 +101,23 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     },
   },
   {
+    // Anthropic's Claude Sonnet 5 is routed through the duet/vercel gateways
+    // under the `anthropic/claude-sonnet-5` model id. pi-ai's catalog does not
+    // ship it yet — not on the gateway, anthropic-direct, or OpenRouter — so
+    // resolution clones the Opus 4.8 gateway entry (identical anthropic-messages
+    // transport, 1M context, 128k output cap) until it does; see
+    // `resolveMissingModel` in duet-gateway.ts. Only the gateway routes are
+    // listed because the clone backs `vercel-ai-gateway` (which `duet-gateway`
+    // resolves through); add the anthropic/openrouter routes once pi-ai ships
+    // them so a pinned resolve does not fall through to an undefined model.
+    shorthand: "sonnet-5",
+    aliases: ["claude-sonnet-5", "anthropic/claude-sonnet-5"],
+    modelsByProvider: {
+      "duet-gateway": "anthropic/claude-sonnet-5",
+      "vercel-ai-gateway": "anthropic/claude-sonnet-5",
+    },
+  },
+  {
     shorthand: "sonnet-4.6",
     aliases: [
       "claude-sonnet-4.6",

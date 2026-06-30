@@ -106,29 +106,32 @@ function synthesizePassthroughModel(
 }
 
 /**
- * Opus 4.8 sibling cloned to synthesize Claude Fable 5 for the Vercel gateway
- * catalog, which pi-ai has not shipped there yet (Anthropic direct already
- * resolves it). Fable 5 reuses Opus 4.8's anthropic-messages transport, 1M
+ * Opus 4.8 siblings cloned to synthesize models pi-ai's gateway catalog has not
+ * shipped yet. Each `to` reuses Opus 4.8's anthropic-messages transport, 1M
  * context window, and 128k output cap unchanged, so swapping the id yields a
- * correct spec — and a better one than the generic synthesized placeholder.
- * The `duet-gateway` route resolves through the `vercel-ai-gateway` catalog, so
- * this entry covers it too. `to` scopes the clone to Fable 5 so other
- * catalog-missing ids are not rewritten.
+ * correct spec — and a better one than the generic synthesized placeholder,
+ * which would cap context at 256k and output at 64k. The `duet-gateway` route
+ * resolves through the `vercel-ai-gateway` catalog, so these entries cover it
+ * too. `to` scopes each clone to one id so other catalog-missing ids are not
+ * rewritten. Drop an entry the moment pi-ai ships that model to the gateway.
  */
-const FABLE_5_CLONE_SOURCES: Record<string, { from: string; to: string }> = {
-  "vercel-ai-gateway": { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-fable-5" },
+const GATEWAY_CLONE_SOURCES: Record<string, ReadonlyArray<{ from: string; to: string }>> = {
+  "vercel-ai-gateway": [
+    { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-fable-5" },
+    { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-sonnet-5" },
+  ],
 };
 
 /**
  * Clone a known sibling on the same provider to build a Model pi-ai has not
  * shipped yet; returns undefined when the provider/modelId pair is not a
  * pending clone. Shared by the `duet-gateway` path (above) and the
- * `vercel-ai-gateway` path in resolver.ts. Delete the Fable 5 entry once pi-ai
- * ships it to the gateway catalog and it resolves directly.
+ * `vercel-ai-gateway` path in resolver.ts. Delete a clone entry once pi-ai
+ * ships that model to the gateway catalog and it resolves directly.
  */
 export function resolveMissingModel(provider: string, modelId: string): Model<any> | undefined {
-  const clone = FABLE_5_CLONE_SOURCES[provider];
-  if (!clone || modelId !== clone.to) return undefined;
+  const clone = GATEWAY_CLONE_SOURCES[provider]?.find((entry) => entry.to === modelId);
+  if (!clone) return undefined;
   const sibling = getModel(provider as any, clone.from as any) as Model<any> | undefined;
   return sibling ? { ...sibling, id: modelId, name: modelId } : undefined;
 }
