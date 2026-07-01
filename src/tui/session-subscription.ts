@@ -1,6 +1,6 @@
 import type { BoxRenderable, TextRenderable } from "@opentui/core";
 import type { Session } from "../session/session.js";
-import type { TurnEvent, TurnFollowUpQueueEntry } from "../types/protocol.js";
+import type { TurnEvent, TurnFollowUpQueueEntry, TurnPromptImage } from "../types/protocol.js";
 import type { QuestionPicker } from "./question-picker.js";
 import type { Sidebar } from "./sidebar.js";
 import type { StatusController } from "./status-controller.js";
@@ -13,6 +13,10 @@ import { COLORS } from "./theme.js";
  * the panel never grows past its `maxHeight` in layout.ts.
  */
 const FOLLOW_UP_MAX_VISIBLE = 3;
+
+export interface FollowUpPopSuppression {
+  pending: TurnFollowUpQueueEntry[];
+}
 
 export interface SessionSubscriptionDeps {
   session: Session;
@@ -32,6 +36,12 @@ export interface SessionSubscriptionDeps {
    * already running; this callback fires it later when the queue shrinks.
    */
   appendUserBlock(message: string): void;
+  /**
+   * Entries lifted out of the queue by a Ctrl+C pop. When a removed entry
+   * matches one of these, it is dropped silently rather than rendered as a
+   * delivered `you:` block. Optional so non-TUI callers (tests) can omit it.
+   */
+  popSuppression?: FollowUpPopSuppression;
 }
 
 /**
@@ -77,6 +87,7 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
     appendLine,
     appendBlock,
     appendUserBlock,
+    popSuppression,
   } = deps;
   const refreshSidebar = () => refreshSidebarFromSession({ session, sidebar });
 
@@ -91,12 +102,9 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
     if (event.type === "step") {
       stepRenderer.renderStep(event.step);
     } else if (event.type === "follow_up_queue") {
-      // Render the new queue snapshot, mirror the count into the status
-      // line, and replay any entries the runner just delivered (entries
-      // present in the prior snapshot but absent from the new one) as
-      // proper `you:` transcript blocks.
       const next = event.followUpQueue;
       for (const delivered of diffRemovedEntries(previousQueue, next)) {
+        if (consumeSuppressedPop(popSuppression, delivered)) continue;
         appendUserBlock(delivered.message);
         if (delivered.images?.length) {
           appendBlock(
@@ -167,6 +175,34 @@ function renderFollowUpPanel(
   }
   body.content = lines.join("\n");
   panel.visible = true;
+}
+
+function consumeSuppressedPop(
+  suppression: FollowUpPopSuppression | undefined,
+  removed: TurnFollowUpQueueEntry,
+): boolean {
+  if (!suppression) return false;
+  const index = suppression.pending.findIndex((entry) => sameFollowUpEntry(entry, removed));
+  if (index === -1) return false;
+  suppression.pending.splice(index, 1);
+  return true;
+}
+
+function sameFollowUpEntry(a: TurnFollowUpQueueEntry, b: TurnFollowUpQueueEntry): boolean {
+  return a.message === b.message && sameImages(a.images, b.images);
+}
+
+function sameImages(
+  a: readonly TurnPromptImage[] | undefined,
+  b: readonly TurnPromptImage[] | undefined,
+): boolean {
+  const left = a ?? [];
+  const right = b ?? [];
+  if (left.length !== right.length) return false;
+  return left.every(
+    (image, index) =>
+      image.data === right[index]?.data && image.mimeType === right[index]?.mimeType,
+  );
 }
 
 /**

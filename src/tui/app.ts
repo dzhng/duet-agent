@@ -17,7 +17,7 @@ import {
 } from "./key-handlers.js";
 import { buildLayout } from "./layout.js";
 import { acquireRenderer, waitForRendererDestroy } from "./renderer-lifecycle.js";
-import { bindSessionToUi } from "./session-subscription.js";
+import { bindSessionToUi, type FollowUpPopSuppression } from "./session-subscription.js";
 import { StarterSection } from "./starter-section.js";
 import { StatusController } from "./status-controller.js";
 import { StepRenderer } from "./step-renderer.js";
@@ -232,6 +232,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const escapeState: EscapeSuppressionFlag = { suppress: false };
   const ctrlCState: CtrlCSuppressionFlag = { suppress: false };
+  const popSuppression: FollowUpPopSuppression = { pending: [] };
   const setEscapeSuppress = () => {
     escapeState.suppress = true;
   };
@@ -287,6 +288,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     appendLine,
     appendBlock,
     appendUserBlock,
+    popSuppression,
   });
 
   // Esc cancels the in-flight turn; idle Esc is a no-op.
@@ -296,6 +298,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   }
 
   // Ctrl+C is a small state machine rather than an immediate quit:
+  //   0. running turn + empty composer + queued follow-ups → pop the newest
+  //                      queued entry back into the composer (one per press),
+  //                      leaving the turn running.
   //   1. running turn  → interrupt it (identical to Esc), no exit prompt.
   //   2. composer text → clear the composer (multiline included) only;
   //                       attachments, autocomplete, and picker state stay.
@@ -304,6 +309,21 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // The exit itself reuses `renderer.destroy()`, the same teardown the old
   // OpenTUI exitOnCtrlC handler used, so shutdown semantics are unchanged.
   function handleCtrlC(): void {
+    if (
+      statusController.isRunning() &&
+      ui.inputField.plainText.length === 0 &&
+      pasteController.attachments().length === 0
+    ) {
+      const queue = input.session.getState()?.followUpQueue ?? [];
+      const popped = queue.at(-1);
+      if (popped) {
+        popSuppression.pending.push(popped);
+        input.session.editFollowUpQueue({ prompts: queue.slice(0, -1) });
+        pasteController.stageImages(popped.images ?? []);
+        ui.inputField.insertText(popped.message);
+        return;
+      }
+    }
     if (statusController.isRunning()) {
       handleEscape();
       return;
