@@ -28,7 +28,7 @@ function makeContext(
     appendBlock: (label, body, fg) => {
       blocks.push({ label, body, fg });
     },
-    onReset: () => {},
+    onClear: () => {},
     setModel,
     setThinkingLevel,
     ...overrides,
@@ -375,21 +375,21 @@ describe("applyInlineSlashCommands", () => {
         setModelCalls.push(model);
         return { modelName: model };
       },
-      onReset: () => {
-        throw new Error("onReset must not run when filtered out");
+      onClear: () => {
+        throw new Error("onClear must not run when filtered out");
       },
     });
 
     const { handledCommands, residue } = applyInlineSlashCommands(
-      "/model sonnet-4.6 also /reset please",
+      "/model sonnet-4.6 also /clear please",
       ctx,
       { onlyCommands: new Set(["model", "thinking"]) },
     );
 
     expect(setModelCalls).toEqual(["sonnet-4.6"]);
     expect(handledCommands).toEqual(["model"]);
-    // /reset stays in the residue because it was filtered out of the
+    // /clear stays in the residue because it was filtered out of the
     // inline-eligible set — the CLI intentionally ignores it.
-    expect(residue).toBe("also /reset please");
+    expect(residue).toBe("also /clear please");
   });
 });

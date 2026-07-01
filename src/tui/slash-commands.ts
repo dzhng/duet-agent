@@ -17,7 +17,7 @@ export interface SlashCommandContext {
    * Controllers are optional because not every consumer of this
    * interface wires the full TUI. The non-TUI CLI applies inline
    * `/model` and `/thinking` against a stripped-down context that
-   * has no clipboard, transcript, or reset surface — those commands
+   * has no clipboard, transcript, or session-management surface — those commands
    * are filtered out via `applyInlineSlashCommands`'s `onlyCommands`
    * before they could ever run, so the handlers that depend on these
    * controllers never see a missing one in practice.
@@ -27,12 +27,12 @@ export interface SlashCommandContext {
   transcriptWriter?: TranscriptWriter;
   appendBlock(label: string | null, body: string, fg: string): void;
   /**
-   * Invoked by `/reset` to ask the outer dispatcher to dispose the
+   * Invoked by `/clear` to ask the outer dispatcher to dispose the
    * current session and re-enter `runTui` with a fresh one. The TUI
    * tears its renderer down immediately after so the parent `while`
    * loop in `cli/run.ts` wakes and performs the swap.
    */
-  onReset?(): void;
+  onClear?(): void;
   /**
    * Invoked by `/model <name>` to swap the model used for subsequent
    * turns. Returns the canonicalized name the session will use on the
@@ -64,7 +64,7 @@ export interface SlashCommandContext {
  * takes when it appears anywhere in a longer prompt rather than as the
  * whole submitted message.
  *
- * - `"none"`: bare invocation only (`/reset`). Matches `/name` with
+ * - `"none"`: bare invocation only (`/clear`). Matches `/name` with
  *   whitespace / start / end boundaries on both sides.
  * - `"token"`: requires one whitespace-bounded argument (`/model X`).
  *   Matches `/name <token>` with whitespace / start before and consumes
@@ -171,12 +171,12 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
     },
   },
   {
-    name: "reset",
+    name: "clear",
     description: "Dispose the current session and start a fresh one",
-    matches: (message) => isBare(message, "reset"),
+    matches: (message) => isBare(message, "clear"),
     handle: (_, ctx) => {
-      ctx.appendBlock("[reset]", "starting a new session…", COLORS.system);
-      ctx.onReset?.();
+      ctx.appendBlock("[clear]", "starting a new session…", COLORS.system);
+      ctx.onClear?.();
     },
     inline: "none",
   },
