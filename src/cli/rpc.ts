@@ -55,9 +55,17 @@ export interface RpcRunner {
  * recover from a bad line without losing an in-flight turn.
  *
  * Unlike the TUI path, RPC mode bypasses {@link SessionManager} entirely:
- * no session ids, no `state.json`, no resume hints. Persistence policy lives
- * with the caller. Memory still works regardless of session: `--incognito`
- * keeps it in-process, otherwise it persists to the configured memory db.
+ * no `state.json`, no resume hints. Persistence policy lives with the caller.
+ * Memory still works regardless of session: `--incognito` keeps it in-process,
+ * otherwise it persists to the configured memory db.
+ *
+ * Session attribution is opt-in via the `--session <id>` spawn flag. One RPC
+ * process is one logical session (a second `start` is rejected), so the id is
+ * a construction-time config value rather than a per-turn field: it lands on
+ * `config.sessionId` before the runner is built and stamps every observation
+ * written during the process. The `start` command and `turn_started` event
+ * shape are unchanged — the caller already supplied the id, so it is not
+ * echoed back.
  */
 export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promise<void> {
   const parsed = parseRpcArgs(args);
@@ -89,6 +97,7 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
       ...(parsed.memoryModelName ? { memoryModelName: parsed.memoryModelName } : {}),
       incognito: parsed.incognito,
       ...(parsed.dbPath ? { dbPath: parsed.dbPath } : {}),
+      ...(parsed.sessionId ? { sessionId: parsed.sessionId } : {}),
       workDir: parsed.workDir,
       ...(parsed.systemInstructions ? { systemInstructions: parsed.systemInstructions } : {}),
       ...(parsed.systemPromptFiles ? { systemPromptFiles: parsed.systemPromptFiles } : {}),
@@ -157,6 +166,14 @@ export interface ParsedRpcArgs {
    * default so RPC mode persists memory just like the TUI/run path.
    */
   dbPath?: string;
+  /**
+   * Caller-owned session id from the `--session <id>` spawn flag. Flows into
+   * `config.sessionId` before the {@link TurnRunner} is constructed, so every
+   * observation written during the process is attributed to this session. One
+   * RPC process is one logical session; omitted when the host does not want
+   * per-session attribution (writes then carry no session id).
+   */
+  sessionId?: string;
   incognito: boolean;
   /** When true, skip the on-load default-skill sync. */
   noSkillSync: boolean;
@@ -177,6 +194,7 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
   let systemPromptFiles: string[] | undefined;
   let envFilePath: string | undefined;
   let dbPath: string | undefined;
+  let sessionId: string | undefined;
   let incognito = false;
   let noSkillSync = false;
 
@@ -223,6 +241,10 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
         dbPath = args[++i];
         break;
+      case "--session":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        sessionId = args[++i];
+        break;
       case "--no-skill-sync":
         noSkillSync = true;
         break;
@@ -261,6 +283,7 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
     ...(systemPromptFiles ? { systemPromptFiles } : {}),
     ...(envFilePath ? { envFilePath } : {}),
     ...(dbPath ? { dbPath } : {}),
+    ...(sessionId ? { sessionId } : {}),
     incognito,
     noSkillSync,
   };

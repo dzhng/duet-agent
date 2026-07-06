@@ -27,9 +27,8 @@ import type {
   StateMachineTerminalResult,
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE } from "../types/state-machine.js";
-import { generateStructuredOutput } from "../core/structured-output.js";
 import type { EmbedFn } from "../memory/embedding.js";
-import { recallMemory, reciprocalRankFusion, type RecallScope } from "../memory/recall.js";
+import { recallMemoryExpanded, type RecallScope } from "../memory/recall.js";
 import type { Observation } from "../types/memory.js";
 import type { MemorySession } from "../memory/session.js";
 import type { ActiveStateOutput } from "./state-machine-controller.js";
@@ -711,50 +710,26 @@ function createRecallMemoryTool(
       const scope: RecallScope = params.scope ?? "all";
       const limit = params.limit ?? 8;
 
-      const queries: string[] = [params.query];
-      if (params.expand && storage.expansionModel) {
-        // Paraphrases broaden recall on vague queries by giving the
-        // hybrid pipeline two more shots at matching the user's intent.
-        // Ranks fuse across all three runs so a row that scores well
-        // on any phrasing rises to the top.
-        const paraphrases = await generateQueryParaphrases(params.query, storage.expansionModel);
-        queries.push(...paraphrases);
-      }
+      const { observations, vectorSearchAttempted, vectorSearchSucceeded, expanded } =
+        await recallMemoryExpanded({
+          session,
+          ...(storage.embed ? { embed: storage.embed } : {}),
+          query: params.query,
+          limit,
+          scope,
+          ...(storage.sessionId ? { sessionId: storage.sessionId } : {}),
+          // Only expand when the model asked for it and a paraphrase model is
+          // configured; otherwise stay on the cheap single-query path.
+          ...(params.expand && storage.expansionModel
+            ? { expansionModel: storage.expansionModel }
+            : {}),
+        });
 
-      const runs = await Promise.all(
-        queries.map((query) =>
-          recallMemory({
-            session,
-            embed: storage.embed,
-            query,
-            // Over-fetch per run so the post-fusion top-K is drawn from
-            // a richer candidate pool when expand is on.
-            limit: params.expand ? limit * 2 : limit,
-            scope,
-            sessionId: storage.sessionId,
-          }),
-        ),
-      );
-
-      const fusedIds = reciprocalRankFusion(
-        runs.map((run) =>
-          run.observations.map((observation, rank) => ({ id: observation.id, rank })),
-        ),
-      ).slice(0, limit);
-      const byId = new Map(
-        runs.flatMap((run) => run.observations).map((observation) => [observation.id, observation]),
-      );
-      const observations = fusedIds
-        .map((id) => byId.get(id))
-        .filter((observation): observation is Observation => observation !== undefined);
-
-      const vectorAttempted = runs.some((run) => run.vectorSearchAttempted);
-      const vectorSucceeded = runs.some((run) => run.vectorSearchSucceeded);
       const summary = observations.length
         ? observations.map(formatRecallHit).join("\n\n")
         : "(no matches)";
       const header =
-        vectorAttempted && !vectorSucceeded
+        vectorSearchAttempted && !vectorSearchSucceeded
           ? "# Memory recall (keyword-only fallback; semantic search unavailable)"
           : "# Memory recall";
 
@@ -764,40 +739,13 @@ function createRecallMemoryTool(
           type: "recall_memory",
           query: params.query,
           scope,
-          expanded: queries.length > 1,
+          expanded,
           hits: observations.length,
-          vectorSearchSucceeded: vectorSucceeded,
+          vectorSearchSucceeded,
         },
       };
     },
   };
-}
-
-const paraphraseSchema = Type.Object({
-  paraphrases: Type.Array(Type.String(), { minItems: 1, maxItems: 4 }),
-});
-
-async function generateQueryParaphrases(query: string, model: string): Promise<string[]> {
-  // Two paraphrases is the sweet spot in the gbrain ablation: enough
-  // breadth to catch reworded queries, few enough that latency stays
-  // under ~300ms with cheap models. Returning the original on failure
-  // keeps recall_memory itself robust even when expansion misbehaves.
-  try {
-    const result = await generateStructuredOutput({
-      model,
-      tool: {
-        name: "emit_paraphrases",
-        description: "Return alternate phrasings of the user's query.",
-        parameters: paraphraseSchema,
-      },
-      systemPrompt:
-        "You rewrite a memory-recall query into 2 alternative phrasings. Keep the same intent; vary terminology. Do not answer the query.",
-      prompt: `Original query: ${query}`,
-    });
-    return result.paraphrases.slice(0, 2);
-  } catch {
-    return [];
-  }
 }
 
 function formatRecallHit(observation: Observation): string {

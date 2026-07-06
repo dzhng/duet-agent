@@ -10,6 +10,12 @@ import { readArchiveManifest, writeArchive } from "../src/train/archive.js";
 import type { TrainListEntry, TrainManifest, TrainRecord } from "../src/train/types.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
+// The `--json` wire shape converts the internal epoch-ms `createdAt` to an ISO
+// 8601 string (`toTrainListEntryJson`/`toTrainRecordJson`); the in-memory type
+// keeps it numeric. Parse into these shapes so the ISO assertions type-check.
+type TrainListEntryJson = Omit<TrainListEntry, "createdAt"> & { createdAt: string };
+type TrainRecordJson = Omit<TrainRecord, "createdAt"> & { createdAt: string };
+
 function bufferStream(): { stream: Writable; read: () => string } {
   const chunks: Buffer[] = [];
   const stream = new Writable({
@@ -70,6 +76,21 @@ async function storedContent(
   }
 }
 
+/** The stored epoch-ms `createdAt` for `memoryId`, read back from `dbPath`. */
+async function storedCreatedAt(
+  dbPath: string,
+  dir: string,
+  memoryId: string,
+): Promise<number | undefined> {
+  const persistence = await loadStoredMemory(dbPath, dir);
+  try {
+    const snapshot = await readAllObservations(persistence.session!);
+    return snapshot.observations.find((row) => row.id === memoryId)?.createdAt;
+  } finally {
+    await persistence.dispose();
+  }
+}
+
 describe("formatTrainList", () => {
   test("renders an empty-state hint when there are no trainings", () => {
     expect(formatTrainList([])).toBe(
@@ -115,7 +136,7 @@ describe("duet train list (end-to-end through runTrainCommand)", () => {
         content: "older training",
         tags: ["train", "train:alpha"],
       });
-      await appendObservation(session, {
+      const beta = await appendObservation(session, {
         kind: "manual",
         observedDate: "2026-06-10",
         priority: "high",
@@ -139,10 +160,13 @@ describe("duet train list (end-to-end through runTrainCommand)", () => {
         stderr: bufferStream().stream,
       });
 
-      const entries = JSON.parse(stdout.read()) as TrainListEntry[];
+      const entries = JSON.parse(stdout.read()) as TrainListEntryJson[];
       expect(entries).toHaveLength(2);
       // Sorted newest-first by createdAt: beta was appended after alpha.
       expect(entries.map((e) => e.slug)).toEqual(["beta", "alpha"]);
+      // `createdAt` is emitted as the ISO 8601 string of the stored epoch ms,
+      // not the raw number — the exact value, matched against the DB row.
+      expect(entries[0]!.createdAt).toBe(new Date(beta!.createdAt).toISOString());
       for (const e of entries) {
         expect(e.hasArchive).toBe(false);
         expect(e.headline).toBeUndefined();
@@ -226,11 +250,14 @@ describe("duet train show", () => {
         stderr: bufferStream().stream,
       });
 
-      const record = JSON.parse(stdout.read()) as TrainRecord;
+      const record = JSON.parse(stdout.read()) as TrainRecordJson;
       expect(record.slug).toBe("gamma");
       expect(record.content).toBe("gamma synthesized memory");
       expect(record.memoryId).toMatch(/^mem_/);
       expect(record.hasArchive).toBe(false);
+      // `createdAt` is the ISO 8601 string of the row's stored epoch ms.
+      const createdMs = await storedCreatedAt(dbPath, dir, record.memoryId);
+      expect(record.createdAt).toBe(new Date(createdMs!).toISOString());
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

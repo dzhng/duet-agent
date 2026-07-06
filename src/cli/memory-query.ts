@@ -2,13 +2,19 @@ import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
 import type { Observation, ObservationKind, ObservationPriority } from "../types/memory.js";
 import { printMemoryHelp } from "./help.js";
 import { type MemoryQueryFilters, scoreObservation, withMemoryDb } from "./memory-db.js";
-import { fail, resolveUserPath } from "./shared.js";
+import { toMemoryJson } from "./memory-json.js";
+import { resolveUserPath, usageError } from "./shared.js";
 
 interface MemoryQueryIO {
   stdout: NodeJS.WritableStream;
 }
 
-type ScoredObservation = Observation & { score: number };
+/**
+ * An observation paired with its global-pack ranking score. `packScore` uses
+ * the same name the canonical {@link toMemoryJson} shape emits, so the table
+ * renderer and the JSON output read one field instead of drifting.
+ */
+type ScoredObservation = Observation & { packScore: number };
 
 /**
  * Build a runtime filter list that must enumerate *every* member of `T`.
@@ -23,9 +29,15 @@ function exhaustiveList<T extends string>() {
 }
 
 const KINDS = exhaustiveList<ObservationKind>()(["observation", "reflection", "note", "manual"]);
-const PRIORITIES = exhaustiveList<ObservationPriority>()(["high", "medium", "low"]);
+/**
+ * The canonical `--priority` and `--source` value sets, compile-time-checked
+ * to enumerate every union member. Exported so sibling memory commands
+ * (e.g. `memory add`) validate the same axes against one source of truth
+ * instead of redeclaring parallel literal lists that can silently drift.
+ */
+export const PRIORITIES = exhaustiveList<ObservationPriority>()(["high", "medium", "low"]);
 type SourceKind = Observation["source"]["kind"];
-const SOURCES = exhaustiveList<SourceKind>()(["user", "agent", "system"]);
+export const SOURCES = exhaustiveList<SourceKind>()(["user", "agent", "system", "api", "import"]);
 
 export interface MemoryQueryOptions {
   dbPath: string;
@@ -45,35 +57,40 @@ function parseDateBound(raw: string, flag: string, edge: "start" | "end"): numbe
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
     const iso = `${raw}T${edge === "start" ? "00:00:00.000" : "23:59:59.999"}Z`;
     const ms = Date.parse(iso);
-    if (Number.isNaN(ms)) fail(`Invalid ${flag} date: ${raw}`);
+    if (Number.isNaN(ms)) usageError(`Invalid ${flag} date: ${raw}`);
     // Reject impossible calendar dates (e.g. 2026-02-31) that JS silently
     // normalizes into a different day rather than returning NaN — otherwise a
     // typo slides the createdAt window and the wrong rows get exported.
     if (new Date(ms).toISOString().slice(0, 10) !== raw) {
-      fail(`Invalid ${flag} date: ${raw} is not a real calendar date`);
+      usageError(`Invalid ${flag} date: ${raw} is not a real calendar date`);
     }
     return ms;
   }
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(raw)) {
     const ms = Date.parse(`${raw}Z`);
-    if (Number.isNaN(ms)) fail(`Invalid ${flag} datetime: ${raw}`);
+    if (Number.isNaN(ms)) usageError(`Invalid ${flag} datetime: ${raw}`);
     // Same round-trip guard for the datetime form (e.g. 2026-02-31T00:00:00).
     if (new Date(ms).toISOString().slice(0, 19) !== raw) {
-      fail(`Invalid ${flag} datetime: ${raw} is not a real calendar datetime`);
+      usageError(`Invalid ${flag} datetime: ${raw} is not a real calendar datetime`);
     }
     return ms;
   }
-  fail(`Invalid ${flag} value: ${raw} (expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)`);
+  usageError(`Invalid ${flag} value: ${raw} (expected YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)`);
 }
 
-function parseEnum<T extends string>(
+/**
+ * Validate a flag value against a closed set, exiting `64` (usage error) on a
+ * missing or out-of-set value. Shared across memory subcommands so every enum
+ * flag reports the same message shape and exit code.
+ */
+export function parseEnum<T extends string>(
   raw: string | undefined,
   allowed: readonly T[],
   flag: string,
 ): T {
-  if (!raw || raw.startsWith("-")) fail(`Missing value for ${flag}`);
+  if (!raw || raw.startsWith("-")) usageError(`Missing value for ${flag}`);
   if (!(allowed as readonly string[]).includes(raw)) {
-    fail(`Invalid ${flag} value: ${raw} (expected one of ${allowed.join(", ")})`);
+    usageError(`Invalid ${flag} value: ${raw} (expected one of ${allowed.join(", ")})`);
   }
   return raw as T;
 }
@@ -95,7 +112,7 @@ export function parseMemoryArgs(args: string[]): MemoryQueryOptions | undefined 
     const arg = args[i]!;
     switch (arg) {
       case "--db":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${arg}`);
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
         dbPath = resolveUserPath(args[++i]!);
         break;
       // `--type` and `--kind` are aliases for the same `Observation.kind` axis.
@@ -112,16 +129,23 @@ export function parseMemoryArgs(args: string[]): MemoryQueryOptions | undefined 
         filters.source = parseEnum(args[++i], SOURCES, arg);
         hasFilter = true;
         break;
+      case "--session": {
+        const raw = args[++i];
+        if (!raw || raw.startsWith("-")) usageError(`Missing value for ${arg}`);
+        filters.sessionId = raw;
+        hasFilter = true;
+        break;
+      }
       case "--from": {
         const raw = args[++i];
-        if (!raw || raw.startsWith("-")) fail(`Missing value for ${arg}`);
+        if (!raw || raw.startsWith("-")) usageError(`Missing value for ${arg}`);
         filters.fromMs = parseDateBound(raw, arg, "start");
         hasFilter = true;
         break;
       }
       case "--to": {
         const raw = args[++i];
-        if (!raw || raw.startsWith("-")) fail(`Missing value for ${arg}`);
+        if (!raw || raw.startsWith("-")) usageError(`Missing value for ${arg}`);
         filters.toMs = parseDateBound(raw, arg, "end");
         hasFilter = true;
         break;
@@ -133,7 +157,7 @@ export function parseMemoryArgs(args: string[]): MemoryQueryOptions | undefined 
         const raw = args[++i];
         const seconds = Number(raw);
         if (!Number.isFinite(seconds) || seconds < 0) {
-          fail(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
+          usageError(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
         }
         waitBudgetMs = seconds * 1000;
         break;
@@ -143,12 +167,12 @@ export function parseMemoryArgs(args: string[]): MemoryQueryOptions | undefined 
         printMemoryHelp();
         return undefined;
       default:
-        fail(`Unknown memory option: ${arg}`);
+        usageError(`Unknown memory option: ${arg}`);
     }
   }
 
   if (filters.fromMs !== undefined && filters.toMs !== undefined && filters.fromMs > filters.toMs) {
-    fail("--from must not be after --to");
+    usageError("--from must not be after --to");
   }
 
   return { dbPath, json, filters, waitBudgetMs, queryMode: json || hasFilter };
@@ -168,7 +192,7 @@ export function formatMemoryTable(observations: ScoredObservation[]): string {
     kind: o.kind,
     priority: o.priority,
     source: o.source.kind,
-    score: o.score.toFixed(2),
+    score: o.packScore.toFixed(2),
     content: truncate(o.content, 60),
     id: o.id,
   }));
@@ -222,10 +246,13 @@ export async function runMemoryQuery(
   const now = Date.now();
   const scored: ScoredObservation[] = observations.map((o) => ({
     ...o,
-    score: scoreObservation(o, now),
+    packScore: scoreObservation(o, now),
   }));
 
-  io.stdout.write(
-    options.json ? `${JSON.stringify(scored, null, 2)}\n` : `${formatMemoryTable(scored)}\n`,
-  );
+  if (options.json) {
+    const json = scored.map((o) => toMemoryJson(o, { packScore: o.packScore }));
+    io.stdout.write(`${JSON.stringify(json, null, 2)}\n`);
+    return;
+  }
+  io.stdout.write(`${formatMemoryTable(scored)}\n`);
 }

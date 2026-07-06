@@ -62,6 +62,31 @@ describe("parseMemoryAddArgs", () => {
     expect(() => parseMemoryAddArgs(["--nope", "x"])).toThrow(ExitCalled);
   });
 
+  test("parses --source, --session, and --json", () => {
+    const options = parseMemoryAddArgs([
+      "--source",
+      "import",
+      "--session",
+      "sess_42",
+      "--json",
+      "a note",
+    ]);
+    expect(options!.source).toBe("import");
+    expect(options!.sessionId).toBe("sess_42");
+    expect(options!.json).toBe(true);
+  });
+
+  test("defaults source to user and leaves sessionId/json off", () => {
+    const options = parseMemoryAddArgs(["a note"]);
+    expect(options!.source).toBe("user");
+    expect(options!.sessionId).toBeUndefined();
+    expect(options!.json).toBe(false);
+  });
+
+  test("rejects an invalid --source value", () => {
+    expect(() => parseMemoryAddArgs(["--source", "train", "x"])).toThrow(ExitCalled);
+  });
+
   test("leaves content empty when only flags are given (stdin fallback)", () => {
     const options = parseMemoryAddArgs(["--priority", "low"]);
     expect(options!.content).toBe("");
@@ -102,6 +127,51 @@ describe("runMemoryAddCommand", () => {
       expect(stored[0]!.content).toBe("Doughy doubles in 4 hours at room temp");
       expect(stored[0]!.tags).toEqual(["pets", "personal"]);
       expect(stored[0]!.priority).toBe("high");
+    });
+  });
+
+  testIfDocker("stores --source and --session and echoes a canonical JSON object", async () => {
+    await withTempDb(async (dbPath) => {
+      const { io, output } = makeIo();
+      await runMemoryAddCommand(
+        [
+          "--db",
+          dbPath,
+          "--source",
+          "api",
+          "--session",
+          "sess_abc",
+          "--priority",
+          "low",
+          "--tag",
+          "billing",
+          "--json",
+          "Enterprise discounts cap at 20%",
+        ],
+        io,
+      );
+
+      const emitted = JSON.parse(output());
+      expect(emitted.id).toMatch(/^mem_/);
+      expect(emitted.content).toBe("Enterprise discounts cap at 20%");
+      expect(emitted.kind).toBe("note");
+      expect(emitted.source).toBe("api");
+      expect(emitted.priority).toBe("low");
+      expect(emitted.sessionId).toBe("sess_abc");
+      expect(emitted.tags).toEqual(["billing"]);
+      // On insert lastUsedAt equals createdAt, packScore is present, and the
+      // query-relevance score is absent (not null) on an add.
+      expect(emitted.lastUsedAt).toBe(emitted.createdAt);
+      expect(typeof emitted.packScore).toBe("number");
+      expect("relevanceScore" in emitted).toBe(false);
+
+      // Prove the row persisted with the exact source and session, not just
+      // that the echoed JSON looked right.
+      const stored = await readBack(dbPath);
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.source).toEqual({ kind: "api" });
+      expect(stored[0]!.sessionId).toBe("sess_abc");
+      expect(stored[0]!.content).toBe("Enterprise discounts cap at 20%");
     });
   });
 

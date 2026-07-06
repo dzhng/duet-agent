@@ -354,6 +354,43 @@ The interactive TUI accepts image attachments (PNG, JPEG, GIF, WebP):
 </details>
 
 <details>
+<summary><b>Query, recall, and add durable memory from the CLI</b></summary>
+
+The same `~/.duet/memory.db` the runner reads is scriptable from the CLI. Bare `duet memory` opens the interactive TUI; adding `--json` or any filter turns the same invocation into a non-interactive query. Three subcommands cover the write and search paths:
+
+```bash
+# Filter/query mode — bare array of canonical memory objects
+duet memory --json --type reflection --from 2026-06-26
+duet memory --json --source user --session sess_abc123     # rows authored by one session
+
+# Recall — hybrid semantic + keyword search, same pipeline as the recall_memory tool
+duet memory recall wire byte budget cap                     # positional query
+duet memory recall --query "how does the gateway race resolve" --expand
+duet memory recall --scope global --session sess_abc123 --json qwiklabs
+
+# Add — write a single user-authored note
+duet memory add --priority high --tag billing "Enterprise discounts cap at 20%"
+echo "note from a pipe" | duet memory add --source import --session sess_abc123 --json
+```
+
+All three share one **canonical memory JSON object** (`--json`), so a consumer parses one shape everywhere:
+
+- Timestamps are ISO 8601 strings (e.g. `2026-07-06T00:00:00.000Z`); date-only fields (`observedDate`, `referencedDate`) stay `YYYY-MM-DD`.
+- `source` is a flat string — one of `user | agent | system | api | import` (`system` is the training-origin value).
+- `sessionId` is the session that authored the row: writable on `add` via `--session <id>`, filterable on `memory`/`recall` via `--session`, and echoed on output (absent on legacy rows).
+- Two ranking scores are always named explicitly, never a generic `score`: `packScore` (recency × priority × kind bias, present everywhere) and `relevanceScore` (query-relevance, RRF-fused — present only in `memory recall` results).
+
+Command-specific notes:
+
+- **`duet memory` (query):** `--json` emits a bare array ordered by pack score; `--source` and `--session` narrow the set alongside `--type`, `--priority`, `--from`, and `--to`.
+- **`duet memory recall`:** query text comes from `--query <q>` or positional args. `--scope session|global` requires `--session <id>` to compare against; `all` (default) ignores it. `--json` emits a bare array ordered best-first, each row carrying both `packScore` and `relevanceScore`.
+- **`duet memory add`:** added rows are always `note` kind. `--source` defaults to `user`; `--session <id>` stamps the row (omit to leave it global). Content comes from positional args or stdin, and empty input is a usage error. `--json` emits one canonical object (`packScore` and `lastUsedAt` present, `relevanceScore` absent).
+
+Every memory command accepts `--db <absolute-path>` (default `~/.duet/memory.db`) and `--wait <seconds>` (lock-wait budget, default 30; `0` fails immediately). Exit codes are stable for scripting: `0` success, `64` usage or validation error (unknown flag, bad value, empty input), `75` memory-DB lock-wait budget exhausted, and `1` for anything else.
+
+</details>
+
+<details>
 <summary><b>Train a folder of docs into durable memory</b></summary>
 
 `duet train <folder>` launches a sub-agent inside the folder, lets it read whatever is there with its native tools (markdown, CSVs, PDFs, spreadsheets, screenshots, source — anything the agent can open), and produces two artifacts:
@@ -508,7 +545,7 @@ const turnRunner = new TurnRunner({
 });
 ```
 
-By default, both `duet` (TUI/run) and `duet --rpc` store durable observations in `~/.duet/memory.db`. Override the path with `--db <path>` (the flag is accepted in both modes and is ignored when `--incognito` is also set), or run with `--incognito` (or `-i`) to set `memoryDbPath: false`, which disables observational memory and compaction for that session. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, pi-turn observation/reflection, compaction, and observation persistence.
+By default, both `duet` (TUI/run) and `duet --rpc` store durable observations in `~/.duet/memory.db`. Override the path with `--db <path>` (the flag is accepted in both modes and is ignored when `--incognito` is also set), or run with `--incognito` (or `-i`) to set `memoryDbPath: false`, which disables observational memory and compaction for that session. `duet --rpc` bypasses `SessionManager`, so it has no session of its own; pass `duet --rpc --session <id>` to attribute every observation written during the RPC process to a caller-owned session (one RPC process is one logical session). Omit it to leave those writes unattributed. Programmatic callers can pass `memoryDbPath: false` or provide a custom `memoryDbPath`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, pi-turn observation/reflection, compaction, and observation persistence.
 
 > [!WARNING]
 > We strongly recommend running with a `memoryDbPath` (the default). Compaction is implemented as part of the observational memory pipeline: raw transcript content is replaced by observations/reflections that the observer and reflector write to the durable store. Without a database, the runner skips that pipeline entirely — there is no compaction, the transcript grows unbounded against the raw model context window, and long sessions will eventually hit a provider context-length error. `memoryDbPath: false` is appropriate for short-lived scripts, tests, and incognito runs that stay well under the model window.

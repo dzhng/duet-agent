@@ -19,12 +19,28 @@ export const SUPPORTED_API_KEYS = [
 ] as const;
 
 /**
- * Print a fatal error and exit with code 1. Used by every CLI subcommand for
- * unrecoverable user-input errors so the message format stays consistent.
+ * Print a fatal error and exit. `exitCode` defaults to `1` (a generic runtime
+ * failure); pass a specific code for the contract's distinguished exits. Used
+ * by every CLI subcommand so the message format stays consistent.
+ *
+ * Exit-code contract:
+ * - `1`: generic runtime failure (default).
+ * - `64`: usage/validation error — route through {@link usageError}.
+ * - `75`: memory DB lock-wait budget exhausted.
  */
-export function fail(message: string): never {
+export function fail(message: string, exitCode = 1): never {
   console.error(`Fatal: ${message}`);
-  process.exit(1);
+  process.exit(exitCode);
+}
+
+/**
+ * Fail with exit code `64` for a usage or validation error: an unknown flag, a
+ * missing or invalid flag value, or empty required input. Kept distinct from a
+ * generic {@link fail} so a caller (the Agent Drive backend) can tell a
+ * bad-invocation error apart from a runtime failure without parsing stderr.
+ */
+export function usageError(message: string): never {
+  return fail(message, 64);
 }
 
 /**

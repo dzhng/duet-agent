@@ -55,6 +55,8 @@ OPTIONS
                             JSON from stdin and writes TurnEvent JSON to stdout. The first command must
                             be "start"; the process exits after the single turn reaches its terminal
                             event. Bypasses session persistence entirely.
+  --session <id>            (--rpc only) Attribute memory written during the process to this caller-owned
+                            session id. One RPC process is one logical session; omit to write with no id.
   -v, --version            Print the installed duet version and exit
   -h, --help               Show this help
 
@@ -181,7 +183,7 @@ duet memory — Browse, query, edit, and delete observational memories
 USAGE
   duet memory [--db <path>] [--wait <seconds>]
   duet memory [--json] [--type <kind>] [--priority <level>] [--source <origin>]
-              [--from <date>] [--to <date>]
+              [--session <id>] [--from <date>] [--to <date>]
   duet memory reflect [options]
 
 ALIASES
@@ -191,9 +193,10 @@ DESCRIPTION
   Bare \`duet memory\` opens an interactive TUI to browse, edit, and delete
   durable observations. Passing --json or any filter flag instead runs a
   non-TUI, scriptable query: it prints a flat, chronological list (newest
-  createdAt first) of the matching observations, each carrying a computed
-  \`score\` field matching the runner's global-pack ranking. With --json the
-  output is a machine-readable array; otherwise an aligned table is printed.
+  createdAt first) of the matching observations. In table mode each row shows
+  a computed \`score\` matching the runner's global-pack ranking; --json emits
+  a machine-readable array of canonical memory objects (ISO timestamps, flat
+  \`source\` string, echoed \`sessionId\`, and that score as \`packScore\`).
 
   Examples:
     duet memory
@@ -203,6 +206,9 @@ DESCRIPTION
 SUBCOMMANDS
   add                      Write a single user-added note memory
                            (run \`duet memory add --help\` for add-specific options)
+  recall <query>           Hybrid semantic + keyword search over durable memory,
+                           the same pipeline the runner's recall_memory tool uses
+                           (run \`duet memory recall --help\` for recall-specific options)
   reflect                  Condense old global observations into reflection rows
                            (run \`duet memory reflect --help\` for reflect-specific options)
 
@@ -211,7 +217,8 @@ QUERY OPTIONS
   --type <kind>            Filter by kind: observation | reflection | note | manual
   --kind <kind>            Alias for --type
   --priority <level>       Filter by priority: high | medium | low
-  --source <origin>        Filter by source: user | agent | system
+  --source <origin>        Filter by source: user | agent | system | api | import
+  --session <id>           Filter to rows authored by this session id
   --from <date>            Inclusive lower bound on createdAt. Accepts
                            YYYY-MM-DD (start of day UTC) or YYYY-MM-DDTHH:MM:SS (UTC)
   --to <date>              Inclusive upper bound on createdAt. Accepts
@@ -250,7 +257,54 @@ DESCRIPTION
 
 OPTIONS
   --priority <level>       high, medium, or low (default: medium)
+  --source <origin>        user, agent, system, api, or import (default: user)
+  --session <id>           Stamp the row's authoring session; omit to leave it
+                           global/unattributed
   --tag <tag>              Attach a label; repeat to add several
+  --db <path>              Memory database path (default: ~/.duet/memory.db)
+  --json                   Emit the stored memory as one canonical JSON object
+                           (with packScore) instead of the confirmation line
+  --wait <seconds>         Seconds to wait for the cross-process open-lock
+                           (default: 30; 0 fails immediately)
+  -h, --help               Show this help
+`);
+}
+
+export function printMemoryRecallHelp(): void {
+  console.log(`
+duet memory recall — Hybrid semantic + keyword search over durable memory
+
+USAGE
+  duet memory recall [options] [--query <q> | <query...>]
+
+DESCRIPTION
+  Searches ~/.duet/memory.db with the exact pipeline the runner's
+  recall_memory tool uses: vector (embedding) search and keyword search run
+  in parallel and merge via Reciprocal Rank Fusion, so fuzzy paraphrases and
+  exact tokens (proper nouns, IDs, code symbols) both match. Results print
+  best-match first.
+
+  Embeddings use the Duet endpoint (DUET_API_KEY). When it is unavailable the
+  vector path is skipped and recall falls back to keyword-only, flagged in the
+  output. --expand adds model-generated paraphrases before fusion for vague
+  queries, at the cost of an extra model call.
+
+  Examples:
+    duet memory recall wire byte budget cap
+    duet memory recall --expand "how does the gateway race resolve"
+    duet memory recall --scope global --session <id> --json qwiklabs
+
+OPTIONS
+  --query <q>              Search text (alternative to positional <query>;
+                           both are accepted and combine)
+  --scope <scope>          session | global | all (default: all).
+                           session/global require --session <id>
+  --session <id>           Session id to compare against for --scope session/global
+  --limit <n>              Maximum fused results to return (default: 8)
+  --expand                 Also run model-generated paraphrases before fusion
+  --model <name>           Model used for --expand paraphrases (default: cheap CLI memory model)
+  --json                   Emit a bare JSON array of canonical memory objects
+                           (best-first) with packScore + relevanceScore
   --db <path>              Memory database path (default: ~/.duet/memory.db)
   --wait <seconds>         Seconds to wait for the cross-process open-lock
                            (default: 30; 0 fails immediately)

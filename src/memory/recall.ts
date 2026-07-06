@@ -1,4 +1,6 @@
 import type { PGlite } from "@electric-sql/pglite";
+import { Type } from "typebox";
+import { generateStructuredOutput } from "../core/structured-output.js";
 import type { Observation, ObservationKind, ObservationPriority } from "../types/memory.js";
 import type { EmbedFn } from "./embedding.js";
 import type { MemorySession } from "./session.js";
@@ -135,6 +137,121 @@ export async function recallMemory(options: RecallMemoryOptions): Promise<Recall
   return result ?? { observations: [], vectorSearchAttempted: false, vectorSearchSucceeded: false };
 }
 
+export interface RecallMemoryExpandedOptions extends RecallMemoryOptions {
+  /**
+   * When set, generate paraphrases of `query` with this model and fuse a
+   * recall run per phrasing on top of the original. Broadens recall on vague
+   * queries; leave undefined to run the single-query path. Callers that lack
+   * a model (or want to keep latency low) simply omit it.
+   */
+  expansionModel?: string;
+}
+
+export interface RecallMemoryExpandedResult extends RecallMemoryResult {
+  /** Whether paraphrase expansion actually contributed extra query runs. */
+  expanded: boolean;
+  /**
+   * Final cross-run RRF fused relevance score per observation id — the same
+   * score that ordered {@link RecallMemoryResult.observations}. Keyed by id so
+   * callers that serialize each row (e.g. `memory recall --json`) can attach
+   * `relevanceScore` without recomputing fusion. The `observations` array and
+   * its ordering are unchanged; callers may ignore this field entirely.
+   */
+  relevanceById: Map<string, number>;
+}
+
+/**
+ * The full recall pipeline shared by the `recall_memory` tool and the
+ * `duet memory recall` CLI: optionally expand the query into paraphrases,
+ * run {@link recallMemory} once per phrasing, and fuse the ranked result
+ * lists with Reciprocal Rank Fusion so a row that scores well on any
+ * phrasing rises to the top. Keeping this in one place is what makes the
+ * tool and the CLI return identical rankings for the same query.
+ *
+ * With no `expansionModel` (or when paraphrase generation fails) this is
+ * exactly a single {@link recallMemory} call, so the single-query path stays
+ * the cheap default.
+ */
+export async function recallMemoryExpanded(
+  options: RecallMemoryExpandedOptions,
+): Promise<RecallMemoryExpandedResult> {
+  const limit = options.limit ?? 8;
+
+  const queries = [options.query];
+  if (options.expansionModel) {
+    queries.push(...(await generateQueryParaphrases(options.query, options.expansionModel)));
+  }
+  const expanded = queries.length > 1;
+
+  const runs = await Promise.all(
+    queries.map((query) =>
+      recallMemory({
+        session: options.session,
+        ...(options.embed ? { embed: options.embed } : {}),
+        query,
+        // Over-fetch per run so the post-fusion top-K is drawn from a richer
+        // candidate pool when expansion is on.
+        limit: expanded ? limit * 2 : limit,
+        ...(options.scope ? { scope: options.scope } : {}),
+        ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+      }),
+    ),
+  );
+
+  const fused = reciprocalRankFusionScored(
+    runs.map((run) => run.observations.map((observation, rank) => ({ id: observation.id, rank }))),
+  ).slice(0, limit);
+  const byId = new Map(
+    runs.flatMap((run) => run.observations).map((observation) => [observation.id, observation]),
+  );
+  const relevanceById = new Map<string, number>();
+  const observations: Observation[] = [];
+  for (const { id, score } of fused) {
+    const observation = byId.get(id);
+    if (!observation) continue;
+    observations.push(observation);
+    relevanceById.set(id, score);
+  }
+
+  return {
+    observations,
+    vectorSearchAttempted: runs.some((run) => run.vectorSearchAttempted),
+    vectorSearchSucceeded: runs.some((run) => run.vectorSearchSucceeded),
+    expanded,
+    relevanceById,
+  };
+}
+
+const paraphraseSchema = Type.Object({
+  paraphrases: Type.Array(Type.String(), { minItems: 1, maxItems: 4 }),
+});
+
+/**
+ * Rewrite a recall query into up to two alternate phrasings via a cheap
+ * model. Two is the sweet spot in the gbrain ablation: enough breadth to
+ * catch reworded queries, few enough that latency stays low. Returns an
+ * empty list on any failure so the surrounding pipeline degrades to the
+ * original query alone rather than erroring.
+ */
+async function generateQueryParaphrases(query: string, model: string): Promise<string[]> {
+  try {
+    const result = await generateStructuredOutput({
+      model,
+      tool: {
+        name: "emit_paraphrases",
+        description: "Return alternate phrasings of the user's query.",
+        parameters: paraphraseSchema,
+      },
+      systemPrompt:
+        "You rewrite a memory-recall query into 2 alternative phrasings. Keep the same intent; vary terminology. Do not answer the query.",
+      prompt: `Original query: ${query}`,
+    });
+    return result.paraphrases.slice(0, 2);
+  } catch {
+    return [];
+  }
+}
+
 interface ScoredHit {
   id: string;
   rank: number;
@@ -266,6 +383,18 @@ async function runScopedQuery<TRow>(
  * tiebreak.
  */
 export function reciprocalRankFusion(rankedLists: ScoredHit[][]): string[] {
+  return reciprocalRankFusionScored(rankedLists).map((entry) => entry.id);
+}
+
+/**
+ * Like {@link reciprocalRankFusion}, but returns each id paired with its final
+ * biased fused score (`sum(1 / (RRF_K + rank)) * kindPriorityBias`) in the same
+ * descending order. Used where callers need the ranking score itself — e.g. to
+ * surface `relevanceScore` per row — not just the ordered ids.
+ */
+export function reciprocalRankFusionScored(
+  rankedLists: ScoredHit[][],
+): Array<{ id: string; score: number }> {
   const scores = new Map<string, { score: number; firstSeen: number; prior: number }>();
   let order = 0;
   for (const list of rankedLists) {
@@ -281,13 +410,12 @@ export function reciprocalRankFusion(rankedLists: ScoredHit[][]): string[] {
   }
 
   return Array.from(scores.entries())
+    .map(([id, entry]) => ({ id, score: entry.score * entry.prior, firstSeen: entry.firstSeen }))
     .sort((a, b) => {
-      const scoreA = a[1].score * a[1].prior;
-      const scoreB = b[1].score * b[1].prior;
-      if (scoreB !== scoreA) return scoreB - scoreA;
-      return a[1].firstSeen - b[1].firstSeen;
+      if (b.score !== a.score) return b.score - a.score;
+      return a.firstSeen - b.firstSeen;
     })
-    .map(([id]) => id);
+    .map(({ id, score }) => ({ id, score }));
 }
 
 /**

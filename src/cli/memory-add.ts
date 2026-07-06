@@ -1,19 +1,26 @@
-import { runMigrations } from "../memory/migrations.js";
-import { MemoryLockTimeoutError } from "../memory/pglite.js";
-import { MemorySession } from "../memory/session.js";
 import { appendObservation } from "../memory/storage.js";
 import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
-import type { ObservationPriority } from "../types/memory.js";
+import type { ObservationPriority, ObservationSource } from "../types/memory.js";
 import { printMemoryAddHelp } from "./help.js";
-import { fail, resolveUserPath } from "./shared.js";
-import { installShutdownHandlers } from "./shutdown.js";
+import { toMemoryJson } from "./memory-json.js";
+import { scoreObservation, withMemorySession } from "./memory-db.js";
+import { PRIORITIES, parseEnum, SOURCES } from "./memory-query.js";
+import { fail, resolveUserPath, usageError } from "./shared.js";
+
+type SourceKind = ObservationSource["kind"];
 
 interface AddCommandOptions {
   dbPath: string;
   /** Positional content joined with spaces; empty when the caller pipes via stdin instead. */
   content: string;
   priority: ObservationPriority;
+  /** Provenance stamped on the row and echoed back; defaults to `user`. */
+  source: SourceKind;
   tags: string[];
+  /** Session that authored the row; omitted leaves the row global/unattributed. */
+  sessionId?: string;
+  /** Emit one canonical memory JSON object instead of the human line. */
+  json: boolean;
   waitBudgetMs?: number;
 }
 
@@ -45,50 +52,38 @@ export async function runMemoryAddCommand(
 
   const content = await resolveContent(options.content, io);
 
-  const session = new MemorySession({
-    path: options.dbPath,
-    openOptions: {
-      init: async (db) => {
-        await runMigrations(db);
-      },
-    },
-    ...(options.waitBudgetMs !== undefined ? { lockWaitBudgetMs: options.waitBudgetMs } : {}),
-    idleCloseMs: 60_000,
-  });
-  const removeShutdownHandlers = installShutdownHandlers(() => session.dispose());
-
-  try {
-    const observation = await appendObservation(session, {
-      kind: "note",
-      priority: options.priority,
-      source: { kind: "user" },
-      content,
-      tags: options.tags,
-      observedDate: new Date().toISOString().slice(0, 10),
-    });
-    if (!observation) {
-      fail(`Could not write memory to ${options.dbPath} (lock contention).`);
-    }
-    const tagSuffix = observation.tags.length > 0 ? ` [${observation.tags.join(", ")}]` : "";
-    io.stdout.write(
-      `Added ${observation.priority}-priority memory ${observation.id} (${observation.observedDate})${tagSuffix}\n`,
-    );
-  } catch (error) {
-    if (error instanceof MemoryLockTimeoutError) {
-      fail(
-        `Memory database at ${error.dataDir} is still locked by duet pid ${error.holderPid} after ${
-          error.budgetMs / 1000
-        }s. Stop that process (or pass --wait <seconds> to wait longer) and retry.`,
-      );
-    }
-    throw error;
-  } finally {
-    removeShutdownHandlers();
-    await session.dispose();
+  const observation = await withMemorySession(
+    options.dbPath,
+    (session) =>
+      appendObservation(session, {
+        kind: "note",
+        priority: options.priority,
+        source: { kind: options.source },
+        content,
+        tags: options.tags,
+        observedDate: new Date().toISOString().slice(0, 10),
+        ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+      }),
+    { waitBudgetMs: options.waitBudgetMs },
+  );
+  if (!observation) {
+    fail(`Could not write memory to ${options.dbPath} (lock contention).`);
   }
-}
 
-const PRIORITIES: readonly ObservationPriority[] = ["high", "medium", "low"];
+  if (options.json) {
+    // Score with a single `now`; on insert `lastUsedAt == createdAt`, so the
+    // pack score reflects a freshly stored row. `relevanceScore` is absent —
+    // there is no query to rank the row against on an add.
+    const packScore = scoreObservation(observation, Date.now());
+    io.stdout.write(`${JSON.stringify(toMemoryJson(observation, { packScore }), null, 2)}\n`);
+    return;
+  }
+
+  const tagSuffix = observation.tags.length > 0 ? ` [${observation.tags.join(", ")}]` : "";
+  io.stdout.write(
+    `Added ${observation.priority}-priority memory ${observation.id} (${observation.observedDate})${tagSuffix}\n`,
+  );
+}
 
 /**
  * Parse `duet memory add` flags and positional content. Returns `undefined`
@@ -98,6 +93,9 @@ const PRIORITIES: readonly ObservationPriority[] = ["high", "medium", "low"];
 export function parseMemoryAddArgs(args: string[]): AddCommandOptions | undefined {
   let dbPath = DEFAULT_MEMORY_DB_PATH;
   let priority: ObservationPriority = "medium";
+  let source: SourceKind = "user";
+  let sessionId: string | undefined;
+  let json = false;
   const tags: string[] = [];
   let waitBudgetMs: number | undefined;
   const contentParts: string[] = [];
@@ -106,26 +104,31 @@ export function parseMemoryAddArgs(args: string[]): AddCommandOptions | undefine
     const arg = args[i]!;
     switch (arg) {
       case "--db":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${arg}`);
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
         dbPath = resolveUserPath(args[++i]!);
         break;
-      case "--priority": {
-        const raw = args[++i];
-        if (!raw || !PRIORITIES.includes(raw as ObservationPriority)) {
-          fail(`Invalid --priority value: ${raw} (expected high, medium, or low)`);
-        }
-        priority = raw as ObservationPriority;
+      case "--priority":
+        priority = parseEnum(args[++i], PRIORITIES, arg);
         break;
-      }
+      case "--source":
+        source = parseEnum(args[++i], SOURCES, arg);
+        break;
+      case "--session":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
+        sessionId = args[++i]!;
+        break;
+      case "--json":
+        json = true;
+        break;
       case "--tag":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${arg}`);
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
         tags.push(args[++i]!);
         break;
       case "--wait": {
         const raw = args[++i];
         const seconds = Number(raw);
         if (!raw || !Number.isFinite(seconds) || seconds < 0) {
-          fail(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
+          usageError(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
         }
         waitBudgetMs = Math.round(seconds * 1000);
         break;
@@ -135,7 +138,7 @@ export function parseMemoryAddArgs(args: string[]): AddCommandOptions | undefine
         printMemoryAddHelp();
         return undefined;
       default:
-        if (arg.startsWith("-")) fail(`Unknown add option: ${arg}`);
+        if (arg.startsWith("-")) usageError(`Unknown add option: ${arg}`);
         contentParts.push(arg);
     }
   }
@@ -144,7 +147,10 @@ export function parseMemoryAddArgs(args: string[]): AddCommandOptions | undefine
     dbPath,
     content: contentParts.join(" ").trim(),
     priority,
+    source,
     tags,
+    json,
+    ...(sessionId !== undefined ? { sessionId } : {}),
     ...(waitBudgetMs !== undefined ? { waitBudgetMs } : {}),
   };
 }
@@ -158,11 +164,11 @@ async function resolveContent(positional: string, io: AddCommandIO): Promise<str
   let content = positional;
   if (content.length === 0) {
     if (io.stdin.isTTY) {
-      fail("No memory content provided. Pass it as an argument or pipe via stdin.");
+      usageError("No memory content provided. Pass it as an argument or pipe via stdin.");
     }
     content = (await readStream(io.stdin)).trim();
   }
-  if (content.length === 0) fail("Refusing to add an empty memory.");
+  if (content.length === 0) usageError("Refusing to add an empty memory.");
   return content;
 }
 

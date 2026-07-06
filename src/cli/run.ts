@@ -41,6 +41,14 @@ export interface CliTurnConfigInput {
    * `incognito` is true, which forces `memoryDbPath: false`.
    */
   dbPath?: string;
+  /**
+   * Caller-owned session id used to attribute memory writes. The TUI path
+   * sets it from the active `SessionManager` session; `duet --rpc` sets it
+   * from the `--session <id>` spawn flag. When set, every observation written
+   * during the process carries this id as its `session_id`, which is the axis
+   * session-scoped recall filters on.
+   */
+  sessionId?: string;
   workDir: string;
   systemInstructions?: string;
   systemPromptFiles?: string[];
@@ -83,6 +91,7 @@ export function buildCliTurnConfig(
       model: modelResolution.modelName,
       memoryModel: memoryModelResolution.modelName,
       memoryDbPath: input.incognito ? false : (input.dbPath ?? DEFAULT_MEMORY_DB_PATH),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       cwd: input.workDir,
       ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),
       ...(input.systemPromptFiles ? { systemPromptFiles: input.systemPromptFiles } : {}),

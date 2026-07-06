@@ -23,12 +23,21 @@ export type ObservationKind = "observation" | "reflection" | "manual" | "note";
  * filtering. Tool provenance is captured as `tool:<name>` in `tags`
  * rather than a separate variant — keeps the source enum closed and
  * makes tool authorship searchable through the existing tag axis.
+ *
+ * - `user`: an operator-authored memory (e.g. `duet memory add`).
+ * - `agent`: produced by an agent during a turn; `name` is optional.
+ * - `system`: synthesized by the system, including the training origin
+ *   (`duet train`) — there is no separate `train` kind.
+ * - `api`: written programmatically through a caller-owned API/gateway.
+ * - `import`: brought in from a bulk import of external memory rows.
  */
 export type ObservationSource =
   | { kind: "user" }
   /** Produced by an agent; name is optional because the runner does not assign agent ids. */
   | { kind: "agent"; name?: string }
-  | { kind: "system" };
+  | { kind: "system" }
+  | { kind: "api" }
+  | { kind: "import" };
 
 /** Durable memory rendered back into model context after raw messages compact. */
 export interface Observation {

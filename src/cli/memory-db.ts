@@ -12,12 +12,28 @@ import {
   MemoryLockTimeoutError,
   openPGliteWaitingForLock,
 } from "../memory/pglite.js";
+import { MemorySession } from "../memory/session.js";
 import { readArchiveManifest, removeArchive } from "../train/archive.js";
 import { isTrainTagged, slugFromTags } from "../train/tags.js";
 import type { TrainListEntry, TrainRecord } from "../train/types.js";
 import type { Observation, ObservationSource } from "../types/memory.js";
 import { fail } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
+
+/**
+ * Report an exhausted memory-DB open lock and exit `75` (the contract's
+ * distinguished lock-wait code, distinct from a generic runtime failure).
+ * Every memory/train subcommand funnels its {@link MemoryLockTimeoutError}
+ * here so the friendly, actionable message and the exit code stay identical.
+ */
+export function failMemoryLockTimeout(error: MemoryLockTimeoutError): never {
+  return fail(
+    `Memory database at ${error.dataDir} is still locked by duet pid ${error.holderPid} after ${
+      error.budgetMs / 1000
+    }s. Stop that process (or pass --wait <seconds> to wait longer) and retry.`,
+    75,
+  );
+}
 
 /** Rows fetched per page by the ranked, lazily-paginated TUI list. */
 export const MEMORY_PAGE_SIZE = 25;
@@ -26,6 +42,8 @@ export interface MemoryQueryFilters {
   kind?: Observation["kind"];
   priority?: Observation["priority"];
   source?: ObservationSource["kind"];
+  /** Restrict to rows authored by this session (matches `session_id`). */
+  sessionId?: string;
   fromMs?: number;
   toMs?: number;
 }
@@ -161,6 +179,7 @@ export class MemoryDb {
     if (filters.kind !== undefined) bind("kind = $?", filters.kind);
     if (filters.priority !== undefined) bind("priority = $?", filters.priority);
     if (filters.source !== undefined) bind("(source_json::json->>'kind') = $?", filters.source);
+    if (filters.sessionId !== undefined) bind("session_id = $?", filters.sessionId);
     if (filters.fromMs !== undefined) bind("created_at >= $?", filters.fromMs);
     if (filters.toMs !== undefined) bind("created_at <= $?", filters.toMs);
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -262,11 +281,7 @@ export async function withMemoryDb<T>(
     db = await MemoryDb.open(dbPath, { waitBudgetMs });
   } catch (error) {
     if (error instanceof MemoryLockTimeoutError) {
-      fail(
-        `Memory database at ${error.dataDir} is still locked by duet pid ${error.holderPid} after ${
-          error.budgetMs / 1000
-        }s. Stop that process (or pass --wait <seconds> to wait longer) and retry.`,
-      );
+      failMemoryLockTimeout(error);
     }
     throw error;
   }
@@ -276,6 +291,44 @@ export async function withMemoryDb<T>(
   } finally {
     removeShutdownHandlers();
     await db.close();
+  }
+}
+
+/**
+ * Run `fn` against a {@link MemorySession} opened on the shared memory
+ * database — the entry point for one-shot CLI commands that need the
+ * session's refcounted handle and cross-process lock (writes via
+ * `appendObservation`, hybrid recall) rather than the raw {@link MemoryDb}
+ * query wrapper. Applies migrations on open, installs shutdown handlers, and
+ * always disposes; a lock-contention timeout exits `75` via
+ * {@link failMemoryLockTimeout} so callers share one error message and code.
+ */
+export async function withMemorySession<T>(
+  dbPath: string,
+  fn: (session: MemorySession) => Promise<T>,
+  { waitBudgetMs }: { waitBudgetMs?: number } = {},
+): Promise<T> {
+  const session = new MemorySession({
+    path: dbPath,
+    openOptions: {
+      init: async (db) => {
+        await runMigrations(db);
+      },
+    },
+    ...(waitBudgetMs !== undefined ? { lockWaitBudgetMs: waitBudgetMs } : {}),
+    idleCloseMs: 60_000,
+  });
+  const removeShutdownHandlers = installShutdownHandlers(() => session.dispose());
+  try {
+    return await fn(session);
+  } catch (error) {
+    if (error instanceof MemoryLockTimeoutError) {
+      failMemoryLockTimeout(error);
+    }
+    throw error;
+  } finally {
+    removeShutdownHandlers();
+    await session.dispose();
   }
 }
 

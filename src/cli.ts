@@ -42,6 +42,7 @@ export { runUpgradeCommand } from "./cli/upgrade.js";
 export { runMemoryCommand } from "./cli/memory.js";
 export { runModelCommand } from "./cli/model.js";
 export { runMemoryAddCommand } from "./cli/memory-add.js";
+export { runMemoryRecallCommand } from "./cli/memory-recall.js";
 export { runMemoryReflectCommand } from "./cli/memory-reflect.js";
 export { runTrainCommand } from "./cli/train.js";
 export { runSendFeedbackCommand } from "./cli/send-feedback.js";

@@ -20,7 +20,7 @@ import type {
 import type { TurnRunnerConfig } from "../types/config.js";
 import { printTrainHelp } from "./help.js";
 import { withMemoryDb } from "./memory-db.js";
-import { fail, loadCliEnvFiles, resolveUserPath } from "./shared.js";
+import { fail, loadCliEnvFiles, resolveUserPath, usageError } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
 
 export interface TrainCommandOptions {
@@ -63,22 +63,22 @@ export function parseTrainArgs(args: string[]): TrainCommandOptions | undefined 
     const arg = args[i]!;
     switch (arg) {
       case "--slug":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${arg}`);
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
         slugOverride = args[++i]!;
         break;
       case "--model":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${arg}`);
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
         model = args[++i]!;
         break;
       case "--db":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${arg}`);
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
         dbPath = resolveUserPath(args[++i]!);
         break;
       case "--wait": {
         const raw = args[++i];
         const seconds = Number(raw);
         if (!Number.isFinite(seconds) || seconds < 0) {
-          fail(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
+          usageError(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
         }
         waitBudgetMs = Math.round(seconds * 1000);
         break;
@@ -88,17 +88,17 @@ export function parseTrainArgs(args: string[]): TrainCommandOptions | undefined 
         printTrainHelp();
         return undefined;
       default:
-        if (arg.startsWith("-")) fail(`Unknown train option: ${arg}`);
-        if (folder !== undefined) fail(`Unexpected extra argument: ${arg}`);
+        if (arg.startsWith("-")) usageError(`Unknown train option: ${arg}`);
+        if (folder !== undefined) usageError(`Unexpected extra argument: ${arg}`);
         folder = arg;
     }
   }
 
-  if (!folder) fail("duet train requires a <folder> argument");
+  if (!folder) usageError("duet train requires a <folder> argument");
   const resolved = path.resolve(folder);
   const slug = sanitizeSlug(slugOverride ?? path.basename(resolved));
   if (slug.length === 0) {
-    fail(`Could not derive a slug from "${folder}"; pass --slug <name>`);
+    usageError(`Could not derive a slug from "${folder}"; pass --slug <name>`);
   }
   return {
     folder: resolved,
@@ -433,6 +433,21 @@ function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
+/**
+ * Map a list/record to its `--json` wire shape, replacing the internal
+ * epoch-ms `createdAt` with an ISO 8601 string. The in-memory
+ * `TrainListEntry`/`TrainRecord` keep `createdAt` as a number (used for
+ * newest-first sorting); ISO conversion happens only at the output edge so
+ * the JSON contract stays stable regardless of the in-memory representation.
+ */
+function toTrainListEntryJson(entry: TrainListEntry) {
+  return { ...entry, createdAt: new Date(entry.createdAt).toISOString() };
+}
+
+function toTrainRecordJson(record: TrainRecord) {
+  return { ...record, createdAt: new Date(record.createdAt).toISOString() };
+}
+
 /** Render the list as an aligned text table. Pure so it is unit-testable
  *  without a database. */
 export function formatTrainList(entries: TrainListEntry[]): string {
@@ -518,11 +533,11 @@ function parseTrainSubArgs(args: string[]): TrainSubOptions | undefined {
     const arg = args[i]!;
     switch (arg) {
       case "--db":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${arg}`);
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
         dbPath = resolveUserPath(args[++i]!);
         break;
       case "--content-file":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${arg}`);
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
         contentFile = resolveUserPath(args[++i]!);
         break;
       case "--json":
@@ -532,7 +547,7 @@ function parseTrainSubArgs(args: string[]): TrainSubOptions | undefined {
         const raw = args[++i];
         const seconds = Number(raw);
         if (!Number.isFinite(seconds) || seconds < 0) {
-          fail(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
+          usageError(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
         }
         waitBudgetMs = seconds * 1000;
         break;
@@ -542,8 +557,8 @@ function parseTrainSubArgs(args: string[]): TrainSubOptions | undefined {
         printTrainHelp();
         return undefined;
       default:
-        if (arg.startsWith("-")) fail(`Unknown train option: ${arg}`);
-        if (slug !== undefined) fail(`Unexpected extra argument: ${arg}`);
+        if (arg.startsWith("-")) usageError(`Unknown train option: ${arg}`);
+        if (slug !== undefined) usageError(`Unexpected extra argument: ${arg}`);
         slug = arg;
     }
   }
@@ -553,34 +568,38 @@ function parseTrainSubArgs(args: string[]): TrainSubOptions | undefined {
 export async function runTrainListCommand(args: string[], io: TrainCommandIO): Promise<void> {
   const options = parseTrainSubArgs(args);
   if (!options) return;
-  if (options.slug !== undefined) fail(`Unexpected argument for train list: ${options.slug}`);
+  if (options.slug !== undefined) usageError(`Unexpected argument for train list: ${options.slug}`);
   const entries = await withMemoryDb(options.dbPath, (db) => db.listTrainings(), {
     waitBudgetMs: options.waitBudgetMs,
   });
   io.stdout.write(
-    options.json ? `${JSON.stringify(entries, null, 2)}\n` : `${formatTrainList(entries)}\n`,
+    options.json
+      ? `${JSON.stringify(entries.map(toTrainListEntryJson), null, 2)}\n`
+      : `${formatTrainList(entries)}\n`,
   );
 }
 
 export async function runTrainShowCommand(args: string[], io: TrainCommandIO): Promise<void> {
   const options = parseTrainSubArgs(args);
   if (!options) return;
-  if (!options.slug) fail("duet train show requires a <slug> argument");
+  if (!options.slug) usageError("duet train show requires a <slug> argument");
   const slug = options.slug;
   const record = await withMemoryDb(options.dbPath, (db) => db.findTrainingBySlug(slug), {
     waitBudgetMs: options.waitBudgetMs,
   });
   if (!record) fail(`No training found for slug "${slug}".`);
   io.stdout.write(
-    options.json ? `${JSON.stringify(record, null, 2)}\n` : `${formatTrainRecord(record)}\n`,
+    options.json
+      ? `${JSON.stringify(toTrainRecordJson(record), null, 2)}\n`
+      : `${formatTrainRecord(record)}\n`,
   );
 }
 
 export async function runTrainUpdateCommand(args: string[], io: TrainCommandIO): Promise<void> {
   const options = parseTrainSubArgs(args);
   if (!options) return;
-  if (!options.slug) fail("duet train update requires a <slug> argument");
-  if (!options.contentFile) fail("duet train update requires --content-file <path>");
+  if (!options.slug) usageError("duet train update requires a <slug> argument");
+  if (!options.contentFile) usageError("duet train update requires --content-file <path>");
   const slug = options.slug;
   const content = await readFile(options.contentFile, "utf8");
   if (content.trim().length === 0) {
@@ -597,7 +616,7 @@ export async function runTrainUpdateCommand(args: string[], io: TrainCommandIO):
     { waitBudgetMs: options.waitBudgetMs },
   );
   if (options.json) {
-    io.stdout.write(`${JSON.stringify(updated, null, 2)}\n`);
+    io.stdout.write(`${JSON.stringify(toTrainRecordJson(updated), null, 2)}\n`);
     return;
   }
   io.stdout.write(`Updated "${slug}" (memory id ${updated.memoryId}).\n`);
@@ -606,7 +625,7 @@ export async function runTrainUpdateCommand(args: string[], io: TrainCommandIO):
 export async function runTrainDeleteCommand(args: string[], io: TrainCommandIO): Promise<void> {
   const options = parseTrainSubArgs(args);
   if (!options) return;
-  if (!options.slug) fail("duet train delete requires a <slug> argument");
+  if (!options.slug) usageError("duet train delete requires a <slug> argument");
   const slug = options.slug;
   const deleted = await withMemoryDb(
     options.dbPath,

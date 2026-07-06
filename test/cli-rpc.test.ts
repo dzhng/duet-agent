@@ -1,7 +1,12 @@
 import { describe, expect, test, spyOn } from "bun:test";
-import { homedir } from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { driveRpcLoop, parseRpcArgs, parseRpcCommandLine, type RpcRunner } from "../src/cli/rpc.js";
+import { buildCliTurnConfig } from "../src/cli/run.js";
+import { MemoryDb } from "../src/cli/memory-db.js";
+import { appendObservation, loadStoredMemory } from "../src/memory/storage.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 import type {
   TurnCompactCommand,
   TurnEditFollowUpQueueCommand,
@@ -127,6 +132,24 @@ describe("parseRpcArgs", () => {
     expect(parsed.dbPath).toBe("/tmp/custom.db");
   });
 
+  test("--session captures the caller-owned attribution id", () => {
+    const parsed = parseRpcArgs(["--session", "sess_rpc_1"]);
+    expect(parsed.sessionId).toBe("sess_rpc_1");
+  });
+
+  test("omitting --session leaves sessionId undefined", () => {
+    expect(parseRpcArgs([]).sessionId).toBeUndefined();
+  });
+
+  test("--session requires a value", () => {
+    const exitSpy = stubProcessExit();
+    try {
+      expect(() => parseRpcArgs(["--session"])).toThrow();
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
   test("omitting --db leaves dbPath undefined so the default applies", () => {
     const parsed = parseRpcArgs([]);
     expect(parsed.dbPath).toBeUndefined();
@@ -190,6 +213,89 @@ function stubProcessExit() {
     throw new Error("exit");
   }) as never);
 }
+
+describe("RPC --session attribution", () => {
+  test("buildCliTurnConfig threads the parsed --session id onto config.sessionId", () => {
+    // Mirror the construction runRpcCommand performs: the parsed spawn flag
+    // must land on config.sessionId *before* `new TurnRunner(config)`, since
+    // RPC reads the first `start` command only after the runner exists.
+    const parsed = parseRpcArgs(["--rpc", "--session", "sess_rpc_2", "--db", "/tmp/x.db"]);
+    const { config } = buildCliTurnConfig(
+      {
+        incognito: parsed.incognito,
+        ...(parsed.dbPath ? { dbPath: parsed.dbPath } : {}),
+        ...(parsed.sessionId ? { sessionId: parsed.sessionId } : {}),
+        workDir: parsed.workDir,
+      },
+      new Set(),
+    );
+    expect(config.sessionId).toBe("sess_rpc_2");
+    expect(config.memoryDbPath).toBe("/tmp/x.db");
+  });
+
+  test("buildCliTurnConfig leaves sessionId unset when --session is omitted", () => {
+    const parsed = parseRpcArgs(["--rpc", "--db", "/tmp/x.db"]);
+    const { config } = buildCliTurnConfig(
+      {
+        incognito: parsed.incognito,
+        ...(parsed.dbPath ? { dbPath: parsed.dbPath } : {}),
+        ...(parsed.sessionId ? { sessionId: parsed.sessionId } : {}),
+        workDir: parsed.workDir,
+      },
+      new Set(),
+    );
+    expect(config.sessionId).toBeUndefined();
+  });
+
+  testIfDocker("a memory written during an RPC session carries the --session id", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "duet-rpc-session-"));
+    const dbPath = join(dir, "memory.db");
+    try {
+      // Build the exact config runRpcCommand hands to `new TurnRunner(config)`.
+      const parsed = parseRpcArgs(["--rpc", "--session", "sess_rpc_write", "--db", dbPath]);
+      const { config } = buildCliTurnConfig(
+        {
+          incognito: parsed.incognito,
+          ...(parsed.dbPath ? { dbPath: parsed.dbPath } : {}),
+          ...(parsed.sessionId ? { sessionId: parsed.sessionId } : {}),
+          workDir: parsed.workDir,
+        },
+        new Set(),
+      );
+      expect(config.sessionId).toBe("sess_rpc_write");
+
+      // Open the same db the runner opens and write through the production
+      // storage helper with `config.sessionId` — the exact value the runner's
+      // post-turn memory write passes at its `sessionId: this.config.sessionId`
+      // site. Proves the spawn flag reaches a persisted observation.
+      const persistence = await loadStoredMemory(config.memoryDbPath as string, config.cwd!, {});
+      const now = new Date().toISOString();
+      await appendObservation(persistence.session!, {
+        kind: "observation",
+        ...(config.sessionId !== undefined ? { sessionId: config.sessionId } : {}),
+        observedDate: now.slice(0, 10),
+        priority: "medium",
+        source: { kind: "system" },
+        content: "RPC turn recorded a durable fact.",
+        tags: ["observational-memory"],
+      });
+      await persistence.dispose();
+
+      // Reopen independently and prove the stored row carries the session id.
+      const db = await MemoryDb.open(dbPath);
+      try {
+        const stored = await db.listRanked({ limit: 25, offset: 0 });
+        expect(stored).toHaveLength(1);
+        expect(stored[0]!.sessionId).toBe("sess_rpc_write");
+        expect(stored[0]!.content).toBe("RPC turn recorded a durable fact.");
+      } finally {
+        await db.close();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("parseRpcCommandLine", () => {
   test("returns a skip result for blank/whitespace lines so the iterator can skip them", () => {
