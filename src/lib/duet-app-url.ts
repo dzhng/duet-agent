@@ -1,9 +1,10 @@
 /**
  * Resolve the base URL of the Duet web app.
  *
- * Single env var (`DUET_APP_BASE_URL`) for the app origin. Surface-specific
- * paths like the AI gateway's `/api/v1/ai-gateway` and the CLI's
- * `/api/v1/cli/*` are hardcoded by their callers.
+ * `DUET_APP_BASE_URL` controls the app origin used by login, skill sync,
+ * embeddings, analytics, and feedback. Model gateway traffic can use
+ * `DUET_GATEWAY_BASE_URL`; when unset, the gateway still falls back to this app
+ * origin plus `/api/v1/ai-gateway` for chat-app compatibility.
  */
 
 const DEFAULT_BASE_URL = "https://duet.so";
