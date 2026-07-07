@@ -5,7 +5,6 @@ import {
   PROVIDER_SHORTHANDS,
   resolveProviderShorthand,
 } from "../model-resolution/catalog.js";
-import { maybeAutoSyncDefaultSkills } from "../lib/sync-skills.js";
 import { TurnRunner } from "../turn-runner/turn-runner.js";
 import type {
   TurnCompactCommand,
@@ -77,19 +76,6 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
   // sandbox tearing down the exec process tree would leave the global
   // node_modules tree in a partial state; keeping RPC quiet here avoids
   // that risk entirely, matching the non-interactive gate in `run.ts`.
-
-  // Refresh gateway-managed default skills when the user has previously
-  // opted in via `duet login`. Skipped when the caller passes
-  // --no-skill-sync (e.g. a sandbox host that already manages its own skill
-  // bundle). Conditional GET keeps the steady-state cost to a single 304
-  // round-trip.
-  //
-  // Awaited (not backgrounded): the parent agent's system prompt captures the
-  // skill set at session start, so the sync must finish before the session
-  // starts or the agent runs the whole session unaware of the synced skills.
-  if (process.env.DUET_API_KEY && !parsed.noSkillSync) {
-    await maybeAutoSyncDefaultSkills({ apiKey: process.env.DUET_API_KEY });
-  }
 
   const { config } = buildCliTurnConfig(
     {
@@ -175,8 +161,6 @@ export interface ParsedRpcArgs {
    */
   sessionId?: string;
   incognito: boolean;
-  /** When true, skip the on-load default-skill sync. */
-  noSkillSync: boolean;
 }
 
 /**
@@ -196,7 +180,6 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
   let dbPath: string | undefined;
   let sessionId: string | undefined;
   let incognito = false;
-  let noSkillSync = false;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -246,7 +229,7 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
         sessionId = args[++i];
         break;
       case "--no-skill-sync":
-        noSkillSync = true;
+        // Deprecated no-op; tolerated so host scripts that pass it do not break.
         break;
       case "--no-auto-upgrade":
         // Accepted as a no-op: RPC mode never auto-upgrades, so the flag is
@@ -285,7 +268,6 @@ export function parseRpcArgs(args: string[]): ParsedRpcArgs {
     ...(dbPath ? { dbPath } : {}),
     ...(sessionId ? { sessionId } : {}),
     incognito,
-    noSkillSync,
   };
 }
 

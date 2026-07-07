@@ -1,4 +1,4 @@
-import { resolveDuetApiBaseUrl } from "./duet-app-url.js";
+import { resolveDuetApiBaseUrl } from "./duet-api-url.js";
 
 /**
  * Source identifier stamped on every CLI/TUI feedback row so the admin

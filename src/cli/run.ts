@@ -1,4 +1,3 @@
-import { maybeAutoSyncDefaultSkills } from "../lib/sync-skills.js";
 import {
   pinnedDefaultModel,
   pinnedMemoryModel,
@@ -123,7 +122,6 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   let dbPath: string | undefined;
   let incognito = false;
   let noAutoUpgrade = false;
-  let noSkillSync = false;
   const promptParts: string[] = [];
   const interactive = isInteractive();
 
@@ -188,7 +186,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         noAutoUpgrade = true;
         break;
       case "--no-skill-sync":
-        noSkillSync = true;
+        // Deprecated no-op; tolerated so host scripts that pass it do not break.
         break;
       case "--version":
       case "-v":
@@ -268,19 +266,6 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     upgradeStatus$.complete(status);
     return status;
   });
-
-  // Refresh the gateway-managed default skills when the user has previously
-  // opted in via `duet login` (i.e. `~/.duet/.skills-hash` exists). Logging
-  // in with --skip-skill-sync leaves no hash, so this stays a no-op until
-  // the user explicitly syncs at least once. The conditional GET hits 304
-  // in steady state, so the cost is one cheap round-trip.
-  //
-  // Awaited (not backgrounded): the parent agent's system prompt captures the
-  // skill set at session start, so the sync must finish before the session
-  // starts or the agent runs the whole session unaware of the synced skills.
-  if (process.env.DUET_API_KEY && !noSkillSync) {
-    await maybeAutoSyncDefaultSkills({ apiKey: process.env.DUET_API_KEY });
-  }
 
   const { config, modelResolution, memoryModelResolution } = buildCliTurnConfig(
     {

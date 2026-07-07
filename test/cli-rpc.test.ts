@@ -114,7 +114,6 @@ describe("parseRpcArgs", () => {
     expect(parsed.systemPromptFiles).toEqual(["A.md", "B.md"]);
     expect(parsed.envFilePath).toBe("/etc/duet/env");
     expect(parsed.incognito).toBe(true);
-    expect(parsed.noSkillSync).toBe(false);
   });
 
   test("expands a leading ~ in --workdir to the user's home directory", () => {
@@ -155,9 +154,9 @@ describe("parseRpcArgs", () => {
     expect(parsed.dbPath).toBeUndefined();
   });
 
-  test("--no-skill-sync sets the skip-skill-sync flag", () => {
-    const parsed = parseRpcArgs(["--no-skill-sync"]);
-    expect(parsed.noSkillSync).toBe(true);
+  test("--no-skill-sync is accepted as a deprecated no-op", () => {
+    // Tolerated so host scripts that pass it do not break.
+    expect(() => parseRpcArgs(["--no-skill-sync"])).not.toThrow();
   });
 
   test("--no-auto-upgrade is accepted as a no-op", () => {
