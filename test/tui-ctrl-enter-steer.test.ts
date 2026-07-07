@@ -91,8 +91,6 @@ describe("TUI Ctrl+Enter steer keystroke", () => {
       await startLongRunningTurn();
       const promptsBefore = harness.promptCalls.length;
 
-      // Seed a two-entry follow-up queue as if the user had soft-queued two
-      // prompts behind the in-flight turn.
       harness.session.editFollowUpQueue({
         prompts: [{ message: "first queued" }, { message: "second queued" }],
       });
@@ -101,14 +99,10 @@ describe("TUI Ctrl+Enter steer keystroke", () => {
       harness.mockInput.pressEnter({ ctrl: true });
       await harness.waitForPrompt({ count: promptsBefore + 1 });
 
-      // Exactly one entry (the oldest) is promoted, delivered as a steer.
       expect(harness.promptCalls.length).toBe(promptsBefore + 1);
       const steer = harness.promptCalls[promptsBefore]!;
       expect(steer.message).toBe("first queued");
       expect(steer.behavior).toBe("steer");
-
-      // The promoted entry is removed from the queue so the runner will not
-      // deliver it again; the untouched entry stays queued.
       expect(harness.session.getState()?.followUpQueue).toEqual([{ message: "second queued" }]);
     },
   );
@@ -151,6 +145,36 @@ describe("TUI Ctrl+Enter steer keystroke", () => {
       { message: "two" },
       { message: "three" },
     ]);
+  });
+
+  testIfDocker("Ctrl+Enter promotion renders duplicate-text attachments correctly", async () => {
+    await startLongRunningTurn();
+    const promptsBefore = harness.promptCalls.length;
+
+    const promotedImage = { data: "cHJvbW90ZWQ=", mimeType: "image/png" };
+    const remainingImage = { data: "cmVtYWluaW5n", mimeType: "image/png" };
+    harness.session.editFollowUpQueue({
+      prompts: [
+        { message: "same text", images: [promotedImage] },
+        { message: "same text", images: [remainingImage] },
+      ],
+    });
+    await harness.flush();
+
+    harness.mockInput.pressEnter({ ctrl: true });
+    await harness.waitForPrompt({ count: promptsBefore + 1 });
+
+    expect(harness.promptCalls[promptsBefore]).toMatchObject({
+      message: "same text",
+      behavior: "steer",
+      images: [promotedImage],
+    });
+    expect(harness.session.getState()?.followUpQueue).toEqual([
+      { message: "same text", images: [remainingImage] },
+    ]);
+
+    const frame = await harness.captureCharFrame();
+    expect(frame).toContain("📎 1 image attachment");
   });
 
   testIfDocker(

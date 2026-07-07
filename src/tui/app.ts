@@ -379,9 +379,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // Ctrl+Enter: behavior:"steer" so the runner calls agent.steer() at
   // the next inference boundary instead of queueing behind the full turn.
-  // When the composer is empty, Ctrl+Enter instead promotes the oldest
-  // queued follow-up (if any) into a steer; an empty composer with an empty
-  // queue stays a no-op.
+  // Empty-composer Ctrl+Enter promotes the oldest queued follow-up.
   function handleSteer(): void {
     const message = ui.inputField.plainText.trim();
     if (message.length === 0) {
@@ -392,14 +390,8 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     void dispatchTurn(message, "steer").catch(reportError);
   }
 
-  // Promote the front (oldest) queued follow-up into a steer: dequeue it and
-  // re-dispatch its own payload with behavior:"steer" so it interrupts at the
-  // next inference boundary instead of waiting for the turn to settle.
-  // Dequeuing first is load-bearing — it stops the runner from delivering the
-  // same entry again when the turn naturally drains the queue. The
-  // `follow_up_queue` event the edit emits already renders the promoted
-  // entry's `you:` transcript block (via the delivered-entry diff in the
-  // session subscription), so this path deliberately does not append it.
+  // Dequeue before steering so the runner does not also deliver this entry
+  // when the original follow-up queue drains.
   function promoteQueuedFollowUpToSteer(): void {
     const [next, ...rest] = input.session.getState()?.followUpQueue ?? [];
     if (!next) return;

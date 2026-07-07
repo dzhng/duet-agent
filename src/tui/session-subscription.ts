@@ -206,26 +206,22 @@ function sameImages(
 }
 
 /**
- * Returns the entries that were in `prev` but are no longer in `next`,
- * treating the lists as message-text multisets. Used to detect deliveries
- * (queue → drain) so the corresponding `you:` blocks can be rendered into
- * the transcript at the point the runner actually hands them to the agent.
+ * Returns the entries that were in `prev` but are no longer in `next` so
+ * delivered follow-ups render exactly once, including duplicate text with
+ * different attachments.
  */
 function diffRemovedEntries(
   prev: readonly TurnFollowUpQueueEntry[],
   next: readonly TurnFollowUpQueueEntry[],
 ): TurnFollowUpQueueEntry[] {
-  const remaining = new Map<string, number>();
-  for (const entry of next) {
-    remaining.set(entry.message, (remaining.get(entry.message) ?? 0) + 1);
-  }
+  const remaining = [...next];
   const removed: TurnFollowUpQueueEntry[] = [];
   for (const entry of prev) {
-    const count = remaining.get(entry.message) ?? 0;
-    if (count > 0) {
-      remaining.set(entry.message, count - 1);
-    } else {
+    const index = remaining.findIndex((candidate) => sameFollowUpEntry(entry, candidate));
+    if (index === -1) {
       removed.push(entry);
+    } else {
+      remaining.splice(index, 1);
     }
   }
   return removed;
