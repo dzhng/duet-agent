@@ -12,7 +12,6 @@ interface RecordedRequest {
 }
 
 let originalApiBaseUrl: string | undefined;
-let originalAppBaseUrl: string | undefined;
 let originalWorkspace: string | undefined;
 let originalApiKey: string | undefined;
 let originalFetch: typeof fetch;
@@ -20,12 +19,10 @@ let tempRoot: string | undefined;
 
 beforeEach(() => {
   originalApiBaseUrl = process.env.DUET_API_BASE_URL;
-  originalAppBaseUrl = process.env.DUET_APP_BASE_URL;
   originalWorkspace = process.env.DUET_WORKSPACE;
   originalApiKey = process.env.DUET_API_KEY;
   originalFetch = globalThis.fetch;
   delete process.env.DUET_API_BASE_URL;
-  delete process.env.DUET_APP_BASE_URL;
   delete process.env.DUET_WORKSPACE;
   delete process.env.DUET_API_KEY;
 });
@@ -34,8 +31,6 @@ afterEach(async () => {
   globalThis.fetch = originalFetch;
   if (originalApiBaseUrl === undefined) delete process.env.DUET_API_BASE_URL;
   else process.env.DUET_API_BASE_URL = originalApiBaseUrl;
-  if (originalAppBaseUrl === undefined) delete process.env.DUET_APP_BASE_URL;
-  else process.env.DUET_APP_BASE_URL = originalAppBaseUrl;
   if (originalWorkspace === undefined) delete process.env.DUET_WORKSPACE;
   else process.env.DUET_WORKSPACE = originalWorkspace;
   if (originalApiKey === undefined) delete process.env.DUET_API_KEY;
@@ -140,7 +135,6 @@ describe("duet login device flow command", () => {
     const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-device-login-")));
     const envFile = join(root, ".env");
     process.env.DUET_API_BASE_URL = "https://api.test";
-    process.env.DUET_APP_BASE_URL = "https://app.test";
     const requests: RecordedRequest[] = [];
     globalThis.fetch = makeDeviceFetch(requests, [
       codeResponse(),
@@ -149,16 +143,18 @@ describe("duet login device flow command", () => {
         access_token: "duet_gt_cli",
         workspace: { slug: "acme", name: "Acme Inc" },
       }),
-      new Response(JSON.stringify({ data: { ok: true } }), { status: 200 }),
     ]);
 
-    await runLoginCommand(["--workspace", "acme", "--no-browser", "--skip-skill-sync"], {
+    await runLoginCommand(["--workspace", "acme", "--no-browser"], {
       envFilePath: envFile,
     });
 
     expect(await readFile(envFile, "utf8")).toBe("DUET_API_KEY=duet_gt_cli\n");
     expect(requests[0]!.body).toEqual({ scopes: ["ws:acme:ai"] });
-    expect(requests[2]!.url).toBe("https://app.test/api/v1/analytics/events");
+    expect(requests.map((request) => request.url)).toEqual([
+      "https://api.test/v1/device/code",
+      "https://api.test/v1/device/token",
+    ]);
   });
 
   testIfDocker("uses DUET_WORKSPACE when --workspace is omitted", async () => {
@@ -169,43 +165,13 @@ describe("duet login device flow command", () => {
     globalThis.fetch = makeDeviceFetch(requests, [
       codeResponse(),
       tokenResponse({ status: "approved", access_token: "duet_gt_env" }),
-      new Response(JSON.stringify({ data: { ok: true } }), { status: 200 }),
     ]);
 
-    await runLoginCommand(["--no-browser", "--skip-skill-sync"], {
+    await runLoginCommand(["--no-browser"], {
       envFilePath: join(root, ".env"),
     });
 
     expect(requests[0]!.body).toEqual({ scopes: ["ws:env-ws:ai"] });
-  });
-
-  testIfDocker("prints no default skills published when login-time sync sees 404", async () => {
-    const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-device-login-")));
-    process.env.DUET_API_BASE_URL = "https://api.test";
-    process.env.DUET_APP_BASE_URL = "https://app.test";
-    const stderr: string[] = [];
-    const consoleErrorSpy = spyOn(console, "error").mockImplementation((message?: unknown) => {
-      stderr.push(String(message ?? ""));
-    });
-    globalThis.fetch = makeDeviceFetch(
-      [],
-      [
-        codeResponse(),
-        tokenResponse({ status: "approved", access_token: "duet_gt_cli" }),
-        new Response(JSON.stringify({ data: { ok: true } }), { status: 200 }),
-        new Response("not found", { status: 404 }),
-      ],
-    );
-
-    try {
-      await runLoginCommand(["--workspace", "acme", "--no-browser"], {
-        envFilePath: join(root, ".env"),
-      });
-    } finally {
-      consoleErrorSpy.mockRestore();
-    }
-
-    expect(stderr.join("\n")).toContain("No default skills published.");
   });
 
   testIfDocker("fails with usage error when no workspace is provided", async () => {
@@ -221,9 +187,7 @@ describe("duet login device flow command", () => {
     }) as never;
 
     try {
-      await expect(runLoginCommand(["--no-browser", "--skip-skill-sync"])).rejects.toThrow(
-        "__exit__",
-      );
+      await expect(runLoginCommand(["--no-browser"])).rejects.toThrow("__exit__");
       expect(exitCode).toBe(64);
       expect(stderr.join("\n")).toContain("Missing required workspace");
     } finally {

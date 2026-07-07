@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { resolveDuetApiBaseUrl } from "./duet-app-url.js";
+import { resolveDuetApiBaseUrl } from "./duet-api-url.js";
 
 /**
  * Device-code login bootstrap for the duet CLI.

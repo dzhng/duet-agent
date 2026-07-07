@@ -49,7 +49,7 @@ None of this makes Claude Code or Codex worse at what they do. It makes duet-age
 
 Two things that don't get a section of their own below, but that follow from the same shape:
 
-- **One login, every frontier model.** `duet login` is the whole setup. Claude, GPT, Gemini, image, video, web — all behind one key, with default skills auto-synced and kept fresh.
+- **One login, every frontier model.** `duet login` is the whole setup. Claude, GPT, Gemini, image, video, web — all behind one key.
 - **Open source.** No black box. If we made a wrong call about how memory ranks or how relays route, you can read the code and tell us we're wrong.
 
 ## What we do differently
@@ -251,7 +251,7 @@ The pre-commit hook runs `format`, `check-types`, and `lint`.
 
 ## CLI Quick Start
 
-The recommended path is `duet login`. One sign-in writes `DUET_API_KEY` to `~/.duet/.env`, syncs the default skills, and gives you access to every frontier language, image, and video model on the Duet AI Gateway plus the bundled web-scraping skills — no other API keys required.
+The recommended path is `duet login`. One sign-in writes `DUET_API_KEY` to `~/.duet/.env` and gives you access to every frontier language, image, and video model on the Duet AI Gateway plus the bundled web-scraping skills — no other API keys required.
 
 ```bash
 duet login
@@ -420,16 +420,13 @@ The CLI also prints the observation content to stdout, so it's pipeable: `duet t
 <details>
 <summary><b>CLI Login</b></summary>
 
-`duet login` is the recommended setup path. It opens a browser to sign in, writes `DUET_API_KEY` for the selected org to `~/.duet/.env`, and syncs the latest default skills into `~/.duet/skills`.
+`duet login` is the recommended setup path. It opens a browser to sign in and writes `DUET_API_KEY` for the selected org to `~/.duet/.env`.
 
 That single `DUET_API_KEY` is your access token to the Duet AI Gateway: frontier language models (Claude, GPT, Gemini), image generation (GPT Image 2), video generation (Seedance), and the Firecrawl-powered web scraping and search skills, all behind one key.
-
-Once you have synced default skills at least once, every subsequent `duet` invocation refreshes them in the background using a conditional GET against the saved hash. Logging in with `--skip-skill-sync` leaves no hash on disk, so this auto-refresh stays a no-op until you explicitly opt in by syncing once.
 
 ```bash
 duet login
 duet login --no-browser           # print the auth URL instead of opening a browser
-duet login --skip-skill-sync      # skip the post-login default skill sync
 ```
 
 </details>

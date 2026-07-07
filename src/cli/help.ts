@@ -14,7 +14,7 @@ duet — An opinionated full-stack agent runner
 
 USAGE
   duet [options] [prompt]
-  duet login --workspace <slug> [--no-browser] [--skip-skill-sync]
+  duet login --workspace <slug> [--no-browser]
   duet env [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
   duet memory [--db <path>] [--json] [filters]
@@ -50,7 +50,6 @@ OPTIONS
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
   --env-file <path>        Shared env file to load after <workdir>/.env (default: ${DEFAULT_DUET_ENV_FILE})
   --no-auto-upgrade         Skip the auto-upgrade probe for this run (also: DUET_NO_AUTO_UPGRADE=1)
-  --no-skill-sync           Skip the on-load default-skill sync
   --rpc                     Bare turn-runner control surface. Reads newline-delimited TurnRunnerCommand
                             JSON from stdin and writes TurnEvent JSON to stdout. The first command must
                             be "start"; the process exits after the single turn reaches its terminal
@@ -103,31 +102,24 @@ EXAMPLES
 
 export function printLoginHelp(): void {
   console.log(`
-duet login — Sign in via device flow and sync default skills
+duet login — Sign in via device flow
 
 USAGE
-  duet login --workspace <slug> [--env-file <path>] [--no-browser] [--skip-skill-sync]
+  duet login --workspace <slug> [--env-file <path>] [--no-browser]
 
 Requests a workspace-scoped device code, prints the user code and verification
 URL, waits for approval, then writes the workspace's DUET_API_KEY to the shared
-env file. After auth, fetches and writes the latest default skills to
-~/.duet/skills when the product publishes them.
+env file.
 
 OPTIONS
   --workspace <slug>       Workspace slug for the one-workspace API key (or DUET_WORKSPACE)
   --env-file <path>        Env file to write the API key to (default: ${DEFAULT_DUET_ENV_FILE})
   --no-browser             Print the verification URL instead of opening a browser
-  --skip-skill-sync        Skip the post-login default skills sync
   -h, --help               Show this help
-
-SKILL SYNC
-  Mirrors the sandbox protocol: hashes the rendered skill payload and only
-  rewrites ~/.duet/skills when the hash differs from ~/.duet/.skills-hash.
 
 OVERRIDES
   Set DUET_API_BASE_URL (e.g. https://api-staging.duet.so) to re-point device
-  login. Set DUET_APP_BASE_URL only for product web-origin endpoints such as
-  default skill sync. Model traffic uses DUET_GATEWAY_BASE_URL.
+  login. Model traffic uses DUET_GATEWAY_BASE_URL.
 `);
 }
 

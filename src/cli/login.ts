@@ -1,6 +1,4 @@
-import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
 import { loginWithDeviceFlow } from "../lib/login.js";
-import { syncDefaultSkills } from "../lib/sync-skills.js";
 import { printLoginHelp } from "./help.js";
 import {
   defaultDuetEnvFilePath,
@@ -18,15 +16,13 @@ export interface LoginCommandIO {
 /**
  * Run `duet login`.
  *
- * Starts the Duet device flow for a workspace-scoped API key, persists the
- * returned `DUET_API_KEY` to the shared env file, then optionally syncs the
- * workspace's default skills bundle to `~/.duet/skills`.
+ * Starts the Duet device flow for a workspace-scoped API key and persists the
+ * returned `DUET_API_KEY` to the shared env file.
  */
 export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): Promise<void> {
   const cwd = io.cwd ?? process.cwd();
   let envFilePathOverride: string | undefined = io.envFilePath;
   let noBrowser = false;
-  let skipSkillSync = false;
   let workspaceSlug: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
@@ -39,7 +35,7 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
         noBrowser = true;
         break;
       case "--skip-skill-sync":
-        skipSkillSync = true;
+        // Deprecated no-op; tolerated so scripts that pass it do not break.
         break;
       case "--workspace":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
@@ -71,30 +67,4 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
   console.error(
     `Saved DUET_API_KEY for ${result.workspaceName} (${result.workspaceSlug}) to ${targetEnvFile}`,
   );
-
-  process.env.DUET_API_KEY = result.apiKey;
-
-  await fetch(`${resolveDuetAppBaseUrl()}/api/v1/analytics/events`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${result.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ name: "cli_login" }),
-  }).catch(() => {});
-
-  if (skipSkillSync) {
-    console.error("Skipping default skill sync (--skip-skill-sync).");
-    return;
-  }
-
-  console.error(`Checking default skills against ${resolveDuetAppBaseUrl()}...`);
-  const syncResult = await syncDefaultSkills({ apiKey: result.apiKey });
-  if (syncResult.status === "unchanged") {
-    console.error("Default skills already up to date.");
-  } else if (syncResult.status === "not-found") {
-    console.error("No default skills published.");
-  } else {
-    console.error(`Synced default skills (${syncResult.count} total).`);
-  }
 }
