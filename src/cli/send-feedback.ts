@@ -15,7 +15,7 @@ export interface SendFeedbackCommandIO {
 /**
  * Run `duet send-feedback`.
  *
- * Submits a piece of free-form markdown feedback to the chat-app's public
+ * Submits a piece of free-form markdown feedback to the Duet API's public
  * feedback endpoint. No API key required — the endpoint is intentionally
  * unauthenticated so external clients can drop notes into the team's triage
  * queue without a login.

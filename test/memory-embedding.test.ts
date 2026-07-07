@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import {
   createEmbeddingClient,
   EMBEDDING_BATCH_LIMIT,
-  EMBEDDING_DIMENSIONS,
+  DEFAULT_DUET_EMBEDDING_MODEL,
   EmbeddingUnavailableError,
 } from "../src/memory/embedding.js";
 
 describe("Embedding client", () => {
-  test("posts inputs and dimensions to the embed endpoint", async () => {
+  test("posts model and inputs to the gateway embeddings endpoint", async () => {
     let capturedUrl = "";
     let capturedBody: unknown = null;
     let capturedAuth = "";
@@ -16,14 +16,8 @@ describe("Embedding client", () => {
       capturedAuth = String((init?.headers as Record<string, string>)?.authorization ?? "");
       capturedBody = JSON.parse(String(init?.body));
       return jsonResponse({
-        data: {
-          embeddings: [
-            [0.1, 0.2],
-            [0.3, 0.4],
-          ],
-          dimensions: EMBEDDING_DIMENSIONS,
-          model: "google/gemini-embedding-2",
-        },
+        data: [{ embedding: [0.1, 0.2] }, { embedding: [0.3, 0.4] }],
+        model: "google/gemini-embedding-2",
       });
     }) as unknown as typeof fetch;
     const embed = createEmbeddingClient({
@@ -41,11 +35,38 @@ describe("Embedding client", () => {
       ],
       model: "google/gemini-embedding-2",
     });
-    expect(capturedUrl).toBe("https://example.test/api/v1/embed");
+    expect(capturedUrl).toBe("https://example.test/v1/embeddings");
     expect(capturedAuth).toBe("Bearer test-key");
     expect(capturedBody).toEqual({
+      model: DEFAULT_DUET_EMBEDDING_MODEL,
       input: ["alpha", "beta"],
-      dimensions: EMBEDDING_DIMENSIONS,
+    });
+  });
+
+  test("honors DUET_EMBEDDING_MODEL for the requested model", async () => {
+    const previous = process.env.DUET_EMBEDDING_MODEL;
+    process.env.DUET_EMBEDDING_MODEL = "openai/text-embedding-3-small";
+    let capturedBody: unknown = null;
+    const fetchStub = (async (_input: string | URL, init?: RequestInit) => {
+      capturedBody = JSON.parse(String(init?.body));
+      return jsonResponse({ data: [{ embedding: [1] }], model: "openai/text-embedding-3-small" });
+    }) as unknown as typeof fetch;
+
+    try {
+      const embed = createEmbeddingClient({
+        apiKey: "k",
+        baseUrl: "https://example.test",
+        fetch: fetchStub,
+      });
+      await embed(["alpha"]);
+    } finally {
+      if (previous === undefined) delete process.env.DUET_EMBEDDING_MODEL;
+      else process.env.DUET_EMBEDDING_MODEL = previous;
+    }
+
+    expect(capturedBody).toEqual({
+      model: "openai/text-embedding-3-small",
+      input: ["alpha"],
     });
   });
 
@@ -56,11 +77,8 @@ describe("Embedding client", () => {
       calls.push(body.input);
       // Echo: each input becomes a one-element vector with its length.
       return jsonResponse({
-        data: {
-          embeddings: body.input.map((value) => [value.length]),
-          dimensions: EMBEDDING_DIMENSIONS,
-          model: "google/gemini-embedding-2",
-        },
+        data: body.input.map((value) => ({ embedding: [value.length] })),
+        model: "google/gemini-embedding-2",
       });
     }) as unknown as typeof fetch;
     const embed = createEmbeddingClient({ apiKey: "k", fetch: fetchStub });
@@ -103,11 +121,8 @@ describe("Embedding client", () => {
       calls++;
       if (calls < 3) return new Response("oops", { status: 503 });
       return jsonResponse({
-        data: {
-          embeddings: [[1, 2, 3]],
-          dimensions: EMBEDDING_DIMENSIONS,
-          model: "google/gemini-embedding-2",
-        },
+        data: [{ embedding: [1, 2, 3] }],
+        model: "google/gemini-embedding-2",
       });
     }) as unknown as typeof fetch;
     const embed = createEmbeddingClient({ apiKey: "k", fetch: fetchStub });
@@ -116,6 +131,17 @@ describe("Embedding client", () => {
     expect(result.embeddings).toEqual([[1, 2, 3]]);
     expect(result.model).toBe("google/gemini-embedding-2");
     expect(calls).toBe(3);
+  });
+
+  test("rejects OpenAI-compatible responses with the wrong vector count", async () => {
+    const fetchStub = (async () =>
+      jsonResponse({
+        data: [{ embedding: [1] }],
+        model: "google/gemini-embedding-2",
+      })) as unknown as typeof fetch;
+    const embed = createEmbeddingClient({ apiKey: "k", fetch: fetchStub });
+
+    await expect(embed(["a", "b"])).rejects.toThrow(/did not match request size/);
   });
 });
 
