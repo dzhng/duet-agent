@@ -12,7 +12,7 @@
  */
 
 const DEFAULT_BASE_URL = "https://duet.so";
-const DEFAULT_API_BASE_URL = "https://api.duet.so";
+const DEFAULT_API_BASE_URL = "https://ctl.duet.so";
 export const DUET_APP_BASE_URL_ENV = "DUET_APP_BASE_URL";
 export const DUET_API_BASE_URL_ENV = "DUET_API_BASE_URL";
 
