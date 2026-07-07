@@ -1,66 +1,79 @@
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { type AddressInfo, createServer } from "node:net";
-import {
-  createServer as createHttpServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
-import { resolveDuetAppBaseUrl } from "./duet-app-url.js";
+import { resolveDuetApiBaseUrl } from "./duet-app-url.js";
 
 /**
- * Browser-based login bootstrap for the duet CLI.
+ * Device-code login bootstrap for the duet CLI.
  *
- * 1. Pick a free localhost port and start an ephemeral HTTP server on
- *    `/callback`.
- * 2. Generate a CSRF state, open the browser to
- *    `<app>/cli/login?port=<n>&state=<s>`.
- * 3. Wait for the user to confirm in the browser; the app redirects them
- *    to `http://127.0.0.1:<n>/callback?code=...&state=...`.
- * 4. Validate state, POST `<app>/api/v1/cli/exchange` with `{ code, state }`,
- *    return the resulting `{ apiKey, orgSlug, orgName, appUrl }`.
- *
- * The server is single-shot — it shuts down after responding to one
- * `/callback` request (or on timeout).
+ * 1. Request a device code from `POST <api>/v1/device/code` with the selected
+ *    workspace-scoped AI capability.
+ * 2. Print the server-supplied user code and verification URI, opening the URI
+ *    in a browser unless `--no-browser` was set.
+ * 3. Poll `POST <api>/v1/device/token` at the server interval until the user
+ *    approves, denies, or the code expires.
+ * 4. Return the approved `DUET_API_KEY` plus workspace info for persistence.
  */
 
 export interface LoginResult {
   apiKey: string;
-  orgSlug: string;
-  orgName: string;
+  workspaceSlug: string;
+  workspaceName: string;
 }
 
 export interface LoginOptions {
-  appBaseUrl?: string;
-  /** Print the auth URL instead of opening a browser. */
+  /**
+   * Workspace slug used to request a one-workspace token. The CLI requires it
+   * before starting login because every generated `DUET_API_KEY` is scoped to
+   * exactly one workspace.
+   */
+  workspaceSlug: string;
+  /** Override the Duet API base URL; defaults to `DUET_API_BASE_URL` or production. */
+  apiBaseUrl?: string;
+  /** Print the verification URL instead of opening a browser. */
   noBrowser?: boolean;
-  /** Hard cap on how long we'll wait for the browser callback. */
-  timeoutMs?: number;
-  /** Inject HTTP for the exchange call (testing). */
+  /** Inject HTTP for the device-code and polling calls (testing). */
   fetchFn?: typeof fetch;
-  /** Override how the URL is opened (testing). */
+  /** Override how the verification URL is opened (testing). */
   openUrl?: (url: string) => void;
+  /** Override polling sleep (testing). */
+  sleep?: (ms: number) => Promise<void>;
   /** Stream user-facing progress (default: stderr). */
   log?: (message: string) => void;
 }
 
-export async function loginWithBrowser(options: LoginOptions = {}): Promise<LoginResult> {
-  const appBaseUrl = options.appBaseUrl ?? resolveDuetAppBaseUrl();
+interface DeviceCodeResponse {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  expires_in: number;
+  interval: number;
+}
+
+interface DeviceTokenResponse {
+  status: "pending" | "approved" | "denied" | "expired" | "slow_down" | string;
+  access_token?: string;
+  interval?: number;
+  workspace?: { slug?: string; name?: string };
+  workspace_slug?: string;
+  workspace_name?: string;
+}
+
+export async function loginWithDeviceFlow(options: LoginOptions): Promise<LoginResult> {
+  const apiBaseUrl = options.apiBaseUrl ?? resolveDuetApiBaseUrl();
   const fetchFn = options.fetchFn ?? fetch;
-  const log = options.log ?? ((m: string) => process.stderr.write(`${m}\n`));
-  const timeoutMs = options.timeoutMs ?? 5 * 60 * 1000;
+  const log = options.log ?? ((message: string) => process.stderr.write(`${message}\n`));
+  const sleep =
+    options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
-  const port = await findFreePort();
-  const state = randomBytes(24).toString("base64url");
-  const loginUrl = `${appBaseUrl}/cli/login?port=${port}&state=${encodeURIComponent(state)}`;
+  const code = await postJson<DeviceCodeResponse>(fetchFn, `${apiBaseUrl}/v1/device/code`, {
+    scopes: [`ws:${options.workspaceSlug}:ai`],
+  });
 
-  log(`Open this URL to authorize the duet CLI:\n  ${loginUrl}`);
-
-  const callbackPromise = waitForCallback({ port, expectedState: state, timeoutMs });
+  log(`User code: ${code.user_code}`);
+  log(`Verification URL: ${code.verification_uri}`);
 
   if (!options.noBrowser) {
     try {
-      (options.openUrl ?? openInBrowser)(loginUrl);
+      (options.openUrl ?? openInBrowser)(code.verification_uri);
     } catch (err) {
       log(
         `Could not open the browser automatically (${err instanceof Error ? err.message : err}). Open the URL manually.`,
@@ -68,138 +81,57 @@ export async function loginWithBrowser(options: LoginOptions = {}): Promise<Logi
     }
   }
 
-  const code = await callbackPromise;
+  let intervalMs = Math.max(1, Number(code.interval || 5)) * 1000;
+  while (true) {
+    const token = await postJson<DeviceTokenResponse>(fetchFn, `${apiBaseUrl}/v1/device/token`, {
+      device_code: code.device_code,
+    });
 
-  log("Exchanging authorization code...");
-  const response = await fetchFn(`${appBaseUrl}/api/v1/cli/exchange`, {
+    if (token.status === "approved") {
+      if (typeof token.access_token !== "string" || !token.access_token) {
+        throw new Error("Device token response was malformed.");
+      }
+      const workspaceSlug = token.workspace?.slug ?? token.workspace_slug ?? options.workspaceSlug;
+      const workspaceName = token.workspace?.name ?? token.workspace_name ?? workspaceSlug;
+      return {
+        apiKey: token.access_token,
+        workspaceSlug,
+        workspaceName,
+      };
+    }
+
+    if (token.status === "pending") {
+      await sleep(intervalMs);
+      continue;
+    }
+
+    if (token.status === "slow_down") {
+      intervalMs = Math.max(intervalMs + 5_000, Number(token.interval ?? 10) * 1000);
+      await sleep(intervalMs);
+      continue;
+    }
+
+    if (token.status === "denied") throw new Error("Device login denied.");
+    if (token.status === "expired")
+      throw new Error("Device login expired. Run `duet login` again.");
+
+    throw new Error(`Device login ended with status: ${token.status}`);
+  }
+}
+
+async function postJson<T>(fetchFn: typeof fetch, url: string, body: unknown): Promise<T> {
+  const response = await fetchFn(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code, state }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     const detail = await safeReadText(response);
     throw new Error(
-      `Exchange failed: ${response.status} ${response.statusText}${detail ? ` — ${detail.slice(0, 256)}` : ""}`,
+      `Device login request failed: ${response.status} ${response.statusText}${detail ? ` — ${detail.slice(0, 256)}` : ""}`,
     );
   }
-
-  const body = (await response.json()) as Partial<LoginResult>;
-  if (
-    !body ||
-    typeof body.apiKey !== "string" ||
-    typeof body.orgSlug !== "string" ||
-    typeof body.orgName !== "string"
-  ) {
-    throw new Error("Unexpected exchange response shape");
-  }
-  return {
-    apiKey: body.apiKey,
-    orgSlug: body.orgSlug,
-    orgName: body.orgName,
-  };
-}
-
-interface CallbackOptions {
-  port: number;
-  expectedState: string;
-  timeoutMs: number;
-}
-
-function waitForCallback({ port, expectedState, timeoutMs }: CallbackOptions): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const server = createHttpServer((req, res) => {
-      handleCallback(req, res, expectedState, (err, code) => {
-        if (err || !code) {
-          server.close();
-          reject(err ?? new Error("Callback received without a code"));
-          return;
-        }
-        server.close();
-        resolve(code);
-      });
-    });
-
-    const timer = setTimeout(() => {
-      server.close();
-      reject(new Error(`Timed out waiting for browser confirmation after ${timeoutMs}ms`));
-    }, timeoutMs);
-    timer.unref?.();
-    server.once("close", () => clearTimeout(timer));
-
-    server.listen(port, "127.0.0.1");
-    server.once("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
-}
-
-function handleCallback(
-  req: IncomingMessage,
-  res: ServerResponse,
-  expectedState: string,
-  done: (err: Error | null, code?: string) => void,
-): void {
-  const url = new URL(req.url ?? "/", "http://127.0.0.1");
-  if (url.pathname !== "/callback") {
-    res.statusCode = 404;
-    res.end("Not found");
-    return;
-  }
-  const code = url.searchParams.get("code");
-  const receivedState = url.searchParams.get("state");
-  const error = url.searchParams.get("error");
-
-  if (error) {
-    respondError(res, "Authorization rejected. You can close this tab.");
-    done(new Error(`Authorization error: ${error}`));
-    return;
-  }
-  if (!code || !receivedState) {
-    respondError(res, "Missing code or state. You can close this tab.");
-    done(new Error("Missing code or state in callback"));
-    return;
-  }
-  if (receivedState !== expectedState) {
-    respondError(res, "State mismatch. You can close this tab.");
-    done(new Error("State mismatch — refusing to exchange code"));
-    return;
-  }
-
-  res.statusCode = 200;
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(
-    `<!doctype html><meta charset="utf-8"><title>duet CLI</title>` +
-      `<body style="font-family:system-ui,sans-serif;padding:48px;text-align:center">` +
-      `<h1 style="margin-bottom:8px">duet CLI authorized</h1>` +
-      `<p style="color:#646565">You can close this tab and return to your terminal.</p>` +
-      `</body>`,
-  );
-  done(null, code);
-}
-
-function respondError(res: ServerResponse, message: string): void {
-  res.statusCode = 400;
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.end(message);
-}
-
-async function findFreePort(): Promise<number> {
-  return await new Promise<number>((resolve, reject) => {
-    const server = createServer();
-    server.unref();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address() as AddressInfo | null;
-      if (!address) {
-        server.close();
-        reject(new Error("Failed to allocate a localhost port"));
-        return;
-      }
-      const port = address.port;
-      server.close(() => resolve(port));
-    });
-  });
+  return (await response.json()) as T;
 }
 
 function openInBrowser(url: string): void {
@@ -208,7 +140,7 @@ function openInBrowser(url: string): void {
   const child = spawn(command, [url], { stdio: "ignore", detached: true });
   child.unref();
   child.on("error", () => {
-    /* swallow — caller logs and tells the user to open manually */
+    /* caller logs and tells the user to open manually */
   });
 }
 

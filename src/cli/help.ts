@@ -14,7 +14,7 @@ duet — An opinionated full-stack agent runner
 
 USAGE
   duet [options] [prompt]
-  duet login [--no-browser] [--skip-skill-sync]
+  duet login --workspace <slug> [--no-browser] [--skip-skill-sync]
   duet env [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
   duet memory [--db <path>] [--json] [filters]
@@ -24,7 +24,7 @@ USAGE
   echo "prompt" | duet
 
 COMMANDS
-  login                    Sign in via browser; saves DUET_API_KEY and syncs default skills (recommended)
+  login                    Sign in via device flow; saves a workspace-scoped DUET_API_KEY (recommended)
   env                      Manually create or update the shared duet env file with provider API keys
   skills                   List installed skills + collisions as JSON
   memory                   Browse memories in a TUI, or query them with --json/filters (alias: memories)
@@ -74,9 +74,9 @@ MODELS
   OPENAI_API_KEY after loading <workdir>/.env and the shared duet env file.
 
   duet-gateway: routes through the Duet gateway proxy
-  (https://duet.so/api/v1/ai-gateway by default; override the app origin
-  via DUET_APP_BASE_URL). It mirrors vercel-ai-gateway's model catalog
-  and authenticates with DUET_API_KEY.
+  (https://gateway.duet.so by default; override via DUET_GATEWAY_BASE_URL).
+  It mirrors vercel-ai-gateway's model catalog and authenticates with
+  DUET_API_KEY.
 
 EXAMPLES
   duet "build a REST API with Express and TypeScript"
@@ -90,7 +90,7 @@ EXAMPLES
   duet --env-file ~/.config/duet/env "review this repo"
   duet --workdir ./my-project "refactor the auth module"
   duet --resume session_abc123 --workdir ./my-project
-  duet login
+  duet login --workspace acme
   duet env
   duet memory
   duet model -m openai/gpt-5.5 "write a haiku about gateways"
@@ -103,18 +103,20 @@ EXAMPLES
 
 export function printLoginHelp(): void {
   console.log(`
-duet login — Sign in via browser and sync default skills
+duet login — Sign in via device flow and sync default skills
 
 USAGE
-  duet login [--env-file <path>] [--no-browser] [--skip-skill-sync]
+  duet login --workspace <slug> [--env-file <path>] [--no-browser] [--skip-skill-sync]
 
-Opens a browser window pointed at the Duet web app, waits for the user to
-confirm, then writes the org's DUET_API_KEY to the shared env file. After
-auth, fetches and writes the latest default skills to ~/.duet/skills.
+Requests a workspace-scoped device code, prints the user code and verification
+URL, waits for approval, then writes the workspace's DUET_API_KEY to the shared
+env file. After auth, fetches and writes the latest default skills to
+~/.duet/skills when the product publishes them.
 
 OPTIONS
+  --workspace <slug>       Workspace slug for the one-workspace API key (or DUET_WORKSPACE)
   --env-file <path>        Env file to write the API key to (default: ${DEFAULT_DUET_ENV_FILE})
-  --no-browser             Print the auth URL instead of opening a browser
+  --no-browser             Print the verification URL instead of opening a browser
   --skip-skill-sync        Skip the post-login default skills sync
   -h, --help               Show this help
 
@@ -123,9 +125,9 @@ SKILL SYNC
   rewrites ~/.duet/skills when the hash differs from ~/.duet/.skills-hash.
 
 OVERRIDES
-  Set DUET_APP_BASE_URL (e.g. https://staging.duet.so) to re-point both the
-  AI gateway provider and the CLI auth/sync endpoints at a non-production
-  deployment.
+  Set DUET_API_BASE_URL (e.g. https://api-staging.duet.so) to re-point device
+  login. Set DUET_APP_BASE_URL only for product web-origin endpoints such as
+  default skill sync. Model traffic uses DUET_GATEWAY_BASE_URL.
 `);
 }
 

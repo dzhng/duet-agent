@@ -1,8 +1,14 @@
 import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
-import { loginWithBrowser } from "../lib/login.js";
+import { loginWithDeviceFlow } from "../lib/login.js";
 import { syncDefaultSkills } from "../lib/sync-skills.js";
 import { printLoginHelp } from "./help.js";
-import { defaultDuetEnvFilePath, fail, mergeEnvEntries, resolveUserPath } from "./shared.js";
+import {
+  defaultDuetEnvFilePath,
+  fail,
+  mergeEnvEntries,
+  resolveUserPath,
+  usageError,
+} from "./shared.js";
 
 export interface LoginCommandIO {
   cwd?: string;
@@ -12,15 +18,16 @@ export interface LoginCommandIO {
 /**
  * Run `duet login`.
  *
- * Opens the duet web app in a browser, waits for confirmation, persists the
+ * Starts the Duet device flow for a workspace-scoped API key, persists the
  * returned `DUET_API_KEY` to the shared env file, then optionally syncs the
- * org's default skills bundle to `~/.duet/skills`.
+ * workspace's default skills bundle to `~/.duet/skills`.
  */
 export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): Promise<void> {
   const cwd = io.cwd ?? process.cwd();
   let envFilePathOverride: string | undefined = io.envFilePath;
   let noBrowser = false;
   let skipSkillSync = false;
+  let workspaceSlug: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -34,6 +41,10 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
       case "--skip-skill-sync":
         skipSkillSync = true;
         break;
+      case "--workspace":
+        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
+        workspaceSlug = args[++i]!;
+        break;
       case "--help":
       case "-h":
         printLoginHelp();
@@ -43,14 +54,23 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
     }
   }
 
+  workspaceSlug = workspaceSlug?.trim() || process.env.DUET_WORKSPACE?.trim();
+  if (!workspaceSlug) {
+    usageError(
+      "Missing required workspace. Pass `duet login --workspace <slug>` or set DUET_WORKSPACE; login creates one DUET_API_KEY scoped to one workspace.",
+    );
+  }
+
   const targetEnvFile = envFilePathOverride
     ? resolveUserPath(envFilePathOverride, cwd)
     : defaultDuetEnvFilePath();
 
-  const result = await loginWithBrowser({ noBrowser });
+  const result = await loginWithDeviceFlow({ noBrowser, workspaceSlug });
 
   await mergeEnvEntries(targetEnvFile, new Map([["DUET_API_KEY", result.apiKey]]));
-  console.error(`Saved DUET_API_KEY for ${result.orgName} (${result.orgSlug}) to ${targetEnvFile}`);
+  console.error(
+    `Saved DUET_API_KEY for ${result.workspaceName} (${result.workspaceSlug}) to ${targetEnvFile}`,
+  );
 
   process.env.DUET_API_KEY = result.apiKey;
 
@@ -72,6 +92,8 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
   const syncResult = await syncDefaultSkills({ apiKey: result.apiKey });
   if (syncResult.status === "unchanged") {
     console.error("Default skills already up to date.");
+  } else if (syncResult.status === "not-found") {
+    console.error("No default skills published.");
   } else {
     console.error(`Synced default skills (${syncResult.count} total).`);
   }

@@ -5,11 +5,9 @@ import { dirname, join, resolve } from "node:path";
 import { resolveDuetAppBaseUrl } from "./duet-app-url.js";
 
 /**
- * Mirror of the chat-app default-skill sync, kept byte-identical so the
- * server's hash and the CLI's local hash match. The chat-app endpoint
- * already renders placeholders against the caller's org; the CLI just
- * verifies the returned hash and dumps the files into ~/.duet/skills/,
- * which the turn runner reads directly.
+ * Mirror of the product default-skill sync. The server owns placeholder
+ * rendering for the caller's workspace; the CLI verifies the returned hash and
+ * dumps the files into ~/.duet/skills/, which the turn runner reads directly.
  *
  * The hash is used as a conditional GET ETag: we send the on-disk hash via
  * `If-None-Match` and the server returns `304 Not Modified` when it still
@@ -26,7 +24,8 @@ export interface RemoteSkill {
 
 export type SyncSkillsResult =
   | { status: "unchanged"; hash: string }
-  | { status: "synced"; hash: string; count: number };
+  | { status: "synced"; hash: string; count: number }
+  | { status: "not-found" };
 
 export interface SyncSkillsOptions {
   apiKey: string;
@@ -50,7 +49,8 @@ export interface FetchSkillsOptions {
 
 export type FetchSkillsResult =
   | { status: "not-modified"; hash: string }
-  | { status: "modified"; hash: string; skills: RemoteSkill[] };
+  | { status: "modified"; hash: string; skills: RemoteSkill[] }
+  | { status: "not-found" };
 
 export async function fetchDefaultSkills(options: FetchSkillsOptions): Promise<FetchSkillsResult> {
   const baseUrl = options.appBaseUrl ?? resolveDuetAppBaseUrl();
@@ -67,6 +67,9 @@ export async function fetchDefaultSkills(options: FetchSkillsOptions): Promise<F
       throw new Error("Server returned 304 without a known hash to compare");
     }
     return { status: "not-modified", hash: options.knownHash };
+  }
+  if (response.status === 404) {
+    return { status: "not-found" };
   }
   if (!response.ok) {
     const detail = (await safeReadText(response)).slice(0, 256);
@@ -152,6 +155,9 @@ export async function syncDefaultSkills(options: SyncSkillsOptions): Promise<Syn
 
   if (fetched.status === "not-modified") {
     return { status: "unchanged", hash: fetched.hash };
+  }
+  if (fetched.status === "not-found") {
+    return { status: "not-found" };
   }
 
   // Stage the new tree in a sibling directory and swap it into place with a

@@ -5,7 +5,7 @@ import {
   resolveDuetGatewayModel,
 } from "../src/model-resolution/duet-gateway.js";
 
-const ENV_KEYS = ["DUET_APP_BASE_URL", "DUET_GATEWAY_BASE_URL", "DUET_API_KEY"] as const;
+const ENV_KEYS = ["DUET_GATEWAY_BASE_URL", "DUET_API_KEY"] as const;
 
 const originalEnv = new Map<string, string | undefined>();
 let originalFetch: typeof fetch;
@@ -35,17 +35,13 @@ afterEach(() => {
 
 describe("getDuetGatewayBaseUrl", () => {
   test("uses DUET_GATEWAY_BASE_URL verbatim after trimming and stripping a trailing slash", () => {
-    process.env.DUET_APP_BASE_URL = "https://app.example.com";
     process.env.DUET_GATEWAY_BASE_URL = "  https://gateway.example.com/custom/  ";
 
     expect(getDuetGatewayBaseUrl()).toBe("https://gateway.example.com/custom");
   });
 
-  test("falls back to the app-derived chat gateway path when unset", () => {
-    expect(getDuetGatewayBaseUrl()).toBe("https://duet.so/api/v1/ai-gateway");
-
-    process.env.DUET_APP_BASE_URL = "https://staging.duet.so/";
-    expect(getDuetGatewayBaseUrl()).toBe("https://staging.duet.so/api/v1/ai-gateway");
+  test("falls back to gateway.duet.so when unset", () => {
+    expect(getDuetGatewayBaseUrl()).toBe("https://gateway.duet.so");
   });
 });
 

@@ -177,6 +177,17 @@ describe("fetchDefaultSkills", () => {
       fetchDefaultSkills({ apiKey: "duet_gt_x", appBaseUrl: "https://test", fetchFn }),
     ).rejects.toThrow(/401.*Unauthorized.*nope/);
   });
+
+  testIfDocker("treats 404 as no default skills published", async () => {
+    const { fetchFn } = makeFetch(() => new Response("not found", { status: 404 }));
+    const result = await fetchDefaultSkills({
+      apiKey: "duet_gt_x",
+      appBaseUrl: "https://test",
+      fetchFn,
+    });
+
+    expect(result).toEqual({ status: "not-found" });
+  });
 });
 
 describe("syncDefaultSkills", () => {
@@ -272,6 +283,26 @@ describe("syncDefaultSkills", () => {
         fetchFn,
       }),
     ).rejects.toThrow(/Refusing to write skill outside/);
+  });
+
+  testIfDocker("skips cleanly when the default skills endpoint is absent", async () => {
+    const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-login-")));
+    const skillsDir = join(root, "skills");
+    const hashFilePath = join(root, ".skills-hash");
+
+    const { fetchFn } = makeFetch(() => new Response("not found", { status: 404 }));
+
+    const result = await syncDefaultSkills({
+      apiKey: "duet_gt_x",
+      appBaseUrl: "https://test",
+      skillsDir,
+      hashFilePath,
+      fetchFn,
+    });
+
+    expect(result).toEqual({ status: "not-found" });
+    await expect(stat(skillsDir)).rejects.toThrow();
+    await expect(stat(hashFilePath)).rejects.toThrow();
   });
 
   testIfDocker(

@@ -4,9 +4,9 @@ import { getDuetGatewayBaseUrl } from "../model-resolution/duet-gateway.js";
 /**
  * The `duet model` subcommand talks to models directly through the Vercel AI
  * SDK (`ai@^7`), pointed at the Duet gateway instead of the pi harness. The
- * gateway re-exposes Vercel's AI Gateway under `/api/v1/ai-gateway`; the SDK's
- * gateway provider speaks the versioned `/v4/ai` protocol path, and `/v1/models`
- * serves the catalog. Auth is the org-scoped `DUET_API_KEY` Bearer token.
+ * gateway provider speaks the versioned `/v4/ai` protocol path, and
+ * `/v1/models` serves the catalog. Auth is the workspace-scoped `DUET_API_KEY`
+ * Bearer token.
  */
 export const DUET_API_KEY_ENV = "DUET_API_KEY";
 

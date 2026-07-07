@@ -1,4 +1,4 @@
-import { resolveDuetAppBaseUrl } from "./duet-app-url.js";
+import { resolveDuetApiBaseUrl } from "./duet-app-url.js";
 
 /**
  * Source identifier stamped on every CLI/TUI feedback row so the admin
@@ -20,7 +20,7 @@ export interface SubmitFeedbackResult {
 }
 
 /**
- * POST a free-form markdown feedback string to the Duet web app's public
+ * POST a free-form markdown feedback string to the Duet API's public
  * feedback endpoint. Shared between `duet send-feedback` (CLI) and the
  * `/feedback` TUI slash command. The endpoint is intentionally
  * unauthenticated — anonymous notes are fine.
@@ -34,8 +34,8 @@ export async function submitDuetFeedback(
   const trimmed = options.content.trim();
   if (!trimmed) throw new Error("Feedback content is required.");
 
-  const baseUrl = resolveDuetAppBaseUrl();
-  const url = `${baseUrl}/api/v1/feedback`;
+  const baseUrl = resolveDuetApiBaseUrl();
+  const url = `${baseUrl}/v1/feedback`;
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const response = await fetchImpl(url, {
     method: "POST",

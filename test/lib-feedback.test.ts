@@ -4,13 +4,13 @@ import { DUET_AGENT_FEEDBACK_SOURCE, submitDuetFeedback } from "../src/lib/feedb
 let originalBaseUrl: string | undefined;
 
 beforeEach(() => {
-  originalBaseUrl = process.env.DUET_APP_BASE_URL;
-  process.env.DUET_APP_BASE_URL = "https://test";
+  originalBaseUrl = process.env.DUET_API_BASE_URL;
+  process.env.DUET_API_BASE_URL = "https://test";
 });
 
 afterEach(() => {
-  if (originalBaseUrl === undefined) delete process.env.DUET_APP_BASE_URL;
-  else process.env.DUET_APP_BASE_URL = originalBaseUrl;
+  if (originalBaseUrl === undefined) delete process.env.DUET_API_BASE_URL;
+  else process.env.DUET_API_BASE_URL = originalBaseUrl;
 });
 
 describe("submitDuetFeedback", () => {
@@ -32,7 +32,7 @@ describe("submitDuetFeedback", () => {
 
     expect(result.baseUrl).toBe("https://test");
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe("https://test/api/v1/feedback");
+    expect(calls[0]!.url).toBe("https://test/v1/feedback");
     expect(calls[0]!.method).toBe("POST");
     expect(JSON.parse(calls[0]!.body)).toEqual({
       content: "the TUI flickers when resuming",

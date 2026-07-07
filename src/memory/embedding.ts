@@ -1,19 +1,17 @@
-import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
+import { getDuetGatewayBaseUrl } from "../model-resolution/duet-gateway.js";
 
 /**
- * Client for the Duet embedding endpoint.
+ * Client for Duet gateway embeddings.
  *
- * Routes through the Duet public API (`POST <app>/api/v1/embed`) gated
- * by the user's existing `DUET_API_KEY`. Logged-in users get embeddings
- * for free as a CLI perk; we deliberately do not expose a way to plug
- * in a different provider key here so the runtime stays single-path.
+ * Routes through the Duet model gateway (`POST <gateway>/v1/embeddings`) gated
+ * by the user's existing `DUET_API_KEY`. Logged-in users get embeddings through
+ * the same gateway origin as model traffic; we deliberately do not expose a way
+ * to plug in a different provider key here so the runtime stays single-path.
  *
- * Model identity is owned by the server. The endpoint hardcodes the
- * model and echoes it back on every response; we store the echoed
- * value alongside each vector so a future server-side model swap can
- * invalidate stale rows by tag. This client knows nothing about the
- * concrete model name — only the dimension width, which has to match
- * the pgvector column.
+ * The requested model defaults to the current server-side embedding model and
+ * can be overridden with `DUET_EMBEDDING_MODEL`. We store the model echoed by
+ * the OpenAI-compatible response alongside each vector so a future model swap
+ * can invalidate stale rows by tag.
  *
  * Behavior:
  *   - Inputs are batched up to `EMBEDDING_BATCH_LIMIT` per HTTP call so
@@ -27,12 +25,15 @@ import { resolveDuetAppBaseUrl } from "../lib/duet-app-url.js";
  *     sleeps until the user logs in).
  */
 
-/** Embedding dimensions. Sent on every request and matches the pgvector column width. */
+/** Embedding dimensions expected by the pgvector column. */
 export const EMBEDDING_DIMENSIONS = 3072;
 /** Maximum input strings sent in a single embedding request. */
 export const EMBEDDING_BATCH_LIMIT = 100;
+/** Current Duet embedding default; matches the 3072-dim pgvector table. */
+export const DEFAULT_DUET_EMBEDDING_MODEL = "google/gemini-embedding-2";
+export const DUET_EMBEDDING_MODEL_ENV = "DUET_EMBEDDING_MODEL";
 
-const ENDPOINT_PATH = "/api/v1/embed";
+const ENDPOINT_PATH = "/v1/embeddings";
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 500;
 
@@ -67,11 +68,15 @@ export interface CreateEmbeddingClientOptions {
    */
   apiKey?: string | (() => string | undefined);
   /**
-   * Override the base URL. Defaults to `resolveDuetAppBaseUrl()` so the
-   * client follows the same staging/production routing as the rest of
-   * the CLI.
+   * Override the gateway base URL. Defaults to `getDuetGatewayBaseUrl()` so
+   * embeddings follow the same staging/production routing as model traffic.
    */
   baseUrl?: string;
+  /**
+   * Override the requested embedding model. Defaults to
+   * `DUET_EMBEDDING_MODEL`, then `DEFAULT_DUET_EMBEDDING_MODEL`.
+   */
+  model?: string;
   /**
    * Override the fetch implementation. Tests use this to assert request
    * shape and stub responses without standing up a real server.
@@ -85,7 +90,8 @@ export interface CreateEmbeddingClientOptions {
  * `recall_memory` query so connection reuse can amortize TLS setup.
  */
 export function createEmbeddingClient(options: CreateEmbeddingClientOptions = {}): EmbedFn {
-  const baseUrl = options.baseUrl ?? resolveDuetAppBaseUrl();
+  const baseUrl = options.baseUrl ?? getDuetGatewayBaseUrl();
+  const requestedModel = options.model ?? resolveEmbeddingModel();
   const fetchImpl = options.fetch ?? fetch;
 
   return async (inputs) => {
@@ -100,12 +106,13 @@ export function createEmbeddingClient(options: CreateEmbeddingClientOptions = {}
     }
 
     const embeddings: number[][] = [];
-    let model = "";
+    let responseModel = "";
     for (let offset = 0; offset < inputs.length; offset += EMBEDDING_BATCH_LIMIT) {
       const slice = inputs.slice(offset, offset + EMBEDDING_BATCH_LIMIT);
       const batch = await postBatch({
         url: `${baseUrl}${ENDPOINT_PATH}`,
         apiKey,
+        model: requestedModel,
         inputs: slice,
         fetchImpl,
       });
@@ -119,15 +126,16 @@ export function createEmbeddingClient(options: CreateEmbeddingClientOptions = {}
       // Take the last one so the caller sees what the server most
       // recently agreed to; mid-call mismatches are not a thing we
       // currently need to reconcile.
-      model = batch.model;
+      responseModel = batch.model;
     }
-    return { embeddings, model };
+    return { embeddings, model: responseModel };
   };
 }
 
 interface PostBatchOptions {
   url: string;
   apiKey: string;
+  model: string;
   inputs: string[];
   fetchImpl: typeof fetch;
 }
@@ -142,12 +150,12 @@ async function postBatch(options: PostBatchOptions): Promise<EmbedResult> {
           authorization: `Bearer ${options.apiKey}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ input: options.inputs, dimensions: EMBEDDING_DIMENSIONS }),
+        body: JSON.stringify({ model: options.model, input: options.inputs }),
       });
 
       if (response.ok) {
         const body = (await response.json()) as EmbeddingResponseEnvelope;
-        return { embeddings: body.data.embeddings, model: body.data.model };
+        return { embeddings: body.data.map((entry) => entry.embedding), model: body.model };
       }
 
       // 4xx errors (auth, malformed input) will not improve on retry;
@@ -177,22 +185,21 @@ async function postBatch(options: PostBatchOptions): Promise<EmbedResult> {
 }
 
 /**
- * Server response envelope. The route wraps the action result in
- * `{ data }`; `dimensions` is echoed back for verification but the
- * server is the source of truth.
+ * OpenAI-compatible embedding response returned by the Duet gateway.
  */
 interface EmbeddingResponseEnvelope {
-  data: {
-    embeddings: number[][];
-    dimensions: number;
-    model: string;
-  };
+  data: Array<{ embedding: number[] }>;
+  model: string;
 }
 
 function resolveApiKey(override: CreateEmbeddingClientOptions["apiKey"]): string | undefined {
   if (typeof override === "function") return override();
   if (typeof override === "string") return override;
   return process.env.DUET_API_KEY;
+}
+
+function resolveEmbeddingModel(): string {
+  return process.env[DUET_EMBEDDING_MODEL_ENV]?.trim() || DEFAULT_DUET_EMBEDDING_MODEL;
 }
 
 async function safeReadText(response: Response): Promise<string> {

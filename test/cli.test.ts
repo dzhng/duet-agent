@@ -276,7 +276,7 @@ describe("CLI model inference", () => {
     expect(model.provider).toBe("duet-gateway");
     expect(model.id).toBe("openai/gpt-5.5");
     expect(model.api).toBe("openai-responses");
-    expect(model.baseUrl).toBe("https://duet.so/api/v1/ai-gateway/v1");
+    expect(model.baseUrl).toBe("https://gateway.duet.so/v1");
     expect(model.reasoning).toBe(true);
   });
 
