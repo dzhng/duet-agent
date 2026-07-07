@@ -12,9 +12,9 @@ const OPENAI_BASE_URL = "https://api.openai.com/v1";
  * parallel model registry, the `duet-gateway` provider piggybacks on upstream
  * model definitions and only swaps `baseUrl` to point at Duet.
  *
- * The base URL is `${DUET_APP_BASE_URL}${GATEWAY_PATH}`; users only need to
- * override the app origin via `DUET_APP_BASE_URL` (also used by `duet login`
- * and the CLI skill sync).
+ * `DUET_GATEWAY_BASE_URL` can point model traffic at a dedicated gateway
+ * origin. When it is unset, the base URL stays `${DUET_APP_BASE_URL}${GATEWAY_PATH}`
+ * for compatibility with the chat app route.
  *
  * Auth flows through pi-ai's existing vercel-ai-gateway path, which reads
  * `AI_GATEWAY_API_KEY` — the CLI shims that env var from `DUET_API_KEY` at
@@ -22,8 +22,11 @@ const OPENAI_BASE_URL = "https://api.openai.com/v1";
  */
 
 export const DUET_GATEWAY_API_KEY_ENV = "DUET_API_KEY";
+export const DUET_GATEWAY_BASE_URL_ENV = "DUET_GATEWAY_BASE_URL";
 
 export function getDuetGatewayBaseUrl(): string {
+  const override = process.env[DUET_GATEWAY_BASE_URL_ENV]?.trim();
+  if (override) return stripTrailingSlash(override);
   return `${resolveDuetAppBaseUrl()}${GATEWAY_PATH}`;
 }
 
@@ -141,6 +144,10 @@ function getDuetGatewayBaseUrlForModel(model: Model<any>): string {
     return `${getDuetGatewayBaseUrl()}/v1`;
   }
   return getDuetGatewayBaseUrl();
+}
+
+function stripTrailingSlash(url: string): string {
+  return url.endsWith("/") ? url.slice(0, -1) : url;
 }
 
 /**
