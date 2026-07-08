@@ -61,8 +61,7 @@ describe("skill metadata + path-based loading", () => {
       runner.subscribe((event: TurnEvent) => {
         if (event.type !== "step") return;
         const step = event.step;
-        if (step.type !== "tool_call") return;
-        if (step.status !== "running") return;
+        if (step.type !== "tool_call_start") return;
         const serialized = JSON.stringify(step.input ?? {});
         if (serialized.includes(skillPath)) {
           skillReads.push({ tool: step.toolName, input: step.input });

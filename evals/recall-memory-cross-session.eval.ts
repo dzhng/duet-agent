@@ -110,9 +110,8 @@ describe("recall_memory cross-session usage", () => {
         runner.subscribe((event: TurnEvent) => {
           if (event.type !== "step") return;
           const step = event.step;
-          if (step.type !== "tool_call") return;
+          if (step.type !== "tool_call_start") return;
           if (step.toolName !== "recall_memory") return;
-          if (step.status !== "running") return;
           const input = step.input as { query?: string } | undefined;
           recallCalls.push({ query: input?.query });
         });

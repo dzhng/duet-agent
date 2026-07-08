@@ -50,7 +50,7 @@ describe("timer wakeAfterMs routing", () => {
       runner.subscribe((event: TurnEvent) => {
         if (event.type !== "step") return;
         const step = event.step;
-        if (step.type === "tool_call" && step.status === "running") {
+        if (step.type === "tool_call_start") {
           toolCalls.push({ name: step.toolName, input: step.input });
         }
       });

@@ -94,8 +94,7 @@ async function runScenario(input: {
     if (step.type === "text") {
       assistantChunks.push(step.text);
     }
-    if (step.type !== "tool_call") return;
-    if (step.status !== "running") return;
+    if (step.type !== "tool_call_start") return;
     const serializedInput = JSON.stringify(step.input ?? {});
     for (const match of serializedInput.matchAll(skillPathPattern)) {
       skillFileReads.push(match[1]!);

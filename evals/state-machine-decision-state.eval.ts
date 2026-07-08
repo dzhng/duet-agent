@@ -174,8 +174,7 @@ async function runOnce(): Promise<{
   runner.subscribe((event: TurnEvent) => {
     if (event.type !== "step") return;
     const step = event.step;
-    if (step.type !== "tool_call") return;
-    if (step.status !== "running") return;
+    if (step.type !== "tool_call_start") return;
     if (step.toolName !== "select_state_machine_state") return;
     const input = (step as { input?: unknown }).input as
       | { decision?: { state?: unknown } }

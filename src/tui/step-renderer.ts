@@ -2,7 +2,12 @@ import { type CliRenderer, TextRenderable } from "@opentui/core";
 import { formatElapsed, runningMarker, StatusController } from "./status-controller.js";
 import { SIDEBAR_WIDTH } from "./sidebar.js";
 import { COLORS } from "./theme.js";
-import { assembleToolBlock, formatToolBlock, truncateReasoningBody } from "./tool-formatters.js";
+import {
+  assembleToolBlock,
+  formatToolBlock,
+  type FormattedTool,
+  truncateReasoningBody,
+} from "./tool-formatters.js";
 import { TranscriptWriter } from "./transcript-writer.js";
 import type { TurnEvent, TurnStep, TurnTokenUsage } from "../types/protocol.js";
 
@@ -18,9 +23,9 @@ interface StreamingBlock {
   truncate?: (text: string) => string;
 }
 
-/** Rendered tool-call row. Tool calls emit a `running` event followed by a
- *  terminal `completed`/`error` event; both events update the same line so
- *  the spinner swaps to ✓/✗ inline instead of pushing a separate block. */
+/** Rendered tool-call row. A `tool_call_start` step opens the block with a
+ *  spinner and the canonical `tool_call` step updates the same line so the
+ *  spinner swaps to ✓/✗ inline instead of pushing a separate block. */
 interface ToolBlock {
   line: TextRenderable;
   /** Formatter-produced header line, e.g. "$ ls /" or "[question]". The
@@ -28,9 +33,6 @@ interface ToolBlock {
   header: string;
   /** Optional input body lines shown under the header. */
   body: string;
-  /** Original tool input, retained so the finalize pass can re-run the
-   *  formatter with the output and produce a custom `result` section. */
-  input: unknown;
   /** Wall-clock start so the running header can show a live elapsed
    *  counter and the finalized header can report total tool duration.
    *  Undefined when the first event we saw was already terminal
@@ -60,8 +62,8 @@ export interface StepRendererOptions {
 export class StepRenderer {
   private activeTextStream: StreamingBlock | undefined;
   private activeReasoningStream: StreamingBlock | undefined;
-  // Tool calls fire twice (running → completed/error). Track the rendered
-  // block by toolCallId so the second event updates the same line in place
+  // Tool calls fire twice (tool_call_start → tool_call). Track the rendered
+  // block by toolCallId so the canonical step updates the same line in place
   // instead of pushing a separate block.
   private readonly activeToolBlocks = new Map<string, ToolBlock>();
 
@@ -107,6 +109,8 @@ export class StepRenderer {
           COLORS.reasoning,
         );
       }
+    } else if (step.type === "tool_call_start") {
+      this.renderToolCallStart(step);
     } else if (step.type === "tool_call") {
       this.renderToolCall(step);
     } else if (step.type === "system") {
@@ -216,14 +220,27 @@ export class StepRenderer {
     return next;
   }
 
-  // Render a tool call as a single, self-updating block. The first event
-  // (`status: "running"`) creates the block with a spinner; the second event
-  // (`completed` or `error`) replaces the spinner with ✓/✗ and appends the
-  // truncated result inline so the call and its outcome stay visually paired.
-  // Per-tool formatters in `tool-formatters.ts` decide the header text and
-  // whether the call should appear in the transcript at all (e.g.
-  // ask_user_question hides itself live and lets the `ask` terminal event
-  // own the question display).
+  // Render a tool call as a single, self-updating block. The
+  // `tool_call_start` step creates the block with a spinner; the canonical
+  // `tool_call` step replaces the spinner with ✓/✗ and appends the truncated
+  // result inline so the call and its outcome stay visually paired. Per-tool
+  // formatters in `tool-formatters.ts` decide the header text and whether the
+  // call should appear in the transcript at all (e.g. ask_user_question hides
+  // itself live and lets the `ask` terminal event own the question display).
+  private renderToolCallStart(step: Extract<TurnStep, { type: "tool_call_start" }>): void {
+    const block = this.mountToolBlock(
+      formatToolBlock({
+        toolName: step.toolName,
+        status: "running",
+        input: step.input,
+        mode: "live",
+      }),
+      COLORS.tool,
+      Date.now(),
+    );
+    if (block) this.activeToolBlocks.set(step.toolCallId, block);
+  }
+
   private renderToolCall(step: Extract<TurnStep, { type: "tool_call" }>): void {
     const existing = this.activeToolBlocks.get(step.toolCallId);
     if (existing) {
@@ -231,44 +248,43 @@ export class StepRenderer {
       return;
     }
 
-    const isLive = step.status === "running" || step.status === "pending";
-    const formatStatus = isLive ? "running" : step.status === "error" ? "error" : "completed";
-    const formatted = formatToolBlock({
-      toolName: step.toolName,
-      status: formatStatus,
-      input: step.input,
-      output: step.output,
-      mode: "live",
-    });
-    if (formatted.hidden) return;
+    // No live block — the canonical step arrived without a preceding
+    // `tool_call_start` (cached/replayed history). It echoes the call's
+    // input, so it renders as a complete block on its own; there is just no
+    // real duration because we never saw the call start.
+    const block = this.mountToolBlock(
+      formatToolBlock({
+        toolName: step.toolName,
+        status: step.isError ? "error" : "completed",
+        input: step.input,
+        output: step.output,
+        mode: "live",
+      }),
+      step.isError ? COLORS.error : COLORS.tool,
+      undefined,
+    );
+    if (block) this.finalizeToolCall(step, block);
+  }
 
-    const startedAt = isLive ? Date.now() : undefined;
-    const marker = "⏳";
-    const fg = step.status === "error" ? COLORS.error : COLORS.tool;
-    const columns = this.toolBlockColumns();
+  /** Mount a new tool block into the transcript, or return undefined when the
+   *  formatter hides this tool (e.g. ask_user_question owns its own display). */
+  private mountToolBlock(
+    formatted: FormattedTool,
+    fg: string,
+    startedAt: number | undefined,
+  ): ToolBlock | undefined {
+    if (formatted.hidden) return undefined;
     const line = new TextRenderable(this.opts.renderer, {
-      content: assembleToolBlock(formatted, marker, { columns }),
+      content: assembleToolBlock(formatted, "⏳", { columns: this.toolBlockColumns() }),
       fg,
     });
     this.opts.transcriptWriter.beginBlock();
     this.opts.transcriptWriter.mount(line);
-    const block: ToolBlock = {
-      line,
-      header: formatted.header,
-      body: formatted.body ?? "",
-      input: step.input,
-      startedAt,
-    };
-    this.activeToolBlocks.set(step.toolCallId, block);
-    // The same event may already carry a terminal status (cached/replayed
-    // history). Fall through to finalize against the just-created block.
-    if (!isLive) {
-      this.finalizeToolCall(step, block);
-    }
+    return { line, header: formatted.header, body: formatted.body ?? "", startedAt };
   }
 
   private finalizeToolCall(step: Extract<TurnStep, { type: "tool_call" }>, block: ToolBlock): void {
-    const isError = step.status === "error";
+    const isError = step.isError;
     const glyph = isError ? "✗" : "✓";
     const elapsedMs = block.startedAt === undefined ? 0 : Date.now() - block.startedAt;
     // Sub-second runs drop the elapsed suffix so the transcript does not get
@@ -277,7 +293,7 @@ export class StepRenderer {
     const formatted = formatToolBlock({
       toolName: step.toolName,
       status: isError ? "error" : "completed",
-      input: block.input,
+      input: step.input,
       output: step.output,
       mode: "live",
     });

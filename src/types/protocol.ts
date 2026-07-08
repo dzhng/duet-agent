@@ -307,13 +307,33 @@ export type TurnStep =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
   | {
-      type: "tool_call";
+      /**
+       * A tool call has started executing. This is the transient precursor to
+       * the canonical `tool_call` step, the way `text_delta` precedes `text`.
+       */
+      type: "tool_call_start";
       toolName: string;
+      /** Correlates this start with its canonical `tool_call` step. */
       toolCallId: string;
-      status: "pending" | "running" | "completed" | "error";
       /** Tool arguments as parsed by the model. Shape is tool-specific. */
       input?: Record<string, any>;
-      /** Tool result content, present once the tool finishes (status "completed" or "error"). */
+    }
+  | {
+      /**
+       * The canonical record of a finished tool call. Like the `text` step
+       * after `text_delta`, it is self-contained: it echoes the call's
+       * `input` alongside the result so consumers can render the finished
+       * call without stitching state from the earlier `tool_call_start`.
+       */
+      type: "tool_call";
+      toolName: string;
+      /** Matches the `toolCallId` of the `tool_call_start` step that began this call. */
+      toolCallId: string;
+      /** Tool arguments echoed from the matching `tool_call_start`. */
+      input?: Record<string, any>;
+      /** Whether the tool finished with an error. */
+      isError: boolean;
+      /** Tool result content. */
       output?: (TextContent | ImageContent)[];
     }
   | { type: "system"; message: string };

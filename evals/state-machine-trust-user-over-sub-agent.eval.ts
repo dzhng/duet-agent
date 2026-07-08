@@ -123,7 +123,7 @@ describe("parent trusts the user over a sub-agent claim", () => {
           parentTextChunks.push(step.text);
           return;
         }
-        if (step.type !== "tool_call" || step.status !== "running") return;
+        if (step.type !== "tool_call_start") return;
 
         if (step.toolName === "select_state_machine_state") {
           const decision = step.input?.decision ?? {};

@@ -56,7 +56,7 @@ describe("usage aggregate invariance", () => {
         events.push(event);
         if (event.type !== "step") return;
         const step = event.step;
-        if (step.type === "tool_call" && step.toolName === "bash" && step.status === "running") {
+        if (step.type === "tool_call_start" && step.toolName === "bash") {
           const input = step.input as { command?: string } | undefined;
           bashCommands.push(input?.command ?? "");
         }

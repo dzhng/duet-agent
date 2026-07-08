@@ -177,7 +177,7 @@ describe("TurnRunner event emission", () => {
     ]);
   });
 
-  test("translates tool execution lifecycle into tool_call step events", () => {
+  test("translates tool execution lifecycle into tool_call_start and tool_call step events", () => {
     const { runner, events } = createEventTurnRunner();
 
     runner.emitAgentEventForTest({
@@ -198,10 +198,9 @@ describe("TurnRunner event emission", () => {
       {
         type: "step",
         step: {
-          type: "tool_call",
+          type: "tool_call_start",
           toolName: "read",
           toolCallId: "tool-1",
-          status: "running",
           input: { path: "README.md" },
         },
       },
@@ -211,7 +210,10 @@ describe("TurnRunner event emission", () => {
           type: "tool_call",
           toolName: "read",
           toolCallId: "tool-1",
-          status: "completed",
+          // The result echoes the input remembered from the start event.
+          input: { path: "README.md" },
+          isError: false,
+          output: undefined,
         },
       },
     ]);

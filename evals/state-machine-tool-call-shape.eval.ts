@@ -52,7 +52,6 @@ const EVAL_INSTRUCTIONS = dedent`
 
 interface CapturedCall {
   toolCallId: string;
-  status: "running" | "completed" | "error";
   input?: unknown;
 }
 
@@ -68,11 +67,10 @@ async function runOnce(): Promise<CapturedCall[]> {
   runner.subscribe((event: TurnEvent) => {
     if (event.type !== "step") return;
     const step = event.step;
-    if (step.type !== "tool_call") return;
+    if (step.type !== "tool_call_start") return;
     if (step.toolName !== "create_state_machine_definition") return;
     calls.push({
       toolCallId: step.toolCallId,
-      status: step.status as CapturedCall["status"],
       input: (step as { input?: unknown }).input,
     });
   });
@@ -87,9 +85,9 @@ function firstAttemptShape(calls: CapturedCall[]): {
   empty: boolean;
   hasDefinition: boolean;
 } {
-  const firstRunning = calls.find((c) => c.status === "running");
-  if (!firstRunning) return { attempted: false, empty: false, hasDefinition: false };
-  const input = firstRunning.input as Record<string, unknown> | undefined;
+  const firstCall = calls[0];
+  if (!firstCall) return { attempted: false, empty: false, hasDefinition: false };
+  const input = firstCall.input as Record<string, unknown> | undefined;
   const empty = !input || Object.keys(input).length === 0;
   const hasDefinition =
     !!input && typeof input === "object" && "definition" in input && !!input.definition;

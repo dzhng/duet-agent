@@ -50,43 +50,39 @@ describe("TUI streaming surface", () => {
     expect(frame).toContain("thinking about prerequisites");
   });
 
-  testIfDocker(
-    "tool_call running then completed transitions from spinner to check glyph",
-    async () => {
-      harness.runner.emitEvent({
-        type: "step",
-        step: {
-          type: "tool_call",
-          toolName: "bash",
-          toolCallId: "bash-1",
-          status: "running",
-          input: { command: "echo hi" },
-        },
-      });
-      await harness.flush();
-      const runningFrame = await harness.captureCharFrame();
-      // The running marker is the hourglass glyph appended to the header.
-      expect(runningFrame).toContain("\u23F3");
+  testIfDocker("tool_call then tool_result transitions from spinner to check glyph", async () => {
+    harness.runner.emitEvent({
+      type: "step",
+      step: {
+        type: "tool_call_start",
+        toolName: "bash",
+        toolCallId: "bash-1",
+        input: { command: "echo hi" },
+      },
+    });
+    await harness.flush();
+    const runningFrame = await harness.captureCharFrame();
+    // The running marker is the hourglass glyph appended to the header.
+    expect(runningFrame).toContain("\u23F3");
 
-      harness.runner.emitEvent({
-        type: "step",
-        step: {
-          type: "tool_call",
-          toolName: "bash",
-          toolCallId: "bash-1",
-          status: "completed",
-          input: { command: "echo hi" },
-          output: [{ type: "text", text: "hi" }],
-        },
-      });
-      await harness.flush();
-      const completedFrame = await harness.captureCharFrame();
-      // Completion replaces the hourglass with a check glyph in the same
-      // header row. The hourglass should be gone for this tool call.
-      expect(completedFrame).toContain("\u2713");
-      expect(completedFrame).not.toContain("\u23F3");
-    },
-  );
+    harness.runner.emitEvent({
+      type: "step",
+      step: {
+        type: "tool_call",
+        toolName: "bash",
+        toolCallId: "bash-1",
+        input: { command: "echo hi" },
+        isError: false,
+        output: [{ type: "text", text: "hi" }],
+      },
+    });
+    await harness.flush();
+    const completedFrame = await harness.captureCharFrame();
+    // Completion replaces the hourglass with a check glyph in the same
+    // header row. The hourglass should be gone for this tool call.
+    expect(completedFrame).toContain("\u2713");
+    expect(completedFrame).not.toContain("\u23F3");
+  });
 
   testIfDocker(
     "memory event with phase: observation updates the working status surface",

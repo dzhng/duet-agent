@@ -83,8 +83,7 @@ describe("state-machine create-while-active explicit reset", () => {
         }
         if (event.type !== "step") return;
         const step = event.step;
-        if (step.type !== "tool_call") return;
-        if (step.status !== "running") return;
+        if (step.type !== "tool_call_start") return;
         toolCalls.push({ name: step.toolName, input: step.input });
       });
 

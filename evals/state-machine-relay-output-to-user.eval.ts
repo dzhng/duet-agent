@@ -76,7 +76,7 @@ describe("state machine relays state output to the user", () => {
         if (event.origin) return;
         const step = event.step;
         if (step.type === "text") parentTextChunks.push(step.text);
-        if (step.type === "tool_call" && step.status === "running") {
+        if (step.type === "tool_call_start") {
           selectCalls.push(step.toolName);
         }
       });

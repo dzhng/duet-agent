@@ -59,7 +59,7 @@ import type {
   TurnTodo,
 } from "../types/protocol.js";
 import type { StateMachineAgentState } from "../types/state-machine.js";
-import { agentEventToTurnEvents, agentMessageText } from "./agent-events.js";
+import { createAgentEventTranslator, agentMessageText } from "./agent-events.js";
 import {
   createRecallMemorySystemPromptLayer,
   createSourceOfTruthSystemPromptLayer,
@@ -248,6 +248,8 @@ export function scaleContextWindowUsageToTotalTokens(
 
 export class TurnRunner {
   private readonly eventHandlers = new Set<TurnEventHandler>();
+  /** Maps pi agent events to turn steps; stateful so the canonical `tool_call` step can echo the call's input. */
+  private readonly agentEventToTurnEvents = createAgentEventTranslator();
   /** In-memory observation store used by context transforms during agent turns. */
   protected readonly memory = new MemoryContextCache();
   /** Hydrates, flushes, and disposes durable observation storage. */
@@ -2229,7 +2231,7 @@ export class TurnRunner {
     if (event.type === "message_start" && event.message.role === "user") {
       this.removeFollowUpPrompt(agentMessageText(event.message));
     }
-    for (const turnEvent of agentEventToTurnEvents(event)) {
+    for (const turnEvent of this.agentEventToTurnEvents(event)) {
       this.emit(origin ? { ...turnEvent, origin } : turnEvent);
     }
   }

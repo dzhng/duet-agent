@@ -44,8 +44,7 @@ describe("state machine vs todo routing", () => {
       runner.subscribe((event: TurnEvent) => {
         if (event.type !== "step") return;
         const step = event.step;
-        if (step.type !== "tool_call") return;
-        if (step.status !== "running") return;
+        if (step.type !== "tool_call_start") return;
         toolCalls.push({ name: step.toolName, input: step.input });
       });
 
@@ -124,8 +123,7 @@ describe("state machine vs todo routing", () => {
         }
         if (event.type !== "step") return;
         const step = event.step;
-        if (step.type !== "tool_call") return;
-        if (step.status !== "running") return;
+        if (step.type !== "tool_call_start") return;
         toolCalls.push({ name: step.toolName, input: step.input });
       });
 

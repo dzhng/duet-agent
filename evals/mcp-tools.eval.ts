@@ -119,15 +119,13 @@ describe("mcp http tools", () => {
       runner.subscribe((event: TurnEvent) => {
         if (event.type !== "step") return;
         const step = event.step;
-        if (step.type !== "tool_call") return;
+        if (step.type !== "tool_call" || step.isError) return;
         if (!step.toolName.startsWith("eval_mcp__")) return;
-        if (step.status === "completed") {
-          const text = step.output?.find((part) => part.type === "text");
-          mcpToolCalls.push({
-            name: step.toolName,
-            output: text && "text" in text ? text.text : undefined,
-          });
-        }
+        const text = step.output?.find((part) => part.type === "text");
+        mcpToolCalls.push({
+          name: step.toolName,
+          output: text && "text" in text ? text.text : undefined,
+        });
       });
 
       try {

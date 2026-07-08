@@ -19,8 +19,8 @@ import { formatCompactJson } from "../lib/compact-json.js";
 export type ToolFormatMode = "live" | "history";
 
 /** Status of a tool call as visible to the formatter. `running` covers the
- * pending/running spinner phase before any result is available; `completed`
- * and `error` carry the tool result. */
+ * spinner phase before any result is available; `completed` and `error`
+ * carry the tool result. */
 export type ToolCallStatus = "running" | "completed" | "error";
 
 export interface ToolCallSpec {

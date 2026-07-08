@@ -101,7 +101,7 @@ describe("state machine enforces a transition after an answered ask", () => {
       runner.subscribe((event: TurnEvent) => {
         if (event.type !== "step" || event.origin) return;
         const step = event.step;
-        if (step.type !== "tool_call" || step.status !== "running") return;
+        if (step.type !== "tool_call_start") return;
         if (step.toolName !== "select_state_machine_state") return;
         const decision = (step.input as { decision?: { state?: string } } | undefined)?.decision;
         selectCalls.push({ state: decision?.state });

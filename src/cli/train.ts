@@ -196,7 +196,7 @@ async function runAgentSynthesis(
   const unsubscribe = manager.subscribe(({ event }) => {
     if (event.type === "step") {
       const step = event.step;
-      if (step.type === "tool_call" && step.status === "running") {
+      if (step.type === "tool_call_start") {
         io.stderr.write(`[agent] ${step.toolName}\n`);
       } else if (step.type === "system") {
         io.stderr.write(`[agent] ${step.message}\n`);

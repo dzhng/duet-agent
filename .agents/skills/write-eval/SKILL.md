@@ -19,7 +19,7 @@ Per AGENTS.md and the review skill (§13): test behavior through the surface a u
 - A unit test on the pure function (e.g. `test/skill-context-resolve.test.ts` for `resolveSlashSkillPrompt`) proves the helper is correct. The **eval** proves the live wiring invokes it. Write the eval at the layer the unit test cannot reach — the real `TurnRunner` + `startTurn` flow, the CLI binary in JSONL mode, or a real `complete()` call.
 - For state-machine behavior, drive a real `TurnRunner` with a `mode` definition and `startTurn` from `test/helpers/turn-runner-protocol.js`. `evals/state-machine-agent-cwd.eval.ts` and `evals/state-machine-slash-skill-expansion.eval.ts` are the templates.
 - For CLI behavior, spawn `bun src/cli.ts` in JSONL mode and inspect the emitted events the same way a production subscriber would. `evals/inline-slash-commands.eval.ts` is the template.
-- Collect tool calls and assistant text off `runner.subscribe` `step` events: `step.type === "tool_call" && step.status === "running"` for calls, `step.type === "text"` for text. Sub-agent (state) events carry `event.origin.kind === "state_machine_agent"`; parent events have no `origin`. Filter on `origin` to attribute a tool call to the right agent.
+- Collect tool calls and assistant text off `runner.subscribe` `step` events: `step.type === "tool_call_start"` for calls as they begin (the canonical `tool_call` step carries the echoed input plus `isError`/`output`), `step.type === "text"` for text. Sub-agent (state) events carry `event.origin.kind === "state_machine_agent"`; parent events have no `origin`. Filter on `origin` to attribute a tool call to the right agent.
 
 ## 2. Design an assertion that can ONLY hold when the behavior is present
 

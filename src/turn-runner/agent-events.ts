@@ -1,51 +1,70 @@
 import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TurnStepEvent } from "../types/protocol.js";
 
-export function agentEventToTurnEvents(event: AgentEvent): TurnStepEvent[] {
-  switch (event.type) {
-    case "message_update": {
-      const update = event.assistantMessageEvent;
-      switch (update.type) {
-        case "text_delta":
-          return [{ type: "step", step: { type: "text_delta", delta: update.delta } }];
-        case "thinking_delta":
-          return [{ type: "step", step: { type: "reasoning_delta", delta: update.delta } }];
-        case "text_end":
-          return [{ type: "step", step: { type: "text", text: update.content } }];
-        case "thinking_end":
-          return [{ type: "step", step: { type: "reasoning", text: update.content } }];
+/**
+ * Build a translator from pi agent events to turn step events.
+ *
+ * The translator is stateful: pi's `tool_execution_end` does not carry the
+ * tool arguments, but the canonical `tool_call` step is self-contained (it
+ * echoes the call's `input`, mirroring how the canonical `text` step carries
+ * the full text after `text_delta`). Each call's input is remembered from
+ * `tool_execution_start` until its end event arrives. Tool call ids are
+ * unique across the parent and state agents, so one translator per runner is
+ * enough.
+ */
+export function createAgentEventTranslator(): (event: AgentEvent) => TurnStepEvent[] {
+  const inputByToolCallId = new Map<string, Record<string, any> | undefined>();
+
+  return (event) => {
+    switch (event.type) {
+      case "message_update": {
+        const update = event.assistantMessageEvent;
+        switch (update.type) {
+          case "text_delta":
+            return [{ type: "step", step: { type: "text_delta", delta: update.delta } }];
+          case "thinking_delta":
+            return [{ type: "step", step: { type: "reasoning_delta", delta: update.delta } }];
+          case "text_end":
+            return [{ type: "step", step: { type: "text", text: update.content } }];
+          case "thinking_end":
+            return [{ type: "step", step: { type: "reasoning", text: update.content } }];
+        }
+        return [];
       }
-      return [];
+      case "tool_execution_start":
+        inputByToolCallId.set(event.toolCallId, event.args);
+        return [
+          {
+            type: "step",
+            step: {
+              type: "tool_call_start",
+              toolName: event.toolName,
+              toolCallId: event.toolCallId,
+              input: event.args,
+            },
+          },
+        ];
+      case "tool_execution_end": {
+        const input = inputByToolCallId.get(event.toolCallId);
+        inputByToolCallId.delete(event.toolCallId);
+        return [
+          {
+            type: "step",
+            step: {
+              type: "tool_call",
+              toolName: event.toolName,
+              toolCallId: event.toolCallId,
+              input,
+              isError: event.isError,
+              output: event.result?.content,
+            },
+          },
+        ];
+      }
+      default:
+        return [];
     }
-    case "tool_execution_start":
-      return [
-        {
-          type: "step",
-          step: {
-            type: "tool_call",
-            toolName: event.toolName,
-            toolCallId: event.toolCallId,
-            status: "running",
-            input: event.args,
-          },
-        },
-      ];
-    case "tool_execution_end":
-      return [
-        {
-          type: "step",
-          step: {
-            type: "tool_call",
-            toolName: event.toolName,
-            toolCallId: event.toolCallId,
-            status: event.isError ? "error" : "completed",
-            output: event.result?.content,
-          },
-        },
-      ];
-    default:
-      return [];
-  }
+  };
 }
 
 export function agentMessageText(message: AgentMessage): string {

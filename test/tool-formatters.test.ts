@@ -303,7 +303,7 @@ describe("truncateReasoningBody", () => {
 });
 
 describe("historyDisplayBlocks > shared formatter parity", () => {
-  test("bash tool_call + tool_result resume to the same shape as the live block", () => {
+  test("bash toolCall + toolResult messages resume to the same shape as the live block", () => {
     const blocks = historyDisplayBlocks([
       {
         role: "assistant",
@@ -340,7 +340,7 @@ describe("historyDisplayBlocks > shared formatter parity", () => {
     expect(blocks[0]?.kind).toBe("tool");
   });
 
-  test("ask_user_question tool_call + result render a [question] block in history", () => {
+  test("ask_user_question toolCall + toolResult messages render a [question] block in history", () => {
     const blocks = historyDisplayBlocks([
       {
         role: "assistant",

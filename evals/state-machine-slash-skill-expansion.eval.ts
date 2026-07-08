@@ -98,7 +98,7 @@ describe("state machine agent slash-skill expansion", () => {
         runner.subscribe((event: TurnEvent) => {
           if (event.type !== "step") return;
           if (event.origin?.kind !== "state_machine_agent") return;
-          if (event.step.type === "tool_call" && event.step.status === "running") {
+          if (event.step.type === "tool_call_start") {
             subAgentToolCalls.push(event.step.toolName);
           }
         });

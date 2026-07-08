@@ -122,10 +122,9 @@ describe("State-machine agent state events", () => {
     expect(events).toContainEqual({
       type: "step",
       step: {
-        type: "tool_call",
+        type: "tool_call_start",
         toolName: "read",
         toolCallId: "tool-1",
-        status: "running",
         input: { path: "profile.md" },
       },
     });

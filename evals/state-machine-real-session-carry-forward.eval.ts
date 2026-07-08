@@ -124,7 +124,7 @@ describe("state machine real session c_cGfNEIotLU carry-forward", () => {
         runner.subscribe((event: TurnEvent) => {
           if (event.type !== "step") return;
           const step = event.step;
-          if (step.type !== "tool_call" || step.status !== "running") return;
+          if (step.type !== "tool_call_start") return;
           if (step.toolName !== "select_state_machine_state") return;
           selectCalls.push({ input: step.input });
         });

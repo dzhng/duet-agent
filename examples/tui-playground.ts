@@ -255,10 +255,9 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       this.emit({
         type: "step",
         step: {
-          type: "tool_call",
+          type: "tool_call_start",
           toolName: "fake_search",
           toolCallId: "tool_1",
-          status: "running",
           input: { query: "playground" },
         },
       });
@@ -270,8 +269,8 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
           type: "tool_call",
           toolName: "fake_search",
           toolCallId: "tool_1",
-          status: "completed",
           input: { query: "playground" },
+          isError: false,
           output: [{ type: "text", text: "Found 3 results." }],
         },
       });
@@ -746,10 +745,9 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       this.emit({
         type: "step",
         step: {
-          type: "tool_call",
+          type: "tool_call_start",
           toolName: fixture.toolName,
           toolCallId,
-          status: "running",
           input: fixture.input,
         },
       });
@@ -761,7 +759,7 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
           type: "tool_call",
           toolName: fixture.toolName,
           toolCallId,
-          status: fixture.isError ? "error" : "completed",
+          isError: fixture.isError ?? false,
           input: fixture.input,
           ...(fixture.output ? { output: [{ type: "text", text: fixture.output }] } : {}),
         },

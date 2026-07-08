@@ -174,7 +174,7 @@ async function runDecisiveTurn(): Promise<DecisiveTurnResult> {
       parentText.push(step.text);
       return;
     }
-    if (step.type !== "tool_call" || step.status !== "running") return;
+    if (step.type !== "tool_call_start") return;
     if (step.toolName === "get_current_state_machine_state") {
       consultedLiveState = true;
       return;

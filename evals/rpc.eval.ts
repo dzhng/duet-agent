@@ -278,7 +278,8 @@ describe("RPC CLI mode", () => {
           .map((event) => event.step)
           .filter(
             (step) =>
-              step.type === "tool_call" && JSON.stringify(step.input ?? {}).includes(skillPath),
+              step.type === "tool_call_start" &&
+              JSON.stringify(step.input ?? {}).includes(skillPath),
           );
         expect(skillReadCalls.length).toBeGreaterThan(0);
 
@@ -407,14 +408,14 @@ describe("RPC CLI mode", () => {
               behavior: "follow_up",
             });
             // Wait until the bash call is actually running, then interrupt.
-            // Looking for the running-status step ensures the model has
-            // committed to the long tool call before we cancel it.
+            // The `tool_call_start` step is emitted at execution start, so
+            // seeing it ensures the model has committed to the long tool call
+            // before we cancel it.
             for await (const event of events) {
               if (
                 event.type === "step" &&
-                event.step.type === "tool_call" &&
-                event.step.toolName === "bash" &&
-                event.step.status === "running"
+                event.step.type === "tool_call_start" &&
+                event.step.toolName === "bash"
               ) {
                 await send({ type: "interrupt" });
                 break;
@@ -464,7 +465,7 @@ describe("RPC CLI mode", () => {
         const resumedToolCalls = resume.events
           .filter((event): event is Extract<TurnEvent, { type: "step" }> => event.type === "step")
           .map((event) => event.step)
-          .filter((step) => step.type === "tool_call" && step.toolName === "bash");
+          .filter((step) => step.type === "tool_call_start" && step.toolName === "bash");
         expect(resumedToolCalls).toHaveLength(0);
       } finally {
         await rm(workDir, { recursive: true, force: true });

@@ -27,9 +27,8 @@ describe("bash tool timeout", () => {
       runner.subscribe((event: TurnEvent) => {
         if (event.type !== "step") return;
         const step = event.step;
-        if (step.type !== "tool_call") return;
+        if (step.type !== "tool_call_start") return;
         if (step.toolName !== "bash") return;
-        if (step.status !== "running") return;
         const input = step.input as { command?: string; timeout?: number } | undefined;
         bashCalls.push({
           command: input?.command ?? "",
