@@ -1,19 +1,23 @@
 ---
 name: refactor-clean
-description: Refactor cleanly instead of layering sediment. Use when a change reveals duplicated concepts, local adapters, obsolete owners, compatibility wrappers, parallel abstractions, or "just tack this on" pressure in any code area.
+description: Refactor cleanly instead of layering sediment. Use when a change reveals duplicated concepts, local adapters, obsolete owners, compatibility wrappers, parallel abstractions, an over-large module that has accreted many responsibilities, or "just tack this on" pressure in any code area.
 ---
 
 # Clean Refactoring
 
 Replace the old shape with the simpler shape the codebase would want if it were
 designed today. Refactoring is not adding a compatibility layer beside the problem;
-it is moving ownership until there is one concept with clear consumers.
+it is moving ownership until every concept has exactly one clear home. That cuts
+both ways: merging N duplicated owners into one, and splitting one over-loaded
+module into the several owners it was hiding.
 
 ## Workflow
 
-1. Name the duplicated concept. Identify the thing that should have one owner:
-   environment, pricing rule, geometry source, state machine, data contract,
-   renderer phase, API shape, UI state, or test oracle.
+1. Name the concept that lacks one clear owner — duplicated across several owners,
+   or several concepts fused into one over-loaded module. Identify the thing(s)
+   that should each have one owner: environment, pricing rule, geometry source,
+   state machine, data contract, renderer phase, API shape, UI state, or test
+   oracle.
 2. Find every current owner and consumer. Treat wrappers, aliases, pass-local
    constants, copied structs, and "temporary" branches as sediment until proven
    otherwise.
@@ -37,6 +41,17 @@ it is moving ownership until there is one concept with clear consumers.
   faithfully rebuild the old interfaces on a new foundation.
 - Prefer one shared primitive over N adapters. An adapter is acceptable only at an
   external boundary or as a short-lived migration seam.
+- **Split a module that owns too many concepts — decomposition is refactoring
+  too.** The dual of merging duplicates: when one file or function has accreted
+  unrelated responsibilities, divide it along ownership seams so each piece owns a
+  coherent slice a reader can name and the original thins to composition. **Past
+  ~1000 lines a file is a smell, not a verdict** — some modules earn their size (a
+  cohesive state machine, a generated table, one algorithm with tight internal
+  coupling), but a god-file that registers dozens of routes or handles many domains
+  inline is accreted responsibility, not cohesion. The split is right only when
+  each new module owns a nameable responsibility and import pressure drops because
+  dependencies moved with it; it's wrong when it's line-count relief that scatters
+  one concept across files a reader must reassemble.
 - **Know what already exists before you build something new.** Before writing a
   new mechanism — a shape, computation, asset, state machine, data contract —
   search the codebase for one that already does this, or something close enough
