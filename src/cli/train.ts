@@ -3,6 +3,7 @@ import path from "node:path";
 
 import dedent from "dedent";
 
+import { createEmbeddingClient } from "../memory/embedding.js";
 import { runMigrations } from "../memory/migrations.js";
 import { MemoryLockTimeoutError } from "../memory/pglite.js";
 import { MemorySession } from "../memory/session.js";
@@ -324,14 +325,21 @@ export async function runTrainCommand(
     // preserves it by kind regardless of age.
     const trainTag = trainSlugTag(options.slug);
     const observedDate = new Date().toISOString().slice(0, 10);
-    const observation = await appendObservation(session, {
-      kind: "manual",
-      priority: "high",
-      source: { kind: "system" },
-      content: synthesis.observationContent,
-      tags: [TRAIN_TAG, trainTag],
-      observedDate,
-    });
+    // The embed makes the row vector-recallable as soon as train exits
+    // (no backfill worker runs in this one-shot process). Embed failure
+    // degrades silently — the row lands and a later backfill embeds it.
+    const observation = await appendObservation(
+      session,
+      {
+        kind: "manual",
+        priority: "high",
+        source: { kind: "system" },
+        content: synthesis.observationContent,
+        tags: [TRAIN_TAG, trainTag],
+        observedDate,
+      },
+      { embed: createEmbeddingClient() },
+    );
     if (!observation) {
       throw new Error(`Could not write training memory to ${options.dbPath} (lock contention).`);
     }

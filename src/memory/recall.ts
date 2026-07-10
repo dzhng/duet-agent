@@ -95,7 +95,12 @@ export interface RecallMemoryResult {
   observations: Observation[];
   /** Whether the vector path actually ran. Useful for tool output to flag degraded mode. */
   vectorSearchAttempted: boolean;
-  /** Whether the vector path produced any rows. False after a 401/network failure or empty index. */
+  /**
+   * Whether the vector path ran to completion. False only when the embed
+   * call or the vector query threw — zero hits from a healthy (possibly
+   * empty) index is still a successful search, so callers must not treat
+   * an empty result as degraded mode.
+   */
   vectorSearchSucceeded: boolean;
 }
 
@@ -113,15 +118,16 @@ export async function recallMemory(options: RecallMemoryOptions): Promise<Recall
     const keywordHits = await keywordSearch(db, options.query, scope, options.sessionId);
 
     let vectorAttempted = false;
+    let vectorFailed = false;
     let vectorHits: ScoredHit[] = [];
     if (options.embed) {
       vectorAttempted = true;
       try {
         vectorHits = await vectorSearch(db, options.embed, options.query, scope, options.sessionId);
       } catch {
-        // Embedding unavailable, network blip, or empty index — drop
-        // back to keyword-only. Caller surfaces the degraded mode.
-        vectorHits = [];
+        // Embedding unavailable or network blip — drop back to
+        // keyword-only. Caller surfaces the degraded mode.
+        vectorFailed = true;
       }
     }
 
@@ -131,7 +137,7 @@ export async function recallMemory(options: RecallMemoryOptions): Promise<Recall
     return {
       observations,
       vectorSearchAttempted: vectorAttempted,
-      vectorSearchSucceeded: vectorHits.length > 0,
+      vectorSearchSucceeded: vectorAttempted && !vectorFailed,
     };
   });
   return result ?? { observations: [], vectorSearchAttempted: false, vectorSearchSucceeded: false };

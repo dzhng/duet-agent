@@ -90,6 +90,9 @@ export async function runMemoryRecallCommand(
     return;
   }
 
+  // Degraded only when the vector path actually failed (embed threw or
+  // the query errored). Zero vector hits from a healthy index are a
+  // successful search and must not print the fallback notice.
   const degraded = result.vectorSearchAttempted && !result.vectorSearchSucceeded;
   if (degraded) {
     io.stdout.write(

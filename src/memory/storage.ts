@@ -2,8 +2,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PGlite, Transaction } from "@electric-sql/pglite";
 import type { Observation, ObservationalMemorySettings } from "../types/memory.js";
-import type { EmbedFn } from "./embedding.js";
-import { EmbeddingBackfillWorker } from "./embedding-worker.js";
+import { EMBEDDING_BATCH_LIMIT, type EmbedFn } from "./embedding.js";
+import {
+  backfillNewestEmbeddings,
+  embedAndPersistObservations,
+  EmbeddingBackfillWorker,
+} from "./embedding-worker.js";
 import { rebuildMemoryContextPack } from "./context-pack.js";
 import { runMigrations } from "./migrations.js";
 import { estimateTokens } from "./observational.js";
@@ -78,13 +82,13 @@ export async function loadStoredMemory(
     ...(options.onWarn ? { onWarn: options.onWarn } : {}),
   });
 
-  // The backfill worker drains any embedding backlog left by prior
-  // runs at startup, then stops until a write kicks it: observers and
-  // reflectors write rows during turns, the write helpers call
-  // `session.notifyWrite()`, and the embedding lands within seconds in
-  // the background. Skipping the worker (no `embed` option) is
-  // intentional for tests and one-shot tools that do not call
-  // recall_memory.
+  // The backfill worker owns whatever embedding backlog the bounded
+  // startup catch-up below does not cover, then stops until a write
+  // kicks it: observers and reflectors write rows during turns, the
+  // write helpers call `session.notifyWrite()`, and the embedding lands
+  // within seconds in the background. Skipping the worker (no `embed`
+  // option) is intentional for tests and one-shot tools that do not
+  // call recall_memory.
   const worker = options.embed
     ? new EmbeddingBackfillWorker({
         session,
@@ -94,7 +98,6 @@ export async function loadStoredMemory(
     : undefined;
   if (worker) {
     session.onWrite(() => worker.kick());
-    worker.start();
   }
 
   // Eager probe: open + run migrations once at startup. This keeps
@@ -104,6 +107,23 @@ export async function loadStoredMemory(
   // lazy-open behavior. The handle idle-closes within 2s afterwards
   // unless the contextPack rebuild below grabs it first.
   await session.withDb(async () => {});
+
+  // Bounded synchronous catch-up before the worker starts (and before
+  // the first turn can dispatch): embed the newest rows still missing
+  // vectors so a memory written by an embed-less flow (`duet memory
+  // add` / `duet train` while embeddings were down) is semantically
+  // recallable in the very first turn rather than whenever the async
+  // drain lands. Capped at one embedding HTTP request; the worker owns
+  // any deeper backlog. Best-effort: on failure (no API key, endpoint
+  // down) the worker's retry loop takes over.
+  if (options.embed) {
+    try {
+      await backfillNewestEmbeddings(session, options.embed, EMBEDDING_BATCH_LIMIT);
+    } catch {
+      // Degrade to the async backfill path; the worker logs the cause.
+    }
+  }
+  worker?.start();
 
   if (options.contextPack) {
     // Initial compaction trigger: freeze the rendered memory pack
@@ -147,10 +167,19 @@ function defaultEmbeddingLogPath(): string {
  * when the cross-process lock could not be acquired within the
  * session's wait budget — writes are silently dropped in that case so
  * a concurrent duet CLI does not crash the foreground turn.
+ *
+ * When `options.embed` is set, the row's embedding is written
+ * synchronously in the same open so the memory is vector-recallable the
+ * moment the call returns. One-shot CLI writers (`duet memory add`,
+ * `duet train`) pass it because no backfill worker runs in their
+ * process — without it the row stays keyword-only until some later
+ * runner drains the backlog. An embed failure never fails the write:
+ * the row still lands and the next backfill pass picks it up.
  */
 export async function appendObservation(
   session: MemorySession,
   input: Omit<Observation, "id" | "createdAt" | "lastUsedAt">,
+  options: { embed?: EmbedFn } = {},
 ): Promise<Observation | undefined> {
   const observation: Observation = {
     ...input,
@@ -160,6 +189,20 @@ export async function appendObservation(
   };
   const result = await session.withDb(async (db) => {
     await upsertObservation(db, observation);
+    if (options.embed) {
+      try {
+        await embedAndPersistObservations(
+          db,
+          [{ id: observation.id, content: observation.content }],
+          options.embed,
+        );
+      } catch {
+        // Embeddings unavailable (no key, rate limit exhausted,
+        // endpoint down). The observation row is already in; the
+        // notifyWrite below kicks any running backfill worker and the
+        // startup catch-up covers CLI-only flows.
+      }
+    }
     return observation;
   });
   if (result) session.notifyWrite();

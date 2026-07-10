@@ -1,3 +1,4 @@
+import { createEmbeddingClient, type EmbedFn } from "../memory/embedding.js";
 import { appendObservation } from "../memory/storage.js";
 import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
 import type { ObservationPriority, ObservationSource } from "../types/memory.js";
@@ -27,6 +28,12 @@ interface AddCommandOptions {
 interface AddCommandIO {
   stdout: NodeJS.WritableStream;
   stdin: NodeJS.ReadableStream & { isTTY?: boolean };
+  /**
+   * Embedding client for the synchronous insert-time embed. Defaults to
+   * the Duet endpoint client; tests inject a stub (or a throwing one) to
+   * pin the embedded/degraded paths without a network call.
+   */
+  embed?: EmbedFn;
 }
 
 /**
@@ -40,8 +47,11 @@ interface AddCommandIO {
  * Content comes from the positional arguments, or from stdin when none are
  * given so callers can pipe longer text (`echo "…" | duet memory add`).
  *
- * Embeddings are not computed here; the next runner session's startup
- * backfill worker picks the row up and embeds it so `recall_memory` reaches it.
+ * The embedding is written synchronously alongside the row (no backfill
+ * worker runs in this one-shot process), so `duet memory recall` and the
+ * next session's `recall_memory` reach it semantically right away. When
+ * embeddings are unavailable the add still succeeds and the next runner's
+ * backfill pass embeds the row.
  */
 export async function runMemoryAddCommand(
   args: string[],
@@ -51,19 +61,24 @@ export async function runMemoryAddCommand(
   if (!options) return;
 
   const content = await resolveContent(options.content, io);
+  const embed = io.embed ?? createEmbeddingClient();
 
   const observation = await withMemorySession(
     options.dbPath,
     (session) =>
-      appendObservation(session, {
-        kind: "note",
-        priority: options.priority,
-        source: { kind: options.source },
-        content,
-        tags: options.tags,
-        observedDate: new Date().toISOString().slice(0, 10),
-        ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
-      }),
+      appendObservation(
+        session,
+        {
+          kind: "note",
+          priority: options.priority,
+          source: { kind: options.source },
+          content,
+          tags: options.tags,
+          observedDate: new Date().toISOString().slice(0, 10),
+          ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+        },
+        { embed },
+      ),
     { waitBudgetMs: options.waitBudgetMs },
   );
   if (!observation) {

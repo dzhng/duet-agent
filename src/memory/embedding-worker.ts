@@ -208,13 +208,7 @@ export class EmbeddingBackfillWorker {
       // ids do not get retried in a tight loop on the next drain.
       const attemptAt = Date.now();
       for (const row of batch) this.recentAttempts.set(row.id, attemptAt);
-      const result = await this.options.embed(batch.map((row) => row.content));
-      if (result.embeddings.length !== batch.length) {
-        throw new Error(
-          `Embedding response length (${result.embeddings.length}) did not match batch size (${batch.length})`,
-        );
-      }
-      await this.persistBatch(db, batch, result.embeddings, result.model);
+      await embedAndPersistObservations(db, batch, this.options.embed);
       this.log(`Embedded ${batch.length} observations`);
     }
     // Aborted mid-drain; the caller returns on the aborted signal
@@ -302,43 +296,6 @@ export class EmbeddingBackfillWorker {
     return active;
   }
 
-  private async persistBatch(
-    db: PGlite,
-    batch: { id: string; content: string }[],
-    vectors: number[][],
-    model: string,
-  ): Promise<void> {
-    // One transaction so a partial network or write failure does not
-    // leave the embeddings table half-populated relative to the
-    // candidate set we just queried. `model` is the identifier the
-    // server reported for this batch; storing it verbatim lets a
-    // future re-embedding pass match the deprecated tag and refresh
-    // only the affected rows.
-    //
-    // No FK exists between `observation_embeddings` and `observations`
-    // (migration 7 dropped the cascade), so a bare INSERT is safe even
-    // if the parent row was deleted between `selectBatch` and here.
-    // Any resulting orphan embedding is harmless — the recall path
-    // JOINs back to `observations` and filters orphans out — and it
-    // survives a same-id reinsert without forcing a re-embed.
-    await db.transaction(async (tx: Transaction) => {
-      const now = Date.now();
-      for (let index = 0; index < batch.length; index++) {
-        const row = batch[index]!;
-        const vector = vectors[index]!;
-        await tx.query(
-          `INSERT INTO observation_embeddings (observation_id, model, vector, created_at)
-           VALUES ($1, $2, $3::vector, $4)
-           ON CONFLICT (observation_id) DO UPDATE SET
-             model = EXCLUDED.model,
-             vector = EXCLUDED.vector,
-             created_at = EXCLUDED.created_at`,
-          [row.id, model, formatVector(vector), now],
-        );
-      }
-    });
-  }
-
   private log(message: string): void {
     const logPath = this.options.logPath;
     if (!logPath) return;
@@ -370,6 +327,92 @@ export class EmbeddingBackfillWorker {
       // down. The next batch's logs will retry the directory create.
     }
   }
+}
+
+/**
+ * Embed `rows` and upsert their `observation_embeddings` rows on the
+ * given open handle. Shared by the worker's drain loop, the synchronous
+ * insert-time embed in `appendObservation`, and the startup catch-up
+ * pass in `loadStoredMemory`. Throws when the embed call fails or
+ * returns a mismatched vector count; callers decide whether that is
+ * fatal (the worker logs and backs off, insert-time callers degrade to
+ * the async backfill).
+ *
+ * The upsert runs in one transaction so a partial write failure does
+ * not leave the embeddings table half-populated relative to `rows`.
+ * `model` is stored verbatim as reported by the server so a future
+ * re-embedding pass can match the deprecated tag and refresh only the
+ * affected rows.
+ *
+ * No FK exists between `observation_embeddings` and `observations`
+ * (migration 7 dropped the cascade), so a bare INSERT is safe even if
+ * the parent row was deleted after it was selected. Any resulting
+ * orphan embedding is harmless — the recall path JOINs back to
+ * `observations` and filters orphans out — and it survives a same-id
+ * reinsert without forcing a re-embed.
+ */
+export async function embedAndPersistObservations(
+  db: PGlite,
+  rows: readonly { id: string; content: string }[],
+  embed: EmbedFn,
+): Promise<void> {
+  if (rows.length === 0) return;
+  const result = await embed(rows.map((row) => row.content));
+  if (result.embeddings.length !== rows.length) {
+    throw new Error(
+      `Embedding response length (${result.embeddings.length}) did not match batch size (${rows.length})`,
+    );
+  }
+  await db.transaction(async (tx: Transaction) => {
+    const now = Date.now();
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index]!;
+      const vector = result.embeddings[index]!;
+      await tx.query(
+        `INSERT INTO observation_embeddings (observation_id, model, vector, created_at)
+         VALUES ($1, $2, $3::vector, $4)
+         ON CONFLICT (observation_id) DO UPDATE SET
+           model = EXCLUDED.model,
+           vector = EXCLUDED.vector,
+           created_at = EXCLUDED.created_at`,
+        [row.id, result.model, formatVector(vector), now],
+      );
+    }
+  });
+}
+
+/**
+ * One bounded catch-up pass over the embedding backlog: embed the
+ * newest `limit` observations that have no embedding row yet. Run by
+ * `loadStoredMemory` before the first turn dispatches so rows written
+ * by embed-less flows (`duet memory add` / `duet train` while
+ * embeddings were unavailable, or from an older CLI) are
+ * vector-recallable immediately instead of whenever the async worker
+ * gets to them. Newest-first because fresh rows are the ones a
+ * first-turn recall is most likely to target; the worker owns the rest
+ * of the backlog. Returns the number of rows embedded (0 when the
+ * cross-process lock could not be acquired). Throws on embed failure —
+ * callers treat the pass as best-effort.
+ */
+export async function backfillNewestEmbeddings(
+  session: MemorySession,
+  embed: EmbedFn,
+  limit: number,
+): Promise<number> {
+  const embedded = await session.withDb(async (db) => {
+    const result = await db.query<{ id: string; content: string }>(
+      `SELECT o.id, o.content
+       FROM observations o
+       LEFT JOIN observation_embeddings e ON e.observation_id = o.id
+       WHERE e.observation_id IS NULL
+       ORDER BY o.created_at DESC
+       LIMIT $1`,
+      [limit],
+    );
+    await embedAndPersistObservations(db, result.rows, embed);
+    return result.rows.length;
+  });
+  return embedded ?? 0;
 }
 
 /**

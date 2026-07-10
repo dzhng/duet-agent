@@ -16,9 +16,9 @@ import { getDuetGatewayBaseUrl } from "../model-resolution/duet-gateway.js";
  * Behavior:
  *   - Inputs are batched up to `EMBEDDING_BATCH_LIMIT` per HTTP call so
  *     a single backfill batch never goes over the request body cap.
- *   - 5xx responses and network errors retry with exponential backoff;
- *     4xx responses (auth, malformed) fail fast since retrying will not
- *     change the outcome.
+ *   - 5xx responses, 429 rate limits, and network errors retry with
+ *     exponential backoff; other 4xx responses (auth, malformed) fail
+ *     fast since retrying will not change the outcome.
  *   - When `DUET_API_KEY` is missing the function throws a typed error
  *     so callers can degrade to keyword-only retrieval (the recall_memory
  *     tool catches it and logs once; the backfill worker logs and
@@ -159,8 +159,10 @@ async function postBatch(options: PostBatchOptions): Promise<EmbedResult> {
       }
 
       // 4xx errors (auth, malformed input) will not improve on retry;
-      // surface them immediately so callers see the real cause.
-      if (response.status >= 400 && response.status < 500) {
+      // surface them immediately so callers see the real cause. 429 is
+      // the exception: a rate limit clears on its own, so it falls
+      // through to the same backoff-and-retry path as 5xx.
+      if (response.status >= 400 && response.status < 500 && response.status !== 429) {
         const detail = await safeReadText(response);
         throw new EmbeddingUnavailableError(
           `Embedding endpoint returned ${response.status}: ${detail}`,

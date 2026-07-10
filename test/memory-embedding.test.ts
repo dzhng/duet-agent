@@ -115,6 +115,26 @@ describe("Embedding client", () => {
     expect(calls).toBe(1);
   });
 
+  test("retries 429 rate limits with backoff instead of failing fast", async () => {
+    let calls = 0;
+    const fetchStub = (async () => {
+      calls++;
+      if (calls < 3) return new Response("rate limited", { status: 429 });
+      return jsonResponse({
+        data: [{ embedding: [1, 2, 3] }],
+        model: "google/gemini-embedding-2",
+      });
+    }) as unknown as typeof fetch;
+    const embed = createEmbeddingClient({ apiKey: "k", fetch: fetchStub });
+
+    // A rate limit clears on its own, so it must ride the same
+    // backoff-and-retry path as 5xx rather than surfacing as a terminal
+    // EmbeddingUnavailableError like other 4xx.
+    const result = await embed(["rate limited then fine"]);
+    expect(result.embeddings).toEqual([[1, 2, 3]]);
+    expect(calls).toBe(3);
+  }, 10_000);
+
   test("retries 5xx responses with backoff and eventually succeeds", async () => {
     let calls = 0;
     const fetchStub = (async () => {

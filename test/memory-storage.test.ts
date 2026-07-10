@@ -166,6 +166,151 @@ describe("Memory storage", () => {
   );
 
   testIfDocker(
+    "appendObservation with an embed client writes the embedding row synchronously",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
+      const memoryPath = join(tempDir, "memory.db");
+
+      try {
+        // No `embed` option: no backfill worker runs, so any embedding
+        // row present after the call must have been written by the
+        // insert itself.
+        const persistence = await loadStoredMemory(memoryPath, tempDir);
+        const session = persistence.session!;
+
+        const observation = await appendObservation(
+          session,
+          observationInput("Embedded at insert.", "session_a"),
+          {
+            embed: async (inputs) => ({
+              embeddings: inputs.map(() => Array(3072).fill(1)),
+              model: "test-model",
+            }),
+          },
+        );
+        expect(observation).toBeDefined();
+
+        const rows = await session.withDb(async (db) =>
+          db.query<{ observation_id: string; model: string }>(
+            "SELECT observation_id, model FROM observation_embeddings",
+          ),
+        );
+        await persistence.dispose();
+
+        expect(rows?.rows).toEqual([{ observation_id: observation!.id, model: "test-model" }]);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  testIfDocker("appendObservation still lands the row when the embed client throws", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
+    const memoryPath = join(tempDir, "memory.db");
+
+    try {
+      const persistence = await loadStoredMemory(memoryPath, tempDir);
+      const session = persistence.session!;
+
+      const observation = await appendObservation(
+        session,
+        observationInput("Written despite embed outage.", "session_a"),
+        {
+          embed: async () => {
+            throw new Error("simulated embedding outage");
+          },
+        },
+      );
+      expect(observation).toBeDefined();
+
+      const embeddingCount = await session.withDb(async (db) =>
+        db.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM observation_embeddings"),
+      );
+      await persistence.dispose();
+
+      // The row landed for the backfill worker to pick up later; the
+      // failed embed left no vector behind.
+      expect(await readObservationContents(memoryPath)).toEqual(["Written despite embed outage."]);
+      expect(embeddingCount?.rows[0]?.count).toBe(0);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker(
+    "loadStoredMemory embeds the unembedded backlog before returning (startup catch-up)",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
+      const memoryPath = join(tempDir, "memory.db");
+
+      try {
+        // Simulate an embed-less writer (old CLI, embeddings down): two
+        // rows land with no vectors.
+        const writer = await loadStoredMemory(memoryPath, tempDir);
+        await appendObservation(writer.session!, observationInput("Backlog row 1", "session_a"));
+        await appendObservation(writer.session!, observationInput("Backlog row 2", "session_a"));
+        await writer.dispose();
+
+        const batches: string[][] = [];
+        const persistence = await loadStoredMemory(memoryPath, tempDir, {
+          embed: async (inputs) => {
+            batches.push(inputs);
+            return {
+              embeddings: inputs.map(() => Array(3072).fill(1)),
+              model: "test-model",
+            };
+          },
+        });
+
+        // Assert immediately — no polling — because the catch-up pass is
+        // awaited inside loadStoredMemory, before the first turn could
+        // dispatch. The async worker cannot be the writer here.
+        const embedded = await persistence.session!.withDb(async (db) =>
+          db.query<{ content: string }>(
+            `SELECT o.content FROM observation_embeddings e
+             JOIN observations o ON o.id = e.observation_id
+             ORDER BY o.content`,
+          ),
+        );
+        await persistence.dispose();
+
+        expect(embedded?.rows.map((row) => row.content)).toEqual([
+          "Backlog row 1",
+          "Backlog row 2",
+        ]);
+        expect(batches[0]?.sort()).toEqual(["Backlog row 1", "Backlog row 2"]);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  testIfDocker("loadStoredMemory survives a failing embed client at startup", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));
+    const memoryPath = join(tempDir, "memory.db");
+
+    try {
+      const writer = await loadStoredMemory(memoryPath, tempDir);
+      await appendObservation(writer.session!, observationInput("Unembeddable row", "session_a"));
+      await writer.dispose();
+
+      const persistence = await loadStoredMemory(memoryPath, tempDir, {
+        embed: async () => {
+          throw new Error("simulated embedding outage");
+        },
+      });
+      expect(persistence.session).toBeDefined();
+      await persistence.dispose();
+
+      // Row survives for a later backfill; startup neither threw nor
+      // dropped it.
+      expect(await readObservationContents(memoryPath)).toEqual(["Unembeddable row"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker(
     "appendObservation kicks the embedding worker so new rows get embedded",
     async () => {
       const tempDir = await mkdtemp(join(tmpdir(), "duet-memory-"));

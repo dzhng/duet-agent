@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite/vector";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -175,6 +177,55 @@ describe("runMemoryAddCommand", () => {
     });
   });
 
+  testIfDocker("writes the embedding row synchronously when the embed client works", async () => {
+    await withTempDb(async (dbPath) => {
+      const batches: string[][] = [];
+      const { io, output } = makeIo();
+      io.embed = async (inputs: string[]) => {
+        batches.push(inputs);
+        return {
+          embeddings: inputs.map(() => Array(3072).fill(1)),
+          model: "test-model",
+        };
+      };
+      await runMemoryAddCommand(
+        ["--db", dbPath, "Northstar Robotics keeps enterprise discounts at 20 percent"],
+        io,
+      );
+
+      expect(output()).toContain("Added medium-priority memory mem_");
+      expect(batches).toEqual([["Northstar Robotics keeps enterprise discounts at 20 percent"]]);
+
+      // The vector landed in the same command — no backfill worker runs
+      // in this one-shot process, so a missing row here would stay
+      // invisible to semantic recall until some later runner drains it.
+      const embedded = await readEmbeddings(dbPath);
+      expect(embedded).toHaveLength(1);
+      expect(embedded[0]!.model).toBe("test-model");
+      expect(embedded[0]!.content).toBe(
+        "Northstar Robotics keeps enterprise discounts at 20 percent",
+      );
+    });
+  });
+
+  testIfDocker("still adds the row when the embed client throws", async () => {
+    await withTempDb(async (dbPath) => {
+      const { io, output } = makeIo();
+      io.embed = async () => {
+        throw new Error("simulated embedding outage");
+      };
+      await runMemoryAddCommand(["--db", dbPath, "Survives the embedding outage"], io);
+
+      // The add degrades exactly as before: the row lands (for a later
+      // backfill to embed) and the command reports success.
+      expect(output()).toContain("Added medium-priority memory mem_");
+      const stored = await readBack(dbPath);
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.content).toBe("Survives the embedding outage");
+      expect(await readEmbeddings(dbPath)).toHaveLength(0);
+    });
+  });
+
   testIfDocker("reads content from stdin when no positional args are given", async () => {
     await withTempDb(async (dbPath) => {
       const { io, output } = makeIo("piped memory text\n");
@@ -208,6 +259,20 @@ async function readBack(dbPath: string) {
   }
 }
 
+/** Embedding rows joined to their observation content, via a fresh handle. */
+async function readEmbeddings(dbPath: string): Promise<Array<{ content: string; model: string }>> {
+  const db = await PGlite.create({ dataDir: dbPath, extensions: { vector } });
+  try {
+    const result = await db.query<{ content: string; model: string }>(
+      `SELECT o.content, e.model FROM observation_embeddings e
+       JOIN observations o ON o.id = e.observation_id`,
+    );
+    return result.rows;
+  } finally {
+    await db.close();
+  }
+}
+
 function makeIo(stdinText = "") {
   const chunks: Buffer[] = [];
   const stdout = new Writable({
@@ -221,8 +286,12 @@ function makeIo(stdinText = "") {
   const stdin = Object.assign(Readable.from(stdinText ? [stdinText] : []), {
     isTTY: stdinText ? false : true,
   });
+  const io: NonNullable<Parameters<typeof runMemoryAddCommand>[1]> = {
+    stdout: stdout as NodeJS.WritableStream,
+    stdin,
+  };
   return {
-    io: { stdout: stdout as NodeJS.WritableStream, stdin },
+    io,
     output: () => Buffer.concat(chunks).toString("utf8"),
   };
 }

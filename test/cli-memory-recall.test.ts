@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
+import { runMemoryAddCommand } from "../src/cli/memory-add.js";
 import {
   formatRecallTable,
   parseMemoryRecallArgs,
@@ -111,6 +112,52 @@ describe("formatRecallTable", () => {
 });
 
 describe("runMemoryRecallCommand", () => {
+  testIfDocker(
+    "recalls a just-added memory via the vector path with no degraded warning",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-cli-recall-"));
+      const dbPath = join(tempDir, "memory.db");
+      try {
+        // Same-vector stub for every input: the add-time embedding and
+        // the recall query land on identical vectors, so the vector path
+        // must return the row even though the verbose paraphrase below
+        // defeats the AND-ing keyword search.
+        const embed = async (inputs: string[]) => ({
+          embeddings: inputs.map(() => {
+            const v = new Array<number>(3072).fill(0);
+            v[0] = 1;
+            return v;
+          }),
+          model: "test-model",
+        });
+
+        const stdin = Object.assign(Readable.from([]), { isTTY: true });
+        await runMemoryAddCommand(
+          ["--db", dbPath, "Northstar Robotics keeps enterprise discounts at 20 percent"],
+          { stdout: new Writable({ write: (_c, _e, cb) => cb() }), stdin, embed },
+        );
+
+        const chunks: string[] = [];
+        const stdout = new Writable({
+          write(chunk, _enc, cb) {
+            chunks.push(chunk.toString());
+            cb();
+          },
+        });
+        await runMemoryRecallCommand(
+          ["--db", dbPath, "Northstar Robotics discount deal pricing negotiation"],
+          { stdout, embed },
+        );
+
+        const rendered = chunks.join("");
+        expect(rendered).not.toContain("Semantic search unavailable");
+        expect(rendered).toContain("Northstar Robotics keeps enterprise discounts at 20 percent");
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   testIfDocker("returns keyword-fused hits as JSON via the shared pipeline", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "duet-cli-recall-"));
     const dbPath = join(tempDir, "memory.db");

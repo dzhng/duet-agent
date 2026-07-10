@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { runMigrations } from "../src/memory/migrations.js";
 import { recallMemory, reciprocalRankFusion } from "../src/memory/recall.js";
 import { MemorySession } from "../src/memory/session.js";
+import { appendObservation } from "../src/memory/storage.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 describe("recall_memory", () => {
@@ -144,6 +145,68 @@ describe("recall_memory", () => {
             expect(id.startsWith("mem_local")).toBe(false);
           }
           expect(ids).toContain("mem_legacy_null_session");
+        });
+      },
+    );
+
+    testIfDocker("reports vector success on zero hits from a healthy (empty) index", async () => {
+      await withSeededDb(async (session) => {
+        // No embeddings are seeded, so the vector query runs against an
+        // empty index and returns zero rows without throwing. That is a
+        // successful search — only a thrown embed/query may flag
+        // degraded mode, otherwise every zero-hit recall would print
+        // the "semantic search unavailable" notice.
+        const result = await recallMemory({
+          session,
+          embed: async () => ({ embeddings: [oneHotVector(0)], model: "test-model" }),
+          query: "wire-byte",
+          scope: "all",
+        });
+
+        expect(result.vectorSearchAttempted).toBe(true);
+        expect(result.vectorSearchSucceeded).toBe(true);
+        expect(result.observations.map((row) => row.id)).toEqual(["mem_wire_budget"]);
+      });
+    });
+
+    testIfDocker(
+      "finds a row embedded at insert via the vector path when keywords miss",
+      async () => {
+        await withSeededDb(async (session) => {
+          // Same-vector stub for every input: the row embedded at insert
+          // and the recall query land on identical vectors, so cosine
+          // distance is zero and the vector path must return the row.
+          const embed = async (inputs: string[]) => ({
+            embeddings: inputs.map(() => oneHotVector(7)),
+            model: "test-model",
+          });
+          const observation = await appendObservation(
+            session,
+            {
+              kind: "note",
+              priority: "medium",
+              source: { kind: "user" },
+              content: "Northstar Robotics keeps enterprise discounts at 20 percent",
+              tags: [],
+              observedDate: "2026-07-10",
+            },
+            { embed },
+          );
+          expect(observation).toBeDefined();
+
+          // A verbose paraphrase: websearch_to_tsquery ANDs every term,
+          // so "deal pricing negotiation" kills the keyword path. Only
+          // the insert-time embedding can surface the row.
+          const result = await recallMemory({
+            session,
+            embed,
+            query: "Northstar Robotics discount deal pricing negotiation",
+            scope: "all",
+          });
+
+          expect(result.vectorSearchAttempted).toBe(true);
+          expect(result.vectorSearchSucceeded).toBe(true);
+          expect(result.observations.map((row) => row.id)).toContain(observation!.id);
         });
       },
     );

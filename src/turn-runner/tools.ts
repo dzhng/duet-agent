@@ -728,6 +728,9 @@ function createRecallMemoryTool(
       const summary = observations.length
         ? observations.map(formatRecallHit).join("\n\n")
         : "(no matches)";
+      // Degraded only when the vector path actually failed (embed threw
+      // or the query errored). Zero vector hits from a healthy index are
+      // a successful search and render the normal header.
       const header =
         vectorSearchAttempted && !vectorSearchSucceeded
           ? "# Memory recall (keyword-only fallback; semantic search unavailable)"
