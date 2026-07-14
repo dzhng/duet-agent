@@ -418,7 +418,8 @@ DESCRIPTION
     list    — every training (one row per slug), joined to its archive
               manifest to show slug, headline, model, file count, date,
               and memory id.
-    show    — the same metadata plus the full synthesized observation text.
+    show    — the same metadata plus the full synthesized observation text
+              and (with --json) the archived files' absolute paths.
     update  — replace just the observation text from --content-file, in
               place; the corpus archive is preserved untouched. Use this to
               hand-correct a memory without re-running synthesis (re-running

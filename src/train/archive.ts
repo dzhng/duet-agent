@@ -26,11 +26,10 @@ export interface WriteArchiveInput {
  */
 export async function writeArchive(input: WriteArchiveInput): Promise<string> {
   const root = archiveRootForMemoryId(input.memoryId);
-  const filesRoot = join(root, "files");
-  await mkdir(filesRoot, { recursive: true });
+  await mkdir(join(root, "files"), { recursive: true });
 
   for (const file of input.files) {
-    const destination = join(filesRoot, file.relPath);
+    const destination = archivedFilePath(input.memoryId, file.relPath);
     await mkdir(dirname(destination), { recursive: true });
     await copyFile(file.absPath, destination);
   }
@@ -41,6 +40,12 @@ export async function writeArchive(input: WriteArchiveInput): Promise<string> {
 
 export async function removeArchive(memoryId: string): Promise<void> {
   await rm(archiveRootForMemoryId(memoryId), { recursive: true, force: true });
+}
+
+/** Absolute path of one archived copy: `<archive>/files/<relPath>`. Owns the
+ *  layout `writeArchive` copies into and `TrainRecord.files` reports. */
+export function archivedFilePath(memoryId: string, relPath: string): string {
+  return join(archiveRootForMemoryId(memoryId), "files", relPath);
 }
 
 /**

@@ -181,11 +181,9 @@ describe("duet train list (end-to-end through runTrainCommand)", () => {
   testIfDocker("joins the archive manifest fields when the archive is present", async () => {
     const dir = await mkdtemp(join(tmpdir(), "duet-train-list-archive-"));
     const dbPath = join(dir, "memory.db");
-    // Archives are rooted at os.homedir(); point HOME at a tmpdir so the
-    // write and the read resolve to the same sandbox.
-    const realHome = process.env.HOME;
-    const fakeHome = await mkdtemp(join(tmpdir(), "duet-train-list-home-"));
-    process.env.HOME = fakeHome;
+    // Archives are rooted at os.homedir(), which Bun resolves at startup and
+    // does not re-read from process.env.HOME — the Docker container is the
+    // sandbox here (testIfDocker), not an env override.
     try {
       const memoryId = await seedTraining(dbPath, dir, {
         slug: "delta",
@@ -226,9 +224,7 @@ describe("duet train list (end-to-end through runTrainCommand)", () => {
       expect(delta.fileCount).toBe(1);
       expect(delta.sourceFolder).toBe(dir);
     } finally {
-      if (realHome !== undefined) process.env.HOME = realHome;
       await rm(dir, { recursive: true, force: true });
-      await rm(fakeHome, { recursive: true, force: true });
     }
   });
 });
@@ -255,9 +251,54 @@ describe("duet train show", () => {
       expect(record.content).toBe("gamma synthesized memory");
       expect(record.memoryId).toMatch(/^mem_/);
       expect(record.hasArchive).toBe(false);
+      expect(record.files).toBeUndefined();
       // `createdAt` is the ISO 8601 string of the row's stored epoch ms.
       const createdMs = await storedCreatedAt(dbPath, dir, record.memoryId);
       expect(record.createdAt).toBe(new Date(createdMs!).toISOString());
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker("includes the archived file paths when the archive is present", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "duet-train-show-archive-"));
+    const dbPath = join(dir, "memory.db");
+    try {
+      const memoryId = await seedTraining(dbPath, dir, {
+        slug: "epsilon",
+        content: "epsilon training",
+        observedDate: "2026-06-10",
+      });
+
+      const sourceFile = join(dir, "overview.md");
+      await writeFile(sourceFile, "# Epsilon\n");
+      const archiveRoot = await writeArchive({
+        memoryId,
+        files: [{ relPath: "overview.md", absPath: sourceFile, bytes: 10, sha256: "abc" }],
+        manifest: {
+          memoryId,
+          slug: "epsilon",
+          createdAt: Date.now(),
+          sourceFolder: dir,
+          model: "opus-4.8",
+          headline: "Epsilon reference",
+          files: [{ relPath: "overview.md", bytes: 10, sha256: "abc" }],
+        },
+      });
+
+      const stdout = bufferStream();
+      await runTrainCommand(["show", "epsilon", "--db", dbPath, "--json"], {
+        stdout: stdout.stream,
+        stderr: bufferStream().stream,
+      });
+
+      const record = JSON.parse(stdout.read()) as TrainRecordJson;
+      expect(record.slug).toBe("epsilon");
+      expect(record.hasArchive).toBe(true);
+      expect(record.fileCount).toBe(1);
+      // Paths point at the archived copies (where writeArchive actually put
+      // them), not the original sources.
+      expect(record.files).toEqual([join(archiveRoot, "files", "overview.md")]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -302,9 +343,6 @@ describe("duet train delete", () => {
   testIfDocker("removes the row and its corpus archive", async () => {
     const dir = await mkdtemp(join(tmpdir(), "duet-train-delete-"));
     const dbPath = join(dir, "memory.db");
-    const realHome = process.env.HOME;
-    const fakeHome = await mkdtemp(join(tmpdir(), "duet-train-delete-home-"));
-    process.env.HOME = fakeHome;
     try {
       const memoryId = await seedTraining(dbPath, dir, {
         slug: "sigma",
@@ -342,9 +380,7 @@ describe("duet train delete", () => {
       expect(await storedContent(dbPath, dir, memoryId)).toBeUndefined();
       expect(await readArchiveManifest(memoryId)).toBeUndefined();
     } finally {
-      if (realHome !== undefined) process.env.HOME = realHome;
       await rm(dir, { recursive: true, force: true });
-      await rm(fakeHome, { recursive: true, force: true });
     }
   });
 });

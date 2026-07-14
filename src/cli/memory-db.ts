@@ -13,9 +13,9 @@ import {
   openPGliteWaitingForLock,
 } from "../memory/pglite.js";
 import { MemorySession } from "../memory/session.js";
-import { readArchiveManifest, removeArchive } from "../train/archive.js";
+import { archivedFilePath, readArchiveManifest, removeArchive } from "../train/archive.js";
 import { isTrainTagged, slugFromTags } from "../train/tags.js";
-import type { TrainListEntry, TrainRecord } from "../train/types.js";
+import type { TrainListEntry, TrainManifest, TrainRecord } from "../train/types.js";
 import type { Observation, ObservationSource } from "../types/memory.js";
 import { fail } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
@@ -200,7 +200,9 @@ export class MemoryDb {
    */
   async listTrainings(): Promise<TrainListEntry[]> {
     const observations = await this.readTrainObservations();
-    const entries = await Promise.all(observations.map((row) => this.toTrainEntry(row)));
+    const entries = await Promise.all(
+      observations.map(async (row) => this.toTrainEntry(row, await readArchiveManifest(row.id))),
+    );
     entries.sort((a, b) => b.createdAt - a.createdAt);
     return entries;
   }
@@ -215,7 +217,12 @@ export class MemoryDb {
     const observations = await this.readTrainObservations();
     const row = observations.find((observation) => slugFromTags(observation.tags) === slug);
     if (!row) return undefined;
-    return { ...(await this.toTrainEntry(row)), content: row.content };
+    const manifest = await readArchiveManifest(row.id);
+    return {
+      ...this.toTrainEntry(row, manifest),
+      content: row.content,
+      files: manifest?.files.map((file) => archivedFilePath(row.id, file.relPath)),
+    };
   }
 
   private async readTrainObservations(): Promise<Observation[]> {
@@ -229,8 +236,10 @@ export class MemoryDb {
       .filter((observation) => isTrainTagged(observation.tags));
   }
 
-  private async toTrainEntry(observation: Observation): Promise<TrainListEntry> {
-    const manifest = await readArchiveManifest(observation.id);
+  private toTrainEntry(
+    observation: Observation,
+    manifest: TrainManifest | undefined,
+  ): TrainListEntry {
     return {
       slug: slugFromTags(observation.tags) ?? "(unknown)",
       memoryId: observation.id,

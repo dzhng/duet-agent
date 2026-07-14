@@ -43,11 +43,16 @@ export interface TrainListEntry {
   hasArchive: boolean;
 }
 
-/** A {@link TrainListEntry} plus the full synthesized observation text, as
- *  returned by a single-row lookup (`duet train show` / `update`). */
+/** A {@link TrainListEntry} plus the full synthesized observation text and
+ *  archive contents, as returned by a single-row lookup (`duet train show` /
+ *  `update`). */
 export interface TrainRecord extends TrainListEntry {
   /** The durable memory text stored in the observation row. */
   content: string;
+  /** Absolute paths of the archived copies under the archive's `files/`
+   *  folder, from the manifest. Preferred over the original source paths,
+   *  which may have moved or been deleted since training. */
+  files?: string[];
 }
 
 export interface TrainManifest {
