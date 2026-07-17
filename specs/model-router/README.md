@@ -11,10 +11,10 @@ prompt sections.
 
 ## Next Agent Prompt
 
-_Last updated: 2026-07-18 (slices 01-06 + 08 merged and green: 1006 tests, 0 fail)._
+_Last updated: 2026-07-18 (slices 01-09 merged; only slice 10 remains)._
 
-You are implementing this feature slice by slice. Next pickup: **slice 07 (TUI) ∥ slice 09
-(interlock + advisor evals)**; then 10 (promotion eval + closeout).
+You are implementing this feature slice by slice. Next pickup: **slice 10 (mixed-task promotion
+eval + closeout)** — the final slice.
 Before wiring anything, read `unknowns-map.md` §Quadrant 2 (fixed decisions) and §Quadrant 4
 (landmines — constraints). Update this section (status, pickup point, checklist) before ending
 your pass.
@@ -44,11 +44,15 @@ work must blank `DUET_API_KEY` (note: CLI env loading re-adds it from `~/.duet/.
       memory actor in usageByModel, resume stays virtual)
 - [x] Hard cutover: frontier default, virtual-aware `/model` surfaces, pin/suspend (06) — merged
       `fb16b63`; bare `duet` live-verified routing via frontier; boot prints `frontier (routed)`
-- [ ] TUI: two-layer display, switch rendering, `/route` inspector (07)
+- [x] TUI: two-layer display, switch rendering, `/route` inspector (07) — merged; real-frame
+      visual gate passed with unprimed critique (see slice file resolution; notice line
+      improved from the critique)
 - [x] Advisor: transcript lib, `ask_advisor` tool, AI SDK call, preview probe (08) — merged
       `78a1195`+`2b39031`; gateway credential fallback moved into createDuetModelGateway;
       advisor-preview live-verified (10k tokens, $0.10 fable estimate)
-- [ ] Interlock (reroute nudge) + advisor prompt tuning + advisor evals (09)
+- [x] Interlock (reroute nudge) + advisor prompt tuning + advisor evals (09) — merged; 4-case
+      eval green with two-directional falsification; nudge via agent.steer; classifier
+      latency gate recalibrated to a 5s sanity bound (provider variance — see slice 04)
 - [ ] Mixed-task promotion eval + closeout tuning + stale-comment audit (10)
 
 Blockers: none. Builder-confirm facts from the map are pre-resolved where drafts verified them

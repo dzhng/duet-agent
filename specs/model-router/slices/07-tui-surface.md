@@ -44,3 +44,18 @@ Wording/density of the switch line and `/route` layout — display-only iteratio
 ## Dependencies
 
 Slices 05 (event) + 06 (status semantics). Parallel with slice 08.
+
+## Visual gate resolution (orchestrator, 2026-07-18)
+
+Frames captured from the real TUI in docker (assets/tui-switch-notice-frame.txt,
+assets/tui-route-inspector-frame.txt) and run through an unprimed critique. Outcomes:
+
+- Critique's critical finding ("/route renders nothing") was a capture artifact — the first
+  Enter feeds the slash autocomplete picker; a second Enter submits. Verified live: /route
+  renders the full labeled inspector (tier/current/rationale/cadence/advisor/pinned).
+- Applied from the critique: the switch notice's bare trailing trigger token read as truncated
+  ("· cadence"); now rendered as prose ("via cadence check" / "via advisor milestone" /
+  "at turn start") and the from-model is included (`frontier: luna → sol (high)`).
+- Dismissed with reasons: banner wrap, `vharness`/`harness + harness` header, `--%` context
+  gauge — all fake-harness fixture artifacts, not production rendering; `loc`/`glb` legend and
+  hint-bar truncation are pre-existing TUI cosmetics outside this slice's variable.

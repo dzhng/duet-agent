@@ -86,7 +86,9 @@ describe("TUI rendering smoke test", () => {
     await harness.flush();
 
     const frame = await harness.captureCharFrame();
-    expect(frame).toContain("[route] frontier → gpt-5.6-sol (high) · implement · cadence");
+    expect(frame).toContain(
+      "[route] frontier: gpt-5.6-luna → gpt-5.6-sol (high) · implement · via cadence check",
+    );
     expect(frame).toContain("frontier → gpt-5.6-sol (high)");
   });
 });

@@ -121,8 +121,17 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
     } else if (event.type === "memory") {
       stepRenderer.renderMemoryStatus(event);
     } else if (event.type === "router_switch") {
+      // Compact from→to notice; `/route` is the full explainer. The trigger
+      // reads as prose ("via cadence check") because a bare trailing token
+      // next to the panel border reads as truncated.
+      const trigger =
+        event.trigger === "cadence"
+          ? "via cadence check"
+          : event.trigger === "advisor"
+            ? "via advisor milestone"
+            : "at turn start";
       appendLine(
-        `[route] ${event.tier} → ${event.toModel} (${event.thinkingLevel}) · ${event.route} · ${event.trigger}`,
+        `[route] ${event.tier}: ${event.fromModel} → ${event.toModel} (${event.thinkingLevel}) · ${event.route} · ${trigger}`,
         COLORS.system,
       );
     } else if (event.type === "system") {

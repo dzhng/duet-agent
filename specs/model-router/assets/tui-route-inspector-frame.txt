@@ -1,0 +1,32 @@
+┌──────────────────────────────────────────────────────────────┐┌──────────────────────────────────┐
+│                                                              ││                                  │
+│ ██   ██ ██   ██ ██        ███     ██   ██ ██      ██         ││ todos                            │
+│ ███  ██   ███                                                ││ Empty for now. Fills with the    │
+│ ██   ██ ██   ██ █████     ███     ███████ ██  ███ █████      ││ agent's in-turn checklist while  │
+│ ██ █ ██   ███                                                ││ it works on a multi-step task.   │
+│ ██   ██ ██   ██ ██        ███     ██   ██ ██   ██ ██         ││                                  │
+│ ██  ███   ███                                                ││                                  │
+│ ██████   █████  ███████   ███     ██   ██  █████  ███████    ││                                  │
+│ ██   ██   ███                                                ││                                  │
+│  ░░░░░░   ░░░░░  ░░░░░░░   ░░░     ░░   ░░  ░░░░░  ░░░░░░░   ││                                  │
+│ ░░   ░░   ░░░                                                ││                                  │
+│                                                              │└──────────────────────────────────┘
+│                                                              │┌──────────────────────────────────┐
+│ DUET AGENT  vharness   ·   /work   ·   harness + harness     ││                                  │
+│ [paste]                                                      ││ relays                           │
+│ cleared pending image attachments                            ││ No relay running. Long-running   │
+│                                                            ▄ ││ prompts (outreach, dev           │
+│ [route]                                                    █ ││ lifecycle, triage) open one and  │
+│ tier: frontier                                             █ ││ run across sessions.             │
+│ current: implement → gpt-5.6-sol (high)                    █ ││                                  │
+│ rationale: The task entered its implementation phase.      █ ││                                  │
+│ cadence: 5 steps until next check                          █ ││                                  │
+│ advisor: enabled · ready                                   █ ││                                  │
+│ pinned: no                                                 █ ││                                  │
+│                                                              ││                                  │
+└──────────────────────────────────────────────────────────────┘└──────────────────────────────────┘
+                                                                ┌──────────────────────────────────┐
+Enter: send · Shift+Enter: newline · PgUp/PgDn: scroll · Ctrl+C:│ context                          │
+┌──────────────────────────────────────────────────────────────┐│ [░░░░░░░░░░░░░░░░░░░░░░░░░]  --% │
+│ > Type a message… or hit Ctrl-G if you're bored 🦖           ││ ■ sys  ■ msg  ■ loc  ■ glb       │
+└──────────────────────────────────────────────────────────────┘└──────────────────────────────────┘
