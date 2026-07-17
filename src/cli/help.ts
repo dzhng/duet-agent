@@ -29,6 +29,8 @@ COMMANDS
   skills                   List installed skills + collisions as JSON
   memory                   Browse memories in a TUI, or query them with --json/filters (alias: memories)
   model                    Call a gateway model directly (text/image/video) via the AI SDK
+  route                    Probe the live virtual-model classifier (duet route "<prompt>")
+  config export            Write the built-in routing table to .duet/models.json for tweaking
   send-feedback            Send free-form markdown feedback to the Duet team
   upgrade                  Upgrade the global ${packageName} installation
 

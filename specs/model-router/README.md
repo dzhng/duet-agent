@@ -11,19 +11,22 @@ prompt sections.
 
 ## Next Agent Prompt
 
-_Last updated: 2026-07-18 (slices 01+02 merged and green: 961 tests)._
+_Last updated: 2026-07-18 (slices 01, 02, 03, 08a merged and green: 977 tests, 1 pre-existing
+environmental flake in `auto-upgrade` — fails identically on the pre-merge base, evidence in the
+git log around `2a34b6e`)._
 
-You are implementing this feature slice by slice. Next pickup:
-[`slices/03-route-probe-cli.md`](./slices/03-route-probe-cli.md) (deps 01+02 are done); the
-transcript-library part of slice 08 is dependency-free and may run in parallel. Before wiring
+You are implementing this feature slice by slice. Next pickup: **slice 04 (classifier
+scorecard — see its "Inputs from the slice-03 review" section) ∥ slice 05 (ModelRouter + runner
+wiring — the fake-classifier seam means it does not wait on 04's tuning)**. Before wiring
 anything, read `unknowns-map.md` §Quadrant 2 (fixed decisions) and §Quadrant 4 (landmines — they
 are constraints). Update this section (status, pickup point, checklist) before ending your pass.
 When a slice's implementation starts changing variables the slice doesn't own, stop and reslice
 per write-spec instead of broadening the patch.
 
-**Active warning:** `gateway.duet.so` currently errors on all three new models (kimi-k3, sol,
-terra) — service-side allowlist gap, David's action item; see slice 01's post-merge addendum.
-Live work must use `AI_GATEWAY_API_KEY`/`OPENROUTER_API_KEY` paths until fixed.
+**Active warning:** `gateway.duet.so` was erroring on ALL models (incl. luna) at last check —
+service-side outage/allowlist gap, David's action item; see slice 01's post-merge addendum. Live
+work must blank `DUET_API_KEY` (note: CLI env loading re-adds it from `~/.duet/.env`; use
+`DUET_API_KEY= duet route …`) so resolution falls to `AI_GATEWAY_API_KEY`/`OPENROUTER_API_KEY`.
 
 **Global TODO** (owning slice in parens):
 
@@ -31,7 +34,11 @@ Live work must use `AI_GATEWAY_API_KEY`/`OPENROUTER_API_KEY` paths until fixed.
       mapping, wire evidence in slice file
 - [x] Routing domain library: table, schema, loader, resolve, vision guard (02) — merged
       `e9a620e`; 24 new tests
-- [ ] Classifier + `duet route` probe + `duet config export` ★ first playable (03)
+- [x] Classifier + `duet route` probe + `duet config export` ★ first playable (03) — merged
+      `67a7eef`; live baseline in `assets/probe-baseline.md`, all 8 canonical prompts routed
+      correctly; schema-constrained route names; signal threaded through structured-output
+- [x] Advisor transcript library (08 — transcript portion) — merged `78a1195`; tool/AI-SDK/probe
+      parts of 08 still open, blocked on 05
 - [ ] Classifier scorecard eval + tuning pass 1 (04)
 - [ ] ModelRouter state machine + turn-runner wiring + `router_switch` + swap-safety fixes (05)
 - [ ] Hard cutover: frontier default, virtual-aware `/model` surfaces, pin/suspend (06)

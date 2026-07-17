@@ -55,3 +55,15 @@ window, then decide from measured failures and record.
 ## Dependencies
 
 Slice 03.
+
+## Inputs from the slice-03 review (orchestrator, 2026-07-18)
+
+- Golden-corpus case to include: "the sidebar flickers when I toggle dark mode, fix the css
+  transition" routed to `implement` (sol) on the first prompt draft. Per the map's intent
+  (visual = "Frontend, 3D, or anything visual: UI, styling, graphics"), CSS/frontend fixes
+  should hit `visual` (kimi). Expect label: visual.
+- The built-in table's route descriptions were condensed by slice 02 relative to the map's
+  richer prompt text (e.g. visual = "Tasks whose output or input depends on visual fidelity").
+  Tuning should start by restoring the map's fuller wording per route, then measure.
+- Probe latency observed at ~1.4s on vercel-ai-gateway (single sample) — above the ~1s p50
+  target; measure properly before freezing the ceiling.
