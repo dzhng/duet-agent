@@ -7,7 +7,7 @@ description: Write and edit project docs (README/markdown) as a glossary of prin
 
 A doc is a **glossary**: it names the moving parts, says why each exists, and
 carries the principles a reader can't derive by grepping. The code is the source
-of truth for _what exists right now_ — the doc must never race it. Before writing
+of truth for *what exists right now* — the doc must never race it. Before writing
 any line, ask the one question that governs this skill: **could the reader get
 this faster and more reliably by reading the code?** If yes, point them at the
 code instead of copying it in.
@@ -37,7 +37,7 @@ Shed — the code or its git history already holds these, so a copy only rots:
 Where you're tempted to list specifics, name the folder or the single file that
 owns them and send the reader there — **prefer a folder over a file, a
 source-of-truth registry over a transcribed copy.** Describe a helper module by
-the _kind_ of helper it holds and the rule for what belongs in it, not its
+the *kind* of helper it holds and the rule for what belongs in it, not its
 current roster. One concrete touchstone is fine to ground a principle; a full
 inventory is the smell. "The matchups live in the table that defines them; the
 ids key off the class registry" stays true after the next edit — reproducing
@@ -59,7 +59,7 @@ and a sub-doc links on to any module-level doc beneath it. Navigation flows
 reachable from there. A doc links back up to its parent, or across to a sibling,
 **only to reuse a fact that already lives there** — an app doc pointing at the
 hub's deployment section instead of restating it, a boundary doc naming the
-sibling it defers to. That is the one-home rule doing its job. What you do _not_
+sibling it defers to. That is the one-home rule doing its job. What you do *not*
 add is a rote "part of X" back-link that carries no information: it's noise, and
 the tree is already navigable from the root without it.
 

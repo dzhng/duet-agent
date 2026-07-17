@@ -35,7 +35,6 @@ Review the diff or specified files against these principles.
   - Bad: `// Wrapper added because FUSE-T was zero-padding (see commit abc123)`
   - Bad: `// Previously this was called fuseAvailable but we renamed it`
 - **Remove:** comments that just restate what the code does without adding reasoning.
-- **One explanation, one location.** When the same fact (a flag's contract, an invariant, a tri-state field's semantics) is documented at three call sites, pick the single best one — usually the leaf where the value is applied or the field where it's declared — and delete the other copies. Transparent forwarders, intermediate hops, and re-exporters don't need to re-document what they pass through. Same rule across files: if the schema's field doc, a domain doc-comment, and a const's preamble all say "this is parent-only and dynamic", keep the one closest to the data and trim the rest.
 - Often no comment is needed at all.
 
 ## 5. Separate install-time from runtime
@@ -85,14 +84,7 @@ Review the diff or specified files against these principles.
 - A good split usually reduces import pressure in the original file because dependencies move with the responsibility they serve.
 - If extraction increases total indirection without clarifying ownership, keep the code local.
 
-## 12. Tests do not justify keeping unused production code
-
-- If a production function has no production callers, it is dead. Tests that exercise it in isolation do not make it live.
-- Delete the function **and** the test in the same change. The test was only validating internal behavior that no longer matters.
-- If the behavior the test was checking is still important, it is now an invariant of _some other_ production function. Move the assertion onto a test of that function (which has real callers), not back onto the dead helper.
-- Pattern: search every caller before deletion. If the only references are tests, both can go.
-
-## 13. Decouple tests from implementation — drive the system end-to-end
+## 12. Decouple tests from implementation — drive the system end-to-end
 
 The most valuable test suite is the one most decoupled from the implementation it covers. Decoupled to the point where you exercise the backend by driving the frontend, and exercise a module by going through the same entry point a user goes through. A test that pokes at internals freezes the internals; a test that drives the public surface frees you to refactor everything underneath.
 
@@ -103,35 +95,76 @@ The most valuable test suite is the one most decoupled from the implementation i
 - **Coupled tests are a refactor tax.** When renaming an internal function or moving a module breaks dozens of tests without changing any user-visible behavior, the suite is testing the wrong layer. Rewrite those tests against the outer surface and delete the brittle ones.
 - **Reserve unit tests for genuinely tricky pure logic** — parsers, normalizers, schedulers, state machines with subtle invariants. Everything else earns more value as an integration or end-to-end test.
 
-## 14. Gate filesystem-touching tests on `testIfDocker`
+## 13. A failing check can be a toolchain defect, not a code defect
 
-- Tests that write real files, spawn subprocesses, mutate `$HOME`, or otherwise reach outside the process must use `testIfDocker` from `test/helpers/docker-only.js`, not bare `test`.
-- `testIfDocker` resolves to `test` when `DUET_TEST_IN_DOCKER=1` (inside the `oven/bun` test image) and `test.skip` everywhere else, so the same suite is safe to run on a contributor's laptop without polluting their host.
-- `os.tmpdir()` + `mkdirSync` / `writeFileSync` counts. So does anything that touches `~/.duet`, the home directory, the global skills root, or any path outside the test's own in-memory state.
-- If you find yourself reaching for `afterEach(rm)` to clean up a real directory, that's the signal — wrap the test in `testIfDocker` and let the container be the sandbox.
-- Pure-logic tests (parsers, reducers, in-memory data structures) stay on bare `test`; the gate is only for tests that escape the process boundary.
+Before hand-writing a type, adding a cast, pinning a value, or restructuring code to make a checker (type-checker, compiler, linter, test runner, build) pass, confirm the failure is a CODE defect and not a toolchain/environment artifact. Patching code to satisfy a broken or mismatched tool is a workaround that masks the real problem — the never-suppress-a-signal rule, one level up.
 
-## 15. Reuse existing types — derive, don't redeclare
+- **Reproduce under the exact toolchain that reports the failure** — the CI/deploy version and config, not just your local one. A green local check proves nothing if it ran a different version: a pinned prerelease, a preview build, or version drift between your machine and CI can pass locally and fail in CI on identical source (or the reverse).
+- **If the same source passes under the real/pinned tool, the code is correct** — the fix belongs in the toolchain (pin the version, fix the config), not the code. When the output is ambiguous, probe the tool directly — force it to print the value, type, or error it actually computed — instead of guessing at the cause.
+- **Keep local == CI.** Confirm the checks that gate merge/deploy run the same toolchain the deploy runs; version drift makes every green check suspect, and "it passed locally" stops being evidence the deploy will.
 
-- If a type already exists upstream (SDK, protocol package, schema validator, generated client), use it directly. Don't redeclare its shape inline, even partially.
-- When you need a variant of an existing type — a subset of fields, an optional version, a union member, the args of a function — derive it with TypeScript utilities: `Pick`, `Omit`, `Partial`, `Required`, `Readonly`, `NonNullable`, `Parameters`, `ReturnType`, `Awaited`, indexed access (`T['field']`), `Extract`/`Exclude` on unions, `infer` in conditional types. Convex/Zod have their own equivalents (`Infer<typeof V>`, `FunctionArgs<typeof api.x.y>`, `z.input/z.output`); use them instead of writing a parallel TS type.
-- Why it matters: redeclared shapes drift. They miss new optional fields the upstream adds, hide which named type you mean behind a structural literal grep can't find, and force callers to update both sides on every protocol change. Derived types stay correct by construction.
-- Bad: `command: TurnPromptCommand | TurnAnswerCommand | { type: 'wake' }` — last arm bypasses the type the rest of the codebase uses.
-- Good: `command: TurnPromptCommand | TurnAnswerCommand | TurnWakeCommand`.
-- Bad: `type UserSummary = { id: string; name: string; email: string }` next to an existing `User` with those same fields plus more.
-- Good: `type UserSummary = Pick<User, 'id' | 'name' | 'email'>` — adding/renaming a field on `User` either propagates or breaks compilation loudly.
-- Bad: hand-rolling a `CreateUserInput` type that parallels a Convex mutation's args.
-- Good: `type CreateUserInput = FunctionArgs<typeof api.users.create>`.
-- Same rule for value-level wrappers: prefer constructing via the named type (`satisfies TurnWakeCommand`) over a structural literal so the constraint lives at the call site.
+## 14. Identity comes from auth, never from the caller
 
-## 16. Leave the codebase cleaner than you found it
+- Resolve the acting identity — org/tenant/workspace id, user id, actor — from the authenticated request (API key, session, or a verified internal key), never from a caller-supplied argument. A public mutation that reads `actorId`/`orgId` from its args is spoofing surface, not a feature.
+- The only exception is a trusted internal call: accept a caller-supplied actor ONLY when a valid internal key is present; otherwise derive it from auth and reject the supplied id.
+- To scope to a child inside the authed scope (a specific channel, share, app), take the _child_ id and verify it belongs to the auth-derived parent — don't trust a parallel parent id from the body.
 
-- Every change is a chance to delete duplication, not just an excuse to add more. When you touch a file, audit the surrounding code for things that were already wrong — and if your change is in the same neighborhood, fix them in the same turn.
-- **No parallel literal sets.** Before adding a new enum, union, picker list, validator, or zod schema that enumerates string values, grep the repo for the same set. If any version of it already exists, derive from it — don't redeclare. Examples that have bitten us: a `THINKING_LEVELS` array next to `ThinkingLevelValidator`, a hand-written zod enum next to a Convex validator with the same members, a hard-coded `['none', 'low', 'medium', ...]` in a picker next to a separate one in another picker.
-- The fix is always: one source of truth (the schema validator, the protocol type, the SDK enum), and everything else derives. Use `Infer<typeof V>`, indexed access, `Pick`/`Omit`, `satisfies`, or a `const X = [...] as const` exported from a single file. Add a compile-time drift check (`type _Check = Infer<typeof V> extends X ? true : never`) when the validator and the array must agree.
-- This applies recursively. If your refactor touches the picker, the validator, the wire-protocol type, and the cron config, and three of them already redeclared the literal list, fix all four — don't leave two clean and two stale.
-- "I'll do that in a follow-up PR" is how the codebase rots. The follow-up rarely happens, and the next person to touch the file inherits the same mess plus your new addition.
-- The reviewer test: after your change, is there exactly ONE place a future contributor would look to add a new value? If the answer is "two or three places, and you have to know which", the refactor isn't done.
+## 15. Public API actions are thin auth + dispatch, not inlined business logic
+
+- A public route authenticates, validates, derives identity, and dispatches to a model function or an internal action that owns the work. Keep that wrapper thin — it is the auth/runtime boundary.
+- Don't inline third-party SDK / analytics / email logic into the public boundary because "it's only 3 lines." Push it behind the dispatch.
+- In Convex specifically: do NOT add `'use node'` to a file holding many actions just to satisfy one — it forces every action in the file into the Node runtime. Split: auth+dispatch (default runtime) → `services/<thing>.ts` (`'use node'`, owns the SDK call).
+
+## 16. Public endpoints ship at minimum scope
+
+- One route, one item per request. Don't preemptively add `/batch` variants, paginated listings, or filter params before a concrete second caller needs them.
+- Inline the schema in the route; don't hoist a 4-line schema into a shared `schemas.ts` "for reuse" when nothing reuses it. Skip body-size caps unless the body is genuinely unbounded.
+
+## 17. Reuse existing types — derive, don't redeclare
+
+- If a type already exists upstream (a schema validator, protocol package, generated client, SDK), use it directly — don't redeclare its shape inline, even partially. Redeclared shapes drift.
+- For a variant, derive it: `Pick`/`Omit`/`Partial`/`Parameters`/`ReturnType`/indexed access/`Extract`/`Exclude`; Convex/Zod equivalents `Infer<typeof V>`, `FunctionArgs<typeof api.x.y>`, `z.input/z.output`.
+- Bad: `type UserSummary = { id: string; name: string; email: string }` next to an existing `User`. Good: `Pick<User, 'id' | 'name' | 'email'>`.
+
+## 18. Filter at the index, never `take()` + post-filter
+
+- When a list query returns rows from a sub-bucket of a table (active vs. archived, `status === X`), the **index** must do the filtering. Don't `.take(N)` the unfiltered query and `.filter()` in JS for the bucket you want.
+- Why it breaks: `.take(N)` returns the N rows at the head of the index's order. If the head is full of the _other_ bucket, the post-filter returns zero even when the bucket has hundreds of older rows. `take(N*2)` only delays the failure.
+- Pattern: put the discriminator in an index and use `.withIndex(..., q => q.eq(...))`, or `q.gt(field, 0)` for the "present" bucket (Convex sorts `undefined` before defined values). Same for `.first()`/`.unique()` and "is there any X" probes.
+
+## 19. Never `.collect()` — bound the read with `.take(N)`
+
+- Convex `.collect()` reads every matching row with no upper bound. For anything that accumulates per-tenant over time (sessions, events, ledger rows, audit rows), a query fine on day one eventually pulls thousands of rows on one reactive tick and silently degrades reactivity for the whole client.
+- Replace `.collect()` with `.take(N)` where N is a safety ceiling clearly above today's working set (100, 1000) — a cap against pathological data, not a UX paginator. Same for `.withIndex(...).filter(...).collect()`.
+- If you genuinely need every row (a migration, admin dump, one-shot maintenance), say so with a comment and run it from a cancellable mutation/action, never a reactive `query`.
+
+## 20. Don't remap rows just to rename or default fields
+
+- Object-literal `.map()`s that copy every field through to rename two or coalesce `undefined → false` are noise, and they drop new columns silently until someone updates the map. If the consumer needs every field, return the row; if a subset, `Pick`/`Omit` or destructure-and-rest. Only rename when the new name materially clarifies; only default when downstream truly can't handle absence.
+- Strip storage-only fields (`_id`, `_creationTime`, internal ids) once with a destructure-rest. Good: `return rows.map(({ _id, _creationTime, ...row }) => row)`.
+
+## 21. Internal APIs carry no version or compat machinery
+
+- When we own both producer and consumer (our own apps, services, and functions), do not add `protocolVersion` fields, version negotiation, capability flags, or "in case the other side is older" branches. Deploying is the version.
+- The one real compat axis is fields, not versions — and it's an asymmetry, not a knob: parse **requests strictly** (reject unknown fields), parse **responses/events tolerantly** (ignore unknown fields). That lets the producer add fields without a lockstep consumer release, which covers the only skew we actually have (components that update on their own schedule).
+- Smells: a version literal in a wire schema that nothing reads; an `if (payload.v >= 2)` branch whose only caller is code we deploy ourselves; a strict parser on a response, which turns every additive server change into a breaking one.
+- Exception: a genuinely external API (consumers we cannot redeploy) versions at the route (`/v1/`), never per-field.
+
+## 22. Things that must agree need one owner
+
+- When two declarations must stay consistent but each can change alone, they drift. Give the shared decision one home and have each site compose from it — a parallel enum, picker list, or switch that restates a set living elsewhere is the common case (deriving the shape is rule 17; this is the wider rule for any values that must agree).
+- The harder half: where near-twins legitimately differ, justify the difference in the code. An undocumented divergence between otherwise-identical things is indistinguishable from a drift bug — a reader can't tell intent from oversight.
+
+## 23. Don't hoist a single-use value into a named const unless it earns the name
+
+- A `const` extracted to module scope but referenced exactly once adds indirection without payoff: the reader has to jump to the declaration to learn the value, and the name restates what an inline value + short comment would say anyway. Inline it at the one call site and let a comment carry the WHY.
+- A single-use named const IS justified when at least one of these holds:
+  - It's **configuration that changes often** or that an operator/reader is expected to tune (timeouts/limits grouped as knobs, feature thresholds, retry budgets that get adjusted).
+  - It **sits next to related consts** and gains meaning from the cluster (a block of `*_TIMEOUT_MS`, a table of limits, sibling enum members) — the grouping is the documentation.
+  - Declaring it independently is **structurally meaningful**: it's exported as part of a module's public surface, referenced by a type, or co-located with the data/file it parameterizes so a future second caller finds it.
+- Otherwise inline. The reviewer test: if the name only exists to label a literal used once, and it neither changes often nor lives beside kin, it's noise — fold it into the call site with a comment explaining the value.
+- Bad: `const STOP_SESSION_CONNECT_TIMEOUT_MS = 5_000` declared on its own, used in exactly one `runAction({ connectTimeoutMs: STOP_SESSION_CONNECT_TIMEOUT_MS })`.
+- Good: `connectTimeoutMs: 5_000, // 5s: a cold sandbox must not hang on the 60s default connect` at the call site.
 
 ## Your task
 
@@ -140,5 +173,3 @@ Review: $ARGUMENTS
 If no arguments given, review `git diff --staged` or `git diff` (unstaged changes).
 
 For each issue found, cite the file and line number. Group by category. End with a clean/not-clean verdict.
-
-When the review surfaces simplifications, apply them in the same turn instead of asking for confirmation. After applying, re-run the relevant `tsc`, lint, and tests to confirm everything still passes, then summarize what changed. Only stop to ask when a fix is genuinely ambiguous (e.g. two valid interpretations with different downstream impact).

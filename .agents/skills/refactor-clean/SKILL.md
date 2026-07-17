@@ -57,7 +57,7 @@ module into the several owners it was hiding.
   search the codebase for one that already does this, or something close enough
   to share. Only once you know what's there can you make the real decision:
   reuse it, consolidate two near-duplicates, or extract the shared core into an
-  independent module both call — and that decision belongs _before_ you start,
+  independent module both call — and that decision belongs *before* you start,
   not bolted on after. Reuse is not automatically the answer; the existing thing
   may be wrong, or genuinely different, and then you build new deliberately. The
   failure this prevents is building in ignorance of what's already there: two
