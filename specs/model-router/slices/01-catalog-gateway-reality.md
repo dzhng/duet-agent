@@ -66,3 +66,14 @@ None. Parallel with slice 02.
 - Both live requests reached `gateway.duet.so` but returned a generic HTTP 500, so request-shape
   delivery is verified while a successful model response is not. The throwaway probe was
   deleted after capture.
+
+## Post-merge verification addendum (orchestrator, 2026-07-18)
+
+Live checks on the merged tree: `vercel-ai-gateway` serves all three models correctly
+(kimi-k3 completes with vision metadata + 1M ctx; sol/terra complete on openai-responses).
+`duet-gateway` (gateway.duet.so) returns server-side errors (500 / stopReason "error", zero
+usage) for ALL THREE new models — kimi-k3, gpt-5.6-sol, gpt-5.6-terra — while luna keeps
+working. This is a gateway service configuration gap (upstream model allowlist), not a repo
+code bug. **Action item for David: enable moonshotai/kimi-k3 and openai/gpt-5.6-sol|terra on
+gateway.duet.so.** Until then, routed sessions must use AI_GATEWAY_API_KEY/OPENROUTER_API_KEY,
+and live evals should not assume the duet gateway serves the routing targets.

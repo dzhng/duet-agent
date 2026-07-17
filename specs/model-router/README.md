@@ -11,21 +11,26 @@ prompt sections.
 
 ## Next Agent Prompt
 
-_Last updated: 2026-07-18 (planning complete, no implementation started)._
+_Last updated: 2026-07-18 (slices 01+02 merged and green: 961 tests)._
 
-You are implementing this feature slice by slice. Start at
-[`slices/01-catalog-gateway-reality.md`](./slices/01-catalog-gateway-reality.md). Before wiring
+You are implementing this feature slice by slice. Next pickup:
+[`slices/03-route-probe-cli.md`](./slices/03-route-probe-cli.md) (deps 01+02 are done); the
+transcript-library part of slice 08 is dependency-free and may run in parallel. Before wiring
 anything, read `unknowns-map.md` §Quadrant 2 (fixed decisions) and §Quadrant 4 (landmines — they
-are constraints). Work one slice at a time; leave each with its runnable artifact and verification
-green before depending on it. S1 and S2 are parallelizable; see the slice graph below. Update this
-section (status, pickup point, checklist) before ending your pass. When a slice's implementation
-starts changing variables the slice doesn't own, stop and reslice per write-spec instead of
-broadening the patch.
+are constraints). Update this section (status, pickup point, checklist) before ending your pass.
+When a slice's implementation starts changing variables the slice doesn't own, stop and reslice
+per write-spec instead of broadening the patch.
+
+**Active warning:** `gateway.duet.so` currently errors on all three new models (kimi-k3, sol,
+terra) — service-side allowlist gap, David's action item; see slice 01's post-merge addendum.
+Live work must use `AI_GATEWAY_API_KEY`/`OPENROUTER_API_KEY` paths until fixed.
 
 **Global TODO** (owning slice in parens):
 
-- [ ] Catalog entries + kimi effort/vision wire evidence (01)
-- [ ] Routing domain library: table, schema, loader, resolve, vision guard (02)
+- [x] Catalog entries + kimi effort/vision wire evidence (01) — merged `a802159`; kimi high→max
+      mapping, wire evidence in slice file
+- [x] Routing domain library: table, schema, loader, resolve, vision guard (02) — merged
+      `e9a620e`; 24 new tests
 - [ ] Classifier + `duet route` probe + `duet config export` ★ first playable (03)
 - [ ] Classifier scorecard eval + tuning pass 1 (04)
 - [ ] ModelRouter state machine + turn-runner wiring + `router_switch` + swap-safety fixes (05)
