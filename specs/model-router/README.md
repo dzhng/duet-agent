@@ -11,11 +11,10 @@ prompt sections.
 
 ## Next Agent Prompt
 
-_Last updated: 2026-07-18 (slices 01-05 + 08a merged and green: 989 tests, 1 pre-existing
-environmental flake in `auto-upgrade` — fails identically on the pre-merge base)._
+_Last updated: 2026-07-18 (slices 01-06 + 08 merged and green: 1006 tests, 0 fail)._
 
-You are implementing this feature slice by slice. Next pickup: **slice 06 (hard cutover) ∥ slice
-08b (advisor tool completion — tool + AI SDK call + preview probe)**; then 07 ∥ 09, then 10.
+You are implementing this feature slice by slice. Next pickup: **slice 07 (TUI) ∥ slice 09
+(interlock + advisor evals)**; then 10 (promotion eval + closeout).
 Before wiring anything, read `unknowns-map.md` §Quadrant 2 (fixed decisions) and §Quadrant 4
 (landmines — constraints). Update this section (status, pickup point, checklist) before ending
 your pass.
@@ -43,9 +42,12 @@ work must blank `DUET_API_KEY` (note: CLI env loading re-adds it from `~/.duet/.
 - [x] ModelRouter state machine + turn-runner wiring + `router_switch` + swap-safety fixes (05)
       — merged `9a0f637`; live one-shot `--model frontier` verified end-to-end (sol turn + luna
       memory actor in usageByModel, resume stays virtual)
-- [ ] Hard cutover: frontier default, virtual-aware `/model` surfaces, pin/suspend (06)
+- [x] Hard cutover: frontier default, virtual-aware `/model` surfaces, pin/suspend (06) — merged
+      `fb16b63`; bare `duet` live-verified routing via frontier; boot prints `frontier (routed)`
 - [ ] TUI: two-layer display, switch rendering, `/route` inspector (07)
-- [ ] Advisor: transcript lib, `ask_advisor` tool, AI SDK call, preview probe (08)
+- [x] Advisor: transcript lib, `ask_advisor` tool, AI SDK call, preview probe (08) — merged
+      `78a1195`+`2b39031`; gateway credential fallback moved into createDuetModelGateway;
+      advisor-preview live-verified (10k tokens, $0.10 fable estimate)
 - [ ] Interlock (reroute nudge) + advisor prompt tuning + advisor evals (09)
 - [ ] Mixed-task promotion eval + closeout tuning + stale-comment audit (10)
 
