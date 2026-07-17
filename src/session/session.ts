@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { TurnRunner, type TurnEventHandler } from "../turn-runner/turn-runner.js";
 import { resolveModelName } from "../model-resolution/resolver.js";
 import { BUILT_IN_ROUTING_TABLE, isVirtualModel } from "../model-routing/table.js";
+import type { RouterStatus } from "../model-routing/router.js";
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { TurnRunnerConfig } from "../types/config.js";
 import { validateThinkingLevel } from "./thinking-level.js";
@@ -100,6 +101,8 @@ export interface SessionTurnRunner {
   setModel?(model: string): { routed: boolean };
   /** Validate a selection against the project routing table loaded at start. */
   isVirtualModelSelection?(model: string): boolean;
+  /** Return the router-owned display snapshot, when this runner has routing state. */
+  routeStatus?(): RouterStatus | undefined;
   getSkills(): Promise<readonly Skill[]>;
   reloadSkills(): Promise<readonly Skill[]>;
   getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]>;
@@ -332,6 +335,11 @@ export class Session {
   /** Current runner-owned turn state snapshot, including agent message history. */
   getState(): TurnState | undefined {
     return this.runner.getState();
+  }
+
+  /** Current router-owned status for read-only UI inspection. */
+  routeStatus(): RouterStatus | undefined {
+    return this.runner.routeStatus?.();
   }
 
   /** Latest `usage` payload for sidebar resume; not part of `TurnState`. */

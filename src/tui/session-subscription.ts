@@ -53,6 +53,7 @@ export function refreshSidebarFromSession(deps: { session: Session; sidebar: Sid
   const state = session.getState();
   sidebar.setTodos(state?.todos ?? []);
   sidebar.setStateMachine(state?.stateMachine);
+  sidebar.setRouteStatus(session.routeStatus());
   const snap = session.getLastUsage();
   sidebar.setUsage(
     snap
@@ -119,6 +120,11 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
       statusController.setQueuedFollowUps(next.length);
     } else if (event.type === "memory") {
       stepRenderer.renderMemoryStatus(event);
+    } else if (event.type === "router_switch") {
+      appendLine(
+        `[route] ${event.tier} → ${event.toModel} (${event.thinkingLevel}) · ${event.route} · ${event.trigger}`,
+        COLORS.system,
+      );
     } else if (event.type === "system") {
       appendBlock("[system]", event.message, COLORS.system);
       if (event.level === "error") statusController.markIdle();

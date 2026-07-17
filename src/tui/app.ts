@@ -404,6 +404,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       },
       setModel: (model: string) => input.session.setModel(model),
       setThinkingLevel: (level: string) => input.session.setThinkingLevel(level),
+      routeStatus: () => input.session.routeStatus(),
       compact: () => {
         void input.session.compact();
       },

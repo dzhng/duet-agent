@@ -3,6 +3,7 @@ import type { SkillAutocompleteItem } from "./autocomplete.js";
 import type { CopyController } from "./copy-controller.js";
 import type { PasteController } from "./paste-controller.js";
 import type { TranscriptWriter } from "./transcript-writer.js";
+import type { RouterStatus } from "../model-routing/router.js";
 import { submitDuetFeedback } from "../lib/feedback.js";
 import { COLORS } from "./theme.js";
 
@@ -47,6 +48,8 @@ export interface SlashCommandContext {
    * level. Unknown levels throw in either mode.
    */
   setThinkingLevel(level: string): { thinkingLevel?: string; routedBy?: string };
+  /** Router-owned snapshot used by the read-only `/route` inspector. */
+  routeStatus?(): RouterStatus | undefined;
   /**
    * Invoked by `/compact` to ask the runner to compact its in-memory
    * `TurnState`. The runner targets 20% of the effective context window;
@@ -184,6 +187,12 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
     matches: (message) => isInvocation(message, "model"),
     handle: handleModelSlashCommand,
     inline: "token",
+  },
+  {
+    name: "route",
+    description: "Inspect the active virtual-model route, cadence, advisor, and pin state",
+    matches: (message) => isBare(message, "route"),
+    handle: handleRouteSlashCommand,
   },
   {
     name: "thinking",
@@ -463,6 +472,46 @@ function handleModelSlashCommand(raw: string, ctx: SlashCommandContext): void {
       COLORS.error,
     );
   }
+}
+
+/** Render the router's detached status snapshot without deriving policy in the TUI. */
+function handleRouteSlashCommand(_raw: string, ctx: SlashCommandContext): void {
+  const status = ctx.routeStatus?.();
+  if (!status) {
+    ctx.appendBlock("[route]", "This session is not using virtual-model routing.", COLORS.system);
+    return;
+  }
+
+  const current =
+    status.route && status.modelName && status.thinkingLevel
+      ? `${status.route} → ${status.modelName} (${status.thinkingLevel})`
+      : "awaiting initial target";
+  const rationale = status.lastRationale ?? "awaiting first classification";
+  const cadence =
+    status.stepsUntilClassification === 0
+      ? "due now"
+      : `${status.stepsUntilClassification} ${pluralizeSteps(status.stepsUntilClassification)} until next check`;
+  const advisorCooldown = status.advisorGate.allowed
+    ? "ready"
+    : `${status.advisorGate.stepsUntilAllowed} ${pluralizeSteps(status.advisorGate.stepsUntilAllowed)} until available`;
+  const pinned = status.pinned ? "yes — routing suspended by concrete model pin" : "no";
+
+  ctx.appendBlock(
+    "[route]",
+    [
+      `tier: ${status.tier}`,
+      `current: ${current}`,
+      `rationale: ${rationale}`,
+      `cadence: ${cadence}`,
+      `advisor: ${status.advisorEnabled ? "enabled" : "disabled"} · ${advisorCooldown}`,
+      `pinned: ${pinned}`,
+    ].join("\n"),
+    COLORS.system,
+  );
+}
+
+function pluralizeSteps(count: number): "step" | "steps" {
+  return count === 1 ? "step" : "steps";
 }
 
 /**

@@ -59,10 +59,6 @@ class RouterTurnRunner extends TurnRunner {
     this.planTarget = options.planTarget;
   }
 
-  routerStatusForTest() {
-    return this.modelRouter?.status();
-  }
-
   parentAgentForTest(): Agent {
     return this.requireParentAgent();
   }
@@ -187,12 +183,12 @@ describe("TurnRunner virtual-model adapter", () => {
     await startRunner(runner, []);
 
     expect(runner.setModel("gpt-5.6-luna")).toEqual({ routed: false });
-    expect(runner.routerStatusForTest()?.pinned).toBe(true);
+    expect(runner.routeStatus()?.pinned).toBe(true);
     expect(runner.parentAgentForTest().state.model.id).toBe("openai/gpt-5.6-luna");
 
     expect(runner.setModel("frontier")).toEqual({ routed: true });
-    expect(runner.routerStatusForTest()?.pinned).toBe(false);
-    expect(runner.routerStatusForTest()?.stepsUntilClassification).toBe(0);
+    expect(runner.routeStatus()?.pinned).toBe(false);
+    expect(runner.routeStatus()?.stepsUntilClassification).toBe(0);
 
     const turn = runner.turn({ type: "prompt", message: "Plan this.", behavior: "follow_up" });
     await waitFor(() => runner.pendingStreams.length === 1);
@@ -313,7 +309,7 @@ describe("TurnRunner virtual-model adapter", () => {
     const message = createAssistantMessage({ text: "child result" });
 
     runner.emitStateAgentEventForTest({ type: "message_end", message });
-    expect(runner.routerStatusForTest()?.assistantSteps).toBe(0);
+    expect(runner.routeStatus()?.assistantSteps).toBe(0);
   });
 
   test("interrupting an in-flight classifier keeps the routed model unchanged", async () => {
@@ -346,7 +342,7 @@ describe("TurnRunner virtual-model adapter", () => {
     const terminal = await turn;
 
     expect(terminal.type).toBe("interrupted");
-    expect(runner.routerStatusForTest()?.modelName).toBe("fable-5");
+    expect(runner.routeStatus()?.modelName).toBe("fable-5");
     expect(runner.parentAgentForTest().state.model.id).toBe(runner.requestModels[0]!.id);
     expect(events.filter((event) => event.type === "router_switch")).toHaveLength(1);
   });

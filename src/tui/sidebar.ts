@@ -8,6 +8,7 @@ import {
 } from "@opentui/core";
 import type { TurnContextWindowUsage, TurnUsageEvent, TurnTodo } from "../types/protocol.js";
 import type { StateMachineSession } from "../types/state-machine.js";
+import type { RouterStatus } from "../model-routing/router.js";
 import { COLORS } from "./theme.js";
 
 /**
@@ -62,6 +63,8 @@ export interface Sidebar {
   setStateMachine(session: StateMachineSession | undefined): void;
   /** Render the latest context-usage progress bar; pass undefined to clear. */
   setUsage(usage: TurnUsageEvent | undefined): void;
+  /** Show the router-owned virtual-to-concrete target; concrete sessions omit this row. */
+  setRouteStatus(status: RouterStatus | undefined): void;
   /** Cumulative USD cost across all turns in the current session. */
   setSessionCost(cost: number): void;
 }
@@ -103,9 +106,9 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
   // single text node. Mirrors createPanel's border + title styling so it
   // sits flush with the other sidebar panels.
   //
-  // Height budget (5 cells): border(2) + title+usage(1) + bar(1) +
-  // legend(1). Tokens and cost ride on the title row, right-aligned, so
-  // the panel stays the same height as the other sidebar panels.
+  // Concrete-session height budget (5 cells): border(2) + title+usage(1) +
+  // bar(1) + legend(1). Routed sessions add one target row. Tokens and cost
+  // ride on the title row, right-aligned.
   const contextPanel = new BoxRenderable(renderer, {
     flexDirection: "column",
     border: true,
@@ -145,6 +148,15 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
   titleRow.add(tokensLabel);
   titleRow.add(costLabel);
   contextPanel.add(titleRow);
+
+  const routeLabel = new TextRenderable(renderer, {
+    content: "",
+    fg: COLORS.status,
+    height: 1,
+    flexShrink: 0,
+  });
+  routeLabel.visible = false;
+  contextPanel.add(routeLabel);
 
   // The whole bar is a single TextRenderable with a StyledText payload so
   // an empty segment contributes zero cells. Splitting the bar across
@@ -222,6 +234,14 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
       }
       smBody.content = lines.join("\n");
       smBody.fg = COLORS.agent;
+    },
+    setRouteStatus(status) {
+      const routed = status && !status.pinned && status.modelName && status.thinkingLevel;
+      routeLabel.visible = Boolean(routed);
+      routeLabel.content = routed
+        ? `${status.tier} → ${status.modelName} (${status.thinkingLevel})`
+        : "";
+      contextPanel.height = routed ? 6 : 5;
     },
     setUsage(usage) {
       if (!usage) {

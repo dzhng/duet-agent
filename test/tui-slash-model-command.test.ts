@@ -106,6 +106,82 @@ describe("/model slash command", () => {
   });
 });
 
+describe("/route slash command", () => {
+  test("/route is registered in the autocomplete catalog", () => {
+    const item = BUILT_IN_SLASH_COMMAND_ITEMS.find((row) => row.name === "route");
+    expect(item).toBeDefined();
+    expect(item?.group).toBe("commands");
+  });
+
+  test("renders a routed session mid-flight from the router snapshot", () => {
+    const ctx = makeContext({
+      routeStatus: () => ({
+        tier: "frontier",
+        route: "implement",
+        modelName: "gpt-5.6-sol",
+        thinkingLevel: "high",
+        lastRationale: "The task moved from planning into implementation.",
+        assistantSteps: 8,
+        stepsUntilClassification: 2,
+        pinned: false,
+        advisorEnabled: true,
+        advisorGate: { allowed: false, stepsUntilAllowed: 1 },
+      }),
+    });
+
+    expect(tryDispatchSlashCommand("/route", ctx)).toBe(true);
+    expect(ctx.blocks[0]?.label).toBe("[route]");
+    expect(ctx.blocks[0]?.body).toMatchInlineSnapshot(`
+      "tier: frontier
+      current: implement → gpt-5.6-sol (high)
+      rationale: The task moved from planning into implementation.
+      cadence: 2 steps until next check
+      advisor: enabled · 1 step until available
+      pinned: no"
+    `);
+  });
+
+  test("says plainly when the session is not routed", () => {
+    const ctx = makeContext({ routeStatus: () => undefined });
+
+    tryDispatchSlashCommand("/route", ctx);
+
+    expect(ctx.blocks[0]?.label).toBe("[route]");
+    expect(ctx.blocks[0]?.body).toMatchInlineSnapshot(
+      `"This session is not using virtual-model routing."`,
+    );
+  });
+
+  test("shows the retained route snapshot after a concrete pin", () => {
+    const ctx = makeContext({
+      routeStatus: () => ({
+        tier: "frontier",
+        route: "implement",
+        modelName: "gpt-5.6-sol",
+        thinkingLevel: "high",
+        lastRationale: "Implementation needed the coding route.",
+        assistantSteps: 10,
+        stepsUntilClassification: 0,
+        pinned: true,
+        advisorEnabled: true,
+        advisorGate: { allowed: true, stepsUntilAllowed: 0 },
+      }),
+    });
+
+    tryDispatchSlashCommand("/route", ctx);
+
+    expect(ctx.blocks[0]?.label).toBe("[route]");
+    expect(ctx.blocks[0]?.body).toMatchInlineSnapshot(`
+      "tier: frontier
+      current: implement → gpt-5.6-sol (high)
+      rationale: Implementation needed the coding route.
+      cadence: due now
+      advisor: enabled · ready
+      pinned: yes — routing suspended by concrete model pin"
+    `);
+  });
+});
+
 describe("/thinking slash command", () => {
   test("/thinking is registered in the autocomplete catalog", () => {
     const item = BUILT_IN_SLASH_COMMAND_ITEMS.find((row) => row.name === "thinking");

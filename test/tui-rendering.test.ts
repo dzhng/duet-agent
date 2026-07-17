@@ -57,4 +57,36 @@ describe("TUI rendering smoke test", () => {
     const frame = await harness.captureCharFrame();
     expect(frame).toContain("Enter: send");
   });
+
+  testIfDocker("router switches render a notice and refresh the sidebar target", async () => {
+    const status = {
+      tier: "frontier",
+      route: "implement",
+      modelName: "gpt-5.6-sol",
+      thinkingLevel: "high" as const,
+      lastRationale: "The task entered its implementation phase.",
+      assistantSteps: 5,
+      stepsUntilClassification: 5,
+      pinned: false,
+      advisorEnabled: true,
+      advisorGate: { allowed: true, stepsUntilAllowed: 0 },
+    };
+    Object.assign(harness.runner, { routeStatus: () => status });
+
+    harness.runner.emitEvent({
+      type: "router_switch",
+      tier: "frontier",
+      route: "implement",
+      fromModel: "gpt-5.6-luna",
+      toModel: "gpt-5.6-sol",
+      thinkingLevel: "high",
+      trigger: "cadence",
+      rationale: status.lastRationale,
+    });
+    await harness.flush();
+
+    const frame = await harness.captureCharFrame();
+    expect(frame).toContain("[route] frontier → gpt-5.6-sol (high) · implement · cadence");
+    expect(frame).toContain("frontier → gpt-5.6-sol (high)");
+  });
 });

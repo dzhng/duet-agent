@@ -17,6 +17,7 @@ import { resolveTierDefault, type RouteResolutionCatalog } from "../model-routin
 import {
   ModelRouter,
   type ModelRouterOptions,
+  type RouterStatus,
   type RouterSwitch,
 } from "../model-routing/router.js";
 import {
@@ -2558,6 +2559,11 @@ export class TurnRunner {
   /** True when a model name is owned by the validated project table. */
   isVirtualModelSelection(modelName: string): boolean {
     return isVirtualModel(modelName, this.routingTable ?? BUILT_IN_ROUTING_TABLE);
+  }
+
+  /** Read-only routing snapshot for session-owned UI surfaces. */
+  routeStatus(): RouterStatus | undefined {
+    return this.modelRouter?.status();
   }
 
   /**
