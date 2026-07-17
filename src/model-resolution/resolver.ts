@@ -32,7 +32,7 @@ export interface ModelResolution {
   modelName: string;
   /** explicit: CLI flag; inferred: provider env var present; default: built-in fallback. */
   source: "explicit" | "inferred" | "default";
-  /** Provider env var that triggered inference, e.g. "ANTHROPIC_API_KEY". */
+  /** Provider env var that triggered inference, e.g. "AI_GATEWAY_API_KEY". */
   envVar?: string;
   /** True when the env var was loaded from a CLI env file rather than the shell. */
   fromDotenv?: boolean;
@@ -46,6 +46,14 @@ export function resolveModelName(model: string): Model<any> {
   }
   const rawProvider = model.slice(0, separator);
   const rawModelId = model.slice(separator + 1);
+  // The CLI supports only the router providers (duet-gateway, vercel-ai-gateway,
+  // openrouter). Any other explicit pin — e.g. `anthropic:claude-opus-4-8` or
+  // `openai:gpt-5.5` — is an unknown provider here: `resolveProviderShorthand`
+  // returns undefined, the raw provider passes through, and `getModel` below
+  // forwards it to pi-ai unchanged. That's incidental passthrough, not a
+  // supported path: pi-ai resolves it if it ships that provider/id and the
+  // caller supplies the credential, otherwise it resolves to an undefined
+  // model. No catalog canonicalization applies to unknown providers.
   const provider = resolveProviderShorthand(rawProvider) ?? rawProvider;
   const modelId = isKnownProvider(provider)
     ? canonicalizeProviderModelId(provider, rawModelId)
@@ -100,7 +108,7 @@ export function resolveCliMemoryModel(
 
 /**
  * Resolve the user-visible model and report provenance so callers can show
- * "inferred from ANTHROPIC_API_KEY in an env file" etc.
+ * "inferred from AI_GATEWAY_API_KEY in an env file" etc.
  */
 export function resolveCliModel(
   modelName: string | undefined,

@@ -7,15 +7,14 @@ import dotenv from "dotenv";
 export const DEFAULT_DUET_ENV_FILE = "~/.duet/.env";
 
 /**
- * Provider API keys recognized by `duet env --keys`. Order is the order
- * we prompt the user; first match wins for inferred-default model resolution.
+ * Provider API keys recognized by `duet env --keys`. One per supported model
+ * router. Order is the order we prompt the user; first match wins for
+ * inferred-default model resolution (mirrors `PROVIDER_ORDER`).
  */
 export const SUPPORTED_API_KEYS = [
   "DUET_API_KEY",
-  "ANTHROPIC_API_KEY",
   "AI_GATEWAY_API_KEY",
   "OPENROUTER_API_KEY",
-  "OPENAI_API_KEY",
 ] as const;
 
 /**

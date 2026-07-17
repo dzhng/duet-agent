@@ -261,21 +261,20 @@ duet "prospect the VP Eng at Acme, send a first-touch email about our conf talk,
 <details>
 <summary><b>Providers, models, and CLI flags</b></summary>
 
-If you would rather manage provider API keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set a provider API key in the environment, `<workdir>/.env`, or `~/.duet/.env`. When `--model` is omitted, the CLI infers a default from the configured provider: Duet, Anthropic, AI Gateway, and OpenRouter use Opus 4.7 (memory: Haiku 4.5); OpenAI uses GPT-5.5 (memory: GPT-5.4-mini).
+Duet routes every model through one of three gateways — the Duet gateway (`DUET_API_KEY`), the Vercel AI Gateway (`AI_GATEWAY_API_KEY`), or OpenRouter (`OPENROUTER_API_KEY`). If you would rather manage keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set one of those keys in the environment, `<workdir>/.env`, or `~/.duet/.env`. When `--model` is omitted, the CLI infers a default from whichever of those credentials is present, preferring them in that order.
 
-Use `--provider <name>` to pin a provider without picking a model:
+Use `--provider <name>` to pin a gateway without picking a model:
 
 ```bash
-duet --provider duet "build a todo app"        # duet-gateway: Opus 4.7 + Haiku 4.5
-duet --provider openai "explain this codebase" # openai: GPT-5.5 + GPT-5.4-mini
-duet --provider anthropic "refactor auth"      # anthropic: Opus 4.7 + Haiku 4.5
-duet --provider vercel "summarize"             # vercel-ai-gateway equivalents
+duet --provider duet "build a todo app"        # Duet gateway
+duet --provider vercel "summarize"             # Vercel AI Gateway
+duet --provider openrouter "explain this repo" # OpenRouter
 ```
 
-`--provider` is mutually exclusive with `--model` / `--memory-model`. Accepted shorthands: `duet`, `vercel` (alias `ai-gateway`), `openrouter`, `anthropic` (alias `claude`), `openai` (alias `gpt`).
+`--provider` is mutually exclusive with `--model` / `--memory-model`. Accepted shorthands: `duet`, `vercel` (alias `ai-gateway`), and `openrouter`.
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...
+export DUET_API_KEY=...
 
 duet "build a REST API with Express"
 duet                                                                  # interactive TUI
@@ -293,7 +292,7 @@ export AI_GATEWAY_API_KEY=...
 duet -m opus-4.8 "review this repo"
 ```
 
-Model names can use full `provider:modelId` syntax or shorthand names such as `opus-4.8`, `sonnet-4.6`, `haiku-4.5`, and `gpt-5.5`. Shorthands resolve to the first configured supported provider; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific provider.
+Model names can use full `provider:modelId` syntax or shorthand names such as `opus-4.8`, `sonnet-4.6`, `haiku-4.5`, and `gpt-5.5`. Shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
 
 </details>
 
@@ -324,7 +323,7 @@ Tool calls render with custom per-tool headers (e.g. `$ <command>`, `read <path>
 
 Type `/` in the composer to open the command picker, or send any of these as a message:
 
-- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts the same shorthands and `provider:modelId` forms as the `--model` flag (e.g. `/model sonnet-4.6`, `/model anthropic:claude-opus-4-7`). Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with.
+- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts the same shorthands and `provider:modelId` forms as the `--model` flag (e.g. `/model sonnet-4.6`, `/model duet:openai/gpt-5.5`). Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with.
 - **`/thinking <level>`** — switch the thinking level for the **next** turn. One of `minimal`, `low`, `medium`, `high`, `xhigh`. The runner clamps to the active model's supported range at use-time. The in-flight turn (if any) keeps its level.
 - **`/feedback <message>`** — send free-form feedback to the Duet team.
 - **`/clear`** — dispose the current session and start a fresh one.
@@ -446,7 +445,7 @@ duet env --env-file ~/.config/duet/env --keys        # use a custom shared env f
 duet --env-file ~/.config/duet/env "review this repo"
 ```
 
-The CLI loads `<workdir>/.env` first, then the shared env file, so project-specific values override shared defaults. Supported keys are `DUET_API_KEY`, `ANTHROPIC_API_KEY`, `AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`, and `OPENAI_API_KEY`.
+The CLI loads `<workdir>/.env` first, then the shared env file, so project-specific values override shared defaults. Supported keys are `DUET_API_KEY`, `AI_GATEWAY_API_KEY`, and `OPENROUTER_API_KEY` — one per model router.
 
 For local development from a checkout:
 

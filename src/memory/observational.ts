@@ -62,6 +62,15 @@ import {
 export const DEFAULT_EFFECTIVE_CONTEXT = 200_000;
 
 /**
+ * Reasoning effort for every observational-memory LLM call (observer +
+ * reflectors). Memory extraction is a cheap, bounded task, so we run it at LOW
+ * effort. This is honored by OpenAI-transport models (openai-responses, e.g.
+ * the default gpt-5.6-luna, which maps it through the request's reasoning
+ * effort) and silently ignored by anthropic-messages transports (e.g. haiku).
+ */
+const MEMORY_CALL_OPTIONS = { reasoningEffort: "low" } as const;
+
+/**
  * Ratios of `effectiveContext` that govern the local-session budgets that
  * count against the actor model's per-turn input. `messageTokens` caps the
  * raw-message tail; `observationTokens` caps the local-memory pack rendered
@@ -930,6 +939,7 @@ async function reflectObservations(
     tool: reflectorResultTool,
     systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction, { cwd }),
     prompt: buildReflectorPrompt(rendered, targetTokens),
+    callOptions: MEMORY_CALL_OPTIONS,
     onUsage,
   });
   // The in-session reflector still produces a single observation row,
@@ -945,6 +955,7 @@ async function reflectObservations(
         tool: reflectorResultTool,
         systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction, { cwd }),
         prompt: buildReflectorPrompt(rendered, targetTokens, { actualTokens }),
+        callOptions: MEMORY_CALL_OPTIONS,
         onUsage,
       });
       return joinReflectorRows(retryResult.reflections);
@@ -1329,6 +1340,7 @@ async function reflectBatch(args: {
     tool: reflectorResultTool,
     systemPrompt: buildReflectorSystemPrompt(settings.reflection.instruction),
     prompt: buildReflectorPrompt(source, targetTokens),
+    callOptions: MEMORY_CALL_OPTIONS,
     onUsage,
   });
   const rows = result.reflections ?? [];
@@ -1422,6 +1434,7 @@ async function observe(
     tool: observerResultTool,
     systemPrompt,
     prompt,
+    callOptions: MEMORY_CALL_OPTIONS,
     onUsage,
   });
   if (!result.hasMemory) {
@@ -1444,6 +1457,7 @@ async function observe(
           observationLogBudget,
           { actualTokens },
         ),
+        callOptions: MEMORY_CALL_OPTIONS,
         onUsage,
       });
       return retryResult.observations;

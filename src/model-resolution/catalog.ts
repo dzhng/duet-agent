@@ -1,11 +1,6 @@
 import { DUET_GATEWAY_API_KEY_ENV } from "./duet-gateway.js";
 
-export type ProviderName =
-  | "duet-gateway"
-  | "vercel-ai-gateway"
-  | "openrouter"
-  | "anthropic"
-  | "openai";
+export type ProviderName = "duet-gateway" | "vercel-ai-gateway" | "openrouter";
 
 export interface ProviderPreference {
   /** Provider identifier accepted by pi-ai or handled locally by model resolution. */
@@ -35,7 +30,7 @@ interface ModelDefinition {
 }
 
 export const DEFAULT_CLI_MODEL = "opus-4.8";
-export const DEFAULT_CLI_MEMORY_MODEL = "gpt-5.4-mini";
+export const DEFAULT_CLI_MEMORY_MODEL = "gpt-5.6-luna";
 
 /**
  * Global provider preference for shorthand resolution. `duet-gateway` must
@@ -49,24 +44,23 @@ export const PROVIDER_ORDER: readonly ProviderPreference[] = [
   },
   { provider: "vercel-ai-gateway" },
   { provider: "openrouter" },
-  { provider: "anthropic" },
-  { provider: "openai" },
 ];
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderName, string> = {
   "duet-gateway": DEFAULT_CLI_MODEL,
   "vercel-ai-gateway": DEFAULT_CLI_MODEL,
   openrouter: DEFAULT_CLI_MODEL,
-  anthropic: DEFAULT_CLI_MODEL,
-  openai: "gpt-5.5",
 };
 
 const MEMORY_MODEL_BY_PROVIDER: Record<ProviderName, string> = {
   "duet-gateway": DEFAULT_CLI_MEMORY_MODEL,
   "vercel-ai-gateway": DEFAULT_CLI_MEMORY_MODEL,
-  openrouter: DEFAULT_CLI_MEMORY_MODEL,
-  anthropic: "haiku-4.5",
-  openai: DEFAULT_CLI_MEMORY_MODEL,
+  // gpt-5.6-luna has no OpenRouter route: pi-ai's catalog does not ship it, so
+  // `openrouter:openai/gpt-5.6-luna` resolves to undefined (unlike the
+  // duet/vercel gateway routes, which synthesize an openai-responses
+  // passthrough). Keep OPENROUTER_API_KEY-only users on gpt-5.4-mini, which
+  // pi-ai ships directly, until pi-ai adds luna.
+  openrouter: "gpt-5.4-mini",
 };
 
 const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
@@ -82,7 +76,6 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "anthropic/claude-opus-4.8",
       "vercel-ai-gateway": "anthropic/claude-opus-4.8",
       openrouter: "anthropic/claude-opus-4.8",
-      anthropic: "claude-opus-4-8",
     },
   },
   {
@@ -97,7 +90,6 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "anthropic/claude-opus-4.7",
       "vercel-ai-gateway": "anthropic/claude-opus-4.7",
       openrouter: "anthropic/claude-opus-4.7",
-      anthropic: "claude-opus-4-7",
     },
   },
   {
@@ -129,7 +121,6 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "anthropic/claude-sonnet-4.6",
       "vercel-ai-gateway": "anthropic/claude-sonnet-4.6",
       openrouter: "anthropic/claude-sonnet-4.6",
-      anthropic: "claude-sonnet-4-6",
     },
   },
   {
@@ -144,7 +135,6 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "anthropic/claude-haiku-4.5",
       "vercel-ai-gateway": "anthropic/claude-haiku-4.5",
       openrouter: "anthropic/claude-haiku-4.5",
-      anthropic: "claude-haiku-4-5",
     },
   },
   {
@@ -154,7 +144,6 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "openai/gpt-5.5",
       "vercel-ai-gateway": "openai/gpt-5.5",
       openrouter: "openai/gpt-5.5",
-      openai: "gpt-5.5",
     },
   },
   {
@@ -164,7 +153,23 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "openai/gpt-5.4-mini",
       "vercel-ai-gateway": "openai/gpt-5.4-mini",
       openrouter: "openai/gpt-5.4-mini",
-      openai: "gpt-5.4-mini",
+    },
+  },
+  {
+    // OpenAI's gpt-5.6-luna is the default observational-memory model. It routes
+    // through the duet and vercel gateways under `openai/gpt-5.6-luna`, both of
+    // which synthesize an openai-responses passthrough for it (the duet path via
+    // `resolveDuetGatewayUpstream`, the vercel path via `resolveMissingModel` in
+    // duet-gateway.ts) so its low reasoning effort survives to the wire. pi-ai's
+    // catalog does not ship luna, so the `openrouter:openai/gpt-5.6-luna` route
+    // would resolve to an undefined model; it is intentionally omitted until
+    // pi-ai adds it, and OPENROUTER-only users stay on gpt-5.4-mini (see
+    // MEMORY_MODEL_BY_PROVIDER).
+    shorthand: "gpt-5.6-luna",
+    aliases: ["openai/gpt-5.6-luna", "openai/gpt-5-6-luna"],
+    modelsByProvider: {
+      "duet-gateway": "openai/gpt-5.6-luna",
+      "vercel-ai-gateway": "openai/gpt-5.6-luna",
     },
   },
   {
@@ -206,7 +211,6 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     modelsByProvider: {
       "duet-gateway": "anthropic/claude-fable-5",
       "vercel-ai-gateway": "anthropic/claude-fable-5",
-      anthropic: "claude-fable-5",
     },
   },
   {
@@ -317,25 +321,13 @@ export function resolveProviderShorthand(name: string): ProviderName | undefined
       return "vercel-ai-gateway";
     case "openrouter":
       return "openrouter";
-    case "anthropic":
-    case "claude":
-      return "anthropic";
-    case "openai":
-    case "gpt":
-      return "openai";
     default:
       return undefined;
   }
 }
 
 /** Names accepted by `--provider`, in canonical order, for help and errors. */
-export const PROVIDER_SHORTHANDS: readonly string[] = [
-  "duet",
-  "vercel",
-  "openrouter",
-  "anthropic",
-  "openai",
-];
+export const PROVIDER_SHORTHANDS: readonly string[] = ["duet", "vercel", "openrouter"];
 
 /** Build a `provider:modelId` reference for a provider's default chat model. */
 export function pinnedDefaultModel(provider: ProviderName): string {

@@ -36,7 +36,7 @@ OPTIONS
   -m, --model <name>       TurnRunner model override
   --memory-model <name>    Observational memory model (default inferred from provider env)
   --provider <name>        Pin the provider and use its catalog default model.
-                            Accepts: duet, vercel, openrouter, anthropic, openai.
+                            Accepts: duet, vercel, openrouter.
                             Mutually exclusive with --model / --memory-model.
   -i, --incognito          Keep memory in-process; do not read or write durable memory
   --db <path>              Memory database path (default: ~/.duet/memory.db); ignored under --incognito
@@ -66,11 +66,10 @@ INTERACTIVE
 
 MODELS
   Prefer shorthands like opus-4.8, opus-4.7, sonnet-4.6, haiku-4.5, and gpt-5.5.
-  They map to the first configured provider that supports that model.
-  Full provider:modelId syntax is also supported, e.g. anthropic:claude-opus-4-7.
-  If omitted, duet infers a default from ANTHROPIC_API_KEY,
-  DUET_API_KEY, AI_GATEWAY_API_KEY, OPENROUTER_API_KEY, or
-  OPENAI_API_KEY after loading <workdir>/.env and the shared duet env file.
+  They map to the first configured router that supports that model.
+  Full provider:modelId syntax is also supported, e.g. duet:anthropic/claude-opus-4.8.
+  If omitted, duet infers a default from DUET_API_KEY, AI_GATEWAY_API_KEY, or
+  OPENROUTER_API_KEY after loading <workdir>/.env and the shared duet env file.
 
   duet-gateway: routes through the Duet gateway proxy
   (https://gateway.duet.so by default; override via DUET_GATEWAY_BASE_URL).
@@ -81,7 +80,7 @@ EXAMPLES
   duet "build a REST API with Express and TypeScript"
   duet -m gpt-5.5 "analyze the performance of our test suite"
   duet --memory-model sonnet-4.6 "summarize this repo"
-  duet --provider openai "explain this codebase"
+  duet --provider openrouter "explain this codebase"
   duet --provider duet "refactor the auth module"
   duet -m opus-4.7 "refactor the auth module"
   duet --system-prompt "Prefer concise answers." "review this repo"

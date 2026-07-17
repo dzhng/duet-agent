@@ -74,7 +74,7 @@ export interface RunTuiInput {
   packageVersion: string;
   /** User-facing model name for this CLI session. */
   modelName: string;
-  /** Provenance for modelName (e.g. "inferred from ANTHROPIC_API_KEY in .env"). */
+  /** Provenance for modelName (e.g. "inferred from AI_GATEWAY_API_KEY in .env"). */
   modelSource?: string;
   /** User-facing model name used for observational memory work. */
   memoryModelName: string;

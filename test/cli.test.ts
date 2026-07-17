@@ -82,13 +82,11 @@ function clearModelEnv(): void {
 }
 
 describe("CLI model inference", () => {
-  test("prefers Duet credentials over other supported provider credentials", () => {
+  test("prefers Duet credentials over the other router credentials", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "duet_gt_test";
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
     process.env.OPENROUTER_API_KEY = "test-openrouter";
-    process.env.ANTHROPIC_API_KEY = "test-anthropic";
-    process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "opus-4.8",
@@ -97,19 +95,17 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.4-mini",
+      modelName: "gpt-5.6-luna",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
     });
   });
 
-  test("uses AI Gateway credentials before OpenRouter, Anthropic, and OpenAI", () => {
+  test("uses AI Gateway credentials before OpenRouter", () => {
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
     process.env.OPENROUTER_API_KEY = "test-openrouter";
-    process.env.ANTHROPIC_API_KEY = "test-anthropic";
-    process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "opus-4.8",
@@ -118,18 +114,16 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.4-mini",
+      modelName: "gpt-5.6-luna",
       source: "inferred",
       envVar: "AI_GATEWAY_API_KEY",
       fromDotenv: false,
     });
   });
 
-  test("uses OpenRouter credentials before Anthropic and OpenAI", () => {
+  test("uses OpenRouter credentials when it is the only router configured", () => {
     clearModelEnv();
     process.env.OPENROUTER_API_KEY = "test-openrouter";
-    process.env.ANTHROPIC_API_KEY = "test-anthropic";
-    process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "opus-4.8",
@@ -137,6 +131,8 @@ describe("CLI model inference", () => {
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
     });
+    // gpt-5.6-luna has no OpenRouter route, so OpenRouter-only users fall back
+    // to gpt-5.4-mini for memory (see MEMORY_MODEL_BY_PROVIDER).
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "gpt-5.4-mini",
       source: "inferred",
@@ -145,22 +141,21 @@ describe("CLI model inference", () => {
     });
   });
 
-  test("uses Anthropic credentials before OpenAI", () => {
+  test("does not infer from direct-provider keys now that only routers are supported", () => {
+    // ANTHROPIC_API_KEY / OPENAI_API_KEY are no longer router credentials, so
+    // they never trigger inference: resolution falls through to the built-in
+    // defaults just as if no key were set.
     clearModelEnv();
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "opus-4.8",
-      source: "inferred",
-      envVar: "ANTHROPIC_API_KEY",
-      fromDotenv: false,
+      source: "default",
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "haiku-4.5",
-      source: "inferred",
-      envVar: "ANTHROPIC_API_KEY",
-      fromDotenv: false,
+      modelName: "gpt-5.6-luna",
+      source: "default",
     });
   });
 
@@ -180,27 +175,9 @@ describe("CLI model inference", () => {
       fromDotenv: false,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.4-mini",
+      modelName: "gpt-5.6-luna",
       source: "inferred",
       envVar: "DUET_API_KEY",
-      fromDotenv: false,
-    });
-  });
-
-  test("uses OpenAI credentials when higher-priority providers are absent", () => {
-    clearModelEnv();
-    process.env.OPENAI_API_KEY = "test-openai";
-
-    expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.5",
-      source: "inferred",
-      envVar: "OPENAI_API_KEY",
-      fromDotenv: false,
-    });
-    expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.4-mini",
-      source: "inferred",
-      envVar: "OPENAI_API_KEY",
       fromDotenv: false,
     });
   });
@@ -213,7 +190,7 @@ describe("CLI model inference", () => {
       source: "default",
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.4-mini",
+      modelName: "gpt-5.6-luna",
       source: "default",
     });
   });
@@ -225,13 +202,15 @@ describe("CLI model inference", () => {
     expect(resolveProviderShorthand("duet")).toBe("duet-gateway");
     expect(resolveProviderShorthand("vercel")).toBe("vercel-ai-gateway");
     expect(resolveProviderShorthand("ai-gateway")).toBe("vercel-ai-gateway");
-    expect(resolveProviderShorthand("claude")).toBe("anthropic");
-    expect(resolveProviderShorthand("gpt")).toBe("openai");
+    expect(resolveProviderShorthand("openrouter")).toBe("openrouter");
+    // The direct providers were removed; their old shorthands no longer resolve.
+    expect(resolveProviderShorthand("claude")).toBeUndefined();
+    expect(resolveProviderShorthand("openai")).toBeUndefined();
     expect(resolveProviderShorthand("bogus")).toBeUndefined();
 
-    expect(pinnedDefaultModel("openai")).toBe("openai:gpt-5.5");
-    expect(pinnedMemoryModel("openai")).toBe("openai:gpt-5.4-mini");
-    expect(pinnedDefaultModel("anthropic")).toBe("anthropic:claude-opus-4-8");
+    expect(pinnedDefaultModel("openrouter")).toBe("openrouter:anthropic/claude-opus-4.8");
+    expect(pinnedMemoryModel("openrouter")).toBe("openrouter:openai/gpt-5.4-mini");
+    expect(pinnedDefaultModel("duet-gateway")).toBe("duet-gateway:anthropic/claude-opus-4.8");
   });
 
   test("keeps an explicitly provided model", () => {
@@ -327,6 +306,21 @@ describe("CLI model inference", () => {
     expect(synthesizedOpenAI.baseUrl.endsWith("/v1")).toBe(true);
   });
 
+  test("keeps vercel-gateway OpenAI models on the openai-responses transport", () => {
+    clearModelEnv();
+    process.env.AI_GATEWAY_API_KEY = "test-gateway";
+
+    // pi-ai serves gateway OpenAI models over anthropic-messages, which ignores
+    // reasoningEffort. The default memory model (gpt-5.6-luna) is catalog-missing
+    // on vercel, so resolution must synthesize an openai-responses passthrough
+    // pointed at the gateway's /v1 route so low reasoning effort reaches the wire.
+    const model = resolveModelName("vercel-ai-gateway:openai/gpt-5.6-luna");
+    expect(model.provider).toBe("vercel-ai-gateway");
+    expect(model.id).toBe("openai/gpt-5.6-luna");
+    expect(model.api).toBe("openai-responses");
+    expect(model.baseUrl).toBe("https://ai-gateway.vercel.sh/v1");
+  });
+
   test("forwards a provider-pinned id that is absent from the catalog without throwing", () => {
     clearModelEnv();
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
@@ -352,9 +346,9 @@ describe("CLI model inference", () => {
     const { resolveProviderApiKey } = await import("../src/model-resolution/duet-gateway.js");
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
-    process.env.ANTHROPIC_API_KEY = "test-anthropic";
+    process.env.OPENROUTER_API_KEY = "test-openrouter";
     expect(resolveProviderApiKey("vercel-ai-gateway")).toBe("test-gateway");
-    expect(resolveProviderApiKey("anthropic")).toBe("test-anthropic");
+    expect(resolveProviderApiKey("openrouter")).toBe("test-openrouter");
   });
 
   test("resolving a duet-gateway model does not clobber an existing AI_GATEWAY_API_KEY", () => {
@@ -384,20 +378,27 @@ describe("CLI model inference", () => {
     );
   });
 
-  test("provider:modelId syntax pins a specific provider", () => {
+  test("provider:modelId syntax pins a router provider", () => {
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
 
-    expect(resolveModelName("anthropic:claude-opus-4-7").id).toBe("claude-opus-4-7");
+    expect(resolveModelName("vercel-ai-gateway:anthropic/claude-opus-4.7").id).toBe(
+      "anthropic/claude-opus-4.7",
+    );
   });
 
-  test("provider shorthand in provider:modelId form canonicalizes the provider", () => {
+  test("forwards an explicit non-router pin straight through to pi-ai", () => {
+    // The direct anthropic/openai providers were removed, but an explicit pin
+    // for them is just an unknown provider here: resolution applies no catalog
+    // canonicalization and hands the provider:modelId to pi-ai's getModel
+    // verbatim. pi-ai resolves it when it ships that native id, so a laptop
+    // caller with the right credential can still reach it — an incidental
+    // passthrough, not an advertised path.
     clearModelEnv();
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
-    process.env.OPENAI_API_KEY = "test-openai";
 
-    expect(resolveModelName("claude:claude-opus-4-7").id).toBe("claude-opus-4-7");
-    expect(resolveModelName("gpt:gpt-5.5").id).toBe("gpt-5.5");
+    expect(resolveModelName("anthropic:claude-opus-4-7").id).toBe("claude-opus-4-7");
+    expect(resolveModelName("openai:gpt-5.5").id).toBe("gpt-5.5");
   });
 
   test("duet provider shorthand resolves through the duet gateway", () => {
@@ -423,16 +424,6 @@ describe("CLI model inference", () => {
     expect(resolveModelName("vercel:anthropic/claude-sonnet-4-6").id).toBe(
       "anthropic/claude-sonnet-4.6",
     );
-  });
-
-  test("leaves provider:modelId untouched when the native id uses dashes", () => {
-    clearModelEnv();
-    process.env.ANTHROPIC_API_KEY = "test-anthropic";
-
-    // Anthropic's own API uses dashes, so the dashed alias must map back to
-    // the dashed id rather than the gateway's dotted variant.
-    expect(resolveModelName("anthropic:claude-opus-4.7").id).toBe("claude-opus-4-7");
-    expect(resolveModelName("anthropic:claude-opus-4-7").id).toBe("claude-opus-4-7");
   });
 
   test("passes provider:modelId through unchanged when no alias matches", () => {
@@ -494,7 +485,7 @@ describe("CLI model inference", () => {
 
   test("builds CLI config from inferred shorthand defaults", () => {
     clearModelEnv();
-    process.env.OPENAI_API_KEY = "test-openai";
+    process.env.OPENROUTER_API_KEY = "test-openrouter";
 
     const { config, modelResolution, memoryModelResolution } = buildCliTurnConfig(
       {
@@ -507,7 +498,7 @@ describe("CLI model inference", () => {
     );
 
     expect(config).toEqual({
-      model: "gpt-5.5",
+      model: "opus-4.8",
       memoryModel: "gpt-5.4-mini",
       memoryDbPath: false,
       cwd: "/repo",
@@ -515,15 +506,15 @@ describe("CLI model inference", () => {
       systemPromptFiles: [],
     });
     expect(modelResolution).toEqual({
-      modelName: "gpt-5.5",
+      modelName: "opus-4.8",
       source: "inferred",
-      envVar: "OPENAI_API_KEY",
+      envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
     });
     expect(memoryModelResolution).toEqual({
       modelName: "gpt-5.4-mini",
       source: "inferred",
-      envVar: "OPENAI_API_KEY",
+      envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
     });
   });
@@ -557,14 +548,14 @@ describe("CLI env files", () => {
     const workDir = join(tempRoot, "project");
     const sharedEnv = join(tempRoot, "shared.env");
     await mkdir(workDir);
-    await writeFile(join(workDir, ".env"), "ANTHROPIC_API_KEY=from-workdir\n");
-    await writeFile(sharedEnv, "ANTHROPIC_API_KEY=from-shared\nOPENAI_API_KEY=from-shared\n");
+    await writeFile(join(workDir, ".env"), "DUET_API_KEY=from-workdir\n");
+    await writeFile(sharedEnv, "DUET_API_KEY=from-shared\nOPENROUTER_API_KEY=from-shared\n");
 
     const dotenvKeys = loadCliEnvFiles(workDir, sharedEnv);
 
-    expect(process.env.ANTHROPIC_API_KEY).toBe("from-workdir");
-    expect(process.env.OPENAI_API_KEY).toBe("from-shared");
-    expect(dotenvKeys).toEqual(new Set(["ANTHROPIC_API_KEY", "OPENAI_API_KEY"]));
+    expect(process.env.DUET_API_KEY).toBe("from-workdir");
+    expect(process.env.OPENROUTER_API_KEY).toBe("from-shared");
+    expect(dotenvKeys).toEqual(new Set(["DUET_API_KEY", "OPENROUTER_API_KEY"]));
   });
 
   test("resolves relative custom env files from the workdir", () => {
@@ -576,10 +567,10 @@ describe("CLI env files", () => {
       formatEnvEntries(
         new Map([
           ["DUET_API_KEY", "duet_gt_test"],
-          ["OPENAI_API_KEY", "value with spaces"],
+          ["OPENROUTER_API_KEY", "value with spaces"],
         ]),
       ),
-    ).toBe('DUET_API_KEY=duet_gt_test\nOPENAI_API_KEY="value with spaces"\n');
+    ).toBe('DUET_API_KEY=duet_gt_test\nOPENROUTER_API_KEY="value with spaces"\n');
   });
 
   testIfDocker("env import without a path imports cwd .env into a custom env file", async () => {
@@ -608,7 +599,7 @@ describe("CLI env files", () => {
       join(workDir, ".env"),
       [
         "DUET_API_KEY=duet_gt_test",
-        "OPENAI_API_KEY=openai_test",
+        "OPENROUTER_API_KEY=openrouter_test",
         "DATABASE_URL=postgres://example",
         "STRIPE_SECRET_KEY=sk_test_unrelated",
         "",
@@ -623,7 +614,7 @@ describe("CLI env files", () => {
     }
 
     expect(await readFile(targetEnv, "utf8")).toBe(
-      "DUET_API_KEY=duet_gt_test\nOPENAI_API_KEY=openai_test\n",
+      "DUET_API_KEY=duet_gt_test\nOPENROUTER_API_KEY=openrouter_test\n",
     );
   });
 
@@ -636,9 +627,10 @@ describe("CLI env files", () => {
       await mkdir(workDir);
       await writeFile(
         join(workDir, ".env"),
-        "DUET_API_KEY=duet_gt_new\nANTHROPIC_API_KEY=anthropic_new\n",
+        "DUET_API_KEY=duet_gt_new\nOPENROUTER_API_KEY=openrouter_new\n",
       );
-      await writeFile(targetEnv, "DUET_API_KEY=duet_gt_old\nOPENAI_API_KEY=openai_existing\n");
+      // A pre-existing, unrecognized key in the target must survive the merge.
+      await writeFile(targetEnv, "DUET_API_KEY=duet_gt_old\nSTRIPE_SECRET_KEY=sk_existing\n");
 
       const stderr = spyOn(console, "error").mockImplementation(() => {});
       try {
@@ -648,7 +640,7 @@ describe("CLI env files", () => {
       }
 
       expect(await readFile(targetEnv, "utf8")).toBe(
-        "DUET_API_KEY=duet_gt_new\nOPENAI_API_KEY=openai_existing\nANTHROPIC_API_KEY=anthropic_new\n",
+        "DUET_API_KEY=duet_gt_new\nSTRIPE_SECRET_KEY=sk_existing\nOPENROUTER_API_KEY=openrouter_new\n",
       );
     },
   );
@@ -667,7 +659,7 @@ describe("CLI env files", () => {
         promptForApiKeys: async () =>
           new Map([
             ["DUET_API_KEY", "duet_gt_test"],
-            ["OPENAI_API_KEY", "openai_test"],
+            ["OPENROUTER_API_KEY", "openrouter_test"],
           ]),
       });
     } finally {
@@ -675,7 +667,7 @@ describe("CLI env files", () => {
     }
 
     expect(await readFile(targetEnv, "utf8")).toBe(
-      "DUET_API_KEY=duet_gt_test\nOPENAI_API_KEY=openai_test\n",
+      "DUET_API_KEY=duet_gt_test\nOPENROUTER_API_KEY=openrouter_test\n",
     );
   });
 

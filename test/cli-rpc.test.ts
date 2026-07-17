@@ -171,13 +171,13 @@ describe("parseRpcArgs", () => {
   });
 
   test("--provider pins the catalog defaults and rejects --model overlap", () => {
-    const ok = parseRpcArgs(["--provider", "openai"]);
+    const ok = parseRpcArgs(["--provider", "openrouter"]);
     expect(ok.modelName).toBeDefined();
     expect(ok.memoryModelName).toBeDefined();
 
     const exitSpy = stubProcessExit();
     try {
-      expect(() => parseRpcArgs(["--provider", "openai", "--model", "gpt-5.5"])).toThrow();
+      expect(() => parseRpcArgs(["--provider", "openrouter", "--model", "gpt-5.5"])).toThrow();
     } finally {
       exitSpy.mockRestore();
     }

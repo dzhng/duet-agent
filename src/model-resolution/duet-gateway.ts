@@ -132,10 +132,39 @@ const GATEWAY_CLONE_SOURCES: Record<string, ReadonlyArray<{ from: string; to: st
  * ships that model to the gateway catalog and it resolves directly.
  */
 export function resolveMissingModel(provider: string, modelId: string): Model<any> | undefined {
+  if (provider === "vercel-ai-gateway" && modelId.startsWith(OPENAI_MODEL_PREFIX)) {
+    return resolveVercelGatewayOpenAIModel(modelId);
+  }
   const clone = GATEWAY_CLONE_SOURCES[provider]?.find((entry) => entry.to === modelId);
   if (!clone) return undefined;
   const sibling = getModel(provider as any, clone.from as any) as Model<any> | undefined;
   return sibling ? { ...sibling, id: modelId, name: modelId } : undefined;
+}
+
+/**
+ * Synthesize a `vercel-ai-gateway` OpenAI model pi-ai's catalog has not shipped
+ * yet, keeping it on the openai-responses transport pointed at the Vercel
+ * gateway's OpenAI-compatible `/v1` route. pi-ai serves gateway OpenAI models
+ * over the anthropic-messages transport, which drops OpenAI reasoning stream
+ * semantics AND silently ignores `reasoningEffort` — so a memory model resolved
+ * here (e.g. the default gpt-5.6-luna) could never run at the low effort the
+ * observer/reflectors request. This mirrors the deliberate openai-responses
+ * routing documented on `resolveDuetGatewayModel`. Auth is unaffected:
+ * `resolveProviderApiKey`/pi-ai key resolution keys off `provider`, which stays
+ * `vercel-ai-gateway`, so `AI_GATEWAY_API_KEY` still applies.
+ */
+function resolveVercelGatewayOpenAIModel(modelId: string): Model<any> {
+  const slug = modelId.slice(OPENAI_MODEL_PREFIX.length);
+  const upstream =
+    (getModel("openai" as any, slug as any) as Model<any> | undefined) ??
+    synthesizePassthroughModel(modelId, "openai-responses");
+  return {
+    ...upstream,
+    provider: "vercel-ai-gateway",
+    id: modelId,
+    name: modelId,
+    baseUrl: `${VERCEL_GATEWAY_BASE_URL}/v1`,
+  };
 }
 
 function getDuetGatewayBaseUrlForModel(model: Model<any>): string {
