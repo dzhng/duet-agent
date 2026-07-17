@@ -1,6 +1,9 @@
 import dedent from "dedent";
 import type { TierDefinition } from "./table.js";
 
+/** Identifies the measured classifier prompt in scorecard output. */
+export const CLASSIFIER_PROMPT_VERSION = "model-router-classifier-v2";
+
 /** Stable classifier behavior shared by the probe CLI and the future runtime router. */
 export const CLASSIFIER_SYSTEM_PROMPT = dedent`
   You are a model-route classifier. Choose the single route that best matches the work the agent
@@ -10,10 +13,11 @@ export const CLASSIFIER_SYSTEM_PROMPT = dedent`
   Never invent, rename, combine, or return a concrete model name. Treat administrator guidance as
   additional routing policy.
 
-  Route for the current kind of work, not merely the topic. Images present means the next model
-  must be able to inspect image input. A route change discards the current model's prompt cache, so
-  prefer the current route/model while the kind of work remains materially the same. Switch when
-  the work clearly changes kind; cache continuity must not keep a genuinely wrong route.
+  Route for the current kind of work, not merely the topic. When the request says images are
+  present, select the tier's named image-safe route so the next model can inspect them. A route
+  change discards the current model's prompt cache, so prefer the current route/model while the
+  kind of work remains materially the same. Switch when the work clearly changes kind; cache
+  continuity must not keep a genuinely wrong route.
 `;
 
 /** Render every route in one tier for a single all-entries classifier decision. */
@@ -30,6 +34,8 @@ export function renderClassifierRules(
 
     AVAILABLE ROUTES:
     ${routes}
+
+    IMAGE-SAFE ROUTE: ${tier.visionRoute}
 
     ADMINISTRATOR GUIDANCE:
     ${guidance.trim() || "No additional guidance."}

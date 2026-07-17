@@ -173,11 +173,16 @@ export interface RoutingTableIssue {
   message: string;
 }
 
-const VISUAL_DESCRIPTION = "Tasks whose output or input depends on visual fidelity.";
-const FRONTIER_PLAN_DESCRIPTION = "Architecture, investigation, and high-stakes planning.";
-const IMPLEMENT_DESCRIPTION = "Implementation and debugging work.";
-const WRITING_DESCRIPTION = "Creative writing and prose where voice is the primary output.";
-const GENERAL_DESCRIPTION = "General requests that do not fit a more specific route.";
+const VISUAL_DESCRIPTION =
+  "Frontend, 3D, or anything visual: UI implementation and debugging, styling, graphics, image inspection, and work where visual fidelity matters.";
+const FRONTIER_PLAN_DESCRIPTION =
+  "Architecture, investigation, research, and high-stakes planning where the primary work is reasoning about what to build or do, not implementing it.";
+const IMPLEMENT_DESCRIPTION =
+  "Backend, systems, data, CLI, and other non-visual implementation or debugging work, including tests and code changes.";
+const WRITING_DESCRIPTION =
+  "Creative writing and prose where voice, narrative, or wording is the primary output rather than analysis or software work.";
+const GENERAL_DESCRIPTION =
+  "General questions, explanations, summaries, and requests that do not fit a more specific route.";
 
 /** Built-in routing policy fixed by the model-router planning record. */
 export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
@@ -248,19 +253,23 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
     economy: {
       routes: {
         plan: {
-          description: "Architecture, investigation, and planning.",
+          description:
+            "Architecture, investigation, research, and planning where the primary work is reasoning about what to build or do, not implementing it.",
           target: { modelName: "gpt-5.6-luna", thinkingLevel: "medium" },
         },
         implement: {
-          description: "Text-only implementation and debugging work.",
+          description:
+            "Text-only backend, systems, data, CLI, and other non-visual implementation or debugging work, including tests and code changes.",
           target: { modelName: "glm-5.2", thinkingLevel: "medium" },
         },
         "implement-visual": {
-          description: "Implementation work that requires image input.",
+          description:
+            "Frontend, UI, styling, graphics, or other implementation and debugging work that requires image input or visual fidelity.",
           target: { modelName: "gpt-5.6-luna", thinkingLevel: "medium" },
         },
         general: {
-          description: "General requests, including writing, without a more specific route.",
+          description:
+            "General questions, explanations, summaries, and creative writing without a more specific route.",
           target: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
         },
       },
