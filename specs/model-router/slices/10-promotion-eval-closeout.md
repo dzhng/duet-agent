@@ -54,3 +54,27 @@ prompt scorecards. ~5-minute window, then promote on evidence and record.
 ## Dependencies
 
 Slices 07 + 09.
+
+## Promotion evidence
+
+Production acceptance ran with `EVAL_MODEL` unset, `DUET_API_KEY` blank, the real built-in
+`frontier` table, the real Luna classifier, and the default five-step cadence.
+
+- Passing switch timeline: `turn_start: general/sol → visual/kimi-k3 (high)`, then
+  `cadence: visual/kimi-k3 → implement/gpt-5.6-sol (high)`. All visual tool calls preceded the
+  backend phase; the final backend read/edit/test calls ran on Sol. Two switches stayed below the
+  eval's four-switch loop bound.
+- Passing final-run usage: `moonshotai/kimi-k3` 63,619 tokens / $0.02870906;
+  `openai/gpt-5.6-sol` 32,949 tokens / $0.00 provider-reported cost; 96,568 tokens /
+  $0.02870906 total. Both per-model token sums and cost sums matched the turn aggregate. Luna did
+  not appear in this run because the in-memory observer made no billable call; the eval permits it
+  only as the memory actor and rejects Luna or Fable as routed parent models.
+- Falsification: temporarily swapped the frontier visual and implement route descriptions. The
+  run inverted the routes (`turn_start → implement/sol`, `cadence → visual/kimi`) and failed at the
+  visual-on-Kimi assertion. Restoring the descriptions returned the eval to green.
+- Live runs: 4 total (one over-strict Luna-usage assertion failure, one passing acceptance, one
+  expected-red falsification, one passing post-restore confirmation). Provider-reported spend was
+  approximately $0.1233 across all four runs.
+- Numeric defaults: unchanged. The five-step cadence caught the phase transition with room for
+  multiple Sol backend steps and no switch/nudge loop. This eval produced no contrary evidence for
+  the existing one-per-five advisor floor or 10,000-token advisor transcript budget.
