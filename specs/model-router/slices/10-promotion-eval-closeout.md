@@ -78,3 +78,32 @@ Production acceptance ran with `EVAL_MODEL` unset, `DUET_API_KEY` blank, the rea
 - Numeric defaults: unchanged. The five-step cadence caught the phase transition with room for
   multiple Sol backend steps and no switch/nudge loop. This eval produced no contrary evidence for
   the existing one-per-five advisor floor or 10,000-token advisor transcript budget.
+
+## Decision reconciliation (orchestrator, 2026-07-18)
+
+Every recorded decision checked against shipped code, per implement-spec's closeout rule:
+
+- Ledger rows 0-10, D1-D3 (unknowns-map Quadrant 2): all implemented — economy vision fallback
+  via `implement-visual`/visionRoute; single classifier call with schema-constrained routes;
+  cache preference in the classifier prompt with prev-turn hint; step-based advisor floor with
+  cap-exempt nudge (one-shot, loop-guarded); pinned+observations+tail transcript at uniform 10k;
+  optional complete-replacement config + `duet config export`; collision-before-canonicalize;
+  two-layer display + `router_switch` + `/route` + pin semantics; exemptions (memory actor,
+  classifier, advisor, explicit concrete state models) with virtual state models via
+  resolveTierDefault; advisor on the shared AI SDK gateway (credential fallback owned by
+  createDuetModelGateway); usage keyed on per-message concrete ids; router effort wins with
+  `/thinking` suppressed in routed sessions.
+- Quadrant 3 extracted decisions: interlock both ways (nudge on switch, classifier check on
+  consult) — shipped; always-on frontier default — shipped; evals-as-done — three live evals
+  (classifier scorecard, advisor-trigger, mixed-task promotion) all green with falsification.
+- Landmines L1-L7: all discharged (L2 live context getter, L3 virtual pre-check before
+  canonicalize/provider-pin, L4 vision guard in resolve.ts, L5 no-throw hook + threaded signal,
+  L6 origin-filtered step counter, L7 live observation read).
+- OPEN items: kimi effort delivery — closed with wire evidence (high→max mapping);
+  classifier latency ceiling — measured, frozen, then recalibrated to a sanity bound with
+  recorded provider-variance evidence (slice 04).
+- Intra-turn rerouting (originally "phase 2 optional", upgraded during planning): shipped in
+  phase 1 and proven by the promotion eval's cadence-triggered mid-turn switch.
+- No decision remains unimplemented; nothing required a "no code needed" marker except the
+  deferred `duet route advisor-preview --session` history reconstruction caveat recorded in
+  slice 08 (preview uses current-cwd composition — accepted).

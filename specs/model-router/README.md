@@ -11,10 +11,10 @@ prompt sections.
 
 ## Next Agent Prompt
 
-_Last updated: 2026-07-18 (slices 01-09 merged; only slice 10 remains)._
+_Last updated: 2026-07-18. ALL TEN SLICES SHIPPED — the feature is complete and promoted; see
+slice 10's Promotion evidence and Decision reconciliation. Spec ready for close-spec archival._
 
-You are implementing this feature slice by slice. Next pickup: **slice 10 (mixed-task promotion
-eval + closeout)** — the final slice.
+Nothing left to pick up. If you are reading this, the spec should be archived via close-spec.
 Before wiring anything, read `unknowns-map.md` §Quadrant 2 (fixed decisions) and §Quadrant 4
 (landmines — constraints). Update this section (status, pickup point, checklist) before ending
 your pass.
@@ -53,7 +53,9 @@ work must blank `DUET_API_KEY` (note: CLI env loading re-adds it from `~/.duet/.
 - [x] Interlock (reroute nudge) + advisor prompt tuning + advisor evals (09) — merged; 4-case
       eval green with two-directional falsification; nudge via agent.steer; classifier
       latency gate recalibrated to a 5s sanity bound (provider variance — see slice 04)
-- [ ] Mixed-task promotion eval + closeout tuning + stale-comment audit (10)
+- [x] Mixed-task promotion eval + closeout tuning + stale-comment audit (10) — merged `beb8da1`;
+      production-path acceptance green (kimi visual phase → cadence switch → sol backend phase),
+      falsification proven, defaults confirmed, decisions reconciled
 
 Blockers: none. Builder-confirm facts from the map are pre-resolved where drafts verified them
 (noted in the owning slice); the rest resolve inside their slice.
