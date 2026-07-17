@@ -2106,8 +2106,11 @@ export class TurnRunner {
     const initialRoute = input.router?.initialTarget({ hasImages: false });
     const model = resolveModelName(initialRoute?.modelName ?? options.model ?? DEFAULT_CLI_MODEL);
     // Parent agent configuration is derived from start/session options, not
-    // per-prompt command options. Keeping model and prompt shape stable protects
-    // prompt caching across all pi-agent turns inside a duet-agent session.
+    // per-prompt command options. For concrete selections the model stays
+    // stable for the whole session to protect prompt caching; routed sessions
+    // deliberately trade cache prefixes away when the ModelRouter swaps the
+    // model (per turn or via prepareNextTurn), with the classifier prompt
+    // carrying the don't-switch-mid-task cache preference.
     let agent!: Agent;
     agent = new Agent({
       initialState: {
