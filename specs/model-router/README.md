@@ -15,9 +15,7 @@ _Last updated: 2026-07-18 (slices 01, 02, 03, 08a merged and green: 977 tests, 1
 environmental flake in `auto-upgrade` — fails identically on the pre-merge base, evidence in the
 git log around `2a34b6e`)._
 
-You are implementing this feature slice by slice. Next pickup: **slice 04 (classifier
-scorecard — see its "Inputs from the slice-03 review" section) ∥ slice 05 (ModelRouter + runner
-wiring — the fake-classifier seam means it does not wait on 04's tuning)**. Before wiring
+You are implementing this feature slice by slice. Next pickup: **slice 06 (hard cutover) ∥ slice 08b (advisor tool completion — tool + AI SDK call + preview probe)**; then 07 ∥ 09, then 10.
 anything, read `unknowns-map.md` §Quadrant 2 (fixed decisions) and §Quadrant 4 (landmines — they
 are constraints). Update this section (status, pickup point, checklist) before ending your pass.
 When a slice's implementation starts changing variables the slice doesn't own, stop and reslice
@@ -39,8 +37,11 @@ work must blank `DUET_API_KEY` (note: CLI env loading re-adds it from `~/.duet/.
       correctly; schema-constrained route names; signal threaded through structured-output
 - [x] Advisor transcript library (08 — transcript portion) — merged `78a1195`; tool/AI-SDK/probe
       parts of 08 still open, blocked on 05
-- [ ] Classifier scorecard eval + tuning pass 1 (04)
-- [ ] ModelRouter state machine + turn-runner wiring + `router_switch` + swap-safety fixes (05)
+- [x] Classifier scorecard eval + tuning pass 1 (04) — merged `6a68bd6`; 100% accuracy ×3
+      trials, p50 1332ms (ceiling 1600ms), assistant-summary hint won, falsification proven
+- [x] ModelRouter state machine + turn-runner wiring + `router_switch` + swap-safety fixes (05)
+      — merged `9a0f637`; live one-shot `--model frontier` verified end-to-end (sol turn + luna
+      memory actor in usageByModel, resume stays virtual)
 - [ ] Hard cutover: frontier default, virtual-aware `/model` surfaces, pin/suspend (06)
 - [ ] TUI: two-layer display, switch rendering, `/route` inspector (07)
 - [ ] Advisor: transcript lib, `ask_advisor` tool, AI SDK call, preview probe (08)
