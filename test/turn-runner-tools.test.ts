@@ -116,6 +116,28 @@ describe("TurnRunner tools", () => {
     });
   });
 
+  test("ask_advisor does not record a failed consult", async () => {
+    let consults = 0;
+    const tool = createAskAdvisorTool({
+      getMessages: () => [{ role: "user", content: "Review this plan.", timestamp: 1 }],
+      getSystemPrompt: () => "You are the executor.",
+      getObservations: async () => [],
+      budgetTokens: 10_000,
+      modelName: "anthropic/claude-fable-5",
+      thinkingLevel: "high",
+      advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
+      noteAdvisorConsult: () => {
+        consults += 1;
+      },
+      callAdvisor: async () => {
+        throw new Error("advisor unavailable");
+      },
+    });
+
+    await expect(tool.execute("advisor-failed", {})).rejects.toThrow("advisor unavailable");
+    expect(consults).toBe(0);
+  });
+
   test("injects ask_advisor only for routed tiers that enable it", async () => {
     const priorKey = process.env.DUET_API_KEY;
     process.env.DUET_API_KEY = "advisor-tool-test-key";

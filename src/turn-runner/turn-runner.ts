@@ -1740,7 +1740,7 @@ export class TurnRunner {
       budgetTokens: policy.transcriptTokens,
       modelName,
       thinkingLevel: policy.target.thinkingLevel,
-      advisorGate: () => router.advisorGate(),
+      advisorGate: () => router.consumeAdvisorGate(),
       noteAdvisorConsult: () => router.noteAdvisorConsult(),
     };
   }
@@ -2637,6 +2637,8 @@ export class TurnRunner {
       };
     }
     this.emit({ type: "router_switch", ...switched });
+    const nudge = this.modelRouter?.takeRerouteNudge();
+    if (nudge) agent.steer(buildUserAgentMessage(nudge, undefined));
     return { model, thinkingLevel: switched.thinkingLevel };
   }
 }

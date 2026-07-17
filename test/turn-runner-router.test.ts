@@ -303,6 +303,20 @@ describe("TurnRunner virtual-model adapter", () => {
       terminal.usageByModel?.reduce((total, entry) => total + entry.usage.totalTokens, 0),
     ).toBe(terminal.turnUsage?.totalTokens);
     expect(terminal.state.options?.model).toBe("frontier");
+    const injectedNudges = terminal.state.agent.messages
+      .filter((message) => message.role === "user")
+      .map((message) =>
+        typeof message.content === "string"
+          ? message.content
+          : message.content
+              .filter((block) => block.type === "text")
+              .map((block) => block.text)
+              .join("\n"),
+      )
+      .filter((text) => text.includes("The routed model changed"));
+    expect(injectedNudges).toContainEqual(
+      expect.stringContaining("changed from fable-5 to gpt-5.6-sol for the implement route"),
+    );
   });
 
   test("state-agent assistant events do not tick the parent router", async () => {
