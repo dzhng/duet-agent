@@ -22,6 +22,7 @@ import {
   resolveCliModel,
   resolveModelName,
 } from "../src/model-resolution/resolver.js";
+import { canonicalizeModelName } from "../src/model-resolution/catalog.js";
 import {
   activeFileAutocompleteToken,
   activeSkillAutocompleteToken,
@@ -82,6 +83,58 @@ function clearModelEnv(): void {
 }
 
 describe("CLI model inference", () => {
+  test("canonicalizes the model-router concrete shorthands", () => {
+    expect(canonicalizeModelName("moonshotai/kimi-k3")).toBe("kimi-k3");
+    expect(canonicalizeModelName("openai/gpt-5.6-sol")).toBe("gpt-5.6-sol");
+    expect(canonicalizeModelName("openai/gpt-5.6-terra")).toBe("gpt-5.6-terra");
+  });
+
+  test("resolves every model-router concrete model on each router provider", () => {
+    const modelIds = {
+      "kimi-k3": "moonshotai/kimi-k3",
+      "gpt-5.6-sol": "openai/gpt-5.6-sol",
+      "gpt-5.6-terra": "openai/gpt-5.6-terra",
+    } as const;
+
+    for (const [shorthand, modelId] of Object.entries(modelIds)) {
+      for (const provider of ["duet-gateway", "vercel-ai-gateway", "openrouter"]) {
+        const model = resolveModelName(`${provider}:${shorthand}`);
+        expect(model.provider).toBe(provider);
+        expect(model.id).toBe(modelId);
+      }
+    }
+  });
+
+  test("preserves model-router capabilities and token ceilings on every provider", () => {
+    const expectations = {
+      "kimi-k3": { contextWindow: 1_000_000, maxTokens: 131_072 },
+      "gpt-5.6-sol": { contextWindow: 1_050_000, maxTokens: 128_000 },
+      "gpt-5.6-terra": { contextWindow: 1_050_000, maxTokens: 128_000 },
+    } as const;
+
+    for (const [shorthand, expected] of Object.entries(expectations)) {
+      for (const provider of ["duet-gateway", "vercel-ai-gateway", "openrouter"]) {
+        const model = resolveModelName(`${provider}:${shorthand}`);
+        expect(model.input).toEqual(["text", "image"]);
+        expect(model.reasoning).toBe(true);
+        expect(model.contextWindow).toBe(expected.contextWindow);
+        expect(model.maxTokens).toBe(expected.maxTokens);
+      }
+    }
+  });
+
+  test("keeps gpt-5.6 router models on the Responses transport at both gateways", () => {
+    for (const shorthand of ["gpt-5.6-sol", "gpt-5.6-terra"]) {
+      const duetModel = resolveModelName(`duet-gateway:${shorthand}`);
+      expect(duetModel.api).toBe("openai-responses");
+      expect(duetModel.baseUrl).toBe("https://gateway.duet.so/v1");
+
+      const vercelModel = resolveModelName(`vercel-ai-gateway:${shorthand}`);
+      expect(vercelModel.api).toBe("openai-responses");
+      expect(vercelModel.baseUrl).toBe("https://ai-gateway.vercel.sh/v1");
+    }
+  });
+
   test("prefers Duet credentials over the other router credentials", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "duet_gt_test";

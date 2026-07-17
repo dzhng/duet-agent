@@ -46,3 +46,23 @@ that is a one-line table edit in slice 02's built-in table, not a redesign.
 ## Dependencies
 
 None. Parallel with slice 02.
+
+## Build findings
+
+- Provider metadata checked on 2026-07-18: Vercel advertises Kimi K3 as vision-capable with a
+  1M context window and 131K maximum output. The catalog therefore caps it at 131,072 tokens.
+  GPT-5.6 Sol and Terra use the published 1.05M combined window and 128,000-token output cap.
+- pi-ai did not yet contain K3, Sol, or Terra. K3 now clones the provider-native Kimi K2.6
+  transport on Vercel/Duet and OpenRouter, then replaces the capability metadata and maps the
+  only currently supported K3 reasoning level (`max`) onto the app's `high` selection. Sol and
+  Terra use `openai-responses` on both gateway paths; OpenRouter clones its existing GPT-5.5
+  transport until pi-ai ships native entries.
+- The throwaway `streamSimple` probe loaded `~/.duet/.env`, resolved models through this repo,
+  and captured requests with pi-ai's `onPayload`. K3 high effort survived on the wire as
+  `thinking: { type: "adaptive", display: "summarized" }` plus
+  `output_config: { effort: "max" }`. Sol high effort survived as
+  `reasoning: { effort: "high", summary: "auto" }` on the Responses request. No call-site
+  special case was needed; the K3 mapping lives with its missing-model clone.
+- Both live requests reached `gateway.duet.so` but returned a generic HTTP 500, so request-shape
+  delivery is verified while a successful model response is not. The throwaway probe was
+  deleted after capture.
