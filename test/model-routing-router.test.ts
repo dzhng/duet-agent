@@ -103,15 +103,30 @@ describe("ModelRouter", () => {
     expect(router.shouldClassify()).toBe(true);
   });
 
-  test("reroute nudge is one-shot and survives a closed advisor gate", async () => {
+  test("reroute nudge grants exactly one advisor-floor exemption when delivered", async () => {
     const router = createRouter(scriptedClassifier([plan]));
     const switched = await router.prepareTurn({ hasImages: false });
     expect(switched?.toModel).toBe("fable-5");
     router.noteAdvisorConsult();
     expect(router.advisorGate()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
 
-    expect(router.takeRerouteNudge()).toContain("fable-5");
+    expect(router.takeRerouteNudge()).toContain(
+      "changed from gpt-5.6-sol to fable-5 for the plan route",
+    );
+    expect(router.advisorGate()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
+    expect(router.consumeAdvisorGate()).toEqual({ allowed: true, stepsUntilAllowed: 0 });
+    expect(router.consumeAdvisorGate()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
     expect(router.takeRerouteNudge()).toBeUndefined();
+  });
+
+  test("advisor-triggered switches do not create a nudge loop", async () => {
+    const router = createRouter(scriptedClassifier([general, plan]));
+    await router.prepareTurn({ hasImages: false });
+    router.noteAdvisorConsult();
+
+    expect((await router.prepareTurn({ hasImages: false }))?.trigger).toBe("advisor");
+    expect(router.takeRerouteNudge()).toBeUndefined();
+    expect(router.consumeAdvisorGate()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
   });
 
   test("advisor floor counts completed steps rather than advisor calls", () => {

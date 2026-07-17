@@ -54,6 +54,47 @@ Slices 05/08 suites, classifier scorecard, full unit floor.
 Sample nudge text + 2 advisor exchanges post-tuning; ~5-minute window, decide on evidence,
 record.
 
+Resolution (2026-07-18): accepted on evidence. The shipped nudge is: “The routed model changed
+from X to Y for the Z route. If the new work would benefit from strategic review, consider
+calling ask_advisor before substantive work. This consult is cap-exempt.” Two independent live
+advisor samples both found the hidden contradiction between exactly-once external side effects
+and unmodified opaque plugins, recommended validating a single runner-owned side-effect
+interception/fencing boundary first, and preserved executor ownership by ending with a concrete
+validation rather than attempting implementation. The first additionally proposed a reversible
+dual-write/record-only slice; the second stayed narrower and asked for an audit of plugin-call
+mediation. Both were direct, actionable, and within scope, so no `ADVISOR_SYSTEM_PROMPT` change
+was justified.
+
+## Tuning log
+
+- Baseline with the slice-08 `ASK_ADVISOR_TOOL_DESCRIPTION`: the live architectural case called
+  `ask_advisor` once, returned non-empty advice, and caused a classifier input tagged `advisor`;
+  the routine rename case made zero advisor calls. The new nudge wording was kept to two short
+  sentences plus the explicit cap exemption because the deterministic runner case delivered and
+  acted on it without another prompt surface.
+- First falsification attempt removed the timing paragraph but remained green. The eval's own
+  system text mentioned “tools made available,” which independently primed tool use, so that run
+  did not prove the production description mattered.
+- Calibration removed that eval-only tool hint while keeping the production timing paragraph
+  absent. The same architectural case then failed as intended with zero `ask_advisor` calls.
+  Restoring only the timing paragraph returned the calibrated case to green; the full suite then
+  passed 4/4. This is the before/after evidence that the timing guidance is load-bearing.
+- One-shot falsification first removed the consume-time burn and stayed green because
+  `noteAdvisorConsult()` defensively burns stale privilege after success. Removing both burns made
+  the second fake consult succeed and failed the rate-limit assertion; restoring both returned the
+  NUDGE case to green. Failed and refused calls remain outside `noteAdvisorConsult()`, so neither
+  schedules advisor-triggered classification.
+- Later acceptance runs exposed positive-case misses with both the original broad timing paragraph
+  and a non-normative list of the intended boundary (the other three cases stayed green). The final
+  wording makes that boundary explicit and normative: consequential architecture, conflicting
+  constraints, and important unknowns must consult, while routine, local, obvious work must not.
+  The next live positive/restraint run passed 2/2 and the deterministic pair remained green.
+- The classifier scorecard remained 28/28 accurate with every family at 100% and 567 maximum input
+  tokens. One post-nudge run passed the frozen latency ceiling at p50 1595 ms; two later runs after
+  advisor-only wording changes kept correctness perfect but missed only the latency ceiling at p50
+  2193/2743 ms through the Vercel fallback. No classifier text, route description, fixture, or
+  numeric gate changed in this slice.
+
 ## Dependencies
 
 Slices 06 (routed daily surface) + 08.

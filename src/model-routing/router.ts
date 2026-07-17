@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { ClassifierDecision, ClassifierInput } from "./classifier.js";
+import { renderRerouteNudge } from "./prompts.js";
 import {
   resolveRoute,
   resolveTierDefault,
@@ -103,6 +104,7 @@ export class ModelRouter {
   private lastRationale?: string;
   private pinned = false;
   private rerouteNudge?: string;
+  private nudgeExemptionAvailable = false;
 
   constructor(options: ModelRouterOptions) {
     this.table = options.table;
@@ -126,6 +128,7 @@ export class ModelRouter {
 
   /** Record a successful advisor call and request classification at the next prepare seam. */
   noteAdvisorConsult(): void {
+    this.nudgeExemptionAvailable = false;
     this.lastAdvisorStep = this.assistantSteps;
     this.advisorClassificationPending = true;
   }
@@ -196,7 +199,11 @@ export class ModelRouter {
         trigger,
         rationale: decision.rationale,
       };
-      this.rerouteNudge = `The routed model changed from ${switched.fromModel} to ${switched.toModel}. Consider consulting the advisor if the new phase would benefit from a second opinion.`;
+      this.rerouteNudge = undefined;
+      this.nudgeExemptionAvailable = false;
+      if (switched.trigger !== "advisor") {
+        this.rerouteNudge = renderRerouteNudge(switched);
+      }
       return switched;
     } catch {
       return undefined;
@@ -212,10 +219,22 @@ export class ModelRouter {
     return { allowed: stepsUntilAllowed === 0, stepsUntilAllowed };
   }
 
-  /** Consume the cap-exempt advisor nudge created by the latest actual switch. */
+  /**
+   * Authorize one advisor attempt. A delivered reroute nudge overrides the
+   * ordinary step floor once; checking the gate burns that privilege even if
+   * transcript assembly or the advisor call later fails.
+   */
+  consumeAdvisorGate(): AdvisorGate {
+    if (!this.nudgeExemptionAvailable) return this.advisorGate();
+    this.nudgeExemptionAvailable = false;
+    return { allowed: true, stepsUntilAllowed: 0 };
+  }
+
+  /** Take the latest switch nudge and arm its one-shot advisor-floor exemption. */
   takeRerouteNudge(): string | undefined {
     const nudge = this.rerouteNudge;
     this.rerouteNudge = undefined;
+    if (nudge) this.nudgeExemptionAvailable = true;
     return nudge;
   }
 
