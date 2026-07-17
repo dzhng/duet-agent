@@ -11,13 +11,14 @@ prompt sections.
 
 ## Next Agent Prompt
 
-_Last updated: 2026-07-18 (slices 01, 02, 03, 08a merged and green: 977 tests, 1 pre-existing
-environmental flake in `auto-upgrade` — fails identically on the pre-merge base, evidence in the
-git log around `2a34b6e`)._
+_Last updated: 2026-07-18 (slices 01-05 + 08a merged and green: 989 tests, 1 pre-existing
+environmental flake in `auto-upgrade` — fails identically on the pre-merge base)._
 
-You are implementing this feature slice by slice. Next pickup: **slice 06 (hard cutover) ∥ slice 08b (advisor tool completion — tool + AI SDK call + preview probe)**; then 07 ∥ 09, then 10.
-anything, read `unknowns-map.md` §Quadrant 2 (fixed decisions) and §Quadrant 4 (landmines — they
-are constraints). Update this section (status, pickup point, checklist) before ending your pass.
+You are implementing this feature slice by slice. Next pickup: **slice 06 (hard cutover) ∥ slice
+08b (advisor tool completion — tool + AI SDK call + preview probe)**; then 07 ∥ 09, then 10.
+Before wiring anything, read `unknowns-map.md` §Quadrant 2 (fixed decisions) and §Quadrant 4
+(landmines — constraints). Update this section (status, pickup point, checklist) before ending
+your pass.
 When a slice's implementation starts changing variables the slice doesn't own, stop and reslice
 per write-spec instead of broadening the patch.
 

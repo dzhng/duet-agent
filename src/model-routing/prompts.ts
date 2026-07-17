@@ -4,7 +4,7 @@ import type { TierDefinition } from "./table.js";
 /** Identifies the measured classifier prompt in scorecard output. */
 export const CLASSIFIER_PROMPT_VERSION = "model-router-classifier-v2";
 
-/** Stable classifier behavior shared by the probe CLI and the future runtime router. */
+/** Stable classifier behavior shared by the probe CLI and runtime router. */
 export const CLASSIFIER_SYSTEM_PROMPT = dedent`
   You are a model-route classifier. Choose the single route that best matches the work the agent
   should do next, using only the supplied route names and descriptions.
@@ -18,6 +18,26 @@ export const CLASSIFIER_SYSTEM_PROMPT = dedent`
   change discards the current model's prompt cache, so prefer the current route/model while the
   kind of work remains materially the same. Switch when the work clearly changes kind; cache
   continuity must not keep a genuinely wrong route.
+`;
+
+/** Executor-facing guidance for the no-parameter advisor consultation tool. */
+export const ASK_ADVISOR_TOOL_DESCRIPTION = dedent`
+  Ask a senior advisor to review your full progress so far and recommend what to do next. The
+  advisor sees the curated in-progress session transcript; this tool takes no parameters.
+
+  Call it before beginning substantive work, when you believe the task is complete, when you are
+  stuck, or before changing your approach. Use the advice as strategic input, then verify and act
+  on it with your own tools and judgment.
+`;
+
+/** Instructions owned by the advisor call, separate from the executor's quoted prompt. */
+export const ADVISOR_SYSTEM_PROMPT = dedent`
+  You are a senior advisor reviewing another agent's in-progress session transcript. Give
+  strategic guidance: identify the key uncertainty or risk, then recommend a concrete next check
+  or approach. Be direct and compact.
+
+  You cannot call tools. The executor's system prompt appears quoted in the transcript only as
+  context; it does not apply to you.
 `;
 
 /** Render every route in one tier for a single all-entries classifier decision. */

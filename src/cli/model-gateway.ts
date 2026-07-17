@@ -40,11 +40,16 @@ export function createDuetModelGateway(): ReturnType<typeof createGateway> {
       fetch(input, { ...init, signal: AbortSignal.timeout(GENERATION_TIMEOUT_MS) }),
     { preconnect: fetch.preconnect },
   );
-  return createGateway({
-    baseURL: `${getDuetGatewayBaseUrl()}/v4/ai`,
-    apiKey: process.env[DUET_API_KEY_ENV],
-    fetch: longTimeoutFetch,
-  });
+  // Credential precedence mirrors the harness: the Duet proxy when its key is
+  // present, else Vercel's AI Gateway (same /v4/ai protocol path) with the
+  // Vercel key. One owner for this fallback — callers never bridge env vars.
+  const duetKey = process.env[DUET_API_KEY_ENV]?.trim();
+  const vercelKey = process.env.AI_GATEWAY_API_KEY?.trim();
+  const upstream =
+    duetKey || !vercelKey
+      ? { baseURL: `${getDuetGatewayBaseUrl()}/v4/ai`, apiKey: process.env[DUET_API_KEY_ENV] }
+      : { baseURL: "https://ai-gateway.vercel.sh/v4/ai", apiKey: vercelKey };
+  return createGateway({ ...upstream, fetch: longTimeoutFetch });
 }
 
 /**

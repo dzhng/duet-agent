@@ -22,6 +22,7 @@ import {
 import {
   BUILT_IN_ROUTING_TABLE,
   isVirtualModel,
+  type AdvisorPolicy,
   type RoutingCatalogAdapter,
   type RoutingTable,
 } from "../model-routing/table.js";
@@ -37,7 +38,11 @@ import {
 } from "../memory/observational.js";
 import { rebuildMemoryContextPack } from "../memory/context-pack.js";
 import { createEmbeddingClient } from "../memory/embedding.js";
-import { loadStoredMemory, type MemoryPersistenceHandle } from "../memory/storage.js";
+import {
+  loadStoredMemory,
+  readSessionObservations,
+  type MemoryPersistenceHandle,
+} from "../memory/storage.js";
 import { MemoryContextCache } from "../memory/store.js";
 import {
   DEFAULT_CLI_MEMORY_MODEL,
@@ -94,6 +99,7 @@ import {
   resolveStateCwd,
   formatCarriedTodosReminder,
   formatStateMachineTerminalAcknowledgmentPrompt,
+  type AskAdvisorToolStorage,
   type RecallMemoryToolStorage,
   isTurnRunnerControlResult,
   type TurnRunnerControlResult,
@@ -285,6 +291,8 @@ export class TurnRunner {
   private routingTable?: RoutingTable;
   /** Model selection queued while a parent turn is running; applied at the next turn boundary. */
   private pendingModelSelection?: string;
+  /** Advisor target and transcript budget selected with the current virtual tier. */
+  private advisorPolicy?: AdvisorPolicy;
   /** Image capability fact carried from the active parent prompt into intra-turn prepares. */
   private parentPromptHasImages = false;
   /** True only while the parent pi agent is actively producing the public terminal event. */
@@ -1314,7 +1322,7 @@ export class TurnRunner {
         // Per-state cwd lets one agent state operate on a different
         // repository or subdirectory than the parent runner without
         // mutating shared config.
-        ...this.createTools("agent", input.state.cwd),
+        ...this.createTools("agent", input.state.cwd, false),
       },
       (result) => {
         control = result;
@@ -1660,6 +1668,7 @@ export class TurnRunner {
   protected createTools(
     mode: TurnMode,
     cwdOverride?: string,
+    includeAdvisor = true,
   ): {
     tools: AgentTool[];
   } {
@@ -1681,9 +1690,17 @@ export class TurnRunner {
       // expand flag goes to the same cheap model the observer uses.
       expansionModel: this.resolveMemoryActorModel(undefined),
     };
+    const router = this.modelRouter;
+    const advisorStorage =
+      includeAdvisor && router && this.advisorPolicy?.enabled
+        ? this.createAskAdvisorStorage(router, this.advisorPolicy)
+        : undefined;
     if (mode === "agent") {
       return {
-        tools: [...createDefaultTurnRunnerTools(cwd, todoStorage, recallStorage), ...mcpTools],
+        tools: [
+          ...createDefaultTurnRunnerTools(cwd, todoStorage, recallStorage, advisorStorage),
+          ...mcpTools,
+        ],
       };
     }
 
@@ -1698,9 +1715,33 @@ export class TurnRunner {
           todoStorage,
           skills,
           recallStorage,
+          advisorStorage,
         }),
         ...mcpTools,
       ],
+    };
+  }
+
+  private createAskAdvisorStorage(
+    router: ModelRouter,
+    policy: AdvisorPolicy,
+  ): AskAdvisorToolStorage {
+    const modelName = resolveModelName(policy.target.modelName).id;
+    return {
+      getMessages: () => this.parentAgent?.state.messages ?? this.state?.agent.messages ?? [],
+      getSystemPrompt: () => this.parentAgent?.state.systemPrompt ?? "",
+      getObservations: async () => {
+        const session = this.memoryPersistence?.session;
+        const sessionId = this.config.sessionId;
+        if (!session || !sessionId) return [];
+        const snapshot = await readSessionObservations(session, sessionId);
+        return snapshot.observations.map((observation) => observation.content);
+      },
+      budgetTokens: policy.transcriptTokens,
+      modelName,
+      thinkingLevel: policy.target.thinkingLevel,
+      advisorGate: () => router.advisorGate(),
+      noteAdvisorConsult: () => router.noteAdvisorConsult(),
     };
   }
 
@@ -2476,6 +2517,7 @@ export class TurnRunner {
   private async initializeModelRouter(modelName: string | undefined): Promise<void> {
     this.modelRouter = undefined;
     this.routingTable = undefined;
+    this.advisorPolicy = undefined;
     if (!modelName || isKnownShorthand(modelName)) return;
     try {
       resolveModelName(modelName);
@@ -2490,6 +2532,7 @@ export class TurnRunner {
     });
     this.routingTable = loaded.table;
     if (!modelName || !isVirtualModel(modelName, loaded.table)) return;
+    this.advisorPolicy = loaded.table.tiers[modelName]!.advisor;
     this.modelRouter = this.createBoundModelRouter(modelName, loaded.table, catalogAdapter);
   }
 

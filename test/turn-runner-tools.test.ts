@@ -2,11 +2,13 @@ import { describe, expect, test } from "bun:test";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import dedent from "dedent";
 import {
+  createAskAdvisorTool,
   createTurnRunnerTools as createTurnRunnerToolsWithStorage,
   DEFAULT_BASH_TIMEOUT_SECONDS,
   withDefaultBashTimeout,
   type TurnRunnerControlResult,
 } from "../src/turn-runner/tools.js";
+import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnTodo } from "../src/types/protocol.js";
 
 type TurnRunnerToolsInput = Parameters<typeof createTurnRunnerToolsWithStorage>[0];
@@ -25,6 +27,119 @@ function createTurnRunnerTools(input: Omit<TurnRunnerToolsInput, "todoStorage">)
 }
 
 describe("TurnRunner tools", () => {
+  test("ask_advisor returns a graceful details-tagged refusal while gated", async () => {
+    let advisorCalled = false;
+    const tool = createAskAdvisorTool({
+      getMessages: () => [],
+      getSystemPrompt: () => "executor prompt",
+      getObservations: async () => [],
+      budgetTokens: 10_000,
+      modelName: "anthropic/claude-fable-5",
+      thinkingLevel: "high",
+      advisorGate: () => ({ allowed: false, stepsUntilAllowed: 3 }),
+      noteAdvisorConsult: () => {},
+      callAdvisor: async () => {
+        advisorCalled = true;
+        return { advice: "unused" };
+      },
+    });
+
+    const result = await tool.execute("advisor-1", {});
+
+    expect(result.terminate).toBe(false);
+    expect(result.details).toEqual({
+      type: "ask_advisor",
+      rateLimited: true,
+      stepsUntilAllowed: 3,
+    });
+    expect(result.content[0]).toEqual(
+      expect.objectContaining({ type: "text", text: expect.stringContaining("3 more") }),
+    );
+    expect(advisorCalled).toBe(false);
+  });
+
+  test("ask_advisor forwards cancellation and records only a successful consult", async () => {
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    let consults = 0;
+    const tool = createAskAdvisorTool({
+      getMessages: () => [
+        { role: "user", content: "Build the router.", timestamp: 1 },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "I inspected the implementation." }],
+          api: "anthropic-messages",
+          provider: "vercel-ai-gateway",
+          model: "anthropic/claude-fable-5",
+          usage: {
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 2,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "stop",
+          timestamp: 2,
+        },
+      ],
+      getSystemPrompt: () => "You are the executor.",
+      getObservations: async () => ["The router API already owns the advisor gate."],
+      budgetTokens: 10_000,
+      modelName: "anthropic/claude-fable-5",
+      thinkingLevel: "high",
+      advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
+      noteAdvisorConsult: () => {
+        consults += 1;
+      },
+      callAdvisor: async (input) => {
+        receivedSignal = input.signal;
+        expect(input.transcriptText).toContain("Build the router.");
+        expect(input.transcriptText).toContain("> You are the executor.");
+        expect(input.transcriptText).toContain("router API already owns");
+        return { advice: "Verify the storage closure at the parent-agent boundary." };
+      },
+    });
+
+    const result = await tool.execute("advisor-2", {}, controller.signal);
+
+    expect(receivedSignal).toBe(controller.signal);
+    expect(consults).toBe(1);
+    expect(result.terminate).toBe(false);
+    expect(result.content).toEqual([
+      { type: "text", text: "Verify the storage closure at the parent-agent boundary." },
+    ]);
+    expect(result.details).toEqual({
+      type: "ask_advisor",
+      model: "anthropic/claude-fable-5",
+      tokens: expect.any(Number),
+    });
+  });
+
+  test("injects ask_advisor only for routed tiers that enable it", async () => {
+    const priorKey = process.env.DUET_API_KEY;
+    process.env.DUET_API_KEY = "advisor-tool-test-key";
+    try {
+      const frontier = new ToolListTurnRunner("frontier");
+      await frontier.start({ type: "start", mode: "agent" });
+      expect(frontier.toolNames()).toContain("ask_advisor");
+      await frontier.dispose();
+
+      const economy = new ToolListTurnRunner("economy");
+      await economy.start({ type: "start", mode: "agent" });
+      expect(economy.toolNames()).not.toContain("ask_advisor");
+      await economy.dispose();
+
+      const concrete = new ToolListTurnRunner("gpt-5.6-sol");
+      await concrete.start({ type: "start", mode: "agent" });
+      expect(concrete.toolNames()).not.toContain("ask_advisor");
+      await concrete.dispose();
+    } finally {
+      if (priorKey === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = priorKey;
+    }
+  });
+
   test("todo_write replaces and merges todo lists", async () => {
     let storedTodos: TurnTodo[] = [];
     const tools = createTurnRunnerToolsWithStorage({
@@ -1279,6 +1394,21 @@ describe("TurnRunner tools", () => {
     });
   });
 });
+
+class ToolListTurnRunner extends TurnRunner {
+  constructor(model: string) {
+    super({
+      model,
+      mode: "agent",
+      memoryDbPath: false,
+      skillDiscovery: { includeDefaults: false },
+    });
+  }
+
+  toolNames(): string[] {
+    return this.requireParentAgent().state.tools.map((tool) => tool.name);
+  }
+}
 
 function propertyDescription(schema: unknown, property: string): string {
   const record = schema as { properties?: Record<string, { description?: string }> };
