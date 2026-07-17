@@ -1,4 +1,5 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import {
   type BashOperations,
   createCodingTools,
@@ -28,7 +29,12 @@ import type {
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE } from "../types/state-machine.js";
 import type { EmbedFn } from "../memory/embedding.js";
+import { serializeMessageForObserver } from "../memory/observational.js";
 import { recallMemoryExpanded, type RecallScope } from "../memory/recall.js";
+import { buildAdvisorTranscript } from "../model-routing/advisor-transcript.js";
+import { callAdvisor, type CallAdvisorInput } from "../model-routing/advisor.js";
+import { ASK_ADVISOR_TOOL_DESCRIPTION } from "../model-routing/prompts.js";
+import type { AdvisorGate } from "../model-routing/router.js";
 import type { Observation } from "../types/memory.js";
 import type { MemorySession } from "../memory/session.js";
 import type { ActiveStateOutput } from "./state-machine-controller.js";
@@ -511,6 +517,7 @@ interface TurnRunnerToolsInput {
   getActiveStateOutput?: () => ActiveStateOutput | undefined;
   skills?: readonly Skill[];
   recallStorage?: RecallMemoryToolStorage;
+  advisorStorage?: AskAdvisorToolStorage;
 }
 
 export interface RecallMemoryToolStorage {
@@ -540,10 +547,33 @@ export interface RecallMemoryToolStorage {
   expansionModel?: string;
 }
 
+/** Lazy runtime inputs and router actions used by the parent-only advisor tool. */
+export interface AskAdvisorToolStorage {
+  /** Current parent transcript, read only when the tool executes. */
+  getMessages: () => readonly AgentMessage[];
+  /** Fully resolved executor prompt quoted into transcript content. */
+  getSystemPrompt: () => string;
+  /** Live local-session observation contents; empty when memory is disabled. */
+  getObservations: () => Promise<readonly string[]>;
+  /** Uniform transcript budget selected by the routed tier. */
+  budgetTokens: number;
+  /** Gateway-native advisor model id resolved at runner composition. */
+  modelName: string;
+  /** Reasoning effort selected by the routed tier. */
+  thinkingLevel: ThinkingLevel;
+  /** Current step-floor decision owned by ModelRouter. */
+  advisorGate: () => AdvisorGate;
+  /** Records a successful consult and requests milestone classification. */
+  noteAdvisorConsult: () => void;
+  /** Network seam for deterministic tool tests; production uses callAdvisor. */
+  callAdvisor?: (input: CallAdvisorInput) => Promise<{ advice: string }>;
+}
+
 export function createDefaultTurnRunnerTools(
   cwd: string,
   todoStorage: TodoWriteToolStorage,
   recallStorage?: RecallMemoryToolStorage,
+  advisorStorage?: AskAdvisorToolStorage,
 ): AgentTool[] {
   const tools: AgentTool[] = [
     ...createCodingTools(cwd, {
@@ -557,12 +587,20 @@ export function createDefaultTurnRunnerTools(
   if (recallStorage) {
     tools.push(createRecallMemoryTool(recallStorage));
   }
+  if (advisorStorage) {
+    tools.push(createAskAdvisorTool(advisorStorage));
+  }
   return tools;
 }
 
 export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] {
   const tools = [
-    ...createDefaultTurnRunnerTools(input.cwd, input.todoStorage, input.recallStorage),
+    ...createDefaultTurnRunnerTools(
+      input.cwd,
+      input.todoStorage,
+      input.recallStorage,
+      input.advisorStorage,
+    ),
   ];
   if (input.mode === "agent") {
     return tools;
@@ -579,6 +617,73 @@ export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] 
   tools.push(createSelectStateTool(getDefinition, input.cwd));
   tools.push(createCurrentStateMachineStateTool(input.getStateMachine, input.getActiveStateOutput));
   return tools;
+}
+
+const askAdvisorSchema = Type.Object({});
+
+/** Build the no-parameter, non-terminating advisor consultation tool. */
+export function createAskAdvisorTool(
+  storage: AskAdvisorToolStorage,
+): AgentTool<typeof askAdvisorSchema> {
+  return {
+    name: "ask_advisor",
+    label: "Ask advisor",
+    description: ASK_ADVISOR_TOOL_DESCRIPTION,
+    parameters: askAdvisorSchema,
+    async execute(...args) {
+      const signal = args[2];
+      const gate = storage.advisorGate();
+      if (!gate.allowed) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `The advisor was consulted too recently. Continue for ${gate.stepsUntilAllowed} more assistant step${gate.stepsUntilAllowed === 1 ? "" : "s"} before asking again.`,
+            },
+          ],
+          details: {
+            type: "ask_advisor",
+            rateLimited: true,
+            stepsUntilAllowed: gate.stepsUntilAllowed,
+          },
+          terminate: false,
+        };
+      }
+
+      const messages = storage.getMessages();
+      const firstUserMessage = messages.find((message) => message.role === "user");
+      if (!firstUserMessage) {
+        return {
+          content: [{ type: "text", text: "The advisor transcript has no user message yet." }],
+          details: { type: "ask_advisor", unavailable: true },
+          terminate: false,
+        };
+      }
+      const transcript = buildAdvisorTranscript({
+        firstUserMessage: serializeMessageForObserver(firstUserMessage),
+        executorSystemPrompt: storage.getSystemPrompt(),
+        observations: await storage.getObservations(),
+        tailMessages: messages.map(serializeMessageForObserver),
+        budgetTokens: storage.budgetTokens,
+      });
+      const result = await (storage.callAdvisor ?? callAdvisor)({
+        transcriptText: transcript.text,
+        modelName: storage.modelName,
+        thinkingLevel: storage.thinkingLevel,
+        signal,
+      });
+      storage.noteAdvisorConsult();
+      return {
+        content: [{ type: "text", text: result.advice }],
+        details: {
+          type: "ask_advisor",
+          model: storage.modelName,
+          tokens: transcript.tokens,
+        },
+        terminate: false,
+      };
+    },
+  };
 }
 
 /**
