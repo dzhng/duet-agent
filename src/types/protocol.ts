@@ -782,6 +782,27 @@ export interface TurnSystemEvent {
   message: string;
 }
 
+/** A concrete model or reasoning-effort change selected by a virtual-model router. */
+export interface TurnRouterSwitchEvent {
+  type: "router_switch";
+  /** Virtual tier whose policy selected the target. */
+  tier: string;
+  /** Classifier route that resolved to the new target. */
+  route: string;
+  /** Previous concrete catalog name. */
+  fromModel: string;
+  /** New concrete catalog name used for subsequent provider requests. */
+  toModel: string;
+  /** Route-owned reasoning effort applied atomically with the model. */
+  thinkingLevel: ThinkingLevel;
+  /** Runtime milestone that requested classification. */
+  trigger: "turn_start" | "cadence" | "advisor";
+  /** Classifier explanation for the selected route. */
+  rationale: string;
+  /** Present only if a future independently-routed child agent emits the switch. */
+  origin?: TurnEventOrigin;
+}
+
 /** Events emitted while the runner is still working on the current turn. */
 export type TurnDuringEvent =
   | TurnStepEvent
@@ -790,7 +811,8 @@ export type TurnDuringEvent =
   | TurnStateMachineEvent
   | TurnMemoryEvent
   | TurnUsageEvent
-  | TurnSystemEvent;
+  | TurnSystemEvent
+  | TurnRouterSwitchEvent;
 
 /** Events that end the current turn. */
 export type TurnTerminalEvent =

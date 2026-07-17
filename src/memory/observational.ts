@@ -412,10 +412,11 @@ export class ModelByInputTokens {
 export interface ObservationalContextTransformOptions {
   memory: MemoryContextCache;
   /**
-   * Caller-resolved effective context window (already clamped to the
-   * model's hard limit). All numeric memory budgets are derived from this.
+   * Live caller-resolved effective context window, already clamped to the
+   * active model's hard limit. It is re-read on every transform invocation
+   * so a mid-turn model swap immediately changes compaction budgets.
    */
-  effectiveContext: number;
+  effectiveContext: number | (() => number);
   settings?: ObservationalMemorySettingsInput;
   /**
    * Awaited inside the budget-trigger block, before the eviction walk
@@ -557,10 +558,13 @@ export function validateObservationalMemorySettings(settings: ObservationalMemor
 }
 
 export function createObservationalContextTransform(options: ObservationalContextTransformOptions) {
-  const settings = resolveObservationalMemorySettings(options.effectiveContext, options.settings);
-  validateObservationalMemorySettings(settings);
-
   return async (messages: AgentMessage[]): Promise<AgentMessage[]> => {
+    const effectiveContext =
+      typeof options.effectiveContext === "function"
+        ? options.effectiveContext()
+        : options.effectiveContext;
+    const settings = resolveObservationalMemorySettings(effectiveContext, options.settings);
+    validateObservationalMemorySettings(settings);
     const observableMessages = stripObservationalContextMessages(messages);
     let retainedMessages = applyEvictionHorizon(
       observableMessages,

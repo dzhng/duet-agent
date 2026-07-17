@@ -11,6 +11,14 @@ import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
 
 import { assistantText } from "../core/serializer.js";
+import { classifyRoute } from "../model-routing/classifier.js";
+import { loadRoutingTable } from "../model-routing/loader.js";
+import {
+  ModelRouter,
+  type ModelRouterOptions,
+  type RouterSwitch,
+} from "../model-routing/router.js";
+import { isVirtualModel } from "../model-routing/table.js";
 import { scheduledStateFallbackWakeAt } from "./duration.js";
 import { toXML } from "../lib/xml.js";
 import {
@@ -30,6 +38,7 @@ import {
   DEFAULT_CLI_MODEL,
   resolveModelName,
 } from "../model-resolution/resolver.js";
+import { isKnownShorthand } from "../model-resolution/catalog.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import {
   COMPACT_MESSAGE_TOKENS_RATIO,
@@ -128,6 +137,8 @@ export interface AgentConfigInput {
   systemPrompt?: string;
   skills?: Skill[];
   tools: AgentTool[];
+  /** Parent-only virtual-model runtime; state agents omit it and keep their existing path. */
+  router?: ModelRouter;
 }
 
 /**
@@ -260,6 +271,10 @@ export class TurnRunner {
    * transcript grows across every pi-agent turn in this duet-agent session.
    */
   private parentAgent?: Agent;
+  /** Virtual-model policy owner for the parent session; absent for concrete selections. */
+  protected modelRouter?: ModelRouter;
+  /** Image capability fact carried from the active parent prompt into intra-turn prepares. */
+  private parentPromptHasImages = false;
   /** True only while the parent pi agent is actively producing the public terminal event. */
   private parentAgentRunning = false;
   /** Last turn-runner control tool result observed from the parent agent. */
@@ -505,6 +520,7 @@ export class TurnRunner {
           options: this.resolveTurnOptions(startOptions, command.state.options),
         }
       : createInitialTurnState(mode, this.resolveTurnOptions(startOptions));
+    await this.initializeModelRouter(state.options?.model);
     this.stateMachineController.hydrate(state.stateMachine);
     // Hydrate the wire-shaping object in place. `this.wireGuardHorizon` is
     // referenced by the observational context transform; replacing the
@@ -1316,7 +1332,7 @@ export class TurnRunner {
           if (event.type !== "message_end" || event.message.role !== "assistant") return;
           // Record always; tick only on a completion that consumed tokens (see
           // the parent path for why a zero-usage attempt must not emit).
-          this.recordUsage(event.message.usage, agent.state.model.id);
+          this.recordUsage(event.message.usage, event.message.model);
           recordedMessageUsage = true;
           if (event.message.usage.totalTokens > 0) this.emitTurnUsage(origin);
         });
@@ -1534,6 +1550,7 @@ export class TurnRunner {
       {
         state,
         appendSystemPrompt,
+        ...(this.modelRouter ? { router: this.modelRouter } : {}),
         ...this.createTools(state.mode),
       },
       (result) => {
@@ -1701,6 +1718,13 @@ export class TurnRunner {
     const unsubscribe = agent.subscribe((event) => this.emitParentAgentEvent(event));
     this.parentAgentInterrupted = false;
     try {
+      this.parentPromptHasImages = (input.images?.length ?? 0) > 0;
+      const switched = await this.modelRouter?.prepareTurn({
+        hasImages: this.parentPromptHasImages,
+        prevTurnHint: input.prompt,
+        signal: agent.signal,
+      });
+      if (switched) this.applyRouterSwitch(agent, switched);
       await agent.prompt(input.prompt, input.images);
       // Single-shot recovery: if the provider rejected the first attempt
       // with a context-overflow error, advance the sticky wire-shaping
@@ -2016,14 +2040,16 @@ export class TurnRunner {
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
     const options = this.resolveTurnOptions(undefined, input.state.options);
-    const model = resolveModelName(options.model ?? DEFAULT_CLI_MODEL);
+    const initialRoute = input.router?.initialTarget({ hasImages: false });
+    const model = resolveModelName(initialRoute?.modelName ?? options.model ?? DEFAULT_CLI_MODEL);
     // Parent agent configuration is derived from start/session options, not
     // per-prompt command options. Keeping model and prompt shape stable protects
     // prompt caching across all pi-agent turns inside a duet-agent session.
-    return new Agent({
+    let agent!: Agent;
+    agent = new Agent({
       initialState: {
         model,
-        thinkingLevel: options.thinkingLevel ?? "medium",
+        thinkingLevel: initialRoute?.thinkingLevel ?? options.thinkingLevel ?? "medium",
         systemPrompt:
           input.systemPrompt ??
           this.createBaseSystemPromptWithAppendedLayers({
@@ -2035,6 +2061,17 @@ export class TurnRunner {
         tools: input.tools,
       },
       transformContext: this.createMemoryTransform(),
+      ...(input.router
+        ? {
+            prepareNextTurn: async (signal?: AbortSignal) => {
+              const switched = await input.router?.prepareTurn({
+                hasImages: this.parentPromptHasImages,
+                signal,
+              });
+              return switched ? this.applyRouterSwitch(agent, switched) : undefined;
+            },
+          }
+        : {}),
       toolExecution: "parallel",
       afterToolCall: async (context) => {
         const details = context.result.details;
@@ -2045,6 +2082,7 @@ export class TurnRunner {
       },
       getApiKey: resolveProviderApiKey,
     });
+    return agent;
   }
 
   protected createMemoryTransform() {
@@ -2055,7 +2093,8 @@ export class TurnRunner {
     // provider prompt cache stays valid between eviction events.
     return createObservationalContextTransform({
       memory: this.memory,
-      effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
+      effectiveContext: () =>
+        this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
       settings: this.config.memory,
       horizon: this.wireGuardHorizon,
       onCompaction: (messages) => this.ensureMemoryCoverageForCompaction(messages),
@@ -2240,6 +2279,8 @@ export class TurnRunner {
     this.emitAgentEvent(event);
     if (event.type !== "message_end" || event.message.role !== "assistant") return;
 
+    this.modelRouter?.noteAssistantStep(routerStepDelta(event.message));
+
     // Cache the parent's latest bar/breakdown so subsequent state-agent and
     // terminal emissions can reuse it without rescaling against a stale base.
     this.lastParentUsageSnapshot = {
@@ -2258,7 +2299,7 @@ export class TurnRunner {
     // consumed tokens, so a rejected attempt (e.g. a provider context-overflow
     // error the turn then recovers from) carries no usage and would otherwise
     // emit a degenerate all-zero bar.
-    this.recordUsage(event.message.usage, this.requireParentAgent().state.model.id);
+    this.recordUsage(event.message.usage, event.message.model);
     if (event.message.usage.totalTokens > 0) this.emitTurnUsage();
   }
 
@@ -2409,6 +2450,81 @@ export class TurnRunner {
     const userValue = this.config.effectiveContext ?? DEFAULT_EFFECTIVE_CONTEXT;
     return modelWindow !== undefined ? Math.min(userValue, modelWindow) : userValue;
   }
+
+  /** Build the parent router only when the persisted session selection is virtual. */
+  private async initializeModelRouter(modelName: string | undefined): Promise<void> {
+    this.modelRouter = undefined;
+    if (!modelName || isKnownShorthand(modelName)) return;
+    try {
+      resolveModelName(modelName);
+      return;
+    } catch {
+      // A name outside the concrete catalog may be owned by the project routing table.
+    }
+
+    const catalogAdapter = {
+      isCatalogName: isKnownShorthand,
+      modelAcceptsImages: (name: string) => resolveModelName(name).input.includes("image"),
+    };
+    const loaded = await loadRoutingTable({
+      cwd: this.config.cwd ?? process.cwd(),
+      catalogAdapter,
+    });
+    if (!isVirtualModel(modelName, loaded.table)) return;
+    this.modelRouter = this.createModelRouter({
+      table: loaded.table,
+      tier: modelName,
+      classify: async (input, signal) => {
+        const classifierModel = resolveModelName(loaded.table.classifier.target.modelName);
+        return classifyRoute(input, {
+          model: `${classifierModel.provider}:${classifierModel.id}`,
+          signal,
+        });
+      },
+      resolveCatalog: catalogAdapter,
+    });
+  }
+
+  /** Composition seam used by production binding and deterministic runner tests. */
+  protected createModelRouter(options: ModelRouterOptions): ModelRouter {
+    return new ModelRouter(options);
+  }
+
+  /** Resolve and atomically apply one router-owned model/effort change. */
+  private applyRouterSwitch(agent: Agent, switched: RouterSwitch) {
+    const model = resolveModelName(switched.toModel);
+    agent.state.model = model;
+    agent.state.thinkingLevel = switched.thinkingLevel;
+    if (this.lastParentUsageSnapshot) {
+      this.lastParentUsageSnapshot = {
+        ...this.lastParentUsageSnapshot,
+        effectiveContextWindow: this.resolveEffectiveContext(model.contextWindow),
+      };
+    }
+    this.emit({ type: "router_switch", ...switched });
+    return { model, thinkingLevel: switched.thinkingLevel };
+  }
+}
+
+function routerStepDelta(
+  message: Extract<AgentMessage, { role: "assistant" }>,
+): string | undefined {
+  const text = message.content
+    .filter(
+      (block): block is Extract<(typeof message.content)[number], { type: "text" }> =>
+        block.type === "text",
+    )
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+  const tools = message.content
+    .filter((block) => block.type === "toolCall")
+    .map((block) => block.name);
+  const parts = [
+    text ? text.slice(-500) : undefined,
+    tools.length > 0 ? `Tools: ${tools.join(", ")}` : undefined,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join("\n") : undefined;
 }
 
 function sleep(ms: number): Promise<void> {
