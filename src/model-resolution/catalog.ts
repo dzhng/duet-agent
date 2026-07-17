@@ -173,6 +173,37 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     },
   },
   {
+    shorthand: "gpt-5.6-sol",
+    aliases: ["openai/gpt-5.6-sol", "openai/gpt-5-6-sol"],
+    modelsByProvider: {
+      "duet-gateway": "openai/gpt-5.6-sol",
+      "vercel-ai-gateway": "openai/gpt-5.6-sol",
+      openrouter: "openai/gpt-5.6-sol",
+    },
+    maxOutputTokens: 128000,
+  },
+  {
+    shorthand: "gpt-5.6-terra",
+    aliases: ["openai/gpt-5.6-terra", "openai/gpt-5-6-terra"],
+    modelsByProvider: {
+      "duet-gateway": "openai/gpt-5.6-terra",
+      "vercel-ai-gateway": "openai/gpt-5.6-terra",
+      openrouter: "openai/gpt-5.6-terra",
+    },
+    maxOutputTokens: 128000,
+  },
+  {
+    shorthand: "kimi-k3",
+    aliases: ["moonshotai/kimi-k3"],
+    modelsByProvider: {
+      "duet-gateway": "moonshotai/kimi-k3",
+      "vercel-ai-gateway": "moonshotai/kimi-k3",
+      openrouter: "moonshotai/kimi-k3",
+    },
+    // Moonshot's provider route advertises a 131k maximum completion.
+    maxOutputTokens: 131072,
+  },
+  {
     // xAI's Grok 4.3 is routed through the duet/vercel gateways under the
     // `xai/grok-4.3` model id. We do not currently configure a direct xAI
     // provider, so the gateway entries are the only routes.

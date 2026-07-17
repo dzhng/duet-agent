@@ -5,6 +5,30 @@ const OPENAI_MODEL_PREFIX = "openai/";
 const VERCEL_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
 
+type ModelCloneOverrides = Partial<
+  Pick<Model<any>, "input" | "contextWindow" | "maxTokens" | "thinkingLevelMap" | "compat">
+>;
+
+const GPT_5_6_GATEWAY_CAPABILITIES = {
+  input: ["text", "image"],
+  contextWindow: 1_050_000,
+  maxTokens: 128_000,
+} satisfies ModelCloneOverrides;
+
+const OPENAI_GATEWAY_MODEL_OVERRIDES: Record<string, ModelCloneOverrides> = {
+  "openai/gpt-5.6-sol": GPT_5_6_GATEWAY_CAPABILITIES,
+  "openai/gpt-5.6-terra": GPT_5_6_GATEWAY_CAPABILITIES,
+};
+
+const KIMI_K3_CAPABILITIES = {
+  input: ["text", "image"],
+  contextWindow: 1_000_000,
+  maxTokens: 131_072,
+  // K3 currently exposes one reasoning setting. Mapping app-level `high` to
+  // `max` keeps the selection honest on both supported transports.
+  thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: "max", xhigh: null },
+} satisfies ModelCloneOverrides;
+
 /**
  * The Duet gateway proxies Vercel's AI Gateway path layout and authenticates
  * with a `DUET_API_KEY` token scoped to a single org. Rather than ship a
@@ -67,11 +91,7 @@ export function resolveDuetGatewayModel(modelId: string): Model<any> {
  */
 function resolveDuetGatewayUpstream(modelId: string): Model<any> {
   if (modelId.startsWith(OPENAI_MODEL_PREFIX)) {
-    const slug = modelId.slice(OPENAI_MODEL_PREFIX.length);
-    return (
-      (getModel("openai" as any, slug as any) as Model<any> | undefined) ??
-      synthesizePassthroughModel(modelId, "openai-responses")
-    );
+    return resolveOpenAIResponsesModel(modelId);
   }
   return (
     (getModel("vercel-ai-gateway" as any, modelId as any) as Model<any> | undefined) ??
@@ -108,37 +128,62 @@ function synthesizePassthroughModel(
 }
 
 /**
- * Opus 4.8 siblings cloned to synthesize models pi-ai's gateway catalog has not
- * shipped yet. Each `to` reuses Opus 4.8's anthropic-messages transport, 1M
- * context window, and 128k output cap unchanged, so swapping the id yields a
- * correct spec — and a better one than the generic synthesized placeholder,
- * which would cap context at 256k and output at 64k. The `duet-gateway` route
- * resolves through the `vercel-ai-gateway` catalog, so these entries cover it
- * too. `to` scopes each clone to one id so other catalog-missing ids are not
- * rewritten. Drop an entry the moment pi-ai ships that model to the gateway.
+ * Known sibling specs cloned for models pi-ai's catalog has not shipped yet.
+ * The `duet-gateway` route resolves through the `vercel-ai-gateway` catalog, so
+ * those entries cover it too. Per-model overrides replace sibling metadata
+ * only where the new model's published contract differs. Drop an entry the
+ * moment pi-ai ships that provider/model pair.
  */
-const GATEWAY_CLONE_SOURCES: Record<string, ReadonlyArray<{ from: string; to: string }>> = {
+const MISSING_MODEL_CLONES: Record<
+  string,
+  ReadonlyArray<{
+    from: string;
+    to: string;
+    overrides?: ModelCloneOverrides;
+  }>
+> = {
   "vercel-ai-gateway": [
     { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-fable-5" },
     { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-sonnet-5" },
+    {
+      from: "moonshotai/kimi-k2.6",
+      to: "moonshotai/kimi-k3",
+      overrides: {
+        ...KIMI_K3_CAPABILITIES,
+        compat: { forceAdaptiveThinking: true },
+      },
+    },
+  ],
+  openrouter: [
+    {
+      from: "moonshotai/kimi-k2.6",
+      to: "moonshotai/kimi-k3",
+      overrides: KIMI_K3_CAPABILITIES,
+    },
+    { from: "openai/gpt-5.5", to: "openai/gpt-5.6-sol" },
+    { from: "openai/gpt-5.5", to: "openai/gpt-5.6-terra" },
   ],
 };
 
 /**
  * Clone a known sibling on the same provider to build a Model pi-ai has not
  * shipped yet; returns undefined when the provider/modelId pair is not a
- * pending clone. Shared by the `duet-gateway` path (above) and the
- * `vercel-ai-gateway` path in resolver.ts. Delete a clone entry once pi-ai
- * ships that model to the gateway catalog and it resolves directly.
+ * pending clone. Shared by the `duet-gateway` path (above) and direct
+ * `vercel-ai-gateway`/`openrouter` resolution in resolver.ts. Delete a clone
+ * entry once pi-ai ships that provider/model pair and it resolves directly.
  */
 export function resolveMissingModel(provider: string, modelId: string): Model<any> | undefined {
   if (provider === "vercel-ai-gateway" && modelId.startsWith(OPENAI_MODEL_PREFIX)) {
     return resolveVercelGatewayOpenAIModel(modelId);
   }
-  const clone = GATEWAY_CLONE_SOURCES[provider]?.find((entry) => entry.to === modelId);
+  const clone = MISSING_MODEL_CLONES[provider]?.find((entry) => entry.to === modelId);
   if (!clone) return undefined;
   const sibling = getModel(provider as any, clone.from as any) as Model<any> | undefined;
-  return sibling ? { ...sibling, id: modelId, name: modelId } : undefined;
+  if (!sibling) return undefined;
+  const compat = clone.overrides?.compat
+    ? { ...sibling.compat, ...clone.overrides.compat }
+    : sibling.compat;
+  return { ...sibling, ...clone.overrides, compat, id: modelId, name: modelId };
 }
 
 /**
@@ -154,10 +199,7 @@ export function resolveMissingModel(provider: string, modelId: string): Model<an
  * `vercel-ai-gateway`, so `AI_GATEWAY_API_KEY` still applies.
  */
 function resolveVercelGatewayOpenAIModel(modelId: string): Model<any> {
-  const slug = modelId.slice(OPENAI_MODEL_PREFIX.length);
-  const upstream =
-    (getModel("openai" as any, slug as any) as Model<any> | undefined) ??
-    synthesizePassthroughModel(modelId, "openai-responses");
+  const upstream = resolveOpenAIResponsesModel(modelId);
   return {
     ...upstream,
     provider: "vercel-ai-gateway",
@@ -165,6 +207,14 @@ function resolveVercelGatewayOpenAIModel(modelId: string): Model<any> {
     name: modelId,
     baseUrl: `${VERCEL_GATEWAY_BASE_URL}/v1`,
   };
+}
+
+function resolveOpenAIResponsesModel(modelId: string): Model<any> {
+  const slug = modelId.slice(OPENAI_MODEL_PREFIX.length);
+  const upstream =
+    (getModel("openai" as any, slug as any) as Model<any> | undefined) ??
+    synthesizePassthroughModel(modelId, "openai-responses");
+  return { ...upstream, ...OPENAI_GATEWAY_MODEL_OVERRIDES[modelId] };
 }
 
 function getDuetGatewayBaseUrlForModel(model: Model<any>): string {
