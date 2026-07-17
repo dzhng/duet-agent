@@ -1,0 +1,201 @@
+[
+  {
+    "id": "visual-css-transition",
+    "prompt": "the sidebar flickers when I toggle dark mode, fix the css transition",
+    "tier": "frontier",
+    "expectedRoute": "visual",
+    "note": "Required slice-03 review golden: frontend/CSS fixes are visual work."
+  },
+  {
+    "id": "visual-landing-page",
+    "prompt": "Build a polished responsive landing page for the new analytics product with a strong visual hierarchy.",
+    "tier": "frontier",
+    "expectedRoute": "visual"
+  },
+  {
+    "id": "visual-screenshot-spacing",
+    "prompt": "Inspect the attached screenshot and fix the modal spacing and typography so the implementation matches it.",
+    "tier": "frontier",
+    "hasImages": true,
+    "expectedRoute": "visual"
+  },
+  {
+    "id": "visual-webgl-shader",
+    "prompt": "Implement a WebGL water shader with convincing reflections and tune the rendered look.",
+    "tier": "balanced",
+    "expectedRoute": "visual"
+  },
+  {
+    "id": "visual-image-critique",
+    "prompt": "Look at this dashboard screenshot and explain why its color balance and visual hierarchy feel wrong.",
+    "tier": "balanced",
+    "hasImages": true,
+    "expectedRoute": "visual"
+  },
+  {
+    "id": "plan-service-migration",
+    "prompt": "Create a phased migration plan for splitting a monolith into services, including risks and rollback checkpoints.",
+    "tier": "frontier",
+    "expectedRoute": "plan"
+  },
+  {
+    "id": "plan-auth-architecture",
+    "prompt": "Design the architecture for multi-tenant authorization and compare the tradeoffs of RBAC and relationship-based access control.",
+    "tier": "frontier",
+    "expectedRoute": "plan"
+  },
+  {
+    "id": "plan-incident-investigation",
+    "prompt": "Investigate the evidence for our intermittent checkout failures and produce a ranked root-cause analysis before anyone changes code.",
+    "tier": "balanced",
+    "expectedRoute": "plan"
+  },
+  {
+    "id": "plan-release-rollout",
+    "prompt": "Plan a zero-downtime rollout of the new event schema, with observability, abort criteria, and rollback steps.",
+    "tier": "economy",
+    "expectedRoute": "plan"
+  },
+  {
+    "id": "implement-api-retries",
+    "prompt": "Implement the missing retry logic in the TypeScript API client and add regression tests.",
+    "tier": "frontier",
+    "expectedRoute": "implement"
+  },
+  {
+    "id": "implement-database-backfill",
+    "prompt": "Write the database backfill, make it idempotent, and add tests for partial failures.",
+    "tier": "balanced",
+    "expectedRoute": "implement"
+  },
+  {
+    "id": "implement-cli-parser",
+    "prompt": "Add a --json flag to the CLI parser and wire it through the command handler with unit tests.",
+    "tier": "frontier",
+    "expectedRoute": "implement"
+  },
+  {
+    "id": "implement-worker-deadlock",
+    "prompt": "Debug the queue worker deadlock and patch the locking logic without changing the public API.",
+    "tier": "balanced",
+    "expectedRoute": "implement"
+  },
+  {
+    "id": "implement-economy-webhook",
+    "prompt": "Implement webhook signature verification in the backend and cover malformed payloads.",
+    "tier": "economy",
+    "expectedRoute": "implement"
+  },
+  {
+    "id": "writing-mystery-opening",
+    "prompt": "Write a vivid opening scene for a mystery novel set on an overnight train.",
+    "tier": "frontier",
+    "expectedRoute": "writing"
+  },
+  {
+    "id": "writing-dialogue",
+    "prompt": "Rewrite this exchange as tense, understated dialogue between two old friends hiding a secret.",
+    "tier": "balanced",
+    "expectedRoute": "writing"
+  },
+  {
+    "id": "writing-brand-story",
+    "prompt": "Draft a playful brand story for a tiny coffee roaster, with warmth and a distinctive narrative voice.",
+    "tier": "frontier",
+    "expectedRoute": "writing"
+  },
+  {
+    "id": "general-blue-sky",
+    "prompt": "Explain why the sky appears blue in simple terms.",
+    "tier": "frontier",
+    "expectedRoute": "general"
+  },
+  {
+    "id": "general-probability",
+    "prompt": "What is the difference between independent and mutually exclusive events? Give a short example.",
+    "tier": "balanced",
+    "expectedRoute": "general"
+  },
+  {
+    "id": "general-economy-writing",
+    "prompt": "Write a friendly two-sentence thank-you note to a neighbor who watered my plants.",
+    "tier": "economy",
+    "expectedRoute": "general",
+    "note": "Economy deliberately has no writing route, so writing falls through to general."
+  },
+  {
+    "id": "general-ambiguous",
+    "prompt": "Take a look at this and tell me what you think.",
+    "tier": "economy",
+    "expectedRoute": "general"
+  },
+  {
+    "id": "economy-visual-settings",
+    "prompt": "Implement the responsive settings panel so it matches the attached design screenshot.",
+    "tier": "economy",
+    "hasImages": true,
+    "expectedRoute": "implement-visual"
+  },
+  {
+    "id": "economy-visual-error-image",
+    "prompt": "Read the error message in the attached screenshot and tell me what it means.",
+    "tier": "economy",
+    "hasImages": true,
+    "expectedRoute": "implement-visual"
+  },
+  {
+    "id": "economy-visual-chart",
+    "prompt": "Use the attached chart image to implement the same axes, legend, colors, and responsive layout.",
+    "tier": "economy",
+    "hasImages": true,
+    "expectedRoute": "implement-visual"
+  },
+  {
+    "id": "continuity-visual-same-task",
+    "prompt": "The toggle is fixed; now soften the hover state and keep the same dark-mode treatment.",
+    "tier": "frontier",
+    "expectedRoute": "visual",
+    "currentTarget": "kimi-k3 because route visual",
+    "assistantSummaryHint": "We are implementing and visually tuning the sidebar dark-mode interaction; the CSS toggle flicker was just fixed.",
+    "toolNamesHint": "Last tools: view_image, apply_patch, exec_command.",
+    "pair": "current-visual",
+    "core": true,
+    "note": "Continuity half: lexical change, same visual task, preserve visual route."
+  },
+  {
+    "id": "transition-visual-to-backend",
+    "prompt": "The sidebar is done. Switch tasks and implement idempotency keys in the payments API with regression tests.",
+    "tier": "frontier",
+    "expectedRoute": "implement",
+    "currentTarget": "kimi-k3 because route visual",
+    "assistantSummaryHint": "The sidebar visual work is complete; the user is moving to an unrelated payments backend task.",
+    "toolNamesHint": "Last tools: view_image, apply_patch, exec_command.",
+    "pair": "current-visual",
+    "core": true,
+    "note": "Transition half: genuine visual-to-backend task change must switch."
+  },
+  {
+    "id": "continuity-implement-same-task",
+    "prompt": "That covers retries; add the circuit-breaker state transitions to the same client and extend the tests.",
+    "tier": "balanced",
+    "expectedRoute": "implement",
+    "currentTarget": "gpt-5.6-terra because route implement",
+    "assistantSummaryHint": "We are implementing resilience in the TypeScript API client; retry handling and its tests are complete.",
+    "toolNamesHint": "Last tools: rg, apply_patch, exec_command.",
+    "pair": "current-implement",
+    "core": true,
+    "note": "Continuity half: same backend task should preserve implement route."
+  },
+  {
+    "id": "transition-implement-to-visual",
+    "prompt": "The API client is done. Now fix the mobile navigation layout and polish its spacing and animations.",
+    "tier": "balanced",
+    "expectedRoute": "visual",
+    "currentTarget": "gpt-5.6-terra because route implement",
+    "assistantSummaryHint": "The API client implementation is complete; the user is moving to mobile navigation UI polish.",
+    "toolNamesHint": "Last tools: rg, apply_patch, exec_command.",
+    "pair": "current-implement",
+    "core": true,
+    "note": "Transition half: genuine backend-to-visual task change must switch."
+  }
+]

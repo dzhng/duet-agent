@@ -67,3 +67,63 @@ Slice 03.
   Tuning should start by restoring the map's fuller wording per route, then measure.
 - Probe latency observed at ~1.4s on vercel-ai-gateway (single sample) — above the ~1s p50
   target; measure properly before freezing the ceiling.
+
+## Scorecard
+
+Recorded 2026-07-18 against `gpt-5.6-luna` at low reasoning effort through
+`vercel-ai-gateway` (`DUET_API_KEY=''`, `AI_GATEWAY_API_KEY` selected). The frozen corpus has 28
+cases. No fixture labels changed during tuning.
+
+### Tuning provenance
+
+1. Restored the map's richer descriptions before changing the classifier prompt. In particular,
+   `visual` again explicitly owns frontend, UI, CSS/styling, 3D, graphics, image inspection, and
+   visual-fidelity work; `implement` explicitly owns non-visual backend/systems/data/CLI work. The
+   economy descriptions make the text-only versus image-dependent implementation boundary explicit.
+2. With those descriptions and prompt `model-router-classifier-v1`, the first 28-case trial scored
+   27/28 (96.4%). Every family was 100% except `implement-visual` at 2/3 (66.7%): the economy
+   screenshot-explanation case chose `general` because the classifier knew an image-capable model
+   was required but was not told which route supplied one. Latency measured p50 1313 ms / p95
+   1582 ms (15,113 tokens).
+3. Froze the p50 ceiling at **1600 ms** before final prompt tuning. This gives about 22% headroom
+   over the measured 1313 ms p50 and agrees with slice 03's 1234–1848 ms Vercel samples. The
+   aspirational ~1s target was not an honest ceiling for the observed provider path.
+4. Compared the two previous-turn hint shapes over the four required continuity/transition cases,
+   three trials each. Both were 12/12 (100%). The **last-assistant-summary style wins** the tie: it
+   retains semantic task state and measured p50/p95 1334/1541 ms, versus 1363/3935 ms for the
+   last-N-tool-names style (7,104 versus 7,015 tokens). The scorecard fixtures therefore feed the
+   summary-style hint by default.
+5. Prompt `model-router-classifier-v2` names the tier's image-safe route in the rendered rules and
+   directs image-bearing requests to it. The formerly failing economy screenshot case then passed
+   3/3. This is prompt-only capability disclosure; resolution and schema behavior did not change.
+
+### Final three-trial result
+
+| Metric                     | Result                                        |
+| -------------------------- | --------------------------------------------- |
+| Overall exact-route        | **84/84 (100%)**                              |
+| `visual`                   | **100%**                                      |
+| `plan`                     | **100%**                                      |
+| `implement`                | **100%**                                      |
+| `writing`                  | **100%**                                      |
+| `general`                  | **100%**                                      |
+| `implement-visual`         | **100%**                                      |
+| Core continuity/transition | **12/12 (100%)**                              |
+| Hard invariants            | **100%** (real route names; image-safe route) |
+| Latency                    | **p50 1332 ms / p95 2952 ms**                 |
+| Classifier input           | **567 tokens max / 1000-token ceiling**       |
+| Prompt                     | `model-router-classifier-v2`                  |
+| Acceptance-run tokens      | **47,025**                                    |
+
+The required prompt, “the sidebar flickers when I toggle dark mode, fix the css transition,”
+selected `visual` in all three final trials.
+
+### Falsification
+
+After the green run, swapping the frontier/balanced `visual` and `implement` descriptions made the
+one-trial suite fail: overall accuracy fell to **16/28 (57.1%)**, and both affected families fell to
+**1/7 (14.3%)**. The CSS-transition case changed to `implement`, image safety failed, and every core
+continuity/transition case failed. Restoring the descriptions restored the accepted configuration.
+
+Total live tuning and falsification spend recorded by provider usage callbacks: **93,505 tokens**.
+The provider catalog reported zero dollar cost for Luna, so tokens are the durable spend estimate.
