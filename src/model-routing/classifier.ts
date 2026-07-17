@@ -2,7 +2,11 @@ import type { Usage } from "@earendil-works/pi-ai";
 import dedent from "dedent";
 import { Type } from "typebox";
 import * as structuredOutput from "../core/structured-output.js";
-import { CLASSIFIER_SYSTEM_PROMPT, renderClassifierRules } from "./prompts.js";
+import {
+  CLASSIFIER_SYSTEM_PROMPT,
+  renderCacheContinuity,
+  renderClassifierRules,
+} from "./prompts.js";
 import type { TierDefinition } from "./table.js";
 
 const CONTEXT_HINT_LIMIT = 1_000;
@@ -83,13 +87,7 @@ function boundedHint(value: string | undefined): string {
 
 /** Build the complete lean classifier request without reading runtime state. */
 export function buildClassifierMessages(input: ClassifierInput): ClassifierMessages {
-  const continuity = input.currentTarget
-    ? dedent`
-        You are currently on ${input.currentTarget}.
-        CACHE CONTINUITY: Switching away discards the current model's prompt cache. Prefer this
-        target unless the kind of work has clearly changed.
-      `
-    : "CURRENT TARGET: None (there is no prompt cache to preserve).";
+  const continuity = renderCacheContinuity(input.currentTarget);
 
   return {
     systemPrompt: CLASSIFIER_SYSTEM_PROMPT,

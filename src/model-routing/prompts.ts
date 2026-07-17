@@ -52,6 +52,17 @@ export function renderRerouteNudge(switched: RouterSwitch): string {
 }
 
 /** Render every route in one tier for a single all-entries classifier decision. */
+/** Continuity framing for the classifier: cache preference when a target is active. */
+export function renderCacheContinuity(currentTarget: string | undefined): string {
+  return currentTarget
+    ? dedent`
+        You are currently on ${currentTarget}.
+        CACHE CONTINUITY: Switching away discards the current model's prompt cache. Prefer this
+        target unless the kind of work has clearly changed.
+      `
+    : "CURRENT TARGET: None (there is no prompt cache to preserve).";
+}
+
 export function renderClassifierRules(
   tierName: string,
   tier: TierDefinition,

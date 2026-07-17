@@ -2,10 +2,9 @@
 
 The completed four-quadrant map from the explore-unknowns walk (2026-07-17/18).
 
-> **Superseded for implementation by [`README.md`](./README.md) + [`slices/`](./slices/)** (the
-> write-spec plan, 2026-07-18). The decision ledger and landmine cards below remain authoritative
-> as constraints; the "Tweakable plan" section at the bottom and the builder-confirm list are
-> superseded — start from the README's Next Agent Prompt, not from here.
+> **The feature shipped 2026-07-18.** This map is preserved as the planning record — the
+> decision ledger and landmine cards document how the design was fixed before building. For the
+> shipped rationale, invariants, and code pointers, read [`README.md`](./README.md).
 
 ---
 
