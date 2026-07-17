@@ -1720,7 +1720,7 @@ function truncateForObserver(text: string, max: number): string {
  * built separately. This projection is observer-only, which is why
  * truncation and tagging are safe here.
  */
-function serializeMessageForObserver(message: AgentMessage): ObserverMessagePreview {
+export function serializeMessageForObserver(message: AgentMessage): ObserverMessagePreview {
   const isToolResult = message.role === "toolResult";
   const maybeContent = (message as { content?: unknown }).content;
 
