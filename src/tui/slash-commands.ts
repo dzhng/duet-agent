@@ -35,20 +35,18 @@ export interface SlashCommandContext {
   onClear?(): void;
   /**
    * Invoked by `/model <name>` to swap the model used for subsequent
-   * turns. Returns the canonicalized name the session will use on the
-   * next prompt, or throws if validation fails (unknown shorthand /
-   * missing provider credentials). The change is queued: the current
-   * in-flight turn keeps the model it started with.
+   * turns. The result distinguishes routed tiers from concrete pins so
+   * confirmation text can describe the actual behavior. The current in-flight
+   * turn keeps the model it started with.
    */
-  setModel(model: string): { modelName: string };
+  setModel(model: string): { modelName: string; routed?: boolean };
   /**
    * Invoked by `/thinking <level>` to swap the thinking level used for
-   * subsequent turns. Returns the normalized level, or throws if the
-   * value is not one of minimal / low / medium / high / xhigh. The
-   * change is queued: the current in-flight turn keeps the level it
-   * started with.
+   * subsequent turns. Routed sessions return `routedBy` and do not mutate
+   * effort because the route owns it; concrete sessions return the normalized
+   * level. Unknown levels throw in either mode.
    */
-  setThinkingLevel(level: string): { thinkingLevel: string };
+  setThinkingLevel(level: string): { thinkingLevel?: string; routedBy?: string };
   /**
    * Invoked by `/compact` to ask the runner to compact its in-memory
    * `TurnState`. The runner targets 20% of the effective context window;
@@ -182,8 +180,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
   },
   {
     name: "model",
-    description:
-      "Switch the model for the next turn (does not affect the current turn): /model <name>",
+    description: "Route via frontier|balanced|economy, or pin a concrete model: /model <name>",
     matches: (message) => isInvocation(message, "model"),
     handle: handleModelSlashCommand,
     inline: "token",
@@ -419,10 +416,12 @@ function handleThinkingSlashCommand(raw: string, ctx: SlashCommandContext): void
     return;
   }
   try {
-    const { thinkingLevel } = ctx.setThinkingLevel(argument);
+    const { thinkingLevel, routedBy } = ctx.setThinkingLevel(argument);
     ctx.appendBlock(
       "[thinking]",
-      `next turn will think at ${thinkingLevel}. The current turn (if any) keeps its level.`,
+      routedBy
+        ? `route effort owns thinking while routing via ${routedBy}; no thinking override was changed.`
+        : `next turn will think at ${thinkingLevel}. The current turn (if any) keeps its level.`,
       COLORS.system,
     );
   } catch (error) {
@@ -435,26 +434,26 @@ function handleThinkingSlashCommand(raw: string, ctx: SlashCommandContext): void
 }
 
 /**
- * `/model <name>` validates the requested model against the same resolver
- * the CLI uses at boot, then mutates session config so the next prompt
- * picks it up. The handler intentionally does not interrupt or restart
- * an in-flight turn; the swap applies starting at the next user turn.
+ * `/model <name>` accepts routing tiers and concrete pins through the session
+ * selection seam. The handler does not interrupt an in-flight turn.
  */
 function handleModelSlashCommand(raw: string, ctx: SlashCommandContext): void {
   const argument = raw === "/model" ? "" : raw.slice("/model ".length).trim();
   if (!argument) {
     ctx.appendBlock(
       "[model]",
-      "Usage: /model <name>  — switch the model for the next turn (e.g. /model sonnet-4.6)",
+      "Usage: /model <name>  — route via frontier|balanced|economy, or pin a concrete model",
       COLORS.system,
     );
     return;
   }
   try {
-    const { modelName } = ctx.setModel(argument);
+    const { modelName, routed } = ctx.setModel(argument);
     ctx.appendBlock(
       "[model]",
-      `next turn will use ${modelName}. The current turn (if any) keeps its model.`,
+      routed
+        ? `next turn routes via ${modelName}. The current turn (if any) keeps its model.`
+        : `next turn is pinned to ${modelName}. The current turn (if any) keeps its model.`,
       COLORS.system,
     );
   } catch (error) {

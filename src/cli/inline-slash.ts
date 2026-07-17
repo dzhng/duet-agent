@@ -1,4 +1,5 @@
 import { resolveModelName } from "../model-resolution/resolver.js";
+import { BUILT_IN_ROUTING_TABLE, isVirtualModel } from "../model-routing/table.js";
 import { validateThinkingLevel } from "../session/thinking-level.js";
 import { applyInlineSlashCommands, type SlashCommandContext } from "../tui/slash-commands.js";
 import type { TurnRunnerConfig } from "../types/config.js";
@@ -38,14 +39,18 @@ export function applyInlineSlashCommandsToCliConfig(
     setModel: (model) => {
       // applyInlineSlashCommands's regex `(\S+)` guarantees the model
       // arg is non-empty non-whitespace, so we go straight to the
-      // resolver — which throws on unknown shorthand / missing
-      // credentials, matching the validation `--model` does at boot.
-      resolveModelName(model);
+      // routing table check or concrete resolver, matching `--model` boot
+      // validation without ever handing a virtual name to resolveModelName.
+      const routed = isVirtualModel(model, BUILT_IN_ROUTING_TABLE);
+      if (!routed) resolveModelName(model);
       config.model = model;
-      return { modelName: model };
+      return { modelName: model, routed };
     },
     setThinkingLevel: (level) => {
       const normalized = validateThinkingLevel(level);
+      if (config.model && isVirtualModel(config.model, BUILT_IN_ROUTING_TABLE)) {
+        return { routedBy: config.model };
+      }
       config.thinkingLevel = normalized;
       return { thinkingLevel: normalized };
     },

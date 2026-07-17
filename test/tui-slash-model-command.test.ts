@@ -60,6 +60,17 @@ describe("/model slash command", () => {
     expect(ctx.blocks[0]!.label).toBe("[model]");
     expect(ctx.blocks[0]!.body).toContain("sonnet-4.6");
     expect(ctx.blocks[0]!.body).toContain("next turn");
+    expect(ctx.blocks[0]!.body).toContain("pinned");
+  });
+
+  test("/model reports virtual tiers as routed", () => {
+    const ctx = makeContext({
+      setModel: (model) => ({ modelName: model, routed: true }),
+    });
+
+    tryDispatchSlashCommand("/model frontier", ctx);
+
+    expect(ctx.blocks[0]!.body).toContain("next turn routes via frontier");
   });
 
   test("/model with no argument prints usage and never calls setModel", () => {
@@ -119,6 +130,18 @@ describe("/thinking slash command", () => {
     expect(ctx.blocks[0]!.label).toBe("[thinking]");
     expect(ctx.blocks[0]!.body).toContain("high");
     expect(ctx.blocks[0]!.body).toContain("next turn");
+  });
+
+  test("/thinking reports route-owned effort without promising a state change", () => {
+    const ctx = makeContext({
+      setThinkingLevel: () => ({ routedBy: "frontier" }),
+    });
+
+    tryDispatchSlashCommand("/thinking high", ctx);
+
+    expect(ctx.blocks[0]!.body).toContain("route effort owns thinking");
+    expect(ctx.blocks[0]!.body).toContain("frontier");
+    expect(ctx.blocks[0]!.body).toContain("no thinking override was changed");
   });
 
   test("/thinking with no argument prints usage and never calls setThinkingLevel", () => {

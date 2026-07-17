@@ -13,12 +13,18 @@ import dedent from "dedent";
 import { assistantText } from "../core/serializer.js";
 import { classifyRoute } from "../model-routing/classifier.js";
 import { loadRoutingTable } from "../model-routing/loader.js";
+import { resolveTierDefault, type RouteResolutionCatalog } from "../model-routing/resolve.js";
 import {
   ModelRouter,
   type ModelRouterOptions,
   type RouterSwitch,
 } from "../model-routing/router.js";
-import { isVirtualModel } from "../model-routing/table.js";
+import {
+  BUILT_IN_ROUTING_TABLE,
+  isVirtualModel,
+  type RoutingCatalogAdapter,
+  type RoutingTable,
+} from "../model-routing/table.js";
 import { scheduledStateFallbackWakeAt } from "./duration.js";
 import { toXML } from "../lib/xml.js";
 import {
@@ -137,8 +143,10 @@ export interface AgentConfigInput {
   systemPrompt?: string;
   skills?: Skill[];
   tools: AgentTool[];
-  /** Parent-only virtual-model runtime; state agents omit it and keep their existing path. */
+  /** Parent boot router used to select the initial concrete model and effort. */
   router?: ModelRouter;
+  /** Installs the parent routing hook even when boot starts from a concrete selection. */
+  parentModelRouting?: boolean;
 }
 
 /**
@@ -271,8 +279,12 @@ export class TurnRunner {
    * transcript grows across every pi-agent turn in this duet-agent session.
    */
   private parentAgent?: Agent;
-  /** Virtual-model policy owner for the parent session; absent for concrete selections. */
+  /** Virtual-model policy owner for the parent session, retained while a concrete pin suspends it. */
   protected modelRouter?: ModelRouter;
+  /** Validated project routing table used by parent retargets and explicit virtual state models. */
+  private routingTable?: RoutingTable;
+  /** Model selection queued while a parent turn is running; applied at the next turn boundary. */
+  private pendingModelSelection?: string;
   /** Image capability fact carried from the active parent prompt into intra-turn prepares. */
   private parentPromptHasImages = false;
   /** True only while the parent pi agent is actively producing the public terminal event. */
@@ -1235,6 +1247,14 @@ export class TurnRunner {
     // wrong if the agent ever appended into the seed array in place, so snapshot
     // the count once.
     const seedMessageCount = seedMessages.length;
+    const stateRoute = this.resolveStateModel(input.state.model);
+    const inheritedOptions = this.resolveStateAgentInheritedOptions();
+    const stateModelOptions: TurnOptions = stateRoute
+      ? { model: stateRoute.modelName, thinkingLevel: stateRoute.thinkingLevel }
+      : {
+          ...(input.state.model ? { model: input.state.model } : {}),
+          ...(input.state.thinkingLevel ? { thinkingLevel: input.state.thinkingLevel } : {}),
+        };
     const state: TurnState = {
       status: "running",
       mode: "agent",
@@ -1242,9 +1262,8 @@ export class TurnRunner {
       // inherited parent options; see StateMachineAgentState for why these are
       // UI-set rather than model-chosen.
       options: {
-        ...this.requireRunnerState().options,
-        ...(input.state.model ? { model: input.state.model } : {}),
-        ...(input.state.thinkingLevel ? { thinkingLevel: input.state.thinkingLevel } : {}),
+        ...inheritedOptions,
+        ...stateModelOptions,
       },
       agent: {
         status: "running",
@@ -1550,6 +1569,7 @@ export class TurnRunner {
       {
         state,
         appendSystemPrompt,
+        parentModelRouting: true,
         ...(this.modelRouter ? { router: this.modelRouter } : {}),
         ...this.createTools(state.mode),
       },
@@ -1712,6 +1732,7 @@ export class TurnRunner {
     }
 
     const agent = this.requireParentAgent();
+    this.applyPendingModelSelection(agent);
     this.parentControlResult = { type: "none" };
     this.setParentAgentRunning(true);
 
@@ -2061,10 +2082,10 @@ export class TurnRunner {
         tools: input.tools,
       },
       transformContext: this.createMemoryTransform(),
-      ...(input.router
+      ...(input.parentModelRouting
         ? {
             prepareNextTurn: async (signal?: AbortSignal) => {
-              const switched = await input.router?.prepareTurn({
+              const switched = await this.modelRouter?.prepareTurn({
                 hasImages: this.parentPromptHasImages,
                 signal,
               });
@@ -2451,9 +2472,10 @@ export class TurnRunner {
     return modelWindow !== undefined ? Math.min(userValue, modelWindow) : userValue;
   }
 
-  /** Build the parent router only when the persisted session selection is virtual. */
+  /** Load the project table and build the parent router when the persisted selection is virtual. */
   private async initializeModelRouter(modelName: string | undefined): Promise<void> {
     this.modelRouter = undefined;
+    this.routingTable = undefined;
     if (!modelName || isKnownShorthand(modelName)) return;
     try {
       resolveModelName(modelName);
@@ -2461,28 +2483,98 @@ export class TurnRunner {
     } catch {
       // A name outside the concrete catalog may be owned by the project routing table.
     }
-
-    const catalogAdapter = {
-      isCatalogName: isKnownShorthand,
-      modelAcceptsImages: (name: string) => resolveModelName(name).input.includes("image"),
-    };
+    const catalogAdapter = this.routingCatalogAdapter();
     const loaded = await loadRoutingTable({
       cwd: this.config.cwd ?? process.cwd(),
       catalogAdapter,
     });
-    if (!isVirtualModel(modelName, loaded.table)) return;
-    this.modelRouter = this.createModelRouter({
-      table: loaded.table,
-      tier: modelName,
+    this.routingTable = loaded.table;
+    if (!modelName || !isVirtualModel(modelName, loaded.table)) return;
+    this.modelRouter = this.createBoundModelRouter(modelName, loaded.table, catalogAdapter);
+  }
+
+  private createBoundModelRouter(
+    tier: string,
+    table: RoutingTable,
+    resolveCatalog: RouteResolutionCatalog,
+  ): ModelRouter {
+    return this.createModelRouter({
+      table,
+      tier,
       classify: async (input, signal) => {
-        const classifierModel = resolveModelName(loaded.table.classifier.target.modelName);
+        const classifierModel = resolveModelName(table.classifier.target.modelName);
         return classifyRoute(input, {
           model: `${classifierModel.provider}:${classifierModel.id}`,
           signal,
         });
       },
-      resolveCatalog: catalogAdapter,
+      resolveCatalog,
     });
+  }
+
+  /** True when a model name is owned by the validated project table. */
+  isVirtualModelSelection(modelName: string): boolean {
+    return isVirtualModel(modelName, this.routingTable ?? BUILT_IN_ROUTING_TABLE);
+  }
+
+  /**
+   * Retarget subsequent parent turns while preserving the current in-flight turn.
+   * Concrete selections pin routing; virtual selections rebuild it so the next
+   * turn classifies from a fresh tier-local baseline.
+   */
+  setModel(modelName: string): { routed: boolean } {
+    const routed = this.isVirtualModelSelection(modelName);
+    if (!routed) resolveModelName(modelName);
+    const state = this.requireRunnerState();
+    state.options = { ...state.options, model: modelName };
+    this.pendingModelSelection = modelName;
+    if (!this.parentAgentRunning) this.applyPendingModelSelection(this.requireParentAgent());
+    return { routed };
+  }
+
+  private applyPendingModelSelection(agent: Agent): void {
+    const selection = this.pendingModelSelection;
+    if (!selection) return;
+    this.pendingModelSelection = undefined;
+    if (!this.isVirtualModelSelection(selection)) {
+      this.modelRouter?.pin();
+      agent.state.model = resolveModelName(selection);
+      return;
+    }
+
+    const table = this.routingTable ?? BUILT_IN_ROUTING_TABLE;
+    const catalogAdapter = this.routingCatalogAdapter();
+    this.modelRouter?.unpin();
+    this.modelRouter = this.createBoundModelRouter(selection, table, catalogAdapter);
+    const initial = this.modelRouter.initialTarget({ hasImages: false });
+    agent.state.model = resolveModelName(initial.modelName);
+    agent.state.thinkingLevel = initial.thinkingLevel;
+  }
+
+  /** Explicit virtual state models take the tier's default route without classifier latency. */
+  private resolveStateModel(modelName: string | undefined) {
+    if (!modelName || !this.isVirtualModelSelection(modelName)) return undefined;
+    const table = this.routingTable ?? BUILT_IN_ROUTING_TABLE;
+    return resolveTierDefault(table, modelName, { hasImages: false }, this.routingCatalogAdapter());
+  }
+
+  /** Omitted state models inherit the parent's active concrete target, not its virtual selection. */
+  private resolveStateAgentInheritedOptions(): TurnOptions {
+    const options = { ...this.requireRunnerState().options };
+    if (!options.model || !this.isVirtualModelSelection(options.model)) return options;
+    const parent = this.requireParentAgent().state;
+    return {
+      ...options,
+      model: `${parent.model.provider}:${parent.model.id}`,
+      ...(parent.thinkingLevel === "off" ? {} : { thinkingLevel: parent.thinkingLevel }),
+    };
+  }
+
+  private routingCatalogAdapter(): RoutingCatalogAdapter {
+    return {
+      isCatalogName: isKnownShorthand,
+      modelAcceptsImages: (name: string) => resolveModelName(name).input.includes("image"),
+    };
   }
 
   /** Composition seam used by production binding and deterministic runner tests. */

@@ -1,12 +1,13 @@
 import { findEnvKeys, getModel, type Model } from "@earendil-works/pi-ai";
 
+import { DEFAULT_MODEL_SELECTION } from "../model-routing/default-selection.js";
+import { BUILT_IN_ROUTING_TABLE, isVirtualModel } from "../model-routing/table.js";
 import { resolveDuetGatewayModel, resolveMissingModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
   canonicalizeProviderModelId,
   clampModelOutputTokens,
   DEFAULT_CLI_MEMORY_MODEL,
-  DEFAULT_CLI_MODEL,
   getModelCandidates,
   getProviderDefaultModel,
   getProviderMemoryModel,
@@ -36,6 +37,8 @@ export interface ModelResolution {
   envVar?: string;
   /** True when the env var was loaded from a CLI env file rather than the shell. */
   fromDotenv?: boolean;
+  /** True when the retained name is a virtual tier owned by model routing. */
+  routed?: boolean;
 }
 
 export function resolveModelName(model: string): Model<any> {
@@ -114,7 +117,12 @@ export function resolveCliModel(
   modelName: string | undefined,
   dotenvKeys: Set<string>,
 ): ModelResolution {
-  return resolveCliModelWith(modelName, getDefaultModelCandidates(), dotenvKeys, DEFAULT_CLI_MODEL);
+  return resolveCliModelWith(
+    modelName,
+    getDefaultModelCandidates(),
+    dotenvKeys,
+    DEFAULT_MODEL_SELECTION,
+  );
 }
 
 function resolveCliModelWith(
@@ -124,12 +132,18 @@ function resolveCliModelWith(
   defaultModel: string,
 ): ModelResolution {
   if (modelName) {
+    if (isVirtualModel(modelName, BUILT_IN_ROUTING_TABLE)) {
+      return { modelName, source: "explicit", routed: true };
+    }
     return {
       modelName: isProviderPinnedModelName(modelName)
         ? modelName
         : canonicalizeModelName(modelName),
       source: "explicit",
     };
+  }
+  if (isVirtualModel(defaultModel, BUILT_IN_ROUTING_TABLE)) {
+    return { modelName: defaultModel, source: "default", routed: true };
   }
   const inferred = findInferredProviderEntry(providerInference);
   if (inferred) {
@@ -184,10 +198,13 @@ function resolveModelReference(modelName: string): string {
 }
 
 export function describeModelResolution(resolution: ModelResolution): string {
-  if (resolution.source === "explicit") return "explicit CLI flag";
+  const routed = resolution.routed ? `${resolution.modelName} (routed) — ` : "";
+  if (resolution.source === "explicit") return `${routed}explicit CLI flag`;
   if (resolution.source === "inferred") {
     const where = resolution.fromDotenv ? "an env file" : "shell environment";
-    return `inferred from ${resolution.envVar} in ${where}`;
+    return `${routed}inferred from ${resolution.envVar} in ${where}`;
   }
-  return "built-in default (no provider env vars set)";
+  return resolution.routed
+    ? `${routed}built-in default`
+    : "built-in default (no provider env vars set)";
 }

@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "bun:test";
 import { Session } from "../src/session/session.js";
+import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { applyInlineSlashCommands } from "../src/tui/slash-commands.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
@@ -89,6 +90,46 @@ describe("Session model-switch persistence", () => {
   });
 
   testIfDocker(
+    "setModel accepts a virtual name from the loaded project routing table",
+    async () => {
+      const previousDuetApiKey = process.env.DUET_API_KEY;
+      process.env.DUET_API_KEY = "session-router-test-key";
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-model-set-virtual-"));
+      tempDirs.push(tempDir);
+      const sessionPath = join(tempDir, "set-virtual-session");
+      const configDir = join(tempDir, ".duet");
+      await mkdir(sessionPath, { recursive: true });
+      await mkdir(configDir, { recursive: true });
+      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      table.tiers.custom = structuredClone(table.tiers.economy!);
+      await writeFile(join(configDir, "models.json"), JSON.stringify(table));
+
+      try {
+        const session = new Session(
+          {
+            model: "frontier",
+            cwd: tempDir,
+            memoryDbPath: false,
+            skillDiscovery: { includeDefaults: false },
+          },
+          { id: "set-virtual-session", sessionPath },
+        );
+        await session.start();
+
+        expect(session.setModel("custom")).toEqual({ modelName: "custom", routed: true });
+        expect(session.config.model).toBe("custom");
+        await session.dispose();
+
+        const stored = JSON.parse(await readFile(join(sessionPath, "state.json"), "utf-8"));
+        expect(stored.state.options.model).toBe("custom");
+      } finally {
+        if (previousDuetApiKey === undefined) delete process.env.DUET_API_KEY;
+        else process.env.DUET_API_KEY = previousDuetApiKey;
+      }
+    },
+  );
+
+  testIfDocker(
     "setThinkingLevel mutates config.thinkingLevel and is picked up on next start",
     async () => {
       const tempDir = await mkdtemp(join(tmpdir(), "duet-thinking-set-"));
@@ -135,6 +176,25 @@ describe("Session model-switch persistence", () => {
     );
 
     expect(() => session.setThinkingLevel("ultra")).toThrow();
+    expect(session.config.thinkingLevel).toBe("medium");
+  });
+
+  testIfDocker("setThinkingLevel leaves routed session effort unchanged", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-thinking-routed-"));
+    tempDirs.push(tempDir);
+    const sessionPath = join(tempDir, "thinking-routed-session");
+    await mkdir(sessionPath, { recursive: true });
+    const session = new Session(
+      {
+        model: "frontier",
+        thinkingLevel: "medium",
+        memoryDbPath: false,
+        skillDiscovery: { includeDefaults: false },
+      },
+      { id: "thinking-routed-session", sessionPath },
+    );
+
+    expect(session.setThinkingLevel("high")).toEqual({ routedBy: "frontier" });
     expect(session.config.thinkingLevel).toBe("medium");
   });
 

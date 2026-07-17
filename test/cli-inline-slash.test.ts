@@ -28,7 +28,9 @@ describe("applyInlineSlashCommandsToCliConfig", () => {
     );
 
     expect(config.model).toBe("anthropic:claude-sonnet-5-1");
-    expect(log.lines.join("")).toContain("[model] next turn will use anthropic:claude-sonnet-5-1");
+    expect(log.lines.join("")).toContain(
+      "[model] next turn is pinned to anthropic:claude-sonnet-5-1",
+    );
     expect(residue).toBe("hey can you review this");
   });
 
@@ -47,6 +49,21 @@ describe("applyInlineSlashCommandsToCliConfig", () => {
 
     expect(config.model).toBe("anthropic:claude-sonnet-5-1");
     expect(residue).toBe("");
+  });
+
+  test("inline /model accepts a virtual tier and reports routed selection", () => {
+    const config = makeConfig();
+    const log = makeLog();
+
+    const { residue } = applyInlineSlashCommandsToCliConfig(
+      "review this /model frontier",
+      config,
+      log.write,
+    );
+
+    expect(config.model).toBe("frontier");
+    expect(log.lines.join("")).toContain("[model] next turn routes via frontier");
+    expect(residue).toBe("review this");
   });
 
   test("whole-prompt /model X /thinking Y applies both swaps and still returns empty residue", () => {
@@ -77,6 +94,16 @@ describe("applyInlineSlashCommandsToCliConfig", () => {
     expect(config.thinkingLevel).toBe("high");
     expect(log.lines.join("")).toContain("[thinking] next turn will think at high");
     expect(residue).toBe("please and reply");
+  });
+
+  test("inline /thinking reports route-owned effort without changing routed config", () => {
+    const config = makeConfig({ model: "frontier", thinkingLevel: "medium" });
+    const log = makeLog();
+
+    applyInlineSlashCommandsToCliConfig("/thinking high", config, log.write);
+
+    expect(config.thinkingLevel).toBe("medium");
+    expect(log.lines.join("")).toContain("route effort owns thinking while routing via frontier");
   });
 
   test("inline /model with an unresolvable shorthand never mutates config and logs the resolver error", () => {

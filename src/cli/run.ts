@@ -267,7 +267,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     return status;
   });
 
-  const { config, modelResolution, memoryModelResolution } = buildCliTurnConfig(
+  const builtConfig = buildCliTurnConfig(
     {
       ...(modelName ? { modelName } : {}),
       ...(memoryModelName ? { memoryModelName } : {}),
@@ -279,6 +279,8 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     },
     dotenvKeys,
   );
+  const { config, memoryModelResolution } = builtConfig;
+  let { modelResolution } = builtConfig;
   modelName = modelResolution.modelName;
   memoryModelName = memoryModelResolution.modelName;
 
@@ -294,9 +296,11 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       process.stderr.write(line),
     );
     // Sync the cached display name so the boot summary lines reflect any
-    // inline override; the resolver source is unchanged because the
-    // inline form is logically equivalent to `--model`.
+    // inline override, including whether the retained selection is routed.
     modelName = config.model ?? modelName;
+    if (modelName !== modelResolution.modelName) {
+      modelResolution = resolveCliModel(modelName, dotenvKeys);
+    }
     // Dispatch the prompt with the slash forms stripped out. When the
     // whole prompt was just slash commands (e.g. `duet "/model X"`),
     // the residue is empty and we skip the agent turn entirely —

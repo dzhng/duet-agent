@@ -13,6 +13,7 @@ import {
 } from "../src/model-routing/router.js";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
+import type { StateMachineAgentState } from "../src/types/state-machine.js";
 import { waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 
@@ -35,6 +36,7 @@ interface PendingStream {
 class RouterTurnRunner extends TurnRunner {
   readonly pendingStreams: PendingStream[] = [];
   readonly requestModels: Model<any>[] = [];
+  readonly createdAgentOptions: Array<{ model?: string; thinkingLevel?: string }> = [];
   private readonly classify: RouteClassifier;
   private readonly everySteps: number;
   private readonly planTarget?: { modelName: string; thinkingLevel: "low" | "medium" | "high" };
@@ -69,6 +71,10 @@ class RouterTurnRunner extends TurnRunner {
     this.emitAgentEvent(event, { kind: "state_machine_agent", state: "child" });
   }
 
+  createStateAgentForTest(state: StateMachineAgentState) {
+    return this.createStateAgentHandle({ state, prompt: state.prompt });
+  }
+
   async transformForTest(messages: AgentMessage[]): Promise<AgentMessage[]> {
     const transform = this.requireParentAgent().transformContext;
     if (!transform) throw new Error("Expected parent context transform");
@@ -92,6 +98,10 @@ class RouterTurnRunner extends TurnRunner {
     input: AgentConfigInput,
     onControlResult?: Parameters<TurnRunner["createAgent"]>[1],
   ): Agent {
+    this.createdAgentOptions.push({
+      model: input.state.options?.model,
+      thinkingLevel: input.state.options?.thinkingLevel,
+    });
     const agent = super.createAgent(input, onControlResult);
     agent.streamFn = (model, _context, options) => {
       const stream = createAssistantMessageEventStream();
@@ -170,6 +180,75 @@ async function startRunner(runner: RouterTurnRunner, events: TurnEvent[]): Promi
 }
 
 describe("TurnRunner virtual-model adapter", () => {
+  test("concrete pin suspends routing and virtual selection rebuilds it for re-classification", async () => {
+    const runner = new RouterTurnRunner({
+      classify: scriptedClassifier([{ route: "plan", rationale: "Fresh routed turn." }]),
+    });
+    await startRunner(runner, []);
+
+    expect(runner.setModel("gpt-5.6-luna")).toEqual({ routed: false });
+    expect(runner.routerStatusForTest()?.pinned).toBe(true);
+    expect(runner.parentAgentForTest().state.model.id).toBe("openai/gpt-5.6-luna");
+
+    expect(runner.setModel("frontier")).toEqual({ routed: true });
+    expect(runner.routerStatusForTest()?.pinned).toBe(false);
+    expect(runner.routerStatusForTest()?.stepsUntilClassification).toBe(0);
+
+    const turn = runner.turn({ type: "prompt", message: "Plan this.", behavior: "follow_up" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(runner.requestModels.at(-1)?.api).toBe("anthropic-messages");
+    runner.completeNext({ text: "Planned.", usageTokens: 5 });
+    const terminal = await turn;
+    expect(terminal.state.options?.model).toBe("frontier");
+  });
+
+  test("explicit virtual state model resolves its tier default while omission still inherits", async () => {
+    const runner = new RouterTurnRunner({ classify: scriptedClassifier([]) });
+    await startRunner(runner, []);
+
+    runner.createStateAgentForTest({
+      kind: "agent",
+      name: "economy-child",
+      prompt: "Do the child task.",
+      model: "economy",
+      thinkingLevel: "high",
+    });
+    expect(runner.createdAgentOptions.at(-1)).toEqual({
+      model: "gpt-5.6-luna",
+      thinkingLevel: "low",
+    });
+
+    runner.createStateAgentForTest({
+      kind: "agent",
+      name: "inherited-child",
+      prompt: "Do the inherited task.",
+    });
+    expect(runner.createdAgentOptions.at(-1)?.model).toContain("openai/gpt-5.6-sol");
+    expect(runner.createdAgentOptions.at(-1)?.thinkingLevel).toBe("medium");
+  });
+
+  test("resumed routed selection re-classifies instead of restoring a concrete target", async () => {
+    const original = new RouterTurnRunner({ classify: scriptedClassifier([]) });
+    await startRunner(original, []);
+    const saved = structuredClone(original.getState()!);
+    expect(saved.options?.model).toBe("frontier");
+
+    const resumed = new RouterTurnRunner({
+      classify: scriptedClassifier([{ route: "plan", rationale: "Classify the resumed prompt." }]),
+    });
+    await resumed.start({ type: "start", state: saved });
+    const turn = resumed.turn({
+      type: "prompt",
+      message: "Continue planning.",
+      behavior: "follow_up",
+    });
+    await waitFor(() => resumed.pendingStreams.length === 1);
+    expect(resumed.requestModels[0]!.api).toBe("anthropic-messages");
+    resumed.completeNext({ text: "Continued.", usageTokens: 5 });
+    const terminal = await turn;
+    expect(terminal.state.options?.model).toBe("frontier");
+  });
+
   test("mid-turn cross-family swap emits router_switch and attributes usage per message model", async () => {
     const runner = new RouterTurnRunner({
       classify: scriptedClassifier([

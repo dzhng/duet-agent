@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TurnRunner, type TurnEventHandler } from "../turn-runner/turn-runner.js";
 import { resolveModelName } from "../model-resolution/resolver.js";
+import { BUILT_IN_ROUTING_TABLE, isVirtualModel } from "../model-routing/table.js";
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { TurnRunnerConfig } from "../types/config.js";
 import { validateThinkingLevel } from "./thinking-level.js";
@@ -95,6 +96,10 @@ export interface SessionTurnRunner {
   compact(command: TurnCompactCommand): void | Promise<void>;
   subscribe(handler: TurnEventHandler): () => void;
   getState(): TurnState | undefined;
+  /** Retarget the persistent parent runner after session start. */
+  setModel?(model: string): { routed: boolean };
+  /** Validate a selection against the project routing table loaded at start. */
+  isVirtualModelSelection?(model: string): boolean;
   getSkills(): Promise<readonly Skill[]>;
   reloadSkills(): Promise<readonly Skill[]>;
   getResolvedAgentFiles(): Promise<readonly TurnAgentFile[]>;
@@ -366,35 +371,44 @@ export class Session {
   }
 
   /**
-   * Swap the model used for subsequent turns. Validates the name by
-   * resolving it through the same `provider:modelId` machinery the CLI
-   * uses at boot, so unknown shorthands / missing provider credentials
-   * throw before we mutate runtime config. The change takes effect on
-   * the next prompt (`startOptions` reads `this.config.model` per turn);
-   * any in-flight turn keeps the model it started with.
+   * Swap the selection used for subsequent turns. Virtual names are validated
+   * against the runner's loaded project table; concrete names retain the CLI's
+   * existing resolution validation. A started runner is retargeted directly,
+   * while an in-flight turn keeps the selection it started with.
    */
-  setModel(model: string): { modelName: string } {
+  setModel(model: string): { modelName: string; routed: boolean } {
     const trimmed = model.trim();
     if (!trimmed) {
       throw new Error("Model name is required");
     }
-    // Throws on unknown shorthand or unresolvable provider; surfaces the
-    // same error the CLI startup would have produced for `--model`.
-    resolveModelName(trimmed);
+    let routed: boolean;
+    if (this.runner.getState() && this.runner.setModel) {
+      routed = this.runner.setModel(trimmed).routed;
+    } else {
+      routed =
+        this.runner.isVirtualModelSelection?.(trimmed) ??
+        isVirtualModel(trimmed, BUILT_IN_ROUTING_TABLE);
+      if (!routed) resolveModelName(trimmed);
+    }
     this.config.model = trimmed;
-    return { modelName: trimmed };
+    return { modelName: trimmed, routed };
   }
 
   /**
-   * Swap the thinking level used for subsequent turns. Accepts any of the
-   * pi-ai `ThinkingLevel` values (minimal / low / medium / high / xhigh);
-   * the runner clamps to the model's supported range at use-time, so
-   * passing a level a given model does not support is not an error here.
-   * The change applies on the next prompt; any in-flight turn keeps the
-   * level it started with.
+   * Swap the thinking level used for subsequent concrete turns. Routed
+   * selections report their tier instead because route effort owns the value;
+   * no config mutation occurs in that case.
    */
-  setThinkingLevel(level: string): { thinkingLevel: ThinkingLevel } {
+  setThinkingLevel(level: string): { thinkingLevel?: ThinkingLevel; routedBy?: string } {
     const normalized = validateThinkingLevel(level);
+    const model = this.config.model;
+    const routed =
+      model &&
+      (this.runner.isVirtualModelSelection?.(model) ??
+        isVirtualModel(model, BUILT_IN_ROUTING_TABLE));
+    if (routed) {
+      return { routedBy: model };
+    }
     this.config.thinkingLevel = normalized;
     return { thinkingLevel: normalized };
   }

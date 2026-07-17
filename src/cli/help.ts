@@ -35,7 +35,7 @@ COMMANDS
   upgrade                  Upgrade the global ${packageName} installation
 
 OPTIONS
-  -m, --model <name>       TurnRunner model override
+  -m, --model <name>       Virtual tier (frontier|balanced|economy) or concrete model pin
   --memory-model <name>    Observational memory model (default inferred from provider env)
   --provider <name>        Pin the provider and use its catalog default model.
                             Accepts: duet, vercel, openrouter.
@@ -67,11 +67,12 @@ INTERACTIVE
   filename to insert a repo-relative path into the prompt.
 
 MODELS
-  Prefer shorthands like opus-4.8, opus-4.7, sonnet-4.6, haiku-4.5, and gpt-5.5.
+  The default is the routed frontier tier. Use frontier, balanced, or economy
+  to select a routing policy, or a concrete shorthand to bypass routing and pin.
+  Concrete names include opus-4.8, sonnet-4.6, haiku-4.5, and gpt-5.5.
   They map to the first configured router that supports that model.
   Full provider:modelId syntax is also supported, e.g. duet:anthropic/claude-opus-4.8.
-  If omitted, duet infers a default from DUET_API_KEY, AI_GATEWAY_API_KEY, or
-  OPENROUTER_API_KEY after loading <workdir>/.env and the shared duet env file.
+  --provider pins that provider's concrete default; the memory model remains concrete.
 
   duet-gateway: routes through the Duet gateway proxy
   (https://gateway.duet.so by default; override via DUET_GATEWAY_BASE_URL).

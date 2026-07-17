@@ -18,10 +18,13 @@ import {
   shouldUseTui,
 } from "../src/cli.js";
 import {
+  DEFAULT_CLI_MODEL,
+  describeModelResolution,
   resolveCliMemoryModel,
   resolveCliModel,
   resolveModelName,
 } from "../src/model-resolution/resolver.js";
+import { DEFAULT_MODEL_SELECTION } from "../src/model-routing/default-selection.js";
 import { canonicalizeModelName } from "../src/model-resolution/catalog.js";
 import {
   activeFileAutocompleteToken,
@@ -83,6 +86,40 @@ function clearModelEnv(): void {
 }
 
 describe("CLI model inference", () => {
+  test("bare boot selects the virtual default before concrete fallback or env inference", () => {
+    clearModelEnv();
+    process.env.DUET_API_KEY = "duet_gt_test";
+
+    const resolution = resolveCliModel(undefined, EMPTY_DOTENV_KEYS);
+
+    expect(DEFAULT_MODEL_SELECTION).toBe("frontier");
+    expect(DEFAULT_CLI_MODEL).not.toBe(DEFAULT_MODEL_SELECTION);
+    expect(resolution).toEqual({ modelName: "frontier", source: "default", routed: true });
+    expect(describeModelResolution(resolution)).toBe("frontier (routed) — built-in default");
+    expect(() => resolveModelName(resolution.modelName)).toThrow("Unknown model shorthand");
+  });
+
+  test("explicit virtual names bypass canonicalization while concrete names stay concrete", () => {
+    expect(resolveCliModel("frontier", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "frontier",
+      source: "explicit",
+      routed: true,
+    });
+    expect(resolveCliModel("gpt-5.6-sol", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "gpt-5.6-sol",
+      source: "explicit",
+    });
+  });
+
+  test("provider-pinned input remains a concrete routing bypass", () => {
+    const { config, modelResolution } = buildCliTurnConfig(
+      { modelName: "openrouter:anthropic/claude-opus-4.8", workDir: "/repo" },
+      EMPTY_DOTENV_KEYS,
+    );
+
+    expect(config.model).toBe("openrouter:anthropic/claude-opus-4.8");
+    expect(modelResolution.routed).toBeUndefined();
+  });
   test("canonicalizes the model-router concrete shorthands", () => {
     expect(canonicalizeModelName("moonshotai/kimi-k3")).toBe("kimi-k3");
     expect(canonicalizeModelName("openai/gpt-5.6-sol")).toBe("gpt-5.6-sol");
@@ -135,17 +172,16 @@ describe("CLI model inference", () => {
     }
   });
 
-  test("prefers Duet credentials over the other router credentials", () => {
+  test("defaults chat routing to frontier while memory prefers Duet credentials", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "duet_gt_test";
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
     process.env.OPENROUTER_API_KEY = "test-openrouter";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.8",
-      source: "inferred",
-      envVar: "DUET_API_KEY",
-      fromDotenv: false,
+      modelName: "frontier",
+      source: "default",
+      routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "gpt-5.6-luna",
@@ -155,16 +191,15 @@ describe("CLI model inference", () => {
     });
   });
 
-  test("uses AI Gateway credentials before OpenRouter", () => {
+  test("keeps frontier as chat default while memory uses AI Gateway before OpenRouter", () => {
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
     process.env.OPENROUTER_API_KEY = "test-openrouter";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.8",
-      source: "inferred",
-      envVar: "AI_GATEWAY_API_KEY",
-      fromDotenv: false,
+      modelName: "frontier",
+      source: "default",
+      routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "gpt-5.6-luna",
@@ -174,15 +209,14 @@ describe("CLI model inference", () => {
     });
   });
 
-  test("uses OpenRouter credentials when it is the only router configured", () => {
+  test("keeps frontier as chat default when OpenRouter is the only router configured", () => {
     clearModelEnv();
     process.env.OPENROUTER_API_KEY = "test-openrouter";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.8",
-      source: "inferred",
-      envVar: "OPENROUTER_API_KEY",
-      fromDotenv: false,
+      modelName: "frontier",
+      source: "default",
+      routed: true,
     });
     // gpt-5.6-luna has no OpenRouter route, so OpenRouter-only users fall back
     // to gpt-5.4-mini for memory (see MEMORY_MODEL_BY_PROVIDER).
@@ -203,8 +237,9 @@ describe("CLI model inference", () => {
     process.env.OPENAI_API_KEY = "test-openai";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.8",
+      modelName: "frontier",
       source: "default",
+      routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "gpt-5.6-luna",
@@ -212,7 +247,7 @@ describe("CLI model inference", () => {
     });
   });
 
-  test("uses Duet sandbox credentials when only DUET_API_KEY is set", () => {
+  test("uses frontier with Duet sandbox credentials while memory resolves concretely", () => {
     // Bare DUET_API_KEY should route through the duet-gateway provider rather
     // than Vercel's gateway directly. The CLI startup shim copies the token
     // into AI_GATEWAY_API_KEY so the underlying vercel-ai-gateway auth path
@@ -222,10 +257,9 @@ describe("CLI model inference", () => {
     process.env.DUET_API_KEY = "duet_gt_test";
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.8",
-      source: "inferred",
-      envVar: "DUET_API_KEY",
-      fromDotenv: false,
+      modelName: "frontier",
+      source: "default",
+      routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "gpt-5.6-luna",
@@ -239,8 +273,9 @@ describe("CLI model inference", () => {
     clearModelEnv();
 
     expect(resolveCliModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.8",
+      modelName: "frontier",
       source: "default",
+      routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
       modelName: "gpt-5.6-luna",
@@ -536,7 +571,7 @@ describe("CLI model inference", () => {
     });
   });
 
-  test("builds CLI config from inferred shorthand defaults", () => {
+  test("builds CLI config with frontier routing and an inferred concrete memory default", () => {
     clearModelEnv();
     process.env.OPENROUTER_API_KEY = "test-openrouter";
 
@@ -551,7 +586,7 @@ describe("CLI model inference", () => {
     );
 
     expect(config).toEqual({
-      model: "opus-4.8",
+      model: "frontier",
       memoryModel: "gpt-5.4-mini",
       memoryDbPath: false,
       cwd: "/repo",
@@ -559,10 +594,9 @@ describe("CLI model inference", () => {
       systemPromptFiles: [],
     });
     expect(modelResolution).toEqual({
-      modelName: "opus-4.8",
-      source: "inferred",
-      envVar: "OPENROUTER_API_KEY",
-      fromDotenv: false,
+      modelName: "frontier",
+      source: "default",
+      routed: true,
     });
     expect(memoryModelResolution).toEqual({
       modelName: "gpt-5.4-mini",
