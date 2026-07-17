@@ -20,6 +20,8 @@ export interface StructuredOutputOptions<TSchemaValue extends TSchema> {
   tool: Tool<TSchemaValue>;
   prompt: StructuredOutputPrompt;
   systemPrompt?: string;
+  /** Cancels the provider stream and surfaces an aborted completion to the caller. */
+  signal?: AbortSignal;
   callOptions?: ProviderStreamOptions;
   onUsage?: (usage: Usage) => void;
 }
@@ -44,6 +46,7 @@ export async function generateStructuredOutput<TSchemaValue extends TSchema>(
     },
     {
       ...options.callOptions,
+      ...(options.signal ? { signal: options.signal } : {}),
       ...(resolvedApiKey ? { apiKey: resolvedApiKey } : {}),
       toolChoice: forcedToolChoice(model, options.tool.name),
       onPayload: async (payload, payloadModel) => {

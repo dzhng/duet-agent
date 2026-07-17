@@ -15,11 +15,14 @@
 
 import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
+import { runConfigCommand } from "./cli/config.js";
 import { runEnvCommand } from "./cli/env.js";
 import { runLoginCommand } from "./cli/login.js";
+import { printRunHelp } from "./cli/help.js";
 import { runMemoryCommand } from "./cli/memory.js";
 import { runModelCommand } from "./cli/model.js";
 import { runRpcCommand } from "./cli/rpc.js";
+import { runRouteCommand } from "./cli/route.js";
 import { runRunCommand } from "./cli/run.js";
 import { runSendFeedbackCommand } from "./cli/send-feedback.js";
 import { runSkillsCommand } from "./cli/skills.js";
@@ -41,6 +44,8 @@ export { runSkillsCommand } from "./cli/skills.js";
 export { runUpgradeCommand } from "./cli/upgrade.js";
 export { runMemoryCommand } from "./cli/memory.js";
 export { runModelCommand } from "./cli/model.js";
+export { runRouteCommand } from "./cli/route.js";
+export { runConfigCommand } from "./cli/config.js";
 export { runMemoryAddCommand } from "./cli/memory-add.js";
 export { runMemoryRecallCommand } from "./cli/memory-recall.js";
 export { runMemoryReflectCommand } from "./cli/memory-reflect.js";
@@ -74,6 +79,13 @@ export async function runCli(): Promise<void> {
   const subcommand = args[0];
 
   try {
+    if (subcommand === "--help" || subcommand === "-h") {
+      printRunHelp(PACKAGE_METADATA.name);
+      console.log(
+        `ROUTING COMMANDS\n  route                    Probe the live virtual-model classifier\n  config export            Export .duet/models.json for customization`,
+      );
+      return;
+    }
     if (subcommand === "upgrade") {
       await runUpgradeCommand(args.slice(1), PACKAGE_METADATA.name);
       return;
@@ -96,6 +108,14 @@ export async function runCli(): Promise<void> {
     }
     if (subcommand === "model") {
       await runModelCommand(args.slice(1));
+      return;
+    }
+    if (subcommand === "route") {
+      await runRouteCommand(args.slice(1));
+      return;
+    }
+    if (subcommand === "config") {
+      await runConfigCommand(args.slice(1));
       return;
     }
     if (subcommand === "train") {
