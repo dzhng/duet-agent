@@ -86,9 +86,10 @@ describe("TUI rendering smoke test", () => {
     await harness.flush();
 
     const frame = await harness.captureCharFrame();
-    expect(frame).toContain(
-      "[route] frontier: gpt-5.6-luna → gpt-5.6-sol (high) · implement · via cadence check",
-    );
+    // The notice wraps at the transcript pane width, so assert on fragments
+    // that each fit within one rendered line rather than the whole string.
+    expect(frame).toContain("[route] frontier: gpt-5.6-luna");
+    expect(frame).toContain("via cadence check");
     expect(frame).toContain("frontier → gpt-5.6-sol (high)");
   });
 });
