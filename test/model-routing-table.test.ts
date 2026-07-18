@@ -215,7 +215,9 @@ describe("routing table file loading and export", () => {
   testIfDocker("uses the built-in table when the optional file is absent", async () => {
     const cwd = await makeTempDir();
 
-    expect(await loadRoutingTable({ cwd, catalogAdapter: catalog })).toEqual({
+    expect(
+      await loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: await makeTempDir() }),
+    ).toEqual({
       table: BUILT_IN_ROUTING_TABLE,
       source: "built-in",
     });
@@ -246,7 +248,9 @@ describe("routing table file loading and export", () => {
     const path = join(cwd, ".duet", "models.json");
     await writeFile(path, JSON.stringify(table));
 
-    expect(await loadRoutingTable({ cwd, catalogAdapter: catalog })).toEqual({
+    expect(
+      await loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: await makeTempDir() }),
+    ).toEqual({
       table,
       source: "file",
       path,
@@ -258,9 +262,9 @@ describe("routing table file loading and export", () => {
     await mkdir(join(cwd, ".duet"));
     await writeFile(join(cwd, ".duet", "models.json"), "{invalid");
 
-    await expect(loadRoutingTable({ cwd, catalogAdapter: catalog })).rejects.toThrow(
-      "Failed to parse routing table",
-    );
+    await expect(
+      loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: await makeTempDir() }),
+    ).rejects.toThrow("Failed to parse routing table");
   });
 
   testIfDocker("enforces intrinsic validation with an explicit catalog adapter", async () => {
@@ -270,9 +274,9 @@ describe("routing table file loading and export", () => {
     await mkdir(join(cwd, ".duet"));
     await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
 
-    await expect(loadRoutingTable({ cwd, catalogAdapter: catalog })).rejects.toThrow(
-      "Classifier cadence must be a positive number of steps.",
-    );
+    await expect(
+      loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: await makeTempDir() }),
+    ).rejects.toThrow("Classifier cadence must be a positive number of steps.");
   });
 
   testIfDocker("fails loading when a file tier collides with a catalog alias", async () => {
@@ -282,7 +286,9 @@ describe("routing table file loading and export", () => {
     await mkdir(join(cwd, ".duet"));
     await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
 
-    await expect(loadRoutingTable({ cwd, catalogAdapter: catalog })).rejects.toThrow(
+    await expect(
+      loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: await makeTempDir() }),
+    ).rejects.toThrow(
       'Virtual model "opus-4.8" collides with a concrete catalog shorthand or alias.',
     );
   });
@@ -296,7 +302,9 @@ describe("routing table file loading and export", () => {
     expect(await readFile(expectedPath, "utf8")).toBe(
       `${JSON.stringify(BUILT_IN_ROUTING_TABLE, null, 2)}\n`,
     );
-    expect(await loadRoutingTable({ cwd, catalogAdapter: catalog })).toEqual({
+    expect(
+      await loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: await makeTempDir() }),
+    ).toEqual({
       table: BUILT_IN_ROUTING_TABLE,
       source: "file",
       path: expectedPath,
@@ -311,5 +319,59 @@ describe("routing table file loading and export", () => {
       "Routing table already exists",
     );
     await expect(exportRoutingTable({ cwd, force: true })).resolves.toBeDefined();
+  });
+});
+
+describe("routing table discovery walk", () => {
+  testIfDocker("the nearest ancestor's table wins over one higher up", async () => {
+    const root = await makeTempDir();
+    const home = await makeTempDir();
+    const repo = join(root, "repo");
+    const pkg = join(repo, "packages", "app");
+    await mkdir(join(repo, ".duet"), { recursive: true });
+    await mkdir(pkg, { recursive: true });
+
+    const repoTable = structuredClone(BUILT_IN_ROUTING_TABLE);
+    repoTable.classifier.guidance = "repo-level table";
+    await writeFile(join(repo, ".duet", "models.json"), JSON.stringify(repoTable));
+
+    const fromPkg = await loadRoutingTable({ cwd: pkg, catalogAdapter: catalog, homeDir: home });
+    expect(fromPkg.source).toBe("file");
+    expect(fromPkg.table.classifier.guidance).toBe("repo-level table");
+
+    const pkgTable = structuredClone(BUILT_IN_ROUTING_TABLE);
+    pkgTable.classifier.guidance = "package-level table";
+    await mkdir(join(pkg, ".duet"), { recursive: true });
+    await writeFile(join(pkg, ".duet", "models.json"), JSON.stringify(pkgTable));
+
+    const nearest = await loadRoutingTable({ cwd: pkg, catalogAdapter: catalog, homeDir: home });
+    expect(nearest.table.classifier.guidance).toBe("package-level table");
+  });
+
+  testIfDocker("falls back to ~/.duet/models.json when no ancestor has one", async () => {
+    const cwd = await makeTempDir();
+    const home = await makeTempDir();
+    const homeTable = structuredClone(BUILT_IN_ROUTING_TABLE);
+    homeTable.classifier.guidance = "home-level table";
+    await mkdir(join(home, ".duet"), { recursive: true });
+    await writeFile(join(home, ".duet", "models.json"), JSON.stringify(homeTable));
+
+    const loaded = await loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: home });
+    expect(loaded.source).toBe("file");
+    expect(loaded.table.classifier.guidance).toBe("home-level table");
+  });
+
+  testIfDocker("an invalid nearest table fails loudly instead of falling through", async () => {
+    const root = await makeTempDir();
+    const home = await makeTempDir();
+    const cwd = join(root, "project");
+    await mkdir(join(cwd, ".duet"), { recursive: true });
+    await writeFile(join(cwd, ".duet", "models.json"), "{ not json");
+    await mkdir(join(home, ".duet"), { recursive: true });
+    await writeFile(join(home, ".duet", "models.json"), JSON.stringify(BUILT_IN_ROUTING_TABLE));
+
+    await expect(loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: home })).rejects.toThrow(
+      /Failed to parse routing table/,
+    );
   });
 });

@@ -230,3 +230,22 @@ at each parent `turn_end`) and returns effects: force-classify and/or sticky `Tu
   color in the output proves the vision model saw the replayed image. Falsification: disabling
   the built-in image effect fails the switch assertion. Best-of-2 (turn-start classification
   variance, same bound as the advisor positive case).
+
+## Post-close increment: discovery walk + single-destination skip (2026-07-18)
+
+- **Override discovery now mirrors skills discovery** (user request): candidates are
+  `<ancestor>/.duet/models.json` for every directory from cwd up to the filesystem root (home
+  excluded from the walk), then `~/.duet/models.json` as the global fallback. Nearest existing
+  file wins outright as a complete replacement; an invalid winner fails loudly — discovery
+  never falls through past a broken file. The ancestor walk itself moved to
+  `src/lib/walk-ancestors.ts` with skills discovery consuming the same owner (two systems that
+  must agree, one home). Loader tests isolate `homeDir` so a developer's real
+  `~/.duet/models.json` can never leak into unit runs; the docker suite is hermetic via
+  `HOME=/tmp/home`.
+- **Single-destination tiers skip the classifier** (user request): when every route in a tier
+  resolves (through virtual chaining) to one identical `{model, effort}` pair, `ModelRouter`
+  precomputes that no decision exists and `shouldClassify()` stays false for the session —
+  no turn-start, cadence, step-trigger, or advisor-milestone classifier calls. The vision guard
+  cannot break the equivalence (it only redirects within the same route set). An unresolvable
+  route disables the optimization rather than guessing. This makes the "one concrete model but
+  with the advisor" tier pattern zero-overhead.

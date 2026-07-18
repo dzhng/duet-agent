@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
 import { loadSkills } from "@earendil-works/pi-coding-agent";
 import type { SkillDiscoveryOptions } from "../types/config.js";
+import { walkAncestors } from "../lib/walk-ancestors.js";
 import {
   getBuiltInSkillInstructions,
   isBuiltInSkill,
@@ -59,25 +60,6 @@ function defaultSkillPaths(globalSkillRoots: string[], cwd: string): string[] {
     }
   }
   return [...ancestorPaths, ...globalSkillRoots.map((root) => join(root, "skills"))];
-}
-
-// Yields cwd, its parent, grandparent, ... up to the filesystem root. The
-// home directory is excluded so global skills do not get double-counted as
-// project skills when cwd lives somewhere inside $HOME.
-function walkAncestors(cwd: string): string[] {
-  const home = resolve(homedir());
-  const seen = new Set<string>();
-  const result: string[] = [];
-  let current = resolve(cwd);
-  while (true) {
-    if (seen.has(current)) break;
-    seen.add(current);
-    if (current !== home) result.push(current);
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return result;
 }
 
 function uniquePaths(paths: string[]): string[] {

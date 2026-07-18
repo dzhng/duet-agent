@@ -240,3 +240,63 @@ describe("ModelRouter", () => {
     expect(inputs.at(-1)?.hasImages).toBe(true);
   });
 });
+
+describe("single-destination tiers", () => {
+  function singleDestinationTable(): typeof BUILT_IN_ROUTING_TABLE {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.defaultTier = "sol-only";
+    table.tiers = {
+      "sol-only": {
+        routes: {
+          general: {
+            description: "All work on one model.",
+            target: { modelName: "gpt-5.6-sol", thinkingLevel: "high" },
+          },
+        },
+        visionRoute: "general",
+        advisor: structuredClone(BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor),
+      },
+    };
+    return table;
+  }
+
+  test("never calls the classifier when every route resolves identically", async () => {
+    const classify: RouteClassifier = async () => {
+      throw new Error("classifier must not be called for a single-destination tier");
+    };
+    const router = new ModelRouter({
+      table: singleDestinationTable(),
+      tier: "sol-only",
+      classify,
+      resolveCatalog: catalog,
+    });
+    router.initialTarget({ hasImages: false });
+
+    expect(router.shouldClassify()).toBe(false);
+    router.noteTurnStart({ promptHasImages: false });
+    // Step triggers, advisor milestones, and cadence all funnel through
+    // shouldClassify, so none of them may wake the classifier either.
+    router.noteAssistantStep({ blockTypes: ["image"], text: "" });
+    router.beginAdvisorConsult();
+    router.endAdvisorConsult(true);
+    for (let step = 0; step < 6; step += 1) router.noteAssistantStep();
+    expect(router.shouldClassify()).toBe(false);
+    expect(await router.prepareTurn({})).toBeUndefined();
+  });
+
+  test("same model at different efforts is still a real decision", () => {
+    const table = singleDestinationTable();
+    table.tiers["sol-only"]!.routes.deep = {
+      description: "Same model, deeper effort.",
+      target: { modelName: "gpt-5.6-sol", thinkingLevel: "xhigh" },
+    };
+    const router = new ModelRouter({
+      table,
+      tier: "sol-only",
+      classify: scriptedClassifier([general]),
+      resolveCatalog: catalog,
+    });
+    router.initialTarget({ hasImages: false });
+    expect(router.shouldClassify()).toBe(true);
+  });
+});
