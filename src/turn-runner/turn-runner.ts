@@ -147,9 +147,10 @@ import {
 import { addUsage, addUsageByModel } from "./usage-accounting.js";
 import { SystemRuntimeClock, type RuntimeClock } from "./runtime-clock.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
-import type { TaskDescriptor, TaskId, TaskSettlement } from "../tasks/types.js";
+import type { TaskDescriptor, TaskEvent, TaskId, TaskSettlement } from "../tasks/types.js";
 import { createShellStateHandle, type ShellStateHandle } from "./shell-state-handle.js";
 import type { StateMachineSession } from "../types/state-machine.js";
+import { createTaskAdminTools, settlementNotice, wrapBackgroundable } from "./task-tools.js";
 
 /** @internal Constructor-only lifecycle seams; these are deliberately absent from config. */
 interface TurnRunnerDependencies {
@@ -164,6 +165,8 @@ export type TurnEventHandler = (event: TurnEvent) => void;
 export interface AgentWorkerInput {
   state: TurnState;
   prompt: string;
+  /** Internal loop passes continue the same public turn and must retain router facts. */
+  continuation?: boolean;
   /**
    * Optional image attachments forwarded to `agent.prompt(text, images)`.
    * Only the parent prompt path carries images; state-machine sub-agents and
@@ -210,7 +213,11 @@ export interface AgentWorkerResult {
 }
 
 export type ParentLoopInput =
-  | { type: "user_command"; command: TurnPromptCommand | TurnAnswerCommand }
+  | {
+      type: "user_command";
+      command: TurnPromptCommand | TurnAnswerCommand;
+      continuation?: boolean;
+    }
   | { type: "task_settlements"; settlements: TaskSettlement[] }
   | { type: "transition_enforcement"; stateName: string; output?: unknown }
   | { type: "terminal_acknowledgment" }
@@ -342,7 +349,8 @@ export class TurnRunner {
   /** Durable state-machine policy ledger; execution lives in TaskManager. */
   private stateMachine?: StateMachineSession;
   /** Runtime owner for every state execution and scheduled wake. */
-  private readonly taskManager: TaskManager;
+  /** Protected for test probes (task descriptors, scope injection); production owner is the loop. */
+  protected readonly taskManager: TaskManager;
   /** Execution-only metadata keyed by TaskManager's stable task id. */
   private readonly stateTasks = new Map<TaskId, StateTaskMetadata>();
   /** Byte-for-byte hydrated descriptors exposed until the first resumed turn reconciles them. */
@@ -355,6 +363,13 @@ export class TurnRunner {
   private readonly parentInputWaiters = new Set<() => void>();
   /** Settlements already folded into the ledger during replacement/interrupt. */
   private readonly ignoredTaskSettlements = new Set<TaskId>();
+  /** Delivery posture for task-backed foreground bash calls. */
+  private readonly taskSettlementDelivery = new Map<
+    TaskId,
+    "foreground_pending" | "deliver" | "suppress"
+  >();
+  /** Coalesces same-tick settlements into one FIFO drain and one B3 notice. */
+  private settlementDeliveryQueued = false;
   /** Monotonic root-scope suffix; each public turn owns one root scope. */
   private nextRootScope = 1;
   /** Scope currently accepting state tasks. */
@@ -436,7 +451,10 @@ export class TurnRunner {
       dependencies.minimumScheduledDelayMs ?? MINIMUM_STATE_MACHINE_DELAY_MS;
     this.taskWaitBudgetMs = config.taskWaitBudgetMs ?? DEFAULT_TASK_WAIT_BUDGET_MS;
     this.skillContext = new SkillContext(config);
-    this.taskManager = createTaskManager({ clock: this.clock });
+    this.taskManager = createTaskManager({
+      clock: this.clock,
+      onEvent: (event) => this.handleTaskEvent(event),
+    });
     this.subagentExecutor = createSubagentExecutor({
       createAgent: (input, onControlResult) => this.createAgent(input, onControlResult),
       skillContext: {
@@ -467,6 +485,8 @@ export class TurnRunner {
     this.parentAgent?.clearAllQueues();
     this.parentInputs.length = 0;
     this.clearFollowUpQueue();
+    await this.taskManager.interruptAll("Runner disposed.");
+    await this.taskManager.reapAll("Runner disposed.");
     await this.memoryPersistence?.dispose();
     this.memoryPersistence = undefined;
     await this.mcpRuntime?.dispose();
@@ -779,6 +799,7 @@ export class TurnRunner {
             this.enqueueParentInput({
               type: "user_command",
               command: { type: "prompt", message: heldAskReminder(), behavior: "steer" },
+              continuation: true,
             });
           } else {
             questions = result.questions;
@@ -922,17 +943,60 @@ export class TurnRunner {
   }
 
   private enqueueAvailableSettlements(): void {
+    if ([...this.taskSettlementDelivery.values()].includes("foreground_pending")) return;
     const settlements: TaskSettlement[] = [];
     for (
       let settlement = this.taskManager.nextSettled();
       settlement;
       settlement = this.taskManager.nextSettled()
     ) {
-      settlements.push(settlement);
+      const delivery = this.taskSettlementDelivery.get(settlement.id);
+      this.taskSettlementDelivery.delete(settlement.id);
+      if (delivery !== "suppress") settlements.push(settlement);
     }
-    if (settlements.length > 0) {
-      this.parentInputs.unshift({ type: "task_settlements", settlements });
+    if (settlements.length === 0) return;
+
+    const canSteer =
+      this.parentAgentRunning &&
+      this.parentControlResults.length === 0 &&
+      settlements.every((settlement) => !this.stateTasks.has(settlement.id));
+    if (canSteer) {
+      const snapshots = settlements
+        .map((settlement) => this.taskManager.output(settlement.id))
+        .filter((snapshot) => snapshot !== undefined);
+      if (snapshots.length > 0) {
+        this.requireParentAgent().steer(
+          buildUserAgentMessage(settlementNotice(snapshots), undefined),
+        );
+        return;
+      }
     }
+    this.parentInputs.unshift({ type: "task_settlements", settlements });
+  }
+
+  private handleTaskEvent(event: TaskEvent): void {
+    if (event.type === "started") {
+      this.emit({ type: "task_started", task: event.descriptor });
+      return;
+    }
+    if (event.type === "output") {
+      this.emit({ type: "task_output", taskId: event.id, chunk: event.chunk });
+      return;
+    }
+    this.emit({ type: "task_settled", settlement: event.settlement });
+    if (this.taskSettlementDelivery.get(event.settlement.id) === "foreground_pending") return;
+    this.scheduleSettlementDelivery();
+  }
+
+  private scheduleSettlementDelivery(): void {
+    if (this.settlementDeliveryQueued) return;
+    this.settlementDeliveryQueued = true;
+    queueMicrotask(() => {
+      this.settlementDeliveryQueued = false;
+      this.enqueueAvailableSettlements();
+      for (const wake of this.parentInputWaiters) wake();
+      this.parentInputWaiters.clear();
+    });
   }
 
   private discardStaleTaskSettlements(): void {
@@ -943,12 +1007,14 @@ export class TurnRunner {
     ) {
       this.stateTasks.delete(settlement.id);
       this.ignoredTaskSettlements.delete(settlement.id);
+      this.taskSettlementDelivery.delete(settlement.id);
     }
     for (const input of this.parentInputs) {
       if (input.type !== "task_settlements") continue;
       for (const settlement of input.settlements) {
         this.stateTasks.delete(settlement.id);
         this.ignoredTaskSettlements.delete(settlement.id);
+        this.taskSettlementDelivery.delete(settlement.id);
       }
     }
     const userInputs = this.parentInputs.filter((input) => input.type !== "task_settlements");
@@ -1084,9 +1150,9 @@ export class TurnRunner {
   ): Promise<SettledDecision["outcome"] | undefined> {
     switch (input.type) {
       case "user_command":
-        return this.runUserCommandPass(input.command);
+        return this.runUserCommandPass(input.command, input.continuation);
       case "task_settlements":
-        return this.recordTaskSettlements(input.settlements);
+        return this.processTaskSettlements(input.settlements);
       case "transition_enforcement":
         return this.selectNextStateAfterCompletion(input.stateName, input.output);
       case "terminal_acknowledgment":
@@ -1096,13 +1162,21 @@ export class TurnRunner {
     }
   }
 
-  private async runUserCommandPass(command: TurnPromptCommand | TurnAnswerCommand) {
-    const state = this.clearFinishedTodosAtTurnStart({
+  private async runUserCommandPass(
+    command: TurnPromptCommand | TurnAnswerCommand,
+    continuation = false,
+  ) {
+    const runningState = {
       ...this.requireRunnerState(),
       status: "running" as const,
-    });
+    };
+    const state = continuation ? runningState : this.clearFinishedTodosAtTurnStart(runningState);
     let prompt = this.commandToUserMessage(command);
-    if (command.behavior === "steer" && this.taskManager.pendingWork().kind === "open") {
+    if (
+      !continuation &&
+      command.behavior === "steer" &&
+      this.taskManager.pendingWork().kind === "open"
+    ) {
       prompt = dedent`
         <system-reminder>
         The user sent this as a steer message while state-machine work is running.
@@ -1112,13 +1186,14 @@ export class TurnRunner {
         ${prompt}
       `;
     }
-    const todoReminder = formatCarriedTodosReminder(state.todos);
+    const todoReminder = continuation ? undefined : formatCarriedTodosReminder(state.todos);
     if (todoReminder) prompt = `${todoReminder}\n\n${prompt}`;
-    this.removeQueuedFollowUpPrompt(command);
+    if (!continuation) this.removeQueuedFollowUpPrompt(command);
     const worker = await this.runParentPass({
       state,
       prompt,
       images: promptImagesToContent(command.images),
+      continuation,
     });
     this.setState(worker.outcome.state);
     if (
@@ -1178,6 +1253,7 @@ export class TurnRunner {
     const worker = await this.runParentPass({
       state: this.snapshotState({ ...this.requireRunnerState(), status: "running" }),
       prompt: formatStateMachineTerminalAcknowledgmentPrompt({ session: acknowledged }),
+      continuation: true,
     });
     this.setState(worker.outcome.state);
     if (worker.outcome.type === "interrupted") return { type: "interrupted" } as const;
@@ -1353,6 +1429,46 @@ export class TurnRunner {
     return latest;
   }
 
+  private async processTaskSettlements(
+    settlements: readonly TaskSettlement[],
+  ): Promise<SettledDecision["outcome"] | undefined> {
+    const stateSettlements = settlements.filter(
+      (settlement) =>
+        this.stateTasks.has(settlement.id) || this.ignoredTaskSettlements.has(settlement.id),
+    );
+    const taskSettlements = settlements.filter(
+      (settlement) => !stateSettlements.includes(settlement),
+    );
+    const stateOutcome = await this.recordTaskSettlements(stateSettlements);
+    if (taskSettlements.length === 0) return stateOutcome;
+    if (stateOutcome) {
+      this.parentInputs.unshift({ type: "task_settlements", settlements: taskSettlements });
+      return stateOutcome;
+    }
+
+    const snapshots = taskSettlements
+      .map((settlement) => this.taskManager.output(settlement.id))
+      .filter((snapshot) => snapshot !== undefined);
+    if (snapshots.length === 0) return stateOutcome;
+    const worker = await this.runParentPass({
+      state: this.snapshotState({ ...this.requireRunnerState(), status: "running" }),
+      prompt: settlementNotice(snapshots),
+      continuation: true,
+    });
+    this.setState(worker.outcome.state);
+    if (worker.outcome.type === "interrupted") return { type: "interrupted" };
+    if (worker.control.type === "ask_user_question") {
+      return { type: "ask", questions: worker.control.questions };
+    }
+    if (this.requireRunnerState().mode !== "agent") {
+      const controlled = await this.stateMachineResultFromWorker(worker, worker.outcome.state);
+      if (controlled) return controlled;
+    }
+    return worker.outcome.status === "failed"
+      ? { type: "terminal", status: "error", error: worker.outcome.error }
+      : { type: "terminal", status: "completed", result: worker.outcome.result };
+  }
+
   private stateResultFromSettlement(settlement: TaskSettlement): SubagentResult | ShellSettlement {
     if (settlement.status === "completed") {
       return settlement.result as SubagentResult | ShellSettlement;
@@ -1397,12 +1513,9 @@ export class TurnRunner {
   }
 
   private async cancelScheduledTasks(reason: string): Promise<void> {
-    await Promise.all(
-      this.taskManager
-        .list()
-        .filter((task) => task.status === "scheduled")
-        .map((task) => this.taskManager.stop(task.id, reason)),
-    );
+    const scheduled = this.taskManager.list().filter((task) => task.status === "scheduled");
+    for (const task of scheduled) this.ignoredTaskSettlements.add(task.id);
+    await Promise.all(scheduled.map((task) => this.taskManager.stop(task.id, reason)));
   }
 
   /**
@@ -1515,6 +1628,7 @@ export class TurnRunner {
       const workerResult = await this.runParentPass({
         state: turnState,
         prompt: buildPrompt(retryInstruction),
+        continuation: true,
       });
       this.setState(workerResult.outcome.state);
       const result = await this.stateMachineResultFromWorker(
@@ -1568,7 +1682,8 @@ export class TurnRunner {
     return this.stateMachine;
   }
 
-  private requireRootScope(): string {
+  /** Protected so test probes can supply a scope when driving tools outside a turn. */
+  protected requireRootScope(): string {
     if (!this.activeRootScopeId) throw new Error("No turn root scope is active.");
     return this.activeRootScopeId;
   }
@@ -1886,7 +2001,7 @@ export class TurnRunner {
   protected createTools(
     mode: TurnMode,
     cwdOverride?: string,
-    includeAdvisor = true,
+    includeParentTools = true,
   ): {
     tools: AgentTool[];
   } {
@@ -1910,33 +2025,52 @@ export class TurnRunner {
     };
     const router = this.modelRouter;
     const advisorStorage =
-      includeAdvisor && router && this.advisorPolicy?.enabled
+      includeParentTools && router && this.advisorPolicy?.enabled
         ? this.createAskAdvisorStorage(router, this.advisorPolicy)
         : undefined;
-    if (mode === "agent") {
-      return {
-        tools: [
-          ...createDefaultTurnRunnerTools(cwd, todoStorage, recallStorage, advisorStorage),
-          ...mcpTools,
-        ],
-      };
-    }
-
+    const baseTools =
+      mode === "agent"
+        ? createDefaultTurnRunnerTools(cwd, todoStorage, recallStorage, advisorStorage)
+        : createTurnRunnerTools({
+            cwd,
+            mode,
+            getDefinition: () => this.stateMachine?.definition,
+            getStateMachine: () => this.stateMachine,
+            getActiveStateOutput: () => this.getActiveStateOutput(),
+            todoStorage,
+            skills,
+            recallStorage,
+            advisorStorage,
+            clock: this.clock,
+            minimumScheduledDelayMs: this.minimumScheduledDelayMs,
+          });
+    const taskAwareTools = baseTools.map((tool) =>
+      tool.name === "bash"
+        ? wrapBackgroundable(tool, {
+            taskManager: this.taskManager,
+            defaultWaitBudgetMs: this.taskWaitBudgetMs,
+            clock: this.clock,
+            ownerScopeId: () => this.requireRootScope(),
+            label: (params) => String(params.command ?? "bash command"),
+            onTaskStarted: (id, foregroundPending) => {
+              this.taskSettlementDelivery.set(
+                id,
+                foregroundPending ? "foreground_pending" : "deliver",
+              );
+            },
+            onForegroundResult: (id, converted) => {
+              this.taskSettlementDelivery.set(id, converted ? "deliver" : "suppress");
+              this.scheduleSettlementDelivery();
+            },
+          })
+        : tool,
+    );
     return {
       tools: [
-        ...createTurnRunnerTools({
-          cwd,
-          mode,
-          getDefinition: () => this.stateMachine?.definition,
-          getStateMachine: () => this.stateMachine,
-          getActiveStateOutput: () => this.getActiveStateOutput(),
-          todoStorage,
-          skills,
-          recallStorage,
-          advisorStorage,
-          clock: this.clock,
-          minimumScheduledDelayMs: this.minimumScheduledDelayMs,
-        }),
+        ...taskAwareTools,
+        ...(includeParentTools
+          ? createTaskAdminTools({ taskManager: this.taskManager, clock: this.clock })
+          : []),
         ...mcpTools,
       ],
     };
@@ -1978,7 +2112,9 @@ export class TurnRunner {
     const unsubscribe = agent.subscribe((event) => this.emitParentAgentEvent(event));
     this.parentAgentInterrupted = false;
     try {
-      this.modelRouter?.noteTurnStart({ promptHasImages: (input.images?.length ?? 0) > 0 });
+      if (!input.continuation) {
+        this.modelRouter?.noteTurnStart({ promptHasImages: (input.images?.length ?? 0) > 0 });
+      }
       const switched = await this.modelRouter?.prepareTurn({
         prevTurnHint: input.prompt,
         signal: agent.signal,
@@ -2335,6 +2471,7 @@ export class TurnRunner {
             },
           }
         : {}),
+      steeringMode: "all",
       toolExecution: "parallel",
       afterToolCall: async (context) => {
         const details = context.result.details;

@@ -1,6 +1,8 @@
 /**
- * Hook into SIGINT/SIGTERM so the caller's `dispose` (PGlite close, MCP
- * teardown, etc.) actually runs before the process exits.
+ * Hook into SIGINT/SIGTERM so the caller's `dispose` (task process-group
+ * reapers, PGlite close, MCP teardown, etc.) actually runs before the process
+ * exits. TurnRunner.dispose owns taskManager.reapAll, so every CLI path that
+ * disposes a runner reaches the same shutdown barrier through this handler.
  *
  * Without this, Ctrl+C kills the process while PGlite is mid-WAL-write and
  * leaves the data directory in a state that PANICs on the next start
