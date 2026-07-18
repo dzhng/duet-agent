@@ -176,8 +176,12 @@ must actually run that eval; wording surfaced to users is contract, and the eval
 - Table-authority invariant: only the runner's loaded table is fully authoritative; pre-boot
   virtual checks approximate with the loaded-at-boot table (post-fix) — never add a third
   notion of "the table".
-- Advisor pricing in `advisor-preview` is a hand-labeled approximation; the strictly better
-  version is a `cost` override in `MISSING_MODEL_CLONES` fixing attribution everywhere.
+- ~~Advisor pricing in `advisor-preview` is a hand-labeled approximation~~ Done (2026-07-18,
+  user-prompted): published per-MTok prices now live as `cost` overrides on the gateway clones
+  and passthroughs (fable 10/50, sonnet-5 intro 2/10, sol 5/30, terra 2.5/15, luna 1/6, kimi
+  3/15 — previously $0 or inherited-wrong), fixing cost accounting everywhere (sidebar, usage
+  events); the preview derives from the catalog and the hand map is deleted. Sonnet-5's intro
+  price needs a bump after 2026-08-31.
 - `cli/route.ts` hosts probe + advisor-preview; split when it grows again.
 - After the adapter unification, a `turn-runner/routing.ts` extraction is the natural next
   decomposition of turn-runner.ts — do it for ownership, not line count.

@@ -198,9 +198,9 @@ describe("CLI model inference", () => {
 
   test("preserves model-router capabilities and token ceilings on every provider", () => {
     const expectations = {
-      "kimi-k3": { contextWindow: 1_000_000, maxTokens: 131_072 },
-      "gpt-5.6-sol": { contextWindow: 1_050_000, maxTokens: 128_000 },
-      "gpt-5.6-terra": { contextWindow: 1_050_000, maxTokens: 128_000 },
+      "kimi-k3": { contextWindow: 1_000_000, maxTokens: 131_072, costInput: 3 },
+      "gpt-5.6-sol": { contextWindow: 1_050_000, maxTokens: 128_000, costInput: 5 },
+      "gpt-5.6-terra": { contextWindow: 1_050_000, maxTokens: 128_000, costInput: 2.5 },
     } as const;
 
     for (const [shorthand, expected] of Object.entries(expectations)) {
@@ -210,8 +210,16 @@ describe("CLI model inference", () => {
         expect(model.reasoning).toBe(true);
         expect(model.contextWindow).toBe(expected.contextWindow);
         expect(model.maxTokens).toBe(expected.maxTokens);
+        // Clones inherit sibling prices and passthroughs zero them out, so the
+        // published price must be pinned or cost accounting silently lies.
+        expect(model.cost.input).toBe(expected.costInput);
       }
     }
+
+    // Advisor targets and the luna classifier bill from these same specs.
+    expect(resolveModelName("duet-gateway:anthropic/claude-fable-5").cost.input).toBe(10);
+    expect(resolveModelName("duet-gateway:anthropic/claude-sonnet-5").cost.input).toBe(2);
+    expect(resolveModelName("duet-gateway:openai/gpt-5.6-luna").cost.input).toBe(1);
   });
 
   test("keeps gpt-5.6 router models on the Responses transport at both gateways", () => {

@@ -6,9 +6,14 @@ const VERCEL_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
 const OPENAI_BASE_URL = "https://api.openai.com/v1";
 
 type ModelCloneOverrides = Partial<
-  Pick<Model<any>, "input" | "contextWindow" | "maxTokens" | "thinkingLevelMap" | "compat">
+  Pick<Model<any>, "input" | "contextWindow" | "maxTokens" | "thinkingLevelMap" | "compat" | "cost">
 >;
 
+// Published USD-per-million-token prices (input / output / cacheRead / cacheWrite),
+// verified against the OpenRouter listing 2026-07-18. Clones inherit their
+// sibling's cost and synthesized passthroughs zero it out, so every model that
+// resolves through an override below must carry its real price here or cost
+// accounting (sidebar, usage events, advisor-preview) silently lies.
 const GPT_5_6_GATEWAY_CAPABILITIES = {
   input: ["text", "image"],
   contextWindow: 1_050_000,
@@ -16,17 +21,37 @@ const GPT_5_6_GATEWAY_CAPABILITIES = {
 } satisfies ModelCloneOverrides;
 
 const OPENAI_GATEWAY_MODEL_OVERRIDES: Record<string, ModelCloneOverrides> = {
-  "openai/gpt-5.6-sol": GPT_5_6_GATEWAY_CAPABILITIES,
-  "openai/gpt-5.6-terra": GPT_5_6_GATEWAY_CAPABILITIES,
+  "openai/gpt-5.6-sol": {
+    ...GPT_5_6_GATEWAY_CAPABILITIES,
+    cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+  },
+  "openai/gpt-5.6-terra": {
+    ...GPT_5_6_GATEWAY_CAPABILITIES,
+    cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 },
+  },
+  "openai/gpt-5.6-luna": {
+    ...GPT_5_6_GATEWAY_CAPABILITIES,
+    cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
+  },
 };
 
 const KIMI_K3_CAPABILITIES = {
   input: ["text", "image"],
   contextWindow: 1_000_000,
   maxTokens: 131_072,
+  cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
   // K3 currently exposes one reasoning setting. Mapping app-level `high` to
   // `max` keeps the selection honest on both supported transports.
   thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: "max", xhigh: null },
+} satisfies ModelCloneOverrides;
+
+const FABLE_5_COST = {
+  cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+} satisfies ModelCloneOverrides;
+
+// Sonnet 5 introductory pricing (through 2026-08-31); bump to 3/15/0.3/3.75 after.
+const SONNET_5_COST = {
+  cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
 } satisfies ModelCloneOverrides;
 
 /**
@@ -143,8 +168,12 @@ const MISSING_MODEL_CLONES: Record<
   }>
 > = {
   "vercel-ai-gateway": [
-    { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-fable-5" },
-    { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-sonnet-5" },
+    { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-fable-5", overrides: FABLE_5_COST },
+    {
+      from: "anthropic/claude-opus-4.8",
+      to: "anthropic/claude-sonnet-5",
+      overrides: SONNET_5_COST,
+    },
     {
       from: "moonshotai/kimi-k2.6",
       to: "moonshotai/kimi-k3",
@@ -160,8 +189,16 @@ const MISSING_MODEL_CLONES: Record<
       to: "moonshotai/kimi-k3",
       overrides: KIMI_K3_CAPABILITIES,
     },
-    { from: "openai/gpt-5.5", to: "openai/gpt-5.6-sol" },
-    { from: "openai/gpt-5.5", to: "openai/gpt-5.6-terra" },
+    {
+      from: "openai/gpt-5.5",
+      to: "openai/gpt-5.6-sol",
+      overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-sol"],
+    },
+    {
+      from: "openai/gpt-5.5",
+      to: "openai/gpt-5.6-terra",
+      overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-terra"],
+    },
   ],
 };
 

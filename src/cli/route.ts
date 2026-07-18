@@ -11,18 +11,16 @@ import { serializeMessageForObserver } from "../memory/observational.js";
 import { MemorySession } from "../memory/session.js";
 import { readSessionObservations } from "../memory/storage.js";
 import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
-import { pinnedModelReference, routingCatalogAdapter } from "../model-resolution/resolver.js";
+import {
+  pinnedModelReference,
+  resolveModelName,
+  routingCatalogAdapter,
+} from "../model-resolution/resolver.js";
 import { DEFAULT_MEMORY_DB_PATH, DEFAULT_SESSION_STORAGE_DIR } from "../session/session-manager.js";
 import { listRecentSessions } from "../tui/recent-sessions.js";
 import { TurnRunner } from "../turn-runner/turn-runner.js";
 import type { TurnState } from "../types/protocol.js";
 import { loadCliEnvFiles } from "./shared.js";
-
-/** Approximate advisor input prices used only by the offline preview. */
-export const ADVISOR_INPUT_USD_PER_MILLION_TOKENS: Readonly<Record<string, number>> = {
-  "fable-5": 10,
-  "gpt-5.6-terra": 2.5,
-};
 
 /** Parsed arguments for the permanent route-classifier workbench. */
 export interface RouteArgs {
@@ -285,12 +283,14 @@ async function runAdvisorPreview(
   });
   const estimates = Object.entries(loaded.table.tiers).map(([tierName, definition]) => {
     const model = definition.advisor.target.modelName;
-    const price = ADVISOR_INPUT_USD_PER_MILLION_TOKENS[model];
+    // Derived from the catalog's per-model cost (the same source the sidebar
+    // and usage accounting bill from); zero means the catalog has no price.
+    const price = resolveModelName(model).cost?.input;
     return {
       tier: tierName,
       model,
       enabled: definition.advisor.enabled,
-      inputUsd: price === undefined ? undefined : (transcript.tokens / 1_000_000) * price,
+      inputUsd: price ? (transcript.tokens / 1_000_000) * price : undefined,
     };
   });
   const result: AdvisorPreviewResult = {
