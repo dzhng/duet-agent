@@ -15,12 +15,8 @@ const ROUTING_TABLE_RELATIVE_PATH = join(".duet", "models.json");
 export interface LoadRoutingTableOptions {
   /** Project directory whose `.duet/models.json` file should be inspected. */
   cwd: string;
-  /**
-   * Concrete catalog used for collision, dangling-target, and vision validation.
-   * The adapter is optional only so the built-in table can be loaded before the
-   * future composition slice wires model resolution; file shape is always checked.
-   */
-  catalogAdapter?: RoutingCatalogAdapter;
+  /** Concrete catalog used for collision, dangling-target, and vision validation. */
+  catalogAdapter: RoutingCatalogAdapter;
 }
 
 /** Provenance attached to the active routing table. */
@@ -59,15 +55,9 @@ function assertSchema(value: unknown, path: string): asserts value is RoutingTab
 function assertDomain(
   table: RoutingTable,
   path: string,
-  catalogAdapter: RoutingCatalogAdapter | undefined,
+  catalogAdapter: RoutingCatalogAdapter,
 ): void {
-  const validationCatalog =
-    catalogAdapter ??
-    ({
-      isCatalogName: (name: string) => !Object.hasOwn(table.tiers, name),
-      modelAcceptsImages: () => true,
-    } satisfies RoutingCatalogAdapter);
-  const issues = validateRoutingTable(table, validationCatalog);
+  const issues = validateRoutingTable(table, catalogAdapter);
   if (issues.length === 0) return;
   throw new Error(
     `Invalid routing table at ${path}:\n${issues.map((issue) => `- ${issue.path}: ${issue.message}`).join("\n")}`,

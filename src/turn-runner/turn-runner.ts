@@ -24,7 +24,6 @@ import {
   BUILT_IN_ROUTING_TABLE,
   isVirtualModel,
   type AdvisorPolicy,
-  type RoutingCatalogAdapter,
   type RoutingTable,
 } from "../model-routing/table.js";
 import { scheduledStateFallbackWakeAt } from "./duration.js";
@@ -48,9 +47,10 @@ import { MemoryContextCache } from "../memory/store.js";
 import {
   DEFAULT_CLI_MEMORY_MODEL,
   DEFAULT_CLI_MODEL,
+  pinnedModelReference,
   resolveModelName,
+  routingCatalogAdapter,
 } from "../model-resolution/resolver.js";
-import { isKnownShorthand } from "../model-resolution/catalog.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import {
   COMPACT_MESSAGE_TOKENS_RATIO,
@@ -1723,11 +1723,10 @@ export class TurnRunner {
     };
   }
 
-  private createAskAdvisorStorage(
+  protected createAskAdvisorStorage(
     router: ModelRouter,
     policy: AdvisorPolicy,
   ): AskAdvisorToolStorage {
-    const modelName = resolveModelName(policy.target.modelName).id;
     return {
       getMessages: () => this.parentAgent?.state.messages ?? this.state?.agent.messages ?? [],
       getSystemPrompt: () => this.parentAgent?.state.systemPrompt ?? "",
@@ -1739,10 +1738,10 @@ export class TurnRunner {
         return snapshot.observations.map((observation) => observation.content);
       },
       budgetTokens: policy.transcriptTokens,
-      modelName,
+      modelName: () => resolveModelName(policy.target.modelName).id,
       thinkingLevel: policy.target.thinkingLevel,
-      advisorGate: () => router.consumeAdvisorGate(),
-      noteAdvisorConsult: () => router.noteAdvisorConsult(),
+      advisorGate: () => router.beginAdvisorConsult(),
+      noteAdvisorConsult: (success = true) => router.endAdvisorConsult(success),
     };
   }
 
@@ -1775,6 +1774,7 @@ export class TurnRunner {
 
     const agent = this.requireParentAgent();
     this.applyPendingModelSelection(agent);
+    agent.state.tools = this.createTools(input.state.mode).tools;
     this.parentControlResult = { type: "none" };
     this.setParentAgentRunning(true);
 
@@ -2522,22 +2522,14 @@ export class TurnRunner {
     this.modelRouter = undefined;
     this.routingTable = undefined;
     this.advisorPolicy = undefined;
-    if (!modelName || isKnownShorthand(modelName)) return;
-    try {
-      resolveModelName(modelName);
-      return;
-    } catch {
-      // A name outside the concrete catalog may be owned by the project routing table.
-    }
-    const catalogAdapter = this.routingCatalogAdapter();
     const loaded = await loadRoutingTable({
       cwd: this.config.cwd ?? process.cwd(),
-      catalogAdapter,
+      catalogAdapter: routingCatalogAdapter,
     });
     this.routingTable = loaded.table;
     if (!modelName || !isVirtualModel(modelName, loaded.table)) return;
     this.advisorPolicy = loaded.table.tiers[modelName]!.advisor;
-    this.modelRouter = this.createBoundModelRouter(modelName, loaded.table, catalogAdapter);
+    this.modelRouter = this.createBoundModelRouter(modelName, loaded.table, routingCatalogAdapter);
   }
 
   private createBoundModelRouter(
@@ -2549,9 +2541,9 @@ export class TurnRunner {
       table,
       tier,
       classify: async (input, signal) => {
-        const classifierModel = resolveModelName(table.classifier.target.modelName);
         return classifyRoute(input, {
-          model: `${classifierModel.provider}:${classifierModel.id}`,
+          model: pinnedModelReference(table.classifier.target.modelName),
+          thinkingLevel: table.classifier.target.thinkingLevel,
           signal,
         });
       },
@@ -2590,14 +2582,15 @@ export class TurnRunner {
     this.pendingModelSelection = undefined;
     if (!this.isVirtualModelSelection(selection)) {
       this.modelRouter?.pin();
+      this.advisorPolicy = undefined;
       agent.state.model = resolveModelName(selection);
       return;
     }
 
     const table = this.routingTable ?? BUILT_IN_ROUTING_TABLE;
-    const catalogAdapter = this.routingCatalogAdapter();
     this.modelRouter?.unpin();
-    this.modelRouter = this.createBoundModelRouter(selection, table, catalogAdapter);
+    this.advisorPolicy = table.tiers[selection]!.advisor;
+    this.modelRouter = this.createBoundModelRouter(selection, table, routingCatalogAdapter);
     const initial = this.modelRouter.initialTarget({ hasImages: false });
     agent.state.model = resolveModelName(initial.modelName);
     agent.state.thinkingLevel = initial.thinkingLevel;
@@ -2607,7 +2600,7 @@ export class TurnRunner {
   private resolveStateModel(modelName: string | undefined) {
     if (!modelName || !this.isVirtualModelSelection(modelName)) return undefined;
     const table = this.routingTable ?? BUILT_IN_ROUTING_TABLE;
-    return resolveTierDefault(table, modelName, { hasImages: false }, this.routingCatalogAdapter());
+    return resolveTierDefault(table, modelName, { hasImages: false }, routingCatalogAdapter);
   }
 
   /** Omitted state models inherit the parent's active concrete target, not its virtual selection. */
@@ -2617,15 +2610,8 @@ export class TurnRunner {
     const parent = this.requireParentAgent().state;
     return {
       ...options,
-      model: `${parent.model.provider}:${parent.model.id}`,
+      model: pinnedModelReference(this.modelRouter?.status().modelName ?? parent.model.id),
       ...(parent.thinkingLevel === "off" ? {} : { thinkingLevel: parent.thinkingLevel }),
-    };
-  }
-
-  private routingCatalogAdapter(): RoutingCatalogAdapter {
-    return {
-      isCatalogName: isKnownShorthand,
-      modelAcceptsImages: (name: string) => resolveModelName(name).input.includes("image"),
     };
   }
 

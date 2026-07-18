@@ -1,6 +1,7 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { THINKING_LEVELS, isThinkingLevel } from "../session/thinking-level.js";
+import { walkVirtualRoute } from "./resolve.js";
 
 const ThinkingLevelSchema = Type.Union(
   THINKING_LEVELS.map((level) => Type.Literal(level)),
@@ -148,7 +149,7 @@ export interface RoutingTable {
   classifier: ClassifierConfig;
 }
 
-/** Catalog capabilities injected by the future composition site. */
+/** Concrete catalog capabilities injected by model-resolution composition sites. */
 export interface RoutingCatalogAdapter {
   /** True for every concrete shorthand or alias accepted by model resolution. */
   isCatalogName(name: string): boolean;
@@ -334,38 +335,6 @@ function targetEntries(table: RoutingTable): TargetEntry[] {
   return entries;
 }
 
-function routeForTier(
-  table: RoutingTable,
-  tier: string,
-  requestedRoute: string,
-): RouteTarget | undefined {
-  const definition = table.tiers[tier];
-  if (!definition) return undefined;
-  const selectedRoute = Object.hasOwn(definition.routes, requestedRoute)
-    ? requestedRoute
-    : "general";
-  const rule = definition.routes[selectedRoute];
-  return rule?.target;
-}
-
-function virtualPath(
-  table: RoutingTable,
-  startTier: string,
-  route: string,
-): { cycle?: string[]; target?: RouteTarget } {
-  const chain: string[] = [];
-  let tier = startTier;
-  while (true) {
-    const repeatedAt = chain.indexOf(tier);
-    if (repeatedAt !== -1) return { cycle: [...chain.slice(repeatedAt), tier] };
-    chain.push(tier);
-    const selected = routeForTier(table, tier, route);
-    if (!selected) return {};
-    if (!isVirtualModel(selected.modelName, table)) return { target: selected };
-    tier = selected.modelName;
-  }
-}
-
 /** Validate cross-field routing invariants against an injected concrete-model catalog. */
 export function validateRoutingTable(
   table: RoutingTable,
@@ -453,7 +422,7 @@ export function validateRoutingTable(
       });
     }
     if (entry.tier && entry.route && targetIsVirtual) {
-      const result = virtualPath(table, entry.tier, entry.route);
+      const result = walkVirtualRoute(table, entry.tier, entry.route);
       if (result.cycle) {
         issues.push({
           code: "virtual_cycle",
@@ -466,7 +435,7 @@ export function validateRoutingTable(
 
   for (const [tier, definition] of Object.entries(table.tiers)) {
     if (!definition.routes[definition.visionRoute]) continue;
-    const result = virtualPath(table, tier, definition.visionRoute);
+    const result = walkVirtualRoute(table, tier, definition.visionRoute);
     if (result.cycle || !result.target) continue;
     if (
       catalogAdapter.isCatalogName(result.target.modelName) &&

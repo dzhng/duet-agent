@@ -1,5 +1,9 @@
 import { resolveModelName } from "../model-resolution/resolver.js";
-import { BUILT_IN_ROUTING_TABLE, isVirtualModel } from "../model-routing/table.js";
+import {
+  BUILT_IN_ROUTING_TABLE,
+  isVirtualModel,
+  type RoutingTable,
+} from "../model-routing/table.js";
 import { validateThinkingLevel } from "../session/thinking-level.js";
 import { applyInlineSlashCommands, type SlashCommandContext } from "../tui/slash-commands.js";
 import type { TurnRunnerConfig } from "../types/config.js";
@@ -30,6 +34,7 @@ export function applyInlineSlashCommandsToCliConfig(
   prompt: string,
   config: TurnRunnerConfig,
   log: InlineSlashLog,
+  routingTable: RoutingTable = BUILT_IN_ROUTING_TABLE,
 ): { residue: string } {
   // /model and /thinking both need just appendBlock + their setter; the
   // other SlashCommandContext fields are optional precisely so this
@@ -41,14 +46,17 @@ export function applyInlineSlashCommandsToCliConfig(
       // arg is non-empty non-whitespace, so we go straight to the
       // routing table check or concrete resolver, matching `--model` boot
       // validation without ever handing a virtual name to resolveModelName.
-      const routed = isVirtualModel(model, BUILT_IN_ROUTING_TABLE);
+      const routed = isVirtualModel(model, routingTable);
+      if (!routed && isVirtualModel(model, BUILT_IN_ROUTING_TABLE)) {
+        throw new Error(`Unknown virtual model tier "${model}" in the active routing table.`);
+      }
       if (!routed) resolveModelName(model);
       config.model = model;
       return { modelName: model, routed };
     },
     setThinkingLevel: (level) => {
       const normalized = validateThinkingLevel(level);
-      if (config.model && isVirtualModel(config.model, BUILT_IN_ROUTING_TABLE)) {
+      if (config.model && isVirtualModel(config.model, routingTable)) {
         return { routedBy: config.model };
       }
       config.thinkingLevel = normalized;

@@ -1,4 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   createAssistantMessageEventStream,
@@ -6,6 +9,7 @@ import {
   type Model,
 } from "@earendil-works/pi-ai";
 import type { ClassifierDecision } from "../src/model-routing/classifier.js";
+import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import {
   ModelRouter,
   type ModelRouterOptions,
@@ -16,6 +20,7 @@ import type { TurnEvent } from "../src/types/protocol.js";
 import type { StateMachineAgentState } from "../src/types/state-machine.js";
 import { waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 
 const previousDuetApiKey = process.env.DUET_API_KEY;
 
@@ -46,10 +51,13 @@ class RouterTurnRunner extends TurnRunner {
     everySteps?: number;
     planTarget?: { modelName: string; thinkingLevel: "low" | "medium" | "high" };
     effectiveContext?: number;
+    model?: string;
+    cwd?: string;
   }) {
     super({
-      model: "frontier",
+      model: options.model ?? "frontier",
       mode: "agent",
+      ...(options.cwd ? { cwd: options.cwd } : {}),
       memoryDbPath: false,
       skillDiscovery: { includeDefaults: false },
       effectiveContext: options.effectiveContext,
@@ -176,6 +184,30 @@ async function startRunner(runner: RouterTurnRunner, events: TurnEvent[]): Promi
 }
 
 describe("TurnRunner virtual-model adapter", () => {
+  testIfDocker("a concrete-started session can switch to a project-only virtual tier", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "duet-router-concrete-"));
+    try {
+      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      table.defaultTier = "custom";
+      table.tiers = { custom: table.tiers.economy! };
+      await mkdir(join(cwd, ".duet"));
+      await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+      const runner = new RouterTurnRunner({
+        model: "gpt-5.6-sol",
+        cwd,
+        classify: scriptedClassifier([]),
+      });
+      await startRunner(runner, []);
+
+      expect(runner.setModel("custom")).toEqual({ routed: true });
+      expect(runner.routeStatus()?.tier).toBe("custom");
+      expect(runner.parentAgentForTest().state.model.id).toBe("openai/gpt-5.6-luna");
+      await runner.dispose();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("concrete pin suspends routing and virtual selection rebuilds it for re-classification", async () => {
     const runner = new RouterTurnRunner({
       classify: scriptedClassifier([{ route: "plan", rationale: "Fresh routed turn." }]),

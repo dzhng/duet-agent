@@ -197,7 +197,8 @@ describe("advisor trigger and router interlock", () => {
     await runner.start({ type: "start", mode: "agent" });
     const router = runner.router;
     if (!router) throw new Error("Expected routed runner");
-    router.noteAdvisorConsult();
+    router.beginAdvisorConsult();
+    router.endAdvisorConsult(true);
 
     const turn = runner.turn({
       type: "prompt",
@@ -230,10 +231,10 @@ describe("advisor trigger and router interlock", () => {
       budgetTokens: 10_000,
       modelName: "anthropic/claude-fable-5",
       thinkingLevel: "high",
-      advisorGate: () => router.consumeAdvisorGate(),
-      noteAdvisorConsult: () => {
-        successfulConsults += 1;
-        router.noteAdvisorConsult();
+      advisorGate: () => router.beginAdvisorConsult(),
+      noteAdvisorConsult: (success = true) => {
+        if (success) successfulConsults += 1;
+        router.endAdvisorConsult(success);
       },
       callAdvisor: async () => ({ advice: "Validate lease ownership before queue selection." }),
     });

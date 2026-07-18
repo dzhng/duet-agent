@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
-import { isVirtualModel, type RoutingTable } from "./table.js";
+import type { RoutingTable } from "./table.js";
 
 /** Request facts that can change an otherwise deterministic route selection. */
 export interface RouteContext {
@@ -31,45 +31,58 @@ export interface ResolvedTarget {
 
 type UncheckedTarget = Omit<ResolvedTarget, "visionFallback">;
 
-function resolveWithoutVisionGuard(
+/** Non-throwing virtual-chain walk shared by validation and live route resolution. */
+export function walkVirtualRoute(
   table: RoutingTable,
   startTier: string,
   requestedRoute: string,
-): UncheckedTarget {
-  if (!isVirtualModel(startTier, table)) {
-    throw new Error(`Unknown virtual model tier "${startTier}".`);
-  }
-
+): { cycle?: string[]; target?: UncheckedTarget; chain: string[] } {
   const chain: string[] = [];
   let tier = startTier;
   while (true) {
     const repeatedAt = chain.indexOf(tier);
     if (repeatedAt !== -1) {
-      const cycle = [...chain.slice(repeatedAt), tier];
-      throw new Error(`Virtual model cycle: ${cycle.join(" -> ")}.`);
+      return { cycle: [...chain.slice(repeatedAt), tier], chain };
     }
-    chain.push(tier);
 
     const definition = table.tiers[tier];
+    if (!definition) return { chain };
+    chain.push(tier);
     const route = Object.hasOwn(definition.routes, requestedRoute) ? requestedRoute : "general";
     const rule = definition.routes[route];
-    if (!rule) {
-      throw new Error(
-        `Tier "${tier}" has neither requested route "${requestedRoute}" nor a general fallback.`,
-      );
-    }
+    if (!rule) return { chain };
 
-    if (!isVirtualModel(rule.target.modelName, table)) {
+    if (!Object.hasOwn(table.tiers, rule.target.modelName)) {
       return {
-        tier,
-        route,
-        modelName: rule.target.modelName,
-        thinkingLevel: rule.target.thinkingLevel,
         chain,
+        target: {
+          tier,
+          route,
+          modelName: rule.target.modelName,
+          thinkingLevel: rule.target.thinkingLevel,
+          chain,
+        },
       };
     }
     tier = rule.target.modelName;
   }
+}
+
+function resolveWithoutVisionGuard(
+  table: RoutingTable,
+  startTier: string,
+  requestedRoute: string,
+): UncheckedTarget {
+  if (!Object.hasOwn(table.tiers, startTier)) {
+    throw new Error(`Unknown virtual model tier "${startTier}".`);
+  }
+  const result = walkVirtualRoute(table, startTier, requestedRoute);
+  if (result.cycle) throw new Error(`Virtual model cycle: ${result.cycle.join(" -> ")}.`);
+  if (result.target) return result.target;
+  const tier = result.chain.at(-1) ?? startTier;
+  throw new Error(
+    `Tier "${tier}" has neither requested route "${requestedRoute}" nor a general fallback.`,
+  );
 }
 
 function joinChains(initial: string[], fallback: string[]): string[] {

@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import dedent from "dedent";
 import {
@@ -6,10 +9,14 @@ import {
   createTurnRunnerTools as createTurnRunnerToolsWithStorage,
   DEFAULT_BASH_TIMEOUT_SECONDS,
   withDefaultBashTimeout,
+  type AskAdvisorToolStorage,
   type TurnRunnerControlResult,
 } from "../src/turn-runner/tools.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
+import { ModelRouter } from "../src/model-routing/router.js";
+import { BUILT_IN_ROUTING_TABLE, type AdvisorPolicy } from "../src/model-routing/table.js";
 import type { TurnTodo } from "../src/types/protocol.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 
 type TurnRunnerToolsInput = Parameters<typeof createTurnRunnerToolsWithStorage>[0];
 
@@ -34,7 +41,7 @@ describe("TurnRunner tools", () => {
       getSystemPrompt: () => "executor prompt",
       getObservations: async () => [],
       budgetTokens: 10_000,
-      modelName: "anthropic/claude-fable-5",
+      modelName: () => "anthropic/claude-fable-5",
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: false, stepsUntilAllowed: 3 }),
       noteAdvisorConsult: () => {},
@@ -86,11 +93,11 @@ describe("TurnRunner tools", () => {
       getSystemPrompt: () => "You are the executor.",
       getObservations: async () => ["The router API already owns the advisor gate."],
       budgetTokens: 10_000,
-      modelName: "anthropic/claude-fable-5",
+      modelName: () => "anthropic/claude-fable-5",
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
-      noteAdvisorConsult: () => {
-        consults += 1;
+      noteAdvisorConsult: (success) => {
+        if (success) consults += 1;
       },
       callAdvisor: async (input) => {
         receivedSignal = input.signal;
@@ -123,11 +130,11 @@ describe("TurnRunner tools", () => {
       getSystemPrompt: () => "You are the executor.",
       getObservations: async () => [],
       budgetTokens: 10_000,
-      modelName: "anthropic/claude-fable-5",
+      modelName: () => "anthropic/claude-fable-5",
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
-      noteAdvisorConsult: () => {
-        consults += 1;
+      noteAdvisorConsult: (success) => {
+        if (success) consults += 1;
       },
       callAdvisor: async () => {
         throw new Error("advisor unavailable");
@@ -136,6 +143,51 @@ describe("TurnRunner tools", () => {
 
     await expect(tool.execute("advisor-failed", {})).rejects.toThrow("advisor unavailable");
     expect(consults).toBe(0);
+  });
+
+  test("overlapping ask_advisor executions reserve one router-owned consult slot", async () => {
+    const router = new ModelRouter({
+      table: BUILT_IN_ROUTING_TABLE,
+      tier: "frontier",
+      classify: async () => ({ route: "general", rationale: "General." }),
+      resolveCatalog: { modelAcceptsImages: () => true },
+    });
+    let release!: () => void;
+    let announceStarted!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      announceStarted = resolve;
+    });
+    const storage: AskAdvisorToolStorage = {
+      getMessages: () => [{ role: "user", content: "Review this plan.", timestamp: 1 }],
+      getSystemPrompt: () => "You are the executor.",
+      getObservations: async () => [],
+      budgetTokens: 10_000,
+      modelName: () => "anthropic/claude-fable-5",
+      thinkingLevel: "high",
+      advisorGate: () => router.beginAdvisorConsult(),
+      noteAdvisorConsult: (success = true) => router.endAdvisorConsult(success),
+      callAdvisor: async () => {
+        announceStarted();
+        await blocked;
+        return { advice: "Proceed." };
+      },
+    };
+    const tool = createAskAdvisorTool(storage);
+
+    const first = tool.execute("advisor-overlap-1", {});
+    await started;
+    const second = await tool.execute("advisor-overlap-2", {});
+    expect(second.details).toEqual({
+      type: "ask_advisor",
+      rateLimited: true,
+      stepsUntilAllowed: 0,
+      inFlight: true,
+    });
+    release();
+    await expect(first).resolves.toEqual(expect.objectContaining({ terminate: false }));
   });
 
   test("injects ask_advisor only for routed tiers that enable it", async () => {
@@ -160,6 +212,63 @@ describe("TurnRunner tools", () => {
       if (priorKey === undefined) delete process.env.DUET_API_KEY;
       else process.env.DUET_API_KEY = priorKey;
     }
+  });
+
+  testIfDocker("lazy advisor resolution cannot crash session startup", async () => {
+    const priorDuet = process.env.DUET_API_KEY;
+    const priorVercel = process.env.AI_GATEWAY_API_KEY;
+    const priorOpenRouter = process.env.OPENROUTER_API_KEY;
+    const cwd = await mkdtemp(join(tmpdir(), "duet-advisor-lazy-"));
+    delete process.env.DUET_API_KEY;
+    delete process.env.AI_GATEWAY_API_KEY;
+    process.env.OPENROUTER_API_KEY = "openrouter-test-key";
+    try {
+      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      table.tiers.frontier!.advisor.target.modelName = "gpt-5.6-luna";
+      await mkdir(join(cwd, ".duet"));
+      await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+      const runner = new ToolListTurnRunner("frontier", cwd);
+
+      await expect(runner.start({ type: "start", mode: "agent" })).resolves.toBeDefined();
+      runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
+      const advisor = runner.advisorTool();
+      if (!advisor) throw new Error("ask_advisor tool missing");
+      const result = await advisor.execute("advisor-unavailable", {});
+      expect(result.details).toEqual({ type: "ask_advisor", unavailable: true });
+      expect(result.content[0]).toEqual(
+        expect.objectContaining({ text: expect.stringContaining("unavailable") }),
+      );
+      await runner.dispose();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      if (priorDuet === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = priorDuet;
+      if (priorVercel === undefined) delete process.env.AI_GATEWAY_API_KEY;
+      else process.env.AI_GATEWAY_API_KEY = priorVercel;
+      if (priorOpenRouter === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = priorOpenRouter;
+    }
+  });
+
+  test("tier switches rebuild advisor injection and bind consults to the new router", async () => {
+    const runner = new ToolListTurnRunner("economy");
+    await runner.start({ type: "start", mode: "agent" });
+    expect(runner.toolNames()).not.toContain("ask_advisor");
+
+    runner.setModel("frontier");
+    runner.refreshToolsForTest();
+    expect(runner.toolNames()).toContain("ask_advisor");
+    runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
+    const advisor = runner.advisorTool();
+    if (!advisor) throw new Error("ask_advisor tool missing");
+    await advisor.execute("advisor-after-switch", {});
+    expect(runner.consultedRouters.at(-1)).toBe(runner.currentRouter());
+    expect(runner.completedConsultRouters.at(-1)).toBe(runner.currentRouter());
+
+    runner.setModel("economy");
+    runner.refreshToolsForTest();
+    expect(runner.toolNames()).not.toContain("ask_advisor");
+    await runner.dispose();
   });
 
   test("todo_write replaces and merges todo lists", async () => {
@@ -1418,10 +1527,14 @@ describe("TurnRunner tools", () => {
 });
 
 class ToolListTurnRunner extends TurnRunner {
-  constructor(model: string) {
+  readonly consultedRouters: ModelRouter[] = [];
+  readonly completedConsultRouters: ModelRouter[] = [];
+
+  constructor(model: string, cwd?: string) {
     super({
       model,
       mode: "agent",
+      ...(cwd ? { cwd } : {}),
       memoryDbPath: false,
       skillDiscovery: { includeDefaults: false },
     });
@@ -1429,6 +1542,41 @@ class ToolListTurnRunner extends TurnRunner {
 
   toolNames(): string[] {
     return this.requireParentAgent().state.tools.map((tool) => tool.name);
+  }
+
+  advisorTool() {
+    return this.requireParentAgent().state.tools.find((tool) => tool.name === "ask_advisor");
+  }
+
+  parentMessages() {
+    return this.requireParentAgent().state.messages;
+  }
+
+  refreshToolsForTest(): void {
+    this.requireParentAgent().state.tools = this.createTools("agent").tools;
+  }
+
+  currentRouter(): ModelRouter | undefined {
+    return this.modelRouter;
+  }
+
+  protected override createAskAdvisorStorage(
+    router: ModelRouter,
+    policy: AdvisorPolicy,
+  ): AskAdvisorToolStorage {
+    const storage = super.createAskAdvisorStorage(router, policy);
+    const begin = storage.advisorGate;
+    storage.advisorGate = () => {
+      this.consultedRouters.push(router);
+      return begin();
+    };
+    const note = storage.noteAdvisorConsult;
+    storage.noteAdvisorConsult = (success) => {
+      if (success) this.completedConsultRouters.push(router);
+      note(success);
+    };
+    storage.callAdvisor = async () => ({ advice: "Proceed with the new tier." });
+    return storage;
   }
 }
 

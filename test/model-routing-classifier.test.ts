@@ -62,22 +62,24 @@ describe("classifyRoute", () => {
       rationale: "This route does not exist.",
     });
 
-    await expect(classifyRoute(fixture, { model: "gpt-5.6-luna" })).rejects.toThrow(
-      'Classifier selected unknown route "invented" for tier "frontier".',
-    );
+    await expect(
+      classifyRoute(fixture, { model: "gpt-5.6-luna", thinkingLevel: "low" }),
+    ).rejects.toThrow('Classifier selected unknown route "invented" for tier "frontier".');
   });
 
-  test("requests low reasoning and returns an existing route", async () => {
+  test("forwards the configured classifier effort and returns an existing route", async () => {
     const generate = spyOn(structuredOutput, "generateStructuredOutput").mockResolvedValue({
       route: "implement",
       rationale: "The next step is implementation work.",
     });
 
-    await expect(classifyRoute(fixture, { model: "gpt-5.6-luna" })).resolves.toEqual({
+    await expect(
+      classifyRoute(fixture, { model: "gpt-5.6-luna", thinkingLevel: "medium" }),
+    ).resolves.toEqual({
       route: "implement",
       rationale: "The next step is implementation work.",
     });
     expect(generate).toHaveBeenCalledTimes(1);
-    expect(generate.mock.calls[0]![0].callOptions).toEqual({ reasoningEffort: "low" });
+    expect(generate.mock.calls[0]![0].callOptions).toEqual({ reasoningEffort: "medium" });
   });
 });

@@ -232,16 +232,16 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     maxOutputTokens: 262144,
   },
   {
-    // Anthropic's Claude Fable 5 is routed through the duet/vercel gateways
-    // under the `anthropic/claude-fable-5` model id. pi-ai's catalog does not
-    // ship it yet, so resolution clones the Opus 4.8 gateway entry (identical
-    // anthropic-messages transport, 1M context, 128k output cap) until it does;
-    // see `resolveMissingModel` in duet-gateway.ts.
+    // Anthropic's Claude Fable 5 uses `anthropic/claude-fable-5` on every router
+    // provider. pi-ai's catalog does not ship it yet, so resolution clones the
+    // Opus 4.8 entry (identical anthropic-messages transport, 1M context, 128k
+    // output cap) until it does; see `resolveMissingModel` in duet-gateway.ts.
     shorthand: "fable-5",
     aliases: ["claude-fable-5", "anthropic/claude-fable-5"],
     modelsByProvider: {
       "duet-gateway": "anthropic/claude-fable-5",
       "vercel-ai-gateway": "anthropic/claude-fable-5",
+      openrouter: "anthropic/claude-fable-5",
     },
   },
   {

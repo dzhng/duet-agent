@@ -462,7 +462,7 @@ function handleModelSlashCommand(raw: string, ctx: SlashCommandContext): void {
       "[model]",
       routed
         ? `next turn routes via ${modelName}. The current turn (if any) keeps its model.`
-        : `next turn is pinned to ${modelName}. The current turn (if any) keeps its model.`,
+        : `next turn will use ${modelName} (pinned — routing suspended). The current turn (if any) keeps its model.`,
       COLORS.system,
     );
   } catch (error) {

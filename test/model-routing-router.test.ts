@@ -56,7 +56,8 @@ describe("ModelRouter", () => {
     const router = createRouter(scriptedClassifier([general, plan], inputs));
     await router.prepareTurn({ hasImages: false });
     router.noteAssistantStep("one step");
-    router.noteAdvisorConsult();
+    expect(router.beginAdvisorConsult().allowed).toBe(true);
+    router.endAdvisorConsult(true);
 
     expect(router.shouldClassify()).toBe(true);
     expect((await router.prepareTurn({ hasImages: false }))?.trigger).toBe("advisor");
@@ -107,38 +108,55 @@ describe("ModelRouter", () => {
     const router = createRouter(scriptedClassifier([plan]));
     const switched = await router.prepareTurn({ hasImages: false });
     expect(switched?.toModel).toBe("fable-5");
-    router.noteAdvisorConsult();
+    expect(router.beginAdvisorConsult().allowed).toBe(true);
+    router.endAdvisorConsult(true);
     expect(router.advisorGate()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
 
     expect(router.takeRerouteNudge()).toContain(
       "changed from gpt-5.6-sol to fable-5 for the plan route",
     );
     expect(router.advisorGate()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
-    expect(router.consumeAdvisorGate()).toEqual({ allowed: true, stepsUntilAllowed: 0 });
-    expect(router.consumeAdvisorGate()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
+    expect(router.beginAdvisorConsult()).toEqual({ allowed: true, stepsUntilAllowed: 0 });
+    router.endAdvisorConsult(false);
+    expect(router.beginAdvisorConsult()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
     expect(router.takeRerouteNudge()).toBeUndefined();
   });
 
   test("advisor-triggered switches do not create a nudge loop", async () => {
     const router = createRouter(scriptedClassifier([general, plan]));
     await router.prepareTurn({ hasImages: false });
-    router.noteAdvisorConsult();
+    expect(router.beginAdvisorConsult().allowed).toBe(true);
+    router.endAdvisorConsult(true);
 
     expect((await router.prepareTurn({ hasImages: false }))?.trigger).toBe("advisor");
     expect(router.takeRerouteNudge()).toBeUndefined();
-    expect(router.consumeAdvisorGate()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
+    expect(router.beginAdvisorConsult()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
   });
 
   test("advisor floor counts completed steps rather than advisor calls", () => {
     const router = createRouter(scriptedClassifier([general]));
     expect(router.advisorGate()).toEqual({ allowed: true, stepsUntilAllowed: 0 });
-    router.noteAdvisorConsult();
-    router.noteAdvisorConsult();
+    expect(router.beginAdvisorConsult().allowed).toBe(true);
+    router.endAdvisorConsult(true);
     expect(router.advisorGate()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
     for (let step = 0; step < 4; step++) router.noteAssistantStep();
     expect(router.advisorGate()).toEqual({ allowed: false, stepsUntilAllowed: 1 });
     router.noteAssistantStep();
     expect(router.advisorGate()).toEqual({ allowed: true, stepsUntilAllowed: 0 });
+  });
+
+  test("only one concurrent advisor consult can reserve the gate", () => {
+    const router = createRouter(scriptedClassifier([general]));
+
+    expect(router.beginAdvisorConsult()).toEqual({ allowed: true, stepsUntilAllowed: 0 });
+    expect(router.beginAdvisorConsult()).toEqual({
+      allowed: false,
+      stepsUntilAllowed: 0,
+      inFlight: true,
+    });
+    router.endAdvisorConsult(false);
+    expect(router.advisorGate()).toEqual({ allowed: true, stepsUntilAllowed: 0 });
+    expect(router.beginAdvisorConsult()).toEqual({ allowed: true, stepsUntilAllowed: 0 });
   });
 
   test("status reports the complete inspector snapshot", async () => {

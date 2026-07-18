@@ -24,8 +24,9 @@ import {
   resolveCliModel,
   resolveModelName,
 } from "../src/model-resolution/resolver.js";
-import { DEFAULT_MODEL_SELECTION } from "../src/model-routing/default-selection.js";
+import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { canonicalizeModelName } from "../src/model-resolution/catalog.js";
+import { buildProjectCliTurnConfig } from "../src/cli/run.js";
 import {
   activeFileAutocompleteToken,
   activeSkillAutocompleteToken,
@@ -86,16 +87,64 @@ function clearModelEnv(): void {
 }
 
 describe("CLI model inference", () => {
+  testIfDocker(
+    "project replacement controls boot default and explicit virtual validation",
+    async () => {
+      tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-routing-"));
+      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      table.defaultTier = "custom";
+      table.tiers = { custom: table.tiers.economy! };
+      await mkdir(join(tempRoot, ".duet"));
+      await writeFile(join(tempRoot, ".duet", "models.json"), JSON.stringify(table));
+
+      const bare = await buildProjectCliTurnConfig(
+        { workDir: tempRoot, memoryModelName: "openrouter:gpt-5.4-mini" },
+        EMPTY_DOTENV_KEYS,
+      );
+      expect(bare.modelResolution).toEqual({
+        modelName: "custom",
+        source: "default",
+        routed: true,
+      });
+      expect(describeModelResolution(bare.modelResolution)).toBe(
+        "custom (routed) — routing-table default",
+      );
+      const explicit = await buildProjectCliTurnConfig(
+        {
+          workDir: tempRoot,
+          modelName: "custom",
+          memoryModelName: "openrouter:gpt-5.4-mini",
+        },
+        EMPTY_DOTENV_KEYS,
+      );
+      expect(explicit.modelResolution).toEqual({
+        modelName: "custom",
+        source: "explicit",
+        routed: true,
+      });
+      await expect(
+        buildProjectCliTurnConfig(
+          {
+            workDir: tempRoot,
+            modelName: "frontier",
+            memoryModelName: "openrouter:gpt-5.4-mini",
+          },
+          EMPTY_DOTENV_KEYS,
+        ),
+      ).rejects.toThrow('Unknown virtual model tier "frontier" in the active routing table.');
+    },
+  );
+
   test("bare boot selects the virtual default before concrete fallback or env inference", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "duet_gt_test";
 
     const resolution = resolveCliModel(undefined, EMPTY_DOTENV_KEYS);
 
-    expect(DEFAULT_MODEL_SELECTION).toBe("frontier");
-    expect(DEFAULT_CLI_MODEL).not.toBe(DEFAULT_MODEL_SELECTION);
+    expect(BUILT_IN_ROUTING_TABLE.defaultTier).toBe("frontier");
+    expect(DEFAULT_CLI_MODEL).not.toBe(BUILT_IN_ROUTING_TABLE.defaultTier);
     expect(resolution).toEqual({ modelName: "frontier", source: "default", routed: true });
-    expect(describeModelResolution(resolution)).toBe("frontier (routed) — built-in default");
+    expect(describeModelResolution(resolution)).toBe("frontier (routed) — routing-table default");
     expect(() => resolveModelName(resolution.modelName)).toThrow("Unknown model shorthand");
   });
 
@@ -140,6 +189,11 @@ describe("CLI model inference", () => {
         expect(model.id).toBe(modelId);
       }
     }
+  });
+
+  test("resolves both advisor targets through OpenRouter", () => {
+    expect(resolveModelName("openrouter:fable-5").id).toBe("anthropic/claude-fable-5");
+    expect(resolveModelName("openrouter:gpt-5.6-terra").id).toBe("openai/gpt-5.6-terra");
   });
 
   test("preserves model-router capabilities and token ceilings on every provider", () => {

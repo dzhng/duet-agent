@@ -9,9 +9,8 @@ import { resolveRoute } from "../model-routing/resolve.js";
 import { serializeMessageForObserver } from "../memory/observational.js";
 import { MemorySession } from "../memory/session.js";
 import { readSessionObservations } from "../memory/storage.js";
-import { isKnownShorthand } from "../model-resolution/catalog.js";
 import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
-import { resolveModelName } from "../model-resolution/resolver.js";
+import { pinnedModelReference, routingCatalogAdapter } from "../model-resolution/resolver.js";
 import { DEFAULT_MEMORY_DB_PATH, DEFAULT_SESSION_STORAGE_DIR } from "../session/session-manager.js";
 import { listRecentSessions } from "../tui/recent-sessions.js";
 import { TurnRunner } from "../turn-runner/turn-runner.js";
@@ -156,21 +155,17 @@ export interface AdvisorPreviewResult {
   }>;
 }
 
-const ROUTING_CATALOG_ADAPTER = {
-  isCatalogName: isKnownShorthand,
-  modelAcceptsImages: (name: string) => resolveModelName(name).input.includes("image"),
-};
-
 function tableSource(loaded: LoadedRoutingTable): string {
   return loaded.source === "built-in" ? loaded.source : loaded.path;
 }
 
 function classifierModelReference(modelName: string): string {
-  const model = resolveModelName(modelName);
-  if (!resolveProviderApiKey(model.provider)) {
-    throw new Error(`No API key configured for classifier provider "${model.provider}".`);
+  const reference = pinnedModelReference(modelName);
+  const provider = reference.slice(0, reference.indexOf(":"));
+  if (!resolveProviderApiKey(provider)) {
+    throw new Error(`No API key configured for classifier provider "${provider}".`);
   }
-  return `${model.provider}:${model.id}`;
+  return reference;
 }
 
 function renderHuman(result: RouteCommandResult): string {
@@ -204,7 +199,7 @@ export async function runRouteCommand(
 
   const cwd = options.cwd ?? process.cwd();
   loadCliEnvFiles(cwd);
-  const loaded = await loadRoutingTable({ cwd, catalogAdapter: ROUTING_CATALOG_ADAPTER });
+  const loaded = await loadRoutingTable({ cwd, catalogAdapter: routingCatalogAdapter });
   const tierName = parsed.model ?? loaded.table.defaultTier;
   const tier = loaded.table.tiers[tierName];
   if (!tier) throw new Error(`Unknown virtual model tier "${tierName}".`);
@@ -220,14 +215,17 @@ export async function runRouteCommand(
       hasImages: parsed.images,
       trigger: "turn_start",
     },
-    { model: classifierModelReference(loaded.table.classifier.target.modelName) },
+    {
+      model: classifierModelReference(loaded.table.classifier.target.modelName),
+      thinkingLevel: loaded.table.classifier.target.thinkingLevel,
+    },
   );
   const resolved = resolveRoute(
     loaded.table,
     tierName,
     decision.route,
     { hasImages: parsed.images },
-    ROUTING_CATALOG_ADAPTER,
+    routingCatalogAdapter,
   );
   const result: RouteCommandResult = {
     tier: tierName,
@@ -265,7 +263,7 @@ async function runAdvisorPreview(
   const firstUserMessage = messages.find((message) => message.role === "user");
   if (!firstUserMessage) throw new Error(`Stored session "${sessionId}" has no user message.`);
 
-  const loaded = await loadRoutingTable({ cwd, catalogAdapter: ROUTING_CATALOG_ADAPTER });
+  const loaded = await loadRoutingTable({ cwd, catalogAdapter: routingCatalogAdapter });
   const selectedTier = stored.state.options?.model;
   const tier =
     selectedTier && loaded.table.tiers[selectedTier] ? selectedTier : loaded.table.defaultTier;

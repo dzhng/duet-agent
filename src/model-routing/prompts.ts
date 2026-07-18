@@ -51,7 +51,6 @@ export function renderRerouteNudge(switched: RouterSwitch): string {
   `;
 }
 
-/** Render every route in one tier for a single all-entries classifier decision. */
 /** Continuity framing for the classifier: cache preference when a target is active. */
 export function renderCacheContinuity(currentTarget: string | undefined): string {
   return currentTarget
@@ -63,6 +62,7 @@ export function renderCacheContinuity(currentTarget: string | undefined): string
     : "CURRENT TARGET: None (there is no prompt cache to preserve).";
 }
 
+/** Render every route in one tier for a single all-entries classifier decision. */
 export function renderClassifierRules(
   tierName: string,
   tier: TierDefinition,

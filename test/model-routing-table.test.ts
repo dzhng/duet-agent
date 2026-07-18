@@ -234,14 +234,14 @@ describe("routing table file loading and export", () => {
     );
   });
 
-  testIfDocker("enforces intrinsic validation even before a catalog adapter is wired", async () => {
+  testIfDocker("enforces intrinsic validation with an explicit catalog adapter", async () => {
     const cwd = await makeTempDir();
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
     table.classifier.everySteps = 0;
     await mkdir(join(cwd, ".duet"));
     await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
 
-    await expect(loadRoutingTable({ cwd })).rejects.toThrow(
+    await expect(loadRoutingTable({ cwd, catalogAdapter: catalog })).rejects.toThrow(
       "Classifier cadence must be a positive number of steps.",
     );
   });

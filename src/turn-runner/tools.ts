@@ -557,14 +557,14 @@ export interface AskAdvisorToolStorage {
   getObservations: () => Promise<readonly string[]>;
   /** Uniform transcript budget selected by the routed tier. */
   budgetTokens: number;
-  /** Gateway-native advisor model id resolved at runner composition. */
-  modelName: string;
+  /** Gateway-native advisor id, or a callback that resolves it lazily at tool execution. */
+  modelName: string | (() => string);
   /** Reasoning effort selected by the routed tier. */
   thinkingLevel: ThinkingLevel;
-  /** Current step-floor decision owned by ModelRouter. */
+  /** Atomically checks the floor and reserves the router's advisor slot when allowed. */
   advisorGate: () => AdvisorGate;
-  /** Records a successful consult and requests milestone classification. */
-  noteAdvisorConsult: () => void;
+  /** Releases the reserved slot; false never stamps the floor or requests classification. */
+  noteAdvisorConsult: (success?: boolean) => void;
   /** Network seam for deterministic tool tests; production uses callAdvisor. */
   callAdvisor?: (input: CallAdvisorInput) => Promise<{ advice: string }>;
 }
@@ -633,18 +633,18 @@ export function createAskAdvisorTool(
     async execute(...args) {
       const signal = args[2];
       const gate = storage.advisorGate();
+      const endConsult = (success: boolean) => storage.noteAdvisorConsult(success);
       if (!gate.allowed) {
+        const text = gate.inFlight
+          ? "An advisor consultation is already in progress. Continue without starting another."
+          : `The advisor was consulted too recently. Continue for ${gate.stepsUntilAllowed} more assistant step${gate.stepsUntilAllowed === 1 ? "" : "s"} before asking again.`;
         return {
-          content: [
-            {
-              type: "text",
-              text: `The advisor was consulted too recently. Continue for ${gate.stepsUntilAllowed} more assistant step${gate.stepsUntilAllowed === 1 ? "" : "s"} before asking again.`,
-            },
-          ],
+          content: [{ type: "text", text }],
           details: {
             type: "ask_advisor",
             rateLimited: true,
             stepsUntilAllowed: gate.stepsUntilAllowed,
+            ...(gate.inFlight ? { inFlight: true } : {}),
           },
           terminate: false,
         };
@@ -653,35 +653,59 @@ export function createAskAdvisorTool(
       const messages = storage.getMessages();
       const firstUserMessage = messages.find((message) => message.role === "user");
       if (!firstUserMessage) {
+        endConsult(false);
         return {
           content: [{ type: "text", text: "The advisor transcript has no user message yet." }],
           details: { type: "ask_advisor", unavailable: true },
           terminate: false,
         };
       }
-      const transcript = buildAdvisorTranscript({
-        firstUserMessage: serializeMessageForObserver(firstUserMessage),
-        executorSystemPrompt: storage.getSystemPrompt(),
-        observations: await storage.getObservations(),
-        tailMessages: messages.map(serializeMessageForObserver),
-        budgetTokens: storage.budgetTokens,
-      });
-      const result = await (storage.callAdvisor ?? callAdvisor)({
-        transcriptText: transcript.text,
-        modelName: storage.modelName,
-        thinkingLevel: storage.thinkingLevel,
-        signal,
-      });
-      storage.noteAdvisorConsult();
-      return {
-        content: [{ type: "text", text: result.advice }],
-        details: {
-          type: "ask_advisor",
-          model: storage.modelName,
-          tokens: transcript.tokens,
-        },
-        terminate: false,
-      };
+      let modelName: string;
+      try {
+        modelName =
+          typeof storage.modelName === "function" ? storage.modelName() : storage.modelName;
+        if (!modelName) throw new Error("advisor model unavailable");
+      } catch {
+        endConsult(false);
+        return {
+          content: [
+            {
+              type: "text",
+              text: "The advisor model is unavailable for the configured providers.",
+            },
+          ],
+          details: { type: "ask_advisor", unavailable: true },
+          terminate: false,
+        };
+      }
+      try {
+        const transcript = buildAdvisorTranscript({
+          firstUserMessage: serializeMessageForObserver(firstUserMessage),
+          executorSystemPrompt: storage.getSystemPrompt(),
+          observations: await storage.getObservations(),
+          tailMessages: messages.map(serializeMessageForObserver),
+          budgetTokens: storage.budgetTokens,
+        });
+        const result = await (storage.callAdvisor ?? callAdvisor)({
+          transcriptText: transcript.text,
+          modelName,
+          thinkingLevel: storage.thinkingLevel,
+          signal,
+        });
+        endConsult(true);
+        return {
+          content: [{ type: "text", text: result.advice }],
+          details: {
+            type: "ask_advisor",
+            model: modelName,
+            tokens: transcript.tokens,
+          },
+          terminate: false,
+        };
+      } catch (error) {
+        endConsult(false);
+        throw error;
+      }
     },
   };
 }

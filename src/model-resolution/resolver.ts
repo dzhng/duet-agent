@@ -1,7 +1,11 @@
 import { findEnvKeys, getModel, type Model } from "@earendil-works/pi-ai";
 
-import { DEFAULT_MODEL_SELECTION } from "../model-routing/default-selection.js";
-import { BUILT_IN_ROUTING_TABLE, isVirtualModel } from "../model-routing/table.js";
+import {
+  BUILT_IN_ROUTING_TABLE,
+  isVirtualModel,
+  type RoutingCatalogAdapter,
+  type RoutingTable,
+} from "../model-routing/table.js";
 import { resolveDuetGatewayModel, resolveMissingModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
@@ -31,7 +35,7 @@ export { DEFAULT_CLI_MEMORY_MODEL, DEFAULT_CLI_MODEL } from "./catalog.js";
 export interface ModelResolution {
   /** Model name retained for config, display, and later runtime resolution. */
   modelName: string;
-  /** explicit: CLI flag; inferred: provider env var present; default: built-in fallback. */
+  /** explicit: CLI flag; inferred: provider env var present; default: active routing-table fallback. */
   source: "explicit" | "inferred" | "default";
   /** Provider env var that triggered inference, e.g. "AI_GATEWAY_API_KEY". */
   envVar?: string;
@@ -78,6 +82,21 @@ export function resolveModelName(model: string): Model<any> {
   return clampModelOutputTokens(resolved);
 }
 
+/** Shared concrete-catalog boundary used by every model-routing composition site. */
+export const routingCatalogAdapter: RoutingCatalogAdapter = {
+  isCatalogName: isKnownShorthand,
+  modelAcceptsImages: (name: string) =>
+    resolveModelName(
+      isProviderPinnedModelName(name) ? name : `duet-gateway:${name}`,
+    ).input.includes("image"),
+};
+
+/** Resolve a concrete catalog name to the provider-pinned reference used for model calls. */
+export function pinnedModelReference(name: string): string {
+  const model = resolveModelName(name);
+  return `${model.provider}:${model.id}`;
+}
+
 function isKnownProvider(provider: string): provider is ProviderName {
   return PROVIDER_ORDER.some((entry) => entry.provider === provider);
 }
@@ -116,12 +135,14 @@ export function resolveCliMemoryModel(
 export function resolveCliModel(
   modelName: string | undefined,
   dotenvKeys: Set<string>,
+  routingTable: RoutingTable = BUILT_IN_ROUTING_TABLE,
 ): ModelResolution {
   return resolveCliModelWith(
     modelName,
     getDefaultModelCandidates(),
     dotenvKeys,
-    DEFAULT_MODEL_SELECTION,
+    routingTable.defaultTier,
+    routingTable,
   );
 }
 
@@ -130,10 +151,14 @@ function resolveCliModelWith(
   providerInference: ProviderModelCandidate[],
   dotenvKeys: Set<string>,
   defaultModel: string,
+  routingTable: RoutingTable = BUILT_IN_ROUTING_TABLE,
 ): ModelResolution {
   if (modelName) {
-    if (isVirtualModel(modelName, BUILT_IN_ROUTING_TABLE)) {
+    if (isVirtualModel(modelName, routingTable)) {
       return { modelName, source: "explicit", routed: true };
+    }
+    if (isVirtualModel(modelName, BUILT_IN_ROUTING_TABLE)) {
+      throw new Error(`Unknown virtual model tier "${modelName}" in the active routing table.`);
     }
     return {
       modelName: isProviderPinnedModelName(modelName)
@@ -142,7 +167,7 @@ function resolveCliModelWith(
       source: "explicit",
     };
   }
-  if (isVirtualModel(defaultModel, BUILT_IN_ROUTING_TABLE)) {
+  if (isVirtualModel(defaultModel, routingTable)) {
     return { modelName: defaultModel, source: "default", routed: true };
   }
   const inferred = findInferredProviderEntry(providerInference);
@@ -205,6 +230,6 @@ export function describeModelResolution(resolution: ModelResolution): string {
     return `${routed}inferred from ${resolution.envVar} in ${where}`;
   }
   return resolution.routed
-    ? `${routed}built-in default`
+    ? `${routed}routing-table default`
     : "built-in default (no provider env vars set)";
 }

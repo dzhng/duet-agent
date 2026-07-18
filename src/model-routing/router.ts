@@ -48,6 +48,8 @@ export interface AdvisorGate {
   allowed: boolean;
   /** Additional completed parent assistant steps required before a call is allowed. */
   stepsUntilAllowed: number;
+  /** True when another consult already owns the session's advisor slot. */
+  inFlight?: boolean;
 }
 
 /** Complete read-only routing snapshot consumed by later CLI and TUI surfaces. */
@@ -105,6 +107,7 @@ export class ModelRouter {
   private pinned = false;
   private rerouteNudge?: string;
   private nudgeExemptionAvailable = false;
+  private advisorConsultInFlight = false;
 
   constructor(options: ModelRouterOptions) {
     this.table = options.table;
@@ -124,13 +127,6 @@ export class ModelRouter {
   noteAssistantStep(delta?: string): void {
     this.assistantSteps += 1;
     this.lastStepDelta = delta?.trim() || undefined;
-  }
-
-  /** Record a successful advisor call and request classification at the next prepare seam. */
-  noteAdvisorConsult(): void {
-    this.nudgeExemptionAvailable = false;
-    this.lastAdvisorStep = this.assistantSteps;
-    this.advisorClassificationPending = true;
   }
 
   /** Suspend virtual routing while a concrete model is pinned. */
@@ -219,15 +215,26 @@ export class ModelRouter {
     return { allowed: stepsUntilAllowed === 0, stepsUntilAllowed };
   }
 
-  /**
-   * Authorize one advisor attempt. A delivered reroute nudge overrides the
-   * ordinary step floor once; checking the gate burns that privilege even if
-   * transcript assembly or the advisor call later fails.
-   */
-  consumeAdvisorGate(): AdvisorGate {
-    if (!this.nudgeExemptionAvailable) return this.advisorGate();
+  /** Atomically authorize one advisor attempt and reserve the session's consult slot. */
+  beginAdvisorConsult(): AdvisorGate {
+    if (this.advisorConsultInFlight) {
+      return { allowed: false, stepsUntilAllowed: 0, inFlight: true };
+    }
+    const gate = this.nudgeExemptionAvailable
+      ? { allowed: true, stepsUntilAllowed: 0 }
+      : this.advisorGate();
     this.nudgeExemptionAvailable = false;
-    return { allowed: true, stepsUntilAllowed: 0 };
+    if (gate.allowed) this.advisorConsultInFlight = true;
+    return gate;
+  }
+
+  /** Release the consult slot; only success stamps the floor and requests reclassification. */
+  endAdvisorConsult(success: boolean): void {
+    if (!this.advisorConsultInFlight) return;
+    this.advisorConsultInFlight = false;
+    if (!success) return;
+    this.lastAdvisorStep = this.assistantSteps;
+    this.advisorClassificationPending = true;
   }
 
   /** Take the latest switch nudge and arm its one-shot advisor-floor exemption. */

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { applyInlineSlashCommandsToCliConfig } from "../src/cli/inline-slash.js";
+import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import type { TurnRunnerConfig } from "../src/types/config.js";
 
 function makeConfig(overrides: Partial<TurnRunnerConfig> = {}): TurnRunnerConfig {
@@ -29,7 +30,7 @@ describe("applyInlineSlashCommandsToCliConfig", () => {
 
     expect(config.model).toBe("anthropic:claude-sonnet-5-1");
     expect(log.lines.join("")).toContain(
-      "[model] next turn is pinned to anthropic:claude-sonnet-5-1",
+      "[model] next turn will use anthropic:claude-sonnet-5-1 (pinned — routing suspended)",
     );
     expect(residue).toBe("hey can you review this");
   });
@@ -64,6 +65,22 @@ describe("applyInlineSlashCommandsToCliConfig", () => {
     expect(config.model).toBe("frontier");
     expect(log.lines.join("")).toContain("[model] next turn routes via frontier");
     expect(residue).toBe("review this");
+  });
+
+  test("inline /model validates virtual names against the loaded replacement table", () => {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.defaultTier = "custom";
+    table.tiers = { custom: table.tiers.economy! };
+    const config = makeConfig();
+    const log = makeLog();
+
+    applyInlineSlashCommandsToCliConfig("/model custom", config, log.write, table);
+    expect(config.model).toBe("custom");
+    expect(log.lines.join("")).toContain("routes via custom");
+
+    applyInlineSlashCommandsToCliConfig("/model frontier", config, log.write, table);
+    expect(config.model).toBe("custom");
+    expect(log.lines.join("")).toContain('Unknown virtual model tier "frontier"');
   });
 
   test("whole-prompt /model X /thinking Y applies both swaps and still returns empty residue", () => {

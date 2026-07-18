@@ -8,8 +8,11 @@ import {
   describeModelResolution,
   resolveCliMemoryModel,
   resolveCliModel,
+  routingCatalogAdapter,
   type ModelResolution,
 } from "../model-resolution/resolver.js";
+import { loadRoutingTable } from "../model-routing/loader.js";
+import { BUILT_IN_ROUTING_TABLE, type RoutingTable } from "../model-routing/table.js";
 import { DEFAULT_MEMORY_DB_PATH, SessionManager } from "../session/session-manager.js";
 import { runTui } from "../tui/app.js";
 import { applyInlineSlashCommandsToCliConfig } from "./inline-slash.js";
@@ -59,6 +62,11 @@ export interface CliTurnConfigResolution {
   memoryModelResolution: ModelResolution;
 }
 
+export interface ProjectCliTurnConfigResolution extends CliTurnConfigResolution {
+  /** Validated complete replacement used for defaults and virtual-name checks at boot. */
+  routingTable: RoutingTable;
+}
+
 export interface PackageMetadata {
   name: string;
   version: string;
@@ -81,8 +89,9 @@ export function shouldUseTui(input: { interactive: boolean; prompt?: string }): 
 export function buildCliTurnConfig(
   input: CliTurnConfigInput,
   dotenvKeys: Set<string>,
+  routingTable: RoutingTable = BUILT_IN_ROUTING_TABLE,
 ): CliTurnConfigResolution {
-  const modelResolution = resolveCliModel(input.modelName, dotenvKeys);
+  const modelResolution = resolveCliModel(input.modelName, dotenvKeys, routingTable);
   const memoryModelResolution = resolveCliMemoryModel(input.memoryModelName, dotenvKeys);
 
   return {
@@ -97,6 +106,21 @@ export function buildCliTurnConfig(
     },
     modelResolution,
     memoryModelResolution,
+  };
+}
+
+/** Load the project routing table once, then resolve the complete boot configuration against it. */
+export async function buildProjectCliTurnConfig(
+  input: CliTurnConfigInput,
+  dotenvKeys: Set<string>,
+): Promise<ProjectCliTurnConfigResolution> {
+  const loaded = await loadRoutingTable({
+    cwd: input.workDir,
+    catalogAdapter: routingCatalogAdapter,
+  });
+  return {
+    ...buildCliTurnConfig(input, dotenvKeys, loaded.table),
+    routingTable: loaded.table,
   };
 }
 
@@ -267,7 +291,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     return status;
   });
 
-  const builtConfig = buildCliTurnConfig(
+  const builtConfig = await buildProjectCliTurnConfig(
     {
       ...(modelName ? { modelName } : {}),
       ...(memoryModelName ? { memoryModelName } : {}),
@@ -279,7 +303,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     },
     dotenvKeys,
   );
-  const { config, memoryModelResolution } = builtConfig;
+  const { config, memoryModelResolution, routingTable } = builtConfig;
   let { modelResolution } = builtConfig;
   modelName = modelResolution.modelName;
   memoryModelName = memoryModelResolution.modelName;
@@ -292,14 +316,17 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   // mirroring how the TUI keeps the slash form in the message and how
   // `/skill-name` references survive the dispatch.
   if (!useTui && prompt) {
-    const { residue } = applyInlineSlashCommandsToCliConfig(prompt, config, (line) =>
-      process.stderr.write(line),
+    const { residue } = applyInlineSlashCommandsToCliConfig(
+      prompt,
+      config,
+      (line) => process.stderr.write(line),
+      routingTable,
     );
     // Sync the cached display name so the boot summary lines reflect any
     // inline override, including whether the retained selection is routed.
     modelName = config.model ?? modelName;
     if (modelName !== modelResolution.modelName) {
-      modelResolution = resolveCliModel(modelName, dotenvKeys);
+      modelResolution = resolveCliModel(modelName, dotenvKeys, routingTable);
     }
     // Dispatch the prompt with the slash forms stripped out. When the
     // whole prompt was just slash commands (e.g. `duet "/model X"`),

@@ -1,4 +1,4 @@
-import type { Usage } from "@earendil-works/pi-ai";
+import type { ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import dedent from "dedent";
 import { Type } from "typebox";
 import * as structuredOutput from "../core/structured-output.js";
@@ -63,6 +63,8 @@ export interface ClassifierMessages {
 export interface ClassifyRouteOptions {
   /** Classifier model reference resolved by the caller's composition layer. */
   model: string;
+  /** Reasoning effort configured for the classifier target in the routing table. */
+  thinkingLevel?: ThinkingLevel;
   /** Cancels the provider request when its owning turn is interrupted. */
   signal?: AbortSignal;
   /** Receives classifier token and cost usage for attribution. */
@@ -117,7 +119,7 @@ export async function classifyRoute(
     tool: classifierResultTool(Object.keys(input.tier.routes)),
     systemPrompt: messages.systemPrompt,
     prompt: messages.prompt,
-    callOptions: { reasoningEffort: "low" },
+    ...(options.thinkingLevel ? { callOptions: { reasoningEffort: options.thinkingLevel } } : {}),
     signal: options.signal,
     onUsage: options.onUsage,
   });
