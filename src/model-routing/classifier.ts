@@ -31,6 +31,13 @@ function classifierResultTool(routeNames: string[]) {
   };
 }
 
+/**
+ * The runtime milestone that requested a classification. Owned here — where
+ * the concept originates — and consumed by the router, the protocol event,
+ * and the CLI probe, so the union can never drift across layers.
+ */
+export type RouteTrigger = "turn_start" | "cadence" | "advisor" | "step_trigger" | "compaction";
+
 /** Lean routing facts supplied at a turn boundary or intra-turn milestone. */
 export interface ClassifierInput {
   /** Virtual tier whose complete route set is being classified in one call. */
@@ -48,7 +55,7 @@ export interface ClassifierInput {
   /** Whether the pending input includes images; the router handles capability after classification. */
   hasImages: boolean;
   /** Event that requested classification, for interpreting sparse cadence/advisor context. */
-  trigger: "turn_start" | "cadence" | "advisor" | "step_trigger" | "compaction";
+  trigger: RouteTrigger;
 }
 
 /** Pure system/user prompt pair consumed by the structured-output classifier call. */

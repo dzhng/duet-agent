@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { bestOfAttempts } from "../test/helpers/best-of.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,22 +40,10 @@ describe("model routing after image-producing tool output", () => {
   testIfDocker(
     "keeps the implement route, applies its vision fallback, and completes from replayed pixels",
     async () => {
-      // Best-of-2 capability gate: the turn-start classification occasionally
-      // routes this prompt straight to a vision-capable route (observed
-      // variance), in which case no switch can fire and the strict timeline
-      // assertions below would flake without any product defect. Same
-      // rationale and bound as the advisor positive case.
-      const ATTEMPTS = 2;
-      let lastFailure: unknown;
-      for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
-        try {
-          await runStepTriggerScenario();
-          return;
-        } catch (error) {
-          lastFailure = error;
-        }
-      }
-      throw lastFailure;
+      // The turn-start classification occasionally routes this prompt
+      // straight to a vision-capable route (observed variance); no switch can
+      // fire then, so a single strict trial would flake without any defect.
+      await bestOfAttempts(2, runStepTriggerScenario);
     },
     600_000,
   );

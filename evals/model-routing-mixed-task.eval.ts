@@ -12,6 +12,7 @@ import type {
 } from "../src/types/protocol.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
+import { bestOfAttempts } from "../test/helpers/best-of.js";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 
 const KIMI_ID = "moonshotai/kimi-k3";
@@ -135,21 +136,10 @@ describe("mixed-task model routing promotion", () => {
   testIfDocker(
     "routes visual work to Kimi and the later backend implementation to Sol",
     async () => {
-      // Best-of-2 capability gate, same rationale and bound as the advisor
-      // positive and step-trigger evals: a live executor occasionally
-      // under-runs the 12-step script (observed: ending the turn after the
-      // frontend phase), which is executor variance, not routing behavior.
-      const ATTEMPTS = 2;
-      let lastFailure: unknown;
-      for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
-        try {
-          await runMixedTaskScenario();
-          return;
-        } catch (error) {
-          lastFailure = error;
-        }
-      }
-      throw lastFailure;
+      // Live executors occasionally under-run the 12-step script (observed:
+      // ending the turn after the frontend phase) — executor variance, not
+      // routing behavior.
+      await bestOfAttempts(2, runMixedTaskScenario);
     },
     1_500_000,
   );

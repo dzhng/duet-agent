@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
-import type { ClassifierDecision, ClassifierInput } from "./classifier.js";
+import type { ClassifierDecision, ClassifierInput, RouteTrigger } from "./classifier.js";
 import { renderRerouteNudge } from "./prompts.js";
 import {
   resolveRoute,
@@ -45,7 +45,7 @@ export interface RouterSwitch {
   /** Route-owned reasoning effort applied with the new model. */
   thinkingLevel: ThinkingLevel;
   /** Runtime milestone that requested classification. */
-  trigger: "turn_start" | "cadence" | "advisor" | "step_trigger" | "compaction";
+  trigger: RouteTrigger;
   /** Classifier explanation for the selected route. */
   rationale: string;
   /** True when image capability applied the selected route's fallback model. */
@@ -177,10 +177,15 @@ export class ModelRouter {
     return target;
   }
 
-  /** Reset sticky routing facts from the new parent prompt at each user-turn boundary. */
+  /**
+   * Reset sticky routing facts from the new parent prompt at each user-turn
+   * boundary. A pending step-trigger arm deliberately survives: a trigger
+   * raised by the FINAL step of a turn has no intra-turn boundary left to
+   * consume it, so it rides into this turn's first classification instead of
+   * being silently dropped. Completed classifications clear every arm.
+   */
   noteTurnStart(input: { promptHasImages: boolean }): void {
     this.facts = { hasImages: input.promptHasImages };
-    this.stepTriggerClassificationPending = false;
     this.currentTurnHint = undefined;
   }
 

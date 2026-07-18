@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { bestOfAttempts } from "../test/helpers/best-of.js";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import dedent from "dedent";
@@ -125,14 +126,10 @@ describe("advisor trigger and router interlock", () => {
   testIfDocker(
     "challenging underspecified architecture work consults the advisor and reclassifies",
     async () => {
-      // Live executor behavior on a single binary trial is noisy (~50% observed
-      // consult rate on this fixture across the promotion runs), so this is a
-      // best-of-2 capability gate — the same reason the classifier scorecard
-      // aggregates 3 trials. The restraint case below stays single-run strict:
-      // its failure mode is over-calling, and retries would mask that.
-      const ATTEMPTS = 2;
-      let lastFailure: unknown;
-      for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+      // Live consult rate on this fixture is noisy (~50% observed pre-layer);
+      // the restraint case below stays single-run strict — its failure mode is
+      // over-calling, and retries would mask that.
+      await bestOfAttempts(2, async () => {
         const runner = new CapturingRunner(
           "frontier",
           dedent`
@@ -162,14 +159,10 @@ describe("advisor trigger and router interlock", () => {
           expect(advisorCalls).toHaveLength(1);
           expect(advisorCalls[0]?.output?.length).toBeGreaterThan(0);
           expect(runner.classifierInputs.map((input) => input.trigger)).toContain("advisor");
-          await runner.dispose();
-          return;
-        } catch (error) {
-          lastFailure = error;
+        } finally {
           await runner.dispose();
         }
-      }
-      throw lastFailure;
+      });
     },
     360_000,
   );

@@ -1,4 +1,5 @@
 import type { ImageContent, TextContent, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
+import type { RouterSwitch } from "../model-routing/router.js";
 
 import type { AgentSession } from "./agent.js";
 import type { ObservationalMemoryActivityEvent } from "./memory.js";
@@ -782,27 +783,13 @@ export interface TurnSystemEvent {
   message: string;
 }
 
-/** A concrete model or reasoning-effort change selected by a virtual-model router. */
-export interface TurnRouterSwitchEvent {
+/**
+ * A concrete model or reasoning-effort change selected by a virtual-model
+ * router. Derived from the router's own switch shape so the two can never
+ * drift — the runner emits `{ type: "router_switch", ...switched }`.
+ */
+export interface TurnRouterSwitchEvent extends RouterSwitch {
   type: "router_switch";
-  /** Virtual tier whose policy selected the target. */
-  tier: string;
-  /** Classifier route that resolved to the new target. */
-  route: string;
-  /** Previous concrete catalog name. */
-  fromModel: string;
-  /** New concrete catalog name used for subsequent provider requests. */
-  toModel: string;
-  /** Route-owned reasoning effort applied atomically with the model. */
-  thinkingLevel: ThinkingLevel;
-  /** Runtime milestone that requested classification. */
-  trigger: "turn_start" | "cadence" | "advisor" | "step_trigger" | "compaction";
-  /** Classifier explanation for the selected route. */
-  rationale: string;
-  /** True when image capability applied the selected route's fallback model. */
-  visionFallback: boolean;
-  /** Router policy recommending a compact wire prefix for the new target. */
-  compactRecommended: boolean;
   /** Present only if a future independently-routed child agent emits the switch. */
   origin?: TurnEventOrigin;
 }

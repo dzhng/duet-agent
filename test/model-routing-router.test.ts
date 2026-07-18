@@ -264,6 +264,21 @@ describe("ModelRouter", () => {
   });
 });
 
+test("a step trigger on the turn's final step survives into the next turn's classify", async () => {
+  const inputs: ClassifierInput[] = [];
+  const router = createRouter(scriptedClassifier([general, general], inputs));
+  router.noteTurnStart({ promptHasImages: false });
+  await router.prepareTurn({}); // consume the first-turn classification
+  // Final step of the turn produces an image; no intra-turn boundary follows.
+  router.noteAssistantStep({ blockTypes: ["image"], text: "" });
+  // Next user turn begins; the arm must survive the fact reset.
+  router.noteTurnStart({ promptHasImages: false });
+  expect(router.shouldClassify()).toBe(true);
+  await router.prepareTurn({});
+  expect(inputs[1]?.trigger).toBe("step_trigger");
+  expect(router.shouldClassify()).toBe(false);
+});
+
 describe("single-destination tiers", () => {
   function singleDestinationTable(): typeof BUILT_IN_ROUTING_TABLE {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
