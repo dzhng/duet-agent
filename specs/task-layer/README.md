@@ -24,7 +24,7 @@ daemon and model credential run before slice 08 can be marked landed. Last updat
 
 You are implementing this spec. Read this README fully, then `unknowns-map.md` Quadrant 2
 (binding decisions — do not relitigate) and the LM-\* cards for your slice. Work one slice at
-a time from `slices/`, in dependency order. **Pickup point: slice 08.**
+a time from `slices/`, in dependency order. **Pickup point: slices 09+10 (in flight), then 11+12.**
 
 Per pass: follow [implement-spec](../../.claude/skills/implement-spec/SKILL.md) discipline —
 implement, verify the slice's gate (red/green; live evals per
@@ -43,7 +43,7 @@ before ending your pass. Workflow: Opus subagents implement, main agent reviews.
 - [x] 05 subagent executor extraction — merged 634294e
 - [x] 06 StateMachineDecisions extraction — merged 63260d4
 - [x] 07 the cutover: one loop, controller deleted — merged (post-review fixes included)
-- [ ] 08 async surface: budget conversion, background, task tools, settlements
+- [x] 08 async surface — merged 82f31e4; 7/7 live evals green
 - [ ] 09 spawn_agent
 - [ ] 10 park + parent-only ask
 - [ ] 11 observer/router/compaction hygiene
