@@ -244,7 +244,7 @@ export const MISCONFIGURED_POLL_GATE_THRESHOLD = 3;
  * streak. The only way to accumulate consecutive same-poll completions is an
  * always-exit-0 command (e.g. `echo waiting for review`) being re-selected as
  * the same gate, which is exactly the hot-loop we want to surface. The
- * current in-flight success is not yet recorded when the controller calls
+ * current in-flight success is not yet recorded when the turn loop calls
  * this, so the returned count reflects only prior completions.
  */
 export function consecutivePollGateSuccesses(

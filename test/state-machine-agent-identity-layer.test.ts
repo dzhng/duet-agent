@@ -3,6 +3,7 @@ import { Agent } from "@earendil-works/pi-agent-core";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import { createStateAgentSystemPromptLayer } from "../src/turn-runner/prompts.js";
+import { startSession as startStateMachineSession } from "../src/turn-runner/state-machine-decisions.js";
 import type { StateMachineAgentState, StateMachineDefinition } from "../src/types/state-machine.js";
 import type { TurnState } from "../src/types/protocol.js";
 
@@ -65,21 +66,10 @@ function composeSubAgentSystemPrompt(
 
   const runner = new CapturingTurnRunner();
   (runner as unknown as { state: TurnState }).state = RUNNING_STATE;
-  // Optionally install an active state-machine session so the production wiring
-  // (turn-runner reading getSession() and threading it into the layer) is the
+  // Optionally install an active policy ledger so the production wiring is the
   // path under test, not just the layer function in isolation.
   if (machineContext) {
-    (
-      runner as unknown as {
-        stateMachineController: {
-          startSession(input: {
-            prompt: string;
-            definition: StateMachineDefinition;
-            currentState: string;
-          }): void;
-        };
-      }
-    ).stateMachineController.startSession({
+    (runner as unknown as { stateMachine: unknown }).stateMachine = startStateMachineSession({
       prompt: "Start.",
       definition: machineContext.definition,
       currentState: machineContext.currentState,

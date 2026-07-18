@@ -126,7 +126,7 @@ export interface SubagentExecutorDeps {
 /** Build the single executor used by every internal sub-agent spec builder. */
 export function createSubagentExecutor(deps: SubagentExecutorDeps) {
   return (spec: SubagentSpec, ctx: SubagentExecutionContext): SubagentRun => {
-    let control: TurnRunnerControlResult = { type: "none" };
+    const controls: TurnRunnerControlResult[] = [];
     const seedMessages = deps.seedMessages(spec);
     // Capture the seeded prefix length up front. The sub-agent's result,
     // partial text, and recorded usage are all computed by slicing this prefix
@@ -191,12 +191,17 @@ export function createSubagentExecutor(deps: SubagentExecutorDeps) {
         ...deps.createTools(spec.cwd),
       },
       (result) => {
-        control = result;
+        if (result.type === "none") return;
+        if (controls.length > 0) {
+          throw new Error("A sub-agent pass produced more than one control result.");
+        }
+        controls.push(result);
       },
     );
     let unsubscribe: (() => void) | undefined;
     let interruptedReason: string | undefined;
     const finish = (): SubagentResult => {
+      const control = controls[0] ?? { type: "none" as const };
       if (control.type === "ask_user_question") {
         return { type: "ask", questions: control.questions };
       }

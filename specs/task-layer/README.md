@@ -15,19 +15,19 @@ Line refs there are vs 3adf0df; drift as of ddfc6f2 is small but re-verify befor
 
 ## Next Agent Prompt
 
-**Status:** pre-cutover preparation complete. Landed: 01 (five pi pins CONFIRMED, no STOP),
-02 (RuntimeClock; internal deps are a constructor-level `TurnRunnerDependencies` second arg),
-03 (TaskManager kernel — note `nextSettled()` is a sync poll, combine with
-`waitForSettlement`; recovered scopes lose parent linkage, acceptable since lost tasks
-pre-settle), 05 (SubagentSpec/SubagentRun + classifySpawnModel), 06 (StateMachineDecisions;
-capping/normalization/template helpers moved with it; controller is now a 304-line
-execution-only shim awaiting deletion). Full suite 1082/0 at merge 63260d4. Slice 04 landed (merged e378959; full suite 1085/0 on its rebase — one flaky bun-1.3.11
-SIGTRAP panic observed on a pre-rebase run, clean on re-run). Slice 07 (the cutover) is
-running as a codex exec. Last updated 2026-07-19.
+**Status:** THE CUTOVER IS MERGED. `StateMachineController` is deleted; `TurnRunner`'s
+`runTurnLoop` owns the turn with a single try/finally terminal exit derived from
+`taskManager.pendingWork()`; parent-slot queue (`ParentLoopInput`) arbitrates passes;
+control capture asserts; interrupt emits its own terminal (SIGTERM→SIGKILL via
+`escalateStop`). Post-review fixes landed: ask gate (ask held while work is open),
+`discardStaleTaskSettlements()` at every exit, ignored-settlement metadata release.
+Landed: 01-07. Full docker suite 1092/0. Task-event EMISSION is still absent (slice 08).
+Known gap: kernel additions `escalateStop`/`nextTaskId()` lack dedicated task-manager unit
+tests — fold into slice 08. Last updated 2026-07-19.
 
 You are implementing this spec. Read this README fully, then `unknowns-map.md` Quadrant 2
 (binding decisions — do not relitigate) and the LM-\* cards for your slice. Work one slice at
-a time from `slices/`, in dependency order. **Pickup point: slice 07 (in flight), then 08.**
+a time from `slices/`, in dependency order. **Pickup point: slice 08.**
 
 Per pass: follow [implement-spec](../../.claude/skills/implement-spec/SKILL.md) discipline —
 implement, verify the slice's gate (red/green; live evals per
@@ -35,8 +35,7 @@ implement, verify the slice's gate (red/green; live evals per
 /code-review on the diff, commit, then update this section (status, pickup point, checklist)
 before ending your pass. Workflow: Opus subagents implement, main agent reviews.
 
-**Blockers/warnings:** none. Slice 01 is a verdict gate: if its STOP criteria trip, halt and
-reopen the architecture with the user rather than working around it.
+**Blockers/warnings:** none.
 
 **Global TODO**
 
@@ -46,7 +45,7 @@ reopen the architecture with the user rather than working around it.
 - [x] 04 task protocol + durable snapshot contract — merged e378959
 - [x] 05 subagent executor extraction — merged 634294e
 - [x] 06 StateMachineDecisions extraction — merged 63260d4
-- [ ] 07 the cutover: one loop, controller deleted (codex exec running)
+- [x] 07 the cutover: one loop, controller deleted — merged (post-review fixes included)
 - [ ] 08 async surface: budget conversion, background, task tools, settlements
 - [ ] 09 spawn_agent
 - [ ] 10 park + parent-only ask

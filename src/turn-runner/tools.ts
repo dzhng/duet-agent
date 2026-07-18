@@ -37,10 +37,13 @@ import { ASK_ADVISOR_TOOL_DESCRIPTION } from "../model-routing/prompts.js";
 import type { AdvisorGate } from "../model-routing/router.js";
 import type { Observation } from "../types/memory.js";
 import type { MemorySession } from "../memory/session.js";
-import type { ActiveStateOutput } from "./state-machine-controller.js";
+export type ActiveStateOutput =
+  | { state?: string; kind: "agent"; output?: { assistantText?: string } }
+  | { state: string; kind: "script" | "poll"; output?: ShellPartialOutput };
 import { applyStateOverride } from "./state-machine-decisions.js";
 import { withBundledRipgrep } from "./bundled-ripgrep.js";
 import { SystemRuntimeClock, type RuntimeClock } from "./runtime-clock.js";
+import type { ShellPartialOutput } from "./shell-state-handle.js";
 
 const jsonSchemaValidator = new Ajv({ strictSchema: false });
 
@@ -744,6 +747,7 @@ function activeStateMachineCreateError(session: StateMachineSession): string {
 function createAskUserQuestionTool(): AgentTool<typeof askUserQuestionSchema> {
   return {
     name: "ask_user_question",
+    executionMode: "sequential",
     label: "Ask user question",
     description:
       "Ask the user one or more structured multiple-choice questions. Use this when progress requires user input before continuing.",
@@ -1029,6 +1033,7 @@ function createStateMachineDefinitionTool(
 ): AgentTool<typeof createDefinitionSchema> {
   return {
     name: "create_state_machine_definition",
+    executionMode: "sequential",
     label: "Create state machine definition",
     description: dedent`
       Create a new state-machine definition for durable, multi-step, or recurring work. See the system prompt for full routing rules (when to choose this over todo_write, how states resume, terminal acknowledgment, etc.). This description only covers the call shape. The states you define here ARE the visible plan for this work, so do not also call todo_write to mirror or track the same phases; the state machine is already the plan surface.
@@ -1094,6 +1099,7 @@ function createSelectStateTool(
 ): AgentTool<typeof selectStateSchema> {
   return {
     name: "select_state_machine_state",
+    executionMode: "sequential",
     label: "Select state machine state",
     description: dedent`
       Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt or wakeAfterMs (exactly one).

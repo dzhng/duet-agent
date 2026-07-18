@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { StateMachineController } from "../src/turn-runner/state-machine-controller.js";
+import { StateMachineExecutionHarness } from "./helpers/state-machine-execution-harness.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 
 /**
@@ -33,7 +33,7 @@ describe("state-machine wake after interrupt", () => {
       agentStarted = resolve;
     });
 
-    const controller = new StateMachineController({
+    const controller = new StateMachineExecutionHarness({
       cwd: process.cwd(),
       createStateAgent: () => ({
         prompt: async () => {

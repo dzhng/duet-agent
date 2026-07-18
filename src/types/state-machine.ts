@@ -207,7 +207,7 @@ export interface StateMachineSession {
    *
    * The flag is per-session: it prevents the same `session.terminal`
    * from being re-acknowledged if the parent re-routes back into the
-   * controller during the acknowledgment turn. A new state machine
+   * turn loop during the acknowledgment pass. A new state machine
    * created during the acknowledgment turn lives on a fresh session
    * built by `createStateMachineSession` and gets its own
    * acknowledgment when it terminates.

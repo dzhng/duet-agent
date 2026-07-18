@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import assert from "node:assert";
-import { StateMachineController } from "../src/turn-runner/state-machine-controller.js";
+import { StateMachineExecutionHarness } from "./helpers/state-machine-execution-harness.js";
 import {
   createTurnRunnerTools,
   type CurrentStateMachineStateResult,
@@ -17,7 +17,7 @@ describe("state-machine active output", () => {
       prompt: "Run agent.",
       states: [{ kind: "agent", name: "research", prompt: "Research." }],
     };
-    const controller = new StateMachineController({
+    const controller = new StateMachineExecutionHarness({
       cwd: process.cwd(),
       createStateAgent: () => ({
         prompt: () => deferred.promise,
@@ -137,8 +137,8 @@ describe("state-machine active output", () => {
   });
 });
 
-function createController(): StateMachineController {
-  return new StateMachineController({
+function createController(): StateMachineExecutionHarness {
+  return new StateMachineExecutionHarness({
     cwd: process.cwd(),
     createStateAgent: () => {
       throw new Error("Unexpected state agent.");
@@ -147,7 +147,7 @@ function createController(): StateMachineController {
 }
 
 async function inspect(
-  controller: StateMachineController,
+  controller: StateMachineExecutionHarness,
   definition: StateMachineDefinition,
 ): Promise<CurrentStateMachineStateResult> {
   const tool = createTurnRunnerTools({

@@ -121,6 +121,15 @@ export function createForkContextReminder(): string {
   `;
 }
 
+/** Keep an ask from becoming a terminal while process-bound work is still live. */
+export function heldAskReminder(): string {
+  return dedent`
+    <system-reminder>
+    Your question was NOT delivered: background/state work is still running. Let it finish — you will be nudged when it settles — then ask again.
+    </system-reminder>
+  `;
+}
+
 /**
  * Situates the sub-agent inside the larger state machine so it scopes its work
  * to the current state instead of trying to deliver the whole process.

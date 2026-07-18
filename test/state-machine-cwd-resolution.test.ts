@@ -2,7 +2,7 @@ import { afterAll, describe, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { StateMachineController } from "../src/turn-runner/state-machine-controller.js";
+import { StateMachineExecutionHarness } from "./helpers/state-machine-execution-harness.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
@@ -32,8 +32,8 @@ afterAll(() => {
   }
 });
 
-function createController(cwd: string): StateMachineController {
-  return new StateMachineController({
+function createController(cwd: string): StateMachineExecutionHarness {
+  return new StateMachineExecutionHarness({
     cwd,
     createStateAgent: () => {
       throw new Error("Agent state should not be invoked in cwd-resolution tests.");

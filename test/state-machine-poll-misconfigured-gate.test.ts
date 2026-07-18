@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { StateMachineController } from "../src/turn-runner/state-machine-controller.js";
+import { StateMachineExecutionHarness } from "./helpers/state-machine-execution-harness.js";
 import {
   consecutivePollGateSuccesses,
   MISCONFIGURED_POLL_GATE_THRESHOLD,
@@ -37,8 +37,8 @@ function pollDefinition(command: string): StateMachineDefinition {
   };
 }
 
-function createController(): StateMachineController {
-  return new StateMachineController({
+function createController(): StateMachineExecutionHarness {
+  return new StateMachineExecutionHarness({
     cwd: process.cwd(),
     createStateAgent: () => {
       throw new Error("Agent state should not be invoked in poll-gate tests.");
