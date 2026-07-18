@@ -44,7 +44,9 @@ describe("task output and stop", () => {
       expect(calls).toContain("task_output");
       expect(calls).toContain("task_stop");
       expect(taskOutputResults.join("\n")).toContain("BUFFERED_SENTINEL");
-      expect(await readFile(paths.stopped!, "utf8")).toContain("SIGTERM");
+      // Liveness, not SIGTERM markers (pi-bash SIGKILL; spec README v1 decision).
+      const pid = Number((await readFile(paths.pid!, "utf8")).trim());
+      expect(() => process.kill(pid, 0)).toThrow();
       await runner.dispose();
     },
     120_000,

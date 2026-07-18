@@ -48,7 +48,10 @@ describe("task interrupt", () => {
       // and interrupted-terminal checks must turn red.
       runner.interrupt({ type: "interrupt" });
       expect((await active).type).toBe("interrupted");
-      expect(await readFile(stopped, "utf8")).toContain("SIGTERM");
+      // pi-bash aborts SIGKILL the process group (v1 decision, spec README): the
+      // fixture cannot record SIGTERM. The contract is liveness — the group is dead.
+      const fixturePid = Number((await readFile(pid, "utf8")).trim());
+      expect(() => process.kill(fixturePid, 0)).toThrow();
       expect(events.filter((event) => event.type === "interrupted")).toHaveLength(1);
       await runner.dispose();
     },
