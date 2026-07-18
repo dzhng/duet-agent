@@ -113,8 +113,8 @@ import {
   currentScheduledState,
   isAwaitingUserAnswer,
   isWaitingOnScheduledState,
-  repeatedSelectionLoopCount,
 } from "./state-machine-session.js";
+import { repeatedSelectionLoopCount } from "./state-machine-decisions.js";
 import {
   StateMachineController,
   type StateMachineExecutionResult,

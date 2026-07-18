@@ -1,6 +1,10 @@
 import { describe, expect } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { StateMachineController } from "../src/turn-runner/state-machine-controller.js";
+import {
+  planDecision,
+  recordSettled,
+  startSession,
+} from "../src/turn-runner/state-machine-decisions.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
@@ -11,31 +15,39 @@ import { testIfDocker } from "./helpers/docker-only.js";
  * used to be inlined verbatim into the orchestrator's state-completion wake
  * prompt. A 100KB+ log bloated the decision turn to tens of thousands of
  * tokens, which both wasted context and made the decision request fragile
- * enough to abort and loop until the machine force-terminated. The controller
- * now caps each output stream, writes the full stream to a file under the OS
- * temp dir, and points the orchestrator at that file.
+ * enough to abort and loop until the machine force-terminated. Settlement
+ * policy caps each output stream, writes the full stream to a file under the
+ * OS temp dir, and points the orchestrator at that file.
  */
 describe("script/poll output cap", () => {
   testIfDocker(
     "caps oversized script stdout and writes the full output to a recoverable file",
-    async () => {
+    () => {
       // ~90k characters of unique-per-line content (well over the cap) so we
       // can prove the full output survived on disk while the inlined value was
       // truncated.
       const lineCount = 5_000;
-      const command = `for i in $(seq 1 ${lineCount}); do echo "duet-cap-line-$i"; done`;
+      const stdout = Array.from(
+        { length: lineCount },
+        (_, index) => `duet-cap-line-${index + 1}`,
+      ).join("\n");
       const definition: StateMachineDefinition = {
         name: "oversized_output",
         prompt: "Run.",
         states: [
-          { kind: "script", name: "emit", command },
+          { kind: "script", name: "emit", command: "emit oversized output" },
           { kind: "terminal", name: "done", status: "completed" },
         ],
       };
-      const controller = createController();
-      controller.startSession({ prompt: "Run.", definition, currentState: "emit" });
+      const planned = planDecision(
+        startSession({ prompt: "Run.", definition, currentState: "emit" }),
+        { state: "emit" },
+      );
 
-      const result = await controller.runDecision({ state: "emit" });
+      const { outcome: result } = recordSettled(planned.session, "emit", "script", {
+        type: "completed",
+        output: { stdout, stderr: "", exitCode: 0 },
+      });
       expect(result.type).toBe("state_completed");
       if (result.type !== "state_completed") return;
 
@@ -64,7 +76,7 @@ describe("script/poll output cap", () => {
     },
   );
 
-  testIfDocker("leaves small stdout untouched", async () => {
+  testIfDocker("leaves small stdout untouched", () => {
     const definition: StateMachineDefinition = {
       name: "small_output",
       prompt: "Run.",
@@ -73,21 +85,17 @@ describe("script/poll output cap", () => {
         { kind: "terminal", name: "done", status: "completed" },
       ],
     };
-    const controller = createController();
-    controller.startSession({ prompt: "Run.", definition, currentState: "emit" });
+    const planned = planDecision(
+      startSession({ prompt: "Run.", definition, currentState: "emit" }),
+      { state: "emit" },
+    );
 
-    const result = await controller.runDecision({ state: "emit" });
+    const { outcome: result } = recordSettled(planned.session, "emit", "script", {
+      type: "completed",
+      output: { stdout: "duet-small-output", stderr: "", exitCode: 0 },
+    });
     expect(result.type).toBe("state_completed");
     if (result.type !== "state_completed") return;
     expect(result.output).toMatchObject({ stdout: "duet-small-output" });
   });
 });
-
-function createController(): StateMachineController {
-  return new StateMachineController({
-    cwd: process.cwd(),
-    createStateAgent: () => {
-      throw new Error("Agent state should not be invoked in output-cap tests.");
-    },
-  });
-}
