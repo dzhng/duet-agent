@@ -3,7 +3,7 @@ import { Agent } from "@earendil-works/pi-agent-core";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import { createForkContextReminder } from "../src/turn-runner/prompts.js";
-import type { StateAgentHandle } from "../src/turn-runner/state-machine-controller.js";
+import type { SubagentRun } from "../src/turn-runner/subagent.js";
 import type { StateMachineAgentState } from "../src/types/state-machine.js";
 import type { TurnState } from "../src/types/protocol.js";
 
@@ -24,7 +24,7 @@ const RUNNING_STATE: TurnState = {
 };
 
 /**
- * Drives the real createStateAgentHandle path and returns the tail prompt the
+ * Drives the real createStateSubagentRun path and returns the tail prompt the
  * sub-agent would actually run. `agent.prompt` is stubbed so no network call
  * happens and `retryTransientServerErrors` short-circuits on the clean state.
  */
@@ -52,12 +52,12 @@ async function captureTailPrompt(state: StateMachineAgentState): Promise<string>
   (runner as unknown as { state: TurnState }).state = RUNNING_STATE;
   const handle = (
     runner as unknown as {
-      createStateAgentHandle: (input: {
+      createStateSubagentRun: (input: {
         state: StateMachineAgentState;
         prompt: string;
-      }) => StateAgentHandle;
+      }) => SubagentRun;
     }
-  ).createStateAgentHandle({ state, prompt: state.prompt });
+  ).createStateSubagentRun({ state, prompt: state.prompt });
 
   await handle.prompt();
   if (tail === undefined) throw new Error("agent.prompt was not invoked");

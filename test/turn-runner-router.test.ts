@@ -76,7 +76,7 @@ class RouterTurnRunner extends TurnRunner {
   }
 
   createStateAgentForTest(state: StateMachineAgentState) {
-    return this.createStateAgentHandle({ state, prompt: state.prompt });
+    return this.createStateSubagentRun({ state, prompt: state.prompt });
   }
 
   async transformForTest(messages: AgentMessage[]): Promise<AgentMessage[]> {

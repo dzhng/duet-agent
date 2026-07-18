@@ -19,7 +19,7 @@ import type { TurnState } from "../src/types/protocol.js";
 // system prompt.
 const HOST_PERSONA = "HOST_CHAT_PERSONA_SENTINEL";
 
-// Minimal "started" runner state so createStateAgentHandle can read
+// Minimal "started" runner state so createStateSubagentRun can read
 // requireRunnerState().options without driving a full live turn.
 const RUNNING_STATE: TurnState = {
   status: "running",
@@ -29,7 +29,7 @@ const RUNNING_STATE: TurnState = {
 };
 
 /**
- * Builds a sub-agent through the real createStateAgentHandle path and returns
+ * Builds a sub-agent through the real createStateSubagentRun path and returns
  * the fully composed system prompt that the sub-agent would run under. Pass
  * `machineContext` to install an active session first, exercising the wiring
  * that threads the running machine into the sub-agent's prompt.
@@ -87,9 +87,9 @@ function composeSubAgentSystemPrompt(
   }
   (
     runner as unknown as {
-      createStateAgentHandle: (input: { state: StateMachineAgentState; prompt: string }) => unknown;
+      createStateSubagentRun: (input: { state: StateMachineAgentState; prompt: string }) => unknown;
     }
-  ).createStateAgentHandle({ state, prompt: state.prompt });
+  ).createStateSubagentRun({ state, prompt: state.prompt });
 
   if (composed === undefined) throw new Error("createAgent was not invoked");
   return composed;
@@ -175,7 +175,7 @@ describe("state agent identity layer", () => {
     expect(identityIndex).toBeLessThan(stateIndex);
   });
 
-  test("createStateAgentHandle threads the active machine into the sub-agent prompt", () => {
+  test("createStateSubagentRun threads the active machine into the sub-agent prompt", () => {
     const definition: StateMachineDefinition = {
       name: "Ship the feature",
       prompt: "Plan, implement, and verify the requested change.",

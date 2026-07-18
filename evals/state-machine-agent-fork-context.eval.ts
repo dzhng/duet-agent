@@ -16,7 +16,7 @@ const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
 
 /**
  * Live eval for the `forkContext` flag on agent states (turn-runner
- * `createStateAgentHandle`). A unit test could prove the helper returns the
+ * `createStateSubagentRun`). A unit test could prove the helper returns the
  * parent's messages; this eval proves the live state-machine path actually
  * seeds the sub-agent with the parent's transcript when the flag is on, and
  * does NOT when it is off (or omitted), and that the override path can flip

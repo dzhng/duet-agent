@@ -87,8 +87,6 @@ import { createAgentEventTranslator, agentMessageText } from "./agent-events.js"
 import {
   createRecallMemorySystemPromptLayer,
   createSourceOfTruthSystemPromptLayer,
-  createForkContextReminder,
-  createStateAgentSystemPromptLayer,
   createStateMachineSystemPromptLayer,
 } from "./prompts.js";
 import {
@@ -118,10 +116,14 @@ import {
 } from "./state-machine-session.js";
 import {
   StateMachineController,
-  type StateAgentHandle,
-  type StateAgentResult,
   type StateMachineExecutionResult,
 } from "./state-machine-controller.js";
+import {
+  createSubagentExecutor,
+  type SubagentAgentConfigInput,
+  type SubagentRun,
+  type SubagentSpec,
+} from "./subagent.js";
 import { completeTurn, copyOptionalArray, createInitialTurnState } from "./turn-state.js";
 import {
   DEFAULT_TRANSIENT_RETRY_POLICY,
@@ -129,7 +131,7 @@ import {
   transientRetryDelayMs,
   type TransientRetryPolicy,
 } from "./transient-error.js";
-import { addUsage, addUsageByModel, usageFromMessages } from "./usage-accounting.js";
+import { addUsage, addUsageByModel } from "./usage-accounting.js";
 
 export type TurnEventHandler = (event: TurnEvent) => void;
 
@@ -144,15 +146,7 @@ export interface AgentWorkerInput {
   images?: ImageContent[];
 }
 
-export interface AgentConfigInput {
-  state: TurnState;
-  /** System-prompt layer placed before the host systemInstructions; see createSystemPromptWithAppendedLayers. */
-  prependSystemPrompt?: string;
-  appendSystemPrompt?: string;
-  /** Reuse an existing rendered system prompt verbatim instead of rebuilding it from layers. */
-  systemPrompt?: string;
-  skills?: Skill[];
-  tools: AgentTool[];
+export interface AgentConfigInput extends SubagentAgentConfigInput {
   /** Parent boot router used to select the initial concrete model and effort. */
   router?: ModelRouter;
   /** Installs the parent routing hook even when boot starts from a concrete selection. */
@@ -303,6 +297,8 @@ export class TurnRunner {
   private parentControlResult: TurnRunnerControlResult = { type: "none" };
   /** Runtime owner for state-machine progress and active state work. */
   private readonly stateMachineController: StateMachineController;
+  /** Shared construction path for relay agent states and future spawned children. */
+  private readonly subagentExecutor: ReturnType<typeof createSubagentExecutor>;
   /** Parent prompt started by a steer while state-machine work is driving the turn. */
   private activeStateWorkPrompt?: Promise<TurnTerminalEvent>;
   /**
@@ -361,9 +357,33 @@ export class TurnRunner {
 
   constructor(readonly config: TurnRunnerConfig) {
     this.skillContext = new SkillContext(config);
+    this.subagentExecutor = createSubagentExecutor({
+      createAgent: (input, onControlResult) => this.createAgent(input, onControlResult),
+      skillContext: {
+        resolveSkills: (spec, ctx) =>
+          this.skillContext.resolveSubagentSkills(
+            spec.allowedSkills,
+            ctx.origin.kind === "state_machine_agent" ? `state "${ctx.origin.state}"` : "sub-agent",
+          ),
+        resolveSlashSkillPrompt: (prompt, skills) =>
+          this.skillContext.resolveSlashSkillPrompt(prompt, skills),
+        createSystemPromptWithAppendedLayers: (input) =>
+          this.createBaseSystemPromptWithAppendedLayers(input),
+      },
+      inheritedOptions: () => this.resolveSubagentInheritedOptions(),
+      resolveModel: (model) => this.resolveStateModel(model),
+      seedMessages: (spec) =>
+        spec.forkContext ? [...(this.parentAgent?.state.messages ?? [])] : [],
+      parentSystemPrompt: () => this.parentAgent?.state.systemPrompt,
+      createTools: (cwd) => this.createTools("agent", cwd, false),
+      retryTransientServerErrors: (agent) => this.retryTransientServerErrors(agent),
+      emitAgentEvent: (event, origin) => this.emitAgentEvent(event, origin),
+      recordUsage: (usage, modelId) => this.recordUsage(usage, modelId),
+      emitTurnUsage: (origin) => this.emitTurnUsage(origin),
+    });
     this.stateMachineController = new StateMachineController({
       cwd: config.cwd ?? process.cwd(),
-      createStateAgent: (input) => this.createStateAgentHandle(input),
+      createStateAgent: (input) => this.createStateSubagentRun(input),
       onSessionChanged: (session) => this.emit({ type: "state_machine", stateMachine: session }),
     });
   }
@@ -1245,162 +1265,27 @@ export class TurnRunner {
     );
   }
 
-  protected createStateAgentHandle(input: {
+  protected createStateSubagentRun(input: {
     state: StateMachineAgentState;
     prompt: string;
-  }): StateAgentHandle {
-    let control: TurnRunnerControlResult = { type: "none" };
-    const seedMessages = this.resolveStateAgentSeedMessages(input.state);
-    // Capture the seeded prefix length up front. The sub-agent's result,
-    // partial text, and recorded usage are all computed by slicing this prefix
-    // off agent.state.messages so a forked parent transcript isn't folded into
-    // this run. Reading `seedMessages.length` lazily at each call site would be
-    // wrong if the agent ever appended into the seed array in place, so snapshot
-    // the count once.
-    const seedMessageCount = seedMessages.length;
-    const stateRoute = this.resolveStateModel(input.state.model);
-    const inheritedOptions = this.resolveStateAgentInheritedOptions();
-    const stateModelOptions: TurnOptions = stateRoute
-      ? { model: stateRoute.modelName, thinkingLevel: stateRoute.thinkingLevel }
-      : {
-          ...(input.state.model ? { model: input.state.model } : {}),
-          ...(input.state.thinkingLevel ? { thinkingLevel: input.state.thinkingLevel } : {}),
-        };
-    const state: TurnState = {
-      status: "running",
-      mode: "agent",
-      // Layer the agent state's optional per-state model/thinkingLevel over the
-      // inherited parent options; see StateMachineAgentState for why these are
-      // UI-set rather than model-chosen.
-      options: {
-        ...inheritedOptions,
-        ...stateModelOptions,
-      },
-      agent: {
-        status: "running",
-        messages: seedMessages,
-      },
+  }): SubagentRun {
+    const spec: SubagentSpec = {
+      prompt: input.prompt,
+      ...(input.state.systemPrompt ? { systemPrompt: input.state.systemPrompt } : {}),
+      ...(input.state.allowedSkills ? { allowedSkills: input.state.allowedSkills } : {}),
+      ...(input.state.cwd ? { cwd: input.state.cwd } : {}),
+      ...(input.state.model ? { model: input.state.model } : {}),
+      ...(input.state.thinkingLevel ? { thinkingLevel: input.state.thinkingLevel } : {}),
+      ...(input.state.forkContext ? { forkContext: true } : {}),
     };
-    const stateSkills = this.skillContext.resolveStateAgentSkills(input.state);
-    // Expand `/skill` slash commands the same way the parent prompt path does,
-    // scoped to the skills this state is actually allowed to use. Lets state
-    // prompts say "use the /foo skill to do xyz" and have the skill body
-    // injected, instead of shipping the literal `/foo` text to the model.
-    const expandedPrompt = this.skillContext.resolveSlashSkillPrompt(input.prompt, stateSkills);
-    // Hand the sub-agent the machine's overall goal, the full state list, and
-    // which state it is running so it scopes its work to this state instead of
-    // running the whole process (a common over-reach on smaller models). The
-    // session always exists while an agent state is executing.
     const session = this.stateMachineController.getSession();
     const machineContext = session
       ? { definition: session.definition, currentState: input.state.name }
       : undefined;
-    const forkContext = input.state.forkContext === true;
-    const identityLayer = createStateAgentSystemPromptLayer(machineContext);
-    // When forking, the sub-agent's identity + per-state systemPrompt layers
-    // ride in the tail user turn so the system prompt can stay byte-identical to
-    // the parent's and preserve the provider prompt-cache prefix. There is one
-    // exception: a state that restricts skills via allowedSkills must NOT inherit
-    // the parent's full skill catalog. resolveStateAgentSkills returns undefined
-    // only for an unrestricted state; when it returns a concrete allowlist we
-    // rebuild the system prompt around that allowlist instead of reusing the
-    // parent's verbatim, trading the cache prefix for the allowlist contract.
-    const forkSystemPrompt = forkContext
-      ? stateSkills === undefined
-        ? this.parentAgent?.state.systemPrompt
-        : this.createBaseSystemPromptWithAppendedLayers({ skills: stateSkills })
-      : undefined;
-    const tailPrompt = forkContext
-      ? [createForkContextReminder(), identityLayer, input.state.systemPrompt, expandedPrompt]
-          .filter((part): part is string => Boolean(part))
-          .join("\n\n")
-      : expandedPrompt;
-    const agent = this.createAgent(
-      {
-        state,
-        ...(forkSystemPrompt ? { systemPrompt: forkSystemPrompt } : {}),
-        prependSystemPrompt: forkContext ? undefined : identityLayer,
-        appendSystemPrompt: forkContext ? undefined : input.state.systemPrompt,
-        skills: stateSkills,
-        // Per-state cwd lets one agent state operate on a different
-        // repository or subdirectory than the parent runner without
-        // mutating shared config.
-        ...this.createTools("agent", input.state.cwd, false),
-      },
-      (result) => {
-        control = result;
-      },
-    );
-    let unsubscribe: (() => void) | undefined;
-    let interruptedReason: string | undefined;
-    const finish = (): StateAgentResult => {
-      if (control.type === "ask_user_question") {
-        return { type: "ask", questions: control.questions };
-      }
-      if (agent.state.errorMessage) {
-        return { type: "failed", error: agent.state.errorMessage };
-      }
-      return {
-        type: "complete",
-        result: assistantText(agent.state.messages.slice(seedMessageCount)),
-      };
-    };
-
-    const origin: TurnEventOrigin = {
-      kind: "state_machine_agent",
-      state: input.state.name,
-    };
-    // A state agent runs a turn just like the parent — a loop of completion
-    // calls — so it streams a `usage` event per completion from its own
-    // `message_end` events. The finally block falls back to summing the whole
-    // message list only when no `message_end` fired (stubbed-agent test path).
-    let recordedMessageUsage = false;
-    return {
-      prompt: async () => {
-        unsubscribe = agent.subscribe((event) => {
-          this.emitAgentEvent(event, origin);
-          if (event.type !== "message_end" || event.message.role !== "assistant") return;
-          // Record always; tick only on a completion that consumed tokens (see
-          // the parent path for why a zero-usage attempt must not emit).
-          this.recordUsage(event.message.usage, event.message.model);
-          recordedMessageUsage = true;
-          if (event.message.usage.totalTokens > 0) this.emitTurnUsage(origin);
-        });
-        try {
-          await agent.prompt(tailPrompt);
-          await this.retryTransientServerErrors(agent);
-          return interruptedReason ? { type: "interrupted" } : finish();
-        } catch (error) {
-          if (interruptedReason) return { type: "interrupted" };
-          if (error instanceof Error) return { type: "failed", error: error.message };
-          return { type: "failed", error: String(error) };
-        } finally {
-          // Fallback for the stubbed-agent path: when no `message_end` streamed,
-          // fold the message list's usage in on every exit path — success,
-          // error, or interrupt — so partial work still reaches the aggregate.
-          // Slice off the seeded prefix so a forked parent transcript's usage
-          // isn't double-counted (parent messages may already carry usage from
-          // the parent turn).
-          if (!recordedMessageUsage) {
-            this.recordUsage(
-              usageFromMessages(agent.state.messages.slice(seedMessageCount)),
-              agent.state.model.id,
-            );
-            this.emitTurnUsage(origin);
-          }
-          unsubscribe?.();
-        }
-      },
-      interrupt: (reason) => {
-        interruptedReason = reason;
-        agent.abort();
-        agent.clearAllQueues();
-        unsubscribe?.();
-      },
-      partialAssistantText: () =>
-        assistantText(agent.state.messages.slice(seedMessageCount)) || undefined,
-      interruptedReason: () => interruptedReason,
-    };
+    return this.subagentExecutor(spec, {
+      origin: { kind: "state_machine_agent", state: input.state.name },
+      ...(machineContext ? { machineContext } : {}),
+    });
   }
 
   private requireRunnerState(): TurnState {
@@ -1408,11 +1293,6 @@ export class TurnRunner {
       throw new Error("Turn runner has not been started.");
     }
     return this.state;
-  }
-
-  private resolveStateAgentSeedMessages(state: StateMachineAgentState): AgentMessage[] {
-    if (!state.forkContext) return [];
-    return [...(this.parentAgent?.state.messages ?? [])];
   }
 
   getState(): TurnState | undefined {
@@ -2611,14 +2491,14 @@ export class TurnRunner {
     return resolveTierDefault(table, modelName, { hasImages: false }, routingCatalogAdapter);
   }
 
-  /** Omitted state models inherit the parent's active concrete target, not its virtual selection. */
-  private resolveStateAgentInheritedOptions(): TurnOptions {
+  /** Omitted child models inherit the parent's active concrete target, not its virtual setting. */
+  private resolveSubagentInheritedOptions(): TurnOptions {
     const options = { ...this.requireRunnerState().options };
     if (!options.model || !this.isVirtualModelSelection(options.model)) return options;
     const parent = this.requireParentAgent().state;
     return {
       ...options,
-      model: pinnedModelReference(this.modelRouter?.status().modelName ?? parent.model.id),
+      model: `${parent.model.provider}:${parent.model.id}`,
       ...(parent.thinkingLevel === "off" ? {} : { thinkingLevel: parent.thinkingLevel }),
     };
   }
