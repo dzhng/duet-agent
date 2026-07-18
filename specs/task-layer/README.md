@@ -15,7 +15,11 @@ Line refs there are vs 3adf0df; drift as of ddfc6f2 is small but re-verify befor
 
 ## Next Agent Prompt
 
-**Status:** planning complete, no slices started. Last updated 2026-07-18.
+**Status:** wave 2 in flight. Landed: 01 (five pi pins CONFIRMED, no STOP; pin 4 documents
+sequential mode interleaves prepare/execute per tool), 05 (SubagentSpec/SubagentRun,
+classifySpawnModel), 02 (RuntimeClock + kit; note: internal deps are a constructor-level
+`TurnRunnerDependencies` second arg on TurnRunner, not config). Full suite 1063/0 at merge
+06f23fc. Slices 03 + 06 running as codex execs. Last updated 2026-07-19.
 
 You are implementing this spec. Read this README fully, then `unknowns-map.md` Quadrant 2
 (binding decisions — do not relitigate) and the LM-\* cards for your slice. Work one slice at
@@ -32,11 +36,11 @@ reopen the architecture with the user rather than working around it.
 
 **Global TODO**
 
-- [ ] 01 pi-contract spike (verdict gate)
-- [ ] 02 clock + verification kit
-- [ ] 03 TaskManager kernel + quiescence decider
+- [x] 01 pi-contract spike (verdict gate) — CONFIRMED ×5, committed 5baec9a
+- [x] 02 clock + verification kit — merged 06f23fc
+- [ ] 03 TaskManager kernel + quiescence decider (codex exec running)
 - [ ] 04 task protocol + durable snapshot contract
-- [ ] 05 subagent executor extraction
+- [x] 05 subagent executor extraction — merged 634294e
 - [ ] 06 StateMachineDecisions extraction
 - [ ] 07 the cutover: one loop, controller deleted
 - [ ] 08 async surface: budget conversion, background, task tools, settlements
