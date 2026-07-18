@@ -151,3 +151,41 @@ losing alternatives). The build followed it with the divergences recorded below.
 build — every live verification ran via `AI_GATEWAY_API_KEY` (Vercel) or OpenRouter. Enabling
 `moonshotai/kimi-k3`, `openai/gpt-5.6-sol`, and `openai/gpt-5.6-terra` on the duet gateway is an
 open service-side action item; the harness needs no code change when that lands.
+
+## Post-close review (2026-07-18)
+
+A full three-lens review (refactor-clean shape audit, independent Codex code review, docs pass)
+ran after archival and produced one fix batch (commit `780d40b`) plus these durable records:
+
+**Fixed post-close.** One owner for the routing catalog adapter + `pinnedModelReference`
+(`resolver.ts`); loader's permissive fallback deleted (adapter now required); one virtual-chain
+kernel shared by validation and runtime; classifier effort read from the table; `model-gateway`
+moved to `model-resolution/` (package cycle broken); lazy advisor resolution + fable-5
+OpenRouter mapping (OpenRouter-only startup crash); boot honors a replacement table's
+`defaultTier`; concrete-started sessions load the project table; tier switches rebuild advisor
+policy; atomic advisor consult lifecycle (`beginAdvisorConsult`/`endAdvisorConsult`) closing a
+parallel-call rate-limit race.
+
+**Regression caught by the eval sweep, fixed.** Slice 06 changed the `/model` pin confirmation
+wording and broke the live inline-slash eval's pinned phrase (`next turn will use`). Lesson
+recorded: `bun run test` does not run evals — a slice whose "stays green" list names an eval
+must actually run that eval; wording surfaced to users is contract, and the eval is its pin.
+
+**Recorded, deliberately not built:**
+
+- Table-authority invariant: only the runner's loaded table is fully authoritative; pre-boot
+  virtual checks approximate with the loaded-at-boot table (post-fix) — never add a third
+  notion of "the table".
+- Advisor pricing in `advisor-preview` is a hand-labeled approximation; the strictly better
+  version is a `cost` override in `MISSING_MODEL_CLONES` fixing attribution everywhere.
+- `cli/route.ts` hosts probe + advisor-preview; split when it grows again.
+- After the adapter unification, a `turn-runner/routing.ts` extraction is the natural next
+  decomposition of turn-runner.ts — do it for ownership, not line count.
+- `TurnRouterSwitchEvent` mirrors `RouterSwitch` deliberately (protocol independence); the
+  trigger union is written in three places — collapse if it ever changes.
+
+**Eval-sweep operating note.** Memory embeddings hard-require `DUET_API_KEY`
+(`src/memory/embedding.ts`), so recall/memory evals cannot pass with the key blanked or the
+duet gateway down — an eval run configured around the gateway outage will fail those for
+environmental reasons. Distinguish with a pre-feature baseline run before treating them as
+regressions.
