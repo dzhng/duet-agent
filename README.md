@@ -261,7 +261,9 @@ duet "prospect the VP Eng at Acme, send a first-touch email about our conf talk,
 <details>
 <summary><b>Providers, models, and CLI flags</b></summary>
 
-Duet routes every model through one of three gateways — the Duet gateway (`DUET_API_KEY`), the Vercel AI Gateway (`AI_GATEWAY_API_KEY`), or OpenRouter (`OPENROUTER_API_KEY`). If you would rather manage keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set one of those keys in the environment, `<workdir>/.env`, or `~/.duet/.env`. When `--model` is omitted, the CLI infers a default from whichever of those credentials is present, preferring them in that order.
+Duet routes every model through one of three gateways — the Duet gateway (`DUET_API_KEY`), the Vercel AI Gateway (`AI_GATEWAY_API_KEY`), or OpenRouter (`OPENROUTER_API_KEY`). If you would rather manage keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set one of those keys in the environment, `<workdir>/.env`, or `~/.duet/.env`. Gateway inference (preferring those credentials in that order) decides which gateway serves each concrete model.
+
+When `--model` is omitted, duet runs the routed `frontier` **virtual model**: a cheap classifier reads each prompt and picks the concrete model + effort per kind of work (visual work, planning, implementation, writing, general questions), re-checking as a turn progresses. `--model frontier|balanced|economy` selects a routing tier explicitly; any concrete model name pins that model and bypasses routing. `duet route "<prompt>"` shows what the classifier would decide, `duet config export` writes the routing table to `.duet/models.json` for tweaking, and `/route` inspects a live session. Design rationale and invariants: `specs/done/model-router/`.
 
 Use `--provider <name>` to pin a gateway without picking a model:
 
@@ -292,7 +294,7 @@ export AI_GATEWAY_API_KEY=...
 duet -m opus-4.8 "review this repo"
 ```
 
-Model names can use full `provider:modelId` syntax or shorthand names such as `opus-4.8`, `sonnet-4.6`, `haiku-4.5`, and `gpt-5.5`. Shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
+Model names can be a virtual tier (`frontier`, `balanced`, `economy` — routed per prompt), full `provider:modelId` syntax, or concrete shorthand names such as `opus-4.8`, `sonnet-4.6`, `haiku-4.5`, and `gpt-5.5`. Concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
 
 </details>
 
@@ -323,7 +325,7 @@ Tool calls render with custom per-tool headers (e.g. `$ <command>`, `read <path>
 
 Type `/` in the composer to open the command picker, or send any of these as a message:
 
-- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts the same shorthands and `provider:modelId` forms as the `--model` flag (e.g. `/model sonnet-4.6`, `/model duet:openai/gpt-5.5`). Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with.
+- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts virtual tiers and the same shorthands and `provider:modelId` forms as the `--model` flag (e.g. `/model frontier`, `/model sonnet-4.6`, `/model duet:openai/gpt-5.5`). A concrete name pins the model and suspends routing; a tier resumes it. Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with. **`/route`** inspects the live routing state.
 - **`/thinking <level>`** — switch the thinking level for the **next** turn. One of `minimal`, `low`, `medium`, `high`, `xhigh`. The runner clamps to the active model's supported range at use-time. The in-flight turn (if any) keeps its level.
 - **`/feedback <message>`** — send free-form feedback to the Duet team.
 - **`/clear`** — dispose the current session and start a fresh one.

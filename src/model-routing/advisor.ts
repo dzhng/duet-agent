@@ -1,6 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import { generateText } from "ai";
-import { createDuetModelGateway } from "../cli/model-gateway.js";
+import { createDuetModelGateway } from "../model-resolution/model-gateway.js";
 import { ADVISOR_SYSTEM_PROMPT } from "./prompts.js";
 
 /** Inputs for one advisor generation after catalog shorthand resolution. */

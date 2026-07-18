@@ -53,7 +53,7 @@
 
 ## Writing Live Evals
 
-- Live evals run a real model against the runner. The shorthand (e.g. `sonnet-4.6`, `opus-4.7`) resolves through `PROVIDER_ORDER`, picking whichever credential is present: `DUET_API_KEY` (duet-gateway), `AI_GATEWAY_API_KEY` (vercel-ai-gateway), `OPENROUTER_API_KEY`, or `ANTHROPIC_API_KEY` (anthropic-direct). Forward `DUET_API_KEY` into the docker container — it is the credential the docker eval path is set up for. The other keys are fallbacks for laptop runs and may be stale.
+- Live evals run a real model against the runner. The shorthand (e.g. `sonnet-4.6`, `opus-4.7`) resolves through `PROVIDER_ORDER`, picking whichever credential is present: `DUET_API_KEY` (duet-gateway), `AI_GATEWAY_API_KEY` (vercel-ai-gateway), or `OPENROUTER_API_KEY`. Forward `DUET_API_KEY` into the docker container — it is the credential the docker eval path is set up for. The other keys are fallbacks for laptop runs and may be stale.
 - To iterate on one eval file, run it directly inside the same container `bun run eval` uses, e.g. `docker run --rm -v "$PWD:/src:ro" -w /work -e HOME=/tmp/home -e DUET_TEST_IN_DOCKER=1 -e DUET_API_KEY="$DUET_API_KEY" oven/bun:1.3.11 sh -lc 'cp -R /src/. /work && bun install --frozen-lockfile >/dev/null 2>&1 && bun test ./evals/<file>.eval.ts'`. The repo-wide `bun run eval` script runs every eval and is wrong for fast iteration.
 - Wrap each eval body in `testIfDocker` from `test/helpers/docker-only.js`. Set a generous timeout (60–120s for planning-only evals, longer for evals that actually run tool calls).
 - Pick the model with `const model = process.env.EVAL_MODEL ?? "sonnet-4.6"` so the same eval can be reroutered to opus / haiku / a custom shorthand without code edits.

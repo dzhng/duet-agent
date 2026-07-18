@@ -8,7 +8,11 @@ import {
   type ImagePart,
   type ModelMessage,
 } from "ai";
-import { createDuetModelGateway, fetchModelCatalog, type ModelType } from "./model-gateway.js";
+import {
+  createDuetModelGateway,
+  fetchModelCatalog,
+  type ModelType,
+} from "../model-resolution/model-gateway.js";
 import { printModelHelp } from "./help.js";
 import { fail, loadCliEnvFiles, resolveUserPath } from "./shared.js";
 

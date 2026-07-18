@@ -1,5 +1,5 @@
 import { createGateway } from "ai";
-import { getDuetGatewayBaseUrl } from "../model-resolution/duet-gateway.js";
+import { getDuetGatewayBaseUrl } from "./duet-gateway.js";
 
 /**
  * The `duet model` subcommand talks to models directly through the Vercel AI

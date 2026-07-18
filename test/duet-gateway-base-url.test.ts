@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { fetchModelCatalog, createDuetModelGateway } from "../src/cli/model-gateway.js";
+import {
+  fetchModelCatalog,
+  createDuetModelGateway,
+} from "../src/model-resolution/model-gateway.js";
 import {
   getDuetGatewayBaseUrl,
   resolveDuetGatewayModel,
