@@ -713,3 +713,31 @@ describe("TurnRunner virtual-model adapter", () => {
     await turn;
   });
 });
+
+describe("advisor executor guidance layer", () => {
+  testIfDocker("routed tiers with the advisor enabled carry the timing layer", async () => {
+    const frontier = new RouterTurnRunner({ classify: scriptedClassifier([]) });
+    await startRunner(frontier, []);
+    expect(frontier.parentAgentForTest().state.systemPrompt).toContain(
+      "Call ask_advisor BEFORE substantive work",
+    );
+    await frontier.dispose();
+
+    const economy = new RouterTurnRunner({ model: "economy", classify: scriptedClassifier([]) });
+    await startRunner(economy, []);
+    expect(economy.parentAgentForTest().state.systemPrompt).not.toContain(
+      "Call ask_advisor BEFORE substantive work",
+    );
+    await economy.dispose();
+
+    const concrete = new RouterTurnRunner({
+      model: "gpt-5.6-sol",
+      classify: scriptedClassifier([]),
+    });
+    await startRunner(concrete, []);
+    expect(concrete.parentAgentForTest().state.systemPrompt).not.toContain(
+      "Call ask_advisor BEFORE substantive work",
+    );
+    await concrete.dispose();
+  });
+});

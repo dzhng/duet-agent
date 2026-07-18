@@ -240,9 +240,18 @@ describe("mixed-task model routing promotion", () => {
         expect(backendCalls.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(5);
         expect(visualCalls.some((call) => call.model === KIMI_ID)).toBe(true);
         expect(backendCalls.some((call) => call.model === SOL_ID)).toBe(true);
-        expect(visualCalls[0]!.index).toBeLessThan(backendCalls[0]!.index);
-        expect(Math.max(...visualCalls.map((call) => call.index))).toBeLessThan(
-          Math.max(...backendCalls.map((call) => call.index)),
+        // Phase ordering is judged on MUTATING calls only (edit/write/run).
+        // Reads are orientation: after a switch-triggered wire compaction the
+        // new model may legitimately re-read an earlier phase's file late in
+        // the turn, and that must not count as phase interleaving.
+        const isMutating = (call: RoutedToolCall) => call.tool !== "read";
+        const visualWork = visualCalls.filter(isMutating);
+        const backendWork = backendCalls.filter(isMutating);
+        expect(visualWork.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(1);
+        expect(backendWork.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(1);
+        expect(visualWork[0]!.index).toBeLessThan(backendWork[0]!.index);
+        expect(Math.max(...visualWork.map((call) => call.index))).toBeLessThan(
+          Math.max(...backendWork.map((call) => call.index)),
         );
 
         const cadenceSwitches = switches.filter((event) => event.trigger === "cadence");

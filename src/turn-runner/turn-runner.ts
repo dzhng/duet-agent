@@ -13,6 +13,7 @@ import dedent from "dedent";
 import { assistantText } from "../core/serializer.js";
 import { classifyRoute } from "../model-routing/classifier.js";
 import { loadRoutingTable } from "../model-routing/loader.js";
+import { ADVISOR_EXECUTOR_GUIDANCE_LAYER } from "../model-routing/prompts.js";
 import { resolveTierDefault, type RouteResolutionCatalog } from "../model-routing/resolve.js";
 import type { StepObservation } from "../model-routing/step-triggers.js";
 import {
@@ -1568,6 +1569,9 @@ export class TurnRunner {
         ? undefined
         : createStateMachineSystemPromptLayer({ mode: state.mode, session: state }),
       this.config.memoryDbPath !== undefined ? createRecallMemorySystemPromptLayer() : undefined,
+      // Advisor timing guidance ships with the tool: description-only
+      // steering measurably under-triggers consults on hard tasks.
+      this.advisorPolicy?.enabled ? ADVISOR_EXECUTOR_GUIDANCE_LAYER : undefined,
       // Source-of-truth-first guidance always applies: even without
       // configured memory, the agent should still prefer live tools,
       // skills, and files in cwd over guessed answers.

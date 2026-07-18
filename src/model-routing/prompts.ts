@@ -33,6 +33,30 @@ export const ASK_ADVISOR_TOOL_DESCRIPTION = dedent`
   strategic input, then verify and act on it with your own tools and judgment.
 `;
 
+/**
+ * Executor-facing system-prompt layer injected alongside the ask_advisor tool.
+ * Anthropic's advisor documentation is explicit that the tool description
+ * alone under-triggers on hard tasks and that consistent consult timing comes
+ * from executor system-prompt steering; live acceptance runs confirmed it
+ * (four consecutive positive-case misses on description-only guidance).
+ */
+export const ADVISOR_EXECUTOR_GUIDANCE_LAYER = dedent`
+  ADVISOR
+
+  You have an \`ask_advisor\` tool backed by a stronger reviewer model. It takes no parameters —
+  your progress so far is forwarded automatically; the advisor sees the task, your steps, and
+  their results.
+
+  Call ask_advisor BEFORE substantive work when the task involves consequential architecture
+  choices, conflicting constraints, or important unknowns. Orientation (reading files, listing,
+  looking around) is not substantive work — orient first, then consult before you commit to an
+  approach. Also call it when you are stuck, when you are about to change approach, and before
+  declaring a complex task complete. Skip it for routine, local, obvious work.
+
+  Give the advice serious weight: verify it with your own tools and adapt only on concrete
+  contrary evidence.
+`;
+
 /** Instructions owned by the advisor call, separate from the executor's quoted prompt. */
 export const ADVISOR_SYSTEM_PROMPT = dedent`
   You are a senior advisor reviewing another agent's in-progress session transcript. Give
