@@ -189,3 +189,13 @@ must actually run that eval; wording surfaced to users is contract, and the eval
 duet gateway down — an eval run configured around the gateway outage will fail those for
 environmental reasons. Distinguish with a pre-feature baseline run before treating them as
 regressions.
+
+**pi-ai upgrade probe (2026-07-18).** Checked whether newer pi-ai ships the routed models
+natively. The 0.79 line (latest 0.79.10) does not — `MISSING_MODEL_CLONES` stays. The 0.80 line
+(0.80.10) is a breaking redesign that removes the static catalog entirely (`getModel` is gone;
+models live in a dynamic `createModels()` store with `refresh()` pulling live provider
+catalogs, and `ThinkingLevel` changed shape). So the clones' removal condition is now: they die
+with the whole static-spec mechanism during a future pi-ai 0.80 migration — a real project
+(resolution, transports, capability sourcing move to the live store), not a version bump. Note
+also pi-agent-core exact-pins its nested pi-ai, so root must stay on the identical version or
+the `Model` type graph splits.
