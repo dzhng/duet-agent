@@ -6,6 +6,7 @@ import { buildAdvisorTranscript } from "../model-routing/advisor-transcript.js";
 import { classifyRoute, type ClassifierDecision } from "../model-routing/classifier.js";
 import { loadRoutingTable, type LoadedRoutingTable } from "../model-routing/loader.js";
 import { resolveRoute } from "../model-routing/resolve.js";
+import type { TurnFacts } from "../model-routing/step-triggers.js";
 import { serializeMessageForObserver } from "../memory/observational.js";
 import { MemorySession } from "../memory/session.js";
 import { readSessionObservations } from "../memory/storage.js";
@@ -206,13 +207,14 @@ export async function runRouteCommand(
 
   const now = options.now ?? Date.now;
   const startedAt = now();
+  const facts: TurnFacts = { hasImages: parsed.images };
   const decision = await (options.classify ?? classifyRoute)(
     {
       tierName,
       tier,
       guidance: loaded.table.classifier.guidance,
       lastStepDelta: parsed.prompt,
-      hasImages: parsed.images,
+      hasImages: facts.hasImages,
       trigger: "turn_start",
     },
     {
@@ -224,7 +226,7 @@ export async function runRouteCommand(
     loaded.table,
     tierName,
     decision.route,
-    { hasImages: parsed.images },
+    facts,
     routingCatalogAdapter,
   );
   const result: RouteCommandResult = {

@@ -796,7 +796,7 @@ export interface TurnRouterSwitchEvent {
   /** Route-owned reasoning effort applied atomically with the model. */
   thinkingLevel: ThinkingLevel;
   /** Runtime milestone that requested classification. */
-  trigger: "turn_start" | "cadence" | "advisor";
+  trigger: "turn_start" | "cadence" | "advisor" | "step_trigger";
   /** Classifier explanation for the selected route. */
   rationale: string;
   /** Present only if a future independently-routed child agent emits the switch. */

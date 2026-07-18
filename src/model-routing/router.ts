@@ -9,6 +9,7 @@ import {
   type RouteResolutionCatalog,
 } from "./resolve.js";
 import type { RoutingTable } from "./table.js";
+import { evaluateStepTriggers, type StepObservation, type TurnFacts } from "./step-triggers.js";
 
 /** Classifier seam kept independent from any agent runtime. */
 export type RouteClassifier = (
@@ -16,8 +17,8 @@ export type RouteClassifier = (
   signal?: AbortSignal,
 ) => Promise<ClassifierDecision>;
 
-/** Facts available when the router prepares a parent-agent turn. */
-export interface RouterPrepareInput extends RouteContext {
+/** Runtime inputs available when the router prepares a parent-agent turn. */
+export interface RouterPrepareInput {
   /** Bounded summary of the preceding user-visible turn. */
   prevTurnHint?: string;
   /** Cancels classification without changing router state. */
@@ -37,7 +38,7 @@ export interface RouterSwitch {
   /** Route-owned reasoning effort applied with the new model. */
   thinkingLevel: ThinkingLevel;
   /** Runtime milestone that requested classification. */
-  trigger: "turn_start" | "cadence" | "advisor";
+  trigger: "turn_start" | "cadence" | "advisor" | "step_trigger";
   /** Classifier explanation for the selected route. */
   rationale: string;
 }
@@ -74,6 +75,8 @@ export interface RouterStatus {
   advisorEnabled: boolean;
   /** Current step-based advisor floor. */
   advisorGate: AdvisorGate;
+  /** Sticky facts learned from the current user turn's prompt and step outputs. */
+  facts: TurnFacts;
 }
 
 export interface ModelRouterOptions {
@@ -101,6 +104,7 @@ export class ModelRouter {
   private lastClassificationStep = 0;
   private firstClassificationPending = true;
   private advisorClassificationPending = false;
+  private stepTriggerClassificationPending = false;
   private lastAdvisorStep?: number;
   private lastStepDelta?: string;
   private lastRationale?: string;
@@ -108,6 +112,7 @@ export class ModelRouter {
   private rerouteNudge?: string;
   private nudgeExemptionAvailable = false;
   private advisorConsultInFlight = false;
+  private facts: TurnFacts = { hasImages: false };
 
   constructor(options: ModelRouterOptions) {
     this.table = options.table;
@@ -123,10 +128,21 @@ export class ModelRouter {
     return target;
   }
 
-  /** Record one completed parent assistant message and its lean classification delta. */
-  noteAssistantStep(delta?: string): void {
+  /** Reset sticky routing facts from the new parent prompt at each user-turn boundary. */
+  noteTurnStart(input: { promptHasImages: boolean }): void {
+    this.facts = { hasImages: input.promptHasImages };
+    this.stepTriggerClassificationPending = false;
+  }
+
+  /** Record one completed parent assistant step and evaluate its runtime-neutral output summary. */
+  noteAssistantStep(observation: StepObservation = { blockTypes: [], text: "" }): void {
     this.assistantSteps += 1;
-    this.lastStepDelta = delta?.trim() || undefined;
+    this.lastStepDelta = observation.text.trim() || undefined;
+    const effects = evaluateStepTriggers(observation, this.table.classifier.stepTriggers);
+    for (const effect of effects) {
+      this.facts = { ...this.facts, ...effect.facts };
+      if (effect.classify) this.stepTriggerClassificationPending = true;
+    }
   }
 
   /** Suspend virtual routing while a concrete model is pinned. */
@@ -145,6 +161,7 @@ export class ModelRouter {
     return (
       this.firstClassificationPending ||
       this.advisorClassificationPending ||
+      this.stepTriggerClassificationPending ||
       this.assistantSteps - this.lastClassificationStep >= this.table.classifier.everySteps
     );
   }
@@ -167,20 +184,28 @@ export class ModelRouter {
           currentTarget: previous?.modelName,
           prevTurnHint: input.prevTurnHint,
           lastStepDelta: this.lastStepDelta,
-          hasImages: input.hasImages,
+          hasImages: this.facts.hasImages,
           trigger,
         },
         input.signal,
       );
       if (input.signal?.aborted) return undefined;
 
-      const next = resolveRoute(this.table, this.tier, decision.route, input, this.resolveCatalog);
-      const baseline = previous ?? this.initialTarget(input);
+      const context = { hasImages: this.facts.hasImages };
+      const next = resolveRoute(
+        this.table,
+        this.tier,
+        decision.route,
+        context,
+        this.resolveCatalog,
+      );
+      const baseline = previous ?? this.initialTarget(context);
       this.current = next;
       this.lastRationale = decision.rationale;
       this.lastClassificationStep = this.assistantSteps;
       this.firstClassificationPending = false;
       this.advisorClassificationPending = false;
+      this.stepTriggerClassificationPending = false;
 
       if (baseline.modelName === next.modelName && baseline.thinkingLevel === next.thinkingLevel) {
         return undefined;
@@ -266,12 +291,14 @@ export class ModelRouter {
       pinned: this.pinned,
       advisorEnabled: this.table.tiers[this.tier]!.advisor.enabled,
       advisorGate: this.advisorGate(),
+      facts: { ...this.facts },
     };
   }
 
   private classificationTrigger(): RouterSwitch["trigger"] {
     if (this.firstClassificationPending) return "turn_start";
     if (this.advisorClassificationPending) return "advisor";
+    if (this.stepTriggerClassificationPending) return "step_trigger";
     return "cadence";
   }
 }

@@ -101,6 +101,17 @@ describe("built-in model routing table", () => {
     expect(roundTripped).toEqual(BUILT_IN_ROUTING_TABLE);
   });
 
+  test("round-trips configured step-output triggers", () => {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.classifier.stepTriggers = [
+      { name: "escalate", keywords: ["ESCALATE_ROUTE", "needs specialist"] },
+    ];
+    const roundTripped = JSON.parse(JSON.stringify(table));
+
+    expect(Value.Check(RoutingTableSchema, roundTripped)).toBe(true);
+    expect(roundTripped.classifier.stepTriggers).toEqual(table.classifier.stepTriggers);
+  });
+
   test("recognizes only table-owned virtual model names", () => {
     expect(virtualModelNames(BUILT_IN_ROUTING_TABLE)).toEqual(["frontier", "balanced", "economy"]);
     expect(isVirtualModel("frontier", BUILT_IN_ROUTING_TABLE)).toBe(true);
@@ -179,6 +190,24 @@ describe("built-in model routing table", () => {
     expect(issues.find((issue) => issue.code === "invalid_vision_fallback")?.message).toContain(
       'text-only model "gpt-5.6-sol"',
     );
+  });
+
+  test("rejects duplicate or empty step-trigger names and empty keywords", () => {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.classifier.stepTriggers = [
+      { name: "", keywords: ["valid"] },
+      { name: "duplicate", keywords: [] },
+      { name: "duplicate", keywords: [""] },
+    ];
+
+    expect(validateRoutingTable(table, catalog)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "invalid_step_trigger_name" }),
+        expect.objectContaining({ code: "duplicate_step_trigger_name" }),
+        expect.objectContaining({ code: "invalid_step_trigger_keywords" }),
+      ]),
+    );
+    expect(Value.Check(RoutingTableSchema, table)).toBe(false);
   });
 });
 

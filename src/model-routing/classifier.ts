@@ -48,7 +48,7 @@ export interface ClassifierInput {
   /** Whether the pending input includes images that the selected route must support. */
   hasImages: boolean;
   /** Event that requested classification, for interpreting sparse cadence/advisor context. */
-  trigger: "turn_start" | "cadence" | "advisor";
+  trigger: "turn_start" | "cadence" | "advisor" | "step_trigger";
 }
 
 /** Pure system/user prompt pair consumed by the structured-output classifier call. */

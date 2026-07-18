@@ -126,6 +126,7 @@ describe("/route slash command", () => {
         pinned: false,
         advisorEnabled: true,
         advisorGate: { allowed: false, stepsUntilAllowed: 1 },
+        facts: { hasImages: false },
       }),
     });
 
@@ -165,6 +166,7 @@ describe("/route slash command", () => {
         pinned: true,
         advisorEnabled: true,
         advisorGate: { allowed: true, stepsUntilAllowed: 0 },
+        facts: { hasImages: false },
       }),
     });
 

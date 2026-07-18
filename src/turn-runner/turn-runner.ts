@@ -14,6 +14,7 @@ import { assistantText } from "../core/serializer.js";
 import { classifyRoute } from "../model-routing/classifier.js";
 import { loadRoutingTable } from "../model-routing/loader.js";
 import { resolveTierDefault, type RouteResolutionCatalog } from "../model-routing/resolve.js";
+import type { StepObservation } from "../model-routing/step-triggers.js";
 import {
   ModelRouter,
   type ModelRouterOptions,
@@ -294,8 +295,6 @@ export class TurnRunner {
   private pendingModelSelection?: string;
   /** Advisor target and transcript budget selected with the current virtual tier. */
   private advisorPolicy?: AdvisorPolicy;
-  /** Image capability fact carried from the active parent prompt into intra-turn prepares. */
-  private parentPromptHasImages = false;
   /** True only while the parent pi agent is actively producing the public terminal event. */
   private parentAgentRunning = false;
   /** Last turn-runner control tool result observed from the parent agent. */
@@ -1781,9 +1780,8 @@ export class TurnRunner {
     const unsubscribe = agent.subscribe((event) => this.emitParentAgentEvent(event));
     this.parentAgentInterrupted = false;
     try {
-      this.parentPromptHasImages = (input.images?.length ?? 0) > 0;
+      this.modelRouter?.noteTurnStart({ promptHasImages: (input.images?.length ?? 0) > 0 });
       const switched = await this.modelRouter?.prepareTurn({
-        hasImages: this.parentPromptHasImages,
         prevTurnHint: input.prompt,
         signal: agent.signal,
       });
@@ -2131,7 +2129,6 @@ export class TurnRunner {
         ? {
             prepareNextTurn: async (signal?: AbortSignal) => {
               const switched = await this.modelRouter?.prepareTurn({
-                hasImages: this.parentPromptHasImages,
                 signal,
               });
               return switched ? this.applyRouterSwitch(agent, switched) : undefined;
@@ -2343,9 +2340,10 @@ export class TurnRunner {
 
   protected emitParentAgentEvent(event: AgentEvent): void {
     this.emitAgentEvent(event);
+    if (event.type === "turn_end" && event.message.role === "assistant") {
+      this.modelRouter?.noteAssistantStep(routerStepObservation(event.message, event.toolResults));
+    }
     if (event.type !== "message_end" || event.message.role !== "assistant") return;
-
-    this.modelRouter?.noteAssistantStep(routerStepDelta(event.message));
 
     // Cache the parent's latest bar/breakdown so subsequent state-agent and
     // terminal emissions can reuse it without rescaling against a stale base.
@@ -2638,25 +2636,25 @@ export class TurnRunner {
   }
 }
 
-function routerStepDelta(
+const ROUTER_STEP_TEXT_LIMIT = 2_000;
+
+function routerStepObservation(
   message: Extract<AgentMessage, { role: "assistant" }>,
-): string | undefined {
-  const text = message.content
+  toolResults: Extract<AgentEvent, { type: "turn_end" }>["toolResults"],
+): StepObservation {
+  const content = [...message.content, ...toolResults.flatMap((result) => result.content)];
+  const text = content
     .filter(
-      (block): block is Extract<(typeof message.content)[number], { type: "text" }> =>
+      (block): block is Extract<(typeof content)[number], { type: "text" }> =>
         block.type === "text",
     )
     .map((block) => block.text)
     .join("\n")
     .trim();
-  const tools = message.content
-    .filter((block) => block.type === "toolCall")
-    .map((block) => block.name);
-  const parts = [
-    text ? text.slice(-500) : undefined,
-    tools.length > 0 ? `Tools: ${tools.join(", ")}` : undefined,
-  ].filter((part): part is string => Boolean(part));
-  return parts.length > 0 ? parts.join("\n") : undefined;
+  return {
+    blockTypes: content.map((block) => block.type),
+    text: text.slice(-ROUTER_STEP_TEXT_LIMIT),
+  };
 }
 
 function sleep(ms: number): Promise<void> {

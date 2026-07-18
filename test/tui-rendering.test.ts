@@ -70,6 +70,7 @@ describe("TUI rendering smoke test", () => {
       pinned: false,
       advisorEnabled: true,
       advisorGate: { allowed: true, stepsUntilAllowed: 0 },
+      facts: { hasImages: false },
     };
     Object.assign(harness.runner, { routeStatus: () => status });
 

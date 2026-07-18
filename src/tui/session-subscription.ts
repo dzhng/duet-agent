@@ -125,11 +125,13 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
       // reads as prose ("via cadence check") because a bare trailing token
       // next to the panel border reads as truncated.
       const trigger =
-        event.trigger === "cadence"
-          ? "via cadence check"
-          : event.trigger === "advisor"
-            ? "via advisor milestone"
-            : "at turn start";
+        event.trigger === "step_trigger"
+          ? "via step trigger"
+          : event.trigger === "cadence"
+            ? "via cadence check"
+            : event.trigger === "advisor"
+              ? "via advisor milestone"
+              : "at turn start";
       appendLine(
         `[route] ${event.tier}: ${event.fromModel} → ${event.toModel} (${event.thinkingLevel}) · ${event.route} · ${trigger}`,
         COLORS.system,

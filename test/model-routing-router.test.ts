@@ -40,51 +40,53 @@ describe("ModelRouter", () => {
     const inputs: ClassifierInput[] = [];
     const router = createRouter(scriptedClassifier([general, implement], inputs));
 
-    await router.prepareTurn({ hasImages: false });
-    for (let step = 0; step < 4; step++) router.noteAssistantStep(`step ${step + 1}`);
+    await router.prepareTurn({});
+    for (let step = 0; step < 4; step++) {
+      router.noteAssistantStep({ blockTypes: [], text: `step ${step + 1}` });
+    }
     expect(router.shouldClassify()).toBe(false);
-    expect(await router.prepareTurn({ hasImages: false })).toBeUndefined();
+    expect(await router.prepareTurn({})).toBeUndefined();
 
-    router.noteAssistantStep("step 5");
+    router.noteAssistantStep({ blockTypes: [], text: "step 5" });
     expect(router.shouldClassify()).toBe(true);
-    expect((await router.prepareTurn({ hasImages: false }))?.trigger).toBe("cadence");
+    expect((await router.prepareTurn({}))?.trigger).toBe("cadence");
     expect(inputs.map((input) => input.trigger)).toEqual(["turn_start", "cadence"]);
   });
 
   test("a successful advisor consult forces an early classification", async () => {
     const inputs: ClassifierInput[] = [];
     const router = createRouter(scriptedClassifier([general, plan], inputs));
-    await router.prepareTurn({ hasImages: false });
-    router.noteAssistantStep("one step");
+    await router.prepareTurn({});
+    router.noteAssistantStep({ blockTypes: [], text: "one step" });
     expect(router.beginAdvisorConsult().allowed).toBe(true);
     router.endAdvisorConsult(true);
 
     expect(router.shouldClassify()).toBe(true);
-    expect((await router.prepareTurn({ hasImages: false }))?.trigger).toBe("advisor");
+    expect((await router.prepareTurn({}))?.trigger).toBe("advisor");
     expect(inputs.at(-1)?.trigger).toBe("advisor");
   });
 
   test("pin suspends due classification and unpin resumes it", async () => {
     const router = createRouter(scriptedClassifier([general, implement]));
-    await router.prepareTurn({ hasImages: false });
+    await router.prepareTurn({});
     for (let step = 0; step < 5; step++) router.noteAssistantStep();
     router.pin();
 
     expect(router.shouldClassify()).toBe(false);
-    expect(await router.prepareTurn({ hasImages: false })).toBeUndefined();
+    expect(await router.prepareTurn({})).toBeUndefined();
     router.unpin();
     expect(router.shouldClassify()).toBe(true);
-    expect(await router.prepareTurn({ hasImages: false })).toBeDefined();
+    expect(await router.prepareTurn({})).toBeDefined();
   });
 
   test("throwing classifier returns undefined and leaves state intact", async () => {
     const router = createRouter(scriptedClassifier([new Error("classifier down"), general]));
     const before = router.status();
 
-    expect(await router.prepareTurn({ hasImages: false })).toBeUndefined();
+    expect(await router.prepareTurn({})).toBeUndefined();
     expect(router.status()).toEqual(before);
     expect(router.shouldClassify()).toBe(true);
-    expect(await router.prepareTurn({ hasImages: false })).toBeUndefined();
+    expect(await router.prepareTurn({})).toBeUndefined();
     expect(router.shouldClassify()).toBe(false);
   });
 
@@ -97,16 +99,14 @@ describe("ModelRouter", () => {
     const router = createRouter(classify);
     const before = router.status();
 
-    expect(
-      await router.prepareTurn({ hasImages: false, signal: controller.signal }),
-    ).toBeUndefined();
+    expect(await router.prepareTurn({ signal: controller.signal })).toBeUndefined();
     expect(router.status()).toEqual(before);
     expect(router.shouldClassify()).toBe(true);
   });
 
   test("reroute nudge grants exactly one advisor-floor exemption when delivered", async () => {
     const router = createRouter(scriptedClassifier([plan]));
-    const switched = await router.prepareTurn({ hasImages: false });
+    const switched = await router.prepareTurn({});
     expect(switched?.toModel).toBe("fable-5");
     expect(router.beginAdvisorConsult().allowed).toBe(true);
     router.endAdvisorConsult(true);
@@ -124,11 +124,11 @@ describe("ModelRouter", () => {
 
   test("advisor-triggered switches do not create a nudge loop", async () => {
     const router = createRouter(scriptedClassifier([general, plan]));
-    await router.prepareTurn({ hasImages: false });
+    await router.prepareTurn({});
     expect(router.beginAdvisorConsult().allowed).toBe(true);
     router.endAdvisorConsult(true);
 
-    expect((await router.prepareTurn({ hasImages: false }))?.trigger).toBe("advisor");
+    expect((await router.prepareTurn({}))?.trigger).toBe("advisor");
     expect(router.takeRerouteNudge()).toBeUndefined();
     expect(router.beginAdvisorConsult()).toEqual({ allowed: false, stepsUntilAllowed: 5 });
   });
@@ -161,8 +161,8 @@ describe("ModelRouter", () => {
 
   test("status reports the complete inspector snapshot", async () => {
     const router = createRouter(scriptedClassifier([plan]));
-    await router.prepareTurn({ hasImages: false });
-    router.noteAssistantStep("planned the change");
+    await router.prepareTurn({});
+    router.noteAssistantStep({ blockTypes: [], text: "planned the change" });
 
     expect(router.status()).toEqual({
       tier: "frontier",
@@ -175,6 +175,68 @@ describe("ModelRouter", () => {
       pinned: false,
       advisorEnabled: true,
       advisorGate: { allowed: true, stepsUntilAllowed: 0 },
+      facts: { hasImages: false },
     });
+  });
+
+  test("image facts stay sticky within a turn and reset at the next prompt", async () => {
+    const inputs: ClassifierInput[] = [];
+    const router = createRouter(scriptedClassifier([general, general], inputs));
+    router.noteTurnStart({ promptHasImages: false });
+    await router.prepareTurn({});
+
+    router.noteAssistantStep({ blockTypes: ["image"], text: "read an image" });
+    expect(router.status().facts).toEqual({ hasImages: true });
+    await router.prepareTurn({});
+    expect(inputs.at(-1)?.hasImages).toBe(true);
+
+    router.noteTurnStart({ promptHasImages: false });
+    expect(router.status().facts).toEqual({ hasImages: false });
+  });
+
+  test("a step trigger forces exactly the next classification boundary", async () => {
+    const inputs: ClassifierInput[] = [];
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.classifier.stepTriggers = [{ name: "escalate", keywords: ["ESCALATE_ROUTE"] }];
+    const configured = new ModelRouter({
+      table,
+      tier: "frontier",
+      classify: scriptedClassifier([general, plan], inputs),
+      resolveCatalog: catalog,
+    });
+    configured.initialTarget({ hasImages: false });
+    configured.noteTurnStart({ promptHasImages: false });
+    await configured.prepareTurn({});
+    configured.noteAssistantStep({ blockTypes: [], text: "ordinary ESCALATE_ROUTE output" });
+
+    expect(configured.shouldClassify()).toBe(true);
+    expect((await configured.prepareTurn({}))?.trigger).toBe("step_trigger");
+    expect(configured.shouldClassify()).toBe(false);
+    expect(inputs.at(-1)?.trigger).toBe("step_trigger");
+  });
+
+  test("the next boundary redirects an image-bearing step away from a text-only target", async () => {
+    const inputs: ClassifierInput[] = [];
+    const router = new ModelRouter({
+      table: BUILT_IN_ROUTING_TABLE,
+      tier: "economy",
+      classify: scriptedClassifier([implement, implement], inputs),
+      resolveCatalog: catalog,
+    });
+    router.initialTarget({ hasImages: false });
+    router.noteTurnStart({ promptHasImages: false });
+    await router.prepareTurn({});
+    expect(router.status().modelName).toBe("glm-5.2");
+
+    router.noteAssistantStep({ blockTypes: ["toolCall", "image"], text: "opened shot.png" });
+    const switched = await router.prepareTurn({});
+
+    expect(switched).toMatchObject({
+      trigger: "step_trigger",
+      route: "implement-visual",
+      fromModel: "glm-5.2",
+      toModel: "gpt-5.6-luna",
+    });
+    expect(inputs.at(-1)?.hasImages).toBe(true);
   });
 });

@@ -183,6 +183,9 @@ async function startRunner(runner: RouterTurnRunner, events: TurnEvent[]): Promi
   await runner.start({ type: "start", mode: "agent" });
 }
 
+const TINY_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAQKADAAQAAAABAAAAQAAAAABGUUKwAAAAi0lEQVR4Ae3VgQ3AIAwEscD+OweJNc7dgNe5OTu7E/5u+O3/6QZQQHwBBOIBjAIUEF8AgXgAfoIIIBBfAIF4AK4AAgjEF0AgHoArgAAC8QUQiAfgCiCAQHwBBOIBuAIIIBBfAIF4AK4AAgjEF0AgHoArgAAC8QUQiAfgCiCAQHwBBOIBuAIIIBBf4AFTuAN9D/8DSwAAAABJRU5ErkJggg==";
+
 describe("TurnRunner virtual-model adapter", () => {
   testIfDocker("a concrete-started session can switch to a project-only virtual tier", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "duet-router-concrete-"));
@@ -345,6 +348,129 @@ describe("TurnRunner virtual-model adapter", () => {
     expect(injectedNudges).toContainEqual(
       expect.stringContaining("changed from fable-5 to gpt-5.6-sol for the implement route"),
     );
+  });
+
+  testIfDocker("an image tool result triggers the vision guard at the next boundary", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "duet-router-image-step-"));
+    try {
+      await writeFile(join(cwd, "shot.png"), Buffer.from(TINY_PNG_BASE64, "base64"));
+      const runner = new RouterTurnRunner({
+        model: "economy",
+        cwd,
+        everySteps: 99,
+        classify: scriptedClassifier([
+          { route: "implement", rationale: "The prompt requests file implementation." },
+          { route: "implement", rationale: "Continue the implementation task." },
+        ]),
+      });
+      const events: TurnEvent[] = [];
+      await startRunner(runner, events);
+
+      const turn = runner.turn({
+        type: "prompt",
+        message: "Read shot.png, then report what you found.",
+        behavior: "follow_up",
+      });
+      await waitFor(() => runner.pendingStreams.length === 1);
+      expect(runner.requestModels.at(-1)?.id).toBe("zai/glm-5.2");
+      runner.completeNext({
+        tool: { name: "read", arguments: { path: "shot.png" } },
+        usageTokens: 5,
+      });
+
+      await waitFor(() => runner.pendingStreams.length === 1);
+      expect(runner.routeStatus()?.facts).toEqual({ hasImages: true });
+      expect(runner.requestModels.at(-1)?.id).toBe("openai/gpt-5.6-luna");
+      runner.completeNext({ text: "The image was read.", usageTokens: 5 });
+      await turn;
+
+      expect(events.filter((event) => event.type === "router_switch").at(-1)).toMatchObject({
+        trigger: "step_trigger",
+        route: "implement-visual",
+        fromModel: "glm-5.2",
+        toModel: "gpt-5.6-luna",
+      });
+      await runner.dispose();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker("configured keyword output forces step-trigger classification", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "duet-router-keyword-step-"));
+    try {
+      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      table.classifier.stepTriggers = [{ name: "escalate", keywords: ["ESCALATE_ROUTE"] }];
+      await mkdir(join(cwd, ".duet"));
+      await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+      const runner = new RouterTurnRunner({
+        cwd,
+        everySteps: 99,
+        classify: scriptedClassifier([
+          { route: "general", rationale: "Start general work." },
+          { route: "plan", rationale: "Escalate after the tool result." },
+        ]),
+      });
+      const events: TurnEvent[] = [];
+      await startRunner(runner, events);
+
+      const turn = runner.turn({
+        type: "prompt",
+        message: "Run the requested check.",
+        behavior: "follow_up",
+      });
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({
+        tool: { name: "bash", arguments: { command: "printf ESCALATE_ROUTE" } },
+        usageTokens: 5,
+      });
+
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({ text: "Escalated.", usageTokens: 5 });
+      await turn;
+
+      expect(events.filter((event) => event.type === "router_switch").at(-1)).toMatchObject({
+        trigger: "step_trigger",
+        route: "plan",
+      });
+      await runner.dispose();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker("a concrete session ignores image step routing", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "duet-router-concrete-image-"));
+    try {
+      await writeFile(join(cwd, "shot.png"), Buffer.from(TINY_PNG_BASE64, "base64"));
+      const runner = new RouterTurnRunner({
+        model: "gpt-5.6-luna",
+        cwd,
+        classify: scriptedClassifier([]),
+      });
+      const events: TurnEvent[] = [];
+      await startRunner(runner, events);
+
+      const turn = runner.turn({
+        type: "prompt",
+        message: "Read shot.png.",
+        behavior: "follow_up",
+      });
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({
+        tool: { name: "read", arguments: { path: "shot.png" } },
+        usageTokens: 5,
+      });
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({ text: "Done.", usageTokens: 5 });
+      await turn;
+
+      expect(runner.routeStatus()).toBeUndefined();
+      expect(events.filter((event) => event.type === "router_switch")).toEqual([]);
+      await runner.dispose();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   test("state-agent assistant events do not tick the parent router", async () => {

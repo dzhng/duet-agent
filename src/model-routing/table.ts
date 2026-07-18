@@ -72,6 +72,27 @@ const ClassifierConfigSchema = Type.Object(
     guidance: Type.String({
       description: "Freeform administrator guidance appended to the classifier prompt.",
     }),
+    stepTriggers: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            name: Type.String({
+              minLength: 1,
+              description: "Unique administrator-facing name for this step-output trigger.",
+            }),
+            keywords: Type.Array(Type.String({ minLength: 1 }), {
+              minItems: 1,
+              description:
+                "Non-empty strings matched case-insensitively against bounded step-output text.",
+            }),
+          },
+          { additionalProperties: false },
+        ),
+        {
+          description: "Optional taste triggers that request classification after matching output.",
+        },
+      ),
+    ),
   },
   { additionalProperties: false },
 );
@@ -137,6 +158,16 @@ export interface ClassifierConfig {
   everySteps: number;
   /** Freeform prompt guidance appended after the generated route descriptions. */
   guidance: string;
+  /** Optional taste triggers matched against bounded text from each completed assistant step. */
+  stepTriggers?: StepTriggerConfig[];
+}
+
+/** Administrator-authored step-output trigger; correctness triggers remain built-in code. */
+export interface StepTriggerConfig {
+  /** Non-empty name unique within `classifier.stepTriggers`. */
+  name: string;
+  /** Non-empty strings matched as case-insensitive substrings against step output. */
+  keywords: string[];
 }
 
 /** Complete routing configuration. A file override replaces this object as a whole. */
@@ -167,7 +198,10 @@ export interface RoutingTableIssue {
     | "invalid_effort"
     | "invalid_cadence"
     | "invalid_transcript_budget"
-    | "invalid_vision_fallback";
+    | "invalid_vision_fallback"
+    | "invalid_step_trigger_name"
+    | "duplicate_step_trigger_name"
+    | "invalid_step_trigger_keywords";
   /** Dot-delimited location of the invalid value in the table. */
   path: string;
   /** Human-readable explanation, including the full path for virtual cycles. */
@@ -397,6 +431,32 @@ export function validateRoutingTable(
       path: "classifier.everySteps",
       message: "Classifier cadence must be a positive number of steps.",
     });
+  }
+
+  const triggerNames = new Set<string>();
+  for (const [index, trigger] of (table.classifier.stepTriggers ?? []).entries()) {
+    const path = `classifier.stepTriggers.${index}`;
+    if (!trigger.name.trim()) {
+      issues.push({
+        code: "invalid_step_trigger_name",
+        path: `${path}.name`,
+        message: "Step trigger name must be non-empty.",
+      });
+    } else if (triggerNames.has(trigger.name)) {
+      issues.push({
+        code: "duplicate_step_trigger_name",
+        path: `${path}.name`,
+        message: `Step trigger name "${trigger.name}" must be unique.`,
+      });
+    }
+    triggerNames.add(trigger.name);
+    if (trigger.keywords.length === 0 || trigger.keywords.some((keyword) => !keyword.trim())) {
+      issues.push({
+        code: "invalid_step_trigger_keywords",
+        path: `${path}.keywords`,
+        message: "Step trigger keywords must be a non-empty array of non-empty strings.",
+      });
+    }
   }
 
   for (const entry of targetEntries(table)) {

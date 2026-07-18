@@ -199,3 +199,30 @@ with the whole static-spec mechanism during a future pi-ai 0.80 migration — a 
 (resolution, transports, capability sourcing move to the live store), not a version bump. Note
 also pi-agent-core exact-pins its nested pi-ai, so root must stay on the identical version or
 the `Model` type graph splits.
+
+## Post-close increment: step-output triggers (2026-07-18)
+
+Generalization landed after close (user request): the output of a step can now hard-trigger a
+classifier call. One policy owner — `src/model-routing/step-triggers.ts` — evaluates a pi-free
+`StepObservation` (block-type names + bounded trailing text extracted mechanically by the runner
+at each parent `turn_end`) and returns effects: force-classify and/or sticky `TurnFacts`.
+
+- **Correctness triggers are code, always on**: an image block in step output sets
+  `facts.hasImages` and forces classification (trigger tag `step_trigger`), so the vision guard
+  reroutes mid-turn — this closed the gap where an image read via the read tool never flipped
+  the prompt-only `hasImages` flag and economy's glm route continued blind. Continuation after
+  the switch was verified sound before building: the transcript always keeps the real image
+  block (pi-ai only placeholder-swaps per-request for text-only models), so the vision model
+  sees the pixels on replay.
+- **Taste triggers are table config**: `classifier.stepTriggers: [{ name, keywords }]`
+  (validated, exported by `duet config export`) force reclassification on case-insensitive
+  substring hits — the extensibility proof; future file-type/content triggers are new entries
+  in the same evaluator, never runner logic.
+- **TurnFacts ownership**: the router seeds facts from prompt attachments at
+  `noteTurnStart` and triggers extend them; classification input and the vision guard read
+  router-owned facts. The runner no longer carries an images flag of its own.
+- Eval: `evals/model-routing-step-trigger.eval.ts` — live economy run where a non-visual prompt
+  routes to glm, reading a magenta PNG fires the `step_trigger` switch to luna, and the correct
+  color in the output proves the vision model saw the replayed image. Falsification: disabling
+  the built-in image effect fails the switch assertion. Best-of-2 (turn-start classification
+  variance, same bound as the advisor positive case).
