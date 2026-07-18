@@ -89,6 +89,7 @@ import {
   createRecallMemorySystemPromptLayer,
   createSourceOfTruthSystemPromptLayer,
   createStateMachineSystemPromptLayer,
+  heldAskReminder,
 } from "./prompts.js";
 import {
   applyEvictionHorizon,
@@ -773,7 +774,16 @@ export class TurnRunner {
         }
 
         const result = await this.processParentLoopInput(input);
-        if (result?.type === "ask") questions = result.questions;
+        if (result?.type === "ask") {
+          if (this.taskManager.pendingWork().kind === "open") {
+            this.enqueueParentInput({
+              type: "user_command",
+              command: { type: "prompt", message: heldAskReminder(), behavior: "steer" },
+            });
+          } else {
+            questions = result.questions;
+          }
+        }
         if (result?.type === "interrupted") this.interruptReason ??= "Interrupted";
         if (result?.type === "state_completed") {
           this.enqueueParentInput({
@@ -811,12 +821,18 @@ export class TurnRunner {
         status: "failed",
         error: error instanceof Error ? error.message : String(error),
       };
-      this.parentInputs.length = 0;
-      this.clearFollowUpQueue();
       await this.taskManager.interruptAll(`Turn failed: ${completion.error}`);
     } finally {
       await this.interruptCleanup;
-      let state = this.snapshotState(this.requireRunnerState());
+      if (!this.interruptReason && !questions && this.taskManager.pendingWork().kind === "open") {
+        await this.taskManager.interruptAll("Turn exited with in-process work still active.");
+        completion = {
+          status: "failed",
+          error: "Turn exited with in-process work still active.",
+        };
+      }
+      this.discardStaleTaskSettlements();
+      const state = this.snapshotState(this.requireRunnerState());
       if (this.interruptReason) {
         terminal = {
           type: "interrupted",
@@ -833,15 +849,6 @@ export class TurnRunner {
           state: { ...state, status: "waiting_for_human" },
         };
       } else {
-        const pending = this.taskManager.pendingWork();
-        if (pending.kind === "open") {
-          await this.taskManager.interruptAll("Turn exited with in-process work still active.");
-          completion = {
-            status: "failed",
-            error: "Turn exited with in-process work still active.",
-          };
-          state = this.snapshotState(this.requireRunnerState());
-        }
         const settledPending = this.taskManager.pendingWork();
         terminal =
           settledPending.kind === "sleep"
@@ -926,6 +933,26 @@ export class TurnRunner {
     if (settlements.length > 0) {
       this.parentInputs.unshift({ type: "task_settlements", settlements });
     }
+  }
+
+  private discardStaleTaskSettlements(): void {
+    for (
+      let settlement = this.taskManager.nextSettled();
+      settlement;
+      settlement = this.taskManager.nextSettled()
+    ) {
+      this.stateTasks.delete(settlement.id);
+      this.ignoredTaskSettlements.delete(settlement.id);
+    }
+    for (const input of this.parentInputs) {
+      if (input.type !== "task_settlements") continue;
+      for (const settlement of input.settlements) {
+        this.stateTasks.delete(settlement.id);
+        this.ignoredTaskSettlements.delete(settlement.id);
+      }
+    }
+    const userInputs = this.parentInputs.filter((input) => input.type !== "task_settlements");
+    this.parentInputs.splice(0, this.parentInputs.length, ...userInputs);
   }
 
   private commandToUserMessage(command: TurnPromptCommand | TurnAnswerCommand): string {
@@ -1295,7 +1322,10 @@ export class TurnRunner {
   ): Promise<SettledDecision["outcome"] | undefined> {
     let latest: SettledDecision["outcome"] | undefined;
     for (const settlement of settlements) {
-      if (this.ignoredTaskSettlements.delete(settlement.id)) continue;
+      if (this.ignoredTaskSettlements.delete(settlement.id)) {
+        this.stateTasks.delete(settlement.id);
+        continue;
+      }
       const metadata = this.stateTasks.get(settlement.id);
       if (!metadata) continue;
       this.stateTasks.delete(settlement.id);
