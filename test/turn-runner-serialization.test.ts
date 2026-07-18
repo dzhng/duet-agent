@@ -66,6 +66,33 @@ class CapturingTurnRunner extends TurnRunner {
 }
 
 describe("TurnState serialization", () => {
+  test("preserves task descriptor values and the monotonic allocator through runner snapshots", async () => {
+    const runner = new CapturingTurnRunner({ systemPromptFiles: [] });
+    const state = createSerializableTurnState();
+    const resumedState = JSON.parse(JSON.stringify(state)) as TurnState;
+
+    await runner.start({ type: "start", state: resumedState });
+    const snapshot = runner.getState();
+
+    expect(snapshot?.tasks).toEqual(state.tasks);
+    expect(snapshot?.tasks?.[0]).toEqual(
+      expect.objectContaining({
+        id: "t12",
+        ownerScopeId: "root",
+        status: "running",
+      }),
+    );
+    expect(snapshot?.tasks?.[1]).toEqual(
+      expect.objectContaining({
+        id: "t13",
+        ownerScopeId: "task:t12",
+        status: "scheduled",
+        wakeAt: 20_000,
+      }),
+    );
+    expect(snapshot?.nextTaskId).toBe(14);
+  });
+
   test("reconstructs the exact same LLM context after JSON round trip", async () => {
     const runner = new CapturingTurnRunner({
       systemInstructions: "Keep the system prompt stable for prompt caching.",
@@ -247,5 +274,27 @@ function createSerializableTurnState(): TurnState {
         createAssistantMessage({ text: "The deployment config is serializable.", timestamp: 2 }),
       ],
     },
+    tasks: [
+      {
+        id: "t12",
+        kind: "subagent",
+        name: "inspect",
+        label: "Inspect deployment",
+        ownerScopeId: "root",
+        status: "running",
+        startedAt: 10_000,
+      },
+      {
+        id: "t13",
+        kind: "scheduled",
+        name: "poll",
+        label: "Poll deployment",
+        ownerScopeId: "task:t12",
+        status: "scheduled",
+        startedAt: 11_000,
+        wakeAt: 20_000,
+      },
+    ],
+    nextTaskId: 14,
   };
 }

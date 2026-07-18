@@ -204,4 +204,47 @@ describe("compactTurnState", () => {
     // are what wedges providers on resume.
     expect(hasCall).toBe(hasResult);
   });
+
+  test("pins the tool-call/result pair that carries a live task handle", () => {
+    const stale = "s".repeat(4000);
+    const messages: AgentMessage[] = [
+      userMessage(`old turn ${stale}`),
+      userMessage("launch background work"),
+      assistantToolCall("call_live"),
+      toolResult("call_live", "Task t7 is still running; inspect it with task_output."),
+      userMessage("newest turn"),
+    ];
+    const before = state(messages, {
+      tasks: [
+        {
+          id: "t7",
+          kind: "tool",
+          name: "bash",
+          label: "Run the test suite",
+          ownerScopeId: "root",
+          status: "running",
+          startedAt: 1_000,
+        },
+      ],
+      nextTaskId: 8,
+    });
+
+    const result = compactTurnState(before, { maxBytes: 300 });
+    const kept = result.state.agent.messages as AgentMessage[];
+    const recoveredTaskIds = kept
+      .filter((message) => (message as { role?: string }).role === "toolResult")
+      .flatMap((message) => JSON.stringify(message).match(/\bt\d+\b/g) ?? []);
+    const hasCall = kept.some((message) =>
+      ((message as { content?: unknown[] }).content ?? []).some(
+        (block) =>
+          (block as { type?: string }).type === "toolCall" &&
+          (block as { toolCallId?: string }).toolCallId === "call_live",
+      ),
+    );
+
+    expect(recoveredTaskIds).toContain("t7");
+    expect(hasCall).toBe(true);
+    expect(result.state.tasks).toEqual(before.tasks);
+    expect(result.state.nextTaskId).toBe(8);
+  });
 });

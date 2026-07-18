@@ -5,8 +5,14 @@ export type TaskId = `t${number}`;
 export type TaskKind = "tool" | "subagent" | "scheduled";
 
 /**
- * Durable lifecycle state. Running work exists in-process; scheduled work is
- * represented only by its wall-clock wake time and can survive process exit.
+ * Durable lifecycle state.
+ *
+ * `running` means an in-process executor still holds the turn open and the
+ * process must remain awake. `scheduled` is durable wall-clock work: it does
+ * not keep the process awake and resumes at `wakeAt`. All other statuses are
+ * terminal. `stopped` records an explicit task_stop, interrupt, or scope-close
+ * request; `lost` records work that was still running in a previous process
+ * and therefore cannot be resumed after hydration.
  */
 export type TaskStatus = "running" | "scheduled" | "completed" | "failed" | "stopped" | "lost";
 

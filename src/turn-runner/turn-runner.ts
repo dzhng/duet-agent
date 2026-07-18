@@ -1336,6 +1336,7 @@ export class TurnRunner {
       todos: copyOptionalArray(state.todos ?? this.state?.todos),
       followUpQueue: copyOptionalArray(state.followUpQueue ?? this.state?.followUpQueue),
       queuedCommands: copyOptionalArray(state.queuedCommands ?? this.state?.queuedCommands),
+      tasks: copyOptionalArray(state.tasks ?? this.state?.tasks),
       // Carry wire-shaping state through every snapshot so persistence
       // layers (state.json, terminal payloads, getState consumers) see
       // the current value. Copy by spread so consumers can't mutate the
@@ -1738,6 +1739,8 @@ export class TurnRunner {
       todos: live?.todos ?? input.state.todos,
       followUpQueue: live?.followUpQueue ?? input.state.followUpQueue,
       queuedCommands: live?.queuedCommands ?? input.state.queuedCommands,
+      tasks: live?.tasks ?? input.state.tasks,
+      nextTaskId: live?.nextTaskId ?? input.state.nextTaskId,
     } satisfies TurnState;
     if (status === "completed") {
       await this.updateMemoryAfterAgentRun(messages, state.options);
