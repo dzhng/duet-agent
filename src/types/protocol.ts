@@ -1,5 +1,8 @@
 import type { ImageContent, TextContent, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { RouterSwitch } from "../model-routing/router.js";
+import type { TaskDescriptor, TaskId, TaskSettlement } from "../tasks/types.js";
+
+export type { TaskDescriptor, TaskId, TaskSettlement, TaskSnapshot } from "../tasks/types.js";
 
 import type { AgentSession } from "./agent.js";
 import type { ObservationalMemoryActivityEvent } from "./memory.js";
@@ -40,8 +43,8 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  * - `answer`: answer questions from the previous terminal `ask` event
  * - `wake`: resume a sleeping session for one scheduled state-machine step
  *
- * Each turn emits any number of during-turn events (`step`, `todos`,
- * `follow_up_queue`, `state_machine`, `log`). The turn ends with exactly one
+ * Each turn emits any number of during-turn events, including task lifecycle,
+ * agent steps, state snapshots, and diagnostics. The turn ends with exactly one
  * terminal event:
  * `complete`, `ask`, `interrupted`, or `sleep`.
  * Terminal events carry the turn runner-owned state needed to continue a later turn.
@@ -79,6 +82,7 @@ import type { StateMachineDefinition, StateMachineSession } from "./state-machin
  * - `step` shows textual progress, reasoning, tool calls, or system messages
  * - `todos` shows current task progress
  * - `follow_up_queue` shows prompts waiting for the current turn chain to finish
+ * - `task_started`, `task_output`, and `task_settled` expose task lifecycle changes
  * - `log` shows diagnostic messages
  *
  * The UI can always render `state.agent` as the conversation transcript. When it
@@ -206,6 +210,23 @@ export interface TurnState {
    * order when the runner can safely continue.
    */
   queuedCommands?: TurnCommand[];
+  /**
+   * Durable task descriptors used to reconstruct the live task set after a
+   * snapshot or process restart. `running` tasks hold the current process
+   * awake; `scheduled` tasks permit sleep until their `wakeAt`; terminal task
+   * statuses hold nothing open. Descriptors persist because identity,
+   * ownership, and lifecycle must survive hydration. Their runtime promises
+   * and AbortControllers are process-bound and are deliberately never stored;
+   * hydration marks formerly running work `lost` rather than pretending its
+   * executor survived.
+   */
+  tasks?: TaskDescriptor[];
+  /**
+   * Numeric suffix to allocate for the next task id. Persisting the allocator
+   * alongside descriptors keeps ids monotonic even when terminal descriptors
+   * have been compacted or a process resumes from state.json.
+   */
+  nextTaskId?: number;
   /**
    * Persisted wire-shaping state. Carries the sticky eviction horizon and
    * any future wire-shaping fields across resume so a compacted session
@@ -576,12 +597,52 @@ export interface TurnStepEvent {
   origin?: TurnEventOrigin;
 }
 
-/**
- * Identifies which agent produced an event. Today the only non-parent
- * origin is a state-machine agent state; the `state` field is the
- * `StateMachineAgentState.name` that was running when the event fired.
- */
-export type TurnEventOrigin = { kind: "state_machine_agent"; state: string };
+/** Identifies the non-parent runtime that produced an event. */
+export type TurnEventOrigin =
+  | {
+      kind: "state_machine_agent";
+      /** Name of the state-machine agent state that was running. */
+      state: string;
+    }
+  | {
+      kind: "task";
+      /** Stable identity of the task whose execution produced the event. */
+      taskId: TaskId;
+      /** Scope that owns and cascade-stops the task. */
+      ownerScopeId: string;
+    };
+
+/** Emitted once after a task id is allocated and its descriptor becomes observable. */
+export interface TurnTaskStartedEvent {
+  type: "task_started";
+  /** Full durable descriptor at task start. */
+  task: TaskDescriptor;
+  /** Present when another task runtime caused this lifecycle change. */
+  origin?: TurnEventOrigin;
+}
+
+/** Emitted for one newly appended task-output chunk while the turn remains open. */
+export interface TurnTaskOutputEvent {
+  type: "task_output";
+  taskId: TaskId;
+  /**
+   * Delta output only; consumers append chunks in event order. This is not a
+   * cumulative replay. Late attach and explicit task_output requests obtain
+   * the cumulative buffered snapshot from TaskManager instead.
+   */
+  chunk: string;
+  /** Present when another task runtime caused this lifecycle change. */
+  origin?: TurnEventOrigin;
+}
+
+/** Emitted once when a task reaches a terminal lifecycle status. */
+export interface TurnTaskSettledEvent {
+  type: "task_settled";
+  /** Terminal value, including whether work completed, failed, stopped, or was lost. */
+  settlement: TaskSettlement;
+  /** Present when another task runtime caused this lifecycle change. */
+  origin?: TurnEventOrigin;
+}
 
 export interface TurnTodosEvent {
   type: "todos";
@@ -797,6 +858,9 @@ export interface TurnRouterSwitchEvent extends RouterSwitch {
 /** Events emitted while the runner is still working on the current turn. */
 export type TurnDuringEvent =
   | TurnStepEvent
+  | TurnTaskStartedEvent
+  | TurnTaskOutputEvent
+  | TurnTaskSettledEvent
   | TurnTodosEvent
   | TurnFollowUpQueueEvent
   | TurnStateMachineEvent
