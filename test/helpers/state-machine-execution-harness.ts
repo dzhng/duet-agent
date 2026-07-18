@@ -2,7 +2,7 @@ import type {
   StateMachineAgentState,
   StateMachineDefinition,
   StateMachineSession,
-} from "../types/state-machine.js";
+} from "../../src/types/state-machine.js";
 import {
   failActiveSession,
   getSession,
@@ -18,18 +18,18 @@ import {
   type PlannedWork,
   type PollPolicy,
   type ShellSpec,
-  type StateMachineExecutionResult,
-} from "./state-machine-decisions.js";
+  type SettledDecision,
+} from "../../src/turn-runner/state-machine-decisions.js";
 import {
   createShellStateHandle,
   ShellCommandError,
   type ShellPartialOutput,
   type ShellStateHandle,
-} from "./shell-state-handle.js";
-import type { SubagentRun, SubagentSpec } from "./subagent.js";
-import { resolveStateCwd, type StateMachineRunnerDecision } from "./tools.js";
+} from "../../src/turn-runner/shell-state-handle.js";
+import type { SubagentRun, SubagentSpec } from "../../src/turn-runner/subagent.js";
+import { resolveStateCwd, type StateMachineRunnerDecision } from "../../src/turn-runner/tools.js";
 
-export type { StateMachineExecutionResult } from "./state-machine-decisions.js";
+type HarnessOutcome = SettledDecision["outcome"];
 
 export type ActiveStateOutput =
   | { state?: string; kind: "agent"; output?: { assistantText?: string } }
@@ -53,7 +53,7 @@ type ActiveStateRun =
       pollPolicy?: PollPolicy;
     });
 
-export interface StateMachineControllerConfig {
+export interface StateMachineExecutionHarnessConfig {
   /** Default working directory used by script and poll-script states. */
   cwd: string;
   /** Builds a fresh transient sub-agent run for one planned agent-state execution. */
@@ -62,15 +62,12 @@ export interface StateMachineControllerConfig {
   onSessionChanged?(session: StateMachineSession): void;
 }
 
-/**
- * Short-lived slice-06 execution shim. State-machine policy lives in
- * state-machine-decisions.ts; slice 07 deletes this controller entirely.
- */
-export class StateMachineController {
+/** Test-only executor for the pure decision module's focused legacy assertions. */
+export class StateMachineExecutionHarness {
   private session?: StateMachineSession;
   private activeRun?: ActiveStateRun;
 
-  constructor(private readonly config: StateMachineControllerConfig) {}
+  constructor(private readonly config: StateMachineExecutionHarnessConfig) {}
 
   hydrate(stateMachine: StateMachineSession | undefined): void {
     this.session = hydrate(stateMachine);
@@ -85,7 +82,7 @@ export class StateMachineController {
     this.session = markTerminalAcknowledged(this.session);
   }
 
-  failActiveSession(state: string, error: string): StateMachineExecutionResult {
+  failActiveSession(state: string, error: string): HarnessOutcome {
     const settled = failActiveSession(this.requireSession(), state, error);
     this.session = settled.session;
     return settled.outcome;
@@ -140,7 +137,7 @@ export class StateMachineController {
     else run.shell.interrupt(reason);
   }
 
-  async runDecision(decision: StateMachineRunnerDecision): Promise<StateMachineExecutionResult> {
+  async runDecision(decision: StateMachineRunnerDecision): Promise<HarnessOutcome> {
     const previous = this.activeRun;
     if (previous) {
       this.interrupt("Replaced by a newly selected state.");
@@ -154,14 +151,14 @@ export class StateMachineController {
     return this.execute(planned.work);
   }
 
-  async wake(): Promise<StateMachineExecutionResult | undefined> {
+  async wake(): Promise<HarnessOutcome | undefined> {
     const planned = planWake(this.session);
     if (!planned) return undefined;
     this.session = planned.session;
     return this.execute(planned.work);
   }
 
-  private execute(work: PlannedWork): Promise<StateMachineExecutionResult> {
+  private execute(work: PlannedWork): Promise<HarnessOutcome> {
     if ("terminal" in work) {
       const settled = recordPlannedTerminal(this.requireSession(), work.terminal);
       this.session = settled.session;
@@ -193,10 +190,7 @@ export class StateMachineController {
     return this.runShell(work.run.shell, work.run.stateName, work.run.pollPolicy);
   }
 
-  private async runAgent(
-    spec: SubagentSpec,
-    stateName: string,
-  ): Promise<StateMachineExecutionResult> {
+  private async runAgent(spec: SubagentSpec, stateName: string): Promise<HarnessOutcome> {
     const state: StateMachineAgentState = { kind: "agent", name: stateName, ...spec };
     const agent = this.config.createStateAgent({ state, prompt: spec.prompt });
     const finished = createDeferredVoid();
@@ -228,7 +222,7 @@ export class StateMachineController {
     spec: ShellSpec,
     stateName: string,
     pollPolicy?: PollPolicy,
-  ): Promise<StateMachineExecutionResult> {
+  ): Promise<HarnessOutcome> {
     const shell = createShellStateHandle({
       command: spec.command,
       cwd: resolveStateCwd(spec.cwd, this.config.cwd),

@@ -78,9 +78,9 @@ export function parseWakeAtToMs(value: unknown, label: string): number {
 
 /**
  * Best-effort wake-time fallback used by sleep-event replay paths that lack
- * controller context. Returns `Date.now()` when the underlying value cannot be
+ * turn-loop context. Returns `Date.now()` when the underlying value cannot be
  * parsed instead of throwing, because these callers are reconstructing UI
- * banners rather than enforcing schedule validity (the controller path runs
+ * banners rather than enforcing schedule validity (the turn-loop path runs
  * its own strict parsing on every state entry).
  */
 export function scheduledStateFallbackWakeAt(
@@ -98,7 +98,7 @@ export function scheduledStateFallbackWakeAt(
       return Date.now() + parseDurationToMs(state.wakeAfterMs, "wakeAfterMs");
     }
   } catch {
-    // Fall through to Date.now() — the strict path on the controller will
+    // Fall through to Date.now() — the strict path in the turn loop will
     // surface the real error when the state is next entered.
   }
   return Date.now();

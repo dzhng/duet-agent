@@ -43,23 +43,22 @@ export {
   REPEATED_SELECTION_LOOP_WINDOW_MS,
 } from "./state-machine-session.js";
 
-export type StateMachineExecutionResult =
-  | { type: "state_completed"; stateName: string; output?: unknown }
-  | {
-      type: "terminal";
-      status: StateMachineTerminalResult["status"];
-      result?: string;
-      error?: string;
-    }
-  | { type: "ask"; questions: TurnQuestion[] }
-  | { type: "sleep"; wakeAt: number }
-  | { type: "interrupted" };
+type StateCompletedOutcome = { type: "state_completed"; stateName: string; output?: unknown };
+type TerminalOutcome = {
+  type: "terminal";
+  status: StateMachineTerminalResult["status"];
+  result?: string;
+  error?: string;
+};
+type AskOutcome = { type: "ask"; questions: TurnQuestion[] };
+type SleepOutcome = { type: "sleep"; wakeAt: number };
+type InterruptedOutcome = { type: "interrupted" };
 
 /** Serializable shell work selected by state-machine policy. */
 export interface ShellSpec {
   /** Rendered command for this state attempt. */
   command: string;
-  /** State-local working directory; the execution shim resolves it against its base cwd. */
+  /** State-local working directory; the turn loop resolves it against its base cwd. */
   cwd?: string;
   /** Hard runtime limit for script states; polls use their timeout as a session-level policy. */
   timeoutMs?: number;
@@ -79,7 +78,7 @@ export type PlannedWork =
   | { run: { shell: ShellSpec; stateName: string; pollPolicy?: PollPolicy } }
   | { schedule: { wakeAt: number; stateName: string } }
   | {
-      terminal: Omit<Extract<StateMachineExecutionResult, { type: "terminal" }>, "type"> & {
+      terminal: Omit<TerminalOutcome, "type"> & {
         stateName: string;
         ledger: "recorded" | "failed" | "completed";
         notifyStarted: boolean;
@@ -89,16 +88,16 @@ export type PlannedWork =
 export interface PlannedDecision {
   /** Updated durable ledger after applying and recording the decision. */
   session: StateMachineSession;
-  /** Execution or scheduling work the controller shim performs. */
+  /** Execution or scheduling work the turn loop performs. */
   work: PlannedWork;
 }
 
-export interface SettledDecision {
-  /** Updated durable ledger after folding the attempt result. */
-  session: StateMachineSession;
-  /** Existing controller-facing result preserved for the turn runner. */
-  outcome: StateMachineExecutionResult;
-}
+export type SettledDecision =
+  | { session: StateMachineSession; outcome: StateCompletedOutcome }
+  | { session: StateMachineSession; outcome: TerminalOutcome }
+  | { session: StateMachineSession; outcome: AskOutcome }
+  | { session: StateMachineSession; outcome: SleepOutcome }
+  | { session: StateMachineSession; outcome: InterruptedOutcome };
 
 export type ShellSettlement =
   | { type: "completed"; output: ShellCommandOutput }
@@ -161,6 +160,7 @@ export function supersede(session: StateMachineSession, reason: string): StateMa
 export function planDecision(
   stateMachine: StateMachineSession,
   decision: StateMachineRunnerDecision,
+  now = Date.now(),
 ): PlannedDecision {
   let session = recordRunnerDecision(stateMachine, decision);
   const selectedState = findState(session, decision.state);
@@ -258,7 +258,7 @@ export function planDecision(
       };
     }
     case "timer": {
-      const wakeAt = resolveTimerWakeAt(effectiveState, session);
+      const wakeAt = resolveTimerWakeAt(effectiveState, session, now);
       return { session, work: { schedule: { wakeAt, stateName: effectiveState.name } } };
     }
     case "terminal": {
@@ -281,6 +281,7 @@ export function planDecision(
 
 export function planWake(
   stateMachine: StateMachineSession | undefined,
+  now = Date.now(),
 ): PlannedDecision | undefined {
   const state = currentScheduledState(stateMachine);
   if (!state || !stateMachine) return undefined;
@@ -316,14 +317,14 @@ export function planWake(
       },
     };
   }
-  resolveTimerWakeAt(state, stateMachine);
+  resolveTimerWakeAt(state, stateMachine, now);
   return {
     session: stateMachine,
-    // A wake command means the persisted timer has fired. The controller's
+    // A wake command means the persisted timer has fired. The turn loop's
     // schedule branch completes immediately when wakeAt is not in the future;
     // preserve the old `runTimerState(state, true)` behavior even if the
     // caller's clock arrives a few milliseconds before the stored deadline.
-    work: { schedule: { wakeAt: Date.now(), stateName: state.name } },
+    work: { schedule: { wakeAt: now, stateName: state.name } },
   };
 }
 
@@ -346,7 +347,7 @@ export function recordPlannedTerminal(
   stateMachine: StateMachineSession,
   terminal: Extract<PlannedWork, { terminal: unknown }>["terminal"],
 ): SettledDecision {
-  const outcome: StateMachineExecutionResult = {
+  const outcome: TerminalOutcome = {
     type: "terminal",
     status: terminal.status,
     ...(terminal.result !== undefined ? { result: terminal.result } : {}),
@@ -375,6 +376,7 @@ export function recordSettled(
   kind: "agent" | "script" | "poll" | "timer",
   result: SubagentResult | ShellSettlement | TimerSettlement,
   partial?: { assistantText?: string } | ShellPartialOutput,
+  now = Date.now(),
 ): SettledDecision {
   if (result.type === "ask") {
     return {
@@ -404,8 +406,7 @@ export function recordSettled(
       if (!state || state.kind !== "poll") {
         throw new Error(`Poll state "${stateName}" is missing from the active definition.`);
       }
-      const wakeAt =
-        Date.now() + parseDurationToMs(state.intervalMs, `poll "${stateName}" intervalMs`);
+      const wakeAt = now + parseDurationToMs(state.intervalMs, `poll "${stateName}" intervalMs`);
       return {
         session: recordStateSleep(stateMachine, state, wakeAt),
         outcome: { type: "sleep", wakeAt },
@@ -478,7 +479,11 @@ export function applyStateOverride(
   return merged;
 }
 
-function resolveTimerWakeAt(state: StateMachineTimerState, session: StateMachineSession): number {
+function resolveTimerWakeAt(
+  state: StateMachineTimerState,
+  session: StateMachineSession,
+  now: number,
+): number {
   if (state.wakeAt !== undefined) {
     return parseWakeAtToMs(state.wakeAt, `timer "${state.name}" wakeAt`);
   }
@@ -486,7 +491,7 @@ function resolveTimerWakeAt(state: StateMachineTimerState, session: StateMachine
     throw new Error(`Timer state "${state.name}" must specify wakeAt or wakeAfterMs.`);
   }
   const wakeAfterMs = parseDurationToMs(state.wakeAfterMs, `timer "${state.name}" wakeAfterMs`);
-  const startedAt = session.progress?.states[state.name]?.startedAt ?? Date.now();
+  const startedAt = session.progress?.states[state.name]?.startedAt ?? now;
   return startedAt + wakeAfterMs;
 }
 

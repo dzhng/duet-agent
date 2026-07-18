@@ -143,8 +143,6 @@ export class Session {
   private wakeTimer?: ReturnType<typeof setInterval>;
   /** Optional fast-path timer used when the deadline is closer than the poll interval. */
   private wakeFastPath?: ReturnType<typeof setTimeout>;
-  /** Restores a prompt/answer turn back to sleep when the state machine is still waiting. */
-  private restoreSleepAfterTurn?: boolean;
   /** Whether this session should hydrate `state.json` on first use. New sessions start empty. */
   private readonly resumeFromStorage: boolean;
   /** Pending callers of `waitForTerminal`, resolved together when the next terminal event arrives. */
@@ -238,10 +236,8 @@ export class Session {
 
   async prompt(input: SessionPromptInput): Promise<void> {
     await this.ensureStarted();
-    const state = await this.requireState();
+    await this.requireState();
     this.cancelWake();
-    const wasSleeping = state.status === "sleeping";
-    this.restoreSleepAfterTurn = wasSleeping && this.isWaitingOnScheduledState(state);
     const command: TurnCommand = {
       type: "prompt",
       message: input.message,
@@ -253,10 +249,8 @@ export class Session {
 
   async answer(input: SessionAnswerInput): Promise<void> {
     await this.ensureStarted();
-    const state = await this.requireState();
+    await this.requireState();
     this.cancelWake();
-    const wasSleeping = state.status === "sleeping";
-    this.restoreSleepAfterTurn = wasSleeping && this.isWaitingOnScheduledState(state);
     const command: TurnAnswerCommand = {
       type: "answer",
       questions: input.questions,
@@ -455,9 +449,17 @@ export class Session {
 
   private dispatchTurn(command: TurnCommand): void {
     this.lastTerminal = undefined;
+    let terminalObserved = false;
+    const unsubscribeAssertion = this.runner.subscribe((event) => {
+      if (isTerminalEvent(event)) terminalObserved = true;
+    });
     const activeTurn = this.runner
       .turn(command)
-      .then(() => undefined)
+      .then(() => {
+        if (!terminalObserved) {
+          throw new Error("TurnRunner.turn() settled without emitting a terminal event.");
+        }
+      })
       .catch((error) => {
         this.emit({
           type: "system",
@@ -466,6 +468,7 @@ export class Session {
         });
       })
       .finally(() => {
+        unsubscribeAssertion();
         if (this.activeTurn === activeTurn) {
           this.activeTurn = undefined;
         }
@@ -478,20 +481,18 @@ export class Session {
       this.applyUsageEvent(event);
       void this.persistLatestState();
     }
-    let emitted = event;
     if (isTerminalEvent(event)) {
-      emitted = this.normalizeTerminalEvent(event);
-      this.lastTerminal = emitted;
-      this.commitTerminalCost(emitted);
-      await this.writeStoredEnvelope(emitted.state);
-      if (emitted.type === "sleep") {
-        this.scheduleWake(emitted);
+      this.lastTerminal = event;
+      this.commitTerminalCost(event);
+      await this.writeStoredEnvelope(event.state);
+      if (event.type === "sleep") {
+        this.scheduleWake(event);
       }
       for (const resolve of this.terminalWaiters.splice(0)) {
-        resolve(emitted);
+        resolve(event);
       }
     }
-    this.emit(emitted);
+    this.emit(event);
   }
 
   /**
@@ -551,33 +552,6 @@ export class Session {
     if (typeof envelope.sessionCostUsd === "number" && Number.isFinite(envelope.sessionCostUsd)) {
       this.sessionCostUsd = envelope.sessionCostUsd;
     }
-  }
-
-  private normalizeTerminalEvent(event: TurnTerminalEvent): TurnTerminalEvent {
-    if (
-      this.restoreSleepAfterTurn &&
-      event.type === "complete" &&
-      this.isWaitingOnScheduledState(event.state)
-    ) {
-      this.restoreSleepAfterTurn = false;
-      if (event.status === "failed") {
-        this.emit({
-          type: "system",
-          level: "error",
-          message: event.error ?? event.result ?? "Prompt failed while waiting.",
-        });
-      }
-      const state = this.currentScheduledState(event.state);
-      const progress = state ? event.state.stateMachine?.progress?.states[state.name] : undefined;
-      const wakeAt = progress?.nextWakeAt ?? scheduledStateFallbackWakeAt(state);
-      return {
-        type: "sleep",
-        wakeAt,
-        state: { ...event.state, status: "sleeping" },
-      };
-    }
-    this.restoreSleepAfterTurn = false;
-    return event;
   }
 
   private emit(event: TurnEvent): void {
@@ -643,10 +617,6 @@ export class Session {
       ...options,
     };
     return Object.keys(effective).length > 0 ? { options: effective } : {};
-  }
-
-  private isWaitingOnScheduledState(state: TurnState | undefined): boolean {
-    return Boolean(this.currentScheduledState(state) && !state?.stateMachine?.terminal);
   }
 
   private currentScheduledState(

@@ -3,7 +3,7 @@ import assert from "node:assert";
 import dedent from "dedent";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
-import { StateMachineController } from "../src/turn-runner/state-machine-controller.js";
+import { StateMachineExecutionHarness } from "../test/helpers/state-machine-execution-harness.js";
 import {
   createTurnRunnerTools,
   type CurrentStateMachineStateResult,
@@ -229,7 +229,7 @@ describe("executed state is not misread as a no-op", () => {
 
   test("live read reports the executed state, not the stale prior state", async () => {
     const definition = buildDefinition();
-    const controller = new StateMachineController({
+    const controller = new StateMachineExecutionHarness({
       cwd: process.cwd(),
       createStateAgent: () => ({
         prompt: async (): Promise<SubagentResult> => ({
@@ -268,7 +268,7 @@ describe("executed state is not misread as a no-op", () => {
 });
 
 async function readLiveState(
-  controller: StateMachineController,
+  controller: StateMachineExecutionHarness,
   definition: StateMachineDefinition,
 ): Promise<CurrentStateMachineStateResult> {
   const tool = createTurnRunnerTools({

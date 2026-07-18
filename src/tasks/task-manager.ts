@@ -92,6 +92,8 @@ export interface TaskManager {
   nextSettled(): TaskSettlement | undefined;
   /** Abort a task once and resolve only after its executor has fully unwound. */
   stop(id: TaskId, reason: TaskStopReason): Promise<TaskSnapshot | undefined>;
+  /** Replace an in-flight stop reason when process teardown escalates. */
+  escalateStop(id: TaskId, reason: TaskStopReason): void;
   /** Stop descendant scopes before directly owned tasks and await every unwind. */
   closeScope(scopeId: string, reason: TaskStopReason): Promise<void>;
   /** Abort all active and scheduled work, reap processes, and await full unwind. */
@@ -99,7 +101,9 @@ export interface TaskManager {
   /** Compute the current quiescence posture from task descriptors. */
   pendingWork(): PendingWork;
   /** Hydrate descriptors, converting process-bound running work to lost settlements. */
-  recover(descriptors: readonly TaskDescriptor[]): RecoverResult;
+  recover(descriptors: readonly TaskDescriptor[], nextTaskId?: number): RecoverResult;
+  /** Return the numeric suffix that the next start() call will allocate. */
+  nextTaskId(): number;
   /** Register process cleanup to run once at the next reap boundary. */
   registerReaper(reaper: TaskReaper): () => void;
   /** Invoke and drain all currently registered process cleanup callbacks. */
@@ -359,6 +363,12 @@ export function createTaskManager(options: TaskManagerOptions): TaskManager {
       return snapshot(record);
     },
 
+    escalateStop(id, reason) {
+      const record = records.get(id);
+      if (!record || record.settlement || record.stopReason === undefined) return;
+      record.stopReason = reason;
+    },
+
     async closeScope(scopeId, reason) {
       const scope = scopes.get(scopeId);
       if (!scope || scope.closed) return;
@@ -392,7 +402,7 @@ export function createTaskManager(options: TaskManagerOptions): TaskManager {
       return computePendingWork(manager.list());
     },
 
-    recover(descriptors) {
+    recover(descriptors, persistedNextTaskId) {
       const lost: TaskDescriptor[] = [];
       for (const source of descriptors) {
         if (records.has(source.id)) throw new Error(`Duplicate recovered task ${source.id}`);
@@ -414,7 +424,17 @@ export function createTaskManager(options: TaskManagerOptions): TaskManager {
           });
         }
       }
+      if (persistedNextTaskId !== undefined) {
+        if (!Number.isInteger(persistedNextTaskId) || persistedNextTaskId < 1) {
+          throw new RangeError("nextTaskId must be a positive integer");
+        }
+        nextTaskNumber = Math.max(nextTaskNumber, persistedNextTaskId);
+      }
       return { lost };
+    },
+
+    nextTaskId() {
+      return nextTaskNumber;
     },
 
     registerReaper(reaper) {

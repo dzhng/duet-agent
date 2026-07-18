@@ -696,14 +696,8 @@ describe("Session", () => {
         ...createStateMachineState("poll_email_reply"),
         status: "sleeping" as const,
       };
-      const completedStillWaiting: TurnState = {
-        ...sleeping,
-        status: "completed",
-        agent: { ...sleeping.agent, status: "completed" },
-      };
-      const runner = new FakeTurnRunner([
-        { type: "sleep", wakeAt: Date.now() + 60_000, state: sleeping },
-      ]);
+      const wakeAt = Date.now() + 60_000;
+      const runner = new FakeTurnRunner([{ type: "sleep", wakeAt, state: sleeping }]);
       const session = await createSession(runner);
 
       await session.start();
@@ -711,9 +705,9 @@ describe("Session", () => {
       await session.waitForTerminal();
       await session.prompt({ message: "anything new?" });
       runner.terminals.push({
-        type: "complete",
-        status: "completed",
-        state: completedStillWaiting,
+        type: "sleep",
+        wakeAt,
+        state: sleeping,
       });
       runner.resolveNext();
       const terminal = await session.waitForTerminal();
@@ -724,6 +718,28 @@ describe("Session", () => {
       });
     },
   );
+
+  testIfDocker("re-arms the same wake after a prompt during sleep", async () => {
+    const sleeping = {
+      ...createStateMachineState("poll_email_reply"),
+      status: "sleeping" as const,
+    };
+    const wakeAt = Date.now() + 60_000;
+    const runner = new FakeTurnRunner([
+      { type: "sleep", wakeAt, state: sleeping },
+      { type: "sleep", wakeAt, state: sleeping },
+    ]);
+    const session = await createSession(runner);
+
+    await session.start();
+    await session.prompt({ message: "begin waiting" });
+    await session.waitForTerminal();
+    await session.prompt({ message: "anything new mid-sleep?" });
+    const terminal = await session.waitForTerminal();
+
+    expect(terminal).toMatchObject({ type: "sleep", wakeAt });
+    expect(runner.commands.map((command) => command.type)).toEqual(["prompt", "prompt"]);
+  });
 
   testIfDocker(
     "resumes sleeping sessions by replaying a sleep event and arming the wake timer",

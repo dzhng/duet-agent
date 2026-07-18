@@ -21,6 +21,8 @@ export interface ShellStateHandle {
    * cancellation apart from other shell errors.
    */
   interrupt(reason: string): void;
+  /** Escalate an interrupted process group to SIGKILL when graceful teardown stalls. */
+  forceKill(reason: string): void;
   partialOutput(): ShellPartialOutput | undefined;
   /** The reason passed to `interrupt()`, or undefined if not interrupted. */
   interruptedReason(): string | undefined;
@@ -33,6 +35,7 @@ export function createShellStateHandle(input: {
   successCodes?: number[];
 }): ShellStateHandle {
   const abortController = new AbortController();
+  let childPid: number | undefined;
   let partial: ShellPartialOutput | undefined;
   let interruptedReason: string | undefined;
 
@@ -43,6 +46,9 @@ export function createShellStateHandle(input: {
         timeoutMs: input.timeoutMs,
         signal: abortController.signal,
         successCodes: input.successCodes,
+        onSpawn: (pid) => {
+          childPid = pid;
+        },
         onOutput: (output) => {
           partial = output;
         },
@@ -50,6 +56,10 @@ export function createShellStateHandle(input: {
     interrupt: (reason) => {
       interruptedReason = reason;
       abortController.abort();
+    },
+    forceKill: (reason) => {
+      interruptedReason = reason;
+      killProcessTree(childPid, "SIGKILL");
     },
     partialOutput: () => partial,
     interruptedReason: () => interruptedReason,
@@ -64,6 +74,7 @@ export async function runShellCommand(
     signal: AbortSignal;
     successCodes?: number[];
     onOutput?: (output: ShellPartialOutput) => void;
+    onSpawn?: (pid: number | undefined) => void;
   },
 ): Promise<ShellCommandOutput> {
   const successCodes = options.successCodes ?? [0];
@@ -79,6 +90,7 @@ export async function runShellCommand(
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
+    options.onSpawn?.(child.pid);
     const output = (exitCode: number): ShellCommandOutput => ({ stdout, stderr, exitCode });
     const emitOutput = () => {
       options.onOutput?.({ stdout, stderr });
@@ -90,14 +102,14 @@ export async function runShellCommand(
     };
     const abort = () => {
       aborted = true;
-      killProcessTree(child.pid);
+      killProcessTree(child.pid, "SIGTERM");
     };
     const timeout =
       options.timeoutMs === undefined
         ? undefined
         : setTimeout(() => {
             timedOut = true;
-            killProcessTree(child.pid);
+            killProcessTree(child.pid, "SIGTERM");
           }, options.timeoutMs);
 
     options.signal.addEventListener("abort", abort, { once: true });
@@ -140,13 +152,13 @@ export async function runShellCommand(
   });
 }
 
-function killProcessTree(pid: number | undefined): void {
+function killProcessTree(pid: number | undefined, signal: NodeJS.Signals): void {
   if (!pid) return;
   try {
-    process.kill(-pid, "SIGTERM");
+    process.kill(-pid, signal);
   } catch {
     try {
-      process.kill(pid, "SIGTERM");
+      process.kill(pid, signal);
     } catch {
       // Process already exited.
     }

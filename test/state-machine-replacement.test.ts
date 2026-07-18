@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { StateMachineController } from "../src/turn-runner/state-machine-controller.js";
+import { StateMachineExecutionHarness } from "./helpers/state-machine-execution-harness.js";
 import type { SubagentResult } from "../src/turn-runner/subagent.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 
@@ -41,7 +41,7 @@ describe("state-machine replacement", () => {
     let secondCreatedAt: number | undefined;
     let firstInterruptedReason: string | undefined;
 
-    const controller = new StateMachineController({
+    const controller = new StateMachineExecutionHarness({
       cwd: process.cwd(),
       createStateAgent: () => {
         calls += 1;
@@ -123,7 +123,7 @@ describe("state-machine replacement", () => {
     });
 
     let firstInterruptedReason: string | undefined;
-    const controller = new StateMachineController({
+    const controller = new StateMachineExecutionHarness({
       cwd: process.cwd(),
       createStateAgent: () => {
         calls += 1;

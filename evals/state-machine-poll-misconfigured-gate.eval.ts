@@ -30,7 +30,7 @@ const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
  * threshold-th consecutive success, bounding the loop instead of spinning.
  *
  * Falsification: delete the `successStreak >= MISCONFIGURED_POLL_GATE_THRESHOLD`
- * guard in runPollState (state-machine-controller.ts). The relay then never
+ * guard in recordSettled (state-machine-decisions.ts). The relay then never
  * terminates — the model re-selects `await_review` indefinitely and the turn
  * hot-loops past the threshold until it times out, exactly the bug this commit
  * fixed. The bounded `state_started` count and the failed terminal both go red.
