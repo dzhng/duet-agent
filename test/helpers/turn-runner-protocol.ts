@@ -20,6 +20,8 @@ import type {
 } from "../../src/types/state-machine.js";
 import { createAssistantMessage } from "./messages.js";
 
+type TurnRunnerDependencies = NonNullable<ConstructorParameters<typeof TurnRunner>[1]>;
+
 export class TestTurnRunner extends TurnRunner {
   readonly workerInputs: AgentWorkerInput[] = [];
   readonly agentConfigs: AgentConfigInput[] = [];
@@ -135,15 +137,21 @@ export class TestTurnRunner extends TurnRunner {
   }
 }
 
-export function createTurnRunner(config?: Partial<TurnRunnerConfig>): {
+export function createTurnRunner(
+  config?: Partial<TurnRunnerConfig>,
+  dependencies?: TurnRunnerDependencies,
+): {
   runner: TestTurnRunner;
   events: TurnEvent[];
 } {
-  const runner = new TestTurnRunner({
-    model: "anthropic:claude-opus-4-7",
-    skillDiscovery: { includeDefaults: false },
-    ...config,
-  });
+  const runner = new TestTurnRunner(
+    {
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+      ...config,
+    },
+    dependencies,
+  );
   const events: TurnEvent[] = [];
   runner.subscribe((event) => events.push(event));
   return { runner, events };

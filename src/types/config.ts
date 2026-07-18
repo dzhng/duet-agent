@@ -7,6 +7,9 @@ import type { AutoStateCompactionOptions } from "../turn-runner/state-compaction
 /** Directly mirrors pi-coding-agent's loadSkills options. */
 export type SkillDiscoveryOptions = Partial<Parameters<typeof loadSkills>[0]>;
 
+/** Foreground work may run this long before yielding a still-running result. */
+export const DEFAULT_TASK_WAIT_BUDGET_MS = 120_000;
+
 export interface TurnRunnerConfig extends TurnOptions {
   /**
    * Session that owns this runner. Plumbed into newly-written observations
@@ -35,6 +38,12 @@ export interface TurnRunnerConfig extends TurnOptions {
    * instead of overflowing.
    */
   effectiveContext?: number;
+  /**
+   * Wall-clock budget for foreground task work before the runner returns a
+   * still-running result and lets that work continue in the background.
+   * Expiry never cancels the task. Defaults to 120,000 ms (two minutes).
+   */
+  taskWaitBudgetMs?: number;
   memory?: ObservationalMemorySettingsInput;
   /**
    * PGlite database directory for durable observational memories.
