@@ -54,7 +54,7 @@ import {
   resolveModelName,
   routingCatalogAdapter,
 } from "../model-resolution/resolver.js";
-import type { TurnRunnerConfig } from "../types/config.js";
+import { DEFAULT_TASK_WAIT_BUDGET_MS, type TurnRunnerConfig } from "../types/config.js";
 import {
   COMPACT_MESSAGE_TOKENS_RATIO,
   compactTurnState,
@@ -105,6 +105,7 @@ import {
   type RecallMemoryToolStorage,
   isTurnRunnerControlResult,
   type TurnRunnerControlResult,
+  MINIMUM_STATE_MACHINE_DELAY_MS,
 } from "./tools.js";
 import { connectMcpServers, type McpRuntime } from "./mcp.js";
 import { SkillContext } from "./skill-context.js";
@@ -132,6 +133,15 @@ import {
   type TransientRetryPolicy,
 } from "./transient-error.js";
 import { addUsage, addUsageByModel } from "./usage-accounting.js";
+import { SystemRuntimeClock, type RuntimeClock } from "./runtime-clock.js";
+
+/** @internal Constructor-only lifecycle seams; these are deliberately absent from config. */
+interface TurnRunnerDependencies {
+  /** Internal wall-clock seam for deterministic task and schedule lifecycle tests. */
+  clock?: RuntimeClock;
+  /** Internal schedule-validation override; production keeps the 15-minute floor. */
+  minimumScheduledDelayMs?: number;
+}
 
 export type TurnEventHandler = (event: TurnEvent) => void;
 
@@ -354,8 +364,19 @@ export class TurnRunner {
   /** MCP servers connected during start(). Disposed on runner.dispose(). */
   private mcpRuntime?: McpRuntime;
   protected readonly skillContext: SkillContext;
+  protected readonly clock: RuntimeClock;
+  protected readonly minimumScheduledDelayMs: number;
+  /** Foreground expiry yields a still-running result without cancelling the task. */
+  protected readonly taskWaitBudgetMs: number;
 
-  constructor(readonly config: TurnRunnerConfig) {
+  constructor(
+    readonly config: TurnRunnerConfig,
+    dependencies: TurnRunnerDependencies = {},
+  ) {
+    this.clock = dependencies.clock ?? new SystemRuntimeClock();
+    this.minimumScheduledDelayMs =
+      dependencies.minimumScheduledDelayMs ?? MINIMUM_STATE_MACHINE_DELAY_MS;
+    this.taskWaitBudgetMs = config.taskWaitBudgetMs ?? DEFAULT_TASK_WAIT_BUDGET_MS;
     this.skillContext = new SkillContext(config);
     this.subagentExecutor = createSubagentExecutor({
       createAgent: (input, onControlResult) => this.createAgent(input, onControlResult),
@@ -1602,6 +1623,8 @@ export class TurnRunner {
           skills,
           recallStorage,
           advisorStorage,
+          clock: this.clock,
+          minimumScheduledDelayMs: this.minimumScheduledDelayMs,
         }),
         ...mcpTools,
       ],

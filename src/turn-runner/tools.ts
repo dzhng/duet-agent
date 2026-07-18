@@ -39,6 +39,7 @@ import type { Observation } from "../types/memory.js";
 import type { MemorySession } from "../memory/session.js";
 import type { ActiveStateOutput } from "./state-machine-controller.js";
 import { withBundledRipgrep } from "./bundled-ripgrep.js";
+import { SystemRuntimeClock, type RuntimeClock } from "./runtime-clock.js";
 
 const jsonSchemaValidator = new Ajv({ strictSchema: false });
 
@@ -518,6 +519,8 @@ interface TurnRunnerToolsInput {
   skills?: readonly Skill[];
   recallStorage?: RecallMemoryToolStorage;
   advisorStorage?: AskAdvisorToolStorage;
+  clock?: RuntimeClock;
+  minimumScheduledDelayMs?: number;
 }
 
 export interface RecallMemoryToolStorage {
@@ -607,7 +610,12 @@ export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] 
   }
 
   if (input.mode === "auto") {
-    tools.push(createStateMachineDefinitionTool(input.getStateMachine, input.cwd));
+    tools.push(
+      createStateMachineDefinitionTool(input.getStateMachine, input.cwd, {
+        clock: input.clock ?? new SystemRuntimeClock(),
+        minimumScheduledDelayMs: input.minimumScheduledDelayMs ?? MINIMUM_STATE_MACHINE_DELAY_MS,
+      }),
+    );
   }
 
   const getDefinition =
@@ -1036,6 +1044,10 @@ function createStateMachineDefinitionTool(
   // Base directory used to resolve a relative state `cwd` before checking it
   // exists, matching the resolution used when the state actually runs.
   baseCwd: string,
+  scheduleValidation: {
+    clock: RuntimeClock;
+    minimumScheduledDelayMs: number;
+  },
 ): AgentTool<typeof createDefinitionSchema> {
   return {
     name: "create_state_machine_definition",
@@ -1079,7 +1091,7 @@ function createStateMachineDefinitionTool(
       if (active && !active.terminal && params.replaceActive !== true) {
         throw new Error(activeStateMachineCreateError(active));
       }
-      assertValidDefinition(params.definition, baseCwd);
+      assertValidDefinition(params.definition, baseCwd, scheduleValidation);
       const result: TurnRunnerControlResult = {
         type: "create_state_machine_definition",
         definition: params.definition,
@@ -1276,16 +1288,20 @@ function assertValidStateInput(state: StateMachineState, input: unknown): void {
 // work that survives sleeps, wakes, and background execution; anything shorter
 // than this should be performed directly in the parent turn rather than paid
 // for with the orchestration overhead of a state machine.
-const MINIMUM_STATE_MACHINE_DELAY_MS = 15 * 60 * 1000;
+export const MINIMUM_STATE_MACHINE_DELAY_MS = 15 * 60 * 1000;
 
-function assertValidDefinition(definition: StateMachineDefinition, baseCwd: string): void {
+function assertValidDefinition(
+  definition: StateMachineDefinition,
+  baseCwd: string,
+  scheduleValidation: { clock: RuntimeClock; minimumScheduledDelayMs: number },
+): void {
   for (const state of definition.states) {
     if (state.name === INTERRUPTED_STATE_MACHINE_STATE) {
       throw new Error(`State name "${INTERRUPTED_STATE_MACHINE_STATE}" is reserved.`);
     }
     assertValidStateInputSchema(state);
     assertValidStateSchedule(state);
-    assertValidStateScheduleMinimum(state);
+    assertValidStateScheduleMinimum(state, scheduleValidation);
     assertValidStateCwd(state, baseCwd, CREATE_CWD_GUIDANCE);
   }
   injectMissingTerminalEscapeHatches(definition);
@@ -1361,15 +1377,18 @@ function assertValidStateSchedule(state: StateMachineState): void {
 // created. Existing definitions handed to the runner via `mode:` may legitimately
 // have shorter cadences from configuration the agent did not author, and the
 // runtime should run them as-is rather than re-litigating the boundary.
-function assertValidStateScheduleMinimum(state: StateMachineState): void {
+function assertValidStateScheduleMinimum(
+  state: StateMachineState,
+  input: { clock: RuntimeClock; minimumScheduledDelayMs: number },
+): void {
   if (state.kind === "poll" && state.intervalMs !== undefined) {
     const intervalMs = parseDurationToMs(
       state.intervalMs,
       `Invalid poll schedule for state "${state.name}": intervalMs`,
     );
-    if (intervalMs < MINIMUM_STATE_MACHINE_DELAY_MS) {
+    if (intervalMs < input.minimumScheduledDelayMs) {
       throw new Error(
-        `Invalid poll schedule for state "${state.name}": intervalMs must be at least 15 minutes (${MINIMUM_STATE_MACHINE_DELAY_MS} ms). Anything shorter should run directly in the parent turn instead of through a state machine.`,
+        `Invalid poll schedule for state "${state.name}": intervalMs must be at least ${scheduleFloorDescription(input.minimumScheduledDelayMs, true)}. Anything shorter should run directly in the parent turn instead of through a state machine.`,
       );
     }
   }
@@ -1378,10 +1397,10 @@ function assertValidStateScheduleMinimum(state: StateMachineState): void {
       state.wakeAt,
       `Invalid timer schedule for state "${state.name}": wakeAt`,
     );
-    const minWakeAt = Date.now() + MINIMUM_STATE_MACHINE_DELAY_MS;
+    const minWakeAt = input.clock.now() + input.minimumScheduledDelayMs;
     if (wakeAt < minWakeAt) {
       throw new Error(
-        `Invalid timer schedule for state "${state.name}": wakeAt must be at least 15 minutes in the future. Anything shorter should run directly in the parent turn instead of through a state machine.`,
+        `Invalid timer schedule for state "${state.name}": wakeAt must be at least ${scheduleFloorDescription(input.minimumScheduledDelayMs)} in the future. Anything shorter should run directly in the parent turn instead of through a state machine.`,
       );
     }
   }
@@ -1390,10 +1409,17 @@ function assertValidStateScheduleMinimum(state: StateMachineState): void {
       state.wakeAfterMs,
       `Invalid timer schedule for state "${state.name}": wakeAfterMs`,
     );
-    if (wakeAfterMs < MINIMUM_STATE_MACHINE_DELAY_MS) {
+    if (wakeAfterMs < input.minimumScheduledDelayMs) {
       throw new Error(
-        `Invalid timer schedule for state "${state.name}": wakeAfterMs must be at least 15 minutes (${MINIMUM_STATE_MACHINE_DELAY_MS} ms). Anything shorter should run directly in the parent turn instead of through a state machine.`,
+        `Invalid timer schedule for state "${state.name}": wakeAfterMs must be at least ${scheduleFloorDescription(input.minimumScheduledDelayMs, true)}. Anything shorter should run directly in the parent turn instead of through a state machine.`,
       );
     }
   }
+}
+
+function scheduleFloorDescription(delayMs: number, includeMilliseconds = false): string {
+  if (delayMs === MINIMUM_STATE_MACHINE_DELAY_MS) {
+    return includeMilliseconds ? `15 minutes (${delayMs} ms)` : "15 minutes";
+  }
+  return `${delayMs} ms`;
 }
