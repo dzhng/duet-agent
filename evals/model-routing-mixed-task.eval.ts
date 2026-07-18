@@ -240,19 +240,27 @@ describe("mixed-task model routing promotion", () => {
         expect(backendCalls.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(5);
         expect(visualCalls.some((call) => call.model === KIMI_ID)).toBe(true);
         expect(backendCalls.some((call) => call.model === SOL_ID)).toBe(true);
-        // Phase ordering is judged on MUTATING calls only (edit/write/run).
-        // Reads are orientation: after a switch-triggered wire compaction the
-        // new model may legitimately re-read an earlier phase's file late in
-        // the turn, and that must not count as phase interleaving.
+        // The promotion contract: phases START in order, the cadence switch
+        // lands kimi→sol around the transition, and sol does real backend
+        // work after it. Deliberately NOT asserted: phase-END ordering by
+        // max index. Two correct behaviors break it — cadence lag (the model
+        // may begin backend steps up to a window before the check fires) and
+        // final verification (re-running the frontend check while wrapping
+        // up). Both were observed in live acceptance runs; pinning them
+        // would test incidental sequence, not routing behavior.
         const isMutating = (call: RoutedToolCall) => call.tool !== "read";
         const visualWork = visualCalls.filter(isMutating);
         const backendWork = backendCalls.filter(isMutating);
         expect(visualWork.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(1);
         expect(backendWork.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(1);
         expect(visualWork[0]!.index).toBeLessThan(backendWork[0]!.index);
-        expect(Math.max(...visualWork.map((call) => call.index))).toBeLessThan(
-          Math.max(...backendWork.map((call) => call.index)),
+        expect(visualWork.some((call) => call.model === KIMI_ID)).toBe(true);
+        const kimiToSol = switches.find(
+          (event) => event.fromModel === "kimi-k3" && event.toModel === "gpt-5.6-sol",
         );
+        expect(kimiToSol, JSON.stringify(switches, null, 2)).toBeDefined();
+        const solBackendWork = backendWork.filter((call) => call.model === SOL_ID);
+        expect(solBackendWork.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(1);
 
         const cadenceSwitches = switches.filter((event) => event.trigger === "cadence");
         expect(cadenceSwitches.length, JSON.stringify(switches, null, 2)).toBeGreaterThanOrEqual(1);
