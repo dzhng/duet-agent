@@ -2,10 +2,7 @@ import { describe, expect } from "bun:test";
 import dedent from "dedent";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
-import type {
-  StateAgentHandle,
-  StateAgentResult,
-} from "../src/turn-runner/state-machine-controller.js";
+import type { SubagentResult, SubagentRun } from "../src/turn-runner/subagent.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import type { StateMachineAgentState, StateMachineDefinition } from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
@@ -45,15 +42,15 @@ class MockedSubAgentRunner extends TurnRunner {
     this.fakeOutputs.set(stateName, result);
   }
 
-  protected override createStateAgentHandle(input: {
+  protected override createStateSubagentRun(input: {
     state: StateMachineAgentState;
     prompt: string;
-  }): StateAgentHandle {
+  }): SubagentRun {
     const fake = this.fakeOutputs.get(input.state.name);
-    if (fake === undefined) return super.createStateAgentHandle(input);
+    if (fake === undefined) return super.createStateSubagentRun(input);
     let interruptedReason: string | undefined;
     return {
-      prompt: async (): Promise<StateAgentResult> => {
+      prompt: async (): Promise<SubagentResult> => {
         if (interruptedReason !== undefined) return { type: "interrupted" };
         return { type: "complete", result: fake };
       },

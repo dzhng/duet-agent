@@ -11,7 +11,7 @@ import type {
   TurnUsageEvent,
   TurnTokenUsage,
 } from "../src/types/protocol.js";
-import type { StateAgentHandle } from "../src/turn-runner/state-machine-controller.js";
+import type { SubagentRun } from "../src/turn-runner/subagent.js";
 import { createOutreachStateMachine } from "./helpers/turn-runner-protocol.js";
 
 class StateMachineAgentEventTurnRunner extends TurnRunner {
@@ -60,7 +60,7 @@ class StateMachineAgentEventTurnRunner extends TurnRunner {
     };
   }
 
-  protected override createStateAgentHandle(): StateAgentHandle {
+  protected override createStateSubagentRun(): SubagentRun {
     return {
       prompt: async () => {
         this.emitAgentEvent({
@@ -217,7 +217,7 @@ describe("State-machine agent state events", () => {
 /**
  * Test double whose state-agent handle records a fixed `TurnTokenUsage`
  * before returning, exercising the real `recordUsage` + `emitTurnUsage`
- * path in `createStateAgentHandle` without standing up a live LLM. The
+ * path in `createStateSubagentRun` without standing up a live LLM. The
  * parent worker stub is unchanged from {@link StateMachineAgentEventTurnRunner};
  * it picks a state and then `none`s out so the turn finishes after the state
  * agent runs.
@@ -265,7 +265,7 @@ class StateMachineUsageTurnRunner extends TurnRunner {
     };
   }
 
-  protected override createStateAgentHandle(): StateAgentHandle {
+  protected override createStateSubagentRun(): SubagentRun {
     const stubbedUsage: TurnTokenUsage = {
       input: 1000,
       output: 200,
@@ -330,7 +330,7 @@ class StateMachineUsageTurnRunner extends TurnRunner {
 /**
  * Stub state-agent handle that emits both a step event and a usage event with
  * a `state_machine_agent` origin, mirroring what the real
- * `createStateAgentHandle` does after this change. Used to assert the runner's
+ * `createStateSubagentRun` does after this change. Used to assert the runner's
  * emit pipeline forwards the origin onto every event it produces, without
  * standing up a live LLM.
  */
@@ -375,7 +375,7 @@ class StateMachineOriginTurnRunner extends TurnRunner {
     };
   }
 
-  protected override createStateAgentHandle(): StateAgentHandle {
+  protected override createStateSubagentRun(): SubagentRun {
     const stubbedUsage: TurnTokenUsage = {
       input: 1000,
       output: 200,

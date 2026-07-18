@@ -43,6 +43,7 @@ import {
   type ShellStateHandle,
 } from "./shell-state-handle.js";
 import { applyStateOverride, resolveStateCwd, type StateMachineRunnerDecision } from "./tools.js";
+import type { SubagentRun } from "./subagent.js";
 
 export type StateMachineExecutionResult =
   | { type: "state_completed"; stateName: string; output?: unknown }
@@ -55,27 +56,6 @@ export type StateMachineExecutionResult =
   | { type: "ask"; questions: TurnQuestion[] }
   | { type: "sleep"; wakeAt: number }
   | { type: "interrupted" };
-
-export type StateAgentResult =
-  | { type: "complete"; result?: string }
-  | { type: "ask"; questions: TurnQuestion[] }
-  | { type: "failed"; error: string }
-  | { type: "interrupted" };
-
-export interface StateAgentHandle {
-  /** Starts the state agent from a fresh transcript owned by the host. */
-  prompt(): Promise<StateAgentResult>;
-  /**
-   * Abort the state agent and remember why. The handle is responsible for
-   * making `prompt()` settle as `{ type: "interrupted" }` after this is
-   * called — callers do not classify the abort themselves.
-   */
-  interrupt(reason: string): void;
-  /** Text-only partial output used for interruption history without persisting messages. */
-  partialAssistantText(): string | undefined;
-  /** The reason passed to `interrupt()`, or undefined if not interrupted. */
-  interruptedReason(): string | undefined;
-}
 
 export type ActiveStateOutput =
   | { state?: string; kind: "agent"; output?: { assistantText?: string } }
@@ -96,7 +76,7 @@ type ActiveStateRun =
   | (ActiveStateRunCommon & {
       kind: "agent";
       state: string | undefined;
-      agent: StateAgentHandle;
+      agent: SubagentRun;
     })
   | (ActiveStateRunCommon & {
       kind: "script";
@@ -112,8 +92,8 @@ type ActiveStateRun =
 export interface StateMachineControllerConfig {
   /** Default working directory used by script and poll-script states. */
   cwd: string;
-  /** Builds a fresh transient state-agent handle for one agent state execution. */
-  createStateAgent(input: { state: StateMachineAgentState; prompt: string }): StateAgentHandle;
+  /** Builds a fresh transient sub-agent run for one agent state execution. */
+  createStateAgent(input: { state: StateMachineAgentState; prompt: string }): SubagentRun;
   /**
    * Notified whenever the controller has updated `session` and the new
    * snapshot is worth broadcasting (state started, terminal reached).

@@ -18,7 +18,7 @@ const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
 
 /**
  * Higher-level eval for the `/skill` expansion wired into agent states
- * (turn-runner `createStateAgentHandle`). The unit test in
+ * (turn-runner `createStateSubagentRun`). The unit test in
  * `test/skill-context-resolve.test.ts` proves `resolveSlashSkillPrompt`
  * builds the right block; this eval proves the live state-machine path
  * actually injects that block before the sub-agent runs.
@@ -60,7 +60,7 @@ describe("state machine agent slash-skill expansion", () => {
               kind: "agent",
               name: "do_handshake",
               // allowedSkills scopes expansion to exactly this skill, which is
-              // the production path that threads `stateSkills` into
+              // the production path that threads `childSkills` into
               // resolveSlashSkillPrompt.
               allowedSkills: ["secret-handshake"],
               prompt: dedent`

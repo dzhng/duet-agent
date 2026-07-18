@@ -4,7 +4,6 @@ import { basename, isAbsolute, join } from "node:path";
 import { toXML } from "../lib/xml.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnAgentFile } from "../types/protocol.js";
-import type { StateMachineAgentState } from "../types/state-machine.js";
 import { createSystemPromptWithAppendedLayers } from "./prompts.js";
 import {
   loadDiscoveredSkills,
@@ -64,26 +63,26 @@ export class SkillContext {
     return skill ? readSkillInstructions(skill) : "";
   }
 
-  resolveStateAgentSkills(state: StateMachineAgentState): Skill[] | undefined {
-    if (!state.allowedSkills) return undefined;
+  /** Resolve a sub-agent allowlist while preserving a caller-specific error label. */
+  resolveSubagentSkills(allowedSkills: string[] | undefined, owner: string): Skill[] | undefined {
+    if (!allowedSkills) return undefined;
 
     const skillsByName = new Map(this.skills.map((skill) => [skill.name, skill]));
-    const missing = state.allowedSkills.filter((name) => !skillsByName.has(name));
+    const missing = allowedSkills.filter((name) => !skillsByName.has(name));
     if (missing.length > 0) {
-      throw new Error(`Unknown allowedSkills for state "${state.name}": ${missing.join(", ")}`);
+      throw new Error(`Unknown allowedSkills for ${owner}: ${missing.join(", ")}`);
     }
 
-    return state.allowedSkills.map((name) => skillsByName.get(name)!);
+    return allowedSkills.map((name) => skillsByName.get(name)!);
   }
 
   /**
    * Expand `/skill` slash commands in a prompt into injected `<skill>` blocks.
    * `skills` scopes which skills are eligible to expand; callers pass a
-   * restricted set (e.g. a state's `allowedSkills`) so a background agent only
-   * expands skills it actually has. Defaults to every discovered skill, which
-   * is what the parent prompt path wants. Passing `undefined` (the result of
-   * `resolveStateAgentSkills` for an unrestricted state) also falls through to
-   * the full set.
+   * restricted set (e.g. a state's `allowedSkills`) so a sub-agent only expands
+   * skills it actually has. Defaults to every discovered skill, which is what
+   * the parent prompt path wants. Passing `undefined` for an unrestricted child
+   * also falls through to the full set.
    */
   resolveSlashSkillPrompt(prompt: string, skills: readonly Skill[] = this.skills): string {
     const slash = parseSlashCommands(prompt);

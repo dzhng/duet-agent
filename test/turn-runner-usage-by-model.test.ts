@@ -6,7 +6,7 @@ import {
   type AgentWorkerResult,
 } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnTerminalEvent, TurnTokenUsage } from "../src/types/protocol.js";
-import type { StateAgentHandle } from "../src/turn-runner/state-machine-controller.js";
+import type { SubagentRun } from "../src/turn-runner/subagent.js";
 import { createOutreachStateMachine } from "./helpers/turn-runner-protocol.js";
 
 const STATE_MODEL_ID = "test-state-model/v1";
@@ -87,7 +87,7 @@ class MultiModelTurnRunner extends TurnRunner {
     };
   }
 
-  protected override createStateAgentHandle(): StateAgentHandle {
+  protected override createStateSubagentRun(): SubagentRun {
     // Mirror production's invariant that a parent emission precedes the state
     // agent, so the runner's sidebar rescale has a base snapshot to work from.
     this.lastParentUsageSnapshot = {

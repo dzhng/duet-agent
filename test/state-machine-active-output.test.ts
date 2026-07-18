@@ -5,12 +5,12 @@ import {
   createTurnRunnerTools,
   type CurrentStateMachineStateResult,
 } from "../src/turn-runner/tools.js";
-import type { StateAgentResult } from "../src/turn-runner/state-machine-controller.js";
+import type { SubagentResult } from "../src/turn-runner/subagent.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 
 describe("state-machine active output", () => {
   test("returns active agent partial assistant text", async () => {
-    const deferred = createDeferred<StateAgentResult>();
+    const deferred = createDeferred<SubagentResult>();
     let assistantText: string | undefined = "drafting research";
     const definition: StateMachineDefinition = {
       name: "agent-output",

@@ -6,10 +6,7 @@ import {
   type AgentWorkerResult,
 } from "../../src/turn-runner/turn-runner.js";
 import type { TurnRunnerControlResult } from "../../src/turn-runner/tools.js";
-import type {
-  StateAgentHandle,
-  StateAgentResult,
-} from "../../src/turn-runner/state-machine-controller.js";
+import type { SubagentResult, SubagentRun } from "../../src/turn-runner/subagent.js";
 import type { TurnRunnerConfig } from "../../src/types/config.js";
 import type {
   TurnEvent,
@@ -87,10 +84,10 @@ export class TestTurnRunner extends TurnRunner {
     };
   }
 
-  protected override createStateAgentHandle(input: {
+  protected override createStateSubagentRun(input: {
     state: StateMachineAgentState;
     prompt: string;
-  }): StateAgentHandle {
+  }): SubagentRun {
     const state: TurnState = {
       status: "running",
       mode: "agent",
@@ -101,10 +98,13 @@ export class TestTurnRunner extends TurnRunner {
       state,
       prompt: input.prompt,
       appendSystemPrompt: input.state.systemPrompt,
-      skills: this.skillContext.resolveStateAgentSkills(input.state),
+      skills: this.skillContext.resolveSubagentSkills(
+        input.state.allowedSkills,
+        `state "${input.state.name}"`,
+      ),
     };
     this.stateAgentInputs.push(workerInput);
-    let terminal: StateAgentResult | undefined;
+    let terminal: SubagentResult | undefined;
     let interruptedReason: string | undefined;
     return {
       prompt: async () => {

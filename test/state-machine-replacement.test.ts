@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { StateMachineController } from "../src/turn-runner/state-machine-controller.js";
-import type { StateAgentResult } from "../src/turn-runner/state-machine-controller.js";
+import type { SubagentResult } from "../src/turn-runner/subagent.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 
 /**
@@ -11,7 +11,7 @@ import type { StateMachineDefinition } from "../src/types/state-machine.js";
  * the parent turn already finished.
  *
  * Invariant under test: when `runDecision` replaces an active agent state,
- * the new state's `StateAgentHandle` must not be constructed until the
+ * the new state's `SubagentRun` must not be constructed until the
  * previous handle has had `interrupt()` called AND its `prompt()` promise
  * has resolved. That guarantees the controller — and any subscribers
  * downstream of the old handle — see a clean handoff instead of two
@@ -31,8 +31,8 @@ describe("state-machine replacement", () => {
     const firstStartedPromise = new Promise<void>((resolve) => {
       firstStarted = resolve;
     });
-    let resolveFirstPrompt: ((result: StateAgentResult) => void) | undefined;
-    const firstPrompt = new Promise<StateAgentResult>((resolve) => {
+    let resolveFirstPrompt: ((result: SubagentResult) => void) | undefined;
+    const firstPrompt = new Promise<SubagentResult>((resolve) => {
       resolveFirstPrompt = resolve;
     });
 
@@ -118,7 +118,7 @@ describe("state-machine replacement", () => {
       firstStarted = resolve;
     });
     let rejectFirstPrompt: ((error: Error) => void) | undefined;
-    const firstPrompt = new Promise<StateAgentResult>((_resolve, reject) => {
+    const firstPrompt = new Promise<SubagentResult>((_resolve, reject) => {
       rejectFirstPrompt = reject;
     });
 
