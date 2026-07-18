@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { TurnState } from "../src/types/protocol.js";
 import { compactTurnState, DEFAULT_STATE_MAX_BYTES } from "../src/turn-runner/state-compaction.js";
+import { createTaskManager } from "../src/tasks/task-manager.js";
+import { createTaskAdminTools } from "../src/turn-runner/task-tools.js";
+import { ManualRuntimeClock } from "./helpers/manual-runtime-clock.js";
 
 function userMessage(text: string): AgentMessage {
   return {
@@ -246,5 +249,43 @@ describe("compactTurnState", () => {
     expect(hasCall).toBe(true);
     expect(result.state.tasks).toEqual(before.tasks);
     expect(result.state.nextTaskId).toBe(8);
+  });
+
+  test("task_output reads retained buffers even when the launch transcript is evicted", async () => {
+    const clock = new ManualRuntimeClock();
+    const manager = createTaskManager({ clock });
+    const handle = manager.start({
+      kind: "tool",
+      name: "bash",
+      label: "long task",
+      ownerScopeId: "root",
+      execute: async ({ onOutput }) => {
+        onOutput("BUFFER_SENTINEL_8Q2");
+        return "done";
+      },
+    });
+    await manager.waitForSettlement(handle.id);
+    const launch = state(
+      [
+        userMessage(`old launch ${"x".repeat(8_000)}`),
+        assistantToolCall("call_evicted"),
+        toolResult("call_evicted", "Task t1 is still running"),
+        userMessage("new context"),
+      ],
+      { tasks: [...manager.list()], nextTaskId: manager.nextTaskId() },
+    );
+    const compacted = compactTurnState(launch, { maxBytes: 500 }).state;
+    expect(JSON.stringify(compacted.agent.messages)).not.toContain("call_evicted");
+
+    const output = createTaskAdminTools({ taskManager: manager, clock }).find(
+      (tool) => tool.name === "task_output",
+    );
+    if (!output) throw new Error("task_output missing");
+    const result = await output.execute("output-after-eviction", { id: "t1" });
+
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("BUFFER_SENTINEL_8Q2"),
+    });
   });
 });

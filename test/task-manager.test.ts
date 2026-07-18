@@ -25,6 +25,23 @@ async function started(): Promise<void> {
 }
 
 describe("TaskManager", () => {
+  test("reports the next monotonic id across starts and recovery", () => {
+    const manager = createTaskManager({ clock: new ManualRuntimeClock() });
+    expect(manager.nextTaskId()).toBe(1);
+    manager.start({
+      kind: "scheduled",
+      name: "later",
+      label: "Later",
+      ownerScopeId: "root",
+      wakeAt: 10,
+    });
+    expect(manager.nextTaskId()).toBe(2);
+
+    const recovered = createTaskManager({ clock: new ManualRuntimeClock() });
+    recovered.recover([], 9);
+    expect(recovered.nextTaskId()).toBe(9);
+  });
+
   test("keeps a foreground task running when its budget elapses", async () => {
     const clock = new ManualRuntimeClock();
     const manager = createTaskManager({ clock });
@@ -257,6 +274,26 @@ describe("TaskManager", () => {
     expect(interrupted).toBe(true);
     expect(manager.list().map(({ status }) => status)).toEqual(["stopped", "stopped", "stopped"]);
     expect(manager.pendingWork()).toEqual({ kind: "complete" });
+  });
+
+  test("escalateStop replaces the final stop reason before unwind completes", async () => {
+    const manager = createTaskManager({ clock: new ManualRuntimeClock() });
+    const work = createFakeTaskWork();
+    const handle = startWork(manager, work);
+    await started();
+
+    const stopped = manager.stop(handle.id, "SIGTERM");
+    await started();
+    manager.escalateStop(handle.id, "SIGKILL");
+    work.completeCleanup();
+    await stopped;
+
+    expect(manager.output(handle.id)?.settlement).toEqual({
+      id: "t1",
+      status: "stopped",
+      settledAt: 0,
+      reason: "SIGKILL",
+    });
   });
 
   test("recover marks in-process work lost, preserves schedules, and advances ids", () => {

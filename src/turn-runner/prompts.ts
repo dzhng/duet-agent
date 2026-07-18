@@ -4,7 +4,6 @@ import { toXML } from "../lib/xml.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
 import type { StateMachineDefinition } from "../types/state-machine.js";
-import { DEFAULT_BASH_TIMEOUT_SECONDS } from "./tools.js";
 
 function cwdSystemPrompt(cwd: string): string {
   return dedent`
@@ -33,7 +32,7 @@ const TOOL_EXECUTION_SYSTEM_PROMPT = dedent`
   </use_parallel_tool_calls>
 
   <bash_timeout>
-  Bash commands run with a default timeout of ${DEFAULT_BASH_TIMEOUT_SECONDS} seconds (${Math.round(DEFAULT_BASH_TIMEOUT_SECONDS / 60)} minutes); commands that exceed it are killed and reported as timed out. Scope commands so they finish well under that — prefer narrow searches (e.g. \`rg\` inside the repo) over filesystem-wide walks like \`find /\`. When a command genuinely needs longer (long builds, test suites, package installs), pass an explicit \`timeout\` argument in seconds sized to the expected runtime.
+  Bash commands are task-backed. The optional \`timeout\` argument is a foreground wait budget in seconds: when it expires, the command keeps running in the background and you receive a task id. It never kills the command. Use \`run_in_background\` to return immediately, \`task_output\` to inspect or wait for a task, and \`task_stop\` to stop one explicitly. Scope commands carefully — only task_stop, interrupt, or scope closure aborts their process groups.
   </bash_timeout>
 `;
 
@@ -125,7 +124,7 @@ export function createForkContextReminder(): string {
 export function heldAskReminder(): string {
   return dedent`
     <system-reminder>
-    Your question was NOT delivered: background/state work is still running. Let it finish — you will be nudged when it settles — then ask again.
+    Your question was NOT delivered: tasks are still running. Before asking again, wait for them with task_output using a wait budget, or stop them with task_stop. You will be nudged as they settle.
     </system-reminder>
   `;
 }

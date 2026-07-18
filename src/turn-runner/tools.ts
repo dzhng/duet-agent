@@ -48,29 +48,13 @@ import type { ShellPartialOutput } from "./shell-state-handle.js";
 const jsonSchemaValidator = new Ajv({ strictSchema: false });
 
 /**
- * Default cap (in seconds) applied to bash tool invocations that omit an
- * explicit timeout. Upstream's bash tool ships with no default timeout, so
- * stray commands like `find /` could otherwise run for many minutes before
- * anything intervenes. The model can still pass a larger `timeout` argument
- * for legitimate long-running work.
+ * Remove pi's kill-timeout input at the execution boundary. The public bash
+ * `timeout` field is consumed by the task wrapper as a foreground wait budget;
+ * only explicit task_stop, interrupt, or scope closure may abort the command.
  */
-export const DEFAULT_BASH_TIMEOUT_SECONDS = 600;
-
-/**
- * Wrap a `BashOperations` implementation so any `exec` call without an
- * explicit `timeout` uses `defaultTimeoutSeconds`. Calls that already specify
- * a timeout (the model passed one) are forwarded unchanged.
- */
-export function withDefaultBashTimeout(
-  base: BashOperations,
-  defaultTimeoutSeconds: number = DEFAULT_BASH_TIMEOUT_SECONDS,
-): BashOperations {
+export function withoutBashKillTimeout(base: BashOperations): BashOperations {
   return {
-    exec: (command, cwd, options) =>
-      base.exec(command, cwd, {
-        ...options,
-        timeout: options.timeout ?? defaultTimeoutSeconds,
-      }),
+    exec: (command, cwd, options) => base.exec(command, cwd, { ...options, timeout: undefined }),
   };
 }
 
@@ -585,7 +569,7 @@ export function createDefaultTurnRunnerTools(
   const tools: AgentTool[] = [
     ...createCodingTools(cwd, {
       bash: {
-        operations: withBundledRipgrep(withDefaultBashTimeout(createLocalBashOperations())),
+        operations: withBundledRipgrep(withoutBashKillTimeout(createLocalBashOperations())),
       },
     }),
     createTodoWriteTool(todoStorage),

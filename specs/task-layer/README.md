@@ -15,15 +15,12 @@ Line refs there are vs 3adf0df; drift as of ddfc6f2 is small but re-verify befor
 
 ## Next Agent Prompt
 
-**Status:** THE CUTOVER IS MERGED. `StateMachineController` is deleted; `TurnRunner`'s
-`runTurnLoop` owns the turn with a single try/finally terminal exit derived from
-`taskManager.pendingWork()`; parent-slot queue (`ParentLoopInput`) arbitrates passes;
-control capture asserts; interrupt emits its own terminal (SIGTERM→SIGKILL via
-`escalateStop`). Post-review fixes landed: ask gate (ask held while work is open),
-`discardStaleTaskSettlements()` at every exit, ignored-settlement metadata release.
-Landed: 01-07. Full docker suite 1092/0. Task-event EMISSION is still absent (slice 08).
-Known gap: kernel additions `escalateStop`/`nextTaskId()` lack dedicated task-manager unit
-tests — fold into slice 08. Last updated 2026-07-19.
+**Status:** Slice 08 implementation is complete in the worktree: bash budget conversion,
+background/admin task tools, batched settlement delivery, held asks, task events, process-group
+shutdown, continuation routing, and durable task snapshots are wired. Focused unit/integration
+gates and the full host suite are green apart from the host clipboard environment check. The
+seven Docker-gated task eval contracts are written but still require the orchestrator's Docker
+daemon and model credential run before slice 08 can be marked landed. Last updated 2026-07-19.
 
 You are implementing this spec. Read this README fully, then `unknowns-map.md` Quadrant 2
 (binding decisions — do not relitigate) and the LM-\* cards for your slice. Work one slice at
@@ -138,6 +135,11 @@ task/schedule paths.
   sentinels, and negative assertions (fallback routes closed).
 
 ## Open items / product calls recorded
+
+- **Bash children get SIGKILL on stop in v1** (decided at slice 08): pi's bash abort handler
+  kills the process group immediately; the wrapper cannot TERM-first without pi's tracked-pid
+  registry. Liveness (invariant 2's purpose) holds; graceful TERM-first for bash children is
+  deferred to slice 12's shutdown work. Script states and subagents stop gracefully.
 
 - Ledger #15 OPEN: does spawn_agent eventually subsume state-machine agent states?
 - TUI follow-up-queue editor cannot see pending settlements (they bypass that queue by

@@ -7,8 +7,7 @@ import dedent from "dedent";
 import {
   createAskAdvisorTool,
   createTurnRunnerTools as createTurnRunnerToolsWithStorage,
-  DEFAULT_BASH_TIMEOUT_SECONDS,
-  withDefaultBashTimeout,
+  withoutBashKillTimeout,
   type AskAdvisorToolStorage,
   type TurnRunnerControlResult,
 } from "../src/turn-runner/tools.js";
@@ -1492,7 +1491,7 @@ describe("TurnRunner tools", () => {
     );
   });
 
-  describe("withDefaultBashTimeout", () => {
+  describe("withoutBashKillTimeout", () => {
     function createRecordingOps(): {
       ops: BashOperations;
       calls: Array<{ command: string; timeout: number | undefined }>;
@@ -1507,36 +1506,31 @@ describe("TurnRunner tools", () => {
       return { ops, calls };
     }
 
-    test("fills in default timeout when caller did not specify one", async () => {
+    test("forwards no kill timeout when caller did not specify one", async () => {
       const { ops, calls } = createRecordingOps();
-      const wrapped = withDefaultBashTimeout(ops, 42);
+      const wrapped = withoutBashKillTimeout(ops);
 
       await wrapped.exec("echo hi", "/tmp", { onData: () => {} });
 
-      expect(calls).toEqual([{ command: "echo hi", timeout: 42 }]);
+      expect(calls).toEqual([{ command: "echo hi", timeout: undefined }]);
     });
 
-    test("respects an explicit timeout passed by the caller", async () => {
+    test("strips an explicit timeout before the inner bash executor", async () => {
       const { ops, calls } = createRecordingOps();
-      const wrapped = withDefaultBashTimeout(ops, 42);
+      const wrapped = withoutBashKillTimeout(ops);
 
       await wrapped.exec("sleep 1", "/tmp", { onData: () => {}, timeout: 7 });
 
-      expect(calls).toEqual([{ command: "sleep 1", timeout: 7 }]);
+      expect(calls).toEqual([{ command: "sleep 1", timeout: undefined }]);
     });
 
     test("treats timeout=0 as explicit (no override)", async () => {
       const { ops, calls } = createRecordingOps();
-      const wrapped = withDefaultBashTimeout(ops, 42);
+      const wrapped = withoutBashKillTimeout(ops);
 
       await wrapped.exec("noop", "/tmp", { onData: () => {}, timeout: 0 });
 
-      expect(calls).toEqual([{ command: "noop", timeout: 0 }]);
-    });
-
-    test("DEFAULT_BASH_TIMEOUT_SECONDS is a finite, positive duration", () => {
-      expect(DEFAULT_BASH_TIMEOUT_SECONDS).toBeGreaterThan(0);
-      expect(Number.isFinite(DEFAULT_BASH_TIMEOUT_SECONDS)).toBe(true);
+      expect(calls).toEqual([{ command: "noop", timeout: undefined }]);
     });
   });
 });

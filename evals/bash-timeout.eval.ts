@@ -2,7 +2,6 @@ import { describe, expect } from "bun:test";
 import dedent from "dedent";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
-import { DEFAULT_BASH_TIMEOUT_SECONDS } from "../src/turn-runner/tools.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
@@ -13,9 +12,9 @@ interface BashCall {
   timeout: number | undefined;
 }
 
-describe("bash tool timeout", () => {
+describe("bash task wait budget", () => {
   testIfDocker(
-    "model passes an explicit timeout for commands that need longer than the default cap",
+    "model uses timeout as a conversion budget rather than a kill deadline",
     async () => {
       const runner = new TurnRunner({
         model,
@@ -36,18 +35,15 @@ describe("bash tool timeout", () => {
         });
       });
 
-      // The actual command finishes in ~1s, but the prompt frames it as a
-      // long-running build so the model has to read the system-prompt guidance
-      // ("pass an explicit `timeout` argument sized to the expected runtime")
-      // and pass a timeout that won't be killed by the default 5-minute cap.
-      const expectedMinTimeout = DEFAULT_BASH_TIMEOUT_SECONDS + 60;
+      // Falsification target (Docker run pending): restore the old kill-deadline prompt;
+      // the model should choose a long timeout and make the upper-bound assertion red.
       const terminal = await (
         await startTurn(runner, {
           mode: "agent",
           prompt: dedent`
-            Run this command for me: \`sleep 1 && echo build-finished\`.
+            Run this command for me: \`sleep 2 && echo build-finished\`.
 
-            Treat it as a stand-in for a slow project build that we expect to take roughly 15 minutes end-to-end. Pick the bash timeout argument so the build will not be killed prematurely. Once it finishes, just confirm it ran.
+            Give it a foreground wait budget of at most one second so it converts to a task instead of blocking. Do not stop it: wait for its settlement nudge, then confirm the build output.
           `,
         })
       ).turn;
@@ -61,10 +57,8 @@ describe("bash tool timeout", () => {
       ).toBeDefined();
       if (!longRunningCall) throw new Error("unreachable");
 
-      expect(
-        longRunningCall.timeout,
-        `expected an explicit timeout >= ${expectedMinTimeout}s; saw ${longRunningCall.timeout}`,
-      ).toBeGreaterThanOrEqual(expectedMinTimeout);
+      expect(longRunningCall.timeout).toBeGreaterThan(0);
+      expect(longRunningCall.timeout).toBeLessThanOrEqual(1);
     },
     120_000,
   );

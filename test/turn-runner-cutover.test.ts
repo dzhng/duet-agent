@@ -91,6 +91,7 @@ describe("TurnRunner cutover seams", () => {
       resolveState = resolve;
     });
     const parentPrompts: string[] = [];
+    const parentContinuations: Array<boolean | undefined> = [];
     let parentPass = 0;
     runner.worker = async (input) => {
       if (input.state.mode === "agent") {
@@ -98,6 +99,7 @@ describe("TurnRunner cutover seams", () => {
         return completedWorker(input, { type: "none" }, "state complete");
       }
       parentPrompts.push(input.prompt);
+      parentContinuations.push(input.continuation);
       parentPass += 1;
       if (parentPass === 1) {
         return completedWorker(input, {
@@ -126,6 +128,10 @@ describe("TurnRunner cutover seams", () => {
     const steered = runner.turn({ type: "prompt", message: "ask me", behavior: "steer" });
 
     await waitFor(() => parentPrompts.some((prompt) => prompt.includes("NOT delivered")));
+    const heldAskPrompt = parentPrompts.find((prompt) => prompt.includes("NOT delivered"));
+    expect(heldAskPrompt).toContain("task_output");
+    expect(heldAskPrompt).toContain("task_stop");
+    expect(parentContinuations[parentPrompts.indexOf(heldAskPrompt ?? "")]).toBe(true);
     expect(terminalEvents(events)).toEqual([]);
 
     resolveState();
