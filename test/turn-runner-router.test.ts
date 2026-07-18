@@ -525,7 +525,10 @@ describe("TurnRunner virtual-model adapter", () => {
         { route: "general", rationale: "Stay on the large model." },
         { route: "plan", rationale: "Move to the smaller model." },
       ]),
-      planTarget: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
+      // haiku-4.5's real 200k window is the smallest in the catalog — luna
+      // previously served this role only because its synthesized spec
+      // under-reported 256k; its true window is 1.05M.
+      planTarget: { modelName: "haiku-4.5", thinkingLevel: "low" },
       effectiveContext: 2_000_000,
     });
     await startRunner(runner, []);
@@ -543,7 +546,7 @@ describe("TurnRunner virtual-model adapter", () => {
       usageTokens: 5,
     });
     await waitFor(() => runner.pendingStreams.length === 1);
-    expect(runner.parentAgentForTest().state.model.id).toBe("openai/gpt-5.6-luna");
+    expect(runner.parentAgentForTest().state.model.id).toBe("anthropic/claude-haiku-4.5");
     expect((await runner.transformForTest(largeTail)).length).toBeLessThan(3);
     runner.completeNext({ text: "Done.", usageTokens: 5 });
     await turn;
