@@ -249,3 +249,25 @@ at each parent `turn_end`) and returns effects: force-classify and/or sticky `Tu
   cannot break the equivalence (it only redirects within the same route set). An unresolvable
   route disables the optimization rather than guessing. This makes the "one concrete model but
   with the advisor" tier pattern zero-overhead.
+
+## Post-close increment: per-route vision fallback + compaction interlocks (2026-07-18)
+
+- **`visionRoute` (tier-level) is gone; vision fallback is per-route and optional** (user
+  request): `RouteRule.visionFallbackModelName?` — when images are present and the route's
+  target is text-only, the guard resolves the fallback (virtual chaining supported, load-time
+  vision-capability validation) keeping the route's own effort; when absent, the route **runs
+  normally on the text-only model** — graceful degradation is the default (pi-ai
+  placeholder-swaps the image on the wire; live-evaled: glm answers "the current model cannot
+  inspect images"). Economy's `implement-visual` route was deleted — the classifier classifies
+  by kind of work, the guard owns vision; three golden-corpus cases relabeled with rationale
+  recorded in the fixture. Only glm-5.2 among built-in targets is text-only (capability probe
+  in the table tests pins this).
+- **Compaction ↔ classification interlocks**: any genuine wire-prefix compaction (explicit
+  /compact, memory-budget transform compaction, context-overflow recovery) arms a one-shot
+  `"compaction"`-tagged classification — the provider cache is already lost, so the reroute
+  check is free. Every model-changing switch carries `compactRecommended` and the runner runs
+  the same wire-horizon compaction, giving the new model a compact prefix. Loop guards, both
+  falsified in tests: switch-caused compaction never re-arms (`noteCompaction("router_switch")`
+  is a no-op), and a compaction-armed classification that changes nothing never compacts.
+- Any completed classification stamps the cadence clock and clears every one-shot arm — stacked
+  triggers can never produce back-to-back classifier calls; failures deliberately don't stamp.

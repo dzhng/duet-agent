@@ -12,6 +12,7 @@ import {
   type RoutingCatalogAdapter,
 } from "../src/model-routing/table.js";
 import { exportRoutingTable, loadRoutingTable } from "../src/model-routing/loader.js";
+import { routingCatalogAdapter } from "../src/model-resolution/resolver.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 const catalogNames = new Set([
@@ -26,7 +27,7 @@ const catalogNames = new Set([
 ]);
 const catalog: RoutingCatalogAdapter = {
   isCatalogName: (name) => catalogNames.has(name),
-  modelAcceptsImages: (name) => name === "kimi-k3" || name === "gpt-5.6-luna",
+  modelAcceptsImages: (name) => name !== "glm-5.2",
 };
 
 let tempDirs: string[] = [];
@@ -69,9 +70,9 @@ describe("built-in model routing table", () => {
     expect(targets("economy")).toEqual({
       plan: { modelName: "gpt-5.6-luna", thinkingLevel: "medium" },
       implement: { modelName: "glm-5.2", thinkingLevel: "medium" },
-      "implement-visual": { modelName: "gpt-5.6-luna", thinkingLevel: "medium" },
       general: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
     });
+    expect(table.tiers.economy.routes.implement.visionFallbackModelName).toBe("gpt-5.6-luna");
 
     expect(table.tiers.frontier.advisor).toEqual({
       enabled: true,
@@ -117,6 +118,22 @@ describe("built-in model routing table", () => {
     expect(isVirtualModel("frontier", BUILT_IN_ROUTING_TABLE)).toBe(true);
     expect(isVirtualModel("opus-4.8", BUILT_IN_ROUTING_TABLE)).toBe(false);
     expect(validateRoutingTable(BUILT_IN_ROUTING_TABLE, catalog)).toEqual([]);
+  });
+
+  test("only glm needs a built-in per-route vision fallback", () => {
+    // Capability probe recorded with the product rationale for removing the vision route axis.
+    for (const name of [
+      "kimi-k3",
+      "fable-5",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "opus-4.8",
+      "sonnet-5",
+    ]) {
+      expect(routingCatalogAdapter.modelAcceptsImages(name), name).toBe(true);
+    }
+    expect(routingCatalogAdapter.modelAcceptsImages("glm-5.2")).toBe(false);
   });
 
   test("rejects a virtual tier that collides with a catalog shorthand", () => {
@@ -169,7 +186,7 @@ describe("built-in model routing table", () => {
   test("reports dangling refs, invalid efforts and cadences, oversized budgets, and text-only vision fallbacks", () => {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
     table.defaultTier = "missing";
-    table.tiers.frontier.visionRoute = "implement";
+    table.tiers.frontier.routes.plan.visionFallbackModelName = "glm-5.2";
     table.tiers.frontier.routes.plan.target.modelName = "missing-model";
     Reflect.set(table.tiers.frontier.routes.plan.target, "thinkingLevel", "extreme");
     table.tiers.frontier.advisor.minStepsBetween = 0;
@@ -184,12 +201,36 @@ describe("built-in model routing table", () => {
         "invalid_effort",
         "invalid_cadence",
         "invalid_transcript_budget",
-        "invalid_vision_fallback",
+        "invalid_vision_fallback_model",
       ]),
     );
-    expect(issues.find((issue) => issue.code === "invalid_vision_fallback")?.message).toContain(
-      'text-only model "gpt-5.6-sol"',
-    );
+    expect(
+      issues.find((issue) => issue.code === "invalid_vision_fallback_model")?.message,
+    ).toContain('text-only model "glm-5.2"');
+  });
+
+  test("reports a missing per-route vision fallback with its dedicated issue code", () => {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.tiers.economy.routes.implement.visionFallbackModelName = "missing-fallback";
+
+    expect(validateRoutingTable(table, catalog)).toContainEqual({
+      code: "invalid_vision_fallback_model",
+      path: "tiers.economy.routes.implement.visionFallbackModelName",
+      message: 'Vision fallback "missing-fallback" is neither a virtual model nor a catalog name.',
+    });
+  });
+
+  test("reports cycles reached through a virtual vision fallback", () => {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.tiers.economy.routes.implement.visionFallbackModelName = "frontier";
+    table.tiers.frontier.routes.implement.target.modelName = "balanced";
+    table.tiers.balanced.routes.implement.target.modelName = "frontier";
+
+    expect(validateRoutingTable(table, catalog)).toContainEqual({
+      code: "invalid_vision_fallback_model",
+      path: "tiers.economy.routes.implement.visionFallbackModelName",
+      message: "Vision fallback cycle: frontier -> balanced -> frontier.",
+    });
   });
 
   test("rejects duplicate or empty step-trigger names and empty keywords", () => {
@@ -235,7 +276,6 @@ describe("routing table file loading and export", () => {
             target: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
           },
         },
-        visionRoute: "general",
         advisor: {
           enabled: false,
           target: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },

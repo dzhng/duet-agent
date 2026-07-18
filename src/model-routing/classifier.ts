@@ -45,10 +45,10 @@ export interface ClassifierInput {
   prevTurnHint?: string;
   /** Bounded description of what changed in the most recent agent step. */
   lastStepDelta?: string;
-  /** Whether the pending input includes images that the selected route must support. */
+  /** Whether the pending input includes images; the router handles capability after classification. */
   hasImages: boolean;
   /** Event that requested classification, for interpreting sparse cadence/advisor context. */
-  trigger: "turn_start" | "cadence" | "advisor" | "step_trigger";
+  trigger: "turn_start" | "cadence" | "advisor" | "step_trigger" | "compaction";
 }
 
 /** Pure system/user prompt pair consumed by the structured-output classifier call. */

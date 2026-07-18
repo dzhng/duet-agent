@@ -27,6 +27,13 @@ const RouteRuleSchema = Type.Object(
       description: "Classifier-facing guidance describing when this route should be selected.",
     }),
     target: RouteTargetSchema,
+    visionFallbackModelName: Type.Optional(
+      Type.String({
+        minLength: 1,
+        description:
+          "Concrete catalog name or virtual tier used only when this route resolves to a text-only target with image input. The route's configured effort is preserved.",
+      }),
+    ),
   },
   { additionalProperties: false },
 );
@@ -52,11 +59,6 @@ const TierDefinitionSchema = Type.Object(
     routes: Type.Record(Type.String({ minLength: 1 }), RouteRuleSchema, {
       description:
         "Classifier routes for this tier. Missing routes deliberately fall through to general.",
-    }),
-    visionRoute: Type.String({
-      minLength: 1,
-      description:
-        "Route used when the selected target cannot accept image input. It must resolve to a vision-capable model.",
     }),
     advisor: AdvisorPolicySchema,
   },
@@ -126,6 +128,11 @@ export interface RouteRule {
   description: string;
   /** Model and effort selected when the classifier chooses this route. */
   target: RouteTarget;
+  /**
+   * Optional image-capable concrete model or virtual tier used when `target` is text-only.
+   * Resolution preserves this route's `thinkingLevel`; omission deliberately degrades in place.
+   */
+  visionFallbackModelName?: string;
 }
 
 /** Per-tier policy for exposing and rate-limiting the advisor. */
@@ -144,8 +151,6 @@ export interface AdvisorPolicy {
 export interface TierDefinition {
   /** Named classifier routes; an absent requested route falls through to `general`. */
   routes: Record<string, RouteRule>;
-  /** Route used by the image-input guard when the initially selected target is text-only. */
-  visionRoute: string;
   /** Advisor availability, target, cadence, and transcript budget for this tier. */
   advisor: AdvisorPolicy;
 }
@@ -198,7 +203,7 @@ export interface RoutingTableIssue {
     | "invalid_effort"
     | "invalid_cadence"
     | "invalid_transcript_budget"
-    | "invalid_vision_fallback"
+    | "invalid_vision_fallback_model"
     | "invalid_step_trigger_name"
     | "duplicate_step_trigger_name"
     | "invalid_step_trigger_keywords";
@@ -213,7 +218,7 @@ const VISUAL_DESCRIPTION =
 const FRONTIER_PLAN_DESCRIPTION =
   "Architecture, investigation, research, and high-stakes planning where the primary work is reasoning about what to build or do, not implementing it.";
 const IMPLEMENT_DESCRIPTION =
-  "Backend, systems, data, CLI, and other non-visual implementation or debugging work, including tests and code changes.";
+  "Backend, systems, data, CLI, and other implementation or debugging work, including tests and code changes.";
 const WRITING_DESCRIPTION =
   "Creative writing and prose where voice, narrative, or wording is the primary output rather than analysis or software work.";
 const GENERAL_DESCRIPTION =
@@ -246,7 +251,6 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
           target: { modelName: "gpt-5.6-sol", thinkingLevel: "medium" },
         },
       },
-      visionRoute: "visual",
       advisor: {
         enabled: true,
         target: { modelName: "fable-5", thinkingLevel: "high" },
@@ -277,7 +281,6 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
           target: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },
         },
       },
-      visionRoute: "visual",
       advisor: {
         enabled: true,
         target: { modelName: "fable-5", thinkingLevel: "high" },
@@ -294,13 +297,11 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         },
         implement: {
           description:
-            "Text-only backend, systems, data, CLI, and other non-visual implementation or debugging work, including tests and code changes.",
+            "Backend, systems, data, CLI, and other implementation or debugging work, including tests and code changes.",
           target: { modelName: "glm-5.2", thinkingLevel: "medium" },
-        },
-        "implement-visual": {
-          description:
-            "Frontend, UI, styling, graphics, or other implementation and debugging work that requires image input or visual fidelity.",
-          target: { modelName: "gpt-5.6-luna", thinkingLevel: "medium" },
+          // Recorded product rationale: image-bearing implementation stays on the work-kind route;
+          // capability correction belongs to router policy, not classifier taxonomy.
+          visionFallbackModelName: "gpt-5.6-luna",
         },
         general: {
           description:
@@ -308,7 +309,6 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
           target: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
         },
       },
-      visionRoute: "implement-visual",
       advisor: {
         enabled: false,
         target: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },
@@ -402,13 +402,6 @@ export function validateRoutingTable(
         message: `Tier "${tier}" must define the general fallback route.`,
       });
     }
-    if (!definition.routes[definition.visionRoute]) {
-      issues.push({
-        code: "dangling_reference",
-        path: `tiers.${tier}.visionRoute`,
-        message: `Vision route "${definition.visionRoute}" does not exist in tier "${tier}".`,
-      });
-    }
     if (definition.advisor.minStepsBetween <= 0) {
       issues.push({
         code: "invalid_cadence",
@@ -494,18 +487,39 @@ export function validateRoutingTable(
   }
 
   for (const [tier, definition] of Object.entries(table.tiers)) {
-    if (!definition.routes[definition.visionRoute]) continue;
-    const result = walkVirtualRoute(table, tier, definition.visionRoute);
-    if (result.cycle || !result.target) continue;
-    if (
-      catalogAdapter.isCatalogName(result.target.modelName) &&
-      !catalogAdapter.modelAcceptsImages(result.target.modelName)
-    ) {
-      issues.push({
-        code: "invalid_vision_fallback",
-        path: `tiers.${tier}.visionRoute`,
-        message: `Vision route "${definition.visionRoute}" resolves to text-only model "${result.target.modelName}".`,
-      });
+    for (const [route, rule] of Object.entries(definition.routes)) {
+      const fallbackName = rule.visionFallbackModelName;
+      if (!fallbackName) continue;
+      const path = `tiers.${tier}.routes.${route}.visionFallbackModelName`;
+      const fallbackIsVirtual = isVirtualModel(fallbackName, table);
+      if (!fallbackIsVirtual && !catalogAdapter.isCatalogName(fallbackName)) {
+        issues.push({
+          code: "invalid_vision_fallback_model",
+          path,
+          message: `Vision fallback "${fallbackName}" is neither a virtual model nor a catalog name.`,
+        });
+        continue;
+      }
+      const result = fallbackIsVirtual
+        ? walkVirtualRoute(table, fallbackName, route)
+        : { target: { modelName: fallbackName } };
+      if ("cycle" in result && result.cycle) {
+        issues.push({
+          code: "invalid_vision_fallback_model",
+          path,
+          message: `Vision fallback cycle: ${result.cycle.join(" -> ")}.`,
+        });
+        continue;
+      }
+      if (!result.target || !catalogAdapter.modelAcceptsImages(result.target.modelName)) {
+        issues.push({
+          code: "invalid_vision_fallback_model",
+          path,
+          message: result.target
+            ? `Vision fallback "${fallbackName}" resolves to text-only model "${result.target.modelName}".`
+            : `Vision fallback "${fallbackName}" does not resolve for route "${route}".`,
+        });
+      }
     }
   }
 

@@ -1,10 +1,11 @@
 import { describe, expect } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import dedent from "dedent";
 import type { ClassifierDecision, ClassifierInput } from "../src/model-routing/classifier.js";
 import { ModelRouter, type ModelRouterOptions } from "../src/model-routing/router.js";
+import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnRouterSwitchEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
@@ -36,7 +37,7 @@ class CapturingRunner extends TurnRunner {
 
 describe("model routing after image-producing tool output", () => {
   testIfDocker(
-    "moves economy implementation to the vision route and completes from replayed pixels",
+    "keeps the implement route, applies its vision fallback, and completes from replayed pixels",
     async () => {
       // Best-of-2 capability gate: the turn-start classification occasionally
       // routes this prompt straight to a vision-capable route (observed
@@ -96,11 +97,12 @@ describe("model routing after image-producing tool output", () => {
           hasImages: input.hasImages,
           route: decision.route,
         })),
-        switches: switches.map(({ trigger, route, fromModel, toModel }) => ({
+        switches: switches.map(({ trigger, route, fromModel, toModel, visionFallback }) => ({
           trigger,
           route,
           fromModel,
           toModel,
+          visionFallback,
         })),
         colorFile,
         finalText,
@@ -116,9 +118,10 @@ describe("model routing after image-producing tool output", () => {
       expect(switches).toContainEqual(
         expect.objectContaining({
           trigger: "step_trigger",
-          route: "implement-visual",
+          route: "implement",
           fromModel: "glm-5.2",
           toModel: "gpt-5.6-luna",
+          visionFallback: true,
         }),
       );
       expect(terminal.type).toBe("complete");
@@ -136,4 +139,84 @@ describe("model routing after image-producing tool output", () => {
       await rm(cwd, { recursive: true, force: true });
     }
   }
+
+  testIfDocker(
+    "lets glm complete with graceful degradation when implement has no vision fallback",
+    async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "duet-model-routing-no-vision-fallback-"));
+      await writeFile(join(cwd, "shot.png"), Buffer.from(MAGENTA_PNG_BASE64, "base64"));
+      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      delete table.tiers.economy.routes.implement.visionFallbackModelName;
+      await mkdir(join(cwd, ".duet"));
+      await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+      const runner = new CapturingRunner({
+        model: "economy",
+        mode: "agent",
+        cwd,
+        memoryDbPath: false,
+        systemPromptFiles: [],
+        skillDiscovery: { includeDefaults: false },
+        systemInstructions: dedent`
+          This is a live routing acceptance task. Use the read tool on shot.png, then answer the
+          user's question. If the tool reports that the current model cannot inspect images, do
+          not guess or write color.txt; explain that limitation honestly. Do not call
+          ask_advisor, recall_memory, or todo_write. Do not ask questions.
+        `,
+      });
+      const events: TurnEvent[] = [];
+      runner.subscribe((event) => events.push(event));
+
+      try {
+        const { turn } = await startTurn(runner, {
+          mode: "agent",
+          prompt:
+            "Open and read shot.png with the read tool, then create color.txt containing the single dominant color name you see in it.",
+        });
+        const terminal = await turn;
+        const switches = events.filter(
+          (event): event is TurnRouterSwitchEvent => event.type === "router_switch",
+        );
+        const finalText = terminal.type === "complete" ? (terminal.result ?? "") : "";
+        const evidence = {
+          decisions: runner.classifierDecisions.map(({ input, decision }) => ({
+            trigger: input.trigger,
+            hasImages: input.hasImages,
+            route: decision.route,
+          })),
+          switches: switches.map(({ trigger, route, fromModel, toModel, visionFallback }) => ({
+            trigger,
+            route,
+            fromModel,
+            toModel,
+            visionFallback,
+          })),
+          finalText,
+          usageModels: terminal.usageByModel?.map((entry) => entry.model) ?? [],
+          terminal: terminal.type,
+        };
+        console.log("MODEL_ROUTING_NO_VISION_FALLBACK_EVIDENCE", JSON.stringify(evidence, null, 2));
+
+        expect(terminal.type).toBe("complete");
+        expect(runner.routeStatus()).toMatchObject({
+          route: "implement",
+          modelName: "glm-5.2",
+        });
+        expect(switches.some((event) => event.toModel === "gpt-5.6-luna")).toBe(false);
+        expect(switches.some((event) => event.visionFallback)).toBe(false);
+        expect(terminal.usageByModel?.some((entry) => entry.model === "zai/glm-5.2")).toBe(true);
+        expect(terminal.usageByModel?.some((entry) => entry.model === "openai/gpt-5.6-luna")).toBe(
+          false,
+        );
+        // Live GLM phrasing: "the current model cannot inspect images" and "model does not
+        // support images." Match the product behavior rather than pinning the whole response.
+        expect(finalText).toMatch(
+          /can(?:no|')t\s+(?:see|view|read)|unable to (?:see|view|read)|do(?:es)? not support image/i,
+        );
+      } finally {
+        await runner.dispose();
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+    600_000,
+  );
 });

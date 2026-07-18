@@ -796,9 +796,13 @@ export interface TurnRouterSwitchEvent {
   /** Route-owned reasoning effort applied atomically with the model. */
   thinkingLevel: ThinkingLevel;
   /** Runtime milestone that requested classification. */
-  trigger: "turn_start" | "cadence" | "advisor" | "step_trigger";
+  trigger: "turn_start" | "cadence" | "advisor" | "step_trigger" | "compaction";
   /** Classifier explanation for the selected route. */
   rationale: string;
+  /** True when image capability applied the selected route's fallback model. */
+  visionFallback: boolean;
+  /** Router policy recommending a compact wire prefix for the new target. */
+  compactRecommended: boolean;
   /** Present only if a future independently-routed child agent emits the switch. */
   origin?: TurnEventOrigin;
 }

@@ -131,7 +131,9 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
             ? "via cadence check"
             : event.trigger === "advisor"
               ? "via advisor milestone"
-              : "at turn start";
+              : event.trigger === "compaction"
+                ? "after compaction"
+                : "at turn start";
       appendLine(
         `[route] ${event.tier}: ${event.fromModel} → ${event.toModel} (${event.thinkingLevel}) · ${event.route} · ${trigger}`,
         COLORS.system,

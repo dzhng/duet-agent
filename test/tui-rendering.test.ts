@@ -83,6 +83,8 @@ describe("TUI rendering smoke test", () => {
       thinkingLevel: "high",
       trigger: "cadence",
       rationale: status.lastRationale,
+      visionFallback: false,
+      compactRecommended: true,
     });
     await harness.flush();
 

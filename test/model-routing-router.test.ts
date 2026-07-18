@@ -4,7 +4,7 @@ import { ModelRouter, type RouteClassifier } from "../src/model-routing/router.j
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 
 const catalog = {
-  modelAcceptsImages: (name: string) => name === "kimi-k3" || name === "gpt-5.6-luna",
+  modelAcceptsImages: (name: string) => name !== "glm-5.2",
 };
 
 function scriptedClassifier(
@@ -183,12 +183,13 @@ describe("ModelRouter", () => {
     const inputs: ClassifierInput[] = [];
     const router = createRouter(scriptedClassifier([general, general], inputs));
     router.noteTurnStart({ promptHasImages: false });
-    await router.prepareTurn({});
+    await router.prepareTurn({ prevTurnHint: "Read the image, then implement the matching file." });
 
     router.noteAssistantStep({ blockTypes: ["image"], text: "read an image" });
     expect(router.status().facts).toEqual({ hasImages: true });
     await router.prepareTurn({});
     expect(inputs.at(-1)?.hasImages).toBe(true);
+    expect(inputs.at(-1)?.prevTurnHint).toBe("Read the image, then implement the matching file.");
 
     router.noteTurnStart({ promptHasImages: false });
     expect(router.status().facts).toEqual({ hasImages: false });
@@ -215,6 +216,27 @@ describe("ModelRouter", () => {
     expect(inputs.at(-1)?.trigger).toBe("step_trigger");
   });
 
+  test("compaction arms exactly one cap-exempt classification with its own trigger", async () => {
+    const inputs: ClassifierInput[] = [];
+    const router = createRouter(scriptedClassifier([general, plan], inputs));
+    await router.prepareTurn({});
+
+    router.noteCompaction();
+    expect(router.shouldClassify()).toBe(true);
+    expect(await router.prepareTurn({})).toMatchObject({ trigger: "compaction", route: "plan" });
+    expect(inputs.at(-1)?.trigger).toBe("compaction");
+    expect(router.shouldClassify()).toBe(false);
+  });
+
+  test("compaction classification that keeps the target consumes the arm without a switch", async () => {
+    const router = createRouter(scriptedClassifier([general, general]));
+    await router.prepareTurn({});
+
+    router.noteCompaction();
+    expect(await router.prepareTurn({})).toBeUndefined();
+    expect(router.shouldClassify()).toBe(false);
+  });
+
   test("the next boundary redirects an image-bearing step away from a text-only target", async () => {
     const inputs: ClassifierInput[] = [];
     const router = new ModelRouter({
@@ -233,9 +255,10 @@ describe("ModelRouter", () => {
 
     expect(switched).toMatchObject({
       trigger: "step_trigger",
-      route: "implement-visual",
+      route: "implement",
       fromModel: "glm-5.2",
       toModel: "gpt-5.6-luna",
+      visionFallback: true,
     });
     expect(inputs.at(-1)?.hasImages).toBe(true);
   });
@@ -253,7 +276,6 @@ describe("single-destination tiers", () => {
             target: { modelName: "gpt-5.6-sol", thinkingLevel: "high" },
           },
         },
-        visionRoute: "general",
         advisor: structuredClone(BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor),
       },
     };
@@ -297,6 +319,21 @@ describe("single-destination tiers", () => {
       resolveCatalog: catalog,
     });
     router.initialTarget({ hasImages: false });
+    expect(router.shouldClassify()).toBe(true);
+  });
+
+  test("an applied vision fallback with a different destination disables the optimization", () => {
+    const table = singleDestinationTable();
+    table.tiers["sol-only"]!.routes.general.target.modelName = "glm-5.2";
+    table.tiers["sol-only"]!.routes.general.visionFallbackModelName = "gpt-5.6-luna";
+    const router = new ModelRouter({
+      table,
+      tier: "sol-only",
+      classify: scriptedClassifier([general]),
+      resolveCatalog: catalog,
+    });
+    router.initialTarget({ hasImages: false });
+
     expect(router.shouldClassify()).toBe(true);
   });
 });

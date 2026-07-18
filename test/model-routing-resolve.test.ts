@@ -3,7 +3,7 @@ import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { resolveRoute, resolveTierDefault } from "../src/model-routing/resolve.js";
 
 const catalog = {
-  modelAcceptsImages: (name: string) => name === "kimi-k3" || name === "gpt-5.6-luna",
+  modelAcceptsImages: (name: string) => name !== "glm-5.2",
 };
 
 describe("model route resolution", () => {
@@ -20,16 +20,44 @@ describe("model route resolution", () => {
     });
   });
 
-  test("guards image input by replacing economy's glm target with its luna vision route", () => {
+  test("applies economy implement's luna fallback without changing its route or effort", () => {
     expect(
       resolveRoute(BUILT_IN_ROUTING_TABLE, "economy", "implement", { hasImages: true }, catalog),
     ).toEqual({
       tier: "economy",
-      route: "implement-visual",
+      route: "implement",
       modelName: "gpt-5.6-luna",
       thinkingLevel: "medium",
       visionFallback: true,
       chain: ["economy"],
+    });
+  });
+
+  test("keeps a text-only target when its route has no vision fallback", () => {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    delete table.tiers.economy.routes.implement.visionFallbackModelName;
+
+    expect(resolveRoute(table, "economy", "implement", { hasImages: true }, catalog)).toEqual({
+      tier: "economy",
+      route: "implement",
+      modelName: "glm-5.2",
+      thinkingLevel: "medium",
+      visionFallback: false,
+      chain: ["economy"],
+    });
+  });
+
+  test("re-enters a virtual fallback chain while preserving the selected route effort", () => {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.tiers.economy.routes.implement.visionFallbackModelName = "frontier";
+
+    expect(resolveRoute(table, "economy", "implement", { hasImages: true }, catalog)).toEqual({
+      tier: "frontier",
+      route: "implement",
+      modelName: "gpt-5.6-sol",
+      thinkingLevel: "medium",
+      visionFallback: true,
+      chain: ["economy", "frontier"],
     });
   });
 

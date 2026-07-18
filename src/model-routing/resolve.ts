@@ -17,13 +17,13 @@ export interface RouteResolutionCatalog {
 export interface ResolvedTarget {
   /** Virtual tier that owns the final concrete route. */
   tier: string;
-  /** Actual route used in the final tier, including general or vision fallbacks. */
+  /** Actual route used in the final tier, including general fallthrough. */
   route: string;
   /** Concrete catalog name selected for execution. */
   modelName: string;
   /** Reasoning effort selected by the final route. */
   thinkingLevel: ThinkingLevel;
-  /** True when image capability forced selection of the tier's vision route. */
+  /** True when the selected route's image fallback model was applied. */
   visionFallback: boolean;
   /** Ordered virtual tier names visited during recursive resolution. */
   chain: string[];
@@ -103,16 +103,21 @@ export function resolveRoute(
     return { ...selected, visionFallback: false };
   }
 
-  const visionRoute = table.tiers[selected.tier].visionRoute;
-  const fallback = resolveWithoutVisionGuard(table, selected.tier, visionRoute);
+  const fallbackName = table.tiers[selected.tier].routes[selected.route]?.visionFallbackModelName;
+  if (!fallbackName) return { ...selected, visionFallback: false };
+
+  const fallback = Object.hasOwn(table.tiers, fallbackName)
+    ? resolveWithoutVisionGuard(table, fallbackName, selected.route)
+    : { ...selected, modelName: fallbackName, chain: [] };
   if (!catalog.modelAcceptsImages(fallback.modelName)) {
     throw new Error(
-      `Vision route "${visionRoute}" for tier "${selected.tier}" resolves to text-only model "${fallback.modelName}".`,
+      `Vision fallback "${fallbackName}" for route "${selected.route}" resolves to text-only model "${fallback.modelName}".`,
     );
   }
 
   return {
     ...fallback,
+    thinkingLevel: selected.thinkingLevel,
     visionFallback: true,
     chain: joinChains(selected.chain, fallback.chain),
   };

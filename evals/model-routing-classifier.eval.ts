@@ -89,7 +89,7 @@ function logFailure(result: CaseResult): void {
 
 describe("model-routing classifier scorecard", () => {
   testIfDocker(
-    "meets route accuracy, continuity, vision, input-size, and latency gates",
+    "meets route accuracy, continuity, input-size, and latency gates",
     async () => {
       expect(trials).toBeGreaterThan(0);
       const fixtures =
@@ -156,9 +156,7 @@ describe("model-routing classifier scorecard", () => {
 
       const hardInvariantFailures = results.filter((result) => {
         const tier = BUILT_IN_ROUTING_TABLE.tiers[result.fixture.tier]!;
-        const invented = !Object.hasOwn(tier.routes, result.actual);
-        const violatesVisionGuard = result.fixture.hasImages && result.actual !== tier.visionRoute;
-        return invented || violatesVisionGuard;
+        return !Object.hasOwn(tier.routes, result.actual);
       });
       const coreFailures = failures.filter((result) => result.fixture.core);
       const familyResults = new Map<string, CaseResult[]>();
@@ -198,7 +196,7 @@ describe("model-routing classifier scorecard", () => {
       };
       console.log(`MODEL ROUTING SCORECARD ${JSON.stringify(scorecard)}`);
 
-      expect(hardInvariantFailures, "Every output must be a real route and image-safe").toEqual([]);
+      expect(hardInvariantFailures, "Every output must be a real route").toEqual([]);
       expect(coreFailures, "All core continuity/transition cases must pass every trial").toEqual(
         [],
       );

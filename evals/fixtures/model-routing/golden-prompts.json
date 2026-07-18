@@ -134,21 +134,24 @@
     "prompt": "Implement the responsive settings panel so it matches the attached design screenshot.",
     "tier": "economy",
     "hasImages": true,
-    "expectedRoute": "implement-visual"
+    "expectedRoute": "implement",
+    "note": "Recorded product rationale: route labels describe work kind; the router guard owns vision fallback or graceful degradation."
   },
   {
     "id": "economy-visual-error-image",
     "prompt": "Read the error message in the attached screenshot and tell me what it means.",
     "tier": "economy",
     "hasImages": true,
-    "expectedRoute": "implement-visual"
+    "expectedRoute": "general",
+    "note": "Recorded product rationale: explaining a screenshot is general work; the router guard owns vision capability."
   },
   {
     "id": "economy-visual-chart",
     "prompt": "Use the attached chart image to implement the same axes, legend, colors, and responsive layout.",
     "tier": "economy",
     "hasImages": true,
-    "expectedRoute": "implement-visual"
+    "expectedRoute": "implement",
+    "note": "Recorded product rationale: route labels describe work kind; the router guard owns vision fallback or graceful degradation."
   },
   {
     "id": "continuity-visual-same-task",

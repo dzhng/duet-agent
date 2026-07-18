@@ -17,6 +17,7 @@ import { resolveTierDefault, type RouteResolutionCatalog } from "../model-routin
 import type { StepObservation } from "../model-routing/step-triggers.js";
 import {
   ModelRouter,
+  type RouterCompactionCause,
   type ModelRouterOptions,
   type RouterStatus,
   type RouterSwitch,
@@ -450,7 +451,7 @@ export class TurnRunner {
     // dispatch with the pre-compact wire-tail and race the horizon
     // mutation. The promise resolves to `void` after the inner body
     // finishes, so `turn()` only needs to await, not inspect a result.
-    const inFlight = this.runCompact();
+    const inFlight = this.runCompact("explicit");
     this.compactInFlight = inFlight;
     try {
       await inFlight;
@@ -461,7 +462,7 @@ export class TurnRunner {
     }
   }
 
-  private async runCompact(): Promise<void> {
+  private async runCompact(cause: RouterCompactionCause): Promise<void> {
     try {
       const state = this.requireRunnerState();
       const observable = stripObservationalContextMessages(state.agent.messages);
@@ -491,6 +492,7 @@ export class TurnRunner {
         return;
       }
       this.wireGuardHorizon.evictionHorizon = newHorizon;
+      this.modelRouter?.noteCompaction(cause);
       const retainedAfter = applyEvictionHorizon(observable, newHorizon);
       const afterTokens = calculateWireTokens(retainedAfter);
       const dropped = currentRetained.length - retainedAfter.length;
@@ -1785,7 +1787,7 @@ export class TurnRunner {
         prevTurnHint: input.prompt,
         signal: agent.signal,
       });
-      if (switched) this.applyRouterSwitch(agent, switched);
+      if (switched) await this.applyRouterSwitch(agent, switched);
       await agent.prompt(input.prompt, input.images);
       // Single-shot recovery: if the provider rejected the first attempt
       // with a context-overflow error, advance the sticky wire-shaping
@@ -1914,6 +1916,7 @@ export class TurnRunner {
 
     messages.pop();
     this.wireGuardHorizon.evictionHorizon = newHorizon;
+    this.modelRouter?.noteCompaction("context_overflow");
 
     const remaining = applyEvictionHorizon(observable, newHorizon).length;
     const dropped = observable.length - remaining;
@@ -2131,7 +2134,7 @@ export class TurnRunner {
               const switched = await this.modelRouter?.prepareTurn({
                 signal,
               });
-              return switched ? this.applyRouterSwitch(agent, switched) : undefined;
+              return switched ? await this.applyRouterSwitch(agent, switched) : undefined;
             },
           }
         : {}),
@@ -2160,7 +2163,10 @@ export class TurnRunner {
         this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
       settings: this.config.memory,
       horizon: this.wireGuardHorizon,
-      onCompaction: (messages) => this.ensureMemoryCoverageForCompaction(messages),
+      onCompaction: async (messages) => {
+        await this.ensureMemoryCoverageForCompaction(messages);
+        this.modelRouter?.noteCompaction("memory_budget");
+      },
     });
   }
 
@@ -2619,7 +2625,7 @@ export class TurnRunner {
   }
 
   /** Resolve and atomically apply one router-owned model/effort change. */
-  private applyRouterSwitch(agent: Agent, switched: RouterSwitch) {
+  private async applyRouterSwitch(agent: Agent, switched: RouterSwitch) {
     const model = resolveModelName(switched.toModel);
     agent.state.model = model;
     agent.state.thinkingLevel = switched.thinkingLevel;
@@ -2629,6 +2635,7 @@ export class TurnRunner {
         effectiveContextWindow: this.resolveEffectiveContext(model.contextWindow),
       };
     }
+    if (switched.compactRecommended) await this.runCompact("router_switch");
     this.emit({ type: "router_switch", ...switched });
     const nudge = this.modelRouter?.takeRerouteNudge();
     if (nudge) agent.steer(buildUserAgentMessage(nudge, undefined));

@@ -8,7 +8,7 @@ import {
   type AssistantMessage,
   type Model,
 } from "@earendil-works/pi-ai";
-import type { ClassifierDecision } from "../src/model-routing/classifier.js";
+import type { ClassifierDecision, ClassifierInput } from "../src/model-routing/classifier.js";
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import {
   ModelRouter,
@@ -83,6 +83,14 @@ class RouterTurnRunner extends TurnRunner {
     const transform = this.requireParentAgent().transformContext;
     if (!transform) throw new Error("Expected parent context transform");
     return transform(messages);
+  }
+
+  seedCompactionHistory(messages: AgentMessage[]): void {
+    const state = this.getState();
+    if (!state) throw new Error("Expected started runner state");
+    const seeded = { ...state, agent: { ...state.agent, messages } };
+    this.requireParentAgent().state.messages = messages;
+    (this as unknown as { setState: (state: typeof seeded) => void }).setState(seeded);
   }
 
   protected override createModelRouter(options: ModelRouterOptions): ModelRouter {
@@ -161,6 +169,24 @@ class RouterTurnRunner extends TurnRunner {
           text: input.text,
           extraContent,
           usage: { input: input.usageTokens - 1, output: 1 },
+        }),
+        model: pending.model.id,
+        provider: pending.model.provider,
+        api: pending.model.api,
+      },
+    });
+  }
+
+  failNextWithContextOverflow(): void {
+    const pending = this.pendingStreams.shift();
+    if (!pending) throw new Error("No pending model stream");
+    pending.stream.push({
+      type: "error",
+      reason: "error",
+      error: {
+        ...createAssistantMessage({
+          errorMessage: "prompt is too long: 2000000 tokens > 1000000 maximum",
+          stopReason: "error",
         }),
         model: pending.model.id,
         provider: pending.model.provider,
@@ -318,6 +344,8 @@ describe("TurnRunner virtual-model adapter", () => {
       thinkingLevel: "high",
       trigger: "cadence",
       rationale: "The plan is ready to implement.",
+      visionFallback: false,
+      compactRecommended: true,
     });
     expect(terminal.turnUsage?.totalTokens).toBe(30);
     expect(terminal.usageByModel).toEqual([
@@ -348,6 +376,138 @@ describe("TurnRunner virtual-model adapter", () => {
     expect(injectedNudges).toContainEqual(
       expect.stringContaining("changed from fable-5 to gpt-5.6-sol for the implement route"),
     );
+  });
+
+  test("explicit compaction arms one classification and its switch compaction does not re-arm", async () => {
+    const inputs: ClassifierInput[] = [];
+    const decisions = [
+      { route: "general", rationale: "Start general work." },
+      { route: "plan", rationale: "Reconsider after compaction." },
+    ];
+    const runner = new RouterTurnRunner({
+      everySteps: 99,
+      effectiveContext: 1_000,
+      classify: async (input) => {
+        inputs.push(input);
+        const decision = decisions.shift();
+        if (!decision) throw new Error("Unexpected classification feedback loop");
+        return decision;
+      },
+    });
+    const events: TurnEvent[] = [];
+    await startRunner(runner, events);
+
+    const first = runner.turn({ type: "prompt", message: "Begin.", behavior: "follow_up" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Started.", usageTokens: 5 });
+    await first;
+
+    runner.seedCompactionHistory(
+      Array.from({ length: 12 }, (_unused, index) => ({
+        role: "user" as const,
+        content: `history-${index} ${"x".repeat(1_000)}`,
+        timestamp: index + 1,
+      })),
+    );
+    await runner.compact();
+
+    const second = runner.turn({ type: "prompt", message: "Continue.", behavior: "follow_up" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Continued.", usageTokens: 5 });
+    await second;
+
+    const third = runner.turn({
+      type: "prompt",
+      message: "Continue again.",
+      behavior: "follow_up",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Still continuing.", usageTokens: 5 });
+    await third;
+
+    expect(inputs.map((input) => input.trigger)).toEqual(["turn_start", "compaction"]);
+    expect(events.filter((event) => event.type === "router_switch")).toEqual([
+      expect.objectContaining({
+        trigger: "compaction",
+        fromModel: "gpt-5.6-sol",
+        toModel: "fable-5",
+        compactRecommended: true,
+      }),
+    ]);
+    expect(
+      events.filter((event) => event.type === "system" && event.message.startsWith("compact:"))
+        .length,
+    ).toBe(2);
+  });
+
+  test("memory-budget compaction arms classification at the next boundary", async () => {
+    const inputs: ClassifierInput[] = [];
+    const runner = new RouterTurnRunner({
+      everySteps: 99,
+      effectiveContext: 100,
+      classify: async (input) => {
+        inputs.push(input);
+        return { route: "general", rationale: "Keep the target unchanged." };
+      },
+    });
+    const events: TurnEvent[] = [];
+    await startRunner(runner, events);
+
+    const first = runner.turn({ type: "prompt", message: "Begin.", behavior: "follow_up" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Started.", usageTokens: 5 });
+    await first;
+
+    await runner.transformForTest([
+      { role: "user", content: "x".repeat(1_000), timestamp: 1 },
+      { role: "user", content: "latest", timestamp: 2 },
+    ]);
+    const second = runner.turn({ type: "prompt", message: "Continue.", behavior: "follow_up" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Continued.", usageTokens: 5 });
+    await second;
+
+    expect(inputs.map((input) => input.trigger)).toEqual(["turn_start", "compaction"]);
+    expect(events.filter((event) => event.type === "router_switch")).toEqual([]);
+    expect(
+      events.filter((event) => event.type === "system" && event.message.startsWith("compact:")),
+    ).toEqual([]);
+  });
+
+  test("context-overflow recovery arms one classification before the retry", async () => {
+    const inputs: ClassifierInput[] = [];
+    const decisions = [
+      { route: "general", rationale: "Start general work." },
+      { route: "plan", rationale: "Use a fresh target after overflow compaction." },
+    ];
+    const runner = new RouterTurnRunner({
+      everySteps: 99,
+      classify: async (input) => {
+        inputs.push(input);
+        const decision = decisions.shift();
+        if (!decision) throw new Error("Unexpected classification feedback loop");
+        return decision;
+      },
+    });
+    await startRunner(runner, []);
+    runner.seedCompactionHistory([
+      { role: "user", content: "one", timestamp: 1 },
+      createAssistantMessage({ text: "two", timestamp: 2 }),
+      { role: "user", content: "three", timestamp: 3 },
+      createAssistantMessage({ text: "four", timestamp: 4 }),
+    ]);
+
+    const turn = runner.turn({ type: "prompt", message: "Continue.", behavior: "follow_up" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.failNextWithContextOverflow();
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Recovered.", usageTokens: 5 });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Recovery complete.", usageTokens: 5 });
+    await turn;
+
+    expect(inputs.map((input) => input.trigger)).toEqual(["turn_start", "compaction"]);
+    expect(runner.requestModels.at(-1)?.api).toBe("anthropic-messages");
   });
 
   testIfDocker("an image tool result triggers the vision guard at the next boundary", async () => {
@@ -386,9 +546,10 @@ describe("TurnRunner virtual-model adapter", () => {
 
       expect(events.filter((event) => event.type === "router_switch").at(-1)).toMatchObject({
         trigger: "step_trigger",
-        route: "implement-visual",
+        route: "implement",
         fromModel: "glm-5.2",
         toModel: "gpt-5.6-luna",
+        visionFallback: true,
       });
       await runner.dispose();
     } finally {
