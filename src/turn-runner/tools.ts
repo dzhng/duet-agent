@@ -38,6 +38,7 @@ import type { AdvisorGate } from "../model-routing/router.js";
 import type { Observation } from "../types/memory.js";
 import type { MemorySession } from "../memory/session.js";
 import type { ActiveStateOutput } from "./state-machine-controller.js";
+import { applyStateOverride } from "./state-machine-decisions.js";
 import { withBundledRipgrep } from "./bundled-ripgrep.js";
 import { SystemRuntimeClock, type RuntimeClock } from "./runtime-clock.js";
 
@@ -738,29 +739,6 @@ function activeStateMachineCreateError(session: StateMachineSession): string {
 
     Advance or end it with select_state_machine_state before creating a new one. If you instead intend to abandon this machine and run a different one in its place, call create_state_machine_definition again with replaceActive: true to cancel the active machine and replace it.
   `;
-}
-
-export function applyStateOverride(
-  state: StateMachineState,
-  override: StateMachineStateOverride | undefined,
-): StateMachineState {
-  if (!override || override.kind !== state.kind) {
-    return state;
-  }
-
-  const merged = { ...state, ...override.state } as StateMachineState;
-  // Timer states must keep wakeAt and wakeAfterMs mutually exclusive: an
-  // override that introduces one field must drop the other so downstream
-  // validation and runtime resolution see exactly one schedule source.
-  if (merged.kind === "timer" && override.kind === "timer") {
-    const overrideState = override.state;
-    if ("wakeAt" in overrideState && overrideState.wakeAt !== undefined) {
-      delete (merged as StateMachineTimerState).wakeAfterMs;
-    } else if ("wakeAfterMs" in overrideState && overrideState.wakeAfterMs !== undefined) {
-      delete (merged as StateMachineTimerState).wakeAt;
-    }
-  }
-  return merged;
 }
 
 function createAskUserQuestionTool(): AgentTool<typeof askUserQuestionSchema> {

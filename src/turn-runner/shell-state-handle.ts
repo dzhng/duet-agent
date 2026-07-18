@@ -1,8 +1,5 @@
 import { spawn } from "node:child_process";
 
-const TEMPLATE_PLACEHOLDER_PATTERN = /\{\{\s*input\.([A-Za-z0-9_.-]+)\s*\}\}/g;
-const TEMPLATE_PLACEHOLDER_CAPTURE_PATTERN = /^\{\{\s*input\.([A-Za-z0-9_.-]+)\s*\}\}$/;
-
 export type ShellCommandOutput = { stdout: string; stderr: string; exitCode: number };
 export type ShellPartialOutput = Pick<ShellCommandOutput, "stdout" | "stderr">;
 
@@ -154,49 +151,4 @@ function killProcessTree(pid: number | undefined): void {
       // Process already exited.
     }
   }
-}
-
-export function parseStructuredOutput(stdout: string): Record<string, unknown> {
-  const trimmed = stdout.trim();
-  if (!trimmed) return {};
-  try {
-    const parsed = JSON.parse(trimmed);
-    return typeof parsed === "object" && parsed !== null
-      ? (parsed as Record<string, unknown>)
-      : { result: parsed };
-  } catch {
-    return { result: trimmed };
-  }
-}
-
-export function parseJsonObject(text: string): Record<string, unknown> {
-  const trimmed = text.trim();
-  if (!trimmed) return {};
-  try {
-    const parsed = JSON.parse(trimmed);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-export function renderTemplate(template: string, input: Record<string, unknown>): string {
-  return template.replace(TEMPLATE_PLACEHOLDER_PATTERN, (placeholder) => {
-    const path = TEMPLATE_PLACEHOLDER_CAPTURE_PATTERN.exec(placeholder)?.[1];
-    if (!path) return "";
-    const value = readPath(input, path);
-    if (value === undefined || value === null) return "";
-    return typeof value === "string" ? value : JSON.stringify(value);
-  });
-}
-
-function readPath(input: Record<string, unknown>, path: string): unknown {
-  let value: unknown = input;
-  for (const part of path.split(".")) {
-    if (!value || typeof value !== "object") return undefined;
-    value = (value as Record<string, unknown>)[part];
-  }
-  return value;
 }

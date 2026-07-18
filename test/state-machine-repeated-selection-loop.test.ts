@@ -4,7 +4,7 @@ import {
   repeatedStateSelectionStreak,
   REPEATED_SELECTION_LOOP_THRESHOLD,
   REPEATED_SELECTION_LOOP_WINDOW_MS,
-} from "../src/turn-runner/state-machine-session.js";
+} from "../src/turn-runner/state-machine-decisions.js";
 import type {
   StateMachineDefinition,
   StateMachineSession,

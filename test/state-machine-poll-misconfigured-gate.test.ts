@@ -3,7 +3,7 @@ import { StateMachineController } from "../src/turn-runner/state-machine-control
 import {
   consecutivePollGateSuccesses,
   MISCONFIGURED_POLL_GATE_THRESHOLD,
-} from "../src/turn-runner/state-machine-session.js";
+} from "../src/turn-runner/state-machine-decisions.js";
 import type {
   StateMachineDefinition,
   StateMachineSession,
