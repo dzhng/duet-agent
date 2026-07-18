@@ -251,6 +251,21 @@ describe("TurnRunner tools", () => {
   });
 
   test("tier switches rebuild advisor injection and bind consults to the new router", async () => {
+    // Routed boot resolves the tier's concrete target, which requires a
+    // provider credential to be PRESENT (never called — the classifier and
+    // advisor are faked). Fresh checkouts/worktrees carry no .env, so the
+    // test supplies its own key like turn-runner-router.test.ts does.
+    const priorKey = process.env.DUET_API_KEY;
+    process.env.DUET_API_KEY = "tier-switch-test-key";
+    try {
+      await runTierSwitchScenario();
+    } finally {
+      if (priorKey === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = priorKey;
+    }
+  });
+
+  async function runTierSwitchScenario(): Promise<void> {
     const runner = new ToolListTurnRunner("economy");
     await runner.start({ type: "start", mode: "agent" });
     expect(runner.toolNames()).not.toContain("ask_advisor");
@@ -269,7 +284,7 @@ describe("TurnRunner tools", () => {
     runner.refreshToolsForTest();
     expect(runner.toolNames()).not.toContain("ask_advisor");
     await runner.dispose();
-  });
+  }
 
   test("todo_write replaces and merges todo lists", async () => {
     let storedTodos: TurnTodo[] = [];
