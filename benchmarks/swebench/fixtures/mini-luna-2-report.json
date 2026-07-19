@@ -1,0 +1,17 @@
+{
+  "total_instances": 2,
+  "submitted_instances": 2,
+  "completed_instances": 2,
+  "resolved_instances": 2,
+  "unresolved_instances": 0,
+  "empty_patch_instances": 0,
+  "error_instances": 0,
+  "completed_ids": ["apache__druid-16875", "briannesbitt__carbon-2981"],
+  "incomplete_ids": [],
+  "empty_patch_ids": [],
+  "submitted_ids": ["apache__druid-16875", "briannesbitt__carbon-2981"],
+  "resolved_ids": ["apache__druid-16875", "briannesbitt__carbon-2981"],
+  "unresolved_ids": [],
+  "error_ids": [],
+  "schema_version": 2
+}

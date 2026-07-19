@@ -14,17 +14,17 @@ about _our_ harness.
 smoke. Slices 02 and 03 are complete: the pinned 30-instance manifest, four
 explicit routing renders, RPC client, telemetry, CLI checkpoints, and their
 tests are committed. Slice 04's Mac provisioner, one-instance capacity gate,
-and corrected 30/30 gold gate are complete under official amd64 emulation with
-measured resource use; its mini-swe-agent gate remains open.
+corrected 30/30 gold gate, and mini-swe-agent 2/2 replication are complete under
+official amd64 emulation with measured resource use.
 Slice 05 has a green live Java checkpoint for Linux-x64 packaging, single-owner
 RPC execution, and dirty-baseline patch round trip, but its nine-language matrix
 remains. Slice 06's rollout, immutable resume, budget, prediction, official
 scoring, and paired-report core is locally green; its paid n=2 gate remains.
-Continue the mini-swe-agent and live gates in slices 04–06; slices 04–08 are
-not complete. Last updated 2026-07-20.
+Continue the live Duet gates in slices 05–06; slices 05–08 are not complete.
+Last updated 2026-07-20.
 
 You are implementing this spec. Read this README fully, then run the
-mini-swe-agent replication in [slice 04](slices/04-box-gold-gate-and-spike.md). Follow
+nine-language Duet matrix in [slice 05](slices/05-duet-in-container.md). Follow
 the dependency graph below; never spend campaign-scale money before slice 07
 says ADMIT.
 
@@ -46,8 +46,8 @@ Global TODO (owner slice in parens):
       usage metered; tool details forwarded; live provider smoke passes (01)
 - [x] Committed 30-instance manifest + all four routing-table renders (02)
 - [x] duet-client (RPC transport + limits) + telemetry derivation, fixture-tested (03)
-- [ ] Mac environment captured and x86 capacity + gold 30/30 gates green;
-      mini-swe-agent replication still pending; scorer fixture captured (04)
+- [x] Mac environment captured; x86 capacity, gold 30/30, and mini-swe-agent
+      2/2 replication gates green; scorer fixtures captured (04)
 - [ ] Duet packaged into instance containers; 9-language smoke; patch
       round-trip integrity (05)
 - [ ] Rollout pipeline + resumable campaign orchestrator + predictions,

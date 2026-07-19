@@ -1,11 +1,11 @@
 # 04 — Mac environment, x86 gold gate, mini-swe-agent replication spike
 
-**Status (2026-07-20): gold gate complete; replication pending.** The
-idempotent provisioner, environment lock, official image-key/pre-pull helper,
-sequential gold runner, one-instance capacity gate, and corrected 30/30
-manifest gate are complete. The capacity instance resolved 1/1 in 167 seconds
-with 2.41 GB peak container memory. The mini-swe-agent replication spike
-remains pending; this slice is not done.
+**Status (2026-07-20): complete.** The idempotent provisioner, environment
+lock, official image-key/pre-pull helper, sequential gold runner, one-instance
+capacity gate, corrected 30/30 manifest gate, and two-language mini-swe-agent
+replication are complete. The capacity instance resolved 1/1 in 167 seconds
+with 2.41 GB peak container memory. Mini's untouched prediction dictionary was
+accepted by the official scorer and resolved 2/2.
 
 Mac-local track; needs slice 02's manifest. No duet code. This slice kills the
 plan cheaply if official x86 images cannot run under Docker emulation or the
@@ -48,7 +48,7 @@ model rollout, selector v2 recorded that infrastructure exclusion and replaced
 it with the next seeded C++ task, `fmtlib__fmt-2457`, which resolved. See
 `benchmarks/swebench/fixtures/gold-30-summary.tsv`,
 `benchmarks/swebench/fixtures/capacity-gold-report.json`, and
-`capacity-metrics.json`. The replication gate remains separate.
+`capacity-metrics.json`, `mini-luna-2-report.json`, and `spike-notes.md`.
 
 ## Playable checkpoint
 

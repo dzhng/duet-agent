@@ -27,6 +27,28 @@ describe("official SWE-bench report parser", () => {
     });
   });
 
+  test("parses mini-swe-agent's untouched two-row scorer result", async () => {
+    const fixture = JSON.parse(
+      await readFile(
+        join(
+          import.meta.dir,
+          "..",
+          "benchmarks",
+          "swebench",
+          "fixtures",
+          "mini-luna-2-report.json",
+        ),
+        "utf8",
+      ),
+    );
+    expect(parseSwebenchReport(fixture)).toEqual({
+      resolvedIds: ["apache__druid-16875", "briannesbitt__carbon-2981"],
+      unresolvedIds: [],
+      errorIds: [],
+      emptyPatchIds: [],
+    });
+  });
+
   test("rejects schema drift instead of treating a missing field as empty", () => {
     expect(() =>
       parseSwebenchReport({ resolved_ids: [], unresolved_ids: [], error_ids: [] }),

@@ -824,6 +824,33 @@ ownerScopeId }`, even though both execute through the same task manager.
   acceptance and capacity signals; raw logs are not needed to reproduce the
   official command.
 
+### S20 — The replication spike ignores mini's missing price map and uses an action ceiling
+
+- **When:** slice 04's mini-swe-agent replication, after Luna returned valid
+  gateway responses that mini rejected during local price lookup.
+- **The choice:** Only the throwaway replication runner disables mini's local
+  cost calculation and caps each task at 40 model actions. Think of a taxi whose
+  meter does not recognize a newly opened road: the ride itself works, but the
+  meter throws after the first block. For this two-task plumbing check, we let
+  the ride continue, count at most 40 turns, and read the actual charge from the
+  gateway receipt saved on each response. The real Duet campaign keeps its own
+  streamed dollar meter and has no action-count limit. The unbuilt alternatives
+  switch to a different model just to satisfy LiteLLM's stale table, or patch a
+  third-party price catalog inside the pinned environment.
+- **The gap:** The spec fixed a cheap replication model and spend target but did
+  not say how to handle a provider model that is callable and reports actual
+  gateway cost while LiteLLM's bundled static catalog lacks its name.
+- **The reach:** The replication still proves Docker, tool execution,
+  prediction emission, and official scoring without weakening or contaminating
+  the measured four-arm harness. The successful trajectories report $0.128210
+  in gateway cost across 27 calls.
+- **Verdict:** **sound.** An action ceiling is appropriate only for this
+  non-measurement compatibility spike; the benchmark under comparison retains
+  the user's requested time-and-dollar limits.
+- **Confidence:** **high** because both untouched predictions scored 2/2 and
+  the workaround is confined to an external replication tool, not campaign
+  execution or accounting.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper
