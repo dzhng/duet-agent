@@ -15,14 +15,13 @@ Line refs there are vs 3adf0df; drift as of ddfc6f2 is small but re-verify befor
 
 ## Next Agent Prompt
 
-**Status:** slices 01-12 merged. Hygiene live (sentinel strips machine injections from
-memory+routing; observer once per turn). Durability live (atomic coalescing persistence,
-hydrate reconciliation, heartbeats, shutdown reap) — suite 1126/0, rpc regression eval 8/8.
-**Red stragglers owned by slice 14:** evals/task-lost-resume-rpc.eval.ts and
-evals/task-rpc-heartbeat.eval.ts time out non-deterministically (model-compliance variance
-in their RPC prompts; hardened with fast-fail + event dumps, need prompt-mechanics passes).
-Slice 13 implementation is ready for its orchestrator-owned Docker frame and visual gates;
-the implementation worktree cannot access the Docker socket. Last updated 2026-07-19.
+**Status:** slices 01-13 merged. TUI task tree live: pure projection, task lanes,
+held-awake status, late attach from hydrated state; unprimed critique passed after the
+fixture gained the parent-narration path (renderer emits "● parent — <activity>").
+**Slice 14 in progress:** stabilize the two straggler RPC evals (lost-resume, heartbeat —
+model-compliance variance; being made mechanical), verify falsification records in every
+task-layer eval, then the full shipping gate (check-types/lint/format/test/eval) and
+ledger-decision reconciliation before close-spec. Last updated 2026-07-19.
 
 You are implementing this spec. Read this README fully, then `unknowns-map.md` Quadrant 2
 (binding decisions — do not relitigate) and the LM-\* cards for your slice. Work one slice at
@@ -51,7 +50,7 @@ slice 11's `task-memory-synthetic-filter.eval.ts` and Docker source-of-truth sui
 - [x] 10 park + parent-only ask — merged; 3/3 live evals green incl. promised-wait
 - [x] 11 observer/router/compaction hygiene — merged 8d5b7e6
 - [x] 12 session/RPC durability — merged (two live evals red → slice 14)
-- [ ] 13 TUI task tree
+- [x] 13 TUI task tree — merged + fixture fixup 6630e13
 - [ ] 14 live-eval acceptance matrix (done-gate)
 
 ## Slice graph
