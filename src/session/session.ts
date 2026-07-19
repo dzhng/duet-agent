@@ -43,6 +43,9 @@ import {
  */
 const WAKE_POLL_INTERVAL_MS = 30_000;
 
+/** Trailing-edge gate for task-output persistence; bounds full-state serialization rate. */
+const OUTPUT_PERSIST_DEBOUNCE_MS = 1_000;
+
 interface StoredSessionFile {
   sessionId?: string;
   updatedAt?: number;
@@ -130,6 +133,8 @@ export class Session {
   /** Directory owned by this session. State persistence writes `state.json` inside it. */
   private readonly sessionPath: string;
   /** Session-level clock used by persistence timestamps and scheduled wake projection. */
+  /** Pending trailing-edge write for task-output bursts. */
+  private cancelOutputPersist?: CancelScheduled;
   private readonly clock: RuntimeClock;
   /** Unique same-directory temp target; stale files never alias another Session writer. */
   private readonly persistenceTempPath: string;
@@ -460,6 +465,8 @@ export class Session {
   }
 
   async dispose(): Promise<void> {
+    this.cancelOutputPersist?.();
+    this.cancelOutputPersist = undefined;
     this.cancelWake();
     await this.runner.dispose();
     await this.persistLatestState();
@@ -501,14 +508,24 @@ export class Session {
       this.applyUsageEvent(event);
       void this.persistLatestState();
     }
-    if (
-      event.type === "task_started" ||
-      event.type === "task_output" ||
-      event.type === "task_settled"
-    ) {
+    if (event.type === "task_started" || event.type === "task_settled") {
       void this.persistLatestState();
     }
+    if (event.type === "task_output") {
+      // Output chunks can arrive at stream rate; each persist serializes the
+      // full TurnState, so gate this trigger through a trailing-edge debounce.
+      // Snapshot validity is unaffected — every fired write captures a
+      // complete state; the debounce only bounds how often.
+      if (!this.cancelOutputPersist) {
+        this.cancelOutputPersist = this.clock.schedule(() => {
+          this.cancelOutputPersist = undefined;
+          void this.persistLatestState();
+        }, OUTPUT_PERSIST_DEBOUNCE_MS);
+      }
+    }
     if (isTerminalEvent(event)) {
+      this.cancelOutputPersist?.();
+      this.cancelOutputPersist = undefined;
       this.lastTerminal = event;
       this.commitTerminalCost(event);
       await this.writeStoredEnvelope(event.state);

@@ -22,7 +22,7 @@ describe("TUI task subscription", () => {
       kind: "subagent" as const,
       name: "spawn_agent",
       label: "audit auth flows",
-      ownerScopeId: "root",
+      ownerScopeId: "turn-1",
       status: "running" as const,
       startedAt: 1000,
     };
@@ -87,7 +87,7 @@ describe("TUI task subscription", () => {
 
     handler({
       type: "step",
-      origin: { kind: "task", taskId: "t4", ownerScopeId: "root" },
+      origin: { kind: "task", taskId: "t4", ownerScopeId: "turn-1" },
       step: { type: "text", text: "child output" },
     });
     expect(laneEvents).toHaveLength(1);

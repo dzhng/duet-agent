@@ -56,7 +56,13 @@ export class RpcEventWriter {
   constructor(
     private readonly stream: RpcWritable,
     private readonly clock: RuntimeClock = new SystemRuntimeClock(),
-  ) {}
+  ) {
+    // Heartbeats are unconditional process liveness: a host reads "heartbeat
+    // arriving" as healthy and "silence past the interval" as wedged — no
+    // task-set special case. They stop only at the terminal, when the process
+    // is about to exit anyway.
+    this.startHeartbeats();
+  }
 
   /** Accept a runner event synchronously while its serialized value is stable. */
   emit(event: TurnEvent): void {
@@ -64,10 +70,8 @@ export class RpcEventWriter {
 
     if (event.type === "task_started" && event.task.status === "running") {
       this.activeTaskIds.add(event.task.id);
-      this.startHeartbeats();
     } else if (event.type === "task_settled") {
       this.activeTaskIds.delete(event.settlement.id);
-      if (this.activeTaskIds.size === 0) this.stopHeartbeats();
     } else if (isRpcTerminalEvent(event)) {
       this.stopHeartbeats();
     }
@@ -95,7 +99,6 @@ export class RpcEventWriter {
   }
 
   private emitHeartbeat(): void {
-    if (this.activeTaskIds.size === 0) return;
     this.pendingHeartbeat = serializeRpcEvent({
       type: "heartbeat",
       timestamp: this.clock.now(),

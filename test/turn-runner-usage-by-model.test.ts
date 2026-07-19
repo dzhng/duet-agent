@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ScopeId } from "../src/tasks/types.js";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import {
   TurnRunner,
@@ -178,7 +179,7 @@ class ConcurrentSpawnUsageRunner extends TurnRunner {
   protected override async createSpawnedSubagentRun(
     _spec: SubagentSpec,
     taskId: TaskId,
-    ownerScopeId: string,
+    ownerScopeId: ScopeId,
   ): Promise<SubagentRun> {
     return {
       prompt: async () => {

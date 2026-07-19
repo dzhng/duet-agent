@@ -67,7 +67,7 @@ describe("task-backed tools", () => {
       taskManager: manager,
       defaultWaitBudgetMs: 120_000,
       clock,
-      ownerScopeId: () => "root",
+      ownerScopeId: () => "turn-1",
       createRun: async () => run,
     });
 
@@ -88,7 +88,7 @@ describe("task-backed tools", () => {
       text: expect.stringContaining("Started background task t1 (spawn_agent: `audit auth`)"),
     });
     expect(manager.list()).toMatchObject([
-      { id: "t1", kind: "subagent", ownerScopeId: "root", status: "running" },
+      { id: "t1", kind: "subagent", ownerScopeId: "turn-1" as const, status: "running" },
     ]);
     finish();
     await manager.waitForSettlement("t1");
@@ -107,7 +107,7 @@ describe("task-backed tools", () => {
       taskManager: manager,
       defaultWaitBudgetMs: 120_000,
       clock,
-      ownerScopeId: () => "root",
+      ownerScopeId: () => "turn-1",
       createRun: async ({ childScopeId }) => {
         manager.start({
           kind: "tool",
@@ -136,7 +136,10 @@ describe("task-backed tools", () => {
     await tool.execute("spawn-cascade", { prompt: "spawn nested work", run_in_background: true });
     await Promise.resolve();
     await Promise.resolve();
-    expect(manager.list()).toMatchObject([{ id: "t1" }, { id: "t2", ownerScopeId: "task:t1" }]);
+    expect(manager.list()).toMatchObject([
+      { id: "t1" },
+      { id: "t2", ownerScopeId: "task:t1" as const },
+    ]);
 
     await manager.stop("t1", "test stop");
     expect(nestedSignal?.aborted).toBe(true);
@@ -147,14 +150,14 @@ describe("task-backed tools", () => {
   test("spawn surfaces the central scope cap as a clean depth-limit error", async () => {
     const clock = new ManualRuntimeClock();
     const manager = createTaskManager({ clock });
-    manager.openScope("root");
-    manager.openScope("task:parent", "root");
-    manager.openScope("task:grandparent", "task:parent");
+    manager.openScope("turn-1");
+    manager.openScope("task:t900", "turn-1");
+    manager.openScope("task:t901", "task:t900");
     const tool = createSpawnAgentTool({
       taskManager: manager,
       defaultWaitBudgetMs: 120_000,
       clock,
-      ownerScopeId: () => "task:grandparent",
+      ownerScopeId: () => "task:t901",
       createRun: async () => {
         throw new Error("must not construct a child past the depth limit");
       },
@@ -173,7 +176,7 @@ describe("task-backed tools", () => {
       taskManager: manager,
       defaultWaitBudgetMs: 2_000,
       clock,
-      ownerScopeId: () => "root",
+      ownerScopeId: () => "turn-1",
       label: (params) => String(params.command),
     });
 
@@ -202,7 +205,7 @@ describe("task-backed tools", () => {
       taskManager: manager,
       defaultWaitBudgetMs: 120_000,
       clock,
-      ownerScopeId: () => "root",
+      ownerScopeId: () => "turn-1",
       label: (params) => String(params.command),
     });
 
@@ -227,7 +230,7 @@ describe("task-backed tools", () => {
       kind: "tool",
       name: "bash",
       label: "buffered command",
-      ownerScopeId: "root",
+      ownerScopeId: "turn-1" as const,
       execute: async ({ signal, onOutput }) => {
         onOutput("survives transcript eviction");
         await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve()));
@@ -262,7 +265,7 @@ describe("task-backed tools", () => {
       taskManager: manager,
       defaultWaitBudgetMs: 120_000,
       clock,
-      ownerScopeId: () => "root",
+      ownerScopeId: () => "turn-1",
       label: () => "orphan probe",
     });
     await wrapped.execute("reaper-1", { command: "orphan probe", run_in_background: true });
@@ -284,7 +287,7 @@ describe("task-backed tools", () => {
         kind: "tool" as const,
         name: "bash",
         label: "npm test",
-        ownerScopeId: "root",
+        ownerScopeId: "turn-1" as const,
         status: "completed" as const,
         startedAt: 0,
       },

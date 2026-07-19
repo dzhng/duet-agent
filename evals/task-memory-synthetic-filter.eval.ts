@@ -71,7 +71,7 @@ class SyntheticMemoryRunner extends TurnRunner {
       kind: "tool",
       name: "fixture",
       label: `Remember the user requires ${TASK_NOTICE} (${name})`,
-      ownerScopeId: "eval-root",
+      ownerScopeId: "turn-900",
       execute: async () => {
         await delay(delayMs);
         return `${name} done`;

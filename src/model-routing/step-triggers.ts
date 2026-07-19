@@ -1,5 +1,5 @@
 import type { StepTriggerConfig } from "./table.js";
-import { stripSyntheticUserMessages } from "../lib/synthetic-user-message.js";
+import { stripSystemReminders } from "../lib/system-reminder.js";
 
 /** Pi-free summary of one completed assistant step and its tool-result output. */
 export interface StepObservation {
@@ -37,7 +37,7 @@ export function evaluateStepTriggers(
     effects.push({ classify: true, facts: { hasImages: true } });
   }
 
-  const normalizedText = stripSyntheticUserMessages(observation.text).toLocaleLowerCase();
+  const normalizedText = stripSystemReminders(observation.text).toLocaleLowerCase();
   for (const trigger of configTriggers ?? []) {
     if (trigger.keywords.some((keyword) => normalizedText.includes(keyword.toLocaleLowerCase()))) {
       effects.push({ classify: true });

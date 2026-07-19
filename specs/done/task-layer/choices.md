@@ -5,7 +5,12 @@ history, codex pass reports, and commits. The spec's binding ledger (unknowns-ma
 was David-approved; entries here are what the implementation invented _beyond_ it.
 Tree audited at 0edd88a; no code changed by the audit.
 
-## Needs-user (provisional calls applied; all reversible)
+## Needs-user — all three RESOLVED by the user at audit review (2026-07-19)
+
+Outcomes: N1 → sentinel deleted, `<system-reminder>` is the one tag (stripped from
+observer/step-trigger projections, any role). N2 → gated asks stash their questions and
+resurface them on the next parent pass. N3 → heartbeats unconditional (absence = wedged).
+Original entries kept below for the record.
 
 **N1 — The synthetic sentinel is visible to the model.**
 
@@ -46,7 +51,7 @@ Tree audited at 0edd88a; no code changed by the audit.
 - Provisional call: keep as shipped. Reverse-friendly while no external host consumes
   it; once one does, changes need coordination.
 
-## Unsound (corrected decision to redo from)
+## Unsound — FIXED (2026-07-19): output persistence debounced (1s trailing edge)
 
 **U1 — Per-chunk full-state serialization on task output.**
 

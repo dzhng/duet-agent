@@ -25,7 +25,7 @@ import {
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import type { TurnEvent, TurnOptions } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
-import { heldAskReminder, parkNudge } from "../src/turn-runner/prompts.js";
+import { withheldAskReminder, parkNudge } from "../src/turn-runner/prompts.js";
 import { settlementNotice } from "../src/turn-runner/task-tools.js";
 
 class MemoryTransformTurnRunner extends TurnRunner {
@@ -71,7 +71,7 @@ describe("synthetic user-message filtering", () => {
           kind: "tool",
           name: "bash",
           label: "fixture",
-          ownerScopeId: "root",
+          ownerScopeId: "turn-1",
           status: "completed",
           startedAt: 1,
         },
@@ -80,7 +80,11 @@ describe("synthetic user-message filtering", () => {
       },
     ]);
     const messages: AgentMessage[] = [
-      { role: "user", content: heldAskReminder(), timestamp: 1 },
+      {
+        role: "user",
+        content: withheldAskReminder([{ question: "Deploy now?", options: [] }]),
+        timestamp: 1,
+      },
       { role: "user", content: settlement, timestamp: 2 },
       { role: "user", content: `Keep the real request.\n\n${parkNudge("approval")}`, timestamp: 3 },
       createAssistantMessage({ text: "Acknowledged.", timestamp: 4 }),

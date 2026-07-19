@@ -50,8 +50,8 @@ class CwdProbeRunner extends TurnRunner {
 
   // The task wrapper demands an owning scope; probes execute tools outside a
   // turn, so supply a stable root scope (TaskManager registers roots lazily).
-  protected override requireRootScope(): string {
-    return "cwd-probe";
+  protected override requireRootScope(): `turn-${number}` {
+    return "turn-901" as const;
   }
 }
 

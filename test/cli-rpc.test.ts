@@ -369,7 +369,7 @@ describe("RpcEventWriter", () => {
         kind: "tool",
         name: "long job",
         label: "Run a long job",
-        ownerScopeId: "root-1",
+        ownerScopeId: "turn-1",
         status: "running",
         startedAt: clock.now(),
       },
@@ -396,7 +396,7 @@ describe("RpcEventWriter", () => {
     ]);
   });
 
-  test("emits clock-driven heartbeats only while running tasks hold the process open", async () => {
+  test("emits clock-driven heartbeats unconditionally until the terminal", async () => {
     const clock = new ManualRuntimeClock(5_000);
     const lines: string[] = [];
     const writer = new RpcEventWriter(
@@ -419,7 +419,7 @@ describe("RpcEventWriter", () => {
         kind: "subagent",
         name: "background research",
         label: "Research in the background",
-        ownerScopeId: "root-1",
+        ownerScopeId: "turn-1",
         status: "running",
         startedAt: clock.now(),
       },
@@ -435,14 +435,27 @@ describe("RpcEventWriter", () => {
       },
     });
     await clock.advanceBy(30_000);
+    writer.emit({
+      type: "complete",
+      status: "completed",
+      state: { status: "completed", mode: "agent", agent: {} as TurnState["agent"] },
+    });
+    await clock.advanceBy(30_000);
     await writer.flush();
 
     const events = lines.map((line) => JSON.parse(line));
+    // Heartbeats flow with AND without active tasks (absence = wedged process);
+    // the terminal stops them because the process exits right after.
     expect(events).toEqual([
       expect.objectContaining({ type: "task_started" }),
       { type: "heartbeat", timestamp: 20_000, activeTaskIds: ["t4"] },
       expect.objectContaining({ type: "task_settled" }),
+      { type: "heartbeat", timestamp: 35_000, activeTaskIds: [] },
+      { type: "heartbeat", timestamp: 50_000, activeTaskIds: [] },
+      expect.objectContaining({ type: "complete" }),
     ]);
+    const afterTerminal = events.filter((event) => event.type === "heartbeat").length;
+    expect(afterTerminal).toBe(3);
   });
 });
 
@@ -462,7 +475,7 @@ describe("fatal terminal guard", () => {
             kind: "tool",
             name: "still live",
             label: "Still live",
-            ownerScopeId: "root-1",
+            ownerScopeId: "turn-1",
             status: "running",
             startedAt: 1,
           },

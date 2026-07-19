@@ -1,3 +1,4 @@
+import type { ScopeId, TaskId } from "../tasks/types.js";
 import type { Agent, AgentEvent, AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type { ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { Skill } from "@earendil-works/pi-coding-agent";
@@ -91,9 +92,9 @@ export interface SubagentExecutionContext {
   /** Active relay definition used to keep a state worker inside its assigned state. */
   machineContext?: SubagentMachineContext;
   /** Scope owned by a spawned child; its nested tasks are cascade-stopped on close. */
-  childScopeId?: string;
+  childScopeId?: `task:${TaskId}`;
   /** Scope that owns the spawn task and is the parent of childScopeId. */
-  ownerScopeId?: string;
+  ownerScopeId?: ScopeId;
   /** Isolated observational-memory identity and horizon for this child. */
   memoryContext?: SubagentMemoryContext;
   /** Transcript source of the agent that called spawn_agent. */

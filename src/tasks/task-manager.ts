@@ -1,6 +1,7 @@
 import type { RuntimeClock } from "../turn-runner/runtime-clock.js";
 import { computePendingWork, type PendingWork } from "./quiescence.js";
 import type {
+  ScopeId,
   TaskDescriptor,
   TaskEvent,
   TaskId,
@@ -23,9 +24,9 @@ export interface TaskExecutionContext {
 
 interface TaskOwnership {
   /** Scope that owns the task and is responsible for closing it. */
-  ownerScopeId: string;
+  ownerScopeId: ScopeId;
   /** Parent of a newly encountered scope; omitted only for a root scope. */
-  parentScopeId?: string;
+  parentScopeId?: ScopeId;
 }
 
 /** Specification for work that begins executing immediately. */
@@ -79,7 +80,7 @@ export interface RecoverResult {
 
 export interface TaskManager {
   /** Register a child scope before work begins so depth is rejected at the executor boundary. */
-  openScope(scopeId: string, parentScopeId?: string): void;
+  openScope(scopeId: ScopeId, parentScopeId?: ScopeId): void;
   /** Allocate an id and either spawn in-process work or record a schedule. */
   start<T>(spec: TaskSpec<T>): TaskHandle;
   /** Wait through a foreground budget without aborting on expiry. */
@@ -95,7 +96,7 @@ export interface TaskManager {
   /** Abort a task once and resolve only after its executor has fully unwound. */
   stop(id: TaskId, reason: TaskStopReason): Promise<TaskSnapshot | undefined>;
   /** Stop descendant scopes before directly owned tasks and await every unwind. */
-  closeScope(scopeId: string, reason: TaskStopReason): Promise<void>;
+  closeScope(scopeId: ScopeId, reason: TaskStopReason): Promise<void>;
   /** Abort all active and scheduled work, reap processes, and await full unwind. */
   interruptAll(reason: TaskStopReason): Promise<void>;
   /** Compute the current quiescence posture from task descriptors. */
@@ -126,7 +127,7 @@ interface TaskRecord {
 
 interface ScopeRecord {
   readonly id: string;
-  readonly parentScopeId?: string;
+  readonly parentScopeId?: ScopeId;
   readonly depth: number;
   closed: boolean;
 }
@@ -149,7 +150,7 @@ export function createTaskManager(options: TaskManagerOptions): TaskManager {
 
   const emit = (event: TaskEvent): void => options.onEvent?.(event);
 
-  const registerScope = (ownerScopeId: string, parentScopeId?: string): ScopeRecord => {
+  const registerScope = (ownerScopeId: ScopeId, parentScopeId?: ScopeId): ScopeRecord => {
     const existing = scopes.get(ownerScopeId);
     if (existing) {
       if (existing.parentScopeId !== parentScopeId && parentScopeId !== undefined) {

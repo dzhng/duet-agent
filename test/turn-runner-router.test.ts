@@ -246,7 +246,7 @@ describe("TurnRunner virtual-model adapter", () => {
           kind: "tool",
           name: "bash",
           label: "SETTLEMENT_TRIGGER_Q7",
-          ownerScopeId: "root",
+          ownerScopeId: "turn-1",
           status: "completed",
           startedAt: 1,
         },

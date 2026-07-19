@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Ajv } from "ajv";
 import dedent from "dedent";
-import { syntheticUserMessage } from "../lib/synthetic-user-message.js";
+import { systemReminder } from "../lib/system-reminder.js";
 import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { Type, type Static } from "typebox";
@@ -996,7 +996,7 @@ export function formatStateMachineTerminalAcknowledgmentPrompt(input: {
   if (!terminal) {
     throw new Error("formatStateMachineTerminalAcknowledgmentPrompt requires a terminal session.");
   }
-  return syntheticUserMessage(dedent`
+  return systemReminder(dedent`
     The state machine "${session.definition.name}" has reached a terminal state and is no longer running.
 
     ${toXML({
@@ -1020,7 +1020,7 @@ export function formatCarriedTodosReminder(todos: TurnTodo[] | undefined): strin
   );
   if (openTodos.length === 0) return undefined;
   const lines = todos.map((todo) => `- [${todo.status}] ${todo.id}: ${todo.content}`);
-  return syntheticUserMessage(dedent`
+  return systemReminder(dedent`
     <system-reminder>
     You have an existing todo list from earlier in this conversation:
     ${lines.join("\n")}

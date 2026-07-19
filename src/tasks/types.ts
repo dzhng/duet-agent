@@ -5,6 +5,13 @@ export type TaskId = `t${number}`;
 export type TaskKind = "tool" | "subagent" | "scheduled";
 
 /**
+ * Structured-concurrency owner: the turn's root scope or a spawned subagent's
+ * child scope. Typed so a stray free-form id can't silently opt out of the
+ * cascade tree.
+ */
+export type ScopeId = `turn-${number}` | `task:${TaskId}`;
+
+/**
  * Durable lifecycle state.
  *
  * `running` means an in-process executor still holds the turn open and the
@@ -30,7 +37,7 @@ export interface TaskDescriptor {
   /** Human-facing text describing the concrete work in progress. */
   label: string;
   /** Scope whose closure owns and cascade-stops this task. */
-  ownerScopeId: string;
+  ownerScopeId: ScopeId;
   /** Current lifecycle state; terminal states never transition again. */
   status: TaskStatus;
   /** Unix-epoch timestamp recorded when the task was created. */

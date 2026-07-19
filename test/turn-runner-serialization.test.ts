@@ -81,7 +81,7 @@ describe("TurnState serialization", () => {
     expect(snapshot?.tasks?.[0]).toEqual(
       expect.objectContaining({
         id: "t12",
-        ownerScopeId: "root",
+        ownerScopeId: "turn-1",
         status: "lost",
       }),
     );
@@ -284,7 +284,7 @@ function createSerializableTurnState(): TurnState {
         kind: "subagent",
         name: "inspect",
         label: "Inspect deployment",
-        ownerScopeId: "root",
+        ownerScopeId: "turn-1",
         status: "running",
         startedAt: 10_000,
       },

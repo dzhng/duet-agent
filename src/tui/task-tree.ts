@@ -1,4 +1,10 @@
-import type { TaskDescriptor, TaskId, TaskSettlement, TaskStatus } from "../tasks/types.js";
+import type {
+  ScopeId,
+  TaskDescriptor,
+  TaskId,
+  TaskSettlement,
+  TaskStatus,
+} from "../tasks/types.js";
 import type { TurnEvent, TurnStep } from "../types/protocol.js";
 
 const TASK_SCOPE_PREFIX = "task:";
@@ -230,7 +236,7 @@ function truncate(value: string, width: number): string {
   return value.length <= width ? value : `${value.slice(0, Math.max(0, width - 1)).trimEnd()}…`;
 }
 
-function parentTaskId(ownerScopeId: string): TaskId | undefined {
+function parentTaskId(ownerScopeId: ScopeId): TaskId | undefined {
   if (!ownerScopeId.startsWith(TASK_SCOPE_PREFIX)) return undefined;
   const candidate = ownerScopeId.slice(TASK_SCOPE_PREFIX.length);
   return /^t\d+$/.test(candidate) ? (candidate as TaskId) : undefined;

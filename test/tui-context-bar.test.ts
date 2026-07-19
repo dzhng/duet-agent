@@ -111,7 +111,7 @@ describe("sidebar context bar", () => {
               kind: "subagent",
               name: "spawn_agent",
               label: "audit auth flows",
-              ownerScopeId: "root",
+              ownerScopeId: "turn-1",
               status: "running",
               startedAt: Date.now() - 5_000,
             },
@@ -134,7 +134,7 @@ describe("sidebar context bar", () => {
       const aggregate = tokenUsage(78_000, 0.78);
       const parentContext = tokenUsage(45_000, 0.1);
       await harness.pushUsage({
-        origin: { kind: "task", taskId: "t4", ownerScopeId: "root" },
+        origin: { kind: "task", taskId: "t4", ownerScopeId: "turn-1" },
         turnUsage: aggregate,
         usageByModel: [
           { model: "parent", usage: parentUsage },

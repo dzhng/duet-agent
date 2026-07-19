@@ -25,7 +25,7 @@ describe("TUI task tree frame", () => {
         kind: "tool",
         name: "bash",
         label: "npm test",
-        ownerScopeId: "root",
+        ownerScopeId: "turn-1",
         status: "running",
         startedAt: now - 252_000,
       },
@@ -41,7 +41,7 @@ describe("TUI task tree frame", () => {
         kind: "subagent",
         name: "spawn_agent",
         label: "audit auth flows",
-        ownerScopeId: "root",
+        ownerScopeId: "turn-1",
         status: "running",
         startedAt: now - 363_000,
       },
@@ -65,7 +65,7 @@ describe("TUI task tree frame", () => {
         kind: "scheduled",
         name: "poll",
         label: "deploy-status",
-        ownerScopeId: "root",
+        ownerScopeId: "turn-1",
         status: "scheduled",
         startedAt: now,
         wakeAt: now + 60_000,
@@ -75,7 +75,7 @@ describe("TUI task tree frame", () => {
     harness.runner.emitEvent({
       type: "usage",
       ...usageFields(14_400),
-      origin: { kind: "task", taskId: "t4", ownerScopeId: "root" },
+      origin: { kind: "task", taskId: "t4", ownerScopeId: "turn-1" },
     });
     harness.runner.emitEvent({
       type: "step",

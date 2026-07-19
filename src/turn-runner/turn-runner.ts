@@ -9,7 +9,7 @@ import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
-import { stripSyntheticUserMessages, syntheticUserMessage } from "../lib/synthetic-user-message.js";
+import { stripSystemReminders, systemReminder } from "../lib/system-reminder.js";
 
 import { assistantText } from "../core/serializer.js";
 import { classifyRoute } from "../model-routing/classifier.js";
@@ -90,7 +90,7 @@ import {
   createRecallMemorySystemPromptLayer,
   createSourceOfTruthSystemPromptLayer,
   createStateMachineSystemPromptLayer,
-  heldAskReminder,
+  withheldAskReminder,
   parkNudge,
 } from "./prompts.js";
 import {
@@ -151,7 +151,7 @@ import {
 import { addUsage, addUsageByModel } from "./usage-accounting.js";
 import { SystemRuntimeClock, type RuntimeClock } from "./runtime-clock.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
-import type { TaskEvent, TaskId, TaskSettlement, TaskSnapshot } from "../tasks/types.js";
+import type { ScopeId, TaskEvent, TaskId, TaskSettlement, TaskSnapshot } from "../tasks/types.js";
 import { createShellStateHandle, type ShellStateHandle } from "./shell-state-handle.js";
 import type { StateMachineSession } from "../types/state-machine.js";
 import {
@@ -172,7 +172,7 @@ interface TurnRunnerDependencies {
 
 interface ChildToolContext {
   /** Scope that owns tasks created by this child. */
-  ownerScopeId: string;
+  ownerScopeId: ScopeId;
   /** Session identity used by recall_memory. */
   memorySessionId?: string;
   /** Live caller transcript used by recursive fork_context spawns. */
@@ -373,6 +373,8 @@ export class TurnRunner {
   private readonly stateTasks = new Map<TaskId, StateTaskMetadata>();
   /** One-shot context attached to the first real parent pass after lost-task recovery. */
   private recoveredTaskReminder?: string;
+  /** Ask withheld by the quiescence gate; re-surfaced on the parent's next pass. */
+  private withheldAskQuestions?: TurnQuestion[];
   /** Legacy persisted user-lane projection retained until the next loop owns it. */
   private hydratedQueuedCommands?: TurnCommand[];
   /** Inputs waiting for the single parent slot between sequential passes. */
@@ -391,7 +393,7 @@ export class TurnRunner {
   /** Monotonic root-scope suffix; each public turn owns one root scope. */
   private nextRootScope = 1;
   /** Scope currently accepting state tasks. */
-  private activeRootScopeId?: string;
+  private activeRootScopeId?: `turn-${number}`;
   /** Tools are built once at the public-turn boundary and reused by every parent pass. */
   private turnTools?: AgentTool[];
   /** Set by interrupt so the loop's sole exit can short-circuit pending-work computation. */
@@ -789,7 +791,7 @@ export class TurnRunner {
     this.interruptReason = undefined;
     this.interruptCleanup = undefined;
     this.terminalEmitted = false;
-    this.activeRootScopeId = `turn-${this.nextRootScope++}`;
+    this.activeRootScopeId = `turn-${this.nextRootScope++}` as const;
     this.turnTools = this.createTools(this.requireRunnerState().mode).tools;
     this.enqueueParentInput(
       command.type === "wake" ? { type: "wake" } : { type: "user_command", command },
@@ -857,11 +859,10 @@ export class TurnRunner {
         const result = await this.processParentLoopInput(input);
         if (result?.type === "ask") {
           if (this.taskManager.pendingWork().kind === "open") {
-            this.enqueueParentInput({
-              type: "user_command",
-              command: { type: "prompt", message: heldAskReminder(), behavior: "steer" },
-              continuation: true,
-            });
+            // Terminal ⇒ quiescent forbids delivering the ask now. Keep the
+            // questions just long enough to remind the parent on its next pass
+            // (settlements guarantee one); the parent re-asks if still relevant.
+            this.withheldAskQuestions = result.questions;
           } else {
             questions = result.questions;
           }
@@ -1249,7 +1250,7 @@ export class TurnRunner {
       command.behavior === "steer" &&
       this.taskManager.pendingWork().kind === "open"
     ) {
-      prompt = `${syntheticUserMessage(dedent`
+      prompt = `${systemReminder(dedent`
         <system-reminder>
         The user sent this as a steer message while state-machine work is running.
         If the state-machine should change course, call select_state_machine_state to restart the current state with updated input or choose a different state.
@@ -1643,7 +1644,7 @@ export class TurnRunner {
     const loopWarning = this.repeatedSelectionLoopWarning(stateName);
     return this.enforceParentTransition(
       (retryInstruction) =>
-        syntheticUserMessage(dedent`
+        systemReminder(dedent`
         The state "${stateName}" finished.
 
         ${toXML({
@@ -1741,8 +1742,8 @@ export class TurnRunner {
   protected async createSpawnedSubagentRun(
     publicSpec: SubagentSpec,
     taskId: TaskId,
-    ownerScopeId: string,
-    childScopeId: string,
+    ownerScopeId: ScopeId,
+    childScopeId: `task:${TaskId}`,
     forkSource?: NonNullable<SubagentExecutionContext["forkSource"]>,
     callerModelSetting?: string,
   ): Promise<SubagentRun> {
@@ -1806,7 +1807,7 @@ export class TurnRunner {
   }
 
   /** Protected so test probes can supply a scope when driving tools outside a turn. */
-  protected requireRootScope(): string {
+  protected requireRootScope(): ScopeId {
     if (!this.activeRootScopeId) throw new Error("No turn root scope is active.");
     return this.activeRootScopeId;
   }
@@ -2267,7 +2268,20 @@ export class TurnRunner {
     };
   }
 
-  protected async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+  /**
+   * Pass-prep applied to EVERY parent pass, including harness overrides of
+   * `runAgentWorker` (they must call this first). One-shot reminders that must
+   * reach "whatever parent pass runs next" live here.
+   */
+  protected prepareParentPassInput(input: AgentWorkerInput): AgentWorkerInput {
+    const withheldAsk = this.withheldAskQuestions;
+    this.withheldAskQuestions = undefined;
+    if (!withheldAsk) return input;
+    return { ...input, prompt: `${withheldAskReminder(withheldAsk)}\n\n${input.prompt}` };
+  }
+
+  protected async runAgentWorker(rawInput: AgentWorkerInput): Promise<AgentWorkerResult> {
+    const input = this.prepareParentPassInput(rawInput);
     if (this.parentAgentRunning) {
       throw new Error("Cannot start a parent agent while another parent agent is active.");
     }
@@ -3145,7 +3159,7 @@ function routerStepObservation(
       (block): block is Extract<(typeof content)[number], { type: "text" }> =>
         block.type === "text",
     )
-    .map((block) => stripSyntheticUserMessages(block.text))
+    .map((block) => stripSystemReminders(block.text))
     .filter(Boolean)
     .join("\n")
     .trim();

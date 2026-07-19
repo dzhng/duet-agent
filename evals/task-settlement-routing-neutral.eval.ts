@@ -38,7 +38,7 @@ describe("task settlement routing neutrality", () => {
           kind: "tool",
           name: "bash",
           label: KEYWORD,
-          ownerScopeId: "root",
+          ownerScopeId: "turn-1",
           status: "completed",
           startedAt: 1,
         },

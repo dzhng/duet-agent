@@ -8,7 +8,7 @@ function descriptor(id: `t${number}`, status: TaskStatus, wakeAt?: number): Task
     kind: status === "scheduled" ? "scheduled" : "tool",
     name: id,
     label: id,
-    ownerScopeId: "root",
+    ownerScopeId: "turn-1",
     status,
     startedAt: 0,
     ...(wakeAt === undefined ? {} : { wakeAt }),

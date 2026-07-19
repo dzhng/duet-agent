@@ -15,7 +15,7 @@ function task(
     kind: "tool",
     name: "bash",
     label: "npm test",
-    ownerScopeId: "root",
+    ownerScopeId: "turn-1",
     status,
     startedAt: NOW - 252_000,
     ...overrides,
@@ -64,7 +64,7 @@ describe("task tree projection", () => {
       {
         type: "usage",
         ...usageFields(14_400),
-        origin: { kind: "task", taskId: "t4", ownerScopeId: "root" },
+        origin: { kind: "task", taskId: "t4", ownerScopeId: "turn-1" },
       },
       { type: "step", step: { type: "text", text: "reviewing audit results…" } },
     ] satisfies NonNullable<TaskTreeProjectionInput["events"]>;
@@ -121,7 +121,7 @@ describe("task tree projection", () => {
         {
           type: "usage",
           ...usageFields(13_500),
-          origin: { kind: "task", taskId: "t4", ownerScopeId: "root" },
+          origin: { kind: "task", taskId: "t4", ownerScopeId: "turn-1" },
         },
       ],
     });

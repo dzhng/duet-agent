@@ -41,7 +41,8 @@ export class TestTurnRunner extends TurnRunner {
     return this.createTools("agent", undefined, false).tools.map((tool) => tool.name);
   }
 
-  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+  protected override async runAgentWorker(rawInput: AgentWorkerInput): Promise<AgentWorkerResult> {
+    const input = this.prepareParentPassInput(rawInput);
     const result = this.worker
       ? await this.worker(input, () => this.runDefaultWorker(input))
       : await this.runDefaultWorker(input);

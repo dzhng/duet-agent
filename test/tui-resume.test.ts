@@ -87,7 +87,7 @@ describe("TUI resume invariance", () => {
             kind: "subagent",
             name: "spawn_agent",
             label: "audit auth flows",
-            ownerScopeId: "root",
+            ownerScopeId: "turn-1",
             status: "running",
             startedAt: now - 10_000,
           },

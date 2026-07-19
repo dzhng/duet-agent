@@ -907,7 +907,7 @@ describe("TurnRunner active turns", () => {
           kind: "scheduled" as const,
           name: "poll_email_reply",
           label: "Wait for poll_email_reply",
-          ownerScopeId: "turn-1",
+          ownerScopeId: "turn-1" as const,
           status: "scheduled" as const,
           startedAt: Date.now(),
           wakeAt,

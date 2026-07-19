@@ -1,6 +1,6 @@
 import type { ImageContent, TextContent, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { RouterSwitch } from "../model-routing/router.js";
-import type { TaskDescriptor, TaskId, TaskSettlement } from "../tasks/types.js";
+import type { ScopeId, TaskDescriptor, TaskId, TaskSettlement } from "../tasks/types.js";
 
 export type { TaskDescriptor, TaskId, TaskSettlement, TaskSnapshot } from "../tasks/types.js";
 
@@ -622,7 +622,7 @@ export type TurnEventOrigin =
       /** Stable identity of the task whose execution produced the event. */
       taskId: TaskId;
       /** Scope that owns and cascade-stops the task. */
-      ownerScopeId: string;
+      ownerScopeId: ScopeId;
     };
 
 /** Emitted once after a task id is allocated and its descriptor becomes observable. */

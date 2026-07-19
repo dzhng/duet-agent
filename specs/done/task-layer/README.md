@@ -61,19 +61,25 @@ that sketch.
    throws on a second control result per pass. Admin tools (`task_output`, `task_stop`)
    never create task descriptors.
 4. **The ask gate:** an `ask` terminal may only be emitted when no in-process task exists;
-   an ask under open work is withheld and the parent is re-prompted (`heldAskReminder`).
+   an ask under open work is stashed and its questions resurface as a one-shot reminder
+   (`withheldAskReminder`, via `prepareParentPassInput`) on whichever parent pass runs
+   next — mirroring the state-machine re-prompt pattern.
 5. **Structured concurrency:** every task has an owner scope; scope close cascade-stops
    descendants (including the child's `:sub:` memory scratch); depth 2 is enforced in the
    kernel.
-6. **Machine-generated user-role injections carry the synthetic sentinel**
-   (`src/lib/synthetic-user-message.ts`) and are stripped from observer and step-trigger
-   projections — the memory system must never record plumbing as user statements.
+6. **`<system-reminder>` is the one harness tag.** Every machine injection is a single
+   (nesting-safe) reminder block, and observer + step-trigger projections strip reminder
+   segments from any role (`src/lib/system-reminder.ts`) — the memory system must never
+   record plumbing as user statements. (The earlier `<duet-synthetic-user-message>`
+   sentinel was deleted by user decision at the choices audit.)
 7. **Internal re-prompt passes are continuations:** they skip `ModelRouter.noteTurnStart`
    and the memory observer; the observer runs once per real turn at quiescence plus under
    compaction pressure.
 8. **RPC processes exit at their terminal regardless of host stdin** — the driver destroys
    the stdin reader at chain completion. Task and terminal events are lossless and
-   ordered on the wire; heartbeats are a droppable, coalescing lane.
+   ordered on the wire; heartbeats are a droppable, coalescing lane emitted
+   unconditionally from RPC start to terminal — silence past the interval always means a
+   wedged process.
 9. **Test knobs don't ship:** clock injection and the scheduling floor are
    constructor-level dependencies (`TurnRunnerDependencies`), not config; the wait budget
    is deliberately public config (`taskWaitBudgetMs`) with a per-call `timeout` override.
@@ -82,7 +88,8 @@ that sketch.
 
 ## Pointers into the code
 
-- Kernel: `src/tasks/task-manager.ts` (settlement FIFO, finished-barriers, scopes,
+- Kernel: `src/tasks/task-manager.ts` (settlement FIFO, finished-barriers, `ScopeId`-typed
+  scopes,
   budget race, `recover`→lost), `src/tasks/quiescence.ts`, `src/tasks/types.ts` (the one
   task shape reused by protocol, persistence, TUI). Tests: `test/task-manager.test.ts`,
   `test/quiescence.test.ts`.

@@ -3,7 +3,7 @@ import type { ImageContent, Model, TextContent, Usage } from "@earendil-works/pi
 import { nanoid } from "nanoid";
 import { Type } from "typebox";
 import { generateStructuredOutput } from "../core/structured-output.js";
-import { stripSyntheticUserMessages } from "../lib/synthetic-user-message.js";
+import { stripSystemReminders } from "../lib/system-reminder.js";
 import {
   applyEvictionHorizon,
   calculateWireBytes,
@@ -810,25 +810,29 @@ export function stripObservationalContextMessages(messages: AgentMessage[]): Age
   return messages.filter((message) => !isObservationalContextMessage(message));
 }
 
-/** Remove runtime-owned user-role segments only from the observer's transcript projection. */
-function stripSyntheticUserMessagesForObserver(messages: AgentMessage[]): AgentMessage[] {
+/** Remove `<system-reminder>` segments (any role) from the observer's transcript projection. */
+function stripSystemRemindersForObserver(messages: AgentMessage[]): AgentMessage[] {
   return messages
-    .map(stripSyntheticUserMessageSegments)
+    .map(stripSystemReminderSegments)
     .filter((message): message is AgentMessage => message !== undefined);
 }
 
-function stripSyntheticUserMessageSegments(message: AgentMessage): AgentMessage | undefined {
-  if (message.role !== "user") return message;
-  if (typeof message.content === "string") {
-    const content = stripSyntheticUserMessages(message.content);
-    return content ? { ...message, content } : undefined;
+function stripSystemReminderSegments(message: AgentMessage): AgentMessage | undefined {
+  if (!("content" in message)) return message;
+  const { content } = message;
+  if (typeof content === "string") {
+    const stripped = stripSystemReminders(content);
+    // Same-shape rebuild; the cast re-asserts the union member the spread widened.
+    return stripped ? ({ ...message, content: stripped } as AgentMessage) : undefined;
   }
-  const content = message.content
+  const strippedBlocks = content
     .map((block) =>
-      block.type === "text" ? { ...block, text: stripSyntheticUserMessages(block.text) } : block,
+      block.type === "text" ? { ...block, text: stripSystemReminders(block.text) } : block,
     )
     .filter((block) => block.type !== "text" || block.text.length > 0);
-  return content.length > 0 ? { ...message, content } : undefined;
+  return strippedBlocks.length > 0
+    ? ({ ...message, content: strippedBlocks } as AgentMessage)
+    : undefined;
 }
 
 function isObservationalContextMessage(message: AgentMessage): boolean {
@@ -1658,7 +1662,7 @@ function getLastObservedMessageIndex(
 }
 
 export function agentMessagesToRaw(messages: AgentMessage[]): RawMemoryMessage[] {
-  return stripSyntheticUserMessagesForObserver(messages)
+  return stripSystemRemindersForObserver(messages)
     .map((message) => agentMessageToRaw(message))
     .filter((message): message is RawMemoryMessage => Boolean(message));
 }

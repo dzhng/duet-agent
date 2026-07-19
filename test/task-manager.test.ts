@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { createTaskManager, type TaskManager } from "../src/tasks/task-manager.js";
-import type { TaskDescriptor, TaskEvent } from "../src/tasks/types.js";
+import type { ScopeId, TaskDescriptor, TaskEvent } from "../src/tasks/types.js";
 import { createFakeTaskWork, type FakeTaskWork } from "./helpers/fake-task-work.js";
 import { ManualRuntimeClock } from "./helpers/manual-runtime-clock.js";
 
 function startWork(
   manager: TaskManager,
   work: FakeTaskWork<string>,
-  ownerScopeId = "root",
-  parentScopeId?: string,
+  ownerScopeId: ScopeId = "turn-1",
+  parentScopeId?: ScopeId,
 ) {
   return manager.start({
     kind: "tool",
@@ -32,7 +32,7 @@ describe("TaskManager", () => {
       kind: "scheduled",
       name: "later",
       label: "Later",
-      ownerScopeId: "root",
+      ownerScopeId: "turn-1",
       wakeAt: 10,
     });
     expect(manager.nextTaskId()).toBe(2);
@@ -188,13 +188,13 @@ describe("TaskManager", () => {
     const root = createFakeTaskWork();
     const child = createFakeTaskWork();
     const grandchild = createFakeTaskWork();
-    startWork(manager, root, "root");
-    startWork(manager, child, "child", "root");
-    startWork(manager, grandchild, "grandchild", "child");
+    startWork(manager, root, "turn-1");
+    startWork(manager, child, "task:t101", "turn-1");
+    startWork(manager, grandchild, "task:t102", "task:t101");
     await started();
 
     let closed = false;
-    const close = manager.closeScope("root", "scope done").then(() => {
+    const close = manager.closeScope("turn-1", "scope done").then(() => {
       closed = true;
     });
     await started();
@@ -220,7 +220,7 @@ describe("TaskManager", () => {
 
   test("accepts scope depth two and centrally rejects depth three", () => {
     const manager = createTaskManager({ clock: new ManualRuntimeClock() });
-    const scheduled = (ownerScopeId: string, parentScopeId?: string) =>
+    const scheduled = (ownerScopeId: ScopeId, parentScopeId?: ScopeId) =>
       manager.start({
         kind: "scheduled",
         name: ownerScopeId,
@@ -230,10 +230,10 @@ describe("TaskManager", () => {
         wakeAt: 100,
       });
 
-    expect(scheduled("root").id).toBe("t1");
-    expect(scheduled("child", "root").id).toBe("t2");
-    expect(scheduled("grandchild", "child").id).toBe("t3");
-    expect(() => scheduled("too-deep", "grandchild")).toThrow(
+    expect(scheduled("turn-1").id).toBe("t1");
+    expect(scheduled("task:t101", "turn-1").id).toBe("t2");
+    expect(scheduled("task:t102", "task:t101").id).toBe("t3");
+    expect(() => scheduled("task:t103", "task:t102")).toThrow(
       "Task scope depth 3 exceeds maximum 2",
     );
     expect(manager.list().map(({ id }) => id)).toEqual(["t1", "t2", "t3"]);
@@ -249,7 +249,7 @@ describe("TaskManager", () => {
       kind: "scheduled",
       name: "wake",
       label: "Wake later",
-      ownerScopeId: "root",
+      ownerScopeId: "turn-1",
       wakeAt: 500,
     });
     const reaped: string[] = [];
@@ -285,7 +285,7 @@ describe("TaskManager", () => {
         kind: "subagent",
         name: "orphan",
         label: "Orphaned process",
-        ownerScopeId: "root",
+        ownerScopeId: "turn-1",
         status: "running",
         startedAt: 100,
       },
@@ -294,7 +294,7 @@ describe("TaskManager", () => {
         kind: "scheduled",
         name: "wake",
         label: "Wake later",
-        ownerScopeId: "root",
+        ownerScopeId: "turn-1",
         status: "scheduled",
         startedAt: 200,
         wakeAt: 2_000,
@@ -311,7 +311,7 @@ describe("TaskManager", () => {
         kind: "scheduled",
         name: "next",
         label: "Next task",
-        ownerScopeId: "root",
+        ownerScopeId: "turn-1",
         wakeAt: 3_000,
       }).id,
     ).toBe("t9");
@@ -326,7 +326,7 @@ describe("TaskManager", () => {
           kind: "subagent",
           name: "orphan",
           label: "Orphaned process",
-          ownerScopeId: "root",
+          ownerScopeId: "turn-1",
           status: "running",
           startedAt: 100,
         },

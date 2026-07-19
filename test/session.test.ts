@@ -1,4 +1,6 @@
 import { mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
+import { ManualRuntimeClock } from "./helpers/manual-runtime-clock.js";
+import type { RuntimeClock } from "../src/turn-runner/runtime-clock.js";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -166,12 +168,12 @@ const turnState = createStateMachineState("draft");
 let tempDirs: string[] = [];
 let sessions: Session[] = [];
 
-async function createSession(runner: FakeTurnRunner): Promise<Session> {
+async function createSession(runner: FakeTurnRunner, clock?: RuntimeClock): Promise<Session> {
   const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
   tempDirs.push(tempDir);
   const session = new Session(
     { model: "anthropic:claude-opus-4-7" },
-    { id: "session_test", runner: runner, sessionPath: tempDir },
+    { id: "session_test", runner: runner, sessionPath: tempDir, ...(clock ? { clock } : {}) },
   );
   sessions.push(session);
   return session;
@@ -281,9 +283,10 @@ describe("Session", () => {
     expect(disposed).toBe(true);
   });
 
-  test("captures every task lifecycle and output event for persistence", async () => {
+  test("persists lifecycle transitions immediately and debounces output bursts", async () => {
+    const clock = new ManualRuntimeClock(0);
     const runner = new FakeTurnRunner([]);
-    const session = await createSession(runner);
+    const session = await createSession(runner, clock);
     let captures = 0;
     const probe = session as unknown as { persistLatestState(): Promise<void> };
     probe.persistLatestState = async () => {
@@ -302,7 +305,14 @@ describe("Session", () => {
         startedAt: 1,
       },
     });
+    // A burst of output chunks coalesces into one trailing-edge write; each
+    // fired write is still a complete valid snapshot.
     runner.emit({ type: "task_output", taskId: "t1", chunk: "working" });
+    runner.emit({ type: "task_output", taskId: "t1", chunk: "still working" });
+    runner.emit({ type: "task_output", taskId: "t1", chunk: "almost" });
+    expect(captures).toBe(1);
+    await clock.advanceBy(1_000);
+    expect(captures).toBe(2);
     runner.emit({
       type: "task_settled",
       settlement: { id: "t1", status: "lost", settledAt: 2 },

@@ -89,7 +89,7 @@ class ObserverCadenceRunner extends TurnRunner {
       kind: "tool",
       name: "fixture",
       label: name,
-      ownerScopeId: "root",
+      ownerScopeId: "turn-1",
       execute: async () => {
         await delay(delayMs);
         return `${name} done`;

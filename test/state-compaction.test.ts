@@ -224,7 +224,7 @@ describe("compactTurnState", () => {
           kind: "tool",
           name: "bash",
           label: "Run the test suite",
-          ownerScopeId: "root",
+          ownerScopeId: "turn-1",
           status: "running",
           startedAt: 1_000,
         },
@@ -258,7 +258,7 @@ describe("compactTurnState", () => {
       kind: "tool",
       name: "bash",
       label: "long task",
-      ownerScopeId: "root",
+      ownerScopeId: "turn-1",
       execute: async ({ onOutput }) => {
         onOutput("BUFFER_SENTINEL_8Q2");
         return "done";

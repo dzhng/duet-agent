@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { evaluateStepTriggers } from "../src/model-routing/step-triggers.js";
-import { syntheticUserMessage } from "../src/lib/synthetic-user-message.js";
+import { systemReminder } from "../src/lib/system-reminder.js";
 
 describe("step-output routing triggers", () => {
   test("image blocks always request classification and make image presence sticky", () => {
@@ -27,7 +27,7 @@ describe("step-output routing triggers", () => {
       evaluateStepTriggers(
         {
           blockTypes: ["text"],
-          text: syntheticUserMessage("A task settled while you were working."),
+          text: systemReminder("A task settled while you were working."),
         },
         triggers,
       ),

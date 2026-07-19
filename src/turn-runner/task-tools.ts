@@ -1,9 +1,9 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static, type TSchema } from "typebox";
 import type { RuntimeClock } from "./runtime-clock.js";
-import { syntheticUserMessage } from "../lib/synthetic-user-message.js";
+import { systemReminder } from "../lib/system-reminder.js";
 import type { TaskManager } from "../tasks/task-manager.js";
-import type { TaskId, TaskSnapshot } from "../tasks/types.js";
+import type { ScopeId, TaskId, TaskSnapshot } from "../tasks/types.js";
 import type { SubagentResult, SubagentRun, SubagentSpec } from "./subagent.js";
 
 export const spawnAgentSchema = Type.Object({
@@ -37,13 +37,13 @@ export interface SpawnAgentDependencies {
   /** Runtime clock used by the shared B1 wording. */
   clock: RuntimeClock;
   /** Scope of the agent that called spawn_agent. */
-  ownerScopeId: () => string;
+  ownerScopeId: () => ScopeId;
   /** Build the child only after its stable task identity and scope exist. */
   createRun(input: {
     spec: SubagentSpec;
     taskId: TaskId;
-    ownerScopeId: string;
-    childScopeId: string;
+    ownerScopeId: ScopeId;
+    childScopeId: `task:${TaskId}`;
   }): Promise<SubagentRun>;
   /** Remove child-scoped scratch after all work in its scope has unwound. */
   dropScratch?(taskId: TaskId): Promise<void>;
@@ -78,7 +78,7 @@ export function createSpawnAgentTool(
         label: params.prompt,
         ownerScopeId,
         execute: async ({ signal, onOutput }) => {
-          const childScopeId = `task:${handle.id}`;
+          const childScopeId = `task:${handle.id}` as const;
           try {
             deps.taskManager.openScope(childScopeId, ownerScopeId);
           } catch (error) {
@@ -173,7 +173,7 @@ export interface BackgroundableDependencies {
   /** Runtime time source used for stable elapsed wording. */
   clock: RuntimeClock;
   /** Scope whose closure must stop the task. */
-  ownerScopeId: () => string;
+  ownerScopeId: () => ScopeId;
   /** Convert validated tool arguments into the human-facing task label. */
   label: (params: Record<string, unknown>) => string;
   /** Register whether a new task is immediately deliverable or still racing foreground. */
@@ -290,7 +290,7 @@ export function wrapBackgroundable<TParameters extends TSchema, TDetails>(
 /** B1: the only source for foreground wait-budget conversion wording. */
 export function stillRunningNotice(snapshot: TaskSnapshot, now = Date.now()): string {
   const recent = recentOutput(snapshot);
-  return syntheticUserMessage(
+  return systemReminder(
     [
       `Task ${snapshot.descriptor.id} is still running (${taskDescription(snapshot)}, ${formatElapsed(snapshot, now)} elapsed).`,
       "Recent output:",
@@ -303,7 +303,7 @@ export function stillRunningNotice(snapshot: TaskSnapshot, now = Date.now()): st
 
 /** B2: the only source for explicit background-start wording. */
 export function startedInBackgroundNotice(snapshot: TaskSnapshot): string {
-  return syntheticUserMessage(
+  return systemReminder(
     [
       `Started background task ${snapshot.descriptor.id} (${taskDescription(snapshot)}).`,
       `You'll be nudged when it settles; task_output("${snapshot.descriptor.id}") shows live progress.`,
@@ -321,7 +321,7 @@ export function settlementNotice(settlements: readonly TaskSnapshot[]): string {
     const inline = settlementInline(snapshot);
     return `- ${snapshot.descriptor.id} (${taskDescription(snapshot)}) ${status}${inline ? ` — ${inline}` : ""}. Full output: task_output("${snapshot.descriptor.id}")`;
   });
-  return syntheticUserMessage(
+  return systemReminder(
     [
       "<system-reminder>",
       `${settlements.length} ${settlements.length === 1 ? "task" : "tasks"} settled while you were working:`,
@@ -343,7 +343,7 @@ export function lostTaskRecoveryReminder(tasks: readonly TaskSnapshot[]): string
       ...output.map((chunk) => `  Last output: ${chunk}`),
     ];
   });
-  return syntheticUserMessage(
+  return systemReminder(
     [
       "<system-reminder>",
       `${tasks.length} ${tasks.length === 1 ? "task was" : "tasks were"} lost during session recovery:`,

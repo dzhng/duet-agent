@@ -194,7 +194,12 @@ describe("TurnRunner cutover seams", () => {
           questions: [{ question: "Premature?", options: [{ label: "Yes" }] }],
         });
       }
-      if (parentPass === 3) return completedWorker(input, { type: "none" });
+      if (parentPass === 3) {
+        return completedWorker(input, {
+          type: "select_state_machine_state",
+          decision: { state: "done" },
+        });
+      }
       return completedWorker(input, {
         type: "ask_user_question",
         questions: [{ question: "Ready now?", options: [{ label: "Yes" }] }],
@@ -208,14 +213,23 @@ describe("TurnRunner cutover seams", () => {
     await waitFor(() => runner.stateAgentInputs.length === 1);
     const steered = runner.turn({ type: "prompt", message: "ask me", behavior: "steer" });
 
-    await waitFor(() => parentPrompts.some((prompt) => prompt.includes("NOT delivered")));
-    const heldAskPrompt = parentPrompts.find((prompt) => prompt.includes("NOT delivered"));
-    expect(heldAskPrompt).toContain("task_output");
-    expect(heldAskPrompt).toContain("task_stop");
-    expect(parentContinuations[parentPrompts.indexOf(heldAskPrompt ?? "")]).toBe(true);
+    // The gated ask produces no immediate reminder pass and no terminal; the
+    // withheld question resurfaces on the parent's next pass after settlement.
+    await waitFor(() => parentPass === 2);
+    expect(
+      parentPrompts.some((prompt) => prompt.includes("background tasks were still running")),
+    ).toBe(false);
     expect(terminalEvents(events)).toEqual([]);
 
     resolveState();
+    await waitFor(() =>
+      parentPrompts.some((prompt) => prompt.includes("background tasks were still running")),
+    );
+    const heldAskPrompt = parentPrompts.find((prompt) =>
+      prompt.includes("background tasks were still running"),
+    );
+    expect(heldAskPrompt).toContain("Premature?");
+    expect(parentContinuations[parentPrompts.indexOf(heldAskPrompt ?? "")]).toBe(true);
     const [terminal, steeredTerminal] = await Promise.all([turn, steered]);
     expect(steeredTerminal).toBe(terminal);
     expect(terminal).toMatchObject({
