@@ -40,10 +40,6 @@ export interface SubagentSpec {
 /** Terminal outcome consumed by the sub-agent's owner after one prompt run. */
 export type SubagentResult =
   | { type: "complete"; result?: string }
-  | {
-      type: "ask";
-      questions: Extract<TurnRunnerControlResult, { type: "ask_user_question" }>["questions"];
-    }
   | { type: "failed"; error: string }
   | { type: "interrupted" };
 
@@ -202,8 +198,8 @@ export function createSubagentExecutor(deps: SubagentExecutorDeps) {
     let interruptedReason: string | undefined;
     const finish = (): SubagentResult => {
       const control = controls[0] ?? { type: "none" as const };
-      if (control.type === "ask_user_question") {
-        return { type: "ask", questions: control.questions };
+      if (control.type !== "none") {
+        return { type: "failed", error: `Sub-agent emitted unsupported control: ${control.type}` };
       }
       if (agent.state.errorMessage) {
         return { type: "failed", error: agent.state.errorMessage };

@@ -374,6 +374,7 @@ const STATE_KIND_GLYPHS: Record<string, string> = {
   script: "$",
   poll: "⟳",
   timer: "⏲",
+  park: "◫",
   terminal: "■",
 };
 
@@ -406,6 +407,7 @@ function summarizeStateRow(state: Record<string, unknown>): string {
     if (wakeAt) return `wakes ${formatWakeAt(wakeAt)}`;
     return "";
   }
+  if (kind === "park") return "Waiting for parent-driven input";
   if (kind === "terminal") {
     const status = stringField(state, "status") ?? "";
     const reason = stringField(state, "reason");

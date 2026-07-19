@@ -186,6 +186,9 @@ export class StateMachineExecutionHarness {
       this.session = settled.session;
       return Promise.resolve(settled.outcome);
     }
+    if ("park" in work) {
+      throw new Error("Park has no execution outcome; test it through TurnRunner.");
+    }
     if ("subagent" in work.run) return this.runAgent(work.run.subagent, work.run.stateName);
     return this.runShell(work.run.shell, work.run.stateName, work.run.pollPolicy);
   }

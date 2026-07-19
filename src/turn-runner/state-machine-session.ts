@@ -1,5 +1,6 @@
 import type {
   StateMachineDefinition,
+  StateMachineParkState,
   StateMachinePollState,
   StateMachineProgress,
   StateMachineSession,
@@ -9,7 +10,6 @@ import type {
   StateMachineTimerState,
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE as INTERRUPTED_STATE } from "../types/state-machine.js";
-import type { TurnQuestion } from "../types/protocol.js";
 import type { StateMachineRunnerDecision } from "./tools.js";
 
 /**
@@ -73,37 +73,13 @@ export function isWaitingOnScheduledState(stateMachine: StateMachineSession | un
   return Boolean(currentScheduledState(stateMachine) && !stateMachine?.terminal);
 }
 
-/**
- * True when an agent state called `ask_user_question` and the machine is still
- * suspended at that state — i.e. scanning history from the tail, the first
- * state-lifecycle event is `state_asked_user`, with no later state start,
- * completion, failure, interruption, or terminal.
- *
- * When this holds, the parent owes a `select_state_machine_state` to advance
- * the machine: the user's answer comes back as an ordinary parent prompt, and
- * if the parent replies in text without selecting a state the machine would
- * silently stall at the asking state. The turn runner uses this to enforce the
- * transition the same way it does after a state completes. Bookkeeping events
- * that don't move the machine (`runner_decided`, `state_definition_updated`,
- * `state_machine_started`) are skipped as noise; a real lifecycle move ends
- * the wait.
- */
-export function isAwaitingUserAnswer(stateMachine: StateMachineSession | undefined): boolean {
-  if (!stateMachine || stateMachine.terminal) return false;
-  for (let i = stateMachine.history.length - 1; i >= 0; i--) {
-    const event = stateMachine.history[i];
-    if (event.type === "state_asked_user") return true;
-    if (
-      event.type === "state_started" ||
-      event.type === "state_completed" ||
-      event.type === "state_failed" ||
-      event.type === "state_interrupted" ||
-      event.type === "state_machine_completed"
-    ) {
-      return false;
-    }
-  }
-  return false;
+/** The active inert park, if the machine currently holds without execution or a wake. */
+export function currentParkState(
+  stateMachine: StateMachineSession | undefined,
+): StateMachineParkState | undefined {
+  if (!stateMachine?.currentState || stateMachine.terminal) return undefined;
+  const state = findState(stateMachine, stateMachine.currentState);
+  return state?.kind === "park" ? state : undefined;
 }
 
 export function recordRunnerDecision(
@@ -266,7 +242,6 @@ export function consecutivePollGateSuccesses(
       (event.type === "state_started" ||
         event.type === "state_failed" ||
         event.type === "state_interrupted" ||
-        event.type === "state_asked_user" ||
         event.type === "state_definition_updated") &&
       event.state !== pollName
     ) {
@@ -282,8 +257,9 @@ export function consecutivePollGateSuccesses(
  * between — before the runner injects a loop warning into the next decision
  * prompt. Set above a normal retry-with-correction streak (re-running a state
  * two or three times with a fixed `override.prompt` is legitimate) so the
- * warning targets idle "holding" loops where the parent re-selects a state to
- * "keep waiting" — which never suspends anything — rather than productive retries.
+ * warning targets idle "holding" loops where the parent re-selects executable
+ * work to "keep waiting" rather than productive retries. Park states are
+ * exempt because re-selecting the same park is a legal no-work hold.
  */
 export const REPEATED_SELECTION_LOOP_THRESHOLD = 5;
 
@@ -305,11 +281,10 @@ export const REPEATED_SELECTION_LOOP_WINDOW_MS = 15 * 60 * 1000;
  * "holding" state again and again to "keep waiting" — a no-op, since selecting a
  * state runs it immediately rather than suspending the machine. Unlike
  * `consecutivePollGateSuccesses` (which counts completions of an always-true
- * poll), this counts `state_started` events for any state kind, because the
- * idle loop is driven by the parent re-selecting, not by a poll's exit code. A
- * lifecycle event naming a *different* state means the machine actually moved
- * on, so the streak resets and a normal plan that revisits a state after doing
- * other work never accumulates.
+ * poll), this telemetry counts `state_started` events for every state kind;
+ * the trip policy separately exempts park. A lifecycle event naming a
+ * *different* state means the machine actually moved on, so the streak resets
+ * and a normal plan that revisits a state after doing other work never accumulates.
  */
 export function repeatedStateSelectionStreak(
   stateMachine: StateMachineSession,
@@ -334,7 +309,6 @@ export function repeatedStateSelectionStreak(
       (event.type === "state_completed" ||
         event.type === "state_failed" ||
         event.type === "state_interrupted" ||
-        event.type === "state_asked_user" ||
         event.type === "state_definition_updated" ||
         event.type === "state_machine_reactivated") &&
       event.state !== stateName
@@ -352,12 +326,14 @@ export function repeatedStateSelectionStreak(
  * read as an idle hot loop, or undefined otherwise. This is the single source of
  * truth for the trip condition — the turn runner uses the returned count to word
  * its loop-warning reminder, and tests assert against this same function rather
- * than re-deriving the threshold/window comparison.
+ * than re-deriving the threshold/window comparison. Park always returns
+ * undefined because repeated park selection deliberately performs no work.
  */
 export function repeatedSelectionLoopCount(
   stateMachine: StateMachineSession,
   stateName: string,
 ): number | undefined {
+  if (findState(stateMachine, stateName)?.kind === "park") return undefined;
   const { count, spanMs } = repeatedStateSelectionStreak(stateMachine, stateName);
   if (count < REPEATED_SELECTION_LOOP_THRESHOLD || spanMs > REPEATED_SELECTION_LOOP_WINDOW_MS) {
     return undefined;
@@ -419,24 +395,6 @@ export function recordStateInterrupted(
       state,
       reason,
       output,
-    }),
-    updatedAt: now,
-  };
-}
-
-export function recordStateAskedUser(
-  stateMachine: StateMachineSession,
-  state: string,
-  questions: TurnQuestion[],
-): StateMachineSession {
-  const now = Date.now();
-  return {
-    ...stateMachine,
-    history: appendHistory(stateMachine.history, {
-      type: "state_asked_user" as const,
-      timestamp: now,
-      state,
-      questions,
     }),
     updatedAt: now,
   };

@@ -1,5 +1,4 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
-import type { TurnQuestion } from "./protocol.js";
 
 export const INTERRUPTED_STATE_MACHINE_STATE = "interrupted";
 
@@ -113,10 +112,10 @@ export const INTERRUPTED_STATE_MACHINE_STATE = "interrupted";
  * says prior work already happened, such as "I've already sent email, just wait
  * for response." The runner injects the original prompt and relevant history
  * automatically when constructing agent prompts; state definitions only describe
- * their own behavior. Human input is not a separate state-machine state: if the
- * current state is an agent state and the runner state is waiting_for_human, the
- * state machine is waiting for that agent's user input. Polling remains explicit
- * because the runner owns one poll attempt and emits sleep until the next attempt.
+ * their own behavior. Human input is parent-owned: the machine parks without
+ * executing work, and the parent asks any question needed to leave that park.
+ * Polling remains explicit because the runner owns one poll attempt and emits
+ * sleep until the next attempt.
  *
  * Example of templated script commands:
  *
@@ -222,6 +221,7 @@ export type StateMachineState =
   | StateMachineScriptState
   | StateMachinePollState
   | StateMachineTimerState
+  | StateMachineParkState
   | StateMachineTerminalState;
 
 export interface StateMachineProgress {
@@ -401,6 +401,11 @@ export interface StateMachineTimerState extends StateMachineBaseState {
   wakeAfterMs?: number | string;
 }
 
+/** Holds the machine without execution or a scheduled wake while the parent drives. */
+export interface StateMachineParkState extends StateMachineBaseState {
+  kind: "park";
+}
+
 /** Finalizes the session when reached. Terminal outcomes are just state machine states. */
 export interface StateMachineTerminalState extends StateMachineBaseState {
   kind: "terminal";
@@ -449,12 +454,6 @@ export type StateMachineSessionEvent =
       state: string;
       reason?: string;
       output?: { assistantText?: string } | { stdout: string; stderr: string };
-    }
-  | {
-      type: "state_asked_user";
-      timestamp: number;
-      state: string;
-      questions: TurnQuestion[];
     }
   | {
       // Emitted when select_state_machine_state persists an override into

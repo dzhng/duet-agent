@@ -37,6 +37,10 @@ export class TestTurnRunner extends TurnRunner {
     next: () => Promise<AgentWorkerResult>,
   ) => Promise<AgentWorkerResult>;
 
+  childToolNames(): string[] {
+    return this.createTools("agent", undefined, false).tools.map((tool) => tool.name);
+  }
+
   protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     const result = this.worker
       ? await this.worker(input, () => this.runDefaultWorker(input))
@@ -114,18 +118,25 @@ export class TestTurnRunner extends TurnRunner {
           ? await this.worker(workerInput, () => this.runDefaultWorker(workerInput))
           : await this.runDefaultWorker(workerInput);
         this.recordUsage(result.parentUsage);
-        if (interruptedReason !== undefined) {
-          terminal = { type: "interrupted" };
-        } else if (result.control.type === "ask_user_question") {
-          terminal = { type: "ask", questions: result.control.questions };
-        } else if (result.outcome.type === "interrupted") {
-          terminal = { type: "interrupted" };
-        } else if (result.outcome.status === "failed") {
-          terminal = { type: "failed", error: result.outcome.error ?? "State agent failed." };
-        } else {
-          terminal = { type: "complete", result: result.outcome.result };
+        const settle = (value: SubagentResult): SubagentResult => {
+          terminal = value;
+          return value;
+        };
+        if (interruptedReason) return settle({ type: "interrupted" });
+        if (result.control.type !== "none") {
+          return settle({
+            type: "failed",
+            error: `State agent emitted unsupported control: ${result.control.type}`,
+          });
         }
-        return terminal;
+        if (result.outcome.type === "interrupted") return settle({ type: "interrupted" });
+        if (result.outcome.status === "failed") {
+          return settle({
+            type: "failed",
+            error: result.outcome.error ?? "State agent failed.",
+          });
+        }
+        return settle({ type: "complete", result: result.outcome.result });
       },
       interrupt: (reason) => {
         interruptedReason = reason;

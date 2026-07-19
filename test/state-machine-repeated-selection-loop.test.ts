@@ -31,6 +31,7 @@ function definition(): StateMachineDefinition {
     states: [
       { kind: "agent", name: "hold", prompt: "Hold." },
       { kind: "agent", name: "work", prompt: "Do work." },
+      { kind: "park", name: "parked", when: "Wait for the user." },
       { kind: "terminal", name: "done", status: "completed" },
     ],
   };
@@ -90,19 +91,6 @@ describe("repeatedStateSelectionStreak", () => {
     ];
     expect(repeatedStateSelectionStreak(session(history), "hold").spanMs).toBe(end - start);
   });
-
-  test("an asked-user gate for the same state does not reset the streak", () => {
-    // The holding loop in the wild interleaves ask_user_question; only a
-    // *different* state should break the streak, not this state's own ask.
-    const history: StateMachineSessionEvent[] = [
-      ...selectionCycle("hold", 1),
-      { type: "runner_decided", timestamp: 2, decision: { state: "hold" } },
-      { type: "state_started", timestamp: 2, state: "hold" },
-      { type: "state_asked_user", timestamp: 2, state: "hold", questions: [] },
-      ...selectionCycle("hold", 3),
-    ];
-    expect(repeatedStateSelectionStreak(session(history), "hold").count).toBe(3);
-  });
 });
 
 describe("repeatedSelectionLoopCount (trip policy)", () => {
@@ -131,5 +119,20 @@ describe("repeatedSelectionLoopCount (trip policy)", () => {
       history.push(...selectionCycle("hold", i * step));
     }
     expect(repeatedSelectionLoopCount(session(history), "hold")).toBeUndefined();
+  });
+
+  test("re-selecting the same park remains legal at the loop threshold", () => {
+    const history: StateMachineSessionEvent[] = [];
+    for (let i = 0; i < REPEATED_SELECTION_LOOP_THRESHOLD; i++) {
+      history.push(
+        { type: "runner_decided", timestamp: i * 1000, decision: { state: "parked" } },
+        { type: "state_started", timestamp: i * 1000, state: "parked" },
+      );
+    }
+    const parked = { ...session(history), currentState: "parked" };
+    expect(repeatedStateSelectionStreak(parked, "parked").count).toBe(
+      REPEATED_SELECTION_LOOP_THRESHOLD,
+    );
+    expect(repeatedSelectionLoopCount(parked, "parked")).toBeUndefined();
   });
 });
