@@ -103,6 +103,7 @@ export async function runRollout(
   let telemetry: RolloutTelemetry | undefined;
   let outcome: RolloutOutcome | undefined;
   let patch: string | undefined;
+  let patchPaths: string[] | undefined;
   let result: RunRolloutResult | undefined;
   let pendingError: unknown;
 
@@ -148,11 +149,14 @@ export async function runRollout(
     );
     events = outcome.events;
     telemetry = deriveTelemetry(events);
-    patch = (await extractPatch(container, baseline, spec.limits.patchBytes)).patch;
+    const extracted = await extractPatch(container, baseline, spec.limits.patchBytes);
+    patch = extracted.patch;
+    patchPaths = extracted.paths;
     const terminalType = terminalName(outcome);
     const status = await completeRolloutAttempt(attempt, {
       events,
       patch,
+      patchPaths,
       telemetry,
       terminalType,
     });
@@ -165,6 +169,7 @@ export async function runRollout(
         message: errorMessage(error),
         ...(events.length > 0 && telemetry ? { events, telemetry } : {}),
         ...(patch === undefined ? {} : { patch }),
+        ...(patchPaths === undefined ? {} : { patchPaths }),
         ...(outcome ? { terminalType: terminalName(outcome) } : {}),
       });
       result = { attempt, status };
@@ -183,6 +188,7 @@ export async function runRollout(
       message: `Container teardown failed: ${errorMessage(stopError)}`,
       ...(events.length > 0 && telemetry ? { events, telemetry } : {}),
       ...(patch === undefined ? {} : { patch }),
+      ...(patchPaths === undefined ? {} : { patchPaths }),
       ...(outcome ? { terminalType: terminalName(outcome) } : {}),
     });
     result = { attempt, status };

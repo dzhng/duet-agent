@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { CampaignConfigName } from "../benchmarks/swebench/src/config-override.js";
 import {
   buildCampaignReport,
+  lintPatch,
   renderCampaignReport,
   type OfficialScoreRow,
   type ReportAttempt,
@@ -41,7 +42,24 @@ describe("SWE-bench paired report", () => {
       neitherResolves: ["org__repo-3"],
     });
     expect(report.configs["glm-pure"]).toMatchObject({ resolved: 1, total: 3 });
+    expect(report.configs["glm-pure"]).toMatchObject({
+      costUsd: 0.75,
+      executorCostUsd: 0,
+      auxiliaryCostUsd: 0.75,
+    });
     expect(renderCampaignReport(report)).toContain("Advisor-only wins: 1 (org__repo-2)");
+  });
+
+  test("patch lint rejects tests and runtime files from exact staged paths", () => {
+    expect(
+      lintPatch("diff", ["src/main.ts", "test/main.test.ts", ".duet/models.json"], 100),
+    ).toEqual({
+      paths: ["src/main.ts", "test/main.test.ts", ".duet/models.json"],
+      violations: [
+        "test file modified: test/main.test.ts",
+        "runtime file leaked: .duet/models.json",
+      ],
+    });
   });
 
   test("fails the pure-arm assertion when telemetry contains an advisor call", () => {

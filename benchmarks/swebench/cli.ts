@@ -242,7 +242,7 @@ async function writeCampaignReport(args: string[]): Promise<void> {
     writeFile(join(outputRoot, "report.md"), renderCampaignReport(report)),
   ]);
   console.log(renderCampaignReport(report));
-  if (!report.pureAdvisorAssertion.passed) process.exitCode = 1;
+  if (!report.pureAdvisorAssertion.passed || !report.patchAssertion.passed) process.exitCode = 1;
 }
 
 async function loadProviderEnv(): Promise<Record<string, string>> {

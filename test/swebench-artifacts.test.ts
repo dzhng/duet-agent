@@ -33,6 +33,7 @@ describe("SWE-bench rollout artifacts", () => {
     await completeRolloutAttempt(first, {
       events,
       patch: "diff --git a/a b/a\n",
+      patchPaths: ["a"],
       telemetry: deriveTelemetry(events),
       terminalType: "complete",
     });

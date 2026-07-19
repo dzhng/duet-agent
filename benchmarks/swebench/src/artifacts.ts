@@ -98,12 +98,16 @@ export async function completeRolloutAttempt(
   values: {
     events: readonly TurnEvent[];
     patch: string;
+    patchPaths: readonly string[];
     telemetry: RolloutTelemetry;
     terminalType: string;
   },
 ): Promise<RolloutStatus> {
   await writeAttemptEvidence(attempt.directory, values.events, values.telemetry);
-  await atomicWrite(join(attempt.directory, "patch.diff"), values.patch);
+  await Promise.all([
+    atomicWrite(join(attempt.directory, "patch.diff"), values.patch),
+    atomicWriteJson(join(attempt.directory, "patch-paths.json"), values.patchPaths),
+  ]);
   const status: RolloutStatus = {
     ...attempt.status,
     phase: "completed",
@@ -124,6 +128,7 @@ export async function failRolloutAttempt(
     events?: readonly TurnEvent[];
     telemetry?: RolloutTelemetry;
     patch?: string;
+    patchPaths?: readonly string[];
     terminalType?: string;
   },
 ): Promise<RolloutStatus> {
@@ -132,6 +137,9 @@ export async function failRolloutAttempt(
   }
   if (values.patch !== undefined)
     await atomicWrite(join(attempt.directory, "patch.diff"), values.patch);
+  if (values.patchPaths !== undefined) {
+    await atomicWriteJson(join(attempt.directory, "patch-paths.json"), values.patchPaths);
+  }
   const status: RolloutStatus = {
     ...attempt.status,
     phase: "failed",

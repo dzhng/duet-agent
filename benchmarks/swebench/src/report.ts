@@ -30,6 +30,12 @@ export interface ReportAttempt {
   terminalType?: string;
   costUsd: number;
   telemetry?: RolloutTelemetry;
+  patchLint?: PatchLint;
+}
+
+export interface PatchLint {
+  paths: string[];
+  violations: string[];
 }
 
 export interface ConfigReport {
@@ -37,9 +43,12 @@ export interface ConfigReport {
   total: number;
   resolveRate: number;
   costUsd: number;
+  executorCostUsd: number;
+  auxiliaryCostUsd: number;
   advisorCalls: number;
   routerSwitches: Record<string, number>;
   failures: Record<string, number>;
+  patchViolations: string[];
   byLanguage: Record<string, { resolved: number; total: number }>;
 }
 
@@ -59,6 +68,7 @@ export interface CampaignReport {
   comparisons: ComparisonReport[];
   totalCostUsd: number;
   pureAdvisorAssertion: { passed: boolean; violations: string[] };
+  patchAssertion: { passed: boolean; violations: string[] };
 }
 
 const COMPARISONS: [CampaignConfigName, CampaignConfigName][] = [
@@ -86,6 +96,7 @@ export function buildCampaignReport(
     "kimi-fable-advisor",
   ];
   const violations: string[] = [];
+  const patchViolations: string[] = [];
 
   for (const config of allConfigs) {
     const summary: ConfigReport = {
@@ -93,9 +104,12 @@ export function buildCampaignReport(
       total: entries.length,
       resolveRate: 0,
       costUsd: 0,
+      executorCostUsd: 0,
+      auxiliaryCostUsd: 0,
       advisorCalls: 0,
       routerSwitches: {},
       failures: {},
+      patchViolations: [],
       byLanguage: {},
     };
     for (const entry of entries) {
@@ -111,12 +125,20 @@ export function buildCampaignReport(
         increment(summary.failures, attempt?.failureKind ?? status);
       }
       summary.costUsd += attempt?.costUsd ?? 0;
+      const executorCost = executorCostUsd(config, attempt?.telemetry);
+      summary.executorCostUsd += executorCost;
+      summary.auxiliaryCostUsd += (attempt?.costUsd ?? 0) - executorCost;
       summary.advisorCalls += attempt?.telemetry?.advisorCalls.total ?? 0;
       for (const [switchName, count] of Object.entries(attempt?.telemetry?.routerSwitches ?? {})) {
         increment(summary.routerSwitches, switchName, count);
       }
       if (config.endsWith("-pure") && (attempt?.telemetry?.advisorCalls.total ?? 0) !== 0) {
         violations.push(`${config}/${entry.instanceId}`);
+      }
+      for (const violation of attempt?.patchLint?.violations ?? []) {
+        const labelled = `${config}/${entry.instanceId}: ${violation}`;
+        summary.patchViolations.push(labelled);
+        patchViolations.push(labelled);
       }
     }
     summary.resolveRate = summary.total === 0 ? 0 : summary.resolved / summary.total;
@@ -153,6 +175,7 @@ export function buildCampaignReport(
     comparisons,
     totalCostUsd: attempts.reduce((total, attempt) => total + attempt.costUsd, 0),
     pureAdvisorAssertion: { passed: violations.length === 0, violations },
+    patchAssertion: { passed: patchViolations.length === 0, violations: patchViolations },
   };
 }
 
@@ -169,12 +192,27 @@ export async function loadReportAttempts(
   return Promise.all(
     [...newest.values()].map(async (attempt) => {
       let telemetry: RolloutTelemetry | undefined;
+      let patchLint: PatchLint | undefined;
       try {
         telemetry = JSON.parse(
           await readFile(`${attempt.directory}/telemetry.json`, "utf8"),
         ) as RolloutTelemetry;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (attempt.status.phase === "completed") {
+        try {
+          const [patch, paths] = await Promise.all([
+            readFile(`${attempt.directory}/patch.diff`, "utf8"),
+            readFile(`${attempt.directory}/patch-paths.json`, "utf8").then(
+              (value) => JSON.parse(value) as string[],
+            ),
+          ]);
+          patchLint = lintPatch(patch, paths, attempt.spec.limits.patchBytes);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          patchLint = { paths: [], violations: ["completed artifact is missing patch evidence"] };
+        }
       }
       return {
         instanceId: attempt.spec.instanceId,
@@ -184,6 +222,7 @@ export async function loadReportAttempts(
         ...(attempt.status.terminalType ? { terminalType: attempt.status.terminalType } : {}),
         costUsd: attempt.status.costUsd ?? 0,
         ...(telemetry ? { telemetry } : {}),
+        ...(patchLint ? { patchLint } : {}),
       };
     }),
   );
@@ -212,18 +251,19 @@ export function renderCampaignReport(report: CampaignReport): string {
   lines.push(
     "## Arm totals",
     "",
-    "| Arm | Resolved | Rate | Cost | Advisor calls |",
-    "| --- | ---: | ---: | ---: | ---: |",
+    "| Arm | Resolved | Rate | Cost | Executor | Auxiliary | Advisor calls |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
   );
   for (const [name, config] of Object.entries(report.configs)) {
     lines.push(
-      `| ${name} | ${config.resolved}/${config.total} | ${(config.resolveRate * 100).toFixed(1)}% | $${config.costUsd.toFixed(2)} | ${config.advisorCalls} |`,
+      `| ${name} | ${config.resolved}/${config.total} | ${(config.resolveRate * 100).toFixed(1)}% | $${config.costUsd.toFixed(2)} | $${config.executorCostUsd.toFixed(2)} | $${config.auxiliaryCostUsd.toFixed(2)} | ${config.advisorCalls} |`,
     );
   }
   lines.push(
     "",
     `Total model spend: $${report.totalCostUsd.toFixed(2)}.`,
     `Pure-arm advisor assertion: ${report.pureAdvisorAssertion.passed ? "PASS" : `FAIL (${report.pureAdvisorAssertion.violations.join(", ")})`}.`,
+    `Patch assertion: ${report.patchAssertion.passed ? "PASS" : `FAIL (${report.patchAssertion.violations.join(", ")})`}.`,
     "",
   );
   return lines.join("\n");
@@ -251,6 +291,40 @@ function isAgentComplete(attempt: ReportAttempt | undefined): boolean {
     attempt?.phase === "completed" &&
     attempt.terminalType === "complete" &&
     attempt.telemetry?.terminalStatus === "completed"
+  );
+}
+
+/** Check exact staged paths rather than guessing from diff text. */
+export function lintPatch(patch: string, paths: readonly string[], maxBytes: number): PatchLint {
+  const violations: string[] = [];
+  const bytes = Buffer.byteLength(patch);
+  if (bytes === 0) violations.push("patch is empty");
+  if (bytes > maxBytes) violations.push(`patch is ${bytes} bytes (limit ${maxBytes})`);
+  for (const path of paths) {
+    const segments = path.toLowerCase().split("/");
+    const filename = segments.at(-1) ?? "";
+    if (
+      segments.some((segment) => ["test", "tests", "__tests__"].includes(segment)) ||
+      /(?:^|[._-])test(?:[._-]|$)/.test(filename)
+    ) {
+      violations.push(`test file modified: ${path}`);
+    }
+    if (segments.includes(".duet") || path.startsWith("opt/duet/")) {
+      violations.push(`runtime file leaked: ${path}`);
+    }
+  }
+  return { paths: [...paths], violations };
+}
+
+function executorCostUsd(
+  config: CampaignConfigName,
+  telemetry: RolloutTelemetry | undefined,
+): number {
+  const executor = config.startsWith("glm-") ? "glm-5.2" : "kimi-k3";
+  return Object.entries(telemetry?.costUsdByModel ?? {}).reduce(
+    (total, [model, cost]) =>
+      total + (model === executor || model.endsWith(`/${executor}`) ? cost : 0),
+    0,
   );
 }
 
