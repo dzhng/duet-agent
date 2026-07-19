@@ -11,12 +11,13 @@ about _our_ harness.
 ## Next Agent Prompt
 
 **Status:** slice 01 complete, including the paid GLM/Kimi auxiliary-usage
-smoke. The plan is reconciled for a Mac-local four-arm campaign; slices 02–08
-are not started. Last updated 2026-07-20.
+smoke. Slice 03 is complete, including its live economy RPC checkpoint. The
+plan is reconciled for a Mac-local four-arm campaign; slices 02 and 04–08 are
+not complete. Last updated 2026-07-20.
 
-You are implementing this spec. Read this README fully, then start
+You are implementing this spec. Read this README fully, then continue
 [slice 02](slices/02-manifest-and-configs.md) and
-[slice 03](slices/03-duet-client-and-telemetry.md). Follow the dependency graph
+[slice 04](slices/04-box-gold-gate-and-spike.md). Follow the dependency graph
 below; never spend campaign-scale money before slice 07 says ADMIT.
 
 Local constraints to prove rather than assume:
@@ -35,7 +36,7 @@ Global TODO (owner slice in parens):
 - [x] RPC loads project routing table and exits cleanly; advisor+classifier
       usage metered; tool details forwarded; live provider smoke passes (01)
 - [ ] Committed 30-instance manifest + all four routing-table renders (02)
-- [ ] duet-client (RPC transport + limits) + telemetry derivation, fixture-tested (03)
+- [x] duet-client (RPC transport + limits) + telemetry derivation, fixture-tested (03)
 - [ ] Mac environment captured; x86 capacity gate + gold 30/30;
       mini-swe-agent replication; scorer
       fixture captured (04)

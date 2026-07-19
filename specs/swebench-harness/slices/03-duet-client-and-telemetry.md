@@ -3,6 +3,11 @@
 Local; the highest-value test seam in the bench. Depends on slice 01 for the
 final event-shape assertions (details on tool_call steps, complete usage).
 
+**Status: complete (2026-07-20).** The client and pure telemetry derivation are
+covered by scripted transport and committed-fixture tests. A real Mac-local
+economy RPC turn completed through the playable CLI in 10 seconds for $0.006905;
+its terminal accounting was sanitized into the committed economy fixture.
+
 ## Contract
 
 - `duet-client.ts`: `runDuetTurn(transport: ExecTransport, spec, prompt) →

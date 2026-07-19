@@ -1,0 +1,9 @@
+{"type":"step","step":{"type":"reasoning_delta","delta":"reviewing"}}
+{"type":"step","step":{"type":"reasoning","text":"reviewing"}}
+{"type":"step","step":{"type":"tool_call","toolName":"ask_advisor","toolCallId":"a1","isError":false,"details":{"type":"ask_advisor","model":"moonshotai/kimi-k3","tokens":400}}}
+{"type":"step","step":{"type":"tool_call","toolName":"ask_advisor","toolCallId":"a2","isError":false,"details":{"type":"ask_advisor","rateLimited":true,"stepsUntilAllowed":2}}}
+{"type":"step","step":{"type":"tool_call","toolName":"ask_advisor","toolCallId":"a3","isError":false,"details":{"type":"ask_advisor","unavailable":true}}}
+{"type":"step","origin":{"taskId":"task_1"},"step":{"type":"text","text":"child"}}
+{"type":"router_switch","tier":"swebench-glm-kimi","route":"general","fromModel":"zai/glm-5.2","toModel":"moonshotai/kimi-k3","thinkingLevel":"high","trigger":"cadence","rationale":"backend","visionFallback":false}
+{"type":"router_switch","tier":"swebench-glm-kimi","route":"general","fromModel":"moonshotai/kimi-k3","toModel":"zai/glm-5.2","thinkingLevel":"high","trigger":"cadence","rationale":"frontend","visionFallback":false}
+{"type":"router_switch","tier":"swebench-glm-kimi","route":"general","fromModel":"zai/glm-5.2","toModel":"moonshotai/kimi-k3","thinkingLevel":"high","trigger":"cadence","rationale":"backend","visionFallback":false}

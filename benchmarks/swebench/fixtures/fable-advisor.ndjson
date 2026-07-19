@@ -1,0 +1,1 @@
+{"type":"step","step":{"type":"tool_call","toolName":"ask_advisor","toolCallId":"f1","isError":false,"details":{"type":"ask_advisor","model":"anthropic/claude-fable-5","tokens":300}}}

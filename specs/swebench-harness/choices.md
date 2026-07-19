@@ -494,6 +494,64 @@ ownerScopeId }`, even though both execute through the same task manager.
 - **Confidence:** **medium** because the live model can still batch several
   calls into one message, which is why N4's acceptance-policy choice remains.
 
+### S13 — A cost ceiling is inclusive
+
+- **When:** slice 03, while implementing streamed rollout limits.
+- **The choice:** The client interrupts as soon as cumulative model spend is
+  equal to or greater than the configured ceiling. For example, with a $1 cap,
+  a usage event reporting exactly $1 starts graceful interruption immediately;
+  it does not permit another provider call. The unbuilt alternative treats $1
+  as still allowed and waits until a later event reports more than $1, which can
+  knowingly launch work after the entire allowance has already been consumed.
+- **The gap:** The slice said “cost cap” and “on breach” without defining whether
+  equality is inside or outside the allowed launch envelope.
+- **The reach:** Every pilot and campaign rollout inherits this boundary. The
+  streamed total can still jump past the cap between provider events, but the
+  client never continues once it observes that no allowance remains.
+- **Verdict:** **sound.** An inclusive stop is the conservative meaning of a
+  hard spend ceiling and agrees with the campaign-level reservation rule.
+- **Confidence:** **high**.
+
+### S14 — Descriptive step telemetry counts canonical parent events
+
+- **When:** slice 03, because the protocol no longer has a dedicated assistant-
+  completion event but the planned report still requested a `steps` number.
+- **The choice:** `steps` counts finished parent events—text, reasoning, system,
+  and completed tool calls—and ignores streaming fragments plus subagent events.
+  Imagine one answer arrives as ten text fragments and then one finished text
+  event: today it counts as one, not eleven. A child agent's work is also not
+  mixed into its parent's count. The unbuilt alternatives count every fragment
+  (transport-dependent noise), count only tool calls, or add a new protocol
+  event after the user explicitly rejected a step-limit protocol expansion.
+- **The gap:** The slice named the field but did not define a step after the
+  earlier assistant-step limit and its protocol event were removed.
+- **The reach:** Reports may use the number descriptively, but never as a time or
+  spend limit. It remains stable across streaming chunk sizes and does not
+  pretend to measure auxiliary-model work.
+- **Verdict:** **sound.** It derives the least surprising stable diagnostic from
+  existing events without changing the product protocol.
+- **Confidence:** **medium** because the campaign may ultimately find the field
+  uninformative enough to omit from human-facing tables.
+
+### S15 — A terminal racing with interruption is preserved
+
+- **When:** slice 03, while defining the grace period after a cost or wall-clock
+  interrupt.
+- **The choice:** After the client sends `interrupt`, the first real terminal
+  wins even if it is `complete`, `failed`, `ask`, or `sleep` rather than
+  `interrupted`. For example, the model may finish a millisecond before the
+  interrupt reaches the runner; today the completed result is retained. The
+  unbuilt alternative rejects that terminal and waits only for `interrupted`,
+  then kills a process that has already supplied its authoritative outcome.
+- **The gap:** The slice said to wait for an interrupted terminal but did not
+  define the unavoidable race where normal completion was already in flight.
+- **The reach:** Artifact extraction and failure classification retain the exact
+  runner outcome instead of converting timing races into synthetic kills. An
+  unexpected `ask` still ends the unattended rollout as settled in S9.
+- **Verdict:** **sound.** The RPC contract says the first terminal ends the turn;
+  the client should not override that authority based on command timing.
+- **Confidence:** **high**.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper
