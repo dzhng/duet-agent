@@ -1,4 +1,4 @@
-● Reviewing audit results before summarizing.
+● parent — Reviewing audit results before summarizing.
   ├─ ✔ t3 bash `npm test` <elapsed>
   ├─ ⠙ t4 spawn_agent audit auth flows <elapsed>   [12.4k tok]
   │  └─ ⠙ t7 bash `rg -n rate_limit` <elapsed>

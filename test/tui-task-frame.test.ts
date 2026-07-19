@@ -117,7 +117,9 @@ describe("TUI task tree frame", () => {
     });
     await harness.flush();
     const awaitingTerminalFrame = await harness.captureCharFrame();
-    expect(awaitingTerminalFrame).toContain("● Reviewing audit results before summarizing.");
+    expect(awaitingTerminalFrame).toContain(
+      "● parent — Reviewing audit results before summarizing.",
+    );
     expect(awaitingTerminalFrame).not.toContain("turn open: held awake by");
 
     const terminal = harness.waitForTerminal();
