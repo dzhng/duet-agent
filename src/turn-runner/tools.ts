@@ -21,6 +21,7 @@ import type {
   StateMachineAgentState,
   StateMachineDefinition,
   StateMachinePollState,
+  StateMachineParkState,
   StateMachineProgress,
   StateMachineScriptState,
   StateMachineState,
@@ -43,6 +44,7 @@ export type ActiveStateOutput =
 import { applyStateOverride } from "./state-machine-decisions.js";
 import { withBundledRipgrep } from "./bundled-ripgrep.js";
 import { SystemRuntimeClock, type RuntimeClock } from "./runtime-clock.js";
+import { parkNudge } from "./prompts.js";
 import type { ShellPartialOutput } from "./shell-state-handle.js";
 
 const jsonSchemaValidator = new Ajv({ strictSchema: false });
@@ -213,11 +215,21 @@ const timerOverrideSchema = Type.Partial(
   }),
 );
 
+const parkOverrideSchema = Type.Partial(
+  Type.Object({
+    inputSchema: Type.Record(Type.String(), Type.Any(), {
+      description:
+        "Replacement valid JSON Schema object for transition input accepted by this park state.",
+    }),
+  }),
+);
+
 const stateOverrideSchema = Type.Union([
   Type.Object({ kind: Type.Literal("agent"), state: agentOverrideSchema }),
   Type.Object({ kind: Type.Literal("script"), state: scriptOverrideSchema }),
   Type.Object({ kind: Type.Literal("poll"), state: pollOverrideSchema }),
   Type.Object({ kind: Type.Literal("timer"), state: timerOverrideSchema }),
+  Type.Object({ kind: Type.Literal("park"), state: parkOverrideSchema }),
 ]);
 
 const baseStateSchema = {
@@ -328,6 +340,14 @@ const timerStateSchema = Type.Object({
   ),
 });
 
+const parkStateSchema = Type.Object({
+  ...baseStateSchema,
+  kind: Type.Literal("park", {
+    description:
+      "Hold the machine without running work or scheduling a wake while the parent drives.",
+  }),
+});
+
 const terminalStateSchema = Type.Object({
   ...baseStateSchema,
   kind: Type.Literal("terminal", { description: "Finalize the state-machine session." }),
@@ -344,6 +364,7 @@ const stateMachineStateSchema = Type.Union([
   scriptStateSchema,
   pollStateSchema,
   timerStateSchema,
+  parkStateSchema,
   terminalStateSchema,
 ]);
 
@@ -367,12 +388,14 @@ export type StateMachinePollStateOverride = Partial<
 export type StateMachineTimerStateOverride = Partial<
   Pick<StateMachineTimerState, "wakeAt" | "wakeAfterMs" | "inputSchema">
 >;
+export type StateMachineParkStateOverride = Partial<Pick<StateMachineParkState, "inputSchema">>;
 
 export type StateMachineStateOverride =
   | { kind: "agent"; state: StateMachineAgentStateOverride }
   | { kind: "script"; state: StateMachineScriptStateOverride }
   | { kind: "poll"; state: StateMachinePollStateOverride }
-  | { kind: "timer"; state: StateMachineTimerStateOverride };
+  | { kind: "timer"; state: StateMachineTimerStateOverride }
+  | { kind: "park"; state: StateMachineParkStateOverride };
 
 const stateMachineDefinitionSchema = Type.Object(
   {
@@ -1036,7 +1059,7 @@ function createStateMachineDefinitionTool(
         "firstState": "step-1"
       }
 
-      State \`kind\` is one of \`agent\`, \`script\`, \`poll\`, \`timer\`, \`terminal\`. Poll \`intervalMs\`, timer \`wakeAt\`, and timer \`wakeAfterMs\` must be ≥ 15 minutes; agent/script states have no minimum duration. Durations accept human-readable strings like \`"3h"\` or \`"5d"\` parsed by the \`ms\` package, and \`wakeAt\` accepts ISO 8601 strings like \`"2026-05-24T18:00:00Z"\`; raw millisecond numbers still work as a fallback. Timer states must set exactly one of \`wakeAt\` (absolute) or \`wakeAfterMs\` (relative from selection time). Every definition needs at least one \`terminal\` state with status "completed"; "failed" and "cancelled" terminals are auto-injected if omitted.
+      State \`kind\` is one of \`agent\`, \`script\`, \`poll\`, \`timer\`, \`park\`, \`terminal\`. A park holds the machine without running work or scheduling a wake while you converse with or ask the user. Poll \`intervalMs\`, timer \`wakeAt\`, and timer \`wakeAfterMs\` must be ≥ 15 minutes; agent/script states have no minimum duration. Durations accept human-readable strings like \`"3h"\` or \`"5d"\` parsed by the \`ms\` package, and \`wakeAt\` accepts ISO 8601 strings like \`"2026-05-24T18:00:00Z"\`; raw millisecond numbers still work as a fallback. Timer states must set exactly one of \`wakeAt\` (absolute) or \`wakeAfterMs\` (relative from selection time). Every definition needs at least one \`terminal\` state with status "completed"; "failed" and "cancelled" terminals are auto-injected if omitted.
 
       State prompts and script commands may use \`{{ input.foo }}\` templates — declare \`inputSchema\` on those states and pass matching \`input\` when selecting them via select_state_machine_state. Agent states may set \`allowedSkills\` to restrict the skill set for that sub-agent.
 
@@ -1064,8 +1087,13 @@ function createStateMachineDefinitionTool(
         definition: params.definition,
         firstState: params.firstState,
       };
+      const firstState = params.definition.states.find((state) => state.name === params.firstState);
+      const text =
+        firstState?.kind === "park"
+          ? `${JSON.stringify(result, null, 2)}\n\n${parkNudge(firstState.name)}`
+          : JSON.stringify(result, null, 2);
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [{ type: "text", text }],
         details: result,
         terminate: true,
       };
@@ -1086,7 +1114,7 @@ function createSelectStateTool(
     executionMode: "sequential",
     label: "Select state machine state",
     description: dedent`
-      Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt or wakeAfterMs (exactly one).
+      Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, park, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt or wakeAfterMs (exactly one).
 
       Carry forward what the orchestrator now knows. By default, agent states run in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — they only see the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: a fresh sub-agent has no way to read those findings, and neither your reasoning nor your reply text reaches it — this call's \`input\`/\`override.prompt\` is its only channel. Put the facts there on the FIRST select into a finding-dependent state; selecting it bare and adding context only after it comes back confused is the failure mode, not the fix. If restating the needed context would be lossy, set \`override.state.forkContext: true\` on an agent state so it starts with a copy of the parent transcript; leave it off for self-contained work because it copies the full context.
 
@@ -1111,8 +1139,13 @@ function createSelectStateTool(
       assertValidSelectedState(decision, definition, baseCwd);
 
       const result: TurnRunnerControlResult = { type: "select_state_machine_state", decision };
+      const selectedState = definition?.states.find((state) => state.name === decision.state);
+      const text =
+        selectedState?.kind === "park"
+          ? `${JSON.stringify(result, null, 2)}\n\n${parkNudge(selectedState.name)}`
+          : JSON.stringify(result, null, 2);
       return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [{ type: "text", text }],
         details: result,
         terminate: true,
       };

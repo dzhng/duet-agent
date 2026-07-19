@@ -90,6 +90,7 @@ import {
   createSourceOfTruthSystemPromptLayer,
   createStateMachineSystemPromptLayer,
   heldAskReminder,
+  parkNudge,
 } from "./prompts.js";
 import {
   applyEvictionHorizon,
@@ -112,7 +113,7 @@ import {
 } from "./tools.js";
 import { connectMcpServers, type McpRuntime } from "./mcp.js";
 import { SkillContext } from "./skill-context.js";
-import { currentScheduledState, isAwaitingUserAnswer } from "./state-machine-session.js";
+import { currentParkState, currentScheduledState } from "./state-machine-session.js";
 import {
   failActiveSession,
   markTerminalAcknowledged,
@@ -236,10 +237,9 @@ const INTERRUPT_GRACE_MS = 1_000;
 
 /**
  * How many times the parent is re-prompted to emit the
- * select_state_machine_state it owes (after a state completes or after the
- * user answers a state's question) before the runner gives up and records an
- * `error` terminal. Bounds the protocol-violation retry loop so a parent that
- * never transitions can't spin forever.
+ * select_state_machine_state it owes after a state completes before the runner
+ * gives up and records an `error` terminal. Bounds the protocol-violation retry
+ * loop so a parent that never transitions can't spin forever.
  */
 const PARENT_TRANSITION_RETRY_BUDGET = 3;
 
@@ -1217,9 +1217,6 @@ export class TurnRunner {
         : ({ type: "terminal", status: "completed", result: worker.outcome.result } as const);
     }
     const result = await this.stateMachineResultFromWorker(worker, worker.outcome.state);
-    if (!result && isAwaitingUserAnswer(this.stateMachine)) {
-      return this.enforceTransitionAfterAnsweredAsk();
-    }
     if (result) return result;
     return worker.outcome.status === "failed"
       ? ({ type: "terminal", status: "error", error: worker.outcome.error } as const)
@@ -1231,7 +1228,13 @@ export class TurnRunner {
     if (agent.hasQueuedMessages()) {
       throw new Error("Parent pi steer/follow-up queues must be empty at internal pass start.");
     }
-    return this.runAgentWorker(input);
+    const parked = currentParkState(this.stateMachine);
+    // Append to the pass already being made, so a transition out of park costs
+    // no extra model call. The selection tools put the same reminder in their
+    // terminating result on the entry pass, before currentState has changed.
+    return this.runAgentWorker(
+      parked ? { ...input, prompt: `${input.prompt}\n\n${parkNudge(parked.name)}` } : input,
+    );
   }
 
   private async runWakeInput(): Promise<SettledDecision["outcome"] | undefined> {
@@ -1304,6 +1307,7 @@ export class TurnRunner {
       this.setStateMachine(settled.session);
       return settled.outcome;
     }
+    if ("park" in work) return undefined;
     if ("subagent" in work.run) {
       this.startSubagentTask(work.run.subagent, work.run.stateName);
     } else {
@@ -1524,7 +1528,7 @@ export class TurnRunner {
    * running in between. This is the idle-"holding" hot loop: re-selecting a
    * state to "keep waiting" is a no-op because selecting runs the state again
    * immediately rather than suspending. The reminder re-teaches the only
-   * primitives that actually wait — ask_user_question for a human reply, a poll
+   * primitives that actually wait — park for a parent-owned human gate, a poll
    * for a checkable condition, a timer for a fixed time — and tells the parent
    * to stop re-selecting the same state unchanged. Returns undefined when the
    * streak is below threshold or spread over too long a span to be a hot loop.
@@ -1538,7 +1542,7 @@ export class TurnRunner {
       LOOP DETECTED: you have selected the "${stateName}" state ${count} times in a row, with no other state running in between, in quick succession. Selecting a state is NOT how you wait — every select_state_machine_state call runs the state again immediately and returns, so re-selecting the same "holding" state over and over is a no-op hot loop that suspends nothing.
 
       If you are waiting on something, back it with the primitive that actually suspends, chosen by WHAT you are waiting for:
-      - a human reply or approval → an agent state that calls ask_user_question, then END YOUR TURN. The user's answer arrives as a fresh turn, and only then do you select the next state. Do not re-select to "keep waiting", and if the user sends an unrelated message while the question is open, answer it in plain text and end the turn rather than re-parking this state.
+      - a human reply or approval → select a park state, ask the user yourself with ask_user_question, then END YOUR TURN. The user's answer arrives as a fresh parent turn; select the next state when the park's purpose is fulfilled.
       - a condition a command can check (CI finished, a file appeared, a deploy went ready) → a poll state whose command exits success only when the condition is actually met.
       - a fixed future time → a timer state (wakeAt or wakeAfterMs).
 
@@ -1577,32 +1581,6 @@ export class TurnRunner {
         </system-reminder>
       `,
       "State completed, but the runner did not call select_state_machine_state.",
-    );
-  }
-
-  /**
-   * Enforce the transition owed after an agent state asked the user a question
-   * and the user answered without the parent advancing the machine.
-   *
-   * The user's answer already ran as an ordinary parent prompt; reaching here
-   * means that turn emitted no `select_state_machine_state`, so the machine is
-   * still suspended at the asking state. Re-prompt under the same bounded
-   * budget as a completed state, then record an `error` terminal if the parent
-   * still refuses to advance.
-   */
-  private async enforceTransitionAfterAnsweredAsk(): Promise<SettledDecision["outcome"]> {
-    const stateName = this.stateMachine?.currentState ?? "";
-    return this.enforceParentTransition(
-      (retryInstruction) => dedent`
-        You received the user's answer to the question asked by the "${stateName}" state, but you did not call select_state_machine_state. The machine is still suspended at that state and will not advance on its own.
-
-        <system-reminder>
-        THIS TURN MUST END WITH A select_state_machine_state TOOL CALL. The user's answer is the input you route on: pick the next state (or a terminal, including a cancelled terminal if the answer means the work should stop) and pass the answer forward via input or override.prompt. Narration without the tool call ("the user chose X, so I'll move to Y") does not advance the machine and will be rejected and re-prompted.
-
-        ${retryInstruction ?? ""}
-        </system-reminder>
-      `,
-      "User answered the question, but the runner did not call select_state_machine_state.",
     );
   }
 
@@ -2044,7 +2022,10 @@ export class TurnRunner {
             clock: this.clock,
             minimumScheduledDelayMs: this.minimumScheduledDelayMs,
           });
-    const taskAwareTools = baseTools.map((tool) =>
+    const childSafeTools = includeParentTools
+      ? baseTools
+      : baseTools.filter((tool) => tool.name !== "ask_user_question");
+    const taskAwareTools = childSafeTools.map((tool) =>
       tool.name === "bash"
         ? wrapBackgroundable(tool, {
             taskManager: this.taskManager,

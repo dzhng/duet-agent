@@ -21,7 +21,6 @@ import {
   MISCONFIGURED_POLL_GATE_THRESHOLD,
   persistStateDefinition,
   recordRunnerDecision,
-  recordStateAskedUser,
   recordStateCompleted,
   recordStateFailed,
   recordStateInterrupted,
@@ -74,6 +73,7 @@ export interface PollPolicy {
 
 /** Execution-free work description produced by a state-machine decision. */
 export type PlannedWork =
+  | { park: { stateName: string } }
   | { run: { subagent: SubagentSpec; stateName: string } }
   | { run: { shell: ShellSpec; stateName: string; pollPolicy?: PollPolicy } }
   | { schedule: { wakeAt: number; stateName: string } }
@@ -261,6 +261,8 @@ export function planDecision(
       const wakeAt = resolveTimerWakeAt(effectiveState, session, now);
       return { session, work: { schedule: { wakeAt, stateName: effectiveState.name } } };
     }
+    case "park":
+      return { session, work: { park: { stateName: effectiveState.name } } };
     case "terminal": {
       const reason = decision.reason ?? effectiveState.reason;
       return {
@@ -378,12 +380,6 @@ export function recordSettled(
   partial?: { assistantText?: string } | ShellPartialOutput,
   now = Date.now(),
 ): SettledDecision {
-  if (result.type === "ask") {
-    return {
-      session: recordStateAskedUser(stateMachine, stateName, result.questions),
-      outcome: { type: "ask", questions: result.questions },
-    };
-  }
   if (result.type === "complete") {
     const output = { result: result.result };
     return {

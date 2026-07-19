@@ -29,8 +29,8 @@ import type {
   TurnUsageEvent,
   TurnUsageFields,
 } from "../types/protocol.js";
-import type { StateMachinePollState, StateMachineTimerState } from "../types/state-machine.js";
 import { scheduledStateFallbackWakeAt } from "../turn-runner/duration.js";
+import { currentScheduledState as scheduledStateForMachine } from "../turn-runner/state-machine-session.js";
 
 /**
  * How often `scheduleWake` checks the wall clock against `wakeAt`. Polling — instead of relying
@@ -619,18 +619,8 @@ export class Session {
     return Object.keys(effective).length > 0 ? { options: effective } : {};
   }
 
-  private currentScheduledState(
-    state: TurnState | undefined,
-  ): StateMachinePollState | StateMachineTimerState | undefined {
-    const stateMachine = state?.stateMachine;
-    const currentState = stateMachine?.currentState;
-    if (!stateMachine || !currentState) return undefined;
-    const definitionState = stateMachine.definition.states.find(
-      (item) => item.name === currentState,
-    );
-    return definitionState?.kind === "poll" || definitionState?.kind === "timer"
-      ? definitionState
-      : undefined;
+  private currentScheduledState(state: TurnState | undefined) {
+    return scheduledStateForMachine(state?.stateMachine);
   }
 
   private async readStoredEnvelope(): Promise<{

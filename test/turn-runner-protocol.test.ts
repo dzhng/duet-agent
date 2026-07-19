@@ -1259,7 +1259,7 @@ describe("TurnRunner protocol scenarios", () => {
     });
   });
 
-  test("bubbles an agent state's ask terminal status to the parent turn runner", async () => {
+  test("rejects an ask control emitted by a state agent", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("research_prospect");
     await runner.start({ type: "start", state: turnState });
@@ -1293,7 +1293,12 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "steer",
     });
 
-    expect(terminal).toMatchObject({ type: "ask", state: { status: "waiting_for_human" } });
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "failed",
+      error: "State agent emitted unsupported control: ask_user_question",
+      state: { stateMachine: { terminal: { status: "error" } } },
+    });
   });
 
   test("routes answers through the parent after an agent state asks for human input", async () => {

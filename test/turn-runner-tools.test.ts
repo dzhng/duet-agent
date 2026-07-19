@@ -478,6 +478,29 @@ describe("TurnRunner tools", () => {
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
   });
 
+  test("accepts a park first state and appends the binding park nudge", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    const result = await createDefinitionTool.execute("tool-park", {
+      definition: {
+        name: "approval_gate",
+        prompt: "Wait for approval.",
+        states: [
+          { kind: "park", name: "await_approval" },
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+      firstState: "await_approval",
+    });
+    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toContain(
+      'The state machine is parked at "await_approval".',
+    );
+  });
+
   test("rejects a definition whose state cwd does not exist", async () => {
     const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
     const createDefinitionTool = tools.find(
@@ -964,6 +987,26 @@ describe("TurnRunner tools", () => {
     });
     expect(result.terminate).toBe(true);
     expect(result.content).toEqual([{ type: "text", text: JSON.stringify(details, null, 2) }]);
+  });
+
+  test("selecting a park appends the binding park nudge", async () => {
+    const tools = createTurnRunnerTools({
+      cwd: process.cwd(),
+      mode: {
+        name: "approval_gate",
+        prompt: "Wait for approval.",
+        states: [{ kind: "park", name: "await_approval" }],
+      },
+    });
+    const selectStateTool = tools.find((tool) => tool.name === "select_state_machine_state");
+    if (!selectStateTool) throw new Error("select_state_machine_state tool missing");
+
+    const result = await selectStateTool.execute("tool-park", {
+      decision: { state: "await_approval", override: { kind: "park", state: {} } },
+    });
+    expect(result.content[0]?.type === "text" ? result.content[0].text : "").toContain(
+      "you may end your turn and the machine stays parked.",
+    );
   });
 
   test("accepts state transition input that matches the selected state's schema", async () => {
@@ -1481,6 +1524,7 @@ describe("TurnRunner tools", () => {
     expect(createDefinitionTool.description).toContain('"kind": "agent"');
     expect(createDefinitionTool.description).toContain('"firstState"');
     expect(createDefinitionTool.description).toContain("`timer`");
+    expect(createDefinitionTool.description).toContain("`park`");
     expect(selectStateTool.description).toContain("input object");
     expect(selectStateTool.description).toContain("timer overrides");
     expect(propertyDescription(createDefinitionTool.parameters, "definition")).toContain(
