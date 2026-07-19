@@ -20,7 +20,6 @@ import { resolveTierDefault, type RouteResolutionCatalog } from "../model-routin
 import type { StepObservation } from "../model-routing/step-triggers.js";
 import {
   ModelRouter,
-  type RouterCompactionCause,
   type ModelRouterOptions,
   type RouterStatus,
   type RouterSwitch,
@@ -620,7 +619,7 @@ export class TurnRunner {
     // dispatch with the pre-compact wire-tail and race the horizon
     // mutation. The promise resolves to `void` after the inner body
     // finishes, so `turn()` only needs to await, not inspect a result.
-    const inFlight = this.runCompact("explicit");
+    const inFlight = this.runCompact();
     this.compactInFlight = inFlight;
     try {
       await inFlight;
@@ -631,7 +630,7 @@ export class TurnRunner {
     }
   }
 
-  private async runCompact(cause: RouterCompactionCause): Promise<void> {
+  private async runCompact(): Promise<void> {
     try {
       const state = this.requireRunnerState();
       const observable = stripObservationalContextMessages(state.agent.messages);
@@ -661,7 +660,7 @@ export class TurnRunner {
         return;
       }
       this.wireGuardHorizon.evictionHorizon = newHorizon;
-      this.modelRouter?.noteCompaction(cause);
+      this.modelRouter?.noteCompaction();
       const retainedAfter = applyEvictionHorizon(observable, newHorizon);
       const afterTokens = calculateWireTokens(retainedAfter);
       const dropped = currentRetained.length - retainedAfter.length;
@@ -2455,7 +2454,7 @@ export class TurnRunner {
 
     messages.pop();
     this.wireGuardHorizon.evictionHorizon = newHorizon;
-    this.modelRouter?.noteCompaction("context_overflow");
+    this.modelRouter?.noteCompaction();
 
     const remaining = applyEvictionHorizon(observable, newHorizon).length;
     const dropped = observable.length - remaining;
@@ -2726,7 +2725,7 @@ export class TurnRunner {
           return;
         }
         await this.ensureMemoryCoverageForCompaction(messages);
-        this.modelRouter?.noteCompaction("memory_budget");
+        this.modelRouter?.noteCompaction();
       },
     });
   }
@@ -3169,10 +3168,7 @@ export class TurnRunner {
         effectiveContextWindow: this.resolveEffectiveContext(model.contextWindow),
       };
     }
-    if (switched.compactRecommended) await this.runCompact("router_switch");
     this.emit({ type: "router_switch", ...switched });
-    const nudge = this.modelRouter?.takeRerouteNudge();
-    if (nudge) agent.steer(buildUserAgentMessage(nudge, undefined));
     return { model, thinkingLevel: switched.thinkingLevel };
   }
 }

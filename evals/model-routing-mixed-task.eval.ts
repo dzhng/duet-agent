@@ -68,6 +68,22 @@ function compactUsage(
   );
 }
 
+function compactAssistantTurns(messages: readonly AgentMessage[]) {
+  return messages
+    .filter((message) => message.role === "assistant")
+    .map((message) => ({
+      model: message.model,
+      stopReason: message.stopReason,
+      text: message.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n"),
+      tools: message.content
+        .filter((block) => block.type === "toolCall")
+        .map((block) => ({ name: block.name, arguments: block.arguments })),
+    }));
+}
+
 async function seedTask(cwd: string): Promise<void> {
   await Promise.all([
     writeFile(
@@ -136,7 +152,7 @@ describe("mixed-task model routing promotion", () => {
   testIfDocker(
     "routes visual work to Kimi and the later backend implementation to Sol",
     async () => {
-      // Live executors occasionally under-run the 12-step script (observed:
+      // Live executors occasionally under-run the eight-step script (observed:
       // ending the turn after the frontend phase) — executor variance, not
       // routing behavior.
       await bestOfAttempts(2, runMixedTaskScenario);
@@ -183,28 +199,26 @@ describe("mixed-task model routing promotion", () => {
             FRONTEND PHASE before beginning the BACKEND PHASE.
 
             FRONTEND PHASE — visual implementation:
-            1. Read index.html in its own tool call.
-            2. Read styles.css in its own tool call.
-            3. Edit index.html in its own tool call: add a hero__content wrapper around the copy
+            1. Run "sed -n '1,220p' index.html styles.css" in its own tool call so both visual
+               files are inspected together.
+            2. Edit index.html in its own tool call: add a hero__content wrapper around the copy
                and add a hero__cta link labeled "Start free".
-            4. Edit styles.css in its own tool call: make .hero a polished two-column grid, style
+            3. Edit styles.css in its own tool call: make .hero a polished two-column grid, style
                the CTA and panel, and add an @media responsive single-column layout.
-            5. Run "bun frontend-check.ts" in its own tool call. Do not start backend work unless it
+            4. Run "bun frontend-check.ts" in its own tool call. Do not start backend work unless it
                prints frontend-ok.
 
             BACKEND PHASE — non-visual TypeScript implementation:
-            6. Read the rate-limiter.ts skeleton in its own tool call.
-            7. Edit rate-limiter.ts in its own tool call. Implement a per-key fixed-window
+            5. Read the rate-limiter.ts skeleton in its own tool call. This is deliberately the
+               fifth call: the production cadence must classify this backend boundary before the
+               implementation call that follows.
+            6. Edit rate-limiter.ts in its own tool call. Implement a per-key fixed-window
                RateLimiter(limit, windowMs, now = Date.now) with consume(key), reset(key), and
                RateLimitDecision. Validate positive integer limit and positive windowMs.
-            8. Create rate-limiter.test.ts in its own tool call with Bun tests for independent keys,
+            7. Create rate-limiter.test.ts in its own tool call with Bun tests for independent keys,
                exhausted limits, retryAfterMs, window rollover, reset, and invalid configuration.
-            9. Run "bun test ./rate-limiter.test.ts" in its own tool call.
-            10. Read rate-limiter.test.ts again in its own tool call and identify one missing exact
-                boundary assertion.
-            11. Edit rate-limiter.test.ts in its own tool call to add that boundary assertion.
-            12. Run "bun test ./rate-limiter.test.ts" again in its own tool call. Stop only after
-                the final test run passes, then summarize both completed phases.
+            8. Run "bun test ./rate-limiter.test.ts" in its own tool call. Stop only after it passes,
+               then summarize both completed phases.
           `,
       });
       const terminal = await turn;
@@ -215,6 +229,7 @@ describe("mixed-task model routing promotion", () => {
       const visualCalls = calls.filter((call) => call.phase === "visual");
       const backendCalls = calls.filter((call) => call.phase === "backend");
       const usageByModel = terminal.usageByModel ?? [];
+      const assistantTurns = compactAssistantTurns(terminal.state.agent.messages);
 
       console.log(
         "MIXED_TASK_PROMOTION_EVIDENCE",
@@ -233,6 +248,7 @@ describe("mixed-task model routing promotion", () => {
               tool,
               phase,
             })),
+            assistantTurnCount: assistantTurns.length,
             usageByModel: compactUsage(usageByModel),
             usageSnapshots: usageSnapshots.length,
             turnCost: terminal.turnUsage?.cost.total,
@@ -247,7 +263,6 @@ describe("mixed-task model routing promotion", () => {
       expect(terminal.type).toBe("complete");
       expect(terminal.type === "complete" ? terminal.status : undefined).toBe("completed");
       expect(visualCalls.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(3);
-      expect(backendCalls.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(5);
       expect(visualCalls.some((call) => call.model === KIMI_ID)).toBe(true);
       expect(backendCalls.some((call) => call.model === SOL_ID)).toBe(true);
       // The promotion contract: phases START in order, the cadence switch
@@ -258,9 +273,9 @@ describe("mixed-task model routing promotion", () => {
       // final verification (re-running the frontend check while wrapping
       // up). Both were observed in live acceptance runs; pinning them
       // would test incidental sequence, not routing behavior.
-      const isMutating = (call: RoutedToolCall) => call.tool !== "read";
-      const visualWork = visualCalls.filter(isMutating);
-      const backendWork = backendCalls.filter(isMutating);
+      const isMutation = (call: RoutedToolCall) => call.tool === "edit" || call.tool === "write";
+      const visualWork = visualCalls.filter(isMutation);
+      const backendWork = backendCalls.filter(isMutation);
       expect(visualWork.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(1);
       expect(backendWork.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(1);
       expect(visualWork[0]!.index).toBeLessThan(backendWork[0]!.index);
@@ -270,7 +285,19 @@ describe("mixed-task model routing promotion", () => {
       );
       expect(kimiToSol, JSON.stringify(switches, null, 2)).toBeDefined();
       const solBackendWork = backendWork.filter((call) => call.model === SOL_ID);
-      expect(solBackendWork.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(1);
+      expect(
+        solBackendWork.length,
+        JSON.stringify({ calls, assistantTurns }, null, 2),
+      ).toBeGreaterThanOrEqual(1);
+      expect(backendWork[0]?.model, JSON.stringify({ calls, assistantTurns }, null, 2)).toBe(
+        SOL_ID,
+      );
+      expect(visualWork.some((call) => call.model === SOL_ID)).toBe(false);
+
+      const userMessages = terminal.state.agent.messages.filter(
+        (message) => message.role === "user",
+      );
+      expect(userMessages).toHaveLength(1);
 
       const cadenceSwitches = switches.filter((event) => event.trigger === "cadence");
       expect(cadenceSwitches.length, JSON.stringify(switches, null, 2)).toBeGreaterThanOrEqual(1);

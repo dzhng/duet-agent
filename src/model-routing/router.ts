@@ -1,6 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import type { ClassifierDecision, ClassifierInput, RouteTrigger } from "./classifier.js";
-import { renderRerouteNudge } from "./prompts.js";
 import {
   resolveRoute,
   resolveTierDefault,
@@ -25,13 +24,6 @@ export interface RouterPrepareInput {
   signal?: AbortSignal;
 }
 
-/** Runtime source of a wire-prefix rebuild reported to routing policy. */
-export type RouterCompactionCause =
-  | "explicit"
-  | "memory_budget"
-  | "context_overflow"
-  | "router_switch";
-
 /** An actual concrete-model or reasoning-effort change selected by the router. */
 export interface RouterSwitch {
   /** Virtual tier whose policy selected the target. */
@@ -50,8 +42,6 @@ export interface RouterSwitch {
   rationale: string;
   /** True when image capability applied the selected route's fallback model. */
   visionFallback: boolean;
-  /** Router policy: a concrete-model change should start from a compact wire prefix. */
-  compactRecommended: boolean;
 }
 
 /** Advisor rate-floor decision measured only in completed parent assistant steps. */
@@ -122,8 +112,6 @@ export class ModelRouter {
   private currentTurnHint?: string;
   private lastRationale?: string;
   private pinned = false;
-  private rerouteNudge?: string;
-  private nudgeExemptionAvailable = false;
   private advisorConsultInFlight = false;
   private facts: TurnFacts = { hasImages: false };
   /** Precomputed: the tier has exactly one possible destination, so classification is skipped. */
@@ -201,10 +189,7 @@ export class ModelRouter {
   }
 
   /** Arm one cap-exempt classification after an independent wire-prefix compaction. */
-  noteCompaction(cause: RouterCompactionCause = "explicit"): void {
-    // Switch-caused compaction is already the consequence of a classification. Ignoring it here
-    // keeps the switch → compact interlock from feeding back into another classification.
-    if (cause === "router_switch") return;
+  noteCompaction(): void {
     this.compactionClassificationPending = true;
   }
 
@@ -288,13 +273,11 @@ export class ModelRouter {
         trigger,
         rationale: decision.rationale,
         visionFallback: next.visionFallback,
-        compactRecommended: baseline.modelName !== next.modelName,
       };
-      this.rerouteNudge = undefined;
-      this.nudgeExemptionAvailable = false;
-      if (switched.trigger !== "advisor") {
-        this.rerouteNudge = renderRerouteNudge(switched);
-      }
+      // A replacement model starts with a fresh advisor floor. Its first
+      // consult is authorized by the ordinary gate; a successful consult then
+      // starts the normal step-based cooldown again.
+      this.lastAdvisorStep = undefined;
       return switched;
     } catch {
       return undefined;
@@ -315,10 +298,7 @@ export class ModelRouter {
     if (this.advisorConsultInFlight) {
       return { allowed: false, stepsUntilAllowed: 0, inFlight: true };
     }
-    const gate = this.nudgeExemptionAvailable
-      ? { allowed: true, stepsUntilAllowed: 0 }
-      : this.advisorGate();
-    this.nudgeExemptionAvailable = false;
+    const gate = this.advisorGate();
     if (gate.allowed) this.advisorConsultInFlight = true;
     return gate;
   }
@@ -330,14 +310,6 @@ export class ModelRouter {
     if (!success) return;
     this.lastAdvisorStep = this.assistantSteps;
     this.advisorClassificationPending = true;
-  }
-
-  /** Take the latest switch nudge and arm its one-shot advisor-floor exemption. */
-  takeRerouteNudge(): string | undefined {
-    const nudge = this.rerouteNudge;
-    this.rerouteNudge = undefined;
-    if (nudge) this.nudgeExemptionAvailable = true;
-    return nudge;
   }
 
   /** Return a detached snapshot; callers never infer routing policy from runner state. */

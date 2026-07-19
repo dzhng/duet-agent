@@ -6,6 +6,7 @@ import { Agent, type AgentEvent, type AgentMessage } from "@earendil-works/pi-ag
 import {
   createAssistantMessageEventStream,
   type AssistantMessage,
+  type Context,
   type Model,
 } from "@earendil-works/pi-ai";
 import type { ClassifierDecision, ClassifierInput } from "../src/model-routing/classifier.js";
@@ -42,6 +43,7 @@ interface PendingStream {
 class RouterTurnRunner extends TurnRunner {
   readonly pendingStreams: PendingStream[] = [];
   readonly requestModels: Model<any>[] = [];
+  readonly requestMessages: Context["messages"][] = [];
   readonly createdAgentOptions: Array<{ model?: string; thinkingLevel?: string }> = [];
   private readonly classify: RouteClassifier;
   private readonly everySteps: number;
@@ -133,9 +135,10 @@ class RouterTurnRunner extends TurnRunner {
       thinkingLevel: input.state.options?.thinkingLevel,
     });
     const agent = super.createAgent(input, onControlResult);
-    agent.streamFn = (model, _context, options) => {
+    agent.streamFn = (model, context, options) => {
       const stream = createAssistantMessageEventStream();
       this.requestModels.push(model);
+      this.requestMessages.push(structuredClone(context.messages));
       this.pendingStreams.push({ model, stream });
       if (options?.signal?.aborted) {
         queueMicrotask(() => {
@@ -411,7 +414,6 @@ describe("TurnRunner virtual-model adapter", () => {
       trigger: "cadence",
       rationale: "The plan is ready to implement.",
       visionFallback: false,
-      compactRecommended: true,
     });
     expect(terminal.turnUsage?.totalTokens).toBe(30);
     expect(terminal.usageByModel).toEqual([
@@ -428,23 +430,16 @@ describe("TurnRunner virtual-model adapter", () => {
       terminal.usageByModel?.reduce((total, entry) => total + entry.usage.totalTokens, 0),
     ).toBe(terminal.turnUsage?.totalTokens);
     expect(terminal.state.options?.model).toBe("frontier");
-    const injectedNudges = terminal.state.agent.messages
-      .filter((message) => message.role === "user")
-      .map((message) =>
-        typeof message.content === "string"
-          ? message.content
-          : message.content
-              .filter((block) => block.type === "text")
-              .map((block) => block.text)
-              .join("\n"),
-      )
-      .filter((text) => text.includes("The routed model changed"));
-    expect(injectedNudges).toContainEqual(
-      expect.stringContaining("changed from fable-5 to gpt-5.6-sol for the implement route"),
+    expect(runner.requestMessages).toHaveLength(2);
+    expect(JSON.stringify(runner.requestMessages[1])).toBe(
+      JSON.stringify(terminal.state.agent.messages.slice(0, -1)),
     );
+    expect(runner.requestMessages[1]!.filter((message) => message.role === "user")).toHaveLength(1);
+    expect(JSON.stringify(runner.requestMessages[1]![0])).toContain("Plan, then implement.");
+    expect(terminal.state.wireGuardHorizon?.evictionHorizon ?? 0).toBe(0);
   });
 
-  test("explicit compaction arms one classification and its switch compaction does not re-arm", async () => {
+  test("explicit compaction arms one classification without a second switch-only compaction", async () => {
     const inputs: ClassifierInput[] = [];
     const decisions = [
       { route: "general", rationale: "Start general work." },
@@ -497,13 +492,12 @@ describe("TurnRunner virtual-model adapter", () => {
         trigger: "compaction",
         fromModel: "gpt-5.6-sol",
         toModel: "fable-5",
-        compactRecommended: true,
       }),
     ]);
     expect(
       events.filter((event) => event.type === "system" && event.message.startsWith("compact:"))
         .length,
-    ).toBe(2);
+    ).toBe(1);
   });
 
   test("memory-budget compaction arms classification at the next boundary", async () => {
@@ -540,7 +534,7 @@ describe("TurnRunner virtual-model adapter", () => {
     ).toEqual([]);
   });
 
-  test("context-overflow recovery arms one classification before the retry", async () => {
+  test("context-overflow recovery classifies once without forcing an extra model turn", async () => {
     const inputs: ClassifierInput[] = [];
     const decisions = [
       { route: "general", rationale: "Start general work." },
@@ -568,12 +562,11 @@ describe("TurnRunner virtual-model adapter", () => {
     runner.failNextWithContextOverflow();
     await waitFor(() => runner.pendingStreams.length === 1);
     runner.completeNext({ text: "Recovered.", usageTokens: 5 });
-    await waitFor(() => runner.pendingStreams.length === 1);
-    runner.completeNext({ text: "Recovery complete.", usageTokens: 5 });
     await turn;
 
     expect(inputs.map((input) => input.trigger)).toEqual(["turn_start", "compaction"]);
-    expect(runner.requestModels.at(-1)?.api).toBe("anthropic-messages");
+    expect(runner.requestModels).toHaveLength(2);
+    expect(runner.parentAgentForTest().state.model.api).toBe("anthropic-messages");
   });
 
   testIfDocker("an image tool result triggers the vision guard at the next boundary", async () => {

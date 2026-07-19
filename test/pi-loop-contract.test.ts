@@ -8,9 +8,14 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, type Message } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
+import { createTaskManager } from "../src/tasks/task-manager.js";
+import { wrapBackgroundable } from "../src/turn-runner/task-tools.js";
+import { waitFor } from "./helpers/async.js";
+import { ManualRuntimeClock } from "./helpers/manual-runtime-clock.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 
 const noParameters = Type.Object({});
+const commandParameters = Type.Object({ command: Type.String() });
 
 function userMessage(text: string): AgentMessage {
   return {
@@ -196,6 +201,70 @@ describe("pi agent loop contract", () => {
       "execute:ordinary_after",
     ]);
     expect(scripted.modelCalls).toHaveLength(1);
+  });
+
+  test("task-backed foreground shell calls execute in model order", async () => {
+    const clock = new ManualRuntimeClock();
+    const manager = createTaskManager({ clock });
+    const starts: string[] = [];
+    let releaseFirst!: () => void;
+    let releaseSecond!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const baseTool: AgentTool<typeof commandParameters> = {
+      name: "bash",
+      label: "bash",
+      description: "Run a shell command.",
+      parameters: commandParameters,
+      async execute(_id, params) {
+        const command = String(params.command);
+        starts.push(command);
+        await (command === "first" ? firstGate : secondGate);
+        return terminatingResult(command);
+      },
+    };
+    const bash = wrapBackgroundable(baseTool, {
+      taskManager: manager,
+      defaultWaitBudgetMs: 120_000,
+      clock,
+      ownerScopeId: () => "turn-1",
+      label: (params) => String(params.command),
+    });
+    const scripted = createScriptedAgent(
+      [
+        createAssistantMessage({
+          extraContent: [
+            { type: "toolCall", id: "bash-first", name: "bash", arguments: { command: "first" } },
+            {
+              type: "toolCall",
+              id: "bash-second",
+              name: "bash",
+              arguments: { command: "second" },
+            },
+          ],
+        }),
+      ],
+      [bash],
+    );
+    const running = scripted.agent.prompt("start");
+
+    try {
+      await waitFor(() => starts.length > 0);
+      expect(starts).toEqual(["first"]);
+      releaseFirst();
+      await waitFor(() => starts.length === 2);
+      expect(starts).toEqual(["first", "second"]);
+      releaseSecond();
+      await running;
+    } finally {
+      releaseFirst();
+      releaseSecond();
+      await running;
+    }
   });
 
   test("an early tool result detaches later work from updates and the ended agent run", async () => {

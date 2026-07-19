@@ -5,12 +5,59 @@ Decision audit for the prerequisite RPC and TurnRunner corrections made on
 
 ## Review these first
 
-1. Slice 01 was marked complete after its required paid live smoke was changed
-   to optional. That completion claim should be reversed unless the user waives
-   the smoke explicitly.
+No open choices remain from this routing-continuity follow-up.
 
 The former parent-step limit, zero-valued early context, built-in balanced tier,
 and fail-closed advisor accounting choices were resolved by the user below.
+
+## Resolved by user — routing follow-up
+
+### N4 — The mixed-model live eval uses best-of-two acceptance
+
+- **When:** routing-continuity follow-up, while strengthening and rerunning
+  `model-routing-mixed-task.eval.ts`.
+- **The choice:** The live eval runs the same frontend-then-backend coding task
+  up to twice and passes if either attempt succeeds. In the final verification,
+  attempt one let Kimi put several backend tool calls into one assistant message;
+  the router could only switch after that whole message, so Kimi performed the
+  backend mutations and the attempt failed. Attempt two obeyed the requested
+  one-tool-per-message rhythm, switched to Sol at the boundary, and made the
+  overall eval green. The unbuilt alternative is a reliability gate: require
+  every attempt to pass, or run a fixed sample and assert/report a pass rate
+  instead of discarding failed attempts.
+- **The gap:** The user authorized paid eval runs and asked whether routing is
+  correct, but did not choose whether this test should answer “can the routing
+  work?” or “how reliably does the routing work?” The existing best-of-two
+  helper answered the first question, and the follow-up retained it.
+- **The reach:** A regression that succeeds only intermittently can still leave
+  this eval green. That is acceptable for a local capability smoke, but it is
+  too weak to support a campaign-readiness or reliability claim by itself.
+- **Verdict:** **resolved by user.** Best-of-two is accepted for this live eval;
+  it is intentionally a capability smoke that tolerates one executor-variance
+  attempt rather than a per-run reliability measurement.
+- **Confidence:** **high** after explicit user confirmation.
+
+### N5 — Effort-only route switches reset the advisor cooldown
+
+- **When:** routing-continuity follow-up, while replacing the prompt-coupled
+  advisor exemption with a direct cooldown reset.
+- **The choice:** A router switch can mean either “use a different concrete
+  model” or “keep the same model but change its thinking effort.” Today both
+  clear the last-advisor timestamp. For example, if Sol stays Sol but moves from
+  medium to high thinking, it may consult the advisor immediately even if Sol
+  consulted one step ago. The unbuilt alternative resets the cooldown only when
+  the concrete model name changes; an effort-only adjustment would inherit the
+  existing wait because no replacement model arrived.
+- **The gap:** The user explicitly said a route/model switch should reset the
+  cooldown, but did not define the same-model, different-effort edge case. The
+  implementation used the router's existing broad definition of a switch.
+- **The reach:** This determines advisor call frequency and cost for routing
+  tables that map multiple routes to one model at different efforts. It also
+  decides whether future code can read “switch” as “new model” or must remember
+  that effort changes have the same side effects.
+- **Verdict:** **resolved by user.** Every actual route switch resets the advisor
+  cooldown, including a same-model switch that changes only thinking effort.
+- **Confidence:** **high** after explicit user confirmation.
 
 ## Unsound
 
@@ -270,6 +317,96 @@ ownerScopeId }`, even though both execute through the same task manager.
   needs it rather than guessing from model names.
 - **Confidence:** **medium** because role-level economics could become useful in
   a later campaign even though campaign 1 does not require them.
+
+### S9 — Foreground task-backed shell calls execute in model order
+
+- **When:** routing-continuity follow-up, after the state-scope eval exposed two
+  parallel shell calls where the first completed and the second never settled.
+- **The choice:** When one assistant message contains two ordinary shell calls,
+  the runner now starts the second only after the first returns its foreground
+  result. A model that genuinely wants concurrent commands can still mark each
+  call `run_in_background`, which returns immediately and lets the task manager
+  own both lifecycles. The unbuilt alternative keeps implicit parallelism for
+  ordinary foreground calls and requires every shell backend and result-delivery
+  path to be safe when several calls begin together.
+- **The gap:** The task layer documented an explicit background mechanism but
+  did not define ordering when a model emitted several foreground calls in one
+  message. The live hang forced that ambiguity into a product behavior choice.
+- **The reach:** This applies to every tool wrapped by the generic
+  backgroundable-task adapter—currently shell—and gives future wrappers the
+  same ordered-foreground/explicit-background contract. It trades accidental
+  foreground parallelism for deterministic delivery and cleanup.
+- **Verdict:** **sound.** Explicit background work is the clearer concurrency
+  boundary, while foreground results preserve the order the model wrote.
+- **Confidence:** **medium** because some workloads may value automatic shell
+  parallelism, although the existing background API preserves that capability
+  deliberately.
+
+### S10 — Every state-scope eval attempt owns a fresh process group
+
+- **When:** routing-continuity follow-up, while fixing the live state-scope eval
+  that could leave a stuck TurnRunner alive after its timeout.
+- **The choice:** Each of the five model attempts now runs in a new Linux process
+  group. At 180 seconds the parent sends a polite termination signal, waits five
+  seconds for runner cleanup, then kills the whole group if anything remains.
+  Only that infrastructure timeout receives one retry in another fresh process;
+  a completed attempt that edits the file is never retried away. The unbuilt
+  alternative reuses one process and trusts in-process cancellation, allowing a
+  leaked shell, timer, or model request to contaminate later samples.
+- **The gap:** The eval specified repeated fresh runners but not an operating
+  system boundary or what kinds of failure were eligible for retry.
+- **The reach:** Repeated stochastic evals can now distinguish model behavior
+  from broken cleanup, and one failed cancellation cannot poison later samples.
+  The mechanism is intentionally Docker/Linux-specific; the eval is skipped
+  outside Docker.
+- **Verdict:** **sound.** A process group is the first boundary that guarantees
+  cleanup even when the code being tested is precisely what failed to cancel.
+- **Confidence:** **high**; the user approved process isolation, and the forced
+  timeout falsification left no child process or container behind.
+
+### S11 — The state-scope eval keeps implementation tools available and unprimed
+
+- **When:** routing-continuity follow-up, after diagnosing the parallel-shell
+  hang.
+- **The choice:** The permanent eval does not tell the planning model “never use
+  write/edit.” It leaves real read, shell, write, and edit tools available, then
+  fails if the planning state calls write/edit or if the fixture changes on
+  disk. A temporary diagnostic prompt forbade inspection and made the eval pass,
+  but that would have taught the model the answer. The unbuilt alternative keeps
+  that over-primed prompt or removes mutation tools, producing a green result
+  that cannot prove the state-machine context prevented implementation.
+- **The gap:** Fixing the infrastructure hang could have been done either by
+  narrowing the scenario until it stopped hanging or by repairing the runtime
+  ordering that the scenario exercised.
+- **The reach:** This preserves the eval as evidence for real model restraint,
+  not prompt compliance manufactured by the test harness. Future prompt-layer
+  changes can continue using its five-run outcome as a meaningful signal.
+- **Verdict:** **sound.** The only-if assertion remains intact: a green attempt
+  still had the opportunity to implement and demonstrably did not.
+- **Confidence:** **high**.
+
+### S12 — The mixed task places the cadence boundary immediately before backend mutation
+
+- **When:** routing-continuity follow-up, while making transcript transfer
+  observable in the live eval.
+- **The choice:** The task now uses eight required calls instead of twelve. Its
+  fifth call reads the backend skeleton, so the production five-step cadence can
+  classify the phase change before the first backend edit. The eval requires the
+  first backend mutation to come from Sol, forbids Sol from replaying frontend
+  mutations, and requires exactly one user message so no hidden reroute prompt
+  can coach the replacement model. The unbuilt alternative leaves several extra
+  backend actions before the expected switch, which can pass even when transfer
+  is late or the replacement repeats earlier work.
+- **The gap:** The old live task proved both models appeared somewhere, but did
+  not isolate seamless continuation at the exact handoff boundary.
+- **The reach:** A green attempt now demonstrates the behavior a user sees when
+  `/model` changes mid-turn: the next model receives the same transcript and
+  continues at the next unfinished action. It also keeps classifier, Kimi, and
+  Sol usage in the existing per-model total invariant.
+- **Verdict:** **sound.** The shorter scenario removes unrelated work while
+  strengthening the routing and continuity claims.
+- **Confidence:** **medium** because the live model can still batch several
+  calls into one message, which is why N4's acceptance-policy choice remains.
 
 ## Compressed trivial discretion
 

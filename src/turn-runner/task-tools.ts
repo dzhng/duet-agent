@@ -213,6 +213,10 @@ export function wrapBackgroundable<TParameters extends TSchema, TDetails>(
 
   return {
     ...tool,
+    // Foreground task calls carry ordering semantics: each result is delivered
+    // before the next command starts. Callers that want concurrency use the
+    // explicit run_in_background path, which returns immediately.
+    executionMode: "sequential",
     parameters,
     description: `${tool.description} The timeout is a foreground wait budget, not a kill timeout. Use run_in_background to return immediately.`,
     async execute(toolCallId, rawParams, outerSignal, onUpdate) {
