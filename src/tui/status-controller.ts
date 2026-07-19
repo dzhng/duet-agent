@@ -21,12 +21,10 @@ export interface StatusControllerOptions {
    *  selection segments. */
   hint: TextRenderable;
   /**
-   * Re-paints every in-flight tool block header with a fresh spinner +
-   * elapsed counter. Invoked from the ticker so spinners advance in step
-   * with the working-status line. Provided externally because the tool
-   * block map lives with the step renderer, not the status controller.
+   * Re-paints in-flight parent tool blocks and the sibling task tree with
+   * fresh elapsed counters. Their maps live outside this controller.
    */
-  refreshActiveToolBlocks: () => void;
+  refreshActiveWork: () => void;
 }
 
 /**
@@ -57,6 +55,7 @@ export class StatusController {
   private workingTicker: ReturnType<typeof setInterval> | undefined;
   private workingMessage = "working…";
   private queuedFollowUps = 0;
+  private heldAwakeBy: readonly string[] = [];
   private pendingImageCount = 0;
   private lastSelectionText = "";
   private terminal: TurnTerminalEvent | undefined;
@@ -115,6 +114,20 @@ export class StatusController {
     this.refreshWorkingStatus();
   }
 
+  /**
+   * Project the in-process task set onto the chrome. A non-empty set is a
+   * direct guarantee that the turn is still open; an empty set never marks
+   * idle because only a real terminal can close the turn.
+   */
+  setHeldAwakeTasks(taskIds: readonly string[], startedAt?: number): void {
+    const changed =
+      taskIds.length !== this.heldAwakeBy.length ||
+      taskIds.some((taskId, index) => taskId !== this.heldAwakeBy[index]);
+    this.heldAwakeBy = [...taskIds];
+    if (taskIds.length > 0 && !this.running) this.markRunning(startedAt);
+    else if (changed) this.refreshWorkingStatus();
+  }
+
   /** Mirror of the most recent drag-selection text. Stored here so the hint
    *  row can advertise the copy keystroke only while something is selectable;
    *  the canonical selection state lives in `runTui`. */
@@ -131,27 +144,28 @@ export class StatusController {
     this.refreshHint();
   }
 
-  markRunning(): void {
+  markRunning(startedAt = Date.now()): void {
     const wasRunning = this.running;
     this.running = true;
     this.workingMessage = "working…";
-    this.workingStartedAt = Date.now();
+    this.workingStartedAt = startedAt;
     this.refreshHint();
     this.refreshWorkingStatus();
     this.startWorkingTicker();
     if (!wasRunning) this.notifyRunningChange(true);
   }
 
-  /** Settle the working-status surface and optionally record the terminal
-   *  event that ended the turn. The terminal is exposed via `lastTerminal()`
+  /** Settle the working-status surface and record the terminal event that
+   *  ended the turn. The terminal is exposed via `lastTerminal()`
    *  so `runTui` can return it to its caller after renderer teardown. */
-  markIdle(terminal?: TurnTerminalEvent): void {
-    if (terminal !== undefined) this.terminal = terminal;
+  markIdle(terminal: TurnTerminalEvent): void {
+    this.terminal = terminal;
     const wasRunning = this.running;
     this.running = false;
     this.stopWorkingTicker();
     this.workingStartedAt = undefined;
     this.workingMessage = "working…";
+    this.heldAwakeBy = [];
     this.refreshHint();
     this.refreshWorkingStatus();
     if (wasRunning) this.notifyRunningChange(false);
@@ -223,13 +237,17 @@ export class StatusController {
     // The exit-confirm prompt owns the status line while it is up; do not
     // let a ticker tick or a queued-follow-up update paint over it.
     if (this.exitConfirmActive) return;
-    this.opts.refreshActiveToolBlocks();
+    this.opts.refreshActiveWork();
     if (this.workingStartedAt === undefined) {
       this.setStatus(this.queuedFollowUps > 0 ? `queued follow-ups: ${this.queuedFollowUps}` : "");
       return;
     }
     const elapsed = formatElapsed(Date.now() - this.workingStartedAt);
     const queued = this.queuedFollowUps > 0 ? ` · queued follow-ups: ${this.queuedFollowUps}` : "";
+    if (this.heldAwakeBy.length > 0) {
+      this.setStatus(`  turn open: held awake by ${this.heldAwakeBy.join(", ")}${queued}`);
+      return;
+    }
     this.setStatus(`● ${this.workingMessage} (${elapsed})${queued}`);
   }
 

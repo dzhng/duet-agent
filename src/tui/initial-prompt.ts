@@ -33,7 +33,5 @@ export function bootstrapInitialPrompt(deps: BootstrapInitialPromptDeps): void {
   if (pending?.type === "sleep") {
     stepRenderer.renderSleeping(pending.wakeAt);
     statusController.markIdle(pending);
-  } else {
-    statusController.markIdle();
   }
 }

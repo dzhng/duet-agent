@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect } from "bun:test";
 import { testIfDocker } from "./helpers/docker-only.js";
 import { bootTui, type TuiHarness } from "./helpers/tui-harness.js";
+import { INITIAL_STATE } from "../examples/tui-playground.js";
 
 /**
  * Sidebar context bar: zero-width segments must not reserve layout cells.
@@ -96,4 +97,80 @@ describe("sidebar context bar", () => {
     expect(match).toBeDefined();
     expect(match![1]).toBe("\u2591".repeat(25));
   });
+
+  testIfDocker(
+    "task-origin usage attributes only its delta while the context bar stays parent-scoped",
+    async () => {
+      await harness.dispose();
+      harness = await bootTui({
+        initialState: {
+          ...INITIAL_STATE,
+          tasks: [
+            {
+              id: "t4",
+              kind: "subagent",
+              name: "spawn_agent",
+              label: "audit auth flows",
+              ownerScopeId: "root",
+              status: "running",
+              startedAt: Date.now() - 5_000,
+            },
+          ],
+        },
+      });
+      const parentUsage = tokenUsage(10_000, 0.1);
+      await harness.pushUsage({
+        turnUsage: parentUsage,
+        usageByModel: [{ model: "parent", usage: parentUsage }],
+        lastMessageUsage: parentUsage,
+        effectiveContextWindow: 200_000,
+        contextWindowUsage: {
+          systemPrompt: 2_000,
+          messages: 8_000,
+          localMemory: 0,
+          globalMemory: 0,
+        },
+      });
+      const aggregate = tokenUsage(78_000, 0.78);
+      const parentContext = tokenUsage(45_000, 0.1);
+      await harness.pushUsage({
+        origin: { kind: "task", taskId: "t4", ownerScopeId: "root" },
+        turnUsage: aggregate,
+        usageByModel: [
+          { model: "parent", usage: parentUsage },
+          { model: "child", usage: tokenUsage(68_000, 0.68) },
+        ],
+        lastMessageUsage: parentContext,
+        effectiveContextWindow: 200_000,
+        contextWindowUsage: {
+          systemPrompt: 5_000,
+          messages: 40_000,
+          localMemory: 0,
+          globalMemory: 0,
+        },
+      });
+
+      const frame = await harness.captureCharFrame();
+      expect(frame).toContain("45k / 200k");
+      expect(frame).toContain("[68.0k tok]");
+      expect(frame).toContain("$0.7800");
+    },
+  );
 });
+
+function tokenUsage(totalTokens: number, costTotal: number) {
+  return {
+    input: totalTokens,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens,
+    cost: {
+      input: costTotal,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      total: costTotal,
+    },
+  };
+}

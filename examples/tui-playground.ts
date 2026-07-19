@@ -94,9 +94,13 @@ export const PLAYGROUND_MENU = [
 
 export class FakePlaygroundRunner implements SessionTurnRunner {
   private readonly handlers = new Set<(event: TurnEvent) => void>();
-  private state: TurnState = INITIAL_STATE;
+  private state: TurnState;
   private interrupted = false;
   private currentTurn?: { resolve: () => void; cancelled: boolean };
+
+  constructor(initialState: TurnState = INITIAL_STATE) {
+    this.state = structuredClone(initialState);
+  }
 
   async start(_command: TurnStartCommand): Promise<TurnState> {
     this.emit({ type: "turn_started", state: this.state });
@@ -228,6 +232,16 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
     // state.followUpQueue (e.g. the Ctrl+C pop handler) see the live queue.
     if (event.type === "follow_up_queue") {
       this.state = { ...this.state, followUpQueue: [...event.followUpQueue] };
+    } else if (event.type === "task_started") {
+      const tasks = (this.state.tasks ?? []).filter((task) => task.id !== event.task.id);
+      this.state = { ...this.state, tasks: [...tasks, { ...event.task }] };
+    } else if (event.type === "task_settled") {
+      this.state = {
+        ...this.state,
+        tasks: (this.state.tasks ?? []).map((task) =>
+          task.id === event.settlement.id ? { ...task, status: event.settlement.status } : task,
+        ),
+      };
     }
     for (const handler of this.handlers) handler(event);
   }
