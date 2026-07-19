@@ -207,6 +207,17 @@ function buildUsageEvent(costTotal: number): TurnUsageEvent {
   };
 }
 
+function buildTerminalUsage(costTotal: number) {
+  const event = buildUsageEvent(costTotal);
+  return {
+    turnUsage: event.turnUsage,
+    usageByModel: event.usageByModel,
+    lastMessageUsage: event.lastMessageUsage,
+    effectiveContextWindow: event.effectiveContextWindow,
+    contextWindowUsage: event.contextWindowUsage,
+  };
+}
+
 function complete(result = "done"): TurnTerminalEvent {
   return {
     type: "complete",
@@ -706,10 +717,7 @@ describe("Session", () => {
       status: "completed",
       result: "done",
       state: turnState,
-      turnUsage: buildUsageEvent(0.1).turnUsage,
-      lastMessageUsage: buildUsageEvent(0.1).lastMessageUsage,
-      effectiveContextWindow: buildUsageEvent(0.1).effectiveContextWindow,
-      contextWindowUsage: buildUsageEvent(0.1).contextWindowUsage,
+      ...buildTerminalUsage(0.1),
     });
     expect(session.getSessionCostUsd()).toBeCloseTo(0.1, 6);
 
@@ -725,10 +733,7 @@ describe("Session", () => {
       status: "completed",
       result: "done",
       state: turnState,
-      turnUsage: buildUsageEvent(0.04).turnUsage,
-      lastMessageUsage: buildUsageEvent(0.04).lastMessageUsage,
-      effectiveContextWindow: buildUsageEvent(0.04).effectiveContextWindow,
-      contextWindowUsage: buildUsageEvent(0.04).contextWindowUsage,
+      ...buildTerminalUsage(0.04),
     });
     expect(session.getSessionCostUsd()).toBeCloseTo(0.14, 6);
 
@@ -741,14 +746,30 @@ describe("Session", () => {
       status: "completed",
       result: "done",
       state: turnState,
-      turnUsage: buildUsageEvent(0.01).turnUsage,
-      lastMessageUsage: buildUsageEvent(0.01).lastMessageUsage,
-      effectiveContextWindow: buildUsageEvent(0.01).effectiveContextWindow,
-      contextWindowUsage: buildUsageEvent(0.01).contextWindowUsage,
+      ...buildTerminalUsage(0.01),
     });
     expect(session.getSessionCostUsd()).toBeCloseTo(0.15, 6);
 
     await session.dispose();
+  });
+
+  testIfDocker("commits auxiliary-only terminal cost without inventing context", async () => {
+    const runner = new FakeTurnRunner([]);
+    const session = await createSession(runner);
+    await session.start();
+    const auxiliaryUsage = buildUsageEvent(0.06);
+
+    runner.emit({
+      type: "complete",
+      status: "completed",
+      result: "done",
+      state: turnState,
+      turnUsage: auxiliaryUsage.turnUsage,
+      usageByModel: auxiliaryUsage.usageByModel,
+    });
+
+    expect(session.getSessionCostUsd()).toBeCloseTo(0.06, 6);
+    expect(session.getLastUsage()).toBeUndefined();
   });
 
   testIfDocker("sends active prompts through turn runner", async () => {

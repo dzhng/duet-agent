@@ -1,5 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
-import { generateText } from "ai";
+import { generateText, type LanguageModelUsage } from "ai";
 import { createDuetModelGateway } from "../model-resolution/model-gateway.js";
 import { ADVISOR_SYSTEM_PROMPT } from "./prompts.js";
 
@@ -19,6 +19,8 @@ export interface CallAdvisorInput {
 export interface AdvisorResult {
   /** Compact strategic guidance returned to the executor tool. */
   advice: string;
+  /** Provider-reported token usage for pricing and live turn attribution. */
+  usage: LanguageModelUsage;
 }
 
 /**
@@ -36,5 +38,5 @@ export async function callAdvisor(input: CallAdvisorInput): Promise<AdvisorResul
     reasoning: input.thinkingLevel,
     abortSignal: input.signal,
   });
-  return { advice: result.text };
+  return { advice: result.text, usage: result.usage };
 }

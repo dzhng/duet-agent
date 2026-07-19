@@ -4,6 +4,8 @@ import { Agent } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import dedent from "dedent";
 import type { ClassifierInput } from "../src/model-routing/classifier.js";
+import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
+import { resolveModelName } from "../src/model-resolution/resolver.js";
 import {
   ModelRouter,
   type ModelRouterOptions,
@@ -11,7 +13,7 @@ import {
 } from "../src/model-routing/router.js";
 import { createAskAdvisorTool } from "../src/turn-runner/tools.js";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
-import type { TurnEvent } from "../src/types/protocol.js";
+import type { TurnEvent, TurnUsageEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { createAssistantMessage } from "../test/helpers/messages.js";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
@@ -139,6 +141,10 @@ describe("advisor trigger and router interlock", () => {
           `,
         );
         const toolCalls = captureToolCalls(runner);
+        const usageEvents: TurnUsageEvent[] = [];
+        runner.subscribe((event) => {
+          if (event.type === "usage") usageEvents.push(event);
+        });
 
         const { turn } = await startTurn(runner, {
           mode: "agent",
@@ -159,6 +165,31 @@ describe("advisor trigger and router interlock", () => {
           expect(advisorCalls).toHaveLength(1);
           expect(advisorCalls[0]?.output?.length).toBeGreaterThan(0);
           expect(runner.classifierInputs.map((input) => input.trigger)).toContain("advisor");
+
+          const classifierId = resolveModelName(
+            BUILT_IN_ROUTING_TABLE.classifier.target.modelName,
+          ).id;
+          const advisorId = resolveModelName(
+            BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName,
+          ).id;
+          const usageByModel = terminal.usageByModel ?? [];
+          expect(
+            usageByModel.find((entry) => entry.model === classifierId)?.usage.totalTokens ?? 0,
+          ).toBeGreaterThan(0);
+          expect(
+            usageByModel.find((entry) => entry.model === advisorId)?.usage.totalTokens ?? 0,
+          ).toBeGreaterThan(0);
+          expect(terminal.turnUsage).toBeDefined();
+          expect(usageByModel.reduce((sum, entry) => sum + entry.usage.totalTokens, 0)).toBe(
+            terminal.turnUsage!.totalTokens,
+          );
+          expect(usageByModel.reduce((sum, entry) => sum + entry.usage.cost.total, 0)).toBeCloseTo(
+            terminal.turnUsage!.cost.total,
+            9,
+          );
+          const lastUsage = usageEvents.at(-1);
+          expect(lastUsage?.turnUsage).toEqual(terminal.turnUsage);
+          expect(lastUsage?.usageByModel).toEqual(usageByModel);
         } finally {
           await runner.dispose();
         }
@@ -245,7 +276,17 @@ describe("advisor trigger and router interlock", () => {
         if (success) successfulConsults += 1;
         router.endAdvisorConsult(success);
       },
-      callAdvisor: async () => ({ advice: "Validate lease ownership before queue selection." }),
+      recordUsage: () => {},
+      callAdvisor: async () => ({
+        advice: "Validate lease ownership before queue selection.",
+        usage: {
+          inputTokens: 12,
+          inputTokenDetails: { noCacheTokens: 12, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          outputTokens: 3,
+          outputTokenDetails: { textTokens: 3, reasoningTokens: 0 },
+          totalTokens: 15,
+        },
+      }),
     });
     const first = await advisor.execute("nudge-consult-1", {});
     const second = await advisor.execute("nudge-consult-2", {});

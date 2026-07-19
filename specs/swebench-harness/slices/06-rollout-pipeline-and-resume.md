@@ -19,14 +19,15 @@ campaign money.
 {spec.json, events.ndjson, patch.diff, telemetry.json, status.json}`.
   `status.json` carries phase + `specHash`; final status atomically renamed
   into place; attempt dirs immutable.
-- `orchestrator.ts`: `CampaignSpec` (committed file: manifest path, config
-  ids, trials, concurrency, limits) → pending = manifest × configs × trials
+- `orchestrator.ts`: `CampaignSpec` (committed file: manifest path, virtual
+  tier, config ids, trials, concurrency, limits) →
+  pending = manifest × configs × trials
   minus completed-with-matching-specHash; bounded concurrency (default 3);
   `--retry-failed`; stale `running` treated as crashed; **seeded interleaved
   ON/OFF schedule per instance** to neutralize provider drift. Stateless —
   kill anytime, rerun the same command.
 - `predictions.ts`: artifact tree → predictions JSONL
-  (`model_name_or_path` = config id, e.g. `duet-balanced-advisor-on`).
+  (`model_name_or_path` = config id, e.g. `duet-glm-kimi-advisor-on`).
 
 ## Verification
 
@@ -42,9 +43,11 @@ campaign money.
   cleanly through the official harness (slice 04's proven invocation). One
   advisor-OFF rollout shows zero advisor tool calls in `events.ndjson`.
   Measured cost/duration feeds slice 07's limit recalibration.
+  The emitted turn state records the product-default memory model actually
+  resolved for provenance.
 
 ## Playable checkpoint
 
 `bun benchmarks/swebench/cli.ts rollout run --instance <id> --config
-balanced-advisor-on`, watchable live over SSH; `campaign status` prints the
+glm-kimi-advisor-on`, watchable live over SSH; `campaign status` prints the
 instance × config grid with cost so far.

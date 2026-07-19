@@ -31,18 +31,18 @@ describe("task protocol", () => {
       {
         type: "task_started",
         task: runningTask,
-        origin: { kind: "task", taskId: "t7", ownerScopeId: "turn-1" },
+        origin: { taskId: "t7" },
       },
       {
         type: "task_output",
         taskId: "t7",
         chunk: "first delta\n",
-        origin: { kind: "task", taskId: "t7", ownerScopeId: "turn-1" },
+        origin: { taskId: "t7" },
       },
       {
         type: "task_settled",
         settlement: { id: "t7", status: "completed", settledAt: 2_000, result: "done" },
-        origin: { kind: "task", taskId: "t7", ownerScopeId: "turn-1" },
+        origin: { taskId: "t7" },
       },
     ];
     const outputSnapshot: TaskSnapshot = {
@@ -72,7 +72,7 @@ describe("task protocol", () => {
       expect.objectContaining({
         taskId: "t7",
         chunk: "first delta\n",
-        origin: { kind: "task", taskId: "t7", ownerScopeId: "turn-1" },
+        origin: { taskId: "t7" },
       }),
     );
     expect(resumed.outputSnapshot.output).toEqual(["first delta\n", "second delta\n"]);

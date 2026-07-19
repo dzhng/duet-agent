@@ -1,6 +1,6 @@
 # 01 — Product: honest RPC configuration and complete telemetry
 
-Pure product work in `src/`; no box, no bench code. Three verified defects
+Pure product work in `src/`; no box, no bench code. Four verified defects
 (2026-07-19) would silently invalidate the measurement — and are product bugs
 regardless of the benchmark:
 
@@ -16,44 +16,55 @@ regardless of the benchmark:
    `tool_call` steps with input/output/isError but not the tool-result
    `details`, so `ask_advisor` outcomes (success vs `rateLimited` vs
    unavailable) are not structurally distinguishable in the event stream.
+4. **RPC can outlive stdin.** The unconditional heartbeat timer keeps the
+   process alive after EOF unless a terminal event happened first. Every RPC
+   shutdown path must close the writer and stop its timer.
 
 ## Contract
 
 - RPC boots from `buildProjectCliTurnConfig` (routing-table discovery walks
   from `--workdir`, same as the CLI).
 - Advisor and classifier completions return `Usage` and are recorded via
-  `recordUsage` with their resolved model ids; invariant preserved:
+  the TurnRunner accounting owner with their resolved model ids. Auxiliary
+  cost enters the cumulative ledger immediately. The flat usage event is
+  emitted only after a real parent context snapshot exists; the first later
+  usage event and terminal include every earlier auxiliary call. Invariant:
   Σ `usageByModel[].usage` = terminal `turnUsage`.
 - `tool_call` steps carry the tool-result `details` field (typed in
-  `src/types/protocol.ts`); no new event types.
+  `src/types/protocol.ts`).
+- Closing stdin, fatal startup, normal terminal completion, and disposal all
+  stop the heartbeat before flushing the writer.
 
 ## Seam
 
 All changes stay inside existing owners: `rpc.ts` (config call site),
-`advisor.ts`/`classifier.ts` (return usage), `turn-runner.ts` (record it),
-`agent-events.ts` + `protocol.ts` (details on the step). No bench-specific
-policy enters `src/`.
+`advisor.ts`/`classifier.ts` (surface usage), `turn-runner.ts` (record it),
+`agent-events.ts` + `protocol.ts` (wire telemetry). No bench-specific policy
+enters `src/`.
 
 ## Verification
 
-- Unit: fabricated parent + classifier + advisor + memory usage → exact
-  per-model entries and totals; a scripted RPC session with two tables
-  differing only at `tiers.balanced.advisor.enabled` shows ON exposes
-  `ask_advisor` (details preserved) and OFF omits the tool entirely.
-- Falsification checks: revert each fix in isolation (drop table loading,
-  drop advisor usage, drop details) — the matching test must go red.
-- Live smoke (Mac, cents): one forced-advisor turn on economy tier shows
-  advisor cost present in `usageByModel`.
+- Unit: fabricated parent + classifier + advisor usage → exact per-model
+  entries and totals, including auxiliary usage recorded before a parent
+  completion without fabricating parent context; tool details survive
+  translation; EOF terminates RPC.
+- Deterministic outer-process RPC check: a project table whose default tier
+  exists only in that table boots successfully, reports that tier, then exits
+  after stdin closes without waiting for a heartbeat.
+- Falsification checks: revert each fix in isolation (built-in table loading,
+  dropped auxiliary usage, omitted details, unclosed writer) — the
+  matching check must go red.
+- Required live smoke (Mac, cents): one forced-advisor turn using the custom
+  GLM/Kimi table shows both classifier and advisor spend in cumulative usage.
 - `bun run test` stays green; typecheck/lint/format.
 
 ## Playable checkpoint
 
-`duet --rpc --workdir <dir-with-override>` against a test override prints a
-banner turn whose events show the overridden table took effect and whose
-terminal usage itemizes every model that ran.
+`duet --rpc --workdir <dir-with-override> --model swebench-glm-kimi` shows the
+custom table took effect and itemizes every model that ran while leaving memory
+on its product default.
 
 ## What would change this slice
 
-If classifier/advisor metering requires a pi-ai seam change (usage not
-exposed through the AI SDK path), stop and reslice — that becomes a pinned
-package decision, not a workaround in this slice.
+If a provider stops exposing usage at its completion boundary, stop and
+reslice rather than estimating tokens or cost in the benchmark.

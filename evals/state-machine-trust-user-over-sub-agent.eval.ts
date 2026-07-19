@@ -3,7 +3,7 @@ import dedent from "dedent";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { SubagentResult, SubagentRun } from "../src/turn-runner/subagent.js";
-import type { TurnEvent } from "../src/types/protocol.js";
+import type { TurnEvent, TurnEventOrigin } from "../src/types/protocol.js";
 import type { StateMachineAgentState, StateMachineDefinition } from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
@@ -45,6 +45,7 @@ class MockedSubAgentRunner extends TurnRunner {
   protected override createStateSubagentRun(input: {
     state: StateMachineAgentState;
     prompt: string;
+    origin: TurnEventOrigin;
   }): SubagentRun {
     const fake = this.fakeOutputs.get(input.state.name);
     if (fake === undefined) return super.createStateSubagentRun(input);

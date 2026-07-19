@@ -190,7 +190,10 @@ describe("TurnRunner event emission", () => {
       type: "tool_execution_end",
       toolCallId: "tool-1",
       toolName: "read",
-      result: undefined,
+      result: {
+        content: [{ type: "text", text: "strategy ready" }],
+        details: { type: "ask_advisor", model: "advisor-model" },
+      },
       isError: false,
     });
 
@@ -213,7 +216,8 @@ describe("TurnRunner event emission", () => {
           // The result echoes the input remembered from the start event.
           input: { path: "README.md" },
           isError: false,
-          output: undefined,
+          output: [{ type: "text", text: "strategy ready" }],
+          details: { type: "ask_advisor", model: "advisor-model" },
         },
       },
     ]);

@@ -23,7 +23,7 @@ import type {
   TurnTerminalEvent,
 } from "../types/protocol.js";
 import type { PackageMetadata } from "./run.js";
-import { buildCliTurnConfig } from "./run.js";
+import { buildProjectCliTurnConfig } from "./run.js";
 import { expandHomeDir, fail, loadCliEnvFiles } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
 
@@ -85,6 +85,12 @@ export class RpcEventWriter {
     if (!this.pumping && this.losslessLines.length === 0 && !this.pendingHeartbeat) return;
     await new Promise<void>((resolve) => this.flushWaiters.add(resolve));
     if (this.failure !== undefined) throw this.failure;
+  }
+
+  /** Stop transport-owned liveness work, then flush every accepted event. */
+  async close(): Promise<void> {
+    this.stopHeartbeats();
+    await this.flush();
   }
 
   private startHeartbeats(): void {
@@ -220,7 +226,7 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
   // node_modules tree in a partial state; keeping RPC quiet here avoids
   // that risk entirely, matching the non-interactive gate in `run.ts`.
 
-  const { config } = buildCliTurnConfig(
+  const { config } = await buildProjectCliTurnConfig(
     {
       ...(parsed.modelName ? { modelName: parsed.modelName } : {}),
       ...(parsed.memoryModelName ? { memoryModelName: parsed.memoryModelName } : {}),
@@ -266,7 +272,7 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
           writeEvent({ type: "complete", status: "failed", error: message, state });
         }
         await runner.dispose();
-        await eventWriter.flush();
+        await eventWriter.close();
       } catch {
         // stdout may be closed if the parent already gave up on us; nothing
         // useful remains after the best-effort task reaper and transport flush.
@@ -280,7 +286,7 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
 
   const removeShutdownHandlers = installShutdownHandlers(async () => {
     await runner.dispose();
-    await eventWriter.flush();
+    await eventWriter.close();
   });
 
   try {
@@ -290,7 +296,7 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
     process.off("uncaughtException", emitFatalAndExit);
     removeShutdownHandlers();
     await runner.dispose();
-    await eventWriter.flush();
+    await eventWriter.close();
   }
 }
 
@@ -303,7 +309,7 @@ export interface ParsedRpcArgs {
   envFilePath?: string;
   /**
    * Explicit memory database file path passed via `--db`. When omitted,
-   * `buildCliTurnConfig` falls back to the shared `~/.duet/memory.db`
+   * Project-aware config resolution falls back to the shared `~/.duet/memory.db`
    * default so RPC mode persists memory just like the TUI/run path.
    */
   dbPath?: string;

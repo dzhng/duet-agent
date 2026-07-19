@@ -108,7 +108,7 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
     refreshSidebar();
     if (event.type === "step") {
       taskLaneRenderer.renderEvent(event);
-      if (event.origin?.kind !== "task") stepRenderer.renderStep(event.step);
+      if (!event.origin) stepRenderer.renderStep(event.step);
     } else if (
       event.type === "task_started" ||
       event.type === "task_output" ||

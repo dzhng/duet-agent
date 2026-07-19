@@ -64,7 +64,7 @@ describe("task tree projection", () => {
       {
         type: "usage",
         ...usageFields(14_400),
-        origin: { kind: "task", taskId: "t4", ownerScopeId: "turn-1" },
+        origin: { taskId: "t4" },
       },
       { type: "step", step: { type: "text", text: "reviewing audit results…" } },
     ] satisfies NonNullable<TaskTreeProjectionInput["events"]>;
@@ -121,7 +121,7 @@ describe("task tree projection", () => {
         {
           type: "usage",
           ...usageFields(13_500),
-          origin: { kind: "task", taskId: "t4", ownerScopeId: "turn-1" },
+          origin: { taskId: "t4" },
         },
       ],
     });

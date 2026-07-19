@@ -84,11 +84,13 @@ describe("state machine usage accumulation", () => {
         // `message_end`), not a running aggregate. It's positive on every
         // emission and bounded above by the running turn aggregate, which
         // also folds in state-agent calls.
-        for (const u of usageEvents) {
-          expect(u.lastMessageUsage.totalTokens).toBeGreaterThan(0);
-          expect(u.lastMessageUsage.cost.total).toBeGreaterThanOrEqual(0);
-          expect(u.lastMessageUsage.totalTokens).toBeLessThanOrEqual(u.turnUsage.totalTokens);
-          expect(u.lastMessageUsage.cost.total).toBeLessThanOrEqual(u.turnUsage.cost.total);
+        for (const event of usageEvents) {
+          expect(event.lastMessageUsage.totalTokens).toBeGreaterThan(0);
+          expect(event.lastMessageUsage.cost.total).toBeGreaterThanOrEqual(0);
+          expect(event.lastMessageUsage.totalTokens).toBeLessThanOrEqual(
+            event.turnUsage.totalTokens,
+          );
+          expect(event.lastMessageUsage.cost.total).toBeLessThanOrEqual(event.turnUsage.cost.total);
         }
 
         const lastUsage = usageEvents.at(-1)!;
@@ -108,8 +110,8 @@ describe("state machine usage accumulation", () => {
         // so every emission in a single turn must agree on it. State-agent
         // emissions reuse the latest parent snapshot, so neither path
         // changes this value mid-turn.
-        for (const u of usageEvents) {
-          expect(u.effectiveContextWindow).toBe(lastUsage.effectiveContextWindow);
+        for (const event of usageEvents) {
+          expect(event.effectiveContextWindow).toBe(lastUsage.effectiveContextWindow);
         }
         // Every emission's breakdown sums to the latest parent message's
         // API-reported `totalTokens` (rescale denominator). That denominator
@@ -119,16 +121,18 @@ describe("state machine usage accumulation", () => {
         // consistent (positive segments, sum bounded by the running
         // aggregate) and the breakdown only changes when a new parent
         // message_end fires.
-        for (const u of usageEvents) {
-          const cw = u.contextWindowUsage;
+        for (const event of usageEvents) {
+          const cw = event.contextWindowUsage;
           const sum = cw.systemPrompt + cw.messages + cw.localMemory + cw.globalMemory;
           expect(sum).toBeGreaterThan(0);
           // Breakdown is rescaled to `lastMessageUsage.totalTokens`, so the
           // four segments sum exactly to that (not to the turn aggregate,
           // which folds in every state-agent call).
-          expect(sum).toBe(u.lastMessageUsage.totalTokens);
+          expect(sum).toBe(event.lastMessageUsage.totalTokens);
         }
-        const distinctBars = new Set(usageEvents.map((u) => JSON.stringify(u.contextWindowUsage)));
+        const distinctBars = new Set(
+          usageEvents.map((event) => JSON.stringify(event.contextWindowUsage)),
+        );
         // Parent emissions in this workflow: select note_one, select
         // note_two, select eval_done (terminal), then the terminal
         // acknowledgment turn the runner fires after every state-machine
@@ -138,7 +142,9 @@ describe("state machine usage accumulation", () => {
         expect(distinctBars.size).toBeLessThanOrEqual(4);
         // `lastMessageUsage` is snapshotted from the same parent emission,
         // so its distinct values match the bar's distinct values exactly.
-        const distinctLast = new Set(usageEvents.map((u) => JSON.stringify(u.lastMessageUsage)));
+        const distinctLast = new Set(
+          usageEvents.map((event) => JSON.stringify(event.lastMessageUsage)),
+        );
         expect(distinctLast.size).toBe(distinctBars.size);
       } finally {
         await manager.dispose();

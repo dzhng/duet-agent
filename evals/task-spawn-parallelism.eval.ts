@@ -41,7 +41,7 @@ describe("spawn task parallelism", () => {
         if (event.type === "task_settled") {
           lifecycle.push({ type: "settled", id: event.settlement.id });
         }
-        if (event.type === "step" && event.origin?.kind === "task") {
+        if (event.type === "step" && event.origin) {
           origins.add(event.origin.taskId);
         }
       });

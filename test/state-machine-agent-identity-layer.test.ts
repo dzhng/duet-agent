@@ -77,9 +77,17 @@ function composeSubAgentSystemPrompt(
   }
   (
     runner as unknown as {
-      createStateSubagentRun: (input: { state: StateMachineAgentState; prompt: string }) => unknown;
+      createStateSubagentRun: (input: {
+        state: StateMachineAgentState;
+        prompt: string;
+        origin: { taskId: "t1" };
+      }) => unknown;
     }
-  ).createStateSubagentRun({ state, prompt: state.prompt });
+  ).createStateSubagentRun({
+    state,
+    prompt: state.prompt,
+    origin: { taskId: "t1" },
+  });
 
   if (composed === undefined) throw new Error("createAgent was not invoked");
   return composed;

@@ -1,11 +1,12 @@
-# 08 — The measurement campaign: balanced advisor-ON vs OFF, 30×2 (LAST)
+# 08 — The measurement campaign: GLM/Kimi advisor-ON vs OFF, 30×2 (LAST)
 
 Needs slice 07's explicit ADMIT. The deliverable.
 
 ## Contract
 
 - `campaign run` on `manifests/multilingual-30.json`, configs
-  `balanced-advisor-on` / `balanced-advisor-off`, 1 trial, limits from the
+  `glm-kimi-advisor-on` / `glm-kimi-advisor-off`, explicit virtual tier
+  `swebench-glm-kimi`, product-default memory model, 1 trial, limits from the
   pilot recalibration, seeded interleaved schedule, concurrency per pilot
   decision (≤3), box-local under tmux.
 - `campaign.json` records duet git SHA + binary sha256, both render

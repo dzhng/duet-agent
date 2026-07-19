@@ -132,15 +132,15 @@ describe("sidebar context bar", () => {
         },
       });
       const aggregate = tokenUsage(78_000, 0.78);
-      const parentContext = tokenUsage(45_000, 0.1);
+      const latestParentUsage = tokenUsage(45_000, 0.1);
       await harness.pushUsage({
-        origin: { kind: "task", taskId: "t4", ownerScopeId: "turn-1" },
+        origin: { taskId: "t4" },
         turnUsage: aggregate,
         usageByModel: [
           { model: "parent", usage: parentUsage },
           { model: "child", usage: tokenUsage(68_000, 0.68) },
         ],
-        lastMessageUsage: parentContext,
+        lastMessageUsage: latestParentUsage,
         effectiveContextWindow: 200_000,
         contextWindowUsage: {
           systemPrompt: 5_000,

@@ -1,5 +1,30 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
+import type { LanguageModelUsage } from "ai";
 import type { ModelUsageEntry, TurnTokenUsage } from "../types/protocol.js";
+
+/** Convert AI SDK token fields into the priced usage shape owned by pi-ai. */
+export function usageFromAiSdk<TApi extends Api>(
+  usage: LanguageModelUsage,
+  model: Model<TApi>,
+): Usage {
+  const cacheRead = usage.inputTokenDetails.cacheReadTokens ?? 0;
+  const cacheWrite = usage.inputTokenDetails.cacheWriteTokens ?? 0;
+  const input =
+    usage.inputTokenDetails.noCacheTokens ??
+    Math.max(0, (usage.inputTokens ?? 0) - cacheRead - cacheWrite);
+  const output = usage.outputTokens ?? 0;
+  const normalized: Usage = {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    totalTokens: usage.totalTokens ?? input + output + cacheRead + cacheWrite,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  calculateCost(model, normalized);
+  return normalized;
+}
 
 /**
  * Returns a new `TurnTokenUsage` equal to `a + b`, treating either operand

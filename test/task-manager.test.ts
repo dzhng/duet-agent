@@ -42,6 +42,26 @@ describe("TaskManager", () => {
     expect(recovered.nextTaskId()).toBe(9);
   });
 
+  test("gives an executor the same task id exposed by its public handle", async () => {
+    const manager = createTaskManager({ clock: new ManualRuntimeClock() });
+    let executorTaskId: string | undefined;
+    const handle = manager.start({
+      kind: "subagent",
+      name: "child",
+      label: "Child agent",
+      ownerScopeId: "turn-1",
+      execute: async ({ taskId }) => {
+        executorTaskId = taskId;
+        return "done";
+      },
+    });
+
+    await started();
+
+    expect(executorTaskId).toBe(handle.id);
+    expect(manager.output(handle.id)?.descriptor.id).toBe(handle.id);
+  });
+
   test("keeps a foreground task running when its budget elapses", async () => {
     const clock = new ManualRuntimeClock();
     const manager = createTaskManager({ clock });

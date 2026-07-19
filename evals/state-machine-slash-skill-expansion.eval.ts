@@ -92,12 +92,12 @@ describe("state machine agent slash-skill expansion", () => {
           ].join("\n"),
         });
 
-        // Count tool calls made by the sub-agent (origin = state_machine_agent).
+        // Count tool calls made by the task-backed subagent.
         // Any read of the SKILL.md to recover the token would surface here.
         const subAgentToolCalls: string[] = [];
         runner.subscribe((event: TurnEvent) => {
           if (event.type !== "step") return;
-          if (event.origin?.kind !== "state_machine_agent") return;
+          if (!event.origin) return;
           if (event.step.type === "tool_call_start") {
             subAgentToolCalls.push(event.step.toolName);
           }

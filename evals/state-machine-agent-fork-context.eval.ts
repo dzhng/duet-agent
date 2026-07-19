@@ -86,7 +86,7 @@ describe("state machine agent state forkContext", () => {
         const subAgentToolCalls: string[] = [];
         runner.subscribe((event: TurnEvent) => {
           if (event.type !== "step") return;
-          if (event.origin?.kind !== "state_machine_agent") return;
+          if (!event.origin) return;
           if (event.step.type === "tool_call_start") {
             subAgentToolCalls.push(event.step.toolName);
           }
@@ -164,7 +164,7 @@ describe("state machine agent state forkContext", () => {
         const subAgentToolCalls: string[] = [];
         runner.subscribe((event: TurnEvent) => {
           if (event.type !== "step") return;
-          if (event.origin?.kind !== "state_machine_agent") return;
+          if (!event.origin) return;
           if (event.step.type === "tool_call_start") {
             subAgentToolCalls.push(event.step.toolName);
           }
@@ -241,7 +241,7 @@ describe("state machine agent state forkContext", () => {
         const subAgentToolCalls: string[] = [];
         runner.subscribe((event: TurnEvent) => {
           if (event.type !== "step") return;
-          if (event.origin?.kind !== "state_machine_agent") return;
+          if (!event.origin) return;
           if (event.step.type === "tool_call_start") {
             subAgentToolCalls.push(event.step.toolName);
           }

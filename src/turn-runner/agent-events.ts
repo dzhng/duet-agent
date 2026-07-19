@@ -57,6 +57,7 @@ export function createAgentEventTranslator(): (event: AgentEvent) => TurnStepEve
               input,
               isError: event.isError,
               output: event.result?.content,
+              details: event.result?.details,
             },
           },
         ];

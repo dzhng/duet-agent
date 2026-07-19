@@ -14,6 +14,8 @@ const MAX_SCOPE_DEPTH = 2;
 
 /** Runtime hooks available to an in-process task executor. */
 export interface TaskExecutionContext {
+  /** Stable identity allocated before this executor starts. */
+  taskId: TaskId;
   /** Aborted exactly once by task_stop, interrupt, or scope closure. */
   signal: AbortSignal;
   /** Append an ordered chunk to the task's retained output. */
@@ -245,6 +247,7 @@ export function createTaskManager(options: TaskManagerOptions): TaskManager {
 
       const execution = Promise.resolve().then(() =>
         spec.execute({
+          taskId: id,
           signal: abortController.signal,
           onOutput(chunk) {
             if (record.settlement) return;

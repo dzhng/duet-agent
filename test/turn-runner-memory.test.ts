@@ -1050,9 +1050,10 @@ describe("TurnRunner memory", () => {
       (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
     );
     expect(usageEvent).toBeDefined();
-    expect(usageEvent!.effectiveContextWindow).toBe(runner.effectiveContextWindowForTest());
+    if (!usageEvent) throw new Error("expected usage after completion");
+    expect(usageEvent.effectiveContextWindow).toBe(runner.effectiveContextWindowForTest());
 
-    const breakdown = usageEvent!.contextWindowUsage;
+    const breakdown = usageEvent.contextWindowUsage;
     expect(breakdown.systemPrompt).toBeGreaterThan(0);
     expect(breakdown.messages).toBeGreaterThan(0);
     expect(breakdown.localMemory).toBeGreaterThan(0);
@@ -1062,7 +1063,7 @@ describe("TurnRunner memory", () => {
     // `totalTokens`, so its segments sum exactly to `lastMessageUsage.totalTokens`.
     const total =
       breakdown.systemPrompt + breakdown.messages + breakdown.localMemory + breakdown.globalMemory;
-    expect(total).toBe(usageEvent!.lastMessageUsage.totalTokens);
+    expect(total).toBe(usageEvent.lastMessageUsage.totalTokens);
 
     // The two global rows together should contribute more tokens than
     // the single local row, since their combined content is longer.
@@ -1129,7 +1130,8 @@ describe("TurnRunner memory", () => {
       (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
     );
     expect(usageEvent).toBeDefined();
-    const breakdown = usageEvent!.contextWindowUsage;
+    if (!usageEvent) throw new Error("expected usage after completion");
+    const breakdown = usageEvent.contextWindowUsage;
 
     // Pre-eviction the huge prefix would dominate: with raw
     // messages ≈ 5000 tokens against systemPrompt ≈ 1500-2000 tokens
@@ -1147,7 +1149,7 @@ describe("TurnRunner memory", () => {
     // Segments sum exactly to lastMessageUsage.totalTokens.
     expect(
       breakdown.systemPrompt + breakdown.messages + breakdown.localMemory + breakdown.globalMemory,
-    ).toBe(usageEvent!.lastMessageUsage.totalTokens);
+    ).toBe(usageEvent.lastMessageUsage.totalTokens);
   });
 
   test("contextWindowUsage messages segment excludes bytes dropped by the wire-eviction horizon", async () => {

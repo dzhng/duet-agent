@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import type { Subprocess } from "bun";
 import type { TurnEvent, TurnRunnerCommand, TurnTerminalEvent } from "../src/types/protocol.js";
+import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { judge } from "../test/helpers/judge.js";
 
@@ -79,6 +80,37 @@ function crc32(buf: Buffer): number {
 const RED_SQUARE_PNG_BASE64 = buildRedPng();
 
 describe("RPC CLI mode", () => {
+  testIfDocker(
+    "boots the default tier from the workdir routing table",
+    async () => {
+      const workDir = await mkdtemp(join(tmpdir(), "duet-rpc-project-tier-"));
+      try {
+        const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+        table.tiers["project-eval"] = structuredClone(table.tiers.balanced!);
+        table.defaultTier = "project-eval";
+        await mkdir(join(workDir, ".duet"));
+        await writeFile(join(workDir, ".duet", "models.json"), JSON.stringify(table));
+
+        const session = await runRpcSession(
+          ["--workdir", workDir, "--incognito", "--memory-model", "openrouter:gpt-5.4-mini"],
+          [{ type: "start", mode: "agent" }],
+          { DUET_API_KEY: "duet_gt_rpc_project_eval" },
+        );
+
+        expect(session.exitCode).toBe(0);
+        const started = session.events.find(
+          (event): event is Extract<TurnEvent, { type: "turn_started" }> =>
+            event.type === "turn_started",
+        );
+        expect(started?.state.options?.model).toBe("project-eval");
+        expect(session.events.some((event) => event.type === "complete")).toBe(false);
+      } finally {
+        await rm(workDir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   testIfDocker(
     "drives two consecutive turns by replaying state through a fresh process",
     async () => {
@@ -764,12 +796,14 @@ class EventStream {
 async function runRpcSession(
   args: string[],
   commands: TurnRunnerCommand[],
+  env?: Record<string, string>,
 ): Promise<RpcSessionResult> {
   const proc = Bun.spawn(["bun", "src/cli.ts", "--rpc", "--no-skill-sync", ...args], {
     cwd: process.cwd(),
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    env: { ...process.env, ...env },
   });
   await writeCommandsToStdin(proc, commands);
   // Drain stderr so the buffer cannot stall the subprocess; the contents

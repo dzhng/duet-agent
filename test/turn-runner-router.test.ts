@@ -76,7 +76,7 @@ class RouterTurnRunner extends TurnRunner {
   }
 
   emitStateAgentEventForTest(event: AgentEvent): void {
-    this.emitAgentEvent(event, { kind: "state_machine_agent", state: "child" });
+    this.emitAgentEvent(event, { taskId: "t1" });
   }
 
   emitParentTurnEndForTest(
@@ -87,7 +87,11 @@ class RouterTurnRunner extends TurnRunner {
   }
 
   createStateAgentForTest(state: StateMachineAgentState) {
-    return this.createStateSubagentRun({ state, prompt: state.prompt });
+    return this.createStateSubagentRun({
+      state,
+      prompt: state.prompt,
+      origin: { taskId: "t1" },
+    });
   }
 
   async transformForTest(messages: AgentMessage[]): Promise<AgentMessage[]> {

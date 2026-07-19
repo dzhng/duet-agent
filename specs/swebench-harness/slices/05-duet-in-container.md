@@ -17,6 +17,9 @@ infinity`), `cpIn`, `exec`, `execStream → ExecTransport`, `stop` (always in
   `HOME` outside `/testbed`** (`HOME=/opt/duet/home`, config at
   `$HOME/.duet/models.json` — the loader's home fallback picks it up;
   `/testbed` stays pristine).
+- Invocation passes `--model swebench-glm-kimi` and omits `--memory-model`.
+  Only the executor and advisor are experiment-selected; memory retains the
+  product default.
 - `patch.ts`: `assertCleanBaseline`, `extractPatch` (stage ephemeral index
   `git add -A`, emit `git diff --cached --binary --full-index HEAD --`),
   `verifyPatchRoundTrip` (apply to a fresh instance container, compare

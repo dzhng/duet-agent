@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import type { ScopeId } from "../src/tasks/types.js";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as structuredOutput from "../src/core/structured-output.js";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
+import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
+import { resolveModelName } from "../src/model-resolution/resolver.js";
 import {
   TurnRunner,
   type AgentWorkerInput,
@@ -39,6 +41,15 @@ const CHILD_USAGE: TurnTokenUsage = {
   cacheWrite: 0,
   totalTokens: 350,
   cost: { input: 0.03, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.05 },
+};
+
+const CLASSIFIER_USAGE: TurnTokenUsage = {
+  input: 80,
+  output: 20,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 100,
+  cost: { input: 0.008, output: 0.012, cacheRead: 0, cacheWrite: 0, total: 0.02 },
 };
 
 /**
@@ -177,16 +188,15 @@ class ConcurrentSpawnUsageRunner extends TurnRunner {
   }
 
   protected override async createSpawnedSubagentRun(
-    _spec: SubagentSpec,
+    spec: SubagentSpec,
     taskId: TaskId,
-    ownerScopeId: ScopeId,
   ): Promise<SubagentRun> {
     return {
       prompt: async () => {
         await Promise.resolve();
         this.recordUsage(CHILD_USAGE, `fake-child/${taskId}`);
-        this.emitTurnUsage({ kind: "task", taskId, ownerScopeId });
-        return { type: "complete", result: `${taskId} report` };
+        this.emitTurnUsage({ taskId });
+        return { type: "complete", result: `${taskId}: ${spec.prompt}` };
       },
       interrupt: () => undefined,
       interruptedReason: () => undefined,
@@ -195,7 +205,67 @@ class ConcurrentSpawnUsageRunner extends TurnRunner {
   }
 }
 
+class ClassifierUsageRunner extends TurnRunner {
+  constructor() {
+    super({ model: "balanced", skillDiscovery: { includeDefaults: false } });
+  }
+
+  protected override async runAgentWorker(rawInput: AgentWorkerInput): Promise<AgentWorkerResult> {
+    const input = this.prepareParentPassInput(rawInput);
+    await this.selectSpawnModel("Implement the patch.", "balanced");
+    return {
+      control: { type: "none" },
+      outcome: {
+        type: "complete",
+        status: "completed",
+        result: "classified",
+        state: { ...input.state, status: "completed" },
+      },
+    };
+  }
+}
+
 describe("TurnRunner per-model cost breakdown", () => {
+  test("holds classifier usage for the flat terminal when no parent snapshot exists", async () => {
+    const priorKey = process.env.DUET_API_KEY;
+    process.env.DUET_API_KEY = "duet_gt_classifier_usage";
+    const generate = spyOn(structuredOutput, "generateStructuredOutput").mockImplementation(
+      async (options) => {
+        options.onUsage?.(CLASSIFIER_USAGE);
+        return { route: "implement", rationale: "Implementation work." } as never;
+      },
+    );
+    try {
+      const runner = new ClassifierUsageRunner();
+      const events: TurnEvent[] = [];
+      runner.subscribe((event) => events.push(event));
+      await runner.start({ type: "start", mode: "agent" });
+
+      const terminal = await runner.turn({
+        type: "prompt",
+        message: "classify child",
+        behavior: "follow_up",
+      });
+
+      const streamed = events.find(
+        (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
+      );
+      expect(streamed).toBeUndefined();
+      expect(terminal.turnUsage).toEqual(CLASSIFIER_USAGE);
+      expect(terminal.usageByModel).toEqual([
+        {
+          model: resolveModelName(BUILT_IN_ROUTING_TABLE.classifier.target.modelName).id,
+          usage: CLASSIFIER_USAGE,
+        },
+      ]);
+      await runner.dispose();
+    } finally {
+      generate.mockRestore();
+      if (priorKey === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = priorKey;
+    }
+  });
+
   test("attributes a mixed-model relay turn to per-model entries that sum to the turn total", async () => {
     const runner = new MultiModelTurnRunner();
     const events: TurnEvent[] = [];
@@ -247,12 +317,9 @@ describe("TurnRunner per-model cost breakdown", () => {
     expect(terminal.type).toBe("complete");
     const taskUsage = events.filter(
       (event): event is Extract<TurnEvent, { type: "usage" }> =>
-        event.type === "usage" && event.origin?.kind === "task",
+        event.type === "usage" && event.origin !== undefined,
     );
-    expect(taskUsage.map((event) => event.origin?.kind === "task" && event.origin.taskId)).toEqual([
-      "t1",
-      "t2",
-    ]);
+    expect(taskUsage.map((event) => event.origin?.taskId)).toEqual(["t1", "t2"]);
     const allUsage = events.filter(
       (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
     );
@@ -261,7 +328,7 @@ describe("TurnRunner per-model cost breakdown", () => {
     for (const event of allUsage) {
       const delta = event.turnUsage.cost.total - previousTotal;
       previousTotal = event.turnUsage.cost.total;
-      if (event.origin?.kind === "task") taskDeltas.set(event.origin.taskId, delta);
+      if (event.origin) taskDeltas.set(event.origin.taskId, delta);
     }
     for (const delta of taskDeltas.values()) expect(delta).toBeCloseTo(0.05, 10);
     expect(terminal.usageByModel!.map((entry) => entry.model)).toEqual(

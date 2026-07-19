@@ -9,7 +9,7 @@ import {
   type CurrentStateMachineStateResult,
 } from "../src/turn-runner/tools.js";
 import type { SubagentResult, SubagentRun } from "../src/turn-runner/subagent.js";
-import type { TurnEvent } from "../src/types/protocol.js";
+import type { TurnEvent, TurnEventOrigin } from "../src/types/protocol.js";
 import type {
   StateMachineAgentState,
   StateMachineDefinition,
@@ -113,6 +113,7 @@ class MockedSubAgentRunner extends TurnRunner {
   protected override createStateSubagentRun(input: {
     state: StateMachineAgentState;
     prompt: string;
+    origin: TurnEventOrigin;
   }): SubagentRun {
     const fake = this.fakeOutputs.get(input.state.name);
     if (fake === undefined) return super.createStateSubagentRun(input);

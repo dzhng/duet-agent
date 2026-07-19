@@ -95,7 +95,7 @@ export function projectTaskTree(input: TaskTreeProjectionInput): TaskTreeProject
       const current = event.turnUsage.totalTokens;
       const delta = Math.max(0, current - previousTurnTokens);
       previousTurnTokens = Math.max(previousTurnTokens, current);
-      if (event.origin?.kind === "task") {
+      if (event.origin) {
         const task = tasks.get(event.origin.taskId);
         if (task) task.tokenUsage += delta;
       }
@@ -104,10 +104,10 @@ export function projectTaskTree(input: TaskTreeProjectionInput): TaskTreeProject
 
     const activity = activityFromStep(event.step);
     if (!activity) continue;
-    if (event.origin?.kind === "task") {
+    if (event.origin) {
       const task = tasks.get(event.origin.taskId);
       if (task) task.activity = activity;
-    } else if (!event.origin) {
+    } else {
       parentActivity = activity;
     }
   }

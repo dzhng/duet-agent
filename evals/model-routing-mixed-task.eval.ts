@@ -294,10 +294,12 @@ describe("mixed-task model routing promotion", () => {
 
       const kimiUsage = usageByModel.find((entry) => entry.model === KIMI_ID);
       const solUsage = usageByModel.find((entry) => entry.model === SOL_ID);
+      const classifierUsage = usageByModel.find((entry) => entry.model === LUNA_ID);
       expect(kimiUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
       expect(solUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
-      // Luna may contribute as the observational-memory actor. Classifier calls are deliberately
-      // outside the parent transcript and do not currently enter the runner's usage aggregate.
+      // Memory is disabled and Luna never executes parent work in this scenario,
+      // so this row can only come from the real route classifier.
+      expect(classifierUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
       expect(usageByModel.every((entry) => [KIMI_ID, SOL_ID, LUNA_ID].includes(entry.model))).toBe(
         true,
       );

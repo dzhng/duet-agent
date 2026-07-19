@@ -1,6 +1,6 @@
 import type { ImageContent, TextContent, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { RouterSwitch } from "../model-routing/router.js";
-import type { ScopeId, TaskDescriptor, TaskId, TaskSettlement } from "../tasks/types.js";
+import type { TaskDescriptor, TaskId, TaskSettlement } from "../tasks/types.js";
 
 export type { TaskDescriptor, TaskId, TaskSettlement, TaskSnapshot } from "../tasks/types.js";
 
@@ -370,6 +370,8 @@ export type TurnStep =
       isError: boolean;
       /** Tool result content. */
       output?: (TextContent | ImageContent)[];
+      /** Tool-specific structured result metadata used for machine-readable outcomes. */
+      details?: unknown;
     }
   | { type: "system"; message: string };
 
@@ -602,28 +604,17 @@ export interface TurnStepEvent {
   type: "step";
   step: TurnStep;
   /**
-   * Set when the step originated from a state-machine agent state. Absent
-   * for steps produced by the parent turn runner. Subscribers use this
-   * to attribute steps to the correct agent without inferring from
-   * interleaving order.
+   * Set when a task-backed subagent produced the step. Absent for the parent
+   * agent; correlate `taskId` with `task_started` for its name and role.
    */
   origin?: TurnEventOrigin;
 }
 
-/** Identifies the non-parent runtime that produced an event. */
-export type TurnEventOrigin =
-  | {
-      kind: "state_machine_agent";
-      /** Name of the state-machine agent state that was running. */
-      state: string;
-    }
-  | {
-      kind: "task";
-      /** Stable identity of the task whose execution produced the event. */
-      taskId: TaskId;
-      /** Scope that owns and cascade-stops the task. */
-      ownerScopeId: ScopeId;
-    };
+/** Identifies the task runtime that produced a non-parent event. */
+export interface TurnEventOrigin {
+  /** Stable identity shared by spawned and state-machine subagents. */
+  taskId: TaskId;
+}
 
 /** Emitted once after a task id is allocated and its descriptor becomes observable. */
 export interface TurnTaskStartedEvent {
@@ -746,10 +737,10 @@ export interface TurnContextWindowUsage {
  * context bar.
  *
  * Two distinct token totals are reported:
- *  - `turnUsage` is a per-turn aggregate across every LLM call (parent
- *    worker + every state agent). Use it for cost accounting and "what
- *    did this turn cost" readouts. It is not comparable to
- *    `effectiveContextWindow` because the cap is per-request.
+ *  - `turnUsage` is a per-turn aggregate across every metered LLM call
+ *    (parent worker, state agents, classifier, advisor, and memory workers).
+ *    Use it for cost accounting and "what did this turn cost" readouts. It is
+ *    not comparable to `effectiveContextWindow` because the cap is per-request.
  *  - `lastMessageUsage` is the exact provider-reported usage of the
  *    most recent parent assistant message. Use it for context-window
  *    pressure surfaces ("X / cap"): `lastMessageUsage.totalTokens` is
@@ -759,9 +750,9 @@ export interface TurnContextWindowUsage {
  */
 export interface TurnUsageFields {
   /**
-   * Running turn aggregate: the sum of every assistant `usage` recorded so
-   * far in this turn (parent worker calls plus every state-agent that has
-   * finished). Always cumulative; never a single-message delta.
+   * Running turn aggregate: the sum of every model `usage` recorded so far in
+   * this turn, including parent, state-agent, classifier, advisor, and memory
+   * calls. Always cumulative; never a single-call delta.
    */
   turnUsage: TurnTokenUsage;
   /**
@@ -774,9 +765,9 @@ export interface TurnUsageFields {
   usageByModel: ModelUsageEntry[];
   /**
    * Provider-reported usage from the latest parent assistant message.
-   * Refreshed on every parent `message_end` and held stable while only
-   * state agents advance `turnUsage`. This is the accurate number to
-   * display against `effectiveContextWindow` — it reflects exactly what
+   * Refreshed on every parent `message_end` and held stable while only state
+   * agents or auxiliary calls advance `turnUsage`. This is the accurate number
+   * to display against `effectiveContextWindow` — it reflects exactly what
    * the API counted on the most recent parent call (`input` is fresh
    * input, `cacheRead` + `cacheWrite` are the cache hits/writes, and
    * `totalTokens` is their sum plus `output`).
@@ -817,16 +808,15 @@ export interface ModelUsageEntry {
 }
 
 /**
- * Emitted after every parent assistant `message_end` and after every
- * state-agent finishes. Carries the running turn aggregate so consumers see
- * cost tick mid-turn even when no terminal event has landed yet.
+ * Emitted after a parent context snapshot exists and metered usage advances.
+ * `turnUsage` includes every recorded parent, state-agent, classifier, advisor,
+ * and memory call; the context fields remain scoped to the latest parent call.
  */
 export interface TurnUsageEvent extends TurnUsageFields {
   type: "usage";
   /**
-   * Set when this usage tick was emitted at a state-agent boundary.
-   * Absent for parent-driven ticks (worker finish, terminal aggregate)
-   * so consumers can split running cost by agent if they want to.
+   * Set when this usage tick was emitted at a task-backed subagent boundary.
+   * Absent for parent-driven ticks so consumers can attribute running cost.
    */
   origin?: TurnEventOrigin;
 }

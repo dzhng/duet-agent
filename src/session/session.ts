@@ -569,10 +569,13 @@ export class Session {
     // field is independently optional in the type system even though the
     // runner attaches the bundle atomically. Check every field so the
     // narrowing is honest and the consumer doesn't need non-null asserts.
+    if (terminal.turnUsage) {
+      this.sessionCostUsd += terminal.turnUsage.cost.total;
+    }
     if (
       terminal.turnUsage &&
       terminal.lastMessageUsage &&
-      terminal.effectiveContextWindow &&
+      terminal.effectiveContextWindow !== undefined &&
       terminal.contextWindowUsage
     ) {
       this.lastUsage = {
@@ -582,7 +585,6 @@ export class Session {
         effectiveContextWindow: terminal.effectiveContextWindow,
         contextWindowUsage: terminal.contextWindowUsage,
       };
-      this.sessionCostUsd += terminal.turnUsage.cost.total;
     }
     this.liveTurnCostUsd = 0;
   }

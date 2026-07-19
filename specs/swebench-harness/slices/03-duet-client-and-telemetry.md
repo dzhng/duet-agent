@@ -6,10 +6,9 @@ final event-shape assertions (details on tool_call steps, complete usage).
 ## Contract
 
 - `duet-client.ts`: `runDuetTurn(transport: ExecTransport, spec, prompt) →
-RolloutOutcome {terminal | "killed", events, timedOut, stepCount,
-wallClockMs}`. Speaks the RPC NDJSON protocol (`{"type":"start"}`, prompt,
+RolloutOutcome {terminal | "killed", events, timedOut, wallClockMs}`. Speaks the RPC NDJSON protocol (`{"type":"start"}`, prompt,
   parse stream, single terminal). Enforces `RolloutLimits` **from the event
-  stream**: step cap counts step events, cost cap reads streaming usage,
+  stream**: cost cap reads cumulative streaming usage,
   wall clock via injected clock; on breach writes `{"type":"interrupt"}`,
   waits a bounded grace (90 s) for the `interrupted` terminal, then
   `transport.kill()` → `"killed"`. Partial work remains extractable.
@@ -17,7 +16,9 @@ wallClockMs}`. Speaks the RPC NDJSON protocol (`{"type":"start"}`, prompt,
 {costUsdTotal, costUsdByModel, tokens, advisorCalls (from tool_call steps
 with ask_advisor details, split success/rateLimited/unavailable),
 routerSwitches (from router_switch events), steps, terminalStatus}` — with
-  the actor-vs-memory-model cost split via `usageByModel`.
+  the per-model cost split taken directly from `usageByModel`. Roles that use
+  the same product-default model share one model entry; the harness must not
+  relabel that entry as a per-role split.
 - `ExecTransport = {stdin, stdoutLines, kill, exited}` injected; production
   transport comes later from `container.execStream` (slice 05). TurnEvent
   types imported from `src/types/protocol.ts`.
@@ -25,9 +26,11 @@ routerSwitches (from router_switch events), steps, terminalStatus}` — with
 ## Verification
 
 - Unit, scripted fake transport: happy path; `status:"failed"` surfaced not
-  thrown; step-cap breach → interrupt written, `interrupted` accepted;
-  cost-cap breach; stalled stream → wall-clock kill (manual clock); stderr
-  banner ignored; garbage stdout lines skipped.
+  thrown; cost-cap breach → interrupt written, `interrupted` accepted; stalled
+  stream → wall-clock kill (manual clock); stderr
+  banner ignored; garbage stdout lines skipped. The initial prompt explicitly
+  uses `behavior:"follow_up"`; completion status comes from the terminal event,
+  not process exit alone.
 - Telemetry unit tests over fixtures: cost sums equal terminal
   `turnUsage.cost.total`; advisor calls counted per outcome; switch histogram
   keys `from→to`; unknown event types tolerated (forward compat). Fixtures:

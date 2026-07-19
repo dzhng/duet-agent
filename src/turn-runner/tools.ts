@@ -34,7 +34,12 @@ import type { EmbedFn } from "../memory/embedding.js";
 import { serializeMessageForObserver } from "../memory/observational.js";
 import { recallMemoryExpanded, type RecallScope } from "../memory/recall.js";
 import { buildAdvisorTranscript } from "../model-routing/advisor-transcript.js";
-import { callAdvisor, type CallAdvisorInput } from "../model-routing/advisor.js";
+import {
+  callAdvisor,
+  type AdvisorResult,
+  type CallAdvisorInput,
+} from "../model-routing/advisor.js";
+import type { LanguageModelUsage } from "ai";
 import { ASK_ADVISOR_TOOL_DESCRIPTION } from "../model-routing/prompts.js";
 import type { AdvisorGate } from "../model-routing/router.js";
 import type { Observation } from "../types/memory.js";
@@ -580,8 +585,12 @@ export interface AskAdvisorToolStorage {
   advisorGate: () => AdvisorGate;
   /** Releases the reserved slot; false never stamps the floor or requests classification. */
   noteAdvisorConsult: (success?: boolean) => void;
+  /** Attributes a completed advisor request to the running turn before the tool returns. */
+  recordUsage: (usage: LanguageModelUsage) => void;
+  /** Reports accounting failures without discarding advice the provider already returned. */
+  onUsageError?: (error: unknown) => void;
   /** Network seam for deterministic tool tests; production uses callAdvisor. */
-  callAdvisor?: (input: CallAdvisorInput) => Promise<{ advice: string }>;
+  callAdvisor?: (input: CallAdvisorInput) => Promise<AdvisorResult>;
 }
 
 export function createDefaultTurnRunnerTools(
@@ -712,6 +721,15 @@ export function createAskAdvisorTool(
           thinkingLevel: storage.thinkingLevel,
           signal,
         });
+        try {
+          storage.recordUsage(result.usage);
+        } catch (error) {
+          try {
+            storage.onUsageError?.(error);
+          } catch {
+            // Logging is best-effort; valid advisor output still wins.
+          }
+        }
         endConsult(true);
         return {
           content: [{ type: "text", text: result.advice }],

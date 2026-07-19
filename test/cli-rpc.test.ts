@@ -1,5 +1,5 @@
 import { describe, expect, test, spyOn } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,6 +14,7 @@ import {
 import { buildCliTurnConfig } from "../src/cli/run.js";
 import { MemoryDb } from "../src/cli/memory-db.js";
 import { appendObservation, loadStoredMemory } from "../src/memory/storage.js";
+import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 import type {
   TurnCompactCommand,
@@ -324,6 +325,56 @@ describe("RPC --session attribution", () => {
       }
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("RPC project routing", () => {
+  testIfDocker("boots from the project routing table's default tier", async () => {
+    const workDir = await mkdtemp(join(tmpdir(), "duet-rpc-routing-"));
+    try {
+      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      table.defaultTier = "project-default";
+      table.tiers = { "project-default": table.tiers.economy! };
+      await mkdir(join(workDir, ".duet"));
+      await writeFile(join(workDir, ".duet", "models.json"), JSON.stringify(table));
+
+      const proc = Bun.spawn(
+        [
+          "bun",
+          "src/cli.ts",
+          "--rpc",
+          "--incognito",
+          "--workdir",
+          workDir,
+          "--memory-model",
+          "openrouter:gpt-5.4-mini",
+        ],
+        {
+          cwd: process.cwd(),
+          env: { ...process.env, DUET_API_KEY: "duet_gt_test" },
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      proc.stdin.write(`${JSON.stringify({ type: "start" })}\n`);
+      proc.stdin.end();
+
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(exitCode, stderr).toBe(0);
+      const events = stdout
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { type: string; state?: TurnState });
+      const started = events.find((event) => event.type === "turn_started");
+      expect(started?.state?.options?.model).toBe("project-default");
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
     }
   });
 });

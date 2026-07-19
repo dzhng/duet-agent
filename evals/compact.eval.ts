@@ -116,19 +116,24 @@ describe("compact RPC command", () => {
           postCompactUsage,
           "expected a usage event immediately after the compact system event",
         ).toBeDefined();
+        expect(postCompactUsage).toBeDefined();
+        expect(lastBuiltUsage).toBeDefined();
+        if (!postCompactUsage || !lastBuiltUsage) {
+          throw new Error("expected usage events around compact");
+        }
         // Sanity: the breakdown is rescaled to sum to totalTokens so the
         // bar's numerator and segment widths stay self-consistent.
         const sum =
-          postCompactUsage!.contextWindowUsage.systemPrompt +
-          postCompactUsage!.contextWindowUsage.messages +
-          postCompactUsage!.contextWindowUsage.localMemory +
-          postCompactUsage!.contextWindowUsage.globalMemory;
-        expect(sum).toBe(postCompactUsage!.lastMessageUsage.totalTokens);
+          postCompactUsage.contextWindowUsage.systemPrompt +
+          postCompactUsage.contextWindowUsage.messages +
+          postCompactUsage.contextWindowUsage.localMemory +
+          postCompactUsage.contextWindowUsage.globalMemory;
+        expect(sum).toBe(postCompactUsage.lastMessageUsage.totalTokens);
         // The bar-visible behaviour: the messages segment shrinks vs the
         // last pre-compact parent emission. This is the assertion that
         // would have failed before `emitPostCompactUsage` was wired in.
-        expect(postCompactUsage!.contextWindowUsage.messages).toBeLessThan(
-          lastBuiltUsage!.contextWindowUsage.messages,
+        expect(postCompactUsage.contextWindowUsage.messages).toBeLessThan(
+          lastBuiltUsage.contextWindowUsage.messages,
         );
 
         // The durable transcript is preserved: the M1 marker from

@@ -44,7 +44,6 @@ export class TaskLaneRenderer {
 
   renderEvent(event: TurnEvent): void {
     if (!isTaskTreeEvent(event)) return;
-    if (event.type === "step" && event.origin?.kind === "state_machine_agent") return;
     const superseded = supersededEventIndex(this.events, event);
     if (superseded !== -1) this.events.splice(superseded, 1);
     this.events.push(event);
@@ -106,10 +105,10 @@ function supersededEventIndex(events: readonly TaskTreeEvent[], next: TaskTreeEv
     );
   }
   if (next.type !== "step") return -1;
-  const nextLane = next.origin?.kind === "task" ? next.origin.taskId : "parent";
+  const nextLane = next.origin?.taskId ?? "parent";
   return events.findIndex((event) => {
     if (event.type !== "step") return false;
-    const lane = event.origin?.kind === "task" ? event.origin.taskId : "parent";
+    const lane = event.origin?.taskId ?? "parent";
     return lane === nextLane;
   });
 }

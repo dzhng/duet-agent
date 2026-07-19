@@ -8,8 +8,10 @@ import {
 import {
   addUsage,
   addUsageByModel,
+  usageFromAiSdk,
   usageFromMessages,
 } from "../src/turn-runner/usage-accounting.js";
+import type { Model } from "@earendil-works/pi-ai";
 import type { ModelUsageEntry, TurnTokenUsage } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 
@@ -107,6 +109,49 @@ describe("turn-runner shell execution utilities", () => {
 });
 
 describe("turn-runner usage accounting", () => {
+  test("normalizes AI SDK usage and prices it with the resolved pi model", () => {
+    const model = {
+      id: "anthropic/test-model",
+      name: "Test model",
+      api: "anthropic-messages",
+      provider: "anthropic",
+      baseUrl: "https://example.test",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 2, output: 4, cacheRead: 0.2, cacheWrite: 2.5 },
+      contextWindow: 200_000,
+      maxTokens: 8_000,
+    } satisfies Model<"anthropic-messages">;
+
+    const usage = usageFromAiSdk(
+      {
+        inputTokens: 130,
+        inputTokenDetails: {
+          noCacheTokens: 100,
+          cacheReadTokens: 20,
+          cacheWriteTokens: 10,
+        },
+        outputTokens: 30,
+        outputTokenDetails: { textTokens: 20, reasoningTokens: 10 },
+        totalTokens: 160,
+      },
+      model,
+    );
+
+    expect(usage).toMatchObject({
+      input: 100,
+      output: 30,
+      cacheRead: 20,
+      cacheWrite: 10,
+      totalTokens: 160,
+    });
+    expect(usage.cost.input).toBeCloseTo(0.0002, 12);
+    expect(usage.cost.output).toBeCloseTo(0.00012, 12);
+    expect(usage.cost.cacheRead).toBeCloseTo(0.000004, 12);
+    expect(usage.cost.cacheWrite).toBeCloseTo(0.000025, 12);
+    expect(usage.cost.total).toBeCloseTo(0.000349, 12);
+  });
+
   test("adds protocol and provider usage values", () => {
     const total = addUsage(
       {

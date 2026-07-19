@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
+import type { LanguageModelUsage } from "ai";
 import dedent from "dedent";
 import {
   createAskAdvisorTool,
@@ -14,10 +15,29 @@ import {
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import { ModelRouter } from "../src/model-routing/router.js";
 import { BUILT_IN_ROUTING_TABLE, type AdvisorPolicy } from "../src/model-routing/table.js";
-import type { TurnTodo } from "../src/types/protocol.js";
+import { resolveModelName } from "../src/model-resolution/resolver.js";
+import * as structuredOutput from "../src/core/structured-output.js";
+import type { TurnEvent, TurnTodo } from "../src/types/protocol.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 type TurnRunnerToolsInput = Parameters<typeof createTurnRunnerToolsWithStorage>[0];
+
+const ADVISOR_USAGE: LanguageModelUsage = {
+  inputTokens: 12,
+  inputTokenDetails: { noCacheTokens: 12, cacheReadTokens: 0, cacheWriteTokens: 0 },
+  outputTokens: 3,
+  outputTokenDetails: { textTokens: 3, reasoningTokens: 0 },
+  totalTokens: 15,
+};
+
+const CLASSIFIER_USAGE = {
+  input: 6,
+  output: 2,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 8,
+  cost: { input: 0.006, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.008 },
+};
 
 function createTurnRunnerTools(input: Omit<TurnRunnerToolsInput, "todoStorage">) {
   let storedTodos: TurnTodo[] = [];
@@ -44,9 +64,10 @@ describe("TurnRunner tools", () => {
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: false, stepsUntilAllowed: 3 }),
       noteAdvisorConsult: () => {},
+      recordUsage: () => {},
       callAdvisor: async () => {
         advisorCalled = true;
-        return { advice: "unused" };
+        return { advice: "unused", usage: ADVISOR_USAGE };
       },
     });
 
@@ -67,6 +88,7 @@ describe("TurnRunner tools", () => {
   test("ask_advisor forwards cancellation and records only a successful consult", async () => {
     const controller = new AbortController();
     let receivedSignal: AbortSignal | undefined;
+    let recordedUsage: LanguageModelUsage | undefined;
     let consults = 0;
     const tool = createAskAdvisorTool({
       getMessages: () => [
@@ -98,12 +120,18 @@ describe("TurnRunner tools", () => {
       noteAdvisorConsult: (success) => {
         if (success) consults += 1;
       },
+      recordUsage: (usage) => {
+        recordedUsage = usage;
+      },
       callAdvisor: async (input) => {
         receivedSignal = input.signal;
         expect(input.transcriptText).toContain("Build the router.");
         expect(input.transcriptText).toContain("> You are the executor.");
         expect(input.transcriptText).toContain("router API already owns");
-        return { advice: "Verify the storage closure at the parent-agent boundary." };
+        return {
+          advice: "Verify the storage closure at the parent-agent boundary.",
+          usage: ADVISOR_USAGE,
+        };
       },
     });
 
@@ -111,6 +139,7 @@ describe("TurnRunner tools", () => {
 
     expect(receivedSignal).toBe(controller.signal);
     expect(consults).toBe(1);
+    expect(recordedUsage).toEqual(ADVISOR_USAGE);
     expect(result.terminate).toBe(false);
     expect(result.content).toEqual([
       { type: "text", text: "Verify the storage closure at the parent-agent boundary." },
@@ -120,6 +149,39 @@ describe("TurnRunner tools", () => {
       model: "anthropic/claude-fable-5",
       tokens: expect.any(Number),
     });
+  });
+
+  test("ask_advisor returns valid advice and warns when usage accounting fails", async () => {
+    const warnings: unknown[] = [];
+    let successfulConsults = 0;
+    const tool = createAskAdvisorTool({
+      getMessages: () => [{ role: "user", content: "Review this plan.", timestamp: 1 }],
+      getSystemPrompt: () => "You are the executor.",
+      getObservations: async () => [],
+      budgetTokens: 10_000,
+      modelName: () => "moonshotai/kimi-k3",
+      thinkingLevel: "high",
+      advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
+      noteAdvisorConsult: (success) => {
+        if (success) successfulConsults += 1;
+      },
+      recordUsage: () => {
+        throw new Error("pricing catalog unavailable");
+      },
+      onUsageError: (error) => warnings.push(error),
+      callAdvisor: async () => ({ advice: "Keep the boundary narrow.", usage: ADVISOR_USAGE }),
+    });
+
+    const result = await tool.execute("advisor-accounting-warning", {});
+
+    expect(result.content).toEqual([{ type: "text", text: "Keep the boundary narrow." }]);
+    expect(result.details).toEqual({
+      type: "ask_advisor",
+      model: "moonshotai/kimi-k3",
+      tokens: expect.any(Number),
+    });
+    expect(successfulConsults).toBe(1);
+    expect(warnings).toEqual([expect.objectContaining({ message: "pricing catalog unavailable" })]);
   });
 
   test("ask_advisor does not record a failed consult", async () => {
@@ -135,6 +197,7 @@ describe("TurnRunner tools", () => {
       noteAdvisorConsult: (success) => {
         if (success) consults += 1;
       },
+      recordUsage: () => {},
       callAdvisor: async () => {
         throw new Error("advisor unavailable");
       },
@@ -168,10 +231,11 @@ describe("TurnRunner tools", () => {
       thinkingLevel: "high",
       advisorGate: () => router.beginAdvisorConsult(),
       noteAdvisorConsult: (success = true) => router.endAdvisorConsult(success),
+      recordUsage: () => {},
       callAdvisor: async () => {
         announceStarted();
         await blocked;
-        return { advice: "Proceed." };
+        return { advice: "Proceed.", usage: ADVISOR_USAGE };
       },
     };
     const tool = createAskAdvisorTool(storage);
@@ -259,6 +323,118 @@ describe("TurnRunner tools", () => {
     try {
       await runTierSwitchScenario();
     } finally {
+      if (priorKey === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = priorKey;
+    }
+  });
+
+  test("streams advisor usage after a parent snapshot and attributes its model", async () => {
+    const priorKey = process.env.DUET_API_KEY;
+    process.env.DUET_API_KEY = "advisor-usage-test-key";
+    const runner = new ToolListTurnRunner("frontier");
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+    try {
+      await runner.start({ type: "start", mode: "agent" });
+      runner.seedParentUsageForTest();
+      runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
+      const advisor = runner.advisorTool();
+      if (!advisor) throw new Error("ask_advisor tool missing");
+
+      await advisor.execute("advisor-usage", {});
+
+      const usage = events.find(
+        (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
+      );
+      expect(usage?.turnUsage).toMatchObject({ input: 12, output: 3, totalTokens: 15 });
+      expect(usage?.lastMessageUsage.totalTokens).toBe(0);
+      expect(usage?.usageByModel).toEqual([
+        {
+          model: resolveModelName(BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName)
+            .id,
+          usage: expect.objectContaining({ totalTokens: 15 }),
+        },
+      ]);
+    } finally {
+      await runner.dispose();
+      if (priorKey === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = priorKey;
+    }
+  });
+
+  test("the post-advisor usage event includes both classifier and advisor spend", async () => {
+    const priorKey = process.env.DUET_API_KEY;
+    process.env.DUET_API_KEY = "classifier-advisor-usage-test-key";
+    const generate = spyOn(structuredOutput, "generateStructuredOutput").mockImplementation(
+      async (options) => {
+        options.onUsage?.(CLASSIFIER_USAGE);
+        return { route: "implement", rationale: "Implementation work." } as never;
+      },
+    );
+    const runner = new ToolListTurnRunner("frontier");
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+    try {
+      await runner.start({ type: "start", mode: "agent" });
+      runner.seedParentUsageForTest();
+      await runner.classifySpawnForTest();
+      runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
+      const advisor = runner.advisorTool();
+      if (!advisor) throw new Error("ask_advisor tool missing");
+
+      await advisor.execute("advisor-after-classifier", {});
+
+      const usageEvents = events.filter(
+        (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
+      );
+      expect(usageEvents).toHaveLength(2);
+      const cumulative = usageEvents.at(-1);
+      expect(cumulative?.turnUsage.totalTokens).toBe(23);
+      expect(cumulative?.usageByModel).toEqual([
+        {
+          model: resolveModelName(BUILT_IN_ROUTING_TABLE.classifier.target.modelName).id,
+          usage: CLASSIFIER_USAGE,
+        },
+        {
+          model: resolveModelName(BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName)
+            .id,
+          usage: expect.objectContaining({ totalTokens: 15 }),
+        },
+      ]);
+    } finally {
+      generate.mockRestore();
+      await runner.dispose();
+      if (priorKey === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = priorKey;
+    }
+  });
+
+  test("TurnRunner emits a warning while preserving advice when advisor accounting fails", async () => {
+    const priorKey = process.env.DUET_API_KEY;
+    process.env.DUET_API_KEY = "advisor-accounting-warning-test-key";
+    const runner = new ToolListTurnRunner("frontier");
+    runner.failAdvisorAccountingForTest();
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+    try {
+      await runner.start({ type: "start", mode: "agent" });
+      runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
+      const advisor = runner.advisorTool();
+      if (!advisor) throw new Error("ask_advisor tool missing");
+
+      const result = await advisor.execute("advisor-accounting-warning", {});
+
+      expect(result.content).toEqual([{ type: "text", text: "Proceed with the new tier." }]);
+      expect(result.details).toEqual(
+        expect.objectContaining({ type: "ask_advisor", model: expect.any(String) }),
+      );
+      expect(events).toContainEqual({
+        type: "system",
+        level: "warn",
+        message: "Advisor usage accounting failed; advice was retained: forced accounting failure",
+      });
+    } finally {
+      await runner.dispose();
       if (priorKey === undefined) delete process.env.DUET_API_KEY;
       else process.env.DUET_API_KEY = priorKey;
     }
@@ -1582,6 +1758,7 @@ describe("TurnRunner tools", () => {
 class ToolListTurnRunner extends TurnRunner {
   readonly consultedRouters: ModelRouter[] = [];
   readonly completedConsultRouters: ModelRouter[] = [];
+  private failAdvisorAccounting = false;
 
   constructor(model: string, cwd?: string) {
     super({
@@ -1613,11 +1790,40 @@ class ToolListTurnRunner extends TurnRunner {
     return this.modelRouter;
   }
 
+  classifySpawnForTest() {
+    return this.selectSpawnModel("Implement the patch.", "frontier");
+  }
+
+  seedParentUsageForTest(): void {
+    const usage = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+    this.lastParentUsageSnapshot = {
+      lastMessageUsage: usage,
+      effectiveContextWindow: 200_000,
+      contextWindowUsage: { systemPrompt: 0, messages: 0, localMemory: 0, globalMemory: 0 },
+    };
+  }
+
+  failAdvisorAccountingForTest(): void {
+    this.failAdvisorAccounting = true;
+  }
+
   protected override createAskAdvisorStorage(
     router: ModelRouter,
     policy: AdvisorPolicy,
   ): AskAdvisorToolStorage {
     const storage = super.createAskAdvisorStorage(router, policy);
+    if (this.failAdvisorAccounting) {
+      storage.recordUsage = () => {
+        throw new Error("forced accounting failure");
+      };
+    }
     const begin = storage.advisorGate;
     storage.advisorGate = () => {
       this.consultedRouters.push(router);
@@ -1628,7 +1834,10 @@ class ToolListTurnRunner extends TurnRunner {
       if (success) this.completedConsultRouters.push(router);
       note(success);
     };
-    storage.callAdvisor = async () => ({ advice: "Proceed with the new tier." });
+    storage.callAdvisor = async () => ({
+      advice: "Proceed with the new tier.",
+      usage: ADVISOR_USAGE,
+    });
     return storage;
   }
 }

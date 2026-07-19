@@ -52,7 +52,11 @@ class PoisonedRouterTurnRunner extends TurnRunner {
   }
 
   runStateAgent(state: StateMachineAgentState): SubagentRun {
-    return this.createStateSubagentRun({ state, prompt: state.prompt });
+    return this.createStateSubagentRun({
+      state,
+      prompt: state.prompt,
+      origin: { taskId: "t1" },
+    });
   }
 }
 

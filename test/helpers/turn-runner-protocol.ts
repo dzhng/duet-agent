@@ -10,6 +10,7 @@ import type { SubagentResult, SubagentRun } from "../../src/turn-runner/subagent
 import type { TurnRunnerConfig } from "../../src/types/config.js";
 import type {
   TurnEvent,
+  TurnEventOrigin,
   TurnMode,
   TurnState,
   TurnTerminalEvent,
@@ -94,6 +95,7 @@ export class TestTurnRunner extends TurnRunner {
   protected override createStateSubagentRun(input: {
     state: StateMachineAgentState;
     prompt: string;
+    origin: TurnEventOrigin;
   }): SubagentRun {
     const state: TurnState = {
       status: "running",

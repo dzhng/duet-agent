@@ -7,10 +7,12 @@ import {
 } from "../src/turn-runner/turn-runner.js";
 import type {
   TurnEvent,
+  TurnEventOrigin,
   TurnStepEvent,
   TurnUsageEvent,
   TurnTokenUsage,
 } from "../src/types/protocol.js";
+import type { StateMachineAgentState } from "../src/types/state-machine.js";
 import type { SubagentRun } from "../src/turn-runner/subagent.js";
 import { createOutreachStateMachine } from "./helpers/turn-runner-protocol.js";
 
@@ -130,7 +132,7 @@ describe("State-machine agent state events", () => {
     });
   });
 
-  test("tags state-agent step + usage events with their originating agent state", async () => {
+  test("tags state-agent step + usage events with their task identity", async () => {
     const runner = new StateMachineOriginTurnRunner();
     const events: TurnEvent[] = [];
     runner.subscribe((event) => events.push(event));
@@ -145,12 +147,16 @@ describe("State-machine agent state events", () => {
     const stepsWithOrigin = events.filter(
       (event): event is TurnStepEvent => event.type === "step" && event.origin !== undefined,
     );
+    const stateTask = events.find(
+      (event) => event.type === "task_started" && event.task.name === "research_prospect",
+    );
+    if (!stateTask || stateTask.type !== "task_started") {
+      throw new Error("expected state task lifecycle event");
+    }
+    const expectedOrigin = { taskId: stateTask.task.id };
     expect(stepsWithOrigin.length).toBeGreaterThan(0);
     for (const step of stepsWithOrigin) {
-      expect(step.origin).toEqual({
-        kind: "state_machine_agent",
-        state: "research_prospect",
-      });
+      expect(step.origin).toEqual(expectedOrigin);
     }
 
     const usageWithOrigin = events.filter(
@@ -158,10 +164,7 @@ describe("State-machine agent state events", () => {
     );
     expect(usageWithOrigin.length).toBeGreaterThan(0);
     for (const usage of usageWithOrigin) {
-      expect(usage.origin).toEqual({
-        kind: "state_machine_agent",
-        state: "research_prospect",
-      });
+      expect(usage.origin).toEqual(expectedOrigin);
     }
   });
 
@@ -329,8 +332,7 @@ class StateMachineUsageTurnRunner extends TurnRunner {
 
 /**
  * Stub state-agent handle that emits both a step event and a usage event with
- * a `state_machine_agent` origin, mirroring what the real
- * `createStateSubagentRun` does after this change. Used to assert the runner's
+ * a task origin, mirroring what the real `createStateSubagentRun` does. Used to assert the runner's
  * emit pipeline forwards the origin onto every event it produces, without
  * standing up a live LLM.
  */
@@ -375,7 +377,11 @@ class StateMachineOriginTurnRunner extends TurnRunner {
     };
   }
 
-  protected override createStateSubagentRun(): SubagentRun {
+  protected override createStateSubagentRun(input: {
+    state: StateMachineAgentState;
+    prompt: string;
+    origin: TurnEventOrigin;
+  }): SubagentRun {
     const stubbedUsage: TurnTokenUsage = {
       input: 1000,
       output: 200,
@@ -396,7 +402,7 @@ class StateMachineOriginTurnRunner extends TurnRunner {
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
     };
-    const origin = { kind: "state_machine_agent" as const, state: "research_prospect" };
+    const { origin } = input;
     return {
       prompt: async () => {
         try {

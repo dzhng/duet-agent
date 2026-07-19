@@ -75,7 +75,7 @@ describe("TUI task tree frame", () => {
     harness.runner.emitEvent({
       type: "usage",
       ...usageFields(14_400),
-      origin: { kind: "task", taskId: "t4", ownerScopeId: "turn-1" },
+      origin: { taskId: "t4" },
     });
     harness.runner.emitEvent({
       type: "step",

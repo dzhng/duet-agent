@@ -14,12 +14,17 @@ every later slice and every future campaign consumes.
   output: `benchmarks/swebench/manifests/multilingual-30.json` with
   `{datasetRevision, seed, algorithmVersion, entries: [{instanceId, language,
 repo, baseCommit, imageKey}]}`.
-- `config-override.ts`: `renderModelsJson({tier: "balanced", advisorEnabled})
-→ RoutingTable` — imports `BUILT_IN_ROUTING_TABLE` and
-  `validateRoutingTable` from `src/model-routing/table.ts`. Committed outputs:
-  `benchmarks/swebench/configs/balanced-advisor-{on,off}.models.json`. The
-  schema requires the `advisor` object with an `enabled` field — OFF flips
-  `enabled: false`, never deletes the object.
+- `config-override.ts`: `renderModelsJson({advisorEnabled}) → RoutingTable` —
+  derives a complete table from `BUILT_IN_ROUTING_TABLE` and validates it with
+  `validateRoutingTable`. Its only tier and `defaultTier` are
+  `swebench-glm-kimi`. The tier has one `general` route: GLM-5.2 at high effort
+  for execution and Kimi K3 at high effort for advice. The classifier, GLM
+  image fallback, advisor cadence/transcript budget, and all other policy are
+  copied unchanged from the product table; the benchmark does not select
+  alternative models for those roles. Committed outputs:
+  `benchmarks/swebench/configs/glm-kimi-advisor-{on,off}.models.json`. OFF flips
+  only `advisor.enabled`; it never deletes the advisor definition. Rollout
+  commands omit `--memory-model`, preserving the product default.
 
 ## Seam
 
@@ -32,15 +37,15 @@ and never re-sample.
 - Unit (fixture rows, no network): same seed → byte-identical manifest; all
   9 languages represented, proportions within ±1; revision recorded; unknown
   tier throws.
-- Config: deep-diff of ON vs OFF renders is exactly the one boolean; both
-  pass `validateRoutingTable`; serialization matches `duet config export`
-  formatting.
+- Config: deep-diff of ON vs OFF renders is exactly the one boolean; both pass
+  `validateRoutingTable`; assertions prove executor and advisor targets are the
+  only model substitutions and every other policy equals the product default.
 
 ## Playable checkpoint
 
 `bun benchmarks/swebench/cli.ts manifest show` prints the per-language table
 of the 30 chosen instances; `... config render --advisor off` prints the JSON
-and its one-line diff against the built-in table.
+and its one-line diff against the advisor-ON render.
 
 ## What would change this slice
 

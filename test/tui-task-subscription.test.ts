@@ -87,7 +87,7 @@ describe("TUI task subscription", () => {
 
     handler({
       type: "step",
-      origin: { kind: "task", taskId: "t4", ownerScopeId: "turn-1" },
+      origin: { taskId: "t4" },
       step: { type: "text", text: "child output" },
     });
     expect(laneEvents).toHaveLength(1);

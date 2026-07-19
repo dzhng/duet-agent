@@ -10,15 +10,14 @@ about _our_ harness.
 
 ## Next Agent Prompt
 
-**Status:** planned, no slices started. Last updated 2026-07-19.
+**Status:** slice 01 code and deterministic verification complete; required live
+advisor-usage smoke pending. Slices 02–08 not started. Last updated 2026-07-19.
 
-You are implementing this spec. Read this README fully, then start at
-[slice 01](slices/01-rpc-config-and-telemetry.md) — it is pure product work in
-`src/` (no cloud box needed) and everything measurement-shaped depends on it.
-Slice 02 (manifest + configs, local) may proceed in parallel with 01; slice 04
-(box provision) can start as soon as David has rented the box (see Blockers).
-Follow the dependency graph below; never spend campaign-scale money before the
-slice 07 admission gate says ADMIT.
+You are implementing this spec. Read this README fully, finish the required
+live smoke in [slice 01](slices/01-rpc-config-and-telemetry.md), then start
+[slice 02](slices/02-manifest-and-configs.md). Slice 04 (box provision) can
+start as soon as David has rented the box (see Blockers). Follow the dependency
+graph below; never spend campaign-scale money before slice 07 says ADMIT.
 
 Blockers / user-owned inputs:
 
@@ -29,8 +28,8 @@ Blockers / user-owned inputs:
 
 Global TODO (owner slice in parens):
 
-- [ ] RPC loads project routing table; advisor+classifier usage metered; tool
-      details forwarded (01)
+- [ ] RPC loads project routing table and exits cleanly; advisor+classifier
+      usage metered; tool details forwarded; live provider smoke passes (01)
 - [ ] Committed 30-instance manifest + both routing-table renders (02)
 - [ ] duet-client (RPC transport + limits) + telemetry derivation, fixture-tested (03)
 - [ ] Box provisioned; gold gate 30/30; mini-swe-agent replication; scorer
@@ -47,6 +46,9 @@ Update this section before ending every pass.
 
 ## Decisions (user-settled — do not relitigate)
 
+The [choices ledger](choices.md) records the prerequisite decisions and their
+rationale.
+
 - **Dataset:** `princeton-nlp/SWE-bench_Multilingual` (300 instances, 9
   languages). Official scorer only: `python -m swebench.harness.run_evaluation`.
 - **Infra:** rented x86_64 Linux box runs rollouts AND scoring, campaign
@@ -54,11 +56,15 @@ Update this section before ending every pass.
   Docker is not used for the campaign.
 - **Replication spike first:** mini-swe-agent proves images+scoring end-to-end
   before duet is wired in (slice 04).
-- **First campaign:** balanced tier advisor-ON vs advisor-OFF, one fixed
-  30-instance subset, 1 trial per config, paired. Budget envelope **$50–100**
-  total including box rent. Economy-vs-balanced, frontier ceiling, and
-  trials>1 are future campaigns the seams must accommodate but this build
-  does not run.
+- **First campaign:** one custom GLM/Kimi tier, advisor-ON vs advisor-OFF, one
+  fixed 30-instance subset, 1 trial per config, paired. The complete tier has
+  one general route: GLM-5.2/high for execution and Kimi K3/high for advice.
+  Classifier, image fallback, memory model, and routing cadence remain product
+  defaults; the benchmark does not select replacements for them. The rendered
+  table is complete, but derives those unchanged policies from the built-in
+  table. Budget envelope **$50–100** total including box rent.
+  Economy-vs-balanced, frontier ceiling, and trials>1 are future campaigns the
+  seams must accommodate but this build does not run.
 - Greenfield tooling: no backward compat, no migrations.
 
 ## Architecture
@@ -71,18 +77,18 @@ precedent). TypeScript/bun orchestration; python exists only as the pinned
 Single-owner concepts (refactor-clean invariants — every slice must preserve
 these ownerships; no parallel abstractions):
 
-| Concept                                      | Owner module (under `benchmarks/swebench/src/`)                                                                                                         |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Instance manifest (the pairing contract)     | `manifest.ts` — seeded, language-stratified, dataset-revision-pinned; materialized as a committed JSON file every campaign references by path           |
-| Routing-table renders (the one-boolean arms) | `config-override.ts` — imports `BUILT_IN_ROUTING_TABLE` + `validateRoutingTable` from `src/model-routing/table.ts`; never hand-copies routing knowledge |
-| Duet invocation + limit enforcement          | `duet-client.ts` — RPC NDJSON over an injected `ExecTransport`; the only module that speaks the wire protocol                                           |
-| Container execution                          | `container.ts` — injected `Cmd` (production: local `docker` CLI); the only module that constructs docker argv                                           |
-| Duet-into-container packaging                | `packaging.ts` — compile-vs-tarball decision confined here                                                                                              |
-| Rollout telemetry                            | `telemetry.ts` — pure `deriveTelemetry(TurnEvent[])`; raw `events.ndjson` is ground truth, every number re-derivable                                    |
-| Run artifact + resumability                  | `artifacts.ts` — filesystem is the state; `status.json` + `specHash`; orchestrator holds no state of its own                                            |
-| Patch extraction + integrity                 | `patch.ts` — staged-index extraction, round-trip verification, pollution scan                                                                           |
-| Predictions + scorer quarantine              | `predictions.ts` + `box/score.sh` + `swebench-report.ts` (narrow parser); nothing else reads harness output                                             |
-| Comparison report                            | `report.ts` — pure over artifact trees + parsed scores                                                                                                  |
+| Concept                                      | Owner module (under `benchmarks/swebench/src/`)                                                                                                                       |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Instance manifest (the pairing contract)     | `manifest.ts` — seeded, language-stratified, dataset-revision-pinned; materialized as a committed JSON file every campaign references by path                         |
+| Routing-table renders (the one-boolean arms) | `config-override.ts` — derives a complete table from product defaults, replaces only the executor/advisor model targets, and validates it with `validateRoutingTable` |
+| Duet invocation + limit enforcement          | `duet-client.ts` — RPC NDJSON over an injected `ExecTransport`; the only module that speaks the wire protocol                                                         |
+| Container execution                          | `container.ts` — injected `Cmd` (production: local `docker` CLI); the only module that constructs docker argv                                                         |
+| Duet-into-container packaging                | `packaging.ts` — compile-vs-tarball decision confined here                                                                                                            |
+| Rollout telemetry                            | `telemetry.ts` — pure `deriveTelemetry(TurnEvent[])`; raw `events.ndjson` is ground truth, every number re-derivable                                                  |
+| Run artifact + resumability                  | `artifacts.ts` — filesystem is the state; `status.json` + `specHash`; orchestrator holds no state of its own                                                          |
+| Patch extraction + integrity                 | `patch.ts` — staged-index extraction, round-trip verification, pollution scan                                                                                         |
+| Predictions + scorer quarantine              | `predictions.ts` + `box/score.sh` + `swebench-report.ts` (narrow parser); nothing else reads harness output                                                           |
+| Comparison report                            | `report.ts` — pure over artifact trees + parsed scores                                                                                                                |
 
 Cross-cutting rules:
 
@@ -101,9 +107,11 @@ Cross-cutting rules:
   with bash proxied via `docker exec` — file tools would still hit the wrong
   filesystem; (c) sidecar — lacks the language toolchains.
 - **Both arms get an explicit rendered `models.json`** (ON is not "absence of
-  override"), placed in the container `HOME`'s `.duet/`, differing in exactly
-  one boolean: `tiers.balanced.advisor.enabled`. It can never appear in the
-  measured patch because it never enters `/testbed`.
+  override"), placed in the container `HOME`'s `.duet/`. The table defines a
+  benchmark-only tier with a GLM-5.2 executor and Kimi K3 advisor. Classifier,
+  image fallback, and cadence are copied unchanged from product policy. The two
+  files differ in exactly the advisor-enabled boolean and never enter
+  `/testbed`.
 - **The official scorer is invoked, never ported or approximated.**
 
 ## Slice graph
@@ -128,20 +136,33 @@ parents; 05+ serial on the box. Live-model spend before slice 07: a few
 dollars. The 30-instance campaign is the last slice, gated by an explicit
 ADMIT decision.
 
+Slice plans: [01](slices/01-rpc-config-and-telemetry.md),
+[02](slices/02-manifest-and-configs.md),
+[03](slices/03-duet-client-and-telemetry.md),
+[04](slices/04-box-gold-gate-and-spike.md),
+[05](slices/05-duet-in-container.md),
+[06](slices/06-rollout-pipeline-and-resume.md),
+[07](slices/07-report-and-pilot.md), and [08](slices/08-campaign.md).
+
 ## Limits (initial; slice 07 pilot recalibrates before the campaign)
 
-Per rollout: 20 min wall clock, 60 parent assistant steps, $1.50 model spend,
-5 MiB patch — enforced at the duet-client seam from the event stream (RPC
-`interrupt`, 90 s grace, then kill; partial patch still extracted). Campaign
-breaker: stop launching rollouts once cumulative spend + box cost approaches
-the envelope. 60 rollouts × $1.50 caps bound worst-case inside $50–100.
+Per-rollout wall-clock, model-spend, and patch-size limits are explicit campaign
+inputs enforced at the duet-client seam. There is no assistant-step limit: step
+counts are a poor proxy for time, spend, or useful work. Slice 07 calibrates the
+time and spend values from the pilot. On breach the client sends RPC
+`interrupt`, waits a bounded grace, then kills the process; partial patches are
+still extracted. A campaign breaker stops launching work before total model
+spend plus box cost reaches the budget envelope.
 
 ## Firewalls & invariants
 
 - Pairing validity: one committed manifest, one committed prompt template
   (`prompt.ts` — frozen input for campaign 1; prompt tuning is out of scope),
   one duet binary hash, explicit renders for both arms, seeded interleaved
-  ON/OFF schedule per instance. The only varying bit is `advisor.enabled`.
+  ON/OFF schedule per instance, and an explicit benchmark-tier invocation. The
+  only varying bit is `advisor.enabled`. Both arms use product defaults for
+  classifier, image fallback, memory model, and every non-advisor routing
+  policy.
 - Isolation: fresh official image + fresh `HOME` per rollout; `--incognito`
   (no memory-db carryover), `--no-system-prompt-files` (no stray AGENTS.md in
   target repos). Scoring applies the patch in the harness's own pristine
@@ -168,8 +189,8 @@ the envelope. 60 rollouts × $1.50 caps bound worst-case inside $50–100.
   disk/time cost (04).
 - `bun build --compile` viability for duet (dynamic imports, sqlite); musl
   images; CA bundles for gateway egress (05).
-- Real per-rollout cost/duration on balanced tier → final limit values (07).
-- Advisor call frequency on real SWE tasks under the default guidance — too
+- Real per-rollout cost/duration on the custom GLM/Kimi tier → final limits (07).
+- Advisor call frequency on real SWE tasks under the campaign guidance — too
   low a rate makes campaign 1 inconclusive on the advisor question; the pilot
   reports it before the campaign spends (07).
 - n=30, 1 trial is signal-seeking, not leaderboard-stable; the report states
@@ -184,11 +205,11 @@ the envelope. 60 rollouts × $1.50 caps bound worst-case inside $50–100.
   proxy splits bash's filesystem view from the file tools'. Rejected.
 - **Advisor-OFF as "no override file"** — unpinned: built-in-table drift
   would silently change the control arm. Both arms are explicit renders.
-- **Trusting terminal cost as-is** — `callAdvisor` drops `result.usage`
-  (`src/model-routing/advisor.ts`) and the classifier's usage is likewise
-  unmetered, so pre-slice-01 terminal cost undercounts exactly the arm under
-  test. Verified 2026-07-19; fixed by slice 01, not worked around in the
-  bench.
+- **Trusting pre-slice-01 terminal cost as-is** — advisor and classifier
+  completions were not both attributed to the turn, so terminal cost
+  undercounted exactly the arm under test. Slice 01 fixes the generic
+  accounting boundary; the bench consumes that protocol instead of
+  reconstructing provider cost.
 
 ## References
 

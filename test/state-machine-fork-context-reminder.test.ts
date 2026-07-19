@@ -55,9 +55,14 @@ async function captureTailPrompt(state: StateMachineAgentState): Promise<string>
       createStateSubagentRun: (input: {
         state: StateMachineAgentState;
         prompt: string;
+        origin: { taskId: "t1" };
       }) => SubagentRun;
     }
-  ).createStateSubagentRun({ state, prompt: state.prompt });
+  ).createStateSubagentRun({
+    state,
+    prompt: state.prompt,
+    origin: { taskId: "t1" },
+  });
 
   await handle.prompt();
   if (tail === undefined) throw new Error("agent.prompt was not invoked");

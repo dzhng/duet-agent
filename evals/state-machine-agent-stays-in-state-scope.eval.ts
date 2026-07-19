@@ -168,10 +168,11 @@ async function runPlanState(
     // Capture tool calls made by the planning sub-agent. A write/edit means it
     // broke scope and started implementing the downstream state's work.
     const toolCalls: string[] = [];
+    const taskNames = new Map<string, string>();
     runner.subscribe((event: TurnEvent) => {
+      if (event.type === "task_started") taskNames.set(event.task.id, event.task.name);
       if (event.type !== "step") return;
-      if (event.origin?.kind !== "state_machine_agent") return;
-      if (event.origin.state !== "plan") return;
+      if (!event.origin || taskNames.get(event.origin.taskId) !== "plan") return;
       if (event.step.type === "tool_call_start") {
         toolCalls.push(event.step.toolName);
       }

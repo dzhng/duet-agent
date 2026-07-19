@@ -13,6 +13,7 @@ import { stripSystemReminders, systemReminder } from "../lib/system-reminder.js"
 
 import { assistantText } from "../core/serializer.js";
 import { classifyRoute } from "../model-routing/classifier.js";
+import type { ClassifyRouteOptions } from "../model-routing/classifier.js";
 import { loadRoutingTable } from "../model-routing/loader.js";
 import { ADVISOR_EXECUTOR_GUIDANCE_LAYER } from "../model-routing/prompts.js";
 import { resolveTierDefault, type RouteResolutionCatalog } from "../model-routing/resolve.js";
@@ -51,7 +52,6 @@ import { MemoryContextCache } from "../memory/store.js";
 import {
   DEFAULT_CLI_MEMORY_MODEL,
   DEFAULT_CLI_MODEL,
-  pinnedModelReference,
   resolveModelName,
   routingCatalogAdapter,
 } from "../model-resolution/resolver.js";
@@ -148,7 +148,7 @@ import {
   transientRetryDelayMs,
   type TransientRetryPolicy,
 } from "./transient-error.js";
-import { addUsage, addUsageByModel } from "./usage-accounting.js";
+import { addUsage, addUsageByModel, usageFromAiSdk } from "./usage-accounting.js";
 import { SystemRuntimeClock, type RuntimeClock } from "./runtime-clock.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
 import type { ScopeId, TaskEvent, TaskId, TaskSettlement, TaskSnapshot } from "../tasks/types.js";
@@ -245,7 +245,7 @@ export type ParentLoopInput =
   | { type: "wake"; queued?: boolean };
 
 type StateTaskMetadata =
-  | { kind: "agent"; stateName: string; run: SubagentRun }
+  | { kind: "agent"; stateName: string; run?: SubagentRun }
   | {
       kind: "script" | "poll";
       stateName: string;
@@ -335,6 +335,17 @@ export function scaleContextWindowUsageToTotalTokens(
     messages: scaled[1]!,
     localMemory: scaled[2]!,
     globalMemory: scaled[3]!,
+  };
+}
+
+function emptyTokenUsage(): TurnTokenUsage {
+  return {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
 }
 
@@ -481,7 +492,7 @@ export class TurnRunner {
         resolveSkills: (spec, ctx) =>
           this.skillContext.resolveSubagentSkills(
             spec.allowedSkills,
-            ctx.origin.kind === "state_machine_agent" ? `state "${ctx.origin.state}"` : "sub-agent",
+            ctx.machineContext ? `state "${ctx.machineContext.currentState}"` : "sub-agent",
           ),
         resolveSlashSkillPrompt: (prompt, skills) =>
           this.skillContext.resolveSlashSkillPrompt(prompt, skills),
@@ -1405,17 +1416,22 @@ export class TurnRunner {
   }
 
   private startSubagentTask(spec: SubagentSpec, stateName: string): void {
-    const run = this.createStateSubagentRun({
-      state: { kind: "agent", name: stateName, ...spec },
-      prompt: spec.prompt,
-    });
+    const ownerScopeId = this.requireRootScope();
     const handle = this.taskManager.start({
       kind: "subagent",
       name: stateName,
       label: `Run state ${stateName}`,
-      ownerScopeId: this.requireRootScope(),
-      execute: async ({ signal }) => {
+      ownerScopeId,
+      execute: async ({ signal, taskId }) => {
+        const run = this.createStateSubagentRun({
+          state: { kind: "agent", name: stateName, ...spec },
+          prompt: spec.prompt,
+          origin: { taskId },
+        });
+        const metadata = this.stateTasks.get(taskId);
+        if (metadata?.kind === "agent") metadata.run = run;
         const interrupt = () => run.interrupt(String(signal.reason ?? "Interrupted"));
+        if (signal.aborted) interrupt();
         signal.addEventListener("abort", interrupt, { once: true });
         try {
           return await run.prompt();
@@ -1424,7 +1440,7 @@ export class TurnRunner {
         }
       },
     });
-    this.stateTasks.set(handle.id, { kind: "agent", stateName, run });
+    this.stateTasks.set(handle.id, { kind: "agent", stateName });
   }
 
   private startShellTask(spec: ShellSpec, stateName: string, pollPolicy?: PollPolicy): void {
@@ -1579,7 +1595,7 @@ export class TurnRunner {
 
   private partialStateOutput(metadata: StateTaskMetadata) {
     if (metadata.kind === "agent") {
-      const assistantText = metadata.run.partialAssistantText();
+      const assistantText = metadata.run?.partialAssistantText();
       return assistantText ? { assistantText } : undefined;
     }
     return metadata.shell.partialOutput();
@@ -1718,6 +1734,7 @@ export class TurnRunner {
   protected createStateSubagentRun(input: {
     state: StateMachineAgentState;
     prompt: string;
+    origin: TurnEventOrigin;
   }): SubagentRun {
     const spec: SubagentSpec = {
       prompt: input.prompt,
@@ -1733,7 +1750,7 @@ export class TurnRunner {
       ? { definition: session.definition, currentState: input.state.name }
       : undefined;
     return this.subagentExecutor(spec, {
-      origin: { kind: "state_machine_agent", state: input.state.name },
+      origin: input.origin,
       ...(machineContext ? { machineContext } : {}),
     });
   }
@@ -1763,7 +1780,7 @@ export class TurnRunner {
         ...(selection.thinkingLevel ? { thinkingLevel: selection.thinkingLevel } : {}),
       },
       {
-        origin: { kind: "task", taskId, ownerScopeId },
+        origin: { taskId },
         childScopeId,
         ownerScopeId,
         memoryContext: {
@@ -1781,10 +1798,7 @@ export class TurnRunner {
     return classifySpawnModel(prompt, parentSetting, {
       table,
       resolveCatalog: routingCatalogAdapter,
-      classifierOptions: {
-        model: pinnedModelReference(table.classifier.target.modelName),
-        thinkingLevel: table.classifier.target.thinkingLevel,
-      },
+      classifierOptions: this.classifierOptions(table),
     });
   }
 
@@ -1821,7 +1835,7 @@ export class TurnRunner {
     for (const [id, metadata] of this.stateTasks) {
       if (this.taskManager.output(id)?.descriptor.status !== "running") continue;
       if (metadata.kind === "agent") {
-        const assistantText = metadata.run.partialAssistantText();
+        const assistantText = metadata.run?.partialAssistantText();
         return assistantText
           ? { state: metadata.stateName, kind: "agent" as const, output: { assistantText } }
           : { state: metadata.stateName, kind: "agent" as const };
@@ -2250,6 +2264,7 @@ export class TurnRunner {
     router: ModelRouter,
     policy: AdvisorPolicy,
   ): AskAdvisorToolStorage {
+    const resolveAdvisorModel = () => resolveModelName(policy.target.modelName);
     return {
       getMessages: () => this.parentAgent?.state.messages ?? this.state?.agent.messages ?? [],
       getSystemPrompt: () => this.parentAgent?.state.systemPrompt ?? "",
@@ -2261,10 +2276,22 @@ export class TurnRunner {
         return snapshot.observations.map((observation) => observation.content);
       },
       budgetTokens: policy.transcriptTokens,
-      modelName: () => resolveModelName(policy.target.modelName).id,
+      modelName: () => resolveAdvisorModel().id,
       thinkingLevel: policy.target.thinkingLevel,
       advisorGate: () => router.beginAdvisorConsult(),
       noteAdvisorConsult: (success = true) => router.endAdvisorConsult(success),
+      recordUsage: (usage) => {
+        const model = resolveAdvisorModel();
+        this.recordAndEmitUsage(usageFromAiSdk(usage, model), model.id);
+      },
+      onUsageError: (error) => {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.emit({
+          type: "system",
+          level: "warn",
+          message: `Advisor usage accounting failed; advice was retained: ${reason}`,
+        });
+      },
     };
   }
 
@@ -2839,6 +2866,12 @@ export class TurnRunner {
     }
   }
 
+  /** Attribute a non-parent model call and publish it once a flat context snapshot exists. */
+  private recordAndEmitUsage(usage: TurnTokenUsage | Usage, modelId: string): void {
+    this.recordUsage(usage, modelId);
+    this.emitTurnUsage();
+  }
+
   protected emitAgentEvent(event: AgentEvent, origin?: TurnEventOrigin): void {
     if (event.type === "message_start" && event.message.role === "user") {
       this.removeFollowUpPrompt(agentMessageText(event.message));
@@ -2925,14 +2958,7 @@ export class TurnRunner {
     // can still refresh `lastUsage`. Session cost was already credited
     // at the prior terminal, so a zero `turnUsage.cost.total` does not
     // lose any spend.
-    const turnUsage: TurnTokenUsage = this.turnUsage ?? {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    };
+    const turnUsage = this.turnUsage ?? emptyTokenUsage();
     this.emit({
       type: "usage",
       turnUsage,
@@ -2947,11 +2973,9 @@ export class TurnRunner {
    * Emit a `usage` event reflecting the latest `this.turnUsage`. Reuses the
    * most recent parent context-window snapshot for the bar/breakdown so
    * mid-turn ticks (parent worker finish, state-agent finish) surface cost
-   * without jittering the parent context fields. No-ops when no usage has
-   * been recorded yet or before the first parent emission — both are only
-   * possible during construction/teardown or in test harnesses; a real
-   * parent worker always sets the snapshot before its terminal usage is
-   * recorded.
+   * without jittering the parent context fields. Before the first parent
+   * completion, usage is recorded for the terminal and the first later usage
+   * event, but no incomplete wire event is emitted.
    */
   protected emitTurnUsage(origin?: TurnEventOrigin): void {
     if (!this.turnUsage || !this.lastParentUsageSnapshot) return;
@@ -3049,14 +3073,20 @@ export class TurnRunner {
       table,
       tier,
       classify: async (input, signal) => {
-        return classifyRoute(input, {
-          model: pinnedModelReference(table.classifier.target.modelName),
-          thinkingLevel: table.classifier.target.thinkingLevel,
-          signal,
-        });
+        return classifyRoute(input, { ...this.classifierOptions(table), signal });
       },
       resolveCatalog,
     });
+  }
+
+  /** One metered classifier contract shared by parent routing and spawned children. */
+  private classifierOptions(table: RoutingTable): ClassifyRouteOptions {
+    const model = resolveModelName(table.classifier.target.modelName);
+    return {
+      model: `${model.provider}:${model.id}`,
+      thinkingLevel: table.classifier.target.thinkingLevel,
+      onUsage: (usage) => this.recordAndEmitUsage(usage, model.id),
+    };
   }
 
   /** True when a model name is owned by the validated project table. */
