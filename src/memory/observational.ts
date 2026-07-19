@@ -3,6 +3,7 @@ import type { ImageContent, Model, TextContent, Usage } from "@earendil-works/pi
 import { nanoid } from "nanoid";
 import { Type } from "typebox";
 import { generateStructuredOutput } from "../core/structured-output.js";
+import { stripSyntheticUserMessages } from "../lib/synthetic-user-message.js";
 import {
   applyEvictionHorizon,
   calculateWireBytes,
@@ -807,6 +808,27 @@ function buildContinuationMessage(): AgentMessage {
  */
 export function stripObservationalContextMessages(messages: AgentMessage[]): AgentMessage[] {
   return messages.filter((message) => !isObservationalContextMessage(message));
+}
+
+/** Remove runtime-owned user-role segments only from the observer's transcript projection. */
+function stripSyntheticUserMessagesForObserver(messages: AgentMessage[]): AgentMessage[] {
+  return messages
+    .map(stripSyntheticUserMessageSegments)
+    .filter((message): message is AgentMessage => message !== undefined);
+}
+
+function stripSyntheticUserMessageSegments(message: AgentMessage): AgentMessage | undefined {
+  if (message.role !== "user") return message;
+  if (typeof message.content === "string") {
+    const content = stripSyntheticUserMessages(message.content);
+    return content ? { ...message, content } : undefined;
+  }
+  const content = message.content
+    .map((block) =>
+      block.type === "text" ? { ...block, text: stripSyntheticUserMessages(block.text) } : block,
+    )
+    .filter((block) => block.type !== "text" || block.text.length > 0);
+  return content.length > 0 ? { ...message, content } : undefined;
 }
 
 function isObservationalContextMessage(message: AgentMessage): boolean {
@@ -1636,7 +1658,7 @@ function getLastObservedMessageIndex(
 }
 
 export function agentMessagesToRaw(messages: AgentMessage[]): RawMemoryMessage[] {
-  return messages
+  return stripSyntheticUserMessagesForObserver(messages)
     .map((message) => agentMessageToRaw(message))
     .filter((message): message is RawMemoryMessage => Boolean(message));
 }

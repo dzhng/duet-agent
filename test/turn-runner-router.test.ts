@@ -16,6 +16,7 @@ import {
   type RouteClassifier,
 } from "../src/model-routing/router.js";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
+import { settlementNotice } from "../src/turn-runner/task-tools.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import type { StateMachineAgentState } from "../src/types/state-machine.js";
 import { waitFor } from "./helpers/async.js";
@@ -45,6 +46,7 @@ class RouterTurnRunner extends TurnRunner {
   private readonly classify: RouteClassifier;
   private readonly everySteps: number;
   private readonly planTarget?: { modelName: string; thinkingLevel: "low" | "medium" | "high" };
+  private readonly stepKeywords?: string[];
 
   constructor(options: {
     classify: RouteClassifier;
@@ -53,6 +55,7 @@ class RouterTurnRunner extends TurnRunner {
     effectiveContext?: number;
     model?: string;
     cwd?: string;
+    stepKeywords?: string[];
   }) {
     super({
       model: options.model ?? "frontier",
@@ -65,6 +68,7 @@ class RouterTurnRunner extends TurnRunner {
     this.classify = options.classify;
     this.everySteps = options.everySteps ?? 1;
     this.planTarget = options.planTarget;
+    this.stepKeywords = options.stepKeywords;
   }
 
   parentAgentForTest(): Agent {
@@ -73,6 +77,13 @@ class RouterTurnRunner extends TurnRunner {
 
   emitStateAgentEventForTest(event: AgentEvent): void {
     this.emitAgentEvent(event, { kind: "state_machine_agent", state: "child" });
+  }
+
+  emitParentTurnEndForTest(
+    message: Extract<AgentMessage, { role: "assistant" }>,
+    toolResults: Extract<AgentEvent, { type: "turn_end" }>["toolResults"],
+  ): void {
+    this.emitParentAgentEvent({ type: "turn_end", message, toolResults });
   }
 
   createStateAgentForTest(state: StateMachineAgentState) {
@@ -96,6 +107,9 @@ class RouterTurnRunner extends TurnRunner {
   protected override createModelRouter(options: ModelRouterOptions): ModelRouter {
     const table = structuredClone(options.table);
     table.classifier.everySteps = this.everySteps;
+    if (this.stepKeywords) {
+      table.classifier.stepTriggers = [{ name: "test-plumbing", keywords: this.stepKeywords }];
+    }
     if (this.planTarget) {
       table.tiers.frontier!.routes.plan!.target = this.planTarget;
     }
@@ -213,6 +227,54 @@ const TINY_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAQKADAAQAAAABAAAAQAAAAABGUUKwAAAAi0lEQVR4Ae3VgQ3AIAwEscD+OweJNc7dgNe5OTu7E/5u+O3/6QZQQHwBBOIBjAIUEF8AgXgAfoIIIBBfAIF4AK4AAgjEF0AgHoArgAAC8QUQiAfgCiCAQHwBBOIBuAIIIBBfAIF4AK4AAgjEF0AgHoArgAAC8QUQiAfgCiCAQHwBBOIBuAIIIBBf4AFTuAN9D/8DSwAAAABJRU5ErkJggg==";
 
 describe("TurnRunner virtual-model adapter", () => {
+  test("task plumbing is routing-neutral while genuine assistant text still arms a trigger", async () => {
+    const runner = new RouterTurnRunner({
+      everySteps: 99,
+      stepKeywords: ["SETTLEMENT_TRIGGER_Q7"],
+      classify: scriptedClassifier([{ route: "general", rationale: "Initial route." }]),
+    });
+    await startRunner(runner, []);
+    const first = runner.turn({ type: "prompt", message: "Begin.", behavior: "follow_up" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "ordinary", usageTokens: 5 });
+    await first;
+
+    const plumbing = settlementNotice([
+      {
+        descriptor: {
+          id: "t1",
+          kind: "tool",
+          name: "bash",
+          label: "SETTLEMENT_TRIGGER_Q7",
+          ownerScopeId: "root",
+          status: "completed",
+          startedAt: 1,
+        },
+        output: [],
+        settlement: { id: "t1", status: "completed", settledAt: 2, result: "done" },
+      },
+    ]);
+    runner.emitParentTurnEndForTest(createAssistantMessage({ text: "ordinary" }), [
+      {
+        role: "toolResult",
+        toolCallId: "settlement-test",
+        toolName: "bash",
+        content: [{ type: "text", text: plumbing }],
+        details: undefined,
+        isError: false,
+        timestamp: 2,
+      },
+    ]);
+    expect(runner.routeStatus()?.stepsUntilClassification).toBeGreaterThan(0);
+
+    runner.emitParentTurnEndForTest(
+      createAssistantMessage({ text: "Genuine SETTLEMENT_TRIGGER_Q7 analysis." }),
+      [],
+    );
+    expect(runner.routeStatus()?.stepsUntilClassification).toBe(0);
+    await runner.dispose();
+  });
+
   testIfDocker("a concrete-started session can switch to a project-only virtual tier", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "duet-router-concrete-"));
     try {

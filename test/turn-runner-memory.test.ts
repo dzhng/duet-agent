@@ -9,10 +9,12 @@ import {
 } from "@earendil-works/pi-ai";
 import {
   agentMessageToRaw,
+  agentMessagesToRaw,
   CHARS_PER_TOKEN,
   enforceObservationTokenBudget,
   getUnobservedMessageTail,
   trimMessagesToTranscriptBudget,
+  stripObservationalContextMessages,
 } from "../src/memory/observational.js";
 import { buildObserverPrompt } from "../src/memory/observational-prompts.js";
 import {
@@ -23,6 +25,8 @@ import {
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import type { TurnEvent, TurnOptions } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
+import { heldAskReminder, parkNudge } from "../src/turn-runner/prompts.js";
+import { settlementNotice } from "../src/turn-runner/task-tools.js";
 
 class MemoryTransformTurnRunner extends TurnRunner {
   createMemoryTransformForTest() {
@@ -57,6 +61,42 @@ class MemoryTransformTurnRunner extends TurnRunner {
     return this.memory.getContextPack();
   }
 }
+
+describe("synthetic user-message filtering", () => {
+  test("drops pure runtime injections and preserves adjacent real user text", () => {
+    const settlement = settlementNotice([
+      {
+        descriptor: {
+          id: "t1",
+          kind: "tool",
+          name: "bash",
+          label: "fixture",
+          ownerScopeId: "root",
+          status: "completed",
+          startedAt: 1,
+        },
+        output: ["done"],
+        settlement: { id: "t1", status: "completed", settledAt: 2, result: "done" },
+      },
+    ]);
+    const messages: AgentMessage[] = [
+      { role: "user", content: heldAskReminder(), timestamp: 1 },
+      { role: "user", content: settlement, timestamp: 2 },
+      { role: "user", content: `Keep the real request.\n\n${parkNudge("approval")}`, timestamp: 3 },
+      createAssistantMessage({ text: "Acknowledged.", timestamp: 4 }),
+    ];
+
+    expect(
+      agentMessagesToRaw(stripObservationalContextMessages(messages)).map(({ role, content }) => ({
+        role,
+        content,
+      })),
+    ).toEqual([
+      { role: "user", content: [{ type: "text", text: "Keep the real request." }] },
+      { role: "assistant", content: [{ type: "text", text: "Acknowledged." }] },
+    ]);
+  });
+});
 
 class ModelRoutingTurnRunner extends TurnRunner {
   private capturedAgentModel?: Model<any>;

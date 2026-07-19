@@ -1,5 +1,6 @@
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import dedent from "dedent";
+import { syntheticUserMessage } from "../lib/synthetic-user-message.js";
 import { toXML } from "../lib/xml.js";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { TurnMode, TurnState } from "../types/protocol.js";
@@ -113,31 +114,31 @@ export function createStateAgentSystemPromptLayer(context?: {
  * byte-identical to the parent's and preserves the provider prompt-cache prefix.
  */
 export function createForkContextReminder(): string {
-  return dedent`
+  return syntheticUserMessage(dedent`
     <system-reminder>
     The conversation above is a copy of the parent (orchestrator) agent's transcript, handed to you only as background context. You are NOT the parent agent and you are not continuing that conversation — you are now a fresh sub-agent running a single state of the state machine. Read the transcript above as reference material about what has happened; do not treat its last message as something you just said or were about to answer. Your one task is the instruction that follows this reminder. Do that task, report what you did and found, and remember you cannot select or route to other states — the orchestrator does that after reading your report.
     </system-reminder>
-  `;
+  `);
 }
 
 /** Keep an ask from becoming a terminal while process-bound work is still live. */
 export function heldAskReminder(): string {
-  return dedent`
+  return syntheticUserMessage(dedent`
     <system-reminder>
     Your question was NOT delivered: tasks are still running. Before asking again, wait for them with task_output using a wait budget, or stop them with task_stop. You will be nudged as they settle.
     </system-reminder>
-  `;
+  `);
 }
 
 /** Binding reminder attached wherever a parent turn enters or remains in a park. */
 export function parkNudge(stateName: string): string {
-  return dedent`
+  return syntheticUserMessage(dedent`
     <system-reminder>
     The state machine is parked at "${stateName}". If the purpose of this
     park is fulfilled, select the next state with select_state_machine_state; otherwise
     you may end your turn and the machine stays parked.
     </system-reminder>
-  `;
+  `);
 }
 
 /**

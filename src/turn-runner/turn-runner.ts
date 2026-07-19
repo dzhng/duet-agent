@@ -9,6 +9,7 @@ import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
+import { stripSyntheticUserMessages, syntheticUserMessage } from "../lib/synthetic-user-message.js";
 
 import { assistantText } from "../core/serializer.js";
 import { classifyRoute } from "../model-routing/classifier.js";
@@ -896,6 +897,17 @@ export class TurnRunner {
         };
       }
       this.discardStaleTaskSettlements();
+      const quiescentState = this.snapshotState(this.requireRunnerState());
+      try {
+        await this.updateMemoryAfterAgentRun(quiescentState.agent.messages, quiescentState.options);
+      } catch (error) {
+        if (!this.interruptReason) {
+          completion = {
+            status: "failed",
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
       const state = this.snapshotState(this.requireRunnerState());
       if (this.interruptReason) {
         terminal = {
@@ -1220,14 +1232,12 @@ export class TurnRunner {
       command.behavior === "steer" &&
       this.taskManager.pendingWork().kind === "open"
     ) {
-      prompt = dedent`
+      prompt = `${syntheticUserMessage(dedent`
         <system-reminder>
         The user sent this as a steer message while state-machine work is running.
         If the state-machine should change course, call select_state_machine_state to restart the current state with updated input or choose a different state.
         </system-reminder>
-
-        ${prompt}
-      `;
+      `)}\n\n${prompt}`;
     }
     const todoReminder = continuation ? undefined : formatCarriedTodosReminder(state.todos);
     if (todoReminder) prompt = `${todoReminder}\n\n${prompt}`;
@@ -1600,7 +1610,8 @@ export class TurnRunner {
   ): Promise<SettledDecision["outcome"]> {
     const loopWarning = this.repeatedSelectionLoopWarning(stateName);
     return this.enforceParentTransition(
-      (retryInstruction) => dedent`
+      (retryInstruction) =>
+        syntheticUserMessage(dedent`
         The state "${stateName}" finished.
 
         ${toXML({
@@ -1622,7 +1633,7 @@ export class TurnRunner {
 
         CARRY FORWARD BEFORE YOU SELECT. The next state runs in a fresh sub-agent that cannot see this state_completed output, your reasoning, or your reply text — the ONLY thing it receives is the \`input\` and \`override.prompt\` you pass in the select call. So if the next state's job depends on anything this state just produced (a root cause, file path, diagnosis, ID, count, decision), inline those exact facts into the select's \`input\`/\`override.prompt\` on the FIRST transition into it. Do not select it bare and let it come back confused, then add the context on a retry — a select that advances to a finding-dependent state carrying none of the finding is already wrong, even with the right state name. Summarizing the finding in your message to the user does not carry it forward.
         </system-reminder>
-      `,
+      `),
       "State completed, but the runner did not call select_state_machine_state.",
     );
   }
@@ -2276,10 +2287,6 @@ export class TurnRunner {
       tasks: live?.tasks ?? input.state.tasks,
       nextTaskId: live?.nextTaskId ?? input.state.nextTaskId,
     } satisfies TurnState;
-    if (status === "completed") {
-      await this.updateMemoryAfterAgentRun(messages, state.options);
-    }
-
     return {
       control: this.consumeParentControlResult(),
       outcome: {
@@ -3091,7 +3098,8 @@ function routerStepObservation(
       (block): block is Extract<(typeof content)[number], { type: "text" }> =>
         block.type === "text",
     )
-    .map((block) => block.text)
+    .map((block) => stripSyntheticUserMessages(block.text))
+    .filter(Boolean)
     .join("\n")
     .trim();
   return {

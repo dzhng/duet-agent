@@ -1,6 +1,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type, type Static, type TSchema } from "typebox";
 import type { RuntimeClock } from "./runtime-clock.js";
+import { syntheticUserMessage } from "../lib/synthetic-user-message.js";
 import type { TaskManager } from "../tasks/task-manager.js";
 import type { TaskId, TaskSnapshot } from "../tasks/types.js";
 import type { SubagentResult, SubagentRun, SubagentSpec } from "./subagent.js";
@@ -289,21 +290,25 @@ export function wrapBackgroundable<TParameters extends TSchema, TDetails>(
 /** B1: the only source for foreground wait-budget conversion wording. */
 export function stillRunningNotice(snapshot: TaskSnapshot, now = Date.now()): string {
   const recent = recentOutput(snapshot);
-  return [
-    `Task ${snapshot.descriptor.id} is still running (${taskDescription(snapshot)}, ${formatElapsed(snapshot, now)} elapsed).`,
-    "Recent output:",
-    recent ? indent(recent) : "  (no output yet)",
-    `It continues in the background. Check it with task_output("${snapshot.descriptor.id}", {wait: 60}),`,
-    `stop it with task_stop("${snapshot.descriptor.id}"), or keep working and you'll be nudged when it settles.`,
-  ].join("\n");
+  return syntheticUserMessage(
+    [
+      `Task ${snapshot.descriptor.id} is still running (${taskDescription(snapshot)}, ${formatElapsed(snapshot, now)} elapsed).`,
+      "Recent output:",
+      recent ? indent(recent) : "  (no output yet)",
+      `It continues in the background. Check it with task_output("${snapshot.descriptor.id}", {wait: 60}),`,
+      `stop it with task_stop("${snapshot.descriptor.id}"), or keep working and you'll be nudged when it settles.`,
+    ].join("\n"),
+  );
 }
 
 /** B2: the only source for explicit background-start wording. */
 export function startedInBackgroundNotice(snapshot: TaskSnapshot): string {
-  return [
-    `Started background task ${snapshot.descriptor.id} (${taskDescription(snapshot)}).`,
-    `You'll be nudged when it settles; task_output("${snapshot.descriptor.id}") shows live progress.`,
-  ].join("\n");
+  return syntheticUserMessage(
+    [
+      `Started background task ${snapshot.descriptor.id} (${taskDescription(snapshot)}).`,
+      `You'll be nudged when it settles; task_output("${snapshot.descriptor.id}") shows live progress.`,
+    ].join("\n"),
+  );
 }
 
 /** B3: the only source for batched settlement nudges and idle re-prompts. */
@@ -316,13 +321,15 @@ export function settlementNotice(settlements: readonly TaskSnapshot[]): string {
     const inline = settlementInline(snapshot);
     return `- ${snapshot.descriptor.id} (${taskDescription(snapshot)}) ${status}${inline ? ` — ${inline}` : ""}. Full output: task_output("${snapshot.descriptor.id}")`;
   });
-  return [
-    "<system-reminder>",
-    `${settlements.length} ${settlements.length === 1 ? "task" : "tasks"} settled while you were working:`,
-    ...lines,
-    "Act on these or continue; your turn stays open while tasks run.",
-    "</system-reminder>",
-  ].join("\n");
+  return syntheticUserMessage(
+    [
+      "<system-reminder>",
+      `${settlements.length} ${settlements.length === 1 ? "task" : "tasks"} settled while you were working:`,
+      ...lines,
+      "Act on these or continue; your turn stays open while tasks run.",
+      "</system-reminder>",
+    ].join("\n"),
+  );
 }
 
 /** Create the sequential admin lane. These tools only inspect existing tasks. */
