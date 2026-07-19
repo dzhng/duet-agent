@@ -22,13 +22,25 @@ infinity`), `cpIn`, `exec`, `execStream → ExecTransport`, `stop` (always in
   `--memory-model`.
   Only the executor and advisor are experiment-selected; memory retains the
   product default.
-- `patch.ts`: `assertCleanBaseline`, `extractPatch` (stage ephemeral index
-  `git add -A`, emit `git diff --cached --binary --full-index HEAD --`),
-  `verifyPatchRoundTrip` (apply to a fresh instance container, compare
-  tracked trees byte-for-byte). Rejects empty/malformed/oversized patches
-  explicitly; never silently substitutes an empty patch.
+- `patch.ts`: `capturePatchBaseline` stages the official image's initial
+  working tree into a private index and writes its tree object. This preserves
+  intentional image modifications instead of resetting them. `extractPatch`
+  stages the final tree over that index and emits `git diff --cached --binary
+--full-index <baseline-tree> --`; `verifyPatchRoundTrip` applies it to a fresh
+  image with the same baseline. Empty/malformed/oversized patches are explicit
+  outcomes, never silently replaced.
 
 ## Verification
+
+Progress 2026-07-20: the target-platform install plus Bun Linux-x64 compile
+produced an ELF binary that booted in the official Druid image. The first smoke
+falsified a compiled-entry bug that launched RPC twice; after fixing dispatcher
+ownership, the same live GLM-5.2 RPC prompt produced exactly one start and one
+terminal, wrote the sentinel in `/testbed`, retained the product-default Luna
+memory model, and cost $0.0108392. Druid's official image starts with a modified
+`pom.xml`; baseline-relative extraction omitted it, captured only the sentinel,
+and round-tripped into a fresh image. The remaining acceptance work is the full
+nine-language matrix and advisor-OFF tool-list assertion.
 
 - Unit (FakeCmd, no docker): exact docker argv construction, timeout kill,
   teardown-on-error.

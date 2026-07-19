@@ -276,6 +276,57 @@ ownerScopeId }`, even though both execute through the same task manager.
 
 ## Sound
 
+### S13 — The compiled entry point is the only owner of compiled CLI dispatch
+
+- **When:** slice 05 Linux-x64 RPC smoke on 2026-07-20.
+- **The choice:** `cli-entry.ts` explicitly calls the dispatcher in compiled
+  builds, while `cli.ts` auto-runs only when that source or its emitted
+  `cli.js` file is invoked directly. Bun gives bundled modules the compiled
+  executable URL, so a URL-equality guard made both modules dispatch the same
+  RPC input. The filename guard preserves direct source use without making an
+  imported module a second process owner.
+- **The gap:** Unit tests exercised source dispatch, but the first compiled
+  binary smoke exposed two `turn_started` events and two paid model turns.
+- **The reach:** Every compiled CLI command, including benchmark RPC, has one
+  dispatcher and cannot duplicate side effects or spend.
+- **Verdict:** **sound.** Process startup must have exactly one explicit owner.
+- **Confidence:** **high**.
+
+### S11 — Agent patches are measured from the official image's real starting tree
+
+- **When:** slice 05 live Druid packaging and patch smoke on 2026-07-20.
+- **The choice:** A fresh official Druid container already reports `pom.xml` as
+  modified because its image pins a Maven resource bundle needed by the test
+  environment. The harness snapshots that exact starting tree into a private
+  Git tree, then computes only what the agent changed afterward. The unbuilt
+  alternative resets to the repository commit before the agent runs, which
+  removes official environment setup and can make builds fail for reasons the
+  benchmark image intentionally fixed.
+- **The gap:** The spec assumed official images had clean Git worktrees; the
+  first live image disproved it.
+- **The reach:** Harness-owned environment changes never leak into predictions,
+  while agents still work and score in the official configured filesystem. The
+  same baseline-relative rule handles tracked and untracked starting changes.
+- **Verdict:** **sound.** The image's actual initial tree is the only fair
+  boundary between environment setup and agent work.
+- **Confidence:** **high**.
+
+### S12 — Cross-compilation installs Linux optional packages in an isolated tree
+
+- **When:** slice 05 Linux-x64 packaging smoke on 2026-07-20.
+- **The choice:** A normal Mac install contains OpenTUI's Darwin native package,
+  so Bun cannot bundle the Linux package when cross-compiling. Packaging copies
+  only source and lock files to a temporary directory, installs locked optional
+  dependencies for `linux/x64`, compiles there, and deletes the directory. The
+  unbuilt alternative mutates the developer's main `node_modules` between Mac
+  and Linux platforms or adds native-package exceptions to product imports.
+- **The gap:** The spec chose Linux cross-compilation but did not define how
+  platform-specific optional dependencies would be resolved on Apple Silicon.
+- **The reach:** The artifact is reproducible from `bun.lock`, the host install
+  stays usable, and no benchmark workaround enters the CLI/TUI module graph.
+- **Verdict:** **sound.** Target dependencies belong to the target build tree.
+- **Confidence:** **high**.
+
 ### S7 — Official x86 images remain the scoring authority on Apple Silicon
 
 - **When:** Mac-local campaign reconciliation on 2026-07-20.

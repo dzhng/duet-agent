@@ -11,6 +11,7 @@ import {
   expandHomeDir,
   formatEnvEntries,
   globalUpgradeCommand,
+  isDirectCliInvocation,
   loadCliEnvFiles,
   parseResumeHistoryMessages,
   resumeCommand,
@@ -71,6 +72,18 @@ afterEach(() => {
       process.env[key] = value;
     }
   }
+});
+
+describe("CLI dispatcher ownership", () => {
+  test("runs directly from cli source or dist but not from cli-entry or a compiled binary", () => {
+    expect(isDirectCliInvocation("file:///repo/src/cli.ts", "/repo/src/cli.ts")).toBe(true);
+    expect(isDirectCliInvocation("file:///repo/dist/src/cli.js", "/repo/dist/src/cli.js")).toBe(
+      true,
+    );
+    expect(isDirectCliInvocation("file:///repo/src/cli.ts", "/repo/src/cli-entry.ts")).toBe(false);
+    expect(isDirectCliInvocation("file:///opt/duet/duet", "/opt/duet/duet")).toBe(false);
+    expect(isDirectCliInvocation("file:///repo/src/cli.ts", "/repo/test/cli.test.ts")).toBe(false);
+  });
 });
 
 afterEach(async () => {

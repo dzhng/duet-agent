@@ -13,8 +13,10 @@ about _our_ harness.
 **Status:** slice 01 complete, including the paid GLM/Kimi auxiliary-usage
 smoke. Slices 02 and 03 are complete: the pinned 30-instance manifest, four
 explicit routing renders, RPC client, telemetry, CLI checkpoints, and their
-tests are committed. Continue slice 04; slices 04–08 are not complete. Last
-updated 2026-07-20.
+tests are committed. Slice 05 has a green live Java checkpoint for Linux-x64
+packaging, single-owner RPC execution, and dirty-baseline patch round trip, but
+its nine-language matrix remains. Continue slices 04 and 05; slices 04–08 are
+not complete. Last updated 2026-07-20.
 
 You are implementing this spec. Read this README fully, then continue the Mac
 capacity/gold gate in [slice 04](slices/04-box-gold-gate-and-spike.md). Follow
@@ -186,7 +188,7 @@ knowingly exceed $500.
 - Security: credentials are passed per exec, never baked into images or
   artifacts, and no Docker socket is mounted into instance containers.
 - Version pinning: `swebench` venv version, dataset revision, duet commit +
-  binary sha256, both renders, manifest hash — all recorded in the campaign's
+  binary sha256, all four renders, manifest hash — all recorded in the campaign's
   `campaign.json` so every run is self-describing.
 - Scope firewall: economy/frontier campaigns, trials>1, HTML dashboards,
   prompt tuning, and any duet-core executor seam are out of scope. Slice 01's
@@ -220,6 +222,9 @@ knowingly exceed $500.
   undercounted exactly the arm under test. Slice 01 fixes the generic
   accounting boundary; the bench consumes that protocol instead of
   reconstructing provider cost.
+- **Resetting official images to a clean Git `HEAD`** — some images deliberately
+  modify build files to make their pinned toolchain work. Patch extraction
+  snapshots that starting tree and submits only the agent's later delta.
 
 ## References
 

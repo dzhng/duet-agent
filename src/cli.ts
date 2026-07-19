@@ -13,7 +13,8 @@
  * callers that historically imported helpers from `src/cli.ts`.
  */
 
-import { pathToFileURL } from "node:url";
+import { basename } from "node:path";
+import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { runConfigCommand } from "./cli/config.js";
 import { runEnvCommand } from "./cli/env.js";
@@ -134,6 +135,15 @@ export async function runCli(): Promise<void> {
   }
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+/** True only when the dispatcher file itself, rather than cli-entry or a test, was invoked. */
+export function isDirectCliInvocation(moduleUrl: string, invokedPath: string | undefined): boolean {
+  if (!invokedPath) return false;
+  const moduleName = basename(fileURLToPath(moduleUrl));
+  return ["cli.ts", "cli.js"].includes(moduleName) && basename(invokedPath) === moduleName;
+}
+
+// Bun's single-file compiler gives dynamically imported modules the executable's
+// URL. The explicit filename check keeps cli-entry as the sole compiled owner.
+if (isDirectCliInvocation(import.meta.url, process.argv[1])) {
   void runCli();
 }
