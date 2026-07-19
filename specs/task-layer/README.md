@@ -21,7 +21,8 @@ hydrate reconciliation, heartbeats, shutdown reap) — suite 1126/0, rpc regress
 **Red stragglers owned by slice 14:** evals/task-lost-resume-rpc.eval.ts and
 evals/task-rpc-heartbeat.eval.ts time out non-deterministically (model-compliance variance
 in their RPC prompts; hardened with fast-fail + event dumps, need prompt-mechanics passes).
-Slice 13 (TUI) launching. Last updated 2026-07-19.
+Slice 13 implementation is ready for its orchestrator-owned Docker frame and visual gates;
+the implementation worktree cannot access the Docker socket. Last updated 2026-07-19.
 
 You are implementing this spec. Read this README fully, then `unknowns-map.md` Quadrant 2
 (binding decisions — do not relitigate) and the LM-\* cards for your slice. Work one slice at
@@ -144,8 +145,8 @@ task/schedule paths.
   deferred to slice 12's shutdown work. Script states and subagents stop gracefully.
 
 - Ledger #15 OPEN: does spawn_agent eventually subsume state-machine agent states?
-- TUI follow-up-queue editor cannot see pending settlements (they bypass that queue by
-  design). Slice 13 shows settlements read-only in that surface or records the deliberate
-  omission.
+- Task settlements remain deliberately absent from the editable follow-up panel. They bypass
+  pi's follow-up queue by invariant, and the read-only task tree is their visible surface;
+  showing them beside poppable prompts would falsely imply that Ctrl+C can edit delivery.
 - Heartbeat events are droppable/coalescing under backpressure; task + terminal events are
   lossless and ordered (slice 12).

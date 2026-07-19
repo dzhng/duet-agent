@@ -7,9 +7,10 @@ import { createTestRenderer } from "@opentui/core/testing";
 
 import { runTui } from "../src/tui/app.js";
 import { Session } from "../src/session/session.js";
-import { FakePlaygroundRunner } from "../examples/tui-playground.js";
+import { FakePlaygroundRunner, INITIAL_STATE } from "../examples/tui-playground.js";
 import { createUpgradeStatusStream } from "../src/cli/auto-upgrade.js";
 import { testIfDocker } from "./helpers/docker-only.js";
+import { bootTui } from "./helpers/tui-harness.js";
 
 // Drain microtasks twice so keystroke events fed through `mockInput` have
 // time to update the input field, fire `onContentChange`, and flush the
@@ -73,6 +74,43 @@ async function bootStarterTui(options: { isResume: boolean }) {
 }
 
 describe("TUI resume invariance", () => {
+  testIfDocker("late attach rebuilds active task lanes without a last terminal", async () => {
+    const now = Date.now();
+    const harness = await bootTui({
+      width: 120,
+      height: 36,
+      initialState: {
+        ...INITIAL_STATE,
+        tasks: [
+          {
+            id: "t4",
+            kind: "subagent",
+            name: "spawn_agent",
+            label: "audit auth flows",
+            ownerScopeId: "root",
+            status: "running",
+            startedAt: now - 10_000,
+          },
+          {
+            id: "t7",
+            kind: "tool",
+            name: "bash",
+            label: "rg -n rate_limit",
+            ownerScopeId: "task:t4",
+            status: "running",
+            startedAt: now - 8_000,
+          },
+        ],
+      },
+    });
+    const frame = await harness.captureCharFrame();
+    expect(harness.session.getLastTerminal()).toBeUndefined();
+    expect(frame).toContain("t4 spawn_agent audit auth flows");
+    expect(frame).toContain("└─ ⠙ t7 bash `rg -n rate_limit`");
+    expect(frame).toContain("turn open: held awake by t4, t7");
+    await harness.dispose();
+  });
+
   testIfDocker("--resume <id> skips the starter menu entirely", async () => {
     const { captureCharFrame, teardown } = await bootStarterTui({ isResume: true });
     const frame = captureCharFrame().toLowerCase();

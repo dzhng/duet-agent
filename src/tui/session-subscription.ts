@@ -5,6 +5,7 @@ import type { QuestionPicker } from "./question-picker.js";
 import type { Sidebar } from "./sidebar.js";
 import type { StatusController } from "./status-controller.js";
 import type { StepRenderer } from "./step-renderer.js";
+import type { TaskLaneRenderer } from "./task-lane-renderer.js";
 import { COLORS } from "./theme.js";
 
 /**
@@ -26,6 +27,8 @@ export interface SessionSubscriptionDeps {
   /** Body of {@link followUpPanel}; rewritten on every queue change. */
   followUpPanelBody: TextRenderable;
   stepRenderer: StepRenderer;
+  /** Concurrent task surface; sibling to the parent-only step renderer. */
+  taskLaneRenderer: TaskLaneRenderer;
   statusController: StatusController;
   questionPicker: QuestionPicker;
   appendLine(content: string, fg: string): void;
@@ -83,6 +86,7 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
     followUpPanel,
     followUpPanelBody,
     stepRenderer,
+    taskLaneRenderer,
     statusController,
     questionPicker,
     appendLine,
@@ -95,13 +99,23 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
   // Seed the queue snapshot from the session's hydrated state so a resumed
   // session that already has persisted follow-ups does not falsely treat
   // them as "delivered" the moment the first event arrives.
-  let previousQueue: TurnFollowUpQueueEntry[] = [...(session.getState()?.followUpQueue ?? [])];
+  const hydratedState = session.getState();
+  let previousQueue: TurnFollowUpQueueEntry[] = [...(hydratedState?.followUpQueue ?? [])];
   renderFollowUpPanel(previousQueue, followUpPanel, followUpPanelBody);
+  taskLaneRenderer.seed(hydratedState?.tasks ?? [], session.getLastUsage()?.turnUsage.totalTokens);
 
   return session.subscribe((event: TurnEvent) => {
     refreshSidebar();
     if (event.type === "step") {
-      stepRenderer.renderStep(event.step);
+      taskLaneRenderer.renderEvent(event);
+      if (event.origin?.kind !== "task") stepRenderer.renderStep(event.step);
+    } else if (
+      event.type === "task_started" ||
+      event.type === "task_output" ||
+      event.type === "task_settled" ||
+      event.type === "usage"
+    ) {
+      taskLaneRenderer.renderEvent(event);
     } else if (event.type === "follow_up_queue") {
       const next = event.followUpQueue;
       for (const delivered of diffRemovedEntries(previousQueue, next)) {
@@ -140,7 +154,6 @@ export function bindSessionToUi(deps: SessionSubscriptionDeps): () => void {
       );
     } else if (event.type === "system") {
       appendBlock("[system]", event.message, COLORS.system);
-      if (event.level === "error") statusController.markIdle();
     } else if (event.type === "ask") {
       appendBlock("[question]", event.questions.map((q) => q.question).join("\n"), COLORS.system);
       questionPicker.show(event.questions);

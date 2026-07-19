@@ -14,6 +14,7 @@ import { runTui } from "../../src/tui/app.js";
 import type {
   TurnEvent,
   TurnQuestion,
+  TurnState,
   TurnTerminalEvent,
   TurnUsageEvent,
 } from "../../src/types/protocol.js";
@@ -158,6 +159,8 @@ export interface BootTuiOptions {
    * tests stay unchanged.
    */
   workDir?: string;
+  /** Runner snapshot installed before runTui attaches; exercises resume hydration paths. */
+  initialState?: TurnState;
 }
 
 export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness> {
@@ -177,7 +180,7 @@ export async function bootTui(options: BootTuiOptions = {}): Promise<TuiHarness>
   });
 
   const sessionPath = await mkdtemp(join(tmpdir(), "duet-tui-harness-"));
-  const runner = new FakePlaygroundRunner();
+  const runner = new FakePlaygroundRunner(options.initialState);
   const session = new Session(
     { model: "harness", cwd: process.cwd() },
     { id: "harness", sessionPath, runner, resumeFromStorage: false },

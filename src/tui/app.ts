@@ -18,6 +18,7 @@ import {
 import { buildLayout } from "./layout.js";
 import { acquireRenderer, waitForRendererDestroy } from "./renderer-lifecycle.js";
 import { bindSessionToUi, type FollowUpPopSuppression } from "./session-subscription.js";
+import { TaskLaneRenderer } from "./task-lane-renderer.js";
 import { StarterSection } from "./starter-section.js";
 import { StatusController } from "./status-controller.js";
 import { StepRenderer } from "./step-renderer.js";
@@ -198,11 +199,16 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
   // of property reads.
   const bannerWatcher = setInterval(refreshLatestUserBannerVisibility, 100);
 
+  let refreshActiveTools: () => void = () => undefined;
+  let refreshTaskLane: () => void = () => undefined;
   const statusController = new StatusController({
     renderer,
     status: ui.status,
     hint: ui.hint,
-    refreshActiveToolBlocks: () => stepRenderer.refreshActiveToolBlocks(),
+    refreshActiveWork: () => {
+      refreshActiveTools();
+      refreshTaskLane();
+    },
   });
 
   const stepRenderer = new StepRenderer({
@@ -213,6 +219,9 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
       if (questionPicker.isOpen()) questionPicker.hide();
     },
   });
+  const taskLaneRenderer = new TaskLaneRenderer({ renderer, transcriptWriter, statusController });
+  refreshActiveTools = () => stepRenderer.refreshActiveToolBlocks();
+  refreshTaskLane = () => taskLaneRenderer.refresh();
 
   // Dino panel: an opt-in mini-game that lives below the input box.
   // Ctrl-G toggles it at any time; the agent's busy/idle transitions
@@ -227,7 +236,6 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   const reportError = (error: unknown): void => {
     appendBlock("[error]", error instanceof Error ? error.message : String(error), COLORS.error);
-    statusController.markIdle();
   };
 
   const escapeState: EscapeSuppressionFlag = { suppress: false };
@@ -283,6 +291,7 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
     followUpPanel: ui.followUpPanel,
     followUpPanelBody: ui.followUpPanelBody,
     stepRenderer,
+    taskLaneRenderer,
     statusController,
     questionPicker,
     appendLine,
