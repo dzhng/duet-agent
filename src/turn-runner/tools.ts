@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Ajv } from "ajv";
 import dedent from "dedent";
+import { syntheticUserMessage } from "../lib/synthetic-user-message.js";
 import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { Type, type Static } from "typebox";
@@ -995,7 +996,7 @@ export function formatStateMachineTerminalAcknowledgmentPrompt(input: {
   if (!terminal) {
     throw new Error("formatStateMachineTerminalAcknowledgmentPrompt requires a terminal session.");
   }
-  return dedent`
+  return syntheticUserMessage(dedent`
     The state machine "${session.definition.name}" has reached a terminal state and is no longer running.
 
     ${toXML({
@@ -1009,7 +1010,7 @@ export function formatStateMachineTerminalAcknowledgmentPrompt(input: {
     Usually: reply to the user in plain text — summarize what happened and recommend what to do next, then let control return to them. Don't proactively spin up new work or resume this machine just because the tools are available.
 
     The exception is a standing instruction the user already gave: if they told you to keep going until the work is finished (or asked for follow-up this terminal does not yet satisfy), continuing is fine — call create_state_machine_definition for new work, or select a non-terminal state to reactivate and continue this machine. Absent that signal, default to summarizing and handing back.
-  `;
+  `);
 }
 
 export function formatCarriedTodosReminder(todos: TurnTodo[] | undefined): string | undefined {
@@ -1019,13 +1020,13 @@ export function formatCarriedTodosReminder(todos: TurnTodo[] | undefined): strin
   );
   if (openTodos.length === 0) return undefined;
   const lines = todos.map((todo) => `- [${todo.status}] ${todo.id}: ${todo.content}`);
-  return dedent`
+  return syntheticUserMessage(dedent`
     <system-reminder>
     You have an existing todo list from earlier in this conversation:
     ${lines.join("\n")}
     This list is shown to the user, so it must accurately reflect what you are actually working on right now. Update it with todo_write (merge=true) as you make progress, and keep calling todo_write until every item is in a terminal state. If the list is no longer relevant to the current request, call todo_write with merge=false and an empty todos array to clear it.
     </system-reminder>
-  `;
+  `);
 }
 
 function createStateMachineDefinitionTool(

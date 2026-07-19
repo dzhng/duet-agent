@@ -55,6 +55,53 @@ class AsyncSurfaceRunner extends TurnRunner {
   }
 }
 
+class ObserverCadenceRunner extends TurnRunner {
+  readonly workerInputs: AgentWorkerInput[] = [];
+  observerRuns = 0;
+
+  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    this.workerInputs.push(input);
+    if (this.workerInputs.length === 1) {
+      this.startFixtureTask("first", 5);
+      this.startFixtureTask("second", 50);
+    }
+    const result = `pass-${this.workerInputs.length}`;
+    return {
+      control: { type: "none" },
+      outcome: {
+        type: "complete",
+        status: "completed",
+        result,
+        state: {
+          ...input.state,
+          status: "completed",
+          agent: {
+            status: "completed",
+            messages: [...input.state.agent.messages, createAssistantMessage({ text: result })],
+          },
+        },
+      },
+    };
+  }
+
+  private startFixtureTask(name: string, delayMs: number): void {
+    this.taskManager.start({
+      kind: "tool",
+      name: "fixture",
+      label: name,
+      ownerScopeId: "root",
+      execute: async () => {
+        await delay(delayMs);
+        return `${name} done`;
+      },
+    });
+  }
+
+  protected override async updateMemoryAfterAgentRun(): Promise<void> {
+    this.observerRuns += 1;
+  }
+}
+
 describe("TurnRunner async task surface", () => {
   test("holds the terminal until background bash settles and re-prompts as a continuation", async () => {
     const runner = new AsyncSurfaceRunner({
@@ -91,6 +138,25 @@ describe("TurnRunner async task surface", () => {
     expect(lifecycle.indexOf("task_settled")).toBeLessThan(lifecycle.indexOf("complete"));
     expect(terminal.state.tasks).toMatchObject([{ id: "t1", kind: "tool", status: "completed" }]);
     expect(terminal.state.nextTaskId).toBe(2);
+    await runner.dispose();
+  });
+
+  test("observes once after multiple settlement continuations instead of once per parent pass", async () => {
+    const runner = new ObserverCadenceRunner({
+      model: "anthropic:claude-opus-4-7",
+      mode: "agent",
+      memoryDbPath: false,
+      skillDiscovery: { includeDefaults: false },
+    });
+
+    await (
+      await startTurn(runner, { mode: "agent", prompt: "run background work" })
+    ).turn;
+
+    expect(runner.workerInputs).toHaveLength(3);
+    expect(runner.observerRuns).toBe(1);
+    // Falsification: invoke updateMemoryAfterAgentRun after each loop input. This count becomes
+    // four (three parent passes plus quiescence), proving the assertion rejects pass cadence.
     await runner.dispose();
   });
 

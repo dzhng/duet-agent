@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { evaluateStepTriggers } from "../src/model-routing/step-triggers.js";
+import { syntheticUserMessage } from "../src/lib/synthetic-user-message.js";
 
 describe("step-output routing triggers", () => {
   test("image blocks always request classification and make image presence sticky", () => {
@@ -17,6 +18,26 @@ describe("step-output routing triggers", () => {
     expect(
       evaluateStepTriggers({ blockTypes: ["text"], text: "ordinary output" }, triggers),
     ).toEqual([]);
+  });
+
+  test("configured keywords ignore runtime-owned task plumbing", () => {
+    const triggers = [{ name: "task", keywords: ["task settled"] }];
+
+    expect(
+      evaluateStepTriggers(
+        {
+          blockTypes: ["text"],
+          text: syntheticUserMessage("A task settled while you were working."),
+        },
+        triggers,
+      ),
+    ).toEqual([]);
+    expect(
+      evaluateStepTriggers(
+        { blockTypes: ["text"], text: "A genuine assistant says task settled." },
+        triggers,
+      ),
+    ).toEqual([{ classify: true }]);
   });
 
   test("every matching configured trigger contributes an effect", () => {

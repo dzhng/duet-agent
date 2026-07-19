@@ -1,4 +1,5 @@
 import dedent from "dedent";
+import { syntheticUserMessage } from "../lib/synthetic-user-message.js";
 import type { RouterSwitch } from "./router.js";
 import type { TierDefinition } from "./table.js";
 
@@ -69,10 +70,10 @@ export const ADVISOR_SYSTEM_PROMPT = dedent`
 
 /** Render the one-shot steering message emitted after a non-advisor route change. */
 export function renderRerouteNudge(switched: RouterSwitch): string {
-  return dedent`
+  return syntheticUserMessage(dedent`
     The routed model changed from ${switched.fromModel} to ${switched.toModel} for the ${switched.route} route.
     If the new work would benefit from strategic review, consider calling ask_advisor before substantive work. This consult is cap-exempt.
-  `;
+  `);
 }
 
 /** Continuity framing for the classifier: cache preference when a target is active. */

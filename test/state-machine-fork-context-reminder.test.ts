@@ -88,7 +88,8 @@ describe("fork-context reminder", () => {
 
     // The reminder must land first so the model resets its identity before it
     // reads the inherited transcript's identity layer or the task itself.
-    expect(reminderIndex).toBe(0);
+    expect(tail).toStartWith("<duet-synthetic-user-message>");
+    expect(reminderIndex).toBeGreaterThan(0);
     expect(identityIndex).toBeGreaterThan(reminderIndex);
     expect(taskIndex).toBeGreaterThan(identityIndex);
   });

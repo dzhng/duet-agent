@@ -15,16 +15,17 @@ Line refs there are vs 3adf0df; drift as of ddfc6f2 is small but re-verify befor
 
 ## Next Agent Prompt
 
-**Status:** slices 01-10 merged. spawn_agent live (parallelism, cascade, scoped-memory
+**Status:** slices 01-10 merged; slice 11 implementation is complete on `slice/11` pending its
+credentialed Docker memory eval. spawn_agent live (parallelism, cascade, scoped-memory
 evals green — the memory eval must probe through the runner's PGlite connection; one
 instance per data dir). Park + parent-only ask live (3/3 evals incl. promised-wait).
-Slices 11+12 next as parallel execs; then 13 (TUI), then the 14 matrix.
+Slice 12 remains in flight; then 13 (TUI), then the 14 matrix.
 Eval credentials: source repo-root `.env` (AI_GATEWAY_API_KEY) into the docker eval run;
 worktrees do not inherit `.env`. Last updated 2026-07-19.
 
 You are implementing this spec. Read this README fully, then `unknowns-map.md` Quadrant 2
 (binding decisions — do not relitigate) and the LM-\* cards for your slice. Work one slice at
-a time from `slices/`, in dependency order. **Pickup point: slices 11+12 (in flight), then 13, then 14.**
+a time from `slices/`, in dependency order. **Pickup point: run slice 11's Docker gates, then 12, 13, and 14.**
 
 Per pass: follow [implement-spec](../../.claude/skills/implement-spec/SKILL.md) discipline —
 implement, verify the slice's gate (red/green; live evals per
@@ -32,7 +33,8 @@ implement, verify the slice's gate (red/green; live evals per
 /code-review on the diff, commit, then update this section (status, pickup point, checklist)
 before ending your pass. Workflow: Opus subagents implement, main agent reviews.
 
-**Blockers/warnings:** none.
+**Blockers/warnings:** this worktree cannot access the Docker socket and has no eval credential;
+slice 11's `task-memory-synthetic-filter.eval.ts` and Docker source-of-truth suite remain to run.
 
 **Global TODO**
 
