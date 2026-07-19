@@ -16,6 +16,7 @@ interface DatasetServerRow {
     repo: unknown;
     instance_id: unknown;
     base_commit: unknown;
+    problem_statement: unknown;
   };
 }
 
@@ -33,15 +34,23 @@ export interface FetchDatasetOptions {
 }
 
 function parseRow(value: DatasetServerRow, index: number): DatasetRow {
-  const { repo, instance_id: instanceId, base_commit: baseCommit } = value.row;
+  const {
+    repo,
+    instance_id: instanceId,
+    base_commit: baseCommit,
+    problem_statement: problemStatement,
+  } = value.row;
   if (
     typeof repo !== "string" ||
     typeof instanceId !== "string" ||
-    typeof baseCommit !== "string"
+    typeof baseCommit !== "string" ||
+    typeof problemStatement !== "string"
   ) {
-    throw new Error(`Dataset row ${index} is missing repo, instance_id, or base_commit.`);
+    throw new Error(
+      `Dataset row ${index} is missing repo, instance_id, base_commit, or problem_statement.`,
+    );
   }
-  return { repo, instanceId, baseCommit };
+  return { repo, instanceId, baseCommit, problemStatement };
 }
 
 /** Download all rows while proving every page came from one pinned dataset revision. */
@@ -88,7 +97,7 @@ export async function fetchDataset(options: FetchDatasetOptions = {}): Promise<D
   return { datasetRevision: expectedRevision, rows };
 }
 
-/** Persist the reduced, non-gold dataset fields used to regenerate a manifest offline. */
+/** Persist the non-gold dataset fields used to regenerate prompts and the manifest offline. */
 export async function writeDatasetCache(path: string, snapshot: DatasetSnapshot): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, `${JSON.stringify(snapshot, null, 2)}\n`);

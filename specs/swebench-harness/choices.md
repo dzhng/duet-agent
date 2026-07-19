@@ -276,6 +276,41 @@ ownerScopeId }`, even though both execute through the same task manager.
 
 ## Sound
 
+### S17 — Scorer cleanup and wrapper cleanup are idempotent owners of the same exact image
+
+- **When:** slice 04 resumable 30-instance gold gate on 2026-07-20.
+- **The choice:** The official scorer's `--clean true` can remove the exact
+  instance image before the Mac wrapper reaches its own cleanup step. The
+  wrapper now checks that exact image and treats absence as success; it still
+  removes it when present and never broad-prunes Docker state. Completed gold
+  rows are detected from both a resolved summary row and a real report, so a
+  registry timeout or operator interrupt resumes rather than redoing them.
+- **The gap:** The first manifest run resolved five tasks but incorrectly
+  counted each post-scorer “No such image” response as a wrapper failure.
+- **The reach:** Gold and prediction scoring are restart-safe under transient
+  registry failures while preserving the one-image-at-a-time disk policy.
+- **Verdict:** **sound.** Cleanup guarantees absence, not which cooperating
+  layer happened to remove the exact owned object first.
+- **Confidence:** **high**.
+
+### S16 — Crashed attempts reserve their full cost cap and retries never overwrite evidence
+
+- **When:** slice 06 filesystem and budget implementation on 2026-07-20.
+- **The choice:** The first rollout uses `<instance>-t<trial>` and each retry
+  receives an immutable `-aN` directory. A stale `running` marker resumes as a
+  new attempt, but budget accounting charges the abandoned attempt's full
+  configured cap because its exact provider spend may have been lost with the
+  process. The unbuilt alternative overwrites one directory or assumes a crash
+  spent zero, either destroying evidence or weakening the $500 breaker.
+- **The gap:** The spec required immutable attempts and a reserve-first breaker
+  but did not state how unknown spend from a host crash is charged.
+- **The reach:** Resume is conservative and auditable; it may stop early after
+  crashes, but it cannot knowingly spend past the envelope based on missing
+  telemetry.
+- **Verdict:** **sound.** Unknown paid work must be budgeted at its proven upper
+  bound.
+- **Confidence:** **high**.
+
 ### S13 — The compiled entry point is the only owner of compiled CLI dispatch
 
 - **When:** slice 05 Linux-x64 RPC smoke on 2026-07-20.

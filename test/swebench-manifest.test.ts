@@ -26,6 +26,7 @@ function fixtureSnapshot(): DatasetSnapshot {
         repo,
         instanceId: `${language.replaceAll("+", "p").toLowerCase()}__${repo.replaceAll("/", "__")}-${index}`,
         baseCommit: `${index}`.repeat(40),
+        problemStatement: `Fix ${language} fixture ${index}`,
       });
     }
   }
@@ -66,7 +67,12 @@ describe("SWE-bench manifest", () => {
 
   test("rejects unclassified repositories instead of guessing", () => {
     const snapshot = fixtureSnapshot();
-    snapshot.rows.push({ repo: "unknown/repo", instanceId: "unknown__repo-1", baseCommit: "a" });
+    snapshot.rows.push({
+      repo: "unknown/repo",
+      instanceId: "unknown__repo-1",
+      baseCommit: "a",
+      problemStatement: "Unknown repository fixture",
+    });
 
     expect(() => selectManifest(snapshot, { seed: 1, size: 30 })).toThrow(
       "Unknown SWE-bench Multilingual repository: unknown/repo.",
@@ -88,7 +94,7 @@ describe("SWE-bench manifest", () => {
     expect(manifest.seed).toBe(20_260_720);
     expect(manifest.algorithmVersion).toBe("language-stratified-v1");
     expect(manifest.entries.map((entry) => entry.instanceId)).toEqual(
-      [...manifest.entries.map((entry) => entry.instanceId)].sort(),
+      manifest.entries.map((entry) => entry.instanceId).sort(),
     );
     expect(
       Object.fromEntries(

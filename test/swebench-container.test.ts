@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   ContainerHandle,
+  resolveAndPullOfficialImage,
   type CommandResult,
   type CommandRunner,
 } from "../benchmarks/swebench/src/container.js";
@@ -45,7 +46,10 @@ describe("SWE-bench container boundary", () => {
       env: { Z_KEY: "z", A_KEY: "a" },
       stdin: "input",
     });
-    const transport = container.execStream(["/opt/duet/duet", "--rpc"], { HOME: "/opt/duet/home" });
+    const transport = container.execStream(["/opt/duet/duet", "--rpc"], {
+      cwd: "/testbed",
+      env: { HOME: "/opt/duet/home" },
+    });
     await transport.exited;
     await container.stop();
 
@@ -88,6 +92,8 @@ describe("SWE-bench container boundary", () => {
         "docker",
         "exec",
         "--interactive",
+        "--workdir",
+        "/testbed",
         "--env",
         "HOME=/opt/duet/home",
         "duet-bench-1",
@@ -105,6 +111,40 @@ describe("SWE-bench container boundary", () => {
     await container.stop();
     await container.stop();
     expect(commands.runs.filter((call) => call.argv[1] === "rm")).toHaveLength(1);
+  });
+
+  test("accepts only a complete official amd64 image record from the pinned helper", async () => {
+    const commands = new FakeCommands();
+    commands.results.push({
+      stdout: JSON.stringify({
+        image: "swebench/official:latest",
+        platform: "linux/amd64",
+        sizeBytes: 123,
+        imageId: "sha256:abc",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(
+      resolveAndPullOfficialImage("org__repo-1", {
+        pythonPath: "/venv/bin/python",
+        helperPath: "/bench/official_image.py",
+        commands,
+      }),
+    ).resolves.toEqual({
+      image: "swebench/official:latest",
+      platform: "linux/amd64",
+      sizeBytes: 123,
+      imageId: "sha256:abc",
+    });
+    expect(commands.runs[0]?.argv).toEqual([
+      "/venv/bin/python",
+      "/bench/official_image.py",
+      "org__repo-1",
+      "--pull",
+      "--json",
+    ]);
   });
 });
 

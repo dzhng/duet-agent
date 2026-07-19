@@ -1,5 +1,11 @@
 # 06 — Rollout pipeline, resumable orchestrator, predictions
 
+**Status (2026-07-20): locally complete, live gate pending.** The container
+rollout, immutable filesystem attempts, spec-hash resume checks, reserve-first
+$500 breaker, deterministic arm order, official predictions/scoring path, and
+paired report core are implemented and fixture-tested. The required two-instance
+four-arm live run and kill/resume exercise remain before this slice is complete.
+
 Needs 02, 03, 05. The whole measurement machine, verified at n=2 before any
 campaign money.
 

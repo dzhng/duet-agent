@@ -18,8 +18,10 @@ are complete: the official amd64 Java image resolved 1/1 under emulation with
 measured resource use; its 30/30 gold and mini-swe-agent gates remain open.
 Slice 05 has a green live Java checkpoint for Linux-x64 packaging, single-owner
 RPC execution, and dirty-baseline patch round trip, but its nine-language matrix
-remains. Continue slices 04 and 05; slices 04–08 are not complete. Last updated
-2026-07-20.
+remains. Slice 06's rollout, immutable resume, budget, prediction, official
+scoring, and paired-report core is locally green; its paid n=2 gate remains.
+The resumable 30-instance gold gate is running. Continue the live gates in
+slices 04–06; slices 04–08 are not complete. Last updated 2026-07-20.
 
 You are implementing this spec. Read this README fully, then continue the Mac
 capacity/gold gate in [slice 04](slices/04-box-gold-gate-and-spike.md). Follow
@@ -49,7 +51,7 @@ Global TODO (owner slice in parens):
 - [ ] Duet packaged into instance containers; 9-language smoke; patch
       round-trip integrity (05)
 - [ ] Rollout pipeline + resumable campaign orchestrator + predictions,
-      verified at n=2 (06)
+      locally complete; paid n=2 verification pending (06)
 - [ ] Two-comparison report; 3-instance four-arm pilot; limits recalibrated;
       ADMIT/STOP decision (07)
 - [ ] 30×4 campaign + two paired comparisons in the final report (08)

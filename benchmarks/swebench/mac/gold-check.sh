@@ -62,6 +62,7 @@ mkdir -p "$OUTPUT_DIR"
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 IDS_FILE="$OUTPUT_DIR/instance-ids.txt"
 SUMMARY_TSV="$OUTPUT_DIR/summary.tsv"
+PREVIOUS_SUMMARY_TSV="$OUTPUT_DIR/summary.previous.tsv"
 
 if [[ -n "$INSTANCE_ID" ]]; then
   printf '%s\n' "$INSTANCE_ID" > "$IDS_FILE"
@@ -77,6 +78,11 @@ for entry in manifest["entries"]:
 PY
 fi
 
+if [[ -f "$SUMMARY_TSV" ]]; then
+  cp "$SUMMARY_TSV" "$PREVIOUS_SUMMARY_TSV"
+else
+  : > "$PREVIOUS_SUMMARY_TSV"
+fi
 printf 'instance_id\tstatus\telapsed_seconds\tcontainer_peak_bytes\tdisk_peak_bytes\n' > "$SUMMARY_TSV"
 run_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 failures=0
@@ -87,6 +93,13 @@ while IFS= read -r instance_id; do
   run_id="gold-$run_stamp-$safe_id"
   instance_dir="$OUTPUT_DIR/$safe_id"
   mkdir -p "$instance_dir"
+
+  previous_row="$(awk -F '\t' -v id="$instance_id" '$1 == id && $2 == "resolved" { print; exit }' "$PREVIOUS_SUMMARY_TSV")"
+  if [[ -n "$previous_row" ]] && find "$instance_dir" -maxdepth 1 -name 'gold.*.json' -print -quit | grep -q .; then
+    printf '%s\n' "$previous_row" >> "$SUMMARY_TSV"
+    printf '\n==> %s (already resolved; resume skip)\n' "$instance_id"
+    continue
+  fi
 
   printf '\n==> %s\n' "$instance_id"
   image_json="$($PYTHON "$SCRIPT_DIR/official_image.py" "$instance_id" --pull --json)" || {
@@ -145,7 +158,7 @@ PY
   [[ "$status" == "resolved" ]] || failures=$((failures + 1))
 
   if [[ "$KEEP_IMAGES" -eq 0 ]]; then
-    if ! docker image rm "$image_key" >/dev/null; then
+    if docker image inspect "$image_key" >/dev/null 2>&1 && ! docker image rm "$image_key" >/dev/null; then
       printf 'error: could not remove benchmark image %s\n' "$image_key" >&2
       failures=$((failures + 1))
     fi

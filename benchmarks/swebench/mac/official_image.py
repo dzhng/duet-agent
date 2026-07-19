@@ -7,6 +7,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from typing import Any
 
 from swebench.harness.run_evaluation import load_swebench_dataset
@@ -30,11 +31,14 @@ def resolve_image(instance_id: str) -> str:
 
 
 def pull_image(image: str) -> dict[str, Any]:
-    subprocess.run(
-        ["docker", "pull", "--platform", DOCKER_PLATFORM, image],
-        check=True,
-        stdout=sys.stderr,
-    )
+    pull_command = ["docker", "pull", "--platform", DOCKER_PLATFORM, image]
+    for attempt in range(1, 4):
+        result = subprocess.run(pull_command, check=False, stdout=sys.stderr)
+        if result.returncode == 0:
+            break
+        if attempt == 3:
+            raise subprocess.CalledProcessError(result.returncode, pull_command)
+        time.sleep(attempt * 2)
     raw = subprocess.check_output(
         [
             "docker",

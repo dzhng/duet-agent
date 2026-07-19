@@ -23,6 +23,14 @@ export interface CommandRunner {
   ): ExecTransport;
 }
 
+/** Official image identity returned by the pinned Python harness. */
+export interface OfficialImage {
+  image: string;
+  platform: "linux/amd64";
+  sizeBytes: number;
+  imageId: string;
+}
+
 /** Node child-process implementation shared by packaging and Docker orchestration. */
 export class LocalCommandRunner implements CommandRunner {
   async run(
@@ -119,10 +127,11 @@ export class ContainerHandle {
   /** Run a bounded command inside the instance and capture its output. */
   async exec(
     argv: readonly string[],
-    options: { env?: Record<string, string>; stdin?: string } = {},
+    options: { cwd?: string; env?: Record<string, string>; stdin?: string } = {},
   ): Promise<CommandResult> {
     this.requireStarted();
     const dockerArgs = ["docker", "exec", "--interactive"];
+    if (options.cwd) dockerArgs.push("--workdir", options.cwd);
     for (const [name, value] of Object.entries(options.env ?? {}).sort(([a], [b]) =>
       a.localeCompare(b),
     )) {
@@ -133,10 +142,16 @@ export class ContainerHandle {
   }
 
   /** Open a streaming `docker exec -i` transport for duet RPC. */
-  execStream(argv: readonly string[], env: Record<string, string>): ExecTransport {
+  execStream(
+    argv: readonly string[],
+    options: { cwd?: string; env?: Record<string, string> } = {},
+  ): ExecTransport {
     this.requireStarted();
     const dockerArgs = ["exec", "--interactive"];
-    for (const [name, value] of Object.entries(env).sort(([a], [b]) => a.localeCompare(b))) {
+    if (options.cwd) dockerArgs.push("--workdir", options.cwd);
+    for (const [name, value] of Object.entries(options.env ?? {}).sort(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
       dockerArgs.push("--env", `${name}=${value}`);
     }
     dockerArgs.push(this.name, ...argv);
@@ -162,6 +177,63 @@ export class ContainerHandle {
   private requireStarted(): void {
     if (!this.started) throw new Error(`Container ${this.name} is not started.`);
   }
+}
+
+/**
+ * Ask the pinned SWE-bench package for an instance image and pre-pull its
+ * explicit platform. Keeping this process boundary here prevents orchestrator
+ * code from reconstructing official image names or Docker commands.
+ */
+export async function resolveAndPullOfficialImage(
+  instanceId: string,
+  options: { pythonPath: string; helperPath: string; commands?: CommandRunner },
+): Promise<OfficialImage> {
+  const commands = options.commands ?? new LocalCommandRunner();
+  const result = await commands.run([
+    options.pythonPath,
+    options.helperPath,
+    instanceId,
+    "--pull",
+    "--json",
+  ]);
+  if (result.exitCode !== 0) {
+    throw commandError([options.pythonPath, options.helperPath, instanceId], result);
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`Official image helper returned invalid JSON for ${instanceId}.`, {
+      cause: error,
+    });
+  }
+  if (!isOfficialImage(value)) {
+    throw new Error(`Official image helper returned an invalid record for ${instanceId}.`);
+  }
+  return value;
+}
+
+/** Remove exactly one image previously resolved for this benchmark. */
+export async function removeOfficialImage(
+  image: string,
+  commands: CommandRunner = new LocalCommandRunner(),
+): Promise<void> {
+  const result = await commands.run(["docker", "image", "rm", image]);
+  if (result.exitCode !== 0 && !result.stderr.includes("No such image")) {
+    throw commandError(["docker", "image", "rm", image], result);
+  }
+}
+
+function isOfficialImage(value: unknown): value is OfficialImage {
+  if (!value || typeof value !== "object") return false;
+  const image = value as Partial<OfficialImage>;
+  return (
+    typeof image.image === "string" &&
+    image.platform === "linux/amd64" &&
+    typeof image.sizeBytes === "number" &&
+    Number.isFinite(image.sizeBytes) &&
+    typeof image.imageId === "string"
+  );
 }
 
 function commandError(argv: readonly string[], result: CommandResult): Error {

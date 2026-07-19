@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 
-const scripts = ["benchmarks/swebench/mac/provision.sh", "benchmarks/swebench/mac/gold-check.sh"];
+const scripts = [
+  "benchmarks/swebench/mac/provision.sh",
+  "benchmarks/swebench/mac/gold-check.sh",
+  "benchmarks/swebench/mac/score.sh",
+];
 
 describe("SWE-bench Mac scripts", () => {
   for (const script of scripts) {

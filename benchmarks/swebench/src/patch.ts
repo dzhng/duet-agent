@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import type { ContainerHandle } from "./container.js";
+import type { CommandResult } from "./container.js";
+
+/** Minimal container operations required by staged-index patch handling. */
+export interface PatchContainer {
+  exec(
+    argv: readonly string[],
+    options?: { cwd?: string; env?: Record<string, string>; stdin?: string },
+  ): Promise<CommandResult>;
+}
 
 /** Private Git tree representing the official image before the model runs. */
 export interface PatchBaseline {
@@ -22,7 +30,7 @@ export interface ExtractedPatch {
  * be clean. Some official images deliberately modify build files (for example,
  * Druid pins a Maven resource bundle); resetting them changes the benchmark.
  */
-export async function capturePatchBaseline(container: ContainerHandle): Promise<PatchBaseline> {
+export async function capturePatchBaseline(container: PatchContainer): Promise<PatchBaseline> {
   const indexPath = `/tmp/duet-index-${randomUUID()}`;
   const env = { GIT_INDEX_FILE: indexPath };
   await requireGit(container, ["git", "-C", "/testbed", "read-tree", "HEAD"], env);
@@ -43,7 +51,7 @@ export async function capturePatchBaseline(container: ContainerHandle): Promise<
 
 /** Stage the final worktree over its captured baseline and emit only the agent delta. */
 export async function extractPatch(
-  container: ContainerHandle,
+  container: PatchContainer,
   baseline: PatchBaseline,
   maxBytes: number,
 ): Promise<ExtractedPatch> {
@@ -74,7 +82,7 @@ export async function extractPatch(
 
 /** Apply a patch to the same official baseline and prove it reproduces the path set. */
 export async function verifyPatchRoundTrip(
-  container: ContainerHandle,
+  container: PatchContainer,
   extracted: ExtractedPatch,
 ): Promise<void> {
   const baseline = await capturePatchBaseline(container);
@@ -122,7 +130,7 @@ function assertNoHarnessPollution(paths: readonly string[]): void {
 }
 
 async function requireGit(
-  container: ContainerHandle,
+  container: PatchContainer,
   argv: readonly string[],
   env: Record<string, string>,
 ) {

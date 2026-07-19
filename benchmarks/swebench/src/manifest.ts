@@ -15,6 +15,8 @@ export type Language = (typeof LANGUAGES)[number];
 
 /** Dataset fields needed to identify and provision one official task image. */
 export interface DatasetRow {
+  /** Canonical issue text presented unchanged to every campaign arm. */
+  problemStatement: string;
   repo: string;
   instanceId: string;
   baseCommit: string;
