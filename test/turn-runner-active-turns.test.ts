@@ -897,9 +897,22 @@ describe("TurnRunner active turns", () => {
 
   test("sleeping follow-up failure emits system error and resolves to sleep", async () => {
     const { runner, events } = createStreamingRunner();
+    const wakeAt = Date.now() + 60_000;
     const sleeping = {
       ...createStateMachineState("poll_email_reply"),
       status: "sleeping" as const,
+      tasks: [
+        {
+          id: "t1" as const,
+          kind: "scheduled" as const,
+          name: "poll_email_reply",
+          label: "Wait for poll_email_reply",
+          ownerScopeId: "turn-1",
+          status: "scheduled" as const,
+          startedAt: Date.now(),
+          wakeAt,
+        },
+      ],
     };
     await runner.start({ type: "start", state: sleeping });
 

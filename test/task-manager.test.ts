@@ -337,6 +337,32 @@ describe("TaskManager", () => {
     ).toBe("t9");
   });
 
+  test("recover restores bounded output for lost-task reporting", () => {
+    const manager = createTaskManager({ clock: new ManualRuntimeClock(1_000) });
+    manager.recover(
+      [
+        {
+          id: "t4",
+          kind: "subagent",
+          name: "orphan",
+          label: "Orphaned process",
+          ownerScopeId: "root",
+          status: "running",
+          startedAt: 100,
+        },
+      ],
+      8,
+      { t4: ["one", "two"] },
+    );
+
+    expect(manager.output("t4")).toMatchObject({
+      descriptor: { status: "lost" },
+      output: ["one", "two"],
+      settlement: { status: "lost" },
+    });
+    expect(manager.nextTaskId()).toBe(8);
+  });
+
   test("waitForSettlement observes values without consuming the pull FIFO", async () => {
     const clock = new ManualRuntimeClock();
     const manager = createTaskManager({ clock });

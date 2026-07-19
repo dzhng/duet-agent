@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -50,8 +50,9 @@ class FakeTurnRunner implements SessionTurnRunner {
 
   async start(command: TurnStartCommand): Promise<TurnState> {
     this.startCommands.push(command);
-    this.emit({ type: "turn_started", state: turnState });
-    return turnState;
+    if (command.state) this.state = command.state;
+    this.emit({ type: "turn_started", state: this.state });
+    return this.state;
   }
 
   async turn(command: TurnCommand): Promise<TurnTerminalEvent> {
@@ -163,17 +164,22 @@ class FakeTurnRunner implements SessionTurnRunner {
 
 const turnState = createStateMachineState("draft");
 let tempDirs: string[] = [];
+let sessions: Session[] = [];
 
 async function createSession(runner: FakeTurnRunner): Promise<Session> {
   const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
   tempDirs.push(tempDir);
-  return new Session(
+  const session = new Session(
     { model: "anthropic:claude-opus-4-7" },
     { id: "session_test", runner: runner, sessionPath: tempDir },
   );
+  sessions.push(session);
+  return session;
 }
 
 afterEach(async () => {
+  await Promise.allSettled(sessions.map((session) => session.dispose()));
+  sessions = [];
   for (const tempDir of tempDirs) {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -217,6 +223,144 @@ async function writeStoredState(sessionPath: string, state: TurnState): Promise<
 }
 
 describe("Session", () => {
+  test("coalesces rapid persistence behind one active write and captures state eagerly", async () => {
+    const runner = new FakeTurnRunner([]);
+    const session = await createSession(runner);
+    const commits: string[] = [];
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const probe = session as unknown as {
+      writeStoredEnvelope(state: TurnState): Promise<void>;
+      commitSerializedEnvelope(serialized: string): Promise<void>;
+    };
+    probe.commitSerializedEnvelope = async (serialized) => {
+      commits.push(serialized);
+      if (commits.length === 1) await firstBlocked;
+    };
+    const messages = [...turnState.agent.messages];
+    const state = { ...turnState, agent: { ...turnState.agent, messages } };
+
+    const first = probe.writeStoredEnvelope(state);
+    messages.push({ role: "user", content: "latest", timestamp: 2 } as never);
+    const queued = Array.from({ length: 20 }, () => probe.writeStoredEnvelope(state));
+    releaseFirst();
+    await Promise.all([first, ...queued]);
+
+    expect(commits).toHaveLength(2);
+    expect(JSON.parse(commits[0]!).state.agent.messages).toHaveLength(
+      turnState.agent.messages.length,
+    );
+    expect(JSON.parse(commits[1]!).state.agent.messages.at(-1).content).toBe("latest");
+  });
+
+  test("dispose waits for the active persistence drain", async () => {
+    const runner = new FakeTurnRunner([]);
+    const session = await createSession(runner);
+    let releaseCommit!: () => void;
+    const blockedCommit = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    const probe = session as unknown as {
+      writeStoredEnvelope(state: TurnState): Promise<void>;
+      commitSerializedEnvelope(serialized: string): Promise<void>;
+    };
+    probe.commitSerializedEnvelope = () => blockedCommit;
+
+    const initialWrite = probe.writeStoredEnvelope(turnState);
+    let disposed = false;
+    const disposal = session.dispose().then(() => {
+      disposed = true;
+    });
+    await Promise.resolve();
+
+    expect(disposed).toBe(false);
+    releaseCommit();
+    await Promise.all([initialWrite, disposal]);
+    expect(disposed).toBe(true);
+  });
+
+  test("captures every task lifecycle and output event for persistence", async () => {
+    const runner = new FakeTurnRunner([]);
+    const session = await createSession(runner);
+    let captures = 0;
+    const probe = session as unknown as { persistLatestState(): Promise<void> };
+    probe.persistLatestState = async () => {
+      captures += 1;
+    };
+
+    runner.emit({
+      type: "task_started",
+      task: {
+        id: "t1",
+        kind: "subagent",
+        name: "research",
+        label: "Research",
+        ownerScopeId: "turn-1",
+        status: "running",
+        startedAt: 1,
+      },
+    });
+    runner.emit({ type: "task_output", taskId: "t1", chunk: "working" });
+    runner.emit({
+      type: "task_settled",
+      settlement: { id: "t1", status: "lost", settledAt: 2 },
+    });
+
+    expect(captures).toBe(3);
+  });
+
+  testIfDocker(
+    "concurrent persistence interrupted mid-write reloads the last atomically renamed state",
+    async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), "duet-session-"));
+      tempDirs.push(tempDir);
+      const sessionPath = join(tempDir, "torn-session");
+      await mkdir(sessionPath, { recursive: true });
+      const persisted = { ...turnState, status: "interrupted" as const };
+      await writeStoredState(sessionPath, persisted);
+      const killedRunner = new FakeTurnRunner([]);
+      const killedSession = new Session(
+        { model: "anthropic:claude-opus-4-7" },
+        { id: "torn-session", runner: killedRunner, sessionPath, resumeFromStorage: true },
+      );
+      const killedProbe = killedSession as unknown as {
+        persistenceTempPath: string;
+        writeStoredEnvelope(state: TurnState): Promise<void>;
+        commitSerializedEnvelope(serialized: string): Promise<void>;
+      };
+      killedProbe.commitSerializedEnvelope = async (serialized) => {
+        const file = await open(killedProbe.persistenceTempPath, "w", 0o600);
+        try {
+          await file.writeFile(serialized.slice(0, Math.floor(serialized.length / 2)), "utf-8");
+          await file.sync();
+        } finally {
+          await file.close();
+        }
+        // Model SIGKILL at the atomic-commit seam: process cleanup and rename never run.
+        throw new Error("simulated process death before rename");
+      };
+      const first = killedProbe.writeStoredEnvelope({ ...turnState, status: "running" });
+      const latest = killedProbe.writeStoredEnvelope({ ...turnState, status: "completed" });
+      await expect(Promise.all([first, latest])).rejects.toThrow("simulated process death");
+
+      const runner = new FakeTurnRunner([]);
+      const session = new Session(
+        { model: "anthropic:claude-opus-4-7" },
+        { id: "torn-session", runner, sessionPath, resumeFromStorage: true },
+      );
+      sessions.push(session);
+
+      await session.hydrate();
+
+      expect(runner.startCommands[0]?.state).toEqual(persisted);
+      expect(JSON.parse(await readFile(join(sessionPath, "state.json"), "utf-8")).state).toEqual(
+        persisted,
+      );
+    },
+  );
+
   test("plumbs sessionId into the runner config so memory writes can be tagged", async () => {
     // Real TurnRunner construction path — the FakeTurnRunner shortcut
     // skips the config copy this test is verifying.
@@ -226,6 +370,7 @@ describe("Session", () => {
       { model: "anthropic:claude-opus-4-7", memoryDbPath: false },
       { id: "session_under_test", sessionPath: tempDir },
     );
+    sessions.push(session);
     const runner = (session as unknown as { runner: TurnRunner }).runner;
     expect(runner.config.sessionId).toBe("session_under_test");
     await session.dispose();
@@ -253,6 +398,7 @@ describe("Session", () => {
       { model: "anthropic:claude-opus-4-7" },
       { id: "compact-session", runner, sessionPath },
     );
+    sessions.push(session);
     await session.start();
     // Simulate the runner advancing its horizon during compaction. The
     // session reads `runner.getState()` when it persists, so this is
@@ -341,6 +487,7 @@ describe("Session", () => {
       { model: "anthropic:claude-opus-4-7" },
       { id: "existing-session", runner: runner, sessionPath: join(tempDir, "existing-session") },
     );
+    sessions.push(session);
 
     await session.start();
     await session.prompt({ message: "remember me" });
@@ -367,6 +514,7 @@ describe("Session", () => {
       { model: "anthropic:claude-opus-4-7" },
       { id: "dispose-session", runner, sessionPath: join(tempDir, "dispose-session") },
     );
+    sessions.push(session);
 
     await session.start();
     await session.dispose();
@@ -406,6 +554,7 @@ describe("Session", () => {
       { model: "anthropic:claude-opus-4-7" },
       { id: "continuable", runner: firstTurnRunner, sessionPath: join(tempDir, "continuable") },
     );
+    sessions.push(first);
     await first.start();
     await first.prompt({ message: "start" });
     await first.waitForTerminal();
@@ -415,6 +564,7 @@ describe("Session", () => {
       { model: "anthropic:claude-opus-4-7" },
       { id: "continuable", runner: secondTurnRunner, sessionPath: join(tempDir, "continuable") },
     );
+    sessions.push(second);
     await second.start();
     await second.prompt({ message: "continue" });
     await second.waitForTerminal();
@@ -451,6 +601,7 @@ describe("Session", () => {
         resumeFromStorage: true,
       },
     );
+    sessions.push(session);
 
     await session.start();
 
@@ -518,6 +669,7 @@ describe("Session", () => {
       { model: "anthropic:claude-opus-4-7" },
       { id: "telemetry-resume", runner, sessionPath, resumeFromStorage: true },
     );
+    sessions.push(session);
 
     await session.start();
 
@@ -716,6 +868,7 @@ describe("Session", () => {
         type: "sleep",
         state: { status: "sleeping", stateMachine: { currentState: "poll_email_reply" } },
       });
+      await session.dispose();
     },
   );
 
@@ -739,6 +892,7 @@ describe("Session", () => {
 
     expect(terminal).toMatchObject({ type: "sleep", wakeAt });
     expect(runner.commands.map((command) => command.type)).toEqual(["prompt", "prompt"]);
+    await session.dispose();
   });
 
   testIfDocker(
@@ -752,6 +906,18 @@ describe("Session", () => {
       const sleepingState: TurnState = {
         ...createStateMachineState("poll_email_reply"),
         status: "sleeping",
+        tasks: [
+          {
+            id: "t1",
+            kind: "scheduled",
+            name: "poll_email_reply",
+            label: "Wait for poll_email_reply",
+            ownerScopeId: "turn-1",
+            status: "scheduled",
+            startedAt: wakeAt - 60_000,
+            wakeAt,
+          },
+        ],
         stateMachine: {
           ...createStateMachineState("poll_email_reply").stateMachine!,
           progress: {
@@ -768,6 +934,7 @@ describe("Session", () => {
         { model: "anthropic:claude-opus-4-7" },
         { id: "resumed-sleeping", runner, sessionPath, resumeFromStorage: true },
       );
+      sessions.push(session);
       const events: TurnEvent[] = [];
       session.subscribe((event) => events.push(event));
 
@@ -797,6 +964,18 @@ describe("Session", () => {
       const sleepingState: TurnState = {
         ...createStateMachineState("poll_email_reply"),
         status: "sleeping",
+        tasks: [
+          {
+            id: "t1",
+            kind: "scheduled",
+            name: "poll_email_reply",
+            label: "Wait for poll_email_reply",
+            ownerScopeId: "turn-1",
+            status: "scheduled",
+            startedAt: wakeAt - 60_000,
+            wakeAt,
+          },
+        ],
         stateMachine: {
           ...createStateMachineState("poll_email_reply").stateMachine!,
           progress: {
@@ -813,6 +992,7 @@ describe("Session", () => {
         { model: "anthropic:claude-opus-4-7" },
         { id: "resumed-sleeping-late", runner, sessionPath, resumeFromStorage: true },
       );
+      sessions.push(session);
 
       await session.hydrate();
 

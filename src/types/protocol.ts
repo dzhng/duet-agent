@@ -222,6 +222,19 @@ export interface TurnState {
    */
   tasks?: TaskDescriptor[];
   /**
+   * Retained output captured for process-bound tasks so crash recovery can tell the
+   * next parent pass what each lost executor last reported. Entries use task ids as
+   * keys and retain at most the final three chunks, capped to their last 1,500
+   * characters, so recovery context cannot make the durable snapshot unbounded.
+   */
+  taskOutputTails?: Partial<Record<TaskId, string[]>>;
+  /**
+   * Lost task ids whose crash-recovery context has not yet been attached to a
+   * parent pass. Persisting this delivery marker prevents repeated process
+   * restarts from silently dropping the reminder before the parent can act on it.
+   */
+  pendingLostTaskReminderTaskIds?: TaskId[];
+  /**
    * Numeric suffix to allocate for the next task id. Persisting the allocator
    * alongside descriptors keeps ids monotonic even when terminal descriptors
    * have been compacted or a process resumes from state.json.
@@ -644,6 +657,19 @@ export interface TurnTaskSettledEvent {
   origin?: TurnEventOrigin;
 }
 
+/**
+ * RPC transport liveness signal emitted while in-process tasks keep a turn
+ * open. It is transport telemetry rather than model activity: runners do not
+ * add it to agent transcripts, routing observations, or memory.
+ */
+export interface TurnHeartbeatEvent {
+  type: "heartbeat";
+  /** Timestamp from the RPC transport's runtime clock. */
+  timestamp: number;
+  /** Running task ids that currently require the RPC process to stay awake. */
+  activeTaskIds: TaskId[];
+}
+
 export interface TurnTodosEvent {
   type: "todos";
   todos: TurnTodo[];
@@ -858,6 +884,7 @@ export interface TurnRouterSwitchEvent extends RouterSwitch {
 /** Events emitted while the runner is still working on the current turn. */
 export type TurnDuringEvent =
   | TurnStepEvent
+  | TurnHeartbeatEvent
   | TurnTaskStartedEvent
   | TurnTaskOutputEvent
   | TurnTaskSettledEvent

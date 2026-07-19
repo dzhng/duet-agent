@@ -6,19 +6,159 @@ import {
   resolveProviderShorthand,
 } from "../model-resolution/catalog.js";
 import { TurnRunner } from "../turn-runner/turn-runner.js";
+import {
+  SystemRuntimeClock,
+  type CancelScheduled,
+  type RuntimeClock,
+} from "../turn-runner/runtime-clock.js";
 import type {
   TurnCompactCommand,
   TurnEditFollowUpQueueCommand,
   TurnEvent,
   TurnInterruptCommand,
   TurnRunnerCommand,
+  TurnState,
   TurnSystemEvent,
+  TaskId,
   TurnTerminalEvent,
 } from "../types/protocol.js";
 import type { PackageMetadata } from "./run.js";
 import { buildCliTurnConfig } from "./run.js";
 import { expandHomeDir, fail, loadCliEnvFiles } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
+
+const RPC_HEARTBEAT_INTERVAL_MS = 15_000;
+
+/** Stdout operations needed by the RPC event writer. */
+export interface RpcWritable {
+  /** Queue one NDJSON line; false means subsequent writes must wait for `drain`. */
+  write(chunk: string): boolean;
+  /** Register the one-shot notification that stream backpressure has cleared. */
+  once(event: "drain", listener: () => void): unknown;
+}
+
+/**
+ * Ordered NDJSON writer for the RPC transport.
+ *
+ * Runner events are lossless and keep subscription order. Heartbeats are a
+ * separate best-effort lane: at most one waits behind backpressure, newer
+ * heartbeats replace it, and any real event is always written first.
+ */
+export class RpcEventWriter {
+  private readonly losslessLines: string[] = [];
+  private readonly activeTaskIds = new Set<TaskId>();
+  private pendingHeartbeat?: string;
+  private pumping = false;
+  private heartbeatCancel?: CancelScheduled;
+  private failure?: unknown;
+  private readonly flushWaiters = new Set<() => void>();
+
+  constructor(
+    private readonly stream: RpcWritable,
+    private readonly clock: RuntimeClock = new SystemRuntimeClock(),
+  ) {}
+
+  /** Accept a runner event synchronously while its serialized value is stable. */
+  emit(event: TurnEvent): void {
+    this.losslessLines.push(serializeRpcEvent(event));
+
+    if (event.type === "task_started" && event.task.status === "running") {
+      this.activeTaskIds.add(event.task.id);
+      this.startHeartbeats();
+    } else if (event.type === "task_settled") {
+      this.activeTaskIds.delete(event.settlement.id);
+      if (this.activeTaskIds.size === 0) this.stopHeartbeats();
+    } else if (isRpcTerminalEvent(event)) {
+      this.stopHeartbeats();
+    }
+
+    this.pump();
+  }
+
+  /** Resolve after every accepted lossless event has crossed the stream boundary. */
+  async flush(): Promise<void> {
+    if (this.failure !== undefined) throw this.failure;
+    if (!this.pumping && this.losslessLines.length === 0 && !this.pendingHeartbeat) return;
+    await new Promise<void>((resolve) => this.flushWaiters.add(resolve));
+    if (this.failure !== undefined) throw this.failure;
+  }
+
+  private startHeartbeats(): void {
+    if (this.heartbeatCancel) return;
+    this.heartbeatCancel = this.clock.repeat(() => this.emitHeartbeat(), RPC_HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopHeartbeats(): void {
+    this.heartbeatCancel?.();
+    this.heartbeatCancel = undefined;
+    this.pendingHeartbeat = undefined;
+  }
+
+  private emitHeartbeat(): void {
+    if (this.activeTaskIds.size === 0) return;
+    this.pendingHeartbeat = serializeRpcEvent({
+      type: "heartbeat",
+      timestamp: this.clock.now(),
+      activeTaskIds: [...this.activeTaskIds],
+    });
+    this.pump();
+  }
+
+  private pump(): void {
+    if (this.pumping || this.failure !== undefined) return;
+    this.pumping = true;
+    void this.runPump();
+  }
+
+  private async runPump(): Promise<void> {
+    try {
+      while (true) {
+        const line = this.losslessLines.shift() ?? this.takeHeartbeat();
+        if (!line) break;
+        if (!this.stream.write(line)) {
+          await new Promise<void>((resolve) => this.stream.once("drain", resolve));
+        }
+      }
+    } catch (error) {
+      this.failure = error;
+    } finally {
+      this.pumping = false;
+      if (this.failure !== undefined) {
+        for (const resolve of this.flushWaiters) resolve();
+        this.flushWaiters.clear();
+      } else if (this.losslessLines.length > 0 || this.pendingHeartbeat) {
+        this.pump();
+      } else {
+        for (const resolve of this.flushWaiters) resolve();
+        this.flushWaiters.clear();
+      }
+    }
+  }
+
+  private takeHeartbeat(): string | undefined {
+    const heartbeat = this.pendingHeartbeat;
+    this.pendingHeartbeat = undefined;
+    return heartbeat;
+  }
+}
+
+function serializeRpcEvent(event: TurnEvent): string {
+  return `${JSON.stringify(event)}\n`;
+}
+
+function isRpcTerminalEvent(event: TurnEvent): event is TurnTerminalEvent {
+  return (
+    event.type === "complete" ||
+    event.type === "ask" ||
+    event.type === "sleep" ||
+    event.type === "interrupted"
+  );
+}
+
+/** Fatal errors may synthesize a terminal only when the captured state is quiescent. */
+export function shouldEmitFatalTerminal(state: TurnState | undefined): state is TurnState {
+  return Boolean(state && !state.tasks?.some((task) => task.status === "running"));
+}
 
 /**
  * Minimal contract the RPC loop expects from a turn runner. The full
@@ -96,9 +236,8 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
   process.stderr.write(`${pkg.name} ${pkg.version} rpc\n`);
 
   const runner = new TurnRunner(config);
-  const writeEvent = (event: TurnEvent): void => {
-    process.stdout.write(`${JSON.stringify(event)}\n`);
-  };
+  const eventWriter = new RpcEventWriter(process.stdout);
+  const writeEvent = (event: TurnEvent): void => eventWriter.emit(event);
   runner.subscribe(writeEvent);
 
   // Without these handlers, an unhandled rejection or uncaught exception
@@ -106,36 +245,49 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
   // hydration, MCP connect) kills the process under Node's default policy
   // with no terminal event written and nothing on stderr. Hosts then see
   // `code=null stderr=` and have no way to surface a real error to the
-  // user. Emit a system error event with the cause, then — if the runner
-  // already has a hydrated state — also emit a `complete` terminal so the
-  // host can settle the in-flight turn cleanly. The system event alone is
-  // the floor; the terminal is best-effort because TurnCompletedEvent
-  // requires `state`, which doesn't exist if we died before `start()`
-  // finished hydrating.
+  // user. Emit a system error event with the cause, then emit a `complete`
+  // terminal only when the captured runner state has no in-process tasks.
+  // Fabricating quiescence while work is open would let the RPC host reap a
+  // live process tree; that path emits only the fatal diagnostic, then uses
+  // runner.dispose() to stop and reap the work before exiting.
+  let fatalExitStarted = false;
   const emitFatalAndExit = (reason: unknown): void => {
+    if (fatalExitStarted) return;
+    fatalExitStarted = true;
     const message = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
-    try {
-      writeEvent({ type: "system", level: "error", message: `fatal: ${message}` });
-      const state = runner.getState();
-      if (state) {
-        writeEvent({ type: "complete", status: "failed", error: message, state });
+    void (async () => {
+      try {
+        writeEvent({ type: "system", level: "error", message: `fatal: ${message}` });
+        const state = runner.getState();
+        if (shouldEmitFatalTerminal(state)) {
+          writeEvent({ type: "complete", status: "failed", error: message, state });
+        }
+        await runner.dispose();
+        await eventWriter.flush();
+      } catch {
+        // stdout may be closed if the parent already gave up on us; nothing
+        // useful remains after the best-effort task reaper and transport flush.
+      } finally {
+        process.exit(1);
       }
-    } catch {
-      // stdout may be closed if the parent already gave up on us; nothing
-      // useful to do at this point besides exiting.
-    }
-    process.exit(1);
+    })();
   };
   process.on("unhandledRejection", emitFatalAndExit);
   process.on("uncaughtException", emitFatalAndExit);
 
-  const removeShutdownHandlers = installShutdownHandlers(() => runner.dispose());
+  const removeShutdownHandlers = installShutdownHandlers(async () => {
+    await runner.dispose();
+    await eventWriter.flush();
+  });
 
   try {
     await driveRpcLoop(runner, readStdinCommands(writeEvent), { emit: writeEvent });
   } finally {
+    process.off("unhandledRejection", emitFatalAndExit);
+    process.off("uncaughtException", emitFatalAndExit);
     removeShutdownHandlers();
     await runner.dispose();
+    await eventWriter.flush();
   }
 }
 

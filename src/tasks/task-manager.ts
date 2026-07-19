@@ -103,7 +103,11 @@ export interface TaskManager {
   /** Compute the current quiescence posture from task descriptors. */
   pendingWork(): PendingWork;
   /** Hydrate descriptors, converting process-bound running work to lost settlements. */
-  recover(descriptors: readonly TaskDescriptor[], nextTaskId?: number): RecoverResult;
+  recover(
+    descriptors: readonly TaskDescriptor[],
+    nextTaskId?: number,
+    outputTails?: Readonly<Partial<Record<TaskId, readonly string[]>>>,
+  ): RecoverResult;
   /** Return the numeric suffix that the next start() call will allocate. */
   nextTaskId(): number;
   /** Register process cleanup to run once at the next reap boundary. */
@@ -408,7 +412,7 @@ export function createTaskManager(options: TaskManagerOptions): TaskManager {
       return computePendingWork(manager.list());
     },
 
-    recover(descriptors, persistedNextTaskId) {
+    recover(descriptors, persistedNextTaskId, outputTails) {
       const lost: TaskDescriptor[] = [];
       for (const source of descriptors) {
         if (records.has(source.id)) throw new Error(`Duplicate recovered task ${source.id}`);
@@ -419,8 +423,12 @@ export function createTaskManager(options: TaskManagerOptions): TaskManager {
 
         const descriptor = copyDescriptor(source);
         const record = createRecord(descriptor);
+        record.output.push(...(outputTails?.[descriptor.id] ?? []));
         records.set(descriptor.id, record);
-        if (descriptor.status === "running") {
+        if (
+          descriptor.status === "running" ||
+          (descriptor.status === "scheduled" && !Number.isFinite(descriptor.wakeAt))
+        ) {
           descriptor.status = "lost";
           lost.push(copyDescriptor(descriptor));
           settle(record, {

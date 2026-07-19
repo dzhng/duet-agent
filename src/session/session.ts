@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { open, readFile, rename, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { TurnRunner, type TurnEventHandler } from "../turn-runner/turn-runner.js";
 import { resolveModelName } from "../model-resolution/resolver.js";
@@ -29,8 +30,11 @@ import type {
   TurnUsageEvent,
   TurnUsageFields,
 } from "../types/protocol.js";
-import { scheduledStateFallbackWakeAt } from "../turn-runner/duration.js";
-import { currentScheduledState as scheduledStateForMachine } from "../turn-runner/state-machine-session.js";
+import {
+  SystemRuntimeClock,
+  type CancelScheduled,
+  type RuntimeClock,
+} from "../turn-runner/runtime-clock.js";
 
 /**
  * How often `scheduleWake` checks the wall clock against `wakeAt`. Polling — instead of relying
@@ -116,6 +120,8 @@ export interface SessionOptions {
   sessionPath: string;
   runner?: SessionTurnRunner;
   resumeFromStorage?: boolean;
+  /** Wall-clock and timer seam used for deterministic scheduled-task wake behavior. */
+  clock?: RuntimeClock;
 }
 
 export class Session {
@@ -123,6 +129,10 @@ export class Session {
   private readonly runner: SessionTurnRunner;
   /** Directory owned by this session. State persistence writes `state.json` inside it. */
   private readonly sessionPath: string;
+  /** Session-level clock used by persistence timestamps and scheduled wake projection. */
+  private readonly clock: RuntimeClock;
+  /** Unique same-directory temp target; stale files never alias another Session writer. */
+  private readonly persistenceTempPath: string;
   /** Subscribers interested in this single session's raw turn-runner events. */
   private readonly eventHandlers = new Set<SessionEventHandler>();
   /** Removes the session's subscription to its owned runner during disposal. */
@@ -134,15 +144,18 @@ export class Session {
   /** Most recent terminal event, returned immediately when callers wait after a turn has settled. */
   private lastTerminal?: TurnTerminalEvent;
   /**
-   * Polling interval that fires the wake when wall-clock `Date.now()` reaches `wakeAt`. Cleared
-   * when user input or an interrupt arrives. We poll instead of using a single `setTimeout` so a
-   * laptop that sleeps through the deadline still fires shortly after wake: Node/Bun timers are
-   * driven by a monotonic clock that pauses on macOS sleep, so a long `setTimeout` would drift by
-   * the duration of the sleep. Polling against `Date.now()` is sleep-proof.
+   * Polling interval that fires the wake when the injected wall clock reaches `wakeAt`. Cleared
+   * when user input or an interrupt arrives. We poll instead of using one long timer so a laptop
+   * that sleeps through the deadline still fires shortly after wake: Node/Bun timers are driven
+   * by a monotonic clock that pauses on macOS sleep, while the wall-clock comparison does not.
    */
-  private wakeTimer?: ReturnType<typeof setInterval>;
+  private wakeTimer?: CancelScheduled;
   /** Optional fast-path timer used when the deadline is closer than the poll interval. */
-  private wakeFastPath?: ReturnType<typeof setTimeout>;
+  private wakeFastPath?: CancelScheduled;
+  /** Latest eagerly serialized envelope waiting behind the active filesystem commit. */
+  private queuedEnvelope?: string;
+  /** The single writer drain shared by every caller while persistence is active. */
+  private persistenceDrain?: Promise<void>;
   /** Whether this session should hydrate `state.json` on first use. New sessions start empty. */
   private readonly resumeFromStorage: boolean;
   /** Pending callers of `waitForTerminal`, resolved together when the next terminal event arrives. */
@@ -181,6 +194,8 @@ export class Session {
     // global memory (every other session, ranked into a budget).
     this.runner = options.runner ?? new TurnRunner({ ...config, sessionId: options.id });
     this.sessionPath = options.sessionPath;
+    this.clock = options.clock ?? new SystemRuntimeClock();
+    this.persistenceTempPath = `${this.sessionFilePath()}.tmp-${process.pid}-${randomUUID()}`;
     this.unsubscribeRunner = this.runner.subscribe((event) => void this.handleTurnEvent(event));
   }
 
@@ -215,8 +230,11 @@ export class Session {
     };
     this.startPromise = this.runner.start(command).then(() => undefined);
     await this.startPromise;
-    if (state?.status === "sleeping") {
-      await this.replaySleepFromResumedState(state);
+    if (state) {
+      await this.persistLatestState();
+      if (state.status === "sleeping") {
+        await this.replaySleepFromResumedState();
+      }
     }
   }
 
@@ -227,10 +245,10 @@ export class Session {
    * normal terminal-event path so `scheduleWake` arms the timer and subscribers
    * receive the banner.
    */
-  private async replaySleepFromResumedState(state: TurnState): Promise<void> {
-    const scheduled = this.currentScheduledState(state);
-    const progress = scheduled ? state.stateMachine?.progress?.states[scheduled.name] : undefined;
-    const wakeAt = progress?.nextWakeAt ?? scheduledStateFallbackWakeAt(scheduled);
+  private async replaySleepFromResumedState(): Promise<void> {
+    const state = this.runner.getState();
+    const wakeAt = scheduledTaskWakeAt(state);
+    if (!state || wakeAt === undefined) return;
     await this.handleTurnEvent({ type: "sleep", wakeAt, state });
   }
 
@@ -435,16 +453,18 @@ export class Session {
       .start({ type: "start", state, ...this.startOptions() })
       .then(() => undefined);
     await this.startPromise;
+    await this.persistLatestState();
     if (state.status === "sleeping") {
-      await this.replaySleepFromResumedState(state);
+      await this.replaySleepFromResumedState();
     }
   }
 
   async dispose(): Promise<void> {
-    await this.persistLatestState();
-    this.unsubscribeRunner();
     this.cancelWake();
     await this.runner.dispose();
+    await this.persistLatestState();
+    if (this.persistenceDrain) await this.persistenceDrain;
+    this.unsubscribeRunner();
   }
 
   private dispatchTurn(command: TurnCommand): void {
@@ -479,6 +499,13 @@ export class Session {
   private async handleTurnEvent(event: TurnEvent): Promise<void> {
     if (event.type === "usage") {
       this.applyUsageEvent(event);
+      void this.persistLatestState();
+    }
+    if (
+      event.type === "task_started" ||
+      event.type === "task_output" ||
+      event.type === "task_settled"
+    ) {
       void this.persistLatestState();
     }
     if (isTerminalEvent(event)) {
@@ -563,7 +590,7 @@ export class Session {
   private scheduleWake(terminal: Extract<TurnTerminalEvent, { type: "sleep" }>): void {
     this.cancelWake();
     const fire = (): void => {
-      if (Date.now() < terminal.wakeAt) return;
+      if (this.clock.now() < terminal.wakeAt) return;
       this.cancelWake();
       const state = this.runner.getState();
       if (!state || state.status !== "sleeping") return;
@@ -572,21 +599,21 @@ export class Session {
     // Poll every 30s so a sleeping laptop still wakes the turn shortly after the lid reopens.
     // Jitter is bounded by the poll interval and is acceptable given the 15-minute minimum
     // wakeAt enforced upstream.
-    this.wakeTimer = setInterval(fire, WAKE_POLL_INTERVAL_MS);
+    this.wakeTimer = this.clock.repeat(fire, WAKE_POLL_INTERVAL_MS);
     // Fast-path for deadlines closer than the poll interval so short waits stay tight.
-    const remaining = terminal.wakeAt - Date.now();
+    const remaining = terminal.wakeAt - this.clock.now();
     if (remaining < WAKE_POLL_INTERVAL_MS) {
-      this.wakeFastPath = setTimeout(fire, Math.max(0, remaining));
+      this.wakeFastPath = this.clock.schedule(fire, Math.max(0, remaining));
     }
   }
 
   private cancelWake(): void {
     if (this.wakeTimer) {
-      clearInterval(this.wakeTimer);
+      this.wakeTimer();
       this.wakeTimer = undefined;
     }
     if (this.wakeFastPath) {
-      clearTimeout(this.wakeFastPath);
+      this.wakeFastPath();
       this.wakeFastPath = undefined;
     }
   }
@@ -619,10 +646,6 @@ export class Session {
     return Object.keys(effective).length > 0 ? { options: effective } : {};
   }
 
-  private currentScheduledState(state: TurnState | undefined) {
-    return scheduledStateForMachine(state?.stateMachine);
-  }
-
   private async readStoredEnvelope(): Promise<{
     state?: TurnState;
     lastUsage?: TurnUsageFields;
@@ -652,19 +675,77 @@ export class Session {
   private async writeStoredEnvelope(state: TurnState): Promise<void> {
     const payload: StoredSessionFile = {
       sessionId: this.id,
-      updatedAt: Date.now(),
+      updatedAt: this.clock.now(),
       state,
       sessionCostUsd: this.sessionCostUsd,
     };
     if (this.lastUsage !== undefined) {
       payload.lastUsage = this.lastUsage;
     }
-    await writeFile(this.sessionFilePath(), `${JSON.stringify(payload, null, 2)}\n`, "utf-8");
+    // Capture synchronously: runner snapshots may contain live arrays whose contents can
+    // change while an earlier filesystem operation is awaiting I/O.
+    this.queuedEnvelope = `${JSON.stringify(payload, null, 2)}\n`;
+    if (!this.persistenceDrain) {
+      const drain = this.drainPersistence();
+      this.persistenceDrain = drain;
+      void drain.then(
+        () => {
+          if (this.persistenceDrain === drain) this.persistenceDrain = undefined;
+        },
+        () => {
+          if (this.persistenceDrain === drain) this.persistenceDrain = undefined;
+        },
+      );
+    }
+    await this.persistenceDrain;
+  }
+
+  private async drainPersistence(): Promise<void> {
+    try {
+      while (this.queuedEnvelope !== undefined) {
+        const serialized = this.queuedEnvelope;
+        this.queuedEnvelope = undefined;
+        await this.commitSerializedEnvelope(serialized);
+      }
+    } catch (error) {
+      // Every caller awaiting this drain observes the failure. Discard a coalesced payload
+      // rather than committing it unexpectedly on some unrelated future persistence request.
+      this.queuedEnvelope = undefined;
+      throw error;
+    }
+  }
+
+  private async commitSerializedEnvelope(serialized: string): Promise<void> {
+    const destination = this.sessionFilePath();
+    const temporary = this.persistenceTempPath;
+    try {
+      const file = await open(temporary, "w", 0o600);
+      try {
+        await file.writeFile(serialized, "utf-8");
+        await file.sync();
+      } finally {
+        await file.close();
+      }
+      await rename(temporary, destination);
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
   }
 
   private sessionFilePath(): string {
     return join(this.sessionPath, "state.json");
   }
+}
+
+function scheduledTaskWakeAt(state: TurnState | undefined): number | undefined {
+  const wakeTimes = (state?.tasks ?? [])
+    .filter(
+      (task) =>
+        task.kind === "scheduled" && task.status === "scheduled" && Number.isFinite(task.wakeAt),
+    )
+    .map((task) => task.wakeAt as number);
+  return wakeTimes.length > 0 ? Math.min(...wakeTimes) : undefined;
 }
 
 function isTerminalEvent(event: TurnEvent): event is TurnTerminalEvent {
