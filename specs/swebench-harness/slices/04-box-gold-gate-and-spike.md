@@ -1,20 +1,23 @@
-# 04 — Box provisioning, gold gate, mini-swe-agent replication spike
+# 04 — Mac environment, x86 gold gate, mini-swe-agent replication spike
 
-Box track; needs the rented x86_64 box and slice 02's manifest. No duet code.
-This slice kills the plan cheaply if the external world is broken.
+Mac-local track; needs slice 02's manifest. No duet code. This slice kills the
+plan cheaply if official x86 images cannot run under Docker emulation or the
+local resource ceiling is untenable.
 
 ## Contract
 
-- `benchmarks/swebench/box/provision.sh`: idempotent — docker, bun, python
-  venv with pinned `swebench` + `mini-swe-agent`, disk/RAM/arch preflight.
-  Produces `environment.lock.json` (OS, resources, docker version, pinned
-  revisions; never credentials). Box driving pattern documented in
-  `benchmarks/swebench/README.md`: campaign runs box-local under tmux, Mac
-  SSHes in as a viewer only.
-- **Gold gate:** `python -m swebench.harness.run_evaluation
---predictions_path gold` restricted to the 30 manifest ids → require
-  30/30 resolved. Record image sizes, peak disk/RSS, and elapsed time;
-  demand ≥25% disk headroom.
+- `benchmarks/swebench/mac/provision.sh`: idempotent preflight plus a pinned
+  `uv` venv containing `swebench==4.1.0` and mini-swe-agent. Produces
+  `environment.lock.json` (host and Docker OS/arch/resources, Docker version,
+  emulation mode, pinned revisions; never credentials).
+- **Capacity gate:** run one official gold instance with `--max_workers 1
+--cache_level none --clean true`. It must resolve under the official x86_64
+  image through amd64 emulation. Record peak disk/RSS and elapsed time before
+  attempting the manifest.
+- **Gold gate:** the same official command restricted to the 30 manifest ids →
+  require 30/30 resolved. Process sequentially and clean benchmark-owned
+  instance images between work units. Never broadly prune unrelated Docker
+  state.
 - **Replication spike (fixed decision):** mini-swe-agent
   (`mini-extra swebench --subset multilingual`) on 2–3 manifest instances
   from distinct languages with a cheap model. Gate is pipeline integrity —
@@ -27,17 +30,17 @@ This slice kills the plan cheaply if the external world is broken.
 
 ## Verification
 
-Gold 30/30 on the box; spike scored end-to-end; lock file and fixtures
-committed. Cost: box rental + <$5 spike spend.
+The capacity instance and gold manifest resolve officially; the spike scores
+end-to-end; lock file and fixtures are committed. Cost: <$5 model spend.
 
 ## Playable checkpoint
 
-`ssh box 'bash benchmarks/swebench/box/gold-check.sh'` prints the 30/30
-table; the spike's scorer report is readable on the box and its fixture is
-in-repo.
+`bash benchmarks/swebench/mac/gold-check.sh` prints the 30/30 table; the
+spike's scorer report is readable locally and its fixture is in-repo.
 
 ## STOP conditions
 
 Persistent gold failure (fix environment or re-select manifest per slice 02
-before any measurement), missing/broken images for a manifest language, or
-resource ceilings breached with one worker.
+before any measurement), missing/broken images for a manifest language, or a
+resource ceiling breached with one worker. Do not silently change scorer,
+architecture, manifest size, or comparison count.

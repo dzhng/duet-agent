@@ -35,8 +35,8 @@ routerSwitches (from router_switch events), steps, terminalStatus}` — with
   `turnUsage.cost.total`; advisor calls counted per outcome; switch histogram
   keys `from→to`; unknown event types tolerated (forward compat). Fixtures:
   one real sanitized economy-tier `--rpc` capture (committed), plus
-  hand-built streams containing router_switch and ask_advisor shapes copied
-  from `protocol.ts`.
+  hand-built streams containing router_switch and ask_advisor shapes for both
+  Kimi K3 and Fable copied from `protocol.ts`.
 - Live smoke (Mac, cents): real `duet --rpc --incognito --model economy`
   answering a trivial prompt through the client; events parse, cost nonzero.
 

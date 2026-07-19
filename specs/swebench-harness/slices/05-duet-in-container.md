@@ -1,12 +1,13 @@
 # 05 — Duet in the instance container: packaging, smoke matrix, patch integrity
 
-Box; needs slices 03 (client) and 04 (images). The architecture's kill-shot
+Mac-local; needs slices 03 (client) and 04 (images). The architecture's kill-shot
 assumption gets falsified here for under a dollar, before the runner exists.
 
 ## Contract
 
 - `packaging.ts`: `prepareDuetArtifact() → {localPath, installDir:
-"/opt/duet"}`. Primary mode: `bun build --compile --target=bun-linux-x64`
+"/opt/duet"}`. Primary mode: cross-compile from the Mac with
+  `bun build --compile --target=bun-linux-x64`
   single binary (sha256 recorded). Fallback behind the same interface: bun
   linux-x64 binary + packed `npm pack` tarball installed under `/opt/duet`.
   The compile-vs-tarball decision never leaks past this module.
@@ -17,7 +18,8 @@ infinity`), `cpIn`, `exec`, `execStream → ExecTransport`, `stop` (always in
   `HOME` outside `/testbed`** (`HOME=/opt/duet/home`, config at
   `$HOME/.duet/models.json` — the loader's home fallback picks it up;
   `/testbed` stays pristine).
-- Invocation passes `--model swebench-glm-kimi` and omits `--memory-model`.
+- Invocation passes the config's explicit benchmark tier and omits
+  `--memory-model`.
   Only the executor and advisor are experiment-selected; memory retains the
   product default.
 - `patch.ts`: `assertCleanBaseline`, `extractPatch` (stage ephemeral index
@@ -30,7 +32,7 @@ infinity`), `cpIn`, `exec`, `execStream → ExecTransport`, `stop` (always in
 
 - Unit (FakeCmd, no docker): exact docker argv construction, timeout kill,
   teardown-on-error.
-- **Smoke matrix (box, one manifest instance per language, 9 total):** duet
+- **Smoke matrix (Mac, one manifest instance per language, 9 total):** duet
   boots over `docker exec -i` RPC, completes a trivial turn that writes a
   sentinel into `/testbed`, gateway egress works (real completion), sentinel
   visible in the diff, config never appears in it, container reaped. On the

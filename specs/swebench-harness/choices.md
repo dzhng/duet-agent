@@ -12,6 +12,23 @@ and fail-closed advisor accounting choices were resolved by the user below.
 
 ## Resolved by user — routing follow-up
 
+### N6 — The campaign runs locally as four arms under one $500 envelope
+
+- **When:** benchmark implementation resumed on 2026-07-20 after the user
+  replaced the rented-box plan with “just run the bench on this Mac.”
+- **The choice:** One committed 30-instance manifest feeds four explicit arms:
+  GLM pure, GLM with Kimi advisor, Kimi pure, and Kimi with Fable advisor. The
+  report treats these as two paired experiments, not one four-way causal
+  comparison. “Pure” disables only the advisor; product-default memory and
+  other unchanged policies remain. All prerequisite smoke, pilots, and 120
+  campaign rollouts share a $500 model-spend envelope.
+- **The reach:** The local harness uses official x86_64 scorer images through
+  Docker Desktop emulation, starts at concurrency one, and schedules all four
+  arms in an instance block. Capacity is proven empirically; resource pressure
+  cannot silently shrink the manifest, change the scorer, or drop a comparison.
+- **Verdict:** **resolved by user.** This is the explicit requested deliverable.
+- **Confidence:** **high**.
+
 ### N4 — The mixed-model live eval uses best-of-two acceptance
 
 - **When:** routing-continuity follow-up, while strengthening and rerunning
@@ -163,6 +180,75 @@ ownerScopeId }`, even though both execute through the same task manager.
 - **Confidence:** **high**.
 
 ## Sound
+
+### S7 — Official x86 images remain the scoring authority on Apple Silicon
+
+- **When:** Mac-local campaign reconciliation on 2026-07-20.
+- **The choice:** The Mac has an ARM processor, but the official benchmark
+  publishes x86_64 instance images and the official harness still selects
+  those images. Docker Desktop has proved it can emulate x86_64 here, so the
+  campaign keeps the official image and accepts slower execution. The unbuilt
+  alternative is to create native ARM images or patch the scorer's architecture
+  selection, which would produce a different environment from the benchmark.
+- **The gap:** The original plan avoided architecture questions by requiring a
+  rented x86_64 box; the user later required this Mac instead.
+- **The reach:** Every gold check, rollout container, and scored prediction uses
+  the same official x86 environment. If emulation fails, the capacity gate
+  stops; it does not quietly switch the benchmark definition.
+- **Verdict:** **sound.** Comparability is more important than local speed.
+- **Confidence:** **high**.
+
+### S8 — Local scheduling starts with one worker and cleans only its own images
+
+- **When:** Mac-local campaign reconciliation on 2026-07-20.
+- **The choice:** Docker has about 8.3 GB RAM and the host has about 37 GiB free,
+  both below official recommendations. The harness therefore runs one work unit
+  at a time and may delete only images and containers it created after an
+  instance's four arms are safely scored. The unbuilt alternative launches
+  several instances concurrently or broadly prunes Docker, risking out-of-memory
+  failures or deleting unrelated user data.
+- **The gap:** The user selected the machine but did not prescribe resource
+  scheduling or authorize deleting its existing Docker objects.
+- **The reach:** The campaign takes longer but preserves pairing and user-owned
+  Docker state. A later measured capacity gate may raise concurrency explicitly.
+- **Verdict:** **sound.** It is the direct local guarantee that respects both the
+  fixed experiment and destructive-action boundaries.
+- **Confidence:** **high**.
+
+### S9 — An unexpected `ask` terminal ends an unattended rollout
+
+- **When:** Mac-local campaign reconciliation on 2026-07-20.
+- **The choice:** RPC closes after its first terminal result. If an agent asks the
+  user a question, continuing would require starting a second RPC process with
+  the returned state and manufacturing an answer. The harness instead uses one
+  frozen prompt that says to proceed unattended and counts any remaining `ask`
+  as an unresolved agent outcome. The unbuilt alternative silently answers the
+  question on the user's behalf and gives that rollout extra turns.
+- **The gap:** The old slice assumed two questions could be auto-answered in one
+  process, but the actual RPC lifecycle does not support that assumption.
+- **The reach:** All four arms get the same single-turn interaction contract and
+  the harness does not invent task-specific user input.
+- **Verdict:** **sound.** Treating an inability to proceed autonomously as an
+  outcome is fairer than hidden continuation policy.
+- **Confidence:** **medium**.
+
+### S10 — The $500 breaker reserves one rollout before launching it
+
+- **When:** Mac-local campaign reconciliation on 2026-07-20.
+- **The choice:** Streaming usage can stop a running rollout at its own cap, but
+  a provider call can spend between two events. Before launching another
+  rollout, the campaign therefore requires remaining budget to cover that
+  rollout's full configured cap. The unbuilt alternative starts whenever the
+  current total is under $500 and can knowingly place the next whole cap beyond
+  the envelope.
+- **The gap:** The user supplied a total budget, not the launch-time reservation
+  rule needed to enforce it locally.
+- **The reach:** Some budget may remain unused, but the orchestrator never starts
+  work it already knows cannot fit. A provider-side key cap remains the harder
+  outer protection when available.
+- **Verdict:** **sound.** This is the conservative enforceable interpretation of
+  a fixed total budget.
+- **Confidence:** **high**.
 
 ### S1 — Campaign overrides only executor and advisor targets
 

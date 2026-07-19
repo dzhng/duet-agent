@@ -12,8 +12,8 @@ campaign money.
 - `rollout.ts`: `runRollout(deps, spec) → artifact dir`: container up →
   install duet + arm's models.json (slice 05 recipe) → `runDuetTurn` →
   extract patch (`patch.ts`) → write artifacts → teardown in `finally`.
-  Auto-answer up to 2 `ask` terminals with a "proceed unattended" follow-up,
-  then interrupt.
+  An unexpected `ask` terminal is an unresolved agent outcome; the frozen
+  prompt tells the agent to proceed unattended instead of asking questions.
 - `artifacts.ts`: layout
   `benchmarks/swebench/runs/<campaign>/<config>/<instanceId>-t<trial>/
 {spec.json, events.ndjson, patch.diff, telemetry.json, status.json}`.
@@ -21,13 +21,14 @@ campaign money.
   into place; attempt dirs immutable.
 - `orchestrator.ts`: `CampaignSpec` (committed file: manifest path, virtual
   tier, config ids, trials, concurrency, limits) →
-  pending = manifest × configs × trials
-  minus completed-with-matching-specHash; bounded concurrency (default 3);
-  `--retry-failed`; stale `running` treated as crashed; **seeded interleaved
-  ON/OFF schedule per instance** to neutralize provider drift. Stateless —
-  kill anytime, rerun the same command.
+  pending = manifest × four configs × trials
+  minus completed-with-matching-specHash; bounded concurrency (default 1 on
+  this Mac); `--retry-failed`; stale `running` treated as crashed; **seeded arm
+  order inside each instance block** to neutralize provider drift. Once an
+  instance's four arms are scored, cleanup may remove only benchmark-owned
+  instance images. Stateless — kill anytime, rerun the same command.
 - `predictions.ts`: artifact tree → predictions JSONL
-  (`model_name_or_path` = config id, e.g. `duet-glm-kimi-advisor-on`).
+  (`model_name_or_path` = config id, e.g. `duet-glm-kimi-advisor`).
 
 ## Verification
 
@@ -36,12 +37,12 @@ campaign money.
   failure (container still stopped); idempotent re-run plans zero work;
   crash-on-instance-3 simulation resumes exactly the remainder; specHash
   mismatch refuses to mix; concurrency respected.
-- Live (box, ≤$5): 2 manifest instances (different languages) under
-  advisor-ON — artifacts complete; `telemetry.json` cost equals terminal
+- Live (Mac, ≤$10): 2 manifest instances (different languages) across all four
+  arms — artifacts complete; `telemetry.json` cost equals terminal
   `usageByModel` sum; advisor cadence plausible against `minStepsBetween`;
-  kill mid-campaign → resume skips the finished one; the 2 predictions score
-  cleanly through the official harness (slice 04's proven invocation). One
-  advisor-OFF rollout shows zero advisor tool calls in `events.ndjson`.
+  kill mid-campaign → resume skips finished work; all 8 predictions score
+  cleanly through the official harness (slice 04's proven invocation). Both
+  advisor-OFF configs show zero advisor tool calls in `events.ndjson`.
   Measured cost/duration feeds slice 07's limit recalibration.
   The emitted turn state records the product-default memory model actually
   resolved for provenance.
@@ -49,5 +50,5 @@ campaign money.
 ## Playable checkpoint
 
 `bun benchmarks/swebench/cli.ts rollout run --instance <id> --config
-glm-kimi-advisor-on`, watchable live over SSH; `campaign status` prints the
+glm-kimi-advisor`, watchable locally; `campaign status` prints the
 instance × config grid with cost so far.
