@@ -41,6 +41,8 @@ export interface InstanceManifest {
   datasetRevision: string;
   seed: number;
   algorithmVersion: typeof MANIFEST_ALGORITHM_VERSION;
+  /** Gold patches that cannot be scored faithfully on this campaign's Mac runtime. */
+  excludedInstanceIds: string[];
   entries: ManifestEntry[];
 }
 
@@ -50,9 +52,21 @@ export interface SelectManifestOptions {
   seed: number;
   /** Total instances; allocation across the nine language buckets differs by at most one. */
   size: number;
+  /** Infrastructure-incompatible tasks removed after shuffling so other buckets stay stable. */
+  excludedInstanceIds?: readonly string[];
 }
 
-export const MANIFEST_ALGORITHM_VERSION = "language-stratified-v1";
+export const MANIFEST_ALGORITHM_VERSION = "language-stratified-v2";
+
+/**
+ * Tasks whose official gold patch cannot complete under this campaign's pinned
+ * Apple-Silicon Docker environment. Exclusions are based only on gold scoring,
+ * before any measured model sees the task.
+ */
+export const CAMPAIGN_GOLD_EXCLUSIONS: Readonly<Record<string, string>> = {
+  "fmtlib__fmt-2310":
+    "The official pass-to-pass test aborts in Rosetta while reserving an invalid 0x8000000000001000-byte mapping.",
+};
 
 /*
  * Pinned from SWE-bench harness revision f7bbbb2 (`constants/*.py`) and the
@@ -152,6 +166,16 @@ export function selectManifest(
     throw new Error(`Manifest size ${options.size} exceeds ${snapshot.rows.length} dataset rows.`);
   }
 
+  const excludedInstanceIds = [...new Set(options.excludedInstanceIds ?? [])].sort();
+  if (excludedInstanceIds.length !== (options.excludedInstanceIds?.length ?? 0)) {
+    throw new Error("Manifest exclusions must not contain duplicate instance ids.");
+  }
+  for (const instanceId of excludedInstanceIds) {
+    if (!ids.has(instanceId))
+      throw new Error(`Excluded instance id is not in the dataset: ${instanceId}.`);
+  }
+  const excluded = new Set(excludedInstanceIds);
+
   const random = makePrng(options.seed);
   const extraLanguages = new Set(
     shuffle(LANGUAGES, random).slice(0, options.size % LANGUAGES.length),
@@ -162,20 +186,19 @@ export function selectManifest(
   for (const language of LANGUAGES) {
     const count = baseCount + (extraLanguages.has(language) ? 1 : 0);
     const bucket = buckets.get(language)!;
-    if (bucket.length < count) {
+    const candidates = shuffle(bucket, random).filter((row) => !excluded.has(row.instanceId));
+    if (candidates.length < count) {
       throw new Error(
-        `Language ${language} has only ${bucket.length} rows; ${count} are required.`,
+        `Language ${language} has only ${candidates.length} compatible rows; ${count} are required.`,
       );
     }
     selected.push(
-      ...shuffle(bucket, random)
-        .slice(0, count)
-        .map((row) => ({
-          instanceId: row.instanceId,
-          language,
-          repo: row.repo,
-          baseCommit: row.baseCommit,
-        })),
+      ...candidates.slice(0, count).map((row) => ({
+        instanceId: row.instanceId,
+        language,
+        repo: row.repo,
+        baseCommit: row.baseCommit,
+      })),
     );
   }
 
@@ -184,6 +207,7 @@ export function selectManifest(
     datasetRevision: snapshot.datasetRevision,
     seed: options.seed,
     algorithmVersion: MANIFEST_ALGORITHM_VERSION,
+    excludedInstanceIds,
     entries: selected,
   };
 }

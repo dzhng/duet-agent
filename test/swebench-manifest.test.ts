@@ -8,6 +8,7 @@ import {
   serializeModelsJson,
 } from "../benchmarks/swebench/src/config-override.js";
 import {
+  CAMPAIGN_GOLD_EXCLUSIONS,
   LANGUAGES,
   REPO_LANGUAGE,
   selectManifest,
@@ -56,6 +57,7 @@ describe("SWE-bench manifest", () => {
 
     expect(serializeManifest(first)).toBe(serializeManifest(second));
     expect(first.datasetRevision).toBe("fixture-revision");
+    expect(first.excludedInstanceIds).toEqual([]);
     expect(first.entries).toHaveLength(30);
     const counts = LANGUAGES.map(
       (language) => first.entries.filter((entry) => entry.language === language).length,
@@ -63,6 +65,28 @@ describe("SWE-bench manifest", () => {
     expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(1);
     expect(counts.every((count) => count > 0)).toBe(true);
     expect(first.entries.every((entry) => REPO_LANGUAGE[entry.repo] === entry.language)).toBe(true);
+  });
+
+  test("replaces an incompatible task without perturbing other language buckets", () => {
+    const snapshot = fixtureSnapshot();
+    const original = selectManifest(snapshot, { seed: 12345, size: 30 });
+    const excludedEntry = original.entries.find((entry) => entry.language === "C++")!;
+    const replacement = selectManifest(snapshot, {
+      seed: 12345,
+      size: 30,
+      excludedInstanceIds: [excludedEntry.instanceId],
+    });
+
+    expect(replacement.excludedInstanceIds).toEqual([excludedEntry.instanceId]);
+    expect(replacement.entries.map((entry) => entry.instanceId)).not.toContain(
+      excludedEntry.instanceId,
+    );
+    expect(replacement.entries).toHaveLength(30);
+    for (const language of LANGUAGES.filter((candidate) => candidate !== "C++")) {
+      expect(replacement.entries.filter((entry) => entry.language === language)).toEqual(
+        original.entries.filter((entry) => entry.language === language),
+      );
+    }
   });
 
   test("rejects unclassified repositories instead of guessing", () => {
@@ -92,7 +116,8 @@ describe("SWE-bench manifest", () => {
 
     expect(manifest.datasetRevision).toBe("2b7aced941b4873e9cad3e76abbae93f481d1beb");
     expect(manifest.seed).toBe(20_260_720);
-    expect(manifest.algorithmVersion).toBe("language-stratified-v1");
+    expect(manifest.algorithmVersion).toBe("language-stratified-v2");
+    expect(manifest.excludedInstanceIds).toEqual(Object.keys(CAMPAIGN_GOLD_EXCLUSIONS).sort());
     expect(manifest.entries.map((entry) => entry.instanceId)).toEqual(
       manifest.entries.map((entry) => entry.instanceId).sort(),
     );
@@ -117,6 +142,9 @@ describe("SWE-bench manifest", () => {
     expect(manifest.entries.every((entry) => REPO_LANGUAGE[entry.repo] === entry.language)).toBe(
       true,
     );
+    expect(
+      manifest.entries.filter((entry) => entry.language === "C++").map((entry) => entry.instanceId),
+    ).toEqual(["fmtlib__fmt-1683", "fmtlib__fmt-2457", "fmtlib__fmt-3729"]);
   });
 });
 

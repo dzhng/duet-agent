@@ -98,7 +98,8 @@ function fixture(): { campaign: CampaignSpec; runtime: CampaignRuntime } {
     manifest: {
       datasetRevision: "revision",
       seed: 1,
-      algorithmVersion: "language-stratified-v1",
+      algorithmVersion: "language-stratified-v2",
+      excludedInstanceIds: [],
       entries,
     },
     datasetRows: entries.map((entry) => ({

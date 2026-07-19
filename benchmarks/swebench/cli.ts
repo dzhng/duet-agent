@@ -12,6 +12,7 @@ import {
 import { runDuetTurn, spawnLocalDuetRpc } from "./src/duet-client.js";
 import { PINNED_DATASET_REVISION, fetchDataset, writeDatasetCache } from "./src/fetch-dataset.js";
 import {
+  CAMPAIGN_GOLD_EXCLUSIONS,
   LANGUAGES,
   selectManifest,
   serializeManifest,
@@ -40,7 +41,11 @@ const MANIFEST_SEED = 20_260_720;
 
 async function writeManifest(): Promise<void> {
   const snapshot = await fetchDataset({ expectedRevision: PINNED_DATASET_REVISION });
-  const manifest = selectManifest(snapshot, { seed: MANIFEST_SEED, size: 30 });
+  const manifest = selectManifest(snapshot, {
+    seed: MANIFEST_SEED,
+    size: 30,
+    excludedInstanceIds: Object.keys(CAMPAIGN_GOLD_EXCLUSIONS),
+  });
   await writeDatasetCache(CACHE_PATH, snapshot);
   await mkdir(dirname(MANIFEST_PATH), { recursive: true });
   await writeFile(MANIFEST_PATH, serializeManifest(manifest));
@@ -52,6 +57,7 @@ async function showManifest(): Promise<void> {
   console.log(`revision  ${manifest.datasetRevision}`);
   console.log(`seed      ${manifest.seed}`);
   console.log(`algorithm ${manifest.algorithmVersion}`);
+  console.log(`excluded  ${manifest.excludedInstanceIds.join(", ") || "none"}`);
   console.log("language    count  instances");
   for (const language of LANGUAGES) {
     const entries = manifest.entries.filter((entry) => entry.language === language);

@@ -1,10 +1,11 @@
 # 04 — Mac environment, x86 gold gate, mini-swe-agent replication spike
 
-**Status (2026-07-20): partially complete.** The idempotent provisioner,
-environment lock, official image-key/pre-pull helper, sequential gold runner,
-and one-instance capacity gate are complete. The capacity instance resolved
-1/1 in 167 seconds with 2.41 GB peak container memory. The 30/30 manifest gate
-and mini-swe-agent replication spike remain pending; this slice is not done.
+**Status (2026-07-20): gold gate complete; replication pending.** The
+idempotent provisioner, environment lock, official image-key/pre-pull helper,
+sequential gold runner, one-instance capacity gate, and corrected 30/30
+manifest gate are complete. The capacity instance resolved 1/1 in 167 seconds
+with 2.41 GB peak container memory. The mini-swe-agent replication spike
+remains pending; this slice is not done.
 
 Mac-local track; needs slice 02's manifest. No duet code. This slice kills the
 plan cheaply if official x86 images cannot run under Docker emulation or the
@@ -39,11 +40,15 @@ local resource ceiling is untenable.
 The capacity instance and gold manifest resolve officially; the spike scores
 end-to-end; lock file and fixtures are committed. Cost: <$5 model spend.
 
-Current evidence: `apache__druid-13704` resolves with the pinned official
-amd64 image under Docker Desktop emulation. See
-`benchmarks/swebench/fixtures/capacity-gold-report.json` and
-`capacity-metrics.json`. This is capacity evidence only, not a substitute for
-the remaining 30/30 and replication gates.
+Current evidence: all 30 committed manifest entries resolve with the pinned
+official amd64 images under Docker Desktop emulation. The initial seeded list
+was 29/30: `fmtlib__fmt-2310` aborted inside its official pass-to-pass test when
+Rosetta attempted an invalid `0x8000000000001000`-byte mapping. Before any
+model rollout, selector v2 recorded that infrastructure exclusion and replaced
+it with the next seeded C++ task, `fmtlib__fmt-2457`, which resolved. See
+`benchmarks/swebench/fixtures/gold-30-summary.tsv`,
+`benchmarks/swebench/fixtures/capacity-gold-report.json`, and
+`capacity-metrics.json`. The replication gate remains separate.
 
 ## Playable checkpoint
 

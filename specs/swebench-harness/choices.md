@@ -773,6 +773,57 @@ ownerScopeId }`, even though both execute through the same task manager.
   the client should not override that authority based on command timing.
 - **Confidence:** **high**.
 
+### S18 — Gold-incompatible tasks are replaced inside their seeded language bucket
+
+- **When:** slice 04's 30-instance Mac gold gate, after the official
+  `fmtlib__fmt-2310` pass-to-pass test aborted under Rosetta.
+- **The choice:** The manifest now records the incompatible task, removes it
+  only after the C++ bucket has been shuffled with the original seed, and takes
+  the next C++ task from that same order. Imagine drawing three numbered C++
+  cards after separately shuffling all nine language piles: if one chosen card
+  cannot physically run on this Mac, today we discard that card and draw the
+  next card from the already-shuffled C++ pile. Every card in the other eight
+  piles stays exactly where it was. The unbuilt alternative changes the seed
+  and reshuffles all 30 tasks, throwing away 29 already-proven selections
+  because one runtime was incompatible.
+- **The gap:** The plan allowed pre-measurement re-selection after a gold
+  failure, but its earlier wording suggested a new seed and did not say whether
+  unaffected language buckets should move.
+- **The reach:** Future campaign results remain paired over the intended nine-
+  language sample, and adding another infrastructure exclusion cannot
+  accidentally cherry-pick tasks based on model performance. The manifest
+  itself exposes the exclusion instead of hiding it in a handwritten edit.
+- **Verdict:** **sound.** It preserves the original randomization as much as
+  possible while replacing only a task the official gold scorer cannot execute
+  faithfully on the campaign machine.
+- **Confidence:** **high** because the exclusion was decided and validated
+  before any measured arm ran, and a test proves every unaffected bucket is
+  byte-for-byte unchanged.
+
+### S19 — The committed gold evidence is one complete resource table, not 30 raw scorer trees
+
+- **When:** slice 04's corrected 30/30 gold gate.
+- **The choice:** The repo keeps one row per task with the official resolved
+  status, elapsed time, peak instance-container memory, and peak transient disk
+  use. The full scorer directories stay in the ignored local cache. Concretely,
+  a reviewer can verify that all 30 rows resolved and see the worst resource
+  case without checking in duplicated logs, test output, and image metadata for
+  every task. The unbuilt alternative commits all 30 raw scorer trees, making
+  the repository much larger while preserving mostly temporary execution
+  detail.
+- **The gap:** The spec required captured gold evidence but did not define how
+  much of the raw official output should be durable after the narrow real JSON
+  parser fixture already existed.
+- **The reach:** Future Mac-capacity decisions have a compact measured baseline,
+  while parser compatibility remains owned by the existing sanitized official
+  JSON fixture. A deeper failure investigation can still use the local cache
+  named by the fixture documentation.
+- **Verdict:** **sound.** The committed table proves the gate and its resource
+  ceiling without turning transient harness output into source code.
+- **Confidence:** **high** because the durable columns are exactly the gate's
+  acceptance and capacity signals; raw logs are not needed to reproduce the
+  official command.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

@@ -14,8 +14,10 @@ routing artifacts every later slice consumes.
   deterministic seeded PRNG over sorted instance ids, language-stratified
   (bucket counts differ by at most one across the 9 languages). Committed
   output: `benchmarks/swebench/manifests/multilingual-30.json` with
-  `{datasetRevision, seed, algorithmVersion, entries: [{instanceId, language,
-repo, baseCommit}]}`. The pinned Python harness remains the authority for
+  `{datasetRevision, seed, algorithmVersion, excludedInstanceIds, entries:
+[{instanceId, language, repo, baseCommit}]}`. An infrastructure-only gold
+  incompatibility is filtered after its bucket is shuffled, so replacement
+  does not perturb other language buckets. The pinned Python harness remains the authority for
   official image keys; TypeScript does not duplicate its naming rules.
 - `config-override.ts`: `renderModelsJson({executorModel, advisorModel,
 advisorEnabled}) → RoutingTable` — derives a complete table from
@@ -53,8 +55,11 @@ one-line diff inside each comparison pair.
 ## Completion evidence (2026-07-20)
 
 - Dataset revision `2b7aced941b4873e9cad3e76abbae93f481d1beb`, seed
-  `20260720`, and algorithm `language-stratified-v1` produced the committed
-  30-instance manifest with 3–4 entries in every language.
+  `20260720`, and algorithm `language-stratified-v2` produced the committed
+  30-instance manifest with 3–4 entries in every language. The selector records
+  and replaces `fmtlib__fmt-2310` because its official gold pass-to-pass test
+  aborts under Rosetta before any model rollout; every other bucket remains
+  byte-for-byte unchanged.
 - All four committed routing files match their pure renderer. Each pair's
   structural diff is only `tiers.swebench.advisor.enabled`.
 - `bun run check-types`, `bun run lint`, the focused six-test file, and both
@@ -64,5 +69,5 @@ one-line diff inside each comparison pair.
 ## What would change this slice
 
 Gold-gate failures in slice 04 may force substituting instances — legal only
-before any measurement runs, via a new seed and re-commit, never by hand-
-editing entries.
+before any measurement runs, through the versioned seeded selector and a
+re-commit, never by hand-editing entries or observing model outcomes.

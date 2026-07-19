@@ -1,7 +1,8 @@
 {
   "datasetRevision": "2b7aced941b4873e9cad3e76abbae93f481d1beb",
   "seed": 20260720,
-  "algorithmVersion": "language-stratified-v1",
+  "algorithmVersion": "language-stratified-v2",
+  "excludedInstanceIds": ["fmtlib__fmt-2310"],
   "entries": [
     {
       "instanceId": "apache__druid-16875",
@@ -58,10 +59,10 @@
       "baseCommit": "981b517ccf2d91bf3bf52c518ac43710b57b5e17"
     },
     {
-      "instanceId": "fmtlib__fmt-2310",
+      "instanceId": "fmtlib__fmt-2457",
       "language": "C++",
       "repo": "fmtlib/fmt",
-      "baseCommit": "7612f18dc8e0112e64e0845a1ebe9da6cfb8a123"
+      "baseCommit": "4b8bda25c05d9f959ffed9a0580f0ded623177e5"
     },
     {
       "instanceId": "fmtlib__fmt-3729",

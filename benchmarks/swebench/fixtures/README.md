@@ -15,3 +15,9 @@ the fixture retains the accounting contract it exists to test.
 `kimi-advisor.ndjson` and `fable-advisor.ndjson` are hand-built protocol
 streams covering the generic `ask_advisor` detail shapes and router-switch
 histogram. They intentionally contain no provider transcript.
+
+`gold-30-summary.tsv` is the official sequential gold-gate result for the
+committed Multilingual manifest on the pinned Mac environment. All 30 patches
+resolve. The elapsed time, peak instance-container memory, and peak transient
+host-disk columns come from `mac/run_with_metrics.py`; the ignored raw scorer
+directories remain under `benchmarks/swebench/.cache/gold-30-20260720/`.
