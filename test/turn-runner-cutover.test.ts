@@ -84,6 +84,87 @@ class ReplacementProbeRunner extends TurnRunner {
 }
 
 describe("TurnRunner cutover seams", () => {
+  test("state completions drive one transition pass without generic settlement notices", async () => {
+    const { runner } = createTurnRunner();
+    const definition: StateMachineDefinition = {
+      name: "release_flow",
+      prompt: "Collect release data, write the note, then finish.",
+      states: [
+        {
+          kind: "script",
+          name: "collect_release_data",
+          command: `printf '{"version":"1.2.3"}'`,
+        },
+        {
+          kind: "agent",
+          name: "write_release_note",
+          prompt: "Write the release note.",
+        },
+        { kind: "terminal", name: "done", status: "completed" },
+      ],
+    };
+    const workerInputs: AgentWorkerInput[] = [];
+    runner.worker = async (input) => {
+      workerInputs.push(input);
+      if (input.prompt === "Write the release note.") {
+        return completedWorker(input, { type: "none" }, "Release note written.");
+      }
+
+      if (input.prompt.includes("Prepare the release.")) {
+        return completedWorker(input, {
+          type: "create_state_machine_definition",
+          definition,
+          firstState: "collect_release_data",
+        });
+      }
+      if (
+        input.prompt.includes("<state_completed>") &&
+        input.prompt.includes("collect_release_data")
+      ) {
+        return completedWorker(input, {
+          type: "select_state_machine_state",
+          decision: { state: "write_release_note" },
+        });
+      }
+      if (
+        input.prompt.includes("<state_completed>") &&
+        input.prompt.includes("write_release_note")
+      ) {
+        return completedWorker(input, {
+          type: "select_state_machine_state",
+          decision: { state: "done" },
+        });
+      }
+      return completedWorker(input, { type: "none" }, "Release flow complete.");
+    };
+
+    const terminal = await (await startTurn(runner, { prompt: "Prepare the release." })).turn;
+    const parentInputs = workerInputs.filter((input) => input.prompt !== "Write the release note.");
+    const transitionInputs = parentInputs.filter((input) =>
+      input.prompt.includes("state_completed"),
+    );
+    const settlementInputs = parentInputs.filter((input) =>
+      input.prompt.includes("settled while you were working"),
+    );
+
+    expect(transitionInputs.map((input) => input.prompt)).toEqual([
+      expect.stringContaining('The state "collect_release_data" finished.'),
+      expect.stringContaining('The state "write_release_note" finished.'),
+    ]);
+    expect(settlementInputs).toEqual([]);
+    expect(workerInputs).toHaveLength(5);
+    expect(
+      terminal.state.stateMachine?.history
+        .filter((entry) => entry.type === "state_completed")
+        .map((entry) => entry.state),
+    ).toEqual(["collect_release_data", "write_release_note"]);
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      state: { stateMachine: { currentState: "done", terminalAcknowledged: true } },
+    });
+  });
+
   test("holds a steered ask until active state work settles", async () => {
     const { runner, events } = createTurnRunner();
     let resolveState!: () => void;
