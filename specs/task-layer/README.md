@@ -15,15 +15,16 @@ Line refs there are vs 3adf0df; drift as of ddfc6f2 is small but re-verify befor
 
 ## Next Agent Prompt
 
-**Status:** Slices 08 and 09 are landed. Slice 10's park kind, taskless planner/loop path,
-parent-only ask surface, binding park nudge, loop exemption, and rewired test/eval family are
-implemented in the worktree. Typecheck, lint, focused tests, and the non-clipboard host suite are
-green; Docker and model credentials are unavailable here, so the three targeted live evals still
-need an authenticated Docker run before slice 10 is marked landed. Last updated 2026-07-19.
+**Status:** slices 01-10 merged. spawn_agent live (parallelism, cascade, scoped-memory
+evals green — the memory eval must probe through the runner's PGlite connection; one
+instance per data dir). Park + parent-only ask live (3/3 evals incl. promised-wait).
+Slices 11+12 next as parallel execs; then 13 (TUI), then the 14 matrix.
+Eval credentials: source repo-root `.env` (AI_GATEWAY_API_KEY) into the docker eval run;
+worktrees do not inherit `.env`. Last updated 2026-07-19.
 
 You are implementing this spec. Read this README fully, then `unknowns-map.md` Quadrant 2
 (binding decisions — do not relitigate) and the LM-\* cards for your slice. Work one slice at
-a time from `slices/`, in dependency order. **Pickup point: slice 09 (gating), then 11+12.**
+a time from `slices/`, in dependency order. **Pickup point: slices 11+12 (in flight), then 13, then 14.**
 
 Per pass: follow [implement-spec](../../.claude/skills/implement-spec/SKILL.md) discipline —
 implement, verify the slice's gate (red/green; live evals per
@@ -31,7 +32,7 @@ implement, verify the slice's gate (red/green; live evals per
 /code-review on the diff, commit, then update this section (status, pickup point, checklist)
 before ending your pass. Workflow: Opus subagents implement, main agent reviews.
 
-**Blockers/warnings:** slice 10 live-eval execution requires Docker plus `DUET_API_KEY`.
+**Blockers/warnings:** none.
 
 **Global TODO**
 
@@ -43,7 +44,7 @@ before ending your pass. Workflow: Opus subagents implement, main agent reviews.
 - [x] 06 StateMachineDecisions extraction — merged 63260d4
 - [x] 07 the cutover: one loop, controller deleted — merged (post-review fixes included)
 - [x] 08 async surface — merged 82f31e4; 7/7 live evals green
-- [ ] 09 spawn_agent (implemented; docker gates in progress)
+- [x] 09 spawn_agent — merged; live evals green
 - [x] 10 park + parent-only ask — merged; 3/3 live evals green incl. promised-wait
 - [ ] 11 observer/router/compaction hygiene
 - [ ] 12 session/RPC durability
