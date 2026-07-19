@@ -52,10 +52,11 @@ OPTIONS
   --no-system-prompt-files Disable default AGENTS.md system prompt loading
   --env-file <path>        Shared env file to load after <workdir>/.env (default: ${DEFAULT_DUET_ENV_FILE})
   --no-auto-upgrade         Skip the auto-upgrade probe for this run (also: DUET_NO_AUTO_UPGRADE=1)
-  --rpc                     Bare turn-runner control surface. Reads newline-delimited TurnRunnerCommand
-                            JSON from stdin and writes TurnEvent JSON to stdout. The first command must
-                            be "start"; the process exits after the single turn reaches its terminal
-                            event. Bypasses session persistence entirely.
+  --rpc                     Bare turn-runner control surface. Reads newline-delimited RpcRunnerCommand
+                            JSON from stdin and writes RpcEvent JSON to stdout. Prompt, answer, and wake
+                            commands require requestId and emit command_accepted after runner delivery.
+                            The first command must be "start"; the process exits after the single turn
+                            reaches its terminal event. Bypasses session persistence entirely.
   --session <id>            (--rpc only) Attribute memory written during the process to this caller-owned
                             session id. One RPC process is one logical session; omit to write with no id.
   -v, --version            Print the installed duet version and exit

@@ -12,9 +12,11 @@ import {
   type RuntimeClock,
 } from "../turn-runner/runtime-clock.js";
 import type {
+  RpcCommandAcceptedEvent,
+  RpcEvent,
+  RpcRunnerCommand,
   TurnCompactCommand,
   TurnEditFollowUpQueueCommand,
-  TurnEvent,
   TurnInterruptCommand,
   TurnRunnerCommand,
   TurnState,
@@ -65,7 +67,7 @@ export class RpcEventWriter {
   }
 
   /** Accept a runner event synchronously while its serialized value is stable. */
-  emit(event: TurnEvent): void {
+  emit(event: RpcEvent): void {
     this.losslessLines.push(serializeRpcEvent(event));
 
     if (event.type === "task_started" && event.task.status === "running") {
@@ -151,11 +153,11 @@ export class RpcEventWriter {
   }
 }
 
-function serializeRpcEvent(event: TurnEvent): string {
+function serializeRpcEvent(event: RpcEvent): string {
   return `${JSON.stringify(event)}\n`;
 }
 
-function isRpcTerminalEvent(event: TurnEvent): event is TurnTerminalEvent {
+function isRpcTerminalEvent(event: RpcEvent): event is TurnTerminalEvent {
   return (
     event.type === "complete" ||
     event.type === "ask" ||
@@ -178,6 +180,7 @@ export interface RpcRunner {
   start(command: Extract<TurnRunnerCommand, { type: "start" }>): Promise<unknown>;
   turn(
     command: Extract<TurnRunnerCommand, { type: "prompt" | "answer" | "wake" }>,
+    onAccepted?: () => void,
   ): Promise<TurnTerminalEvent>;
   interrupt(command: TurnInterruptCommand): void;
   editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void;
@@ -187,9 +190,11 @@ export interface RpcRunner {
 /**
  * `duet --rpc` — bare turn-runner control surface.
  *
- * Reads newline-delimited JSON {@link TurnRunnerCommand} values from stdin and
- * writes newline-delimited {@link import("../types/protocol.js").TurnEvent}
- * values to stdout. The first command must be `start`; the runner emits
+ * Reads newline-delimited JSON {@link RpcRunnerCommand} values from stdin and
+ * writes newline-delimited {@link RpcEvent} values to stdout. Prompt, answer,
+ * and wake commands carry a caller-owned `requestId`; the RPC transport emits
+ * `command_accepted` after the command enters the runner. The first command
+ * must be `start`; the runner emits
  * `turn_started` and then waits for a turn-driving command (`prompt`,
  * `answer`, or `wake`). Additional turn-driving commands sent before the
  * terminal event are forwarded into the runner, which queues them onto the
@@ -246,7 +251,7 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
 
   const runner = new TurnRunner(config);
   const eventWriter = new RpcEventWriter(process.stdout);
-  const writeEvent = (event: TurnEvent): void => eventWriter.emit(event);
+  const writeEvent = (event: RpcEvent): void => eventWriter.emit(event);
   runner.subscribe(writeEvent);
 
   // Without these handlers, an unhandled rejection or uncaught exception
@@ -440,7 +445,7 @@ export interface DriveRpcLoopOptions {
    * about soft errors stay terse. The CLI wires this to stdout so hosts
    * see the same event stream they get from the runner.
    */
-  emit?: (event: TurnSystemEvent) => void;
+  emit?: (event: TurnSystemEvent | RpcCommandAcceptedEvent) => void;
 }
 
 /**
@@ -459,7 +464,7 @@ export interface DriveRpcLoopOptions {
  */
 export async function driveRpcLoop(
   runner: RpcRunner,
-  commands: AsyncIterable<TurnRunnerCommand>,
+  commands: AsyncIterable<RpcRunnerCommand>,
   options: DriveRpcLoopOptions = {},
 ): Promise<void> {
   const emit = options.emit ?? (() => {});
@@ -467,11 +472,11 @@ export async function driveRpcLoop(
     emit({ type: "system", level: "error", message });
   };
   const iterator = commands[Symbol.asyncIterator]();
-  const CHAIN_SETTLED: IteratorResult<TurnRunnerCommand> = { done: true, value: undefined };
+  const CHAIN_SETTLED: IteratorResult<RpcRunnerCommand> = { done: true, value: undefined };
 
   let started = false;
   let chain: Promise<TurnTerminalEvent> | undefined;
-  let chainSettled: Promise<IteratorResult<TurnRunnerCommand>> | undefined;
+  let chainSettled: Promise<IteratorResult<RpcRunnerCommand>> | undefined;
   let chainDone = false;
 
   while (true) {
@@ -528,10 +533,13 @@ export async function driveRpcLoop(
         // join it via the runner's own queueing. turn() returns the same
         // activeTurnPromise for the whole chain, so we only track the
         // first promise and let the runner serialize everything else.
-        const promise = runner.turn(command);
+        const { requestId, ...runnerCommand } = command;
+        const promise = runner.turn(runnerCommand, () => {
+          emit({ type: "command_accepted", requestId, commandType: command.type });
+        });
         if (!chain) {
           chain = promise;
-          const onSettle = (): IteratorResult<TurnRunnerCommand> => {
+          const onSettle = (): IteratorResult<RpcRunnerCommand> => {
             chainDone = true;
             return CHAIN_SETTLED;
           };
@@ -559,7 +567,7 @@ export async function driveRpcLoop(
 }
 
 /**
- * Async iterator over newline-delimited {@link TurnRunnerCommand} values
+ * Async iterator over newline-delimited {@link RpcRunnerCommand} values
  * read from stdin. Blank lines are skipped. Malformed JSON or commands
  * without a `type` field are surfaced through {@link emit} as a soft
  * {@link TurnSystemEvent} and skipped; the iterator never aborts the
@@ -567,7 +575,7 @@ export async function driveRpcLoop(
  */
 async function* readStdinCommands(
   emit: (event: TurnSystemEvent) => void,
-): AsyncGenerator<TurnRunnerCommand> {
+): AsyncGenerator<RpcRunnerCommand> {
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   try {
     for await (const rawLine of rl) {
@@ -589,7 +597,7 @@ async function* readStdinCommands(
  * boundary or terminates the process.
  */
 export type ParseRpcCommandLineResult =
-  | { kind: "command"; command: TurnRunnerCommand }
+  | { kind: "command"; command: RpcRunnerCommand }
   | { kind: "error"; message: string }
   | { kind: "skip" };
 
@@ -621,5 +629,16 @@ export function parseRpcCommandLine(rawLine: string): ParseRpcCommandLineResult 
       message: `RPC command must be an object with a string "type"; received: ${line}`,
     };
   }
-  return { kind: "command", command: parsed as TurnRunnerCommand };
+  const commandType = (parsed as { type: string }).type;
+  if (
+    (commandType === "prompt" || commandType === "answer" || commandType === "wake") &&
+    (typeof (parsed as { requestId?: unknown }).requestId !== "string" ||
+      (parsed as { requestId: string }).requestId.trim().length === 0)
+  ) {
+    return {
+      kind: "error",
+      message: `RPC command "${commandType}" requires a non-empty string "requestId".`,
+    };
+  }
+  return { kind: "command", command: parsed as RpcRunnerCommand };
 }

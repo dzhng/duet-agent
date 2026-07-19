@@ -17,6 +17,8 @@ import { appendObservation, loadStoredMemory } from "../src/memory/storage.js";
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 import type {
+  RpcCommandAcceptedEvent,
+  RpcRunnerCommand,
   TurnCompactCommand,
   TurnEditFollowUpQueueCommand,
   TurnInterruptCommand,
@@ -54,7 +56,7 @@ class BackpressuredWritable implements RpcWritable {
  * loop's phase transitions easy to assert: each yielded value is a single
  * stdin line the loop would have read.
  */
-function commandStream(commands: TurnRunnerCommand[]): AsyncIterable<TurnRunnerCommand> {
+function commandStream(commands: RpcRunnerCommand[]): AsyncIterable<RpcRunnerCommand> {
   return (async function* () {
     for (const command of commands) yield command;
   })();
@@ -66,6 +68,7 @@ interface RecordedRunner extends RpcRunner {
   interrupts: TurnInterruptCommand[];
   editQueues: TurnEditFollowUpQueueCommand[];
   compacts: TurnCompactCommand[];
+  acceptNextTurn: () => void;
   resolveTurn: (terminal: TurnTerminalEvent) => void;
 }
 
@@ -75,11 +78,16 @@ interface RecordedRunner extends RpcRunner {
  * unknown command types). Used in lieu of the older fatal-exit assertions.
  */
 function buildEventSink(): {
-  emit: (event: TurnSystemEvent) => void;
+  emit: (event: TurnSystemEvent | RpcCommandAcceptedEvent) => void;
   events: TurnSystemEvent[];
 } {
   const events: TurnSystemEvent[] = [];
-  return { events, emit: (event) => events.push(event) };
+  return {
+    events,
+    emit: (event) => {
+      if (event.type === "system") events.push(event);
+    },
+  };
 }
 
 /**
@@ -90,6 +98,7 @@ function buildEventSink(): {
  */
 function buildRunner(): RecordedRunner {
   let resolveTurn!: (terminal: TurnTerminalEvent) => void;
+  const pendingAcceptances: Array<() => void> = [];
   const turnPromise = new Promise<TurnTerminalEvent>((resolve) => {
     resolveTurn = resolve;
   });
@@ -99,12 +108,16 @@ function buildRunner(): RecordedRunner {
     interrupts: [],
     editQueues: [],
     compacts: [],
+    acceptNextTurn() {
+      pendingAcceptances.shift()?.();
+    },
     resolveTurn,
     async start(command) {
       runner.starts.push(command);
     },
-    async turn(command) {
+    async turn(command, onAccepted) {
       runner.turns.push(command);
+      if (onAccepted) pendingAcceptances.push(onAccepted);
       return turnPromise;
     },
     interrupt(command) {
@@ -405,6 +418,19 @@ describe("parseRpcCommandLine", () => {
     const plainString = parseRpcCommandLine('"plain string"');
     expect(plainString.kind).toBe("error");
   });
+
+  test("rejects turn-driving commands without a non-empty requestId", () => {
+    for (const line of [
+      '{"type":"prompt","message":"hello","behavior":"steer"}',
+      '{"type":"answer","requestId":"","questions":[],"answers":{},"behavior":"steer"}',
+      '{"type":"wake","requestId":"   "}',
+    ]) {
+      const result = parseRpcCommandLine(line);
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") throw new Error("unreachable");
+      expect(result.message).toMatch(/requestId/);
+    }
+  });
 });
 
 describe("RpcEventWriter", () => {
@@ -426,6 +452,7 @@ describe("RpcEventWriter", () => {
       },
     });
     await clock.advanceBy(30_000);
+    writer.emit({ type: "command_accepted", requestId: "request-1", commandType: "prompt" });
     writer.emit({
       type: "task_settled",
       settlement: {
@@ -442,6 +469,7 @@ describe("RpcEventWriter", () => {
 
     expect(stream.lines.map((line) => JSON.parse(line).type)).toEqual([
       "task_started",
+      "command_accepted",
       "task_settled",
       "complete",
     ]);
@@ -557,7 +585,10 @@ describe("driveRpcLoop", () => {
     };
     const loop = driveRpcLoop(
       runner,
-      commandStream([{ type: "start" }, { type: "prompt", message: "hi", behavior: "follow_up" }]),
+      commandStream([
+        { type: "start" },
+        { type: "prompt", requestId: "request-1", message: "hi", behavior: "follow_up" },
+      ]),
     );
     // Settle on the next microtask so the loop pumps the start and turn
     // before we resolve the in-flight turn promise.
@@ -582,9 +613,9 @@ describe("driveRpcLoop", () => {
     const loop = driveRpcLoop(
       runner,
       commandStream([
-        { type: "prompt", message: "too early", behavior: "follow_up" },
+        { type: "prompt", requestId: "request-before", message: "too early", behavior: "follow_up" },
         { type: "start" },
-        { type: "prompt", message: "after start", behavior: "follow_up" },
+        { type: "prompt", requestId: "request-after", message: "after start", behavior: "follow_up" },
       ]),
       { emit: sink.emit },
     );
@@ -615,7 +646,7 @@ describe("driveRpcLoop", () => {
       runner,
       commandStream([
         { type: "start" },
-        { type: "prompt", message: "go", behavior: "follow_up" },
+        { type: "prompt", requestId: "request-1", message: "go", behavior: "follow_up" },
         editCommand,
         interruptCommand,
       ]),
@@ -641,7 +672,7 @@ describe("driveRpcLoop", () => {
       runner,
       commandStream([
         { type: "start" },
-        { type: "prompt", message: "go", behavior: "follow_up" },
+        { type: "prompt", requestId: "request-1", message: "go", behavior: "follow_up" },
         compactCommand,
       ]),
     );
@@ -668,7 +699,7 @@ describe("driveRpcLoop", () => {
       commandStream([
         { type: "start" },
         { type: "start" },
-        { type: "prompt", message: "hi", behavior: "follow_up" },
+        { type: "prompt", requestId: "request-1", message: "hi", behavior: "follow_up" },
       ]),
       { emit: sink.emit },
     );
@@ -693,8 +724,8 @@ describe("driveRpcLoop", () => {
       runner,
       commandStream([
         { type: "start" },
-        { type: "bogus" } as unknown as TurnRunnerCommand,
-        { type: "prompt", message: "hi", behavior: "follow_up" },
+        { type: "bogus" } as unknown as RpcRunnerCommand,
+        { type: "prompt", requestId: "request-1", message: "hi", behavior: "follow_up" },
       ]),
       { emit: sink.emit },
     );
@@ -717,18 +748,57 @@ describe("driveRpcLoop", () => {
       status: "completed",
       state: {} as never,
     };
-    const first = { type: "prompt" as const, message: "one", behavior: "follow_up" as const };
-    const second = { type: "prompt" as const, message: "two", behavior: "follow_up" as const };
-    const wake = { type: "wake" as const };
-    const third = { type: "prompt" as const, message: "three", behavior: "steer" as const };
-    const fourth = { type: "prompt" as const, message: "four", behavior: "follow_up" as const };
+    const first = { type: "prompt" as const, requestId: "request-1", message: "one", behavior: "follow_up" as const };
+    const second = { type: "prompt" as const, requestId: "request-2", message: "two", behavior: "follow_up" as const };
+    const wake = { type: "wake" as const, requestId: "request-3" };
+    const third = { type: "prompt" as const, requestId: "request-4", message: "three", behavior: "steer" as const };
+    const fourth = { type: "prompt" as const, requestId: "request-5", message: "four", behavior: "follow_up" as const };
     const loop = driveRpcLoop(
       runner,
       commandStream([{ type: "start" }, first, second, wake, third, fourth]),
     );
     // Let the loop drain stdin before the turn resolves.
     for (let i = 0; i < 6; i++) await new Promise((resolve) => setImmediate(resolve));
-    expect(runner.turns).toEqual([first, second, wake, third, fourth]);
+    expect(runner.turns).toEqual([
+      { type: "prompt", message: "one", behavior: "follow_up" },
+      { type: "prompt", message: "two", behavior: "follow_up" },
+      { type: "wake" },
+      { type: "prompt", message: "three", behavior: "steer" },
+      { type: "prompt", message: "four", behavior: "follow_up" },
+    ]);
+    runner.resolveTurn(terminal);
+    await loop;
+  });
+
+  test("acknowledges a correlated prompt only after the runner accepts it", async () => {
+    const runner = buildRunner();
+    const events: unknown[] = [];
+    const terminal: TurnTerminalEvent = {
+      type: "complete",
+      status: "completed",
+      state: {} as never,
+    };
+    const command = {
+      type: "prompt" as const,
+      requestId: "request-1",
+      message: "hello",
+      behavior: "steer" as const,
+    };
+
+    const loop = driveRpcLoop(runner, commandStream([{ type: "start" }, command]), {
+      emit: (event) => events.push(event),
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(runner.turns).toEqual([{ type: "prompt", message: "hello", behavior: "steer" }]);
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "command_accepted" }));
+    runner.acceptNextTurn();
+    expect(events).toContainEqual({
+      type: "command_accepted",
+      requestId: "request-1",
+      commandType: "prompt",
+    });
+
     runner.resolveTurn(terminal);
     await loop;
   });

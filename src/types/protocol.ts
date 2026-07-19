@@ -586,6 +586,17 @@ export type TurnRunnerCommand =
   | TurnEditFollowUpQueueCommand
   | TurnCompactCommand;
 
+/** RPC transport envelope for commands whose delivery must be correlated. */
+export type RpcTurnCommand = TurnCommand & { requestId: string };
+
+/** Commands accepted by the newline-delimited RPC transport. */
+export type RpcRunnerCommand =
+  | TurnStartCommand
+  | RpcTurnCommand
+  | TurnInterruptCommand
+  | TurnEditFollowUpQueueCommand
+  | TurnCompactCommand;
+
 /** A system-prompt file that was resolved on disk for the session. */
 export interface TurnAgentFile {
   /** Configured file name relative to the working directory, e.g. "AGENTS.md". */
@@ -894,3 +905,13 @@ export type TurnTerminalEvent =
   | TurnSleepEvent;
 
 export type TurnEvent = TurnStartedEvent | TurnDuringEvent | TurnTerminalEvent;
+
+/** RPC-only delivery receipt; runner subscribers never observe this event. */
+export interface RpcCommandAcceptedEvent {
+  type: "command_accepted";
+  requestId: string;
+  commandType: RpcTurnCommand["type"];
+}
+
+/** Complete newline-delimited output union for `duet --rpc`. */
+export type RpcEvent = TurnEvent | RpcCommandAcceptedEvent;

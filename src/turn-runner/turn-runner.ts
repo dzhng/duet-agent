@@ -764,7 +764,13 @@ export class TurnRunner {
     return hydratedState;
   }
 
-  async turn(command: TurnCommand): Promise<TurnTerminalEvent> {
+  /**
+   * Route a turn-driving command and resolve with the shared chain terminal.
+   * `onAccepted` fires only after the command has entered the active driver or
+   * the runner-owned queue; transports can acknowledge delivery at that
+   * boundary without leaking transport metadata into durable turn state.
+   */
+  async turn(command: TurnCommand, onAccepted?: () => void): Promise<TurnTerminalEvent> {
     this.requireStarted();
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
@@ -781,11 +787,13 @@ export class TurnRunner {
       // turn() is the concurrency boundary: repeated calls extend or queue
       // behind the active chain instead of creating a separate parent transcript.
       this.handleCommandDuringActiveTurn(command);
+      onAccepted?.();
       return this.activeTurnPromise;
     }
 
     const activeTurnPromise = this.runTurnLoop(command);
     this.activeTurnPromise = activeTurnPromise;
+    onAccepted?.();
     try {
       return await activeTurnPromise;
     } finally {
