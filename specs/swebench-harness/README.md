@@ -10,13 +10,13 @@ about _our_ harness.
 
 ## Next Agent Prompt
 
-**Status:** slice 01 code and deterministic verification complete; required live
-advisor-usage smoke pending. The plan is reconciled for a Mac-local four-arm
-campaign; slices 02–08 are not started. Last updated 2026-07-20.
+**Status:** slice 01 complete, including the paid GLM/Kimi auxiliary-usage
+smoke. The plan is reconciled for a Mac-local four-arm campaign; slices 02–08
+are not started. Last updated 2026-07-20.
 
-You are implementing this spec. Read this README fully, finish the required
-live smoke in [slice 01](slices/01-rpc-config-and-telemetry.md), then start
-[slice 02](slices/02-manifest-and-configs.md). Follow the dependency graph
+You are implementing this spec. Read this README fully, then start
+[slice 02](slices/02-manifest-and-configs.md) and
+[slice 03](slices/03-duet-client-and-telemetry.md). Follow the dependency graph
 below; never spend campaign-scale money before slice 07 says ADMIT.
 
 Local constraints to prove rather than assume:
@@ -32,7 +32,7 @@ Local constraints to prove rather than assume:
 
 Global TODO (owner slice in parens):
 
-- [ ] RPC loads project routing table and exits cleanly; advisor+classifier
+- [x] RPC loads project routing table and exits cleanly; advisor+classifier
       usage metered; tool details forwarded; live provider smoke passes (01)
 - [ ] Committed 30-instance manifest + all four routing-table renders (02)
 - [ ] duet-client (RPC transport + limits) + telemetry derivation, fixture-tested (03)

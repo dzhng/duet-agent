@@ -3,6 +3,9 @@ import { bestOfAttempts } from "../test/helpers/best-of.js";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import dedent from "dedent";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ClassifierInput } from "../src/model-routing/classifier.js";
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { resolveModelName } from "../src/model-resolution/resolver.js";
@@ -110,10 +113,11 @@ class NudgeRunner extends TurnRunner {
  * paying for an unrelated third model request.
  */
 class LiveAuxiliaryUsageRunner extends TurnRunner {
-  constructor() {
+  constructor(cwd: string) {
     super({
-      model: "frontier",
+      model: "swebench-glm-kimi",
       mode: "agent",
+      cwd,
       memoryDbPath: false,
       skillDiscovery: { includeDefaults: false },
     });
@@ -136,7 +140,7 @@ class LiveAuxiliaryUsageRunner extends TurnRunner {
   }
 
   classifySpawn() {
-    return this.selectSpawnModel("Implement the migration safely.", "frontier");
+    return this.selectSpawnModel("Implement the migration safely.", "swebench-glm-kimi");
   }
 
   advisorTool() {
@@ -177,7 +181,27 @@ describe("advisor trigger and router interlock", () => {
   testIfDocker(
     "real classifier and advisor calls share one cumulative per-model ledger",
     async () => {
-      const runner = new LiveAuxiliaryUsageRunner();
+      const workDir = await mkdtemp(join(tmpdir(), "duet-live-auxiliary-usage-"));
+      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      const advisor = structuredClone(table.tiers.frontier!.advisor);
+      advisor.target = { modelName: "kimi-k3", thinkingLevel: "high" };
+      table.defaultTier = "swebench-glm-kimi";
+      table.tiers = {
+        "swebench-glm-kimi": {
+          routes: {
+            general: {
+              description: "SWE-bench software implementation and debugging.",
+              target: { modelName: "glm-5.2", thinkingLevel: "high" },
+              visionFallbackModelName: "kimi-k3",
+            },
+          },
+          advisor,
+        },
+      };
+      await mkdir(join(workDir, ".duet"));
+      await writeFile(join(workDir, ".duet", "models.json"), JSON.stringify(table));
+
+      const runner = new LiveAuxiliaryUsageRunner(workDir);
       const usageEvents: TurnUsageEvent[] = [];
       runner.subscribe((event) => {
         if (event.type === "usage") usageEvents.push(event);
@@ -197,7 +221,7 @@ describe("advisor trigger and router interlock", () => {
           BUILT_IN_ROUTING_TABLE.classifier.target.modelName,
         ).id;
         const advisorId = resolveModelName(
-          BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName,
+          table.tiers["swebench-glm-kimi"]!.advisor.target.modelName,
         ).id;
         expect(
           usage?.usageByModel.find((entry) => entry.model === classifierId)?.usage.totalTokens ?? 0,
@@ -213,6 +237,7 @@ describe("advisor trigger and router interlock", () => {
         ).toBeCloseTo(usage?.turnUsage.cost.total ?? 0, 9);
       } finally {
         await runner.dispose();
+        await rm(workDir, { recursive: true, force: true });
       }
     },
     120_000,

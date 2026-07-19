@@ -44,6 +44,11 @@ enters `src/`.
 
 ## Verification
 
+Complete 2026-07-20. The required focused Docker eval used the custom
+`swebench-glm-kimi` table (GLM-5.2 executor, Kimi K3 vision fallback and
+advisor) and observed nonzero product-default classifier and Kimi advisor usage
+whose per-model sums exactly matched cumulative turn usage.
+
 - Unit: fabricated parent + classifier + advisor usage → exact per-model
   entries and totals, including auxiliary usage recorded before a parent
   completion without fabricating parent context; tool details survive
