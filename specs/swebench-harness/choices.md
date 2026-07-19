@@ -851,6 +851,72 @@ ownerScopeId }`, even though both execute through the same task manager.
   the workaround is confined to an external replication tool, not campaign
   execution or accounting.
 
+### S21 — The language matrix takes the first committed task in each bucket
+
+- **When:** slice 05's `rollout smoke --all-languages` command.
+- **The choice:** The command walks the benchmark's fixed language order and
+  takes the first manifest row for each language. For example, Java always gets
+  the first alphabetically stored Java task in the committed manifest; a later
+  run does not choose whichever image happens to be cached or fastest that day.
+  The unbuilt alternative maintains a second hand-picked nine-task list or
+  chooses tasks dynamically from measured resource results.
+- **The gap:** The spec required one image per language but did not define which
+  of the three or four committed tasks represents that language in packaging
+  smoke.
+- **The reach:** Anyone rerunning the command gets the same nine images without
+  another manifest-like artifact that could drift. This selection controls only
+  compatibility smoke, never which tasks enter the four-arm measurement.
+- **Verdict:** **sound.** The committed manifest is already sorted and fixed;
+  consuming its first row is transparent, deterministic, and independent of
+  model outcomes.
+- **Confidence:** **high** because all 30 candidates have already passed the
+  official gold gate, so no compatibility information is hidden by this rule.
+
+### S22 — Packaging smoke is a pure-GLM one-file task stored outside campaign runs
+
+- **When:** slice 05's live smoke workflow.
+- **The choice:** Each image receives the real compiled Duet binary and
+  `glm-pure` routing file, then the model is asked to create one exact sentinel
+  text file. Its immutable RPC evidence lives under the ignored
+  `.cache/smoke-runs` tree, and the patch must contain only that file before it
+  is applied byte-for-byte to a fresh container. Think of this as testing a
+  delivery truck with one labeled box: if the box arrives intact in every
+  language-specific garage, packaging, tools, gateway access, patch extraction,
+  and teardown all worked. The unbuilt alternative asks nine real benchmark
+  issues, mixing model problem-solving ability into what should be a plumbing
+  check and mixing smoke attempts into measured campaign artifacts.
+- **The gap:** The slice prescribed a sentinel and advisor-OFF run but did not
+  choose one of the two executors or an artifact namespace.
+- **The reach:** Cross-language failures stay attributable to packaging or
+  infrastructure. Kimi's executor path is exercised by the subsequent four-arm
+  live gate; this matrix specifically proves the Linux artifact and pure-tool
+  surface once per language.
+- **Verdict:** **sound.** One executor is sufficient for image compatibility,
+  and isolating synthetic artifacts prevents accidental inclusion in campaign
+  predictions or spend reports.
+- **Confidence:** **medium** because running both executors would add redundant
+  provider coverage, although it would not strengthen the packaging contract.
+
+### S23 — Each packaging smoke reserves $0.25, five minutes, and a 20 KB patch
+
+- **When:** slice 05's live smoke workflow.
+- **The choice:** A sentinel task is interrupted if streamed spend reaches
+  $0.25 or wall time reaches five minutes, and rejected if its one-file patch
+  exceeds 20 KB. The earlier Java checkpoint cost about one cent, so these
+  ceilings leave ample room for a slow image without allowing a confused model
+  to consume campaign-scale resources. The unbuilt alternative reuses the much
+  larger real-issue rollout limits or adds an arbitrary assistant-step count.
+- **The gap:** The spec capped the entire matrix below a dollar but did not set
+  per-image time, spend, or patch ceilings.
+- **The reach:** Worst-case reserved model spend for the nine-task matrix is
+  $2.25, still inside the shared $500 envelope, and the same client interrupt
+  path used by measured rollouts is exercised before the campaign.
+- **Verdict:** **sound.** Direct time, dollar, and output-size limits bound the
+  actual resources of concern without reviving the rejected step limit.
+- **Confidence:** **high** because the limits are over 20× the observed Java
+  model spend and the gold gate proves five minutes is enough for every image's
+  official test path.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

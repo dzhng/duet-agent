@@ -1,5 +1,11 @@
 # 05 — Duet in the instance container: packaging, smoke matrix, patch integrity
 
+**Status (2026-07-20): command complete; live matrix pending.** The compiled
+artifact, container boundary, dirty-baseline extraction, fresh-image round trip,
+and `rollout smoke --instance|--all-languages` workflow are implemented and
+fixture-tested. The paid sequential nine-language run remains before this slice
+is complete.
+
 Mac-local; needs slices 03 (client) and 04 (images). The architecture's kill-shot
 assumption gets falsified here for under a dollar, before the runner exists.
 
@@ -55,8 +61,9 @@ nine-language matrix and advisor-OFF tool-list assertion.
 
 ## Playable checkpoint
 
-`bun benchmarks/swebench/cli.ts rollout smoke --instance <id>` streams the
-NDJSON events live and prints duet's version, terminal event, and cost.
+`bun benchmarks/swebench/cli.ts rollout smoke --instance <id>` runs one image;
+`--all-languages` selects the first committed manifest entry in each language.
+Each successful JSON line prints the terminal, cost, patch, and per-model usage.
 
 ## STOP conditions
 

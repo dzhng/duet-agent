@@ -16,15 +16,17 @@ explicit routing renders, RPC client, telemetry, CLI checkpoints, and their
 tests are committed. Slice 04's Mac provisioner, one-instance capacity gate,
 corrected 30/30 gold gate, and mini-swe-agent 2/2 replication are complete under
 official amd64 emulation with measured resource use.
-Slice 05 has a green live Java checkpoint for Linux-x64 packaging, single-owner
-RPC execution, and dirty-baseline patch round trip, but its nine-language matrix
-remains. Slice 06's rollout, immutable resume, budget, prediction, official
+Slice 05 has a green live Java checkpoint and a locally green deterministic
+nine-language smoke command for Linux-x64 packaging, single-owner RPC execution,
+and fresh-image patch round trip; its paid matrix remains. Slice 06's rollout,
+immutable resume, budget, prediction, official
 scoring, and paired-report core is locally green; its paid n=2 gate remains.
 Continue the live Duet gates in slices 05–06; slices 05–08 are not complete.
 Last updated 2026-07-20.
 
-You are implementing this spec. Read this README fully, then run the
-nine-language Duet matrix in [slice 05](slices/05-duet-in-container.md). Follow
+You are implementing this spec. Read this README fully, then run
+`bun benchmarks/swebench/cli.ts rollout smoke --all-languages` for
+[slice 05](slices/05-duet-in-container.md). Follow
 the dependency graph below; never spend campaign-scale money before slice 07
 says ADMIT.
 

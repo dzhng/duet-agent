@@ -30,7 +30,13 @@ import {
   type OfficialScoreRow,
 } from "./src/report.js";
 import { hashConfigFile } from "./src/rollout.js";
+import { runContainerSmoke } from "./src/smoke.js";
 import { deriveTelemetry } from "./src/telemetry.js";
+import {
+  ContainerHandle,
+  removeOfficialImage,
+  resolveAndPullOfficialImage,
+} from "./src/container.js";
 
 const ROOT = import.meta.dir;
 const REPO_ROOT = resolve(ROOT, "..", "..");
@@ -113,6 +119,72 @@ async function runLocalRollout(args: string[]): Promise<void> {
       2,
     ),
   );
+}
+
+async function runLiveSmoke(args: string[]): Promise<void> {
+  const instanceFlag = args.indexOf("--instance");
+  const requestedInstance = instanceFlag >= 0 ? args[instanceFlag + 1] : undefined;
+  const allLanguages = args.includes("--all-languages");
+  if ((requestedInstance ? 1 : 0) + (allLanguages ? 1 : 0) !== 1) {
+    throw new Error("rollout smoke requires exactly one of --instance ID or --all-languages");
+  }
+
+  const [manifest, snapshot, artifact, providerEnv] = await Promise.all([
+    readFile(MANIFEST_PATH, "utf8").then((value) => JSON.parse(value) as InstanceManifest),
+    readFile(CACHE_PATH, "utf8").then(
+      (value) => JSON.parse(value) as Awaited<ReturnType<typeof fetchDataset>>,
+    ),
+    prepareDuetArtifact({ repoRoot: REPO_ROOT, outputDir: join(ROOT, "runtime", "build") }),
+    loadProviderEnv(),
+  ]);
+  const entries = allLanguages
+    ? LANGUAGES.map(
+        (language) =>
+          manifest.entries.find((entry) => entry.language === language) ??
+          fail(`Manifest has no ${language} entry.`),
+      )
+    : [
+        manifest.entries.find((entry) => entry.instanceId === requestedInstance) ??
+          fail(`Instance is not in the committed manifest: ${requestedInstance}.`),
+      ];
+  if (snapshot.datasetRevision !== manifest.datasetRevision) {
+    throw new Error(
+      `Dataset cache revision ${snapshot.datasetRevision} does not match manifest ${manifest.datasetRevision}.`,
+    );
+  }
+  const configPath = join(CONFIG_DIR, "glm-pure.models.json");
+  const configSha256 = await hashConfigFile(configPath);
+
+  for (const entry of entries) {
+    const datasetRow =
+      snapshot.rows.find((row) => row.instanceId === entry.instanceId) ??
+      fail(`Dataset cache has no row for ${entry.instanceId}.`);
+    const image = await resolveAndPullOfficialImage(entry.instanceId, {
+      pythonPath: join(ROOT, ".venv", "bin", "python"),
+      helperPath: join(ROOT, "mac", "official_image.py"),
+    });
+    try {
+      const result = await runContainerSmoke(
+        {
+          runsRoot: join(ROOT, ".cache", "smoke-runs"),
+          artifact,
+          providerEnv,
+          containerFactory: (name, imageName) => new ContainerHandle(name, imageName),
+        },
+        {
+          entry,
+          datasetRow,
+          image: image.image,
+          configPath,
+          configSha256,
+          limits: { costUsd: 0.25, wallClockMs: 300_000, patchBytes: 20_000 },
+        },
+      );
+      console.log(JSON.stringify(result));
+    } finally {
+      await removeOfficialImage(image.image);
+    }
+  }
 }
 
 async function readCampaignSpec(args: string[]): Promise<CampaignSpec> {
@@ -275,13 +347,18 @@ else if (domain === "manifest" && action === "show") await showManifest();
 else if (domain === "config" && action === "write") await writeConfigs();
 else if (domain === "config" && action === "show") await showConfigs();
 else if (domain === "rollout" && action === "local") await runLocalRollout(rest);
+else if (domain === "rollout" && action === "smoke") await runLiveSmoke(rest);
 else if (domain === "campaign" && action === "run") await runCommittedCampaign(rest);
 else if (domain === "campaign" && action === "status") await showCampaignStatus(rest);
 else if (domain === "campaign" && action === "predictions") await writeCampaignPredictions(rest);
 else if (domain === "campaign" && action === "report") await writeCampaignReport(rest);
 else {
   console.error(
-    "Usage: bun benchmarks/swebench/cli.ts <manifest update|manifest show|config write|config show|rollout local --prompt TEXT|campaign run|status|predictions|report --spec PATH>",
+    "Usage: bun benchmarks/swebench/cli.ts <manifest update|manifest show|config write|config show|rollout local --prompt TEXT|rollout smoke (--instance ID|--all-languages)|campaign run|status|predictions|report --spec PATH>",
   );
   process.exitCode = 1;
+}
+
+function fail(message: string): never {
+  throw new Error(message);
 }

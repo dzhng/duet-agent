@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import type { CommandResult } from "../benchmarks/swebench/src/container.js";
 import type { ExecTransport } from "../benchmarks/swebench/src/duet-client.js";
 import { runRollout, type RolloutContainer } from "../benchmarks/swebench/src/rollout.js";
+import { runContainerSmoke } from "../benchmarks/swebench/src/smoke.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let root: string | undefined;
@@ -118,6 +119,68 @@ describe("SWE-bench rollout pipeline", () => {
     expect(result.status).toMatchObject({ phase: "failed", failureKind: "infra" });
     expect(container.stopped).toBe(true);
   });
+
+  testIfDocker("smoke proves a pure one-file patch in a fresh container", async () => {
+    root = await mkdtemp(join(tmpdir(), "duet-swebench-smoke-"));
+    const configPath = join(root, "models.json");
+    await writeFile(configPath, "{}\n");
+    const sentinel = "duet swebench smoke org__repo-1\n";
+    const patch = [
+      "diff --git a/duet-swebench-smoke.txt b/duet-swebench-smoke.txt",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/duet-swebench-smoke.txt",
+      "@@ -0,0 +1 @@",
+      "+duet swebench smoke org__repo-1",
+      "",
+    ].join("\n");
+    const primary = new FakeSmokeContainer(patch, sentinel, true);
+    const roundTrip = new FakeSmokeContainer(patch, sentinel, false);
+    const containers = [primary, roundTrip];
+
+    const result = await runContainerSmoke(
+      {
+        runsRoot: root,
+        artifact: {
+          localPath: "/host/duet",
+          installPath: "/opt/duet/duet",
+          sha256: "a".repeat(64),
+          packagingMode: "compiled-linux-x64",
+        },
+        providerEnv: {},
+        containerFactory: () => containers.shift()!,
+      },
+      {
+        entry: {
+          instanceId: "org__repo-1",
+          language: "Go",
+          repo: "org/repo",
+          baseCommit: "base",
+        },
+        datasetRow: {
+          instanceId: "org__repo-1",
+          repo: "org/repo",
+          baseCommit: "base",
+          problemStatement: "Original issue is replaced by the smoke task.",
+        },
+        image: "official/image",
+        configPath,
+        configSha256: "b".repeat(64),
+        limits: { costUsd: 1, wallClockMs: 1000, patchBytes: 1000 },
+      },
+    );
+
+    expect(result).toMatchObject({
+      instanceId: "org__repo-1",
+      terminalType: "complete",
+      costUsd: 0.3,
+      patchBytes: Buffer.byteLength(patch),
+      patchPaths: ["duet-swebench-smoke.txt"],
+    });
+    expect(containers).toEqual([]);
+    expect(primary.stopped).toBe(true);
+    expect(roundTrip.stopped).toBe(true);
+  });
 });
 
 class FakeRolloutContainer implements RolloutContainer {
@@ -163,6 +226,49 @@ class FakeRolloutContainer implements RolloutContainer {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
+  }
+}
+
+class FakeSmokeContainer implements RolloutContainer {
+  stopped = false;
+
+  constructor(
+    private readonly patch: string,
+    private readonly sentinel: string,
+    private readonly servesRpc: boolean,
+  ) {}
+
+  async start(): Promise<void> {}
+
+  async cpIn(): Promise<void> {}
+
+  async exec(argv: readonly string[]): Promise<CommandResult> {
+    if (argv[0] === "cat") return ok(this.sentinel);
+    if (argv[0] !== "git") return ok("");
+    if (argv.includes("write-tree")) return ok(`${"c".repeat(40)}\n`);
+    if (argv.includes("--name-only")) {
+      return ok(argv.includes("HEAD") ? "" : "duet-swebench-smoke.txt\0");
+    }
+    if (argv.includes("--binary")) return ok(this.patch);
+    return ok("");
+  }
+
+  execStream(): ExecTransport {
+    if (!this.servesRpc) throw new Error("Round-trip container must not start RPC.");
+    return {
+      stdin: { write: () => {} },
+      stdoutLines: lines([
+        '{"type":"turn_started","state":{"status":"running","mode":"agent","agent":{"status":"running","messages":[]}}}',
+        '{"type":"complete","status":"completed","result":"done","state":{"status":"completed","mode":"agent","agent":{"status":"completed","messages":[]}},"turnUsage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}},"usageByModel":[{"model":"model","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}}}],"lastMessageUsage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}},"effectiveContextWindow":1000,"contextWindowUsage":{"systemPrompt":1,"messages":1,"localMemory":0,"globalMemory":0}}',
+      ]),
+      kill: () => {},
+      exited: Promise.resolve({ code: 0, signal: null }),
+    };
+  }
+
+  async stop(): Promise<void> {
+    if (this.stopped) throw new Error("Container stopped twice.");
     this.stopped = true;
   }
 }
