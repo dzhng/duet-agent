@@ -15,13 +15,13 @@ Line refs there are vs 3adf0df; drift as of ddfc6f2 is small but re-verify befor
 
 ## Next Agent Prompt
 
-**Status:** slices 01-10 merged; slice 11 implementation is complete on `slice/11` pending its
-credentialed Docker memory eval. spawn_agent live (parallelism, cascade, scoped-memory
-evals green — the memory eval must probe through the runner's PGlite connection; one
-instance per data dir). Park + parent-only ask live (3/3 evals incl. promised-wait).
-Slice 12 remains in flight; then 13 (TUI), then the 14 matrix.
-Eval credentials: source repo-root `.env` (AI_GATEWAY_API_KEY) into the docker eval run;
-worktrees do not inherit `.env`. Last updated 2026-07-19.
+**Status:** slices 01-12 merged. Hygiene live (sentinel strips machine injections from
+memory+routing; observer once per turn). Durability live (atomic coalescing persistence,
+hydrate reconciliation, heartbeats, shutdown reap) — suite 1126/0, rpc regression eval 8/8.
+**Red stragglers owned by slice 14:** evals/task-lost-resume-rpc.eval.ts and
+evals/task-rpc-heartbeat.eval.ts time out non-deterministically (model-compliance variance
+in their RPC prompts; hardened with fast-fail + event dumps, need prompt-mechanics passes).
+Slice 13 (TUI) launching. Last updated 2026-07-19.
 
 You are implementing this spec. Read this README fully, then `unknowns-map.md` Quadrant 2
 (binding decisions — do not relitigate) and the LM-\* cards for your slice. Work one slice at
@@ -48,8 +48,8 @@ slice 11's `task-memory-synthetic-filter.eval.ts` and Docker source-of-truth sui
 - [x] 08 async surface — merged 82f31e4; 7/7 live evals green
 - [x] 09 spawn_agent — merged; live evals green
 - [x] 10 park + parent-only ask — merged; 3/3 live evals green incl. promised-wait
-- [ ] 11 observer/router/compaction hygiene
-- [ ] 12 session/RPC durability
+- [x] 11 observer/router/compaction hygiene — merged 8d5b7e6
+- [x] 12 session/RPC durability — merged (two live evals red → slice 14)
 - [ ] 13 TUI task tree
 - [ ] 14 live-eval acceptance matrix (done-gate)
 
