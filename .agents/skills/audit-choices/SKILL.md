@@ -80,7 +80,21 @@ Two ways in, same audit:
    open the report with the two or three least-confident choices overall,
    whatever their group: the "review these first" line. Sound is not
    skippable. Only trivial discretion (internal naming, cosmetic calls)
-   compresses to a one-line count. It must stand alone without the diff.
+   compresses to a one-line count.
+
+   **Write every entry ELI5 — by default, not on request.** The reader
+   didn't live the session: walk a concrete scenario end to end — the
+   triggering event, what the work does today, what the unbuilt alternative
+   would do — and define each term of art at first use instead of leaning on
+   labels the session invented. "A gated ask is dropped, not deferred" is a
+   headline, not an entry; the entry is: *the agent has a background task
+   running and calls ask_user_question("should I deploy?") — asking now is
+   forbidden, so today the question is thrown away and the agent is told to
+   re-ask later; if it shrugs and moves on, the user never sees the
+   question. The unbuilt alternative: hold the question and deliver it when
+   the tasks finish — never lost, but possibly stale.* A compressed entry
+   that makes the user ask "explain this one" has failed; the ledger must
+   stand alone without the diff, the spec, or the transcript.
 
 ## The Choices Ledger
 
@@ -89,7 +103,9 @@ A dedicated file that outlives every pass: `choices.md` beside the plan
 audited choice:
 
 - **When** — pass or commit it landed in.
-- **The choice** — one line, concrete.
+- **The choice** — a one-line headline, then the ELI5 scenario: the
+  triggering event, what the work does today, what the unbuilt alternative
+  would do, with terms of art defined in place.
 - **The gap** — what the plan left unspecified that forced it.
 - **The reach** — what future work this decision constrains or enables; why
   the user needs to know it exists.
@@ -133,6 +149,6 @@ The audit is done when every invented choice in the pass has a ledger entry
 with a verdict, every unsound entry names the corrected decision to redo
 from, every needs-user entry carries a reversible provisional call, and the
 ledger has been presented — grouped by verdict, least-confident-first within
-each group — to whoever acts next, with the tree untouched. A
-handback that shows the diff instead of the choices, or a "fix" applied
-during the audit, is not done.
+each group, every entry readable ELI5 without follow-up questions — to
+whoever acts next, with the tree untouched. A handback that shows the diff
+instead of the choices, or a "fix" applied during the audit, is not done.
