@@ -332,6 +332,28 @@ export function settlementNotice(settlements: readonly TaskSnapshot[]): string {
   );
 }
 
+/** One-shot parent context for executors that could not survive process recovery. */
+export function lostTaskRecoveryReminder(tasks: readonly TaskSnapshot[]): string {
+  const lines = tasks.flatMap((snapshot) => {
+    const descriptor = snapshot.descriptor;
+    const output =
+      snapshot.output.length > 0 ? snapshot.output.slice(-3) : ["<no buffered output>"];
+    return [
+      `- ${descriptor.id} (${taskDescription(snapshot)}) was interrupted when the previous process exited. It was not restarted.`,
+      ...output.map((chunk) => `  Last output: ${chunk}`),
+    ];
+  });
+  return syntheticUserMessage(
+    [
+      "<system-reminder>",
+      `${tasks.length} ${tasks.length === 1 ? "task was" : "tasks were"} lost during session recovery:`,
+      ...lines,
+      "Treat these executors as stopped. Inspect or restart the work explicitly if it is still needed.",
+      "</system-reminder>",
+    ].join("\n"),
+  );
+}
+
 /** Create the sequential admin lane. These tools only inspect existing tasks. */
 export function createTaskAdminTools(input: {
   taskManager: TaskManager;

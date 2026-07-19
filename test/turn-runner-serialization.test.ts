@@ -74,12 +74,15 @@ describe("TurnState serialization", () => {
     await runner.start({ type: "start", state: resumedState });
     const snapshot = runner.getState();
 
-    expect(snapshot?.tasks).toEqual(state.tasks);
+    expect(snapshot?.tasks).toEqual([
+      expect.objectContaining({ ...state.tasks![0], status: "lost" }),
+      state.tasks![1],
+    ]);
     expect(snapshot?.tasks?.[0]).toEqual(
       expect.objectContaining({
         id: "t12",
         ownerScopeId: "root",
-        status: "running",
+        status: "lost",
       }),
     );
     expect(snapshot?.tasks?.[1]).toEqual(
@@ -90,6 +93,7 @@ describe("TurnState serialization", () => {
         wakeAt: 20_000,
       }),
     );
+    expect(snapshot?.taskOutputTails).toEqual({ t12: ["second", "third", "fourth"] });
     expect(snapshot?.nextTaskId).toBe(14);
   });
 
@@ -295,6 +299,7 @@ function createSerializableTurnState(): TurnState {
         wakeAt: 20_000,
       },
     ],
+    taskOutputTails: { t12: ["first", "second", "third", "fourth"] },
     nextTaskId: 14,
   };
 }

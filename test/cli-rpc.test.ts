@@ -2,7 +2,15 @@ import { describe, expect, test, spyOn } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { driveRpcLoop, parseRpcArgs, parseRpcCommandLine, type RpcRunner } from "../src/cli/rpc.js";
+import {
+  RpcEventWriter,
+  driveRpcLoop,
+  parseRpcArgs,
+  parseRpcCommandLine,
+  shouldEmitFatalTerminal,
+  type RpcRunner,
+  type RpcWritable,
+} from "../src/cli/rpc.js";
 import { buildCliTurnConfig } from "../src/cli/run.js";
 import { MemoryDb } from "../src/cli/memory-db.js";
 import { appendObservation, loadStoredMemory } from "../src/memory/storage.js";
@@ -12,9 +20,33 @@ import type {
   TurnEditFollowUpQueueCommand,
   TurnInterruptCommand,
   TurnRunnerCommand,
+  TurnState,
   TurnSystemEvent,
   TurnTerminalEvent,
 } from "../src/types/protocol.js";
+import { ManualRuntimeClock } from "./helpers/manual-runtime-clock.js";
+
+class BackpressuredWritable implements RpcWritable {
+  readonly lines: string[] = [];
+  private drainListener?: () => void;
+  blocked = true;
+
+  write(chunk: string): boolean {
+    this.lines.push(chunk);
+    return !this.blocked;
+  }
+
+  once(event: "drain", listener: () => void): this {
+    if (event === "drain") this.drainListener = listener;
+    return this;
+  }
+
+  release(): void {
+    this.blocked = false;
+    this.drainListener?.();
+    this.drainListener = undefined;
+  }
+}
 
 /**
  * Async iterable helper for `driveRpcLoop`. Pulling from an array makes the
@@ -321,6 +353,124 @@ describe("parseRpcCommandLine", () => {
     expect(missingType.kind).toBe("error");
     const plainString = parseRpcCommandLine('"plain string"');
     expect(plainString.kind).toBe("error");
+  });
+});
+
+describe("RpcEventWriter", () => {
+  test("keeps task and terminal events ordered while dropping queued heartbeats under backpressure", async () => {
+    const clock = new ManualRuntimeClock(1_000);
+    const stream = new BackpressuredWritable();
+    const writer = new RpcEventWriter(stream, clock);
+
+    writer.emit({
+      type: "task_started",
+      task: {
+        id: "t1",
+        kind: "tool",
+        name: "long job",
+        label: "Run a long job",
+        ownerScopeId: "root-1",
+        status: "running",
+        startedAt: clock.now(),
+      },
+    });
+    await clock.advanceBy(30_000);
+    writer.emit({
+      type: "task_settled",
+      settlement: {
+        id: "t1",
+        status: "completed",
+        settledAt: clock.now(),
+        result: "done",
+      },
+    });
+    writer.emit({ type: "complete", status: "completed", state: {} as TurnState });
+
+    stream.release();
+    await writer.flush();
+
+    expect(stream.lines.map((line) => JSON.parse(line).type)).toEqual([
+      "task_started",
+      "task_settled",
+      "complete",
+    ]);
+  });
+
+  test("emits clock-driven heartbeats only while running tasks hold the process open", async () => {
+    const clock = new ManualRuntimeClock(5_000);
+    const lines: string[] = [];
+    const writer = new RpcEventWriter(
+      {
+        write(chunk) {
+          lines.push(chunk);
+          return true;
+        },
+        once() {
+          return this;
+        },
+      },
+      clock,
+    );
+
+    writer.emit({
+      type: "task_started",
+      task: {
+        id: "t4",
+        kind: "subagent",
+        name: "background research",
+        label: "Research in the background",
+        ownerScopeId: "root-1",
+        status: "running",
+        startedAt: clock.now(),
+      },
+    });
+    await clock.advanceBy(15_000);
+    writer.emit({
+      type: "task_settled",
+      settlement: {
+        id: "t4",
+        status: "completed",
+        settledAt: clock.now(),
+        result: "done",
+      },
+    });
+    await clock.advanceBy(30_000);
+    await writer.flush();
+
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events).toEqual([
+      expect.objectContaining({ type: "task_started" }),
+      { type: "heartbeat", timestamp: 20_000, activeTaskIds: ["t4"] },
+      expect.objectContaining({ type: "task_settled" }),
+    ]);
+  });
+});
+
+describe("fatal terminal guard", () => {
+  test("does not fabricate quiescence while a recovered runner still has open work", () => {
+    const base = {
+      status: "running",
+      mode: "agent",
+      agent: {} as TurnState["agent"],
+    } satisfies TurnState;
+    expect(
+      shouldEmitFatalTerminal({
+        ...base,
+        tasks: [
+          {
+            id: "t9",
+            kind: "tool",
+            name: "still live",
+            label: "Still live",
+            ownerScopeId: "root-1",
+            status: "running",
+            startedAt: 1,
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(shouldEmitFatalTerminal({ ...base, tasks: [] })).toBe(true);
+    expect(shouldEmitFatalTerminal(undefined)).toBe(false);
   });
 });
 

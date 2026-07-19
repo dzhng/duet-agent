@@ -56,7 +56,6 @@ import {
   routingCatalogAdapter,
 } from "../model-resolution/resolver.js";
 import { DEFAULT_TASK_WAIT_BUDGET_MS, type TurnRunnerConfig } from "../types/config.js";
-import { scheduledStateFallbackWakeAt } from "./duration.js";
 import {
   COMPACT_MESSAGE_TOKENS_RATIO,
   compactTurnState,
@@ -115,7 +114,7 @@ import {
 } from "./tools.js";
 import { connectMcpServers, type McpRuntime } from "./mcp.js";
 import { SkillContext } from "./skill-context.js";
-import { currentParkState, currentScheduledState } from "./state-machine-session.js";
+import { currentParkState } from "./state-machine-session.js";
 import {
   failActiveSession,
   markTerminalAcknowledged,
@@ -152,12 +151,13 @@ import {
 import { addUsage, addUsageByModel } from "./usage-accounting.js";
 import { SystemRuntimeClock, type RuntimeClock } from "./runtime-clock.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
-import type { TaskDescriptor, TaskEvent, TaskId, TaskSettlement } from "../tasks/types.js";
+import type { TaskEvent, TaskId, TaskSettlement, TaskSnapshot } from "../tasks/types.js";
 import { createShellStateHandle, type ShellStateHandle } from "./shell-state-handle.js";
 import type { StateMachineSession } from "../types/state-machine.js";
 import {
   createSpawnAgentTool,
   createTaskAdminTools,
+  lostTaskRecoveryReminder,
   settlementNotice,
   wrapBackgroundable,
 } from "./task-tools.js";
@@ -373,8 +373,8 @@ export class TurnRunner {
   protected readonly taskManager: TaskManager;
   /** Execution-only metadata keyed by TaskManager's stable task id. */
   private readonly stateTasks = new Map<TaskId, StateTaskMetadata>();
-  /** Byte-for-byte hydrated descriptors exposed until the first resumed turn reconciles them. */
-  private hydratedTaskSnapshot?: TaskDescriptor[];
+  /** One-shot context attached to the first real parent pass after lost-task recovery. */
+  private recoveredTaskReminder?: string;
   /** Legacy persisted user-lane projection retained until the next loop owns it. */
   private hydratedQueuedCommands?: TurnCommand[];
   /** Inputs waiting for the single parent slot between sequential passes. */
@@ -702,22 +702,42 @@ export class TurnRunner {
       : createInitialTurnState(mode, this.resolveTurnOptions(startOptions));
     await this.initializeModelRouter(state.options?.model);
     this.stateMachine = state.stateMachine;
-    this.taskManager.recover(state.tasks ?? [], state.nextTaskId);
-    this.hydratedTaskSnapshot = state.tasks ? [...state.tasks] : undefined;
-    this.hydratedQueuedCommands = state.queuedCommands ? [...state.queuedCommands] : undefined;
-    if (state.status === "sleeping" && this.taskManager.pendingWork().kind === "complete") {
-      const scheduled = currentScheduledState(state.stateMachine);
-      if (scheduled) {
-        const progress = state.stateMachine?.progress?.states[scheduled.name];
-        this.taskManager.start({
-          kind: "scheduled",
-          name: scheduled.name,
-          label: `Wait for ${scheduled.name}`,
-          ownerScopeId: "sleep-resume",
-          wakeAt: progress?.nextWakeAt ?? scheduledStateFallbackWakeAt(scheduled),
-        });
+    const recovery = this.taskManager.recover(
+      state.tasks ?? [],
+      state.nextTaskId,
+      state.taskOutputTails,
+    );
+    const pendingLostTaskIds = new Set([
+      ...(state.pendingLostTaskReminderTaskIds ?? []),
+      ...recovery.lost.map((descriptor) => descriptor.id),
+    ]);
+    const lostSnapshots = [...pendingLostTaskIds]
+      .map((id) => this.taskManager.output(id))
+      .filter((snapshot): snapshot is TaskSnapshot => snapshot !== undefined);
+    if (lostSnapshots.length > 0) {
+      this.recoveredTaskReminder = lostTaskRecoveryReminder(lostSnapshots);
+      while (this.taskManager.nextSettled()) {
+        // Recovery is delivered through the one-shot reminder, not the live settlement lane.
       }
     }
+    this.hydratedQueuedCommands = state.queuedCommands ? [...state.queuedCommands] : undefined;
+    const interruptedOnRecovery =
+      command.state &&
+      (state.status === "running" ||
+        (state.status === "sleeping" && this.taskManager.pendingWork().kind !== "sleep"));
+    const recoveredState: TurnState = {
+      ...state,
+      ...(interruptedOnRecovery
+        ? { status: "interrupted", agent: { ...state.agent, status: "cancelled" } }
+        : {}),
+      tasks: [...this.taskManager.list()],
+      taskOutputTails: this.snapshotTaskOutputTails(),
+      pendingLostTaskReminderTaskIds:
+        lostSnapshots.length > 0
+          ? lostSnapshots.map((snapshot) => snapshot.descriptor.id)
+          : undefined,
+      nextTaskId: this.taskManager.nextTaskId(),
+    };
     // Hydrate the wire-shaping object in place. `this.wireGuardHorizon` is
     // referenced by the observational context transform; replacing the
     // reference would orphan the transform's view. `Object.assign` over
@@ -726,7 +746,7 @@ export class TurnRunner {
     if (state.wireGuardHorizon) {
       Object.assign(this.wireGuardHorizon, state.wireGuardHorizon);
     }
-    this.setState(state);
+    this.setState(recoveredState);
     this.initializeParentAgent();
     this.started = true;
     const hydratedState = this.requireRunnerState();
@@ -772,7 +792,6 @@ export class TurnRunner {
     this.interruptCleanup = undefined;
     this.terminalEmitted = false;
     this.activeRootScopeId = `turn-${this.nextRootScope++}`;
-    this.hydratedTaskSnapshot = undefined;
     this.turnTools = this.createTools(this.requireRunnerState().mode).tools;
     this.enqueueParentInput(
       command.type === "wake" ? { type: "wake" } : { type: "user_command", command },
@@ -1281,12 +1300,29 @@ export class TurnRunner {
     if (agent.hasQueuedMessages()) {
       throw new Error("Parent pi steer/follow-up queues must be empty at internal pass start.");
     }
+    const recoveredTaskReminder = this.recoveredTaskReminder;
+    this.recoveredTaskReminder = undefined;
+    if (recoveredTaskReminder) {
+      this.setState({
+        ...this.requireRunnerState(),
+        pendingLostTaskReminderTaskIds: undefined,
+      });
+    }
+    const recoveryInput = recoveredTaskReminder
+      ? {
+          ...input,
+          state: { ...input.state, pendingLostTaskReminderTaskIds: undefined },
+          prompt: `${recoveredTaskReminder}\n\n${input.prompt}`,
+        }
+      : input;
     const parked = currentParkState(this.stateMachine);
     // Append to the pass already being made, so a transition out of park costs
     // no extra model call. The selection tools put the same reminder in their
     // terminating result on the entry pass, before currentState has changed.
     return this.runAgentWorker(
-      parked ? { ...input, prompt: `${input.prompt}\n\n${parkNudge(parked.name)}` } : input,
+      parked
+        ? { ...recoveryInput, prompt: `${recoveryInput.prompt}\n\n${parkNudge(parked.name)}` }
+        : recoveryInput,
     );
   }
 
@@ -1865,7 +1901,8 @@ export class TurnRunner {
               .map((input) => input.command)
           : (this.hydratedQueuedCommands ??
             copyOptionalArray(state.queuedCommands ?? this.state?.queuedCommands)),
-      tasks: this.hydratedTaskSnapshot ?? [...this.taskManager.list()],
+      tasks: [...this.taskManager.list()],
+      taskOutputTails: this.snapshotTaskOutputTails(),
       nextTaskId: this.taskManager.nextTaskId(),
       // Carry wire-shaping state through every snapshot so persistence
       // layers (state.json, terminal payloads, getState consumers) see
@@ -1879,6 +1916,17 @@ export class TurnRunner {
         : {}),
     };
     return this.applyAutoStateCompaction(snapshot);
+  }
+
+  private snapshotTaskOutputTails(): TurnState["taskOutputTails"] {
+    const tails: NonNullable<TurnState["taskOutputTails"]> = {};
+    for (const descriptor of this.taskManager.list()) {
+      const output = this.taskManager.output(descriptor.id)?.output;
+      if (output && output.length > 0) {
+        tails[descriptor.id] = output.slice(-3).map((chunk) => chunk.slice(-1_500));
+      }
+    }
+    return Object.keys(tails).length > 0 ? tails : undefined;
   }
 
   /**

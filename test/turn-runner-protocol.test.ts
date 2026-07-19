@@ -10,6 +10,129 @@ import {
 import { createAssistantMessage } from "./helpers/messages.js";
 
 describe("TurnRunner protocol scenarios", () => {
+  test("reconciles lost tasks and delivers their output reminder exactly once", async () => {
+    const { runner: firstProcess } = createTurnRunner();
+    const recovered = await firstProcess.start({
+      type: "start",
+      state: {
+        status: "running",
+        mode: "agent",
+        agent: { status: "running", messages: [] },
+        tasks: [
+          {
+            id: "t4",
+            kind: "subagent",
+            name: "research",
+            label: "Research account",
+            ownerScopeId: "turn-1",
+            status: "running",
+            startedAt: 10,
+          },
+        ],
+        taskOutputTails: { t4: ["found account", "checking contacts"] },
+        nextTaskId: 9,
+      },
+    });
+
+    expect(recovered).toMatchObject({
+      status: "interrupted",
+      agent: { status: "cancelled" },
+      tasks: [{ id: "t4", status: "lost" }],
+      nextTaskId: 9,
+      pendingLostTaskReminderTaskIds: ["t4"],
+    });
+    const crashedAgain = JSON.parse(JSON.stringify(recovered));
+    const { runner } = createTurnRunner();
+    await runner.start({ type: "start", state: crashedAgain });
+    await runner.turn({ type: "prompt", message: "Resume.", behavior: "follow_up" });
+    await runner.turn({ type: "prompt", message: "Continue.", behavior: "follow_up" });
+
+    expect(runner.workerInputs[0]?.prompt).toContain("lost during session recovery");
+    expect(runner.workerInputs[0]?.prompt).toContain("found account");
+    expect(runner.workerInputs[0]?.prompt).toContain("checking contacts");
+    expect(runner.workerInputs[0]?.prompt).toContain("It was not restarted");
+    expect(runner.workerInputs[1]?.prompt).not.toContain("lost during session recovery");
+  });
+
+  test("preserves valid schedules but marks invalid recovered schedules lost", async () => {
+    const { runner } = createTurnRunner();
+    const recovered = await runner.start({
+      type: "start",
+      state: {
+        status: "sleeping",
+        mode: "agent",
+        agent: { status: "completed", messages: [] },
+        tasks: [
+          {
+            id: "t2",
+            kind: "scheduled",
+            name: "valid",
+            label: "Wake later",
+            ownerScopeId: "turn-1",
+            status: "scheduled",
+            startedAt: 10,
+            wakeAt: 2_000,
+          },
+          {
+            id: "t3",
+            kind: "scheduled",
+            name: "invalid",
+            label: "Broken wake",
+            ownerScopeId: "turn-1",
+            status: "scheduled",
+            startedAt: 10,
+          },
+        ],
+      },
+    });
+
+    expect(recovered.tasks).toEqual([
+      expect.objectContaining({ id: "t2", status: "scheduled", wakeAt: 2_000 }),
+      expect.objectContaining({ id: "t3", status: "lost" }),
+    ]);
+  });
+
+  test.each([
+    ["running", "running", undefined, "interrupted", "cancelled"],
+    ["sleeping", "completed", 2_000, "sleeping", "completed"],
+    ["sleeping", "completed", undefined, "interrupted", "cancelled"],
+    ["waiting_for_human", "completed", undefined, "waiting_for_human", "completed"],
+    ["completed", "completed", undefined, "completed", "completed"],
+  ] as const)(
+    "reconciles persisted %s state to %s when recovered wakeAt is %s",
+    async (status, agentStatus, wakeAt, expectedStatus, expectedAgentStatus) => {
+      const { runner } = createTurnRunner();
+      const tasks =
+        status === "sleeping"
+          ? [
+              {
+                id: "t1" as const,
+                kind: "scheduled" as const,
+                name: "wake",
+                label: "Wake later",
+                ownerScopeId: "turn-1",
+                status: "scheduled" as const,
+                startedAt: 10,
+                ...(wakeAt === undefined ? {} : { wakeAt }),
+              },
+            ]
+          : undefined;
+
+      const recovered = await runner.start({
+        type: "start",
+        state: {
+          status,
+          mode: "agent",
+          agent: { status: agentStatus, messages: [] },
+          tasks,
+        },
+      });
+
+      expect(recovered.status).toBe(expectedStatus);
+      expect(recovered.agent.status).toBe(expectedAgentStatus);
+    },
+  );
+
   test("runs a simple auto-classified prompt in agent mode", async () => {
     const { runner, events } = createTurnRunner();
 
