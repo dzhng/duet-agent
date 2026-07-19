@@ -22,6 +22,12 @@ function transcriptText(value: unknown): string {
   return "";
 }
 
+// Falsification record (run at slice 10, restored green):
+// - Including park in the repeated-selection loop warning turned the repeated-park
+//   case red (loop counter reached 5 instead of staying exempt).
+// - Treating park as shell work emitted an unexpected `task_started t1`, failing
+//   the taskless assertion.
+
 describe("state machine park", () => {
   testIfDocker(
     "park is taskless, nudged every turn, and a later go-ahead advances it",
