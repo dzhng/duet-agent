@@ -11,14 +11,15 @@ about _our_ harness.
 ## Next Agent Prompt
 
 **Status:** slice 01 complete, including the paid GLM/Kimi auxiliary-usage
-smoke. Slice 03 is complete, including its live economy RPC checkpoint. The
-plan is reconciled for a Mac-local four-arm campaign; slices 02 and 04–08 are
-not complete. Last updated 2026-07-20.
+smoke. Slices 02 and 03 are complete: the pinned 30-instance manifest, four
+explicit routing renders, RPC client, telemetry, CLI checkpoints, and their
+tests are committed. Continue slice 04; slices 04–08 are not complete. Last
+updated 2026-07-20.
 
-You are implementing this spec. Read this README fully, then continue
-[slice 02](slices/02-manifest-and-configs.md) and
-[slice 04](slices/04-box-gold-gate-and-spike.md). Follow the dependency graph
-below; never spend campaign-scale money before slice 07 says ADMIT.
+You are implementing this spec. Read this README fully, then continue the Mac
+capacity/gold gate in [slice 04](slices/04-box-gold-gate-and-spike.md). Follow
+the dependency graph below; never spend campaign-scale money before slice 07
+says ADMIT.
 
 Local constraints to prove rather than assume:
 
@@ -35,7 +36,7 @@ Global TODO (owner slice in parens):
 
 - [x] RPC loads project routing table and exits cleanly; advisor+classifier
       usage metered; tool details forwarded; live provider smoke passes (01)
-- [ ] Committed 30-instance manifest + all four routing-table renders (02)
+- [x] Committed 30-instance manifest + all four routing-table renders (02)
 - [x] duet-client (RPC transport + limits) + telemetry derivation, fixture-tested (03)
 - [ ] Mac environment captured; x86 capacity gate + gold 30/30;
       mini-swe-agent replication; scorer
@@ -67,8 +68,9 @@ rationale.
   arm, reported as two paired comparisons: pure GLM-5.2 vs GLM-5.2 with Kimi K3
   advisor, and pure Kimi K3 vs Kimi K3 with Fable advisor. “Pure” means the
   advisor tool is disabled; product-default memory still runs. Every complete
-  render derives classifier, memory, cadence, transcript, and vision policy
-  from the built-in table, replacing only the executor and advisor targets.
+  render derives classifier, memory, cadence, and transcript policy from the
+  built-in table. The campaign fixes the executor and advisor targets and uses
+  Kimi K3 as its vision fallback, including for the text-only GLM executor.
   Within each pair ON/OFF differs only in `advisor.enabled`. The shared model-
   spend envelope is **$500**, including prerequisite live smoke and pilots.
   Economy-vs-balanced, frontier ceiling, and trials>1 remain future campaigns.
@@ -84,18 +86,18 @@ Mac-local `swebench` venv. Spec home:
 Single-owner concepts (refactor-clean invariants — every slice must preserve
 these ownerships; no parallel abstractions):
 
-| Concept                                       | Owner module (under `benchmarks/swebench/src/`)                                                                                                              |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Instance manifest (the pairing contract)      | `manifest.ts` — seeded, language-stratified, dataset-revision-pinned; materialized as a committed JSON file every campaign references by path                |
-| Routing-table renders (two one-boolean pairs) | `config-override.ts` — derives complete tables from product defaults, replaces only executor/advisor targets, and validates them with `validateRoutingTable` |
-| Duet invocation + limit enforcement           | `duet-client.ts` — RPC NDJSON over an injected `ExecTransport`; the only module that speaks the wire protocol                                                |
-| Container execution                           | `container.ts` — injected `Cmd` (production: local `docker` CLI); the only module that constructs docker argv                                                |
-| Duet-into-container packaging                 | `packaging.ts` — compile-vs-tarball decision confined here                                                                                                   |
-| Rollout telemetry                             | `telemetry.ts` — pure `deriveTelemetry(TurnEvent[])`; raw `events.ndjson` is ground truth, every number re-derivable                                         |
-| Run artifact + resumability                   | `artifacts.ts` — filesystem is the state; `status.json` + `specHash`; orchestrator holds no state of its own                                                 |
-| Patch extraction + integrity                  | `patch.ts` — staged-index extraction, round-trip verification, pollution scan                                                                                |
-| Predictions + scorer quarantine               | `predictions.ts` + `mac/score.sh` + `swebench-report.ts` (narrow parser); nothing else reads harness output                                                  |
-| Comparison report                             | `report.ts` — pure over artifact trees + parsed scores                                                                                                       |
+| Concept                                       | Owner module (under `benchmarks/swebench/src/`)                                                                                                                                             |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Instance manifest (the pairing contract)      | `manifest.ts` — seeded, language-stratified, dataset-revision-pinned; materialized as a committed JSON file every campaign references by path                                               |
+| Routing-table renders (two one-boolean pairs) | `config-override.ts` — derives complete tables from product defaults, installs the fixed Kimi vision fallback plus executor/advisor targets, and validates them with `validateRoutingTable` |
+| Duet invocation + limit enforcement           | `duet-client.ts` — RPC NDJSON over an injected `ExecTransport`; the only module that speaks the wire protocol                                                                               |
+| Container execution                           | `container.ts` — injected `Cmd` (production: local `docker` CLI); the only module that constructs docker argv                                                                               |
+| Duet-into-container packaging                 | `packaging.ts` — compile-vs-tarball decision confined here                                                                                                                                  |
+| Rollout telemetry                             | `telemetry.ts` — pure `deriveTelemetry(TurnEvent[])`; raw `events.ndjson` is ground truth, every number re-derivable                                                                        |
+| Run artifact + resumability                   | `artifacts.ts` — filesystem is the state; `status.json` + `specHash`; orchestrator holds no state of its own                                                                                |
+| Patch extraction + integrity                  | `patch.ts` — staged-index extraction, round-trip verification, pollution scan                                                                                                               |
+| Predictions + scorer quarantine               | `predictions.ts` + `mac/score.sh` + `swebench-report.ts` (narrow parser); nothing else reads harness output                                                                                 |
+| Comparison report                             | `report.ts` — pure over artifact trees + parsed scores                                                                                                                                      |
 
 Cross-cutting rules:
 
@@ -116,9 +118,10 @@ Cross-cutting rules:
 - **All four arms get an explicit rendered `models.json`** (OFF is not
   “absence of override”), placed in the container `HOME`'s `.duet/`. The GLM
   pair uses a GLM-5.2 executor and Kimi K3 advisor; the Kimi pair uses a Kimi K3
-  executor and Fable advisor. Classifier, memory, cadence, transcript, and
-  vision policy are copied unchanged from product policy. Files within a pair
-  differ in exactly the advisor-enabled boolean and never enter `/testbed`.
+  executor and Fable advisor. Classifier, memory, cadence, and transcript are
+  copied unchanged from product policy; Kimi K3 is the fixed campaign vision
+  fallback. Files within a pair differ in exactly the advisor-enabled boolean
+  and never enter `/testbed`.
 - **The official scorer is invoked, never ported or approximated.**
 
 ## Slice graph
@@ -169,7 +172,8 @@ knowingly exceed $500.
   one duet binary hash, explicit renders for all four arms, seeded per-instance
   arm order, and explicit benchmark-tier invocations. Within each comparison
   the only varying bit is `advisor.enabled`. All arms use product defaults for
-  classifier, vision policy, memory model, and every non-advisor policy.
+  classifier, memory model, and every non-advisor policy, plus the same fixed
+  Kimi vision fallback.
 - Isolation: fresh official image + fresh `HOME` per rollout; `--incognito`
   (no memory-db carryover), `--no-system-prompt-files` (no stray AGENTS.md in
   target repos). Scoring applies the patch in the harness's own pristine

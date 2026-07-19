@@ -10,7 +10,7 @@ routing artifacts every later slice consumes.
   (no python) into a git-ignored cache, recording the pinned dataset revision.
   Rows do not contain a language field; `manifest.ts` owns a pinned repo-to-
   language map derived from the official harness rather than guessing.
-- `manifest.ts`: `selectManifest(rows, {seed, size}) → InstanceManifest` —
+- `manifest.ts`: `selectManifest(snapshot, {seed, size}) → InstanceManifest` —
   deterministic seeded PRNG over sorted instance ids, language-stratified
   (bucket counts differ by at most one across the 9 languages). Committed
   output: `benchmarks/swebench/manifests/multilingual-30.json` with
@@ -38,7 +38,7 @@ and never re-sample.
 
 - Unit (fixture rows, no network): same seed → byte-identical manifest; all
   9 languages represented, proportions within ±1; revision recorded; unknown
-  tier throws.
+  repositories throw instead of receiving a guessed language.
 - Config: the deep diff within each ON/OFF pair is exactly one boolean; all
   four pass `validateRoutingTable`; assertions prove executor and advisor
   targets are the only model substitutions and every other applicable policy
@@ -49,6 +49,17 @@ and never re-sample.
 `bun benchmarks/swebench/cli.ts manifest show` prints the per-language table
 of the 30 chosen instances; `... config show` prints all four files and the
 one-line diff inside each comparison pair.
+
+## Completion evidence (2026-07-20)
+
+- Dataset revision `2b7aced941b4873e9cad3e76abbae93f481d1beb`, seed
+  `20260720`, and algorithm `language-stratified-v1` produced the committed
+  30-instance manifest with 3–4 entries in every language.
+- All four committed routing files match their pure renderer. Each pair's
+  structural diff is only `tiers.swebench.advisor.enabled`.
+- `bun run check-types`, `bun run lint`, the focused six-test file, and both
+  playable CLI commands pass. `bun run test` passes all 1,149 Docker-backed
+  tests with zero failures.
 
 ## What would change this slice
 

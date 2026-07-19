@@ -5,7 +5,102 @@ Decision audit for the prerequisite RPC and TurnRunner corrections made on
 
 ## Review these first
 
-No open choices remain from this routing-continuity follow-up.
+N7 is the only open choice: the official benchmark names JavaScript and
+TypeScript separately but publishes one combined repository group, so slice 02
+uses the repositories' pinned primary-language classification to preserve the
+spec's nine-way sample.
+
+## Needs user — slice 02
+
+### N7 — JavaScript and TypeScript repositories are separated by primary language
+
+- **When:** slice 02 manifest implementation on 2026-07-20.
+- **The choice:** Imagine the sampler receives an issue from `vuejs/core`. The
+  official benchmark says its nine languages include both JavaScript and
+  TypeScript, but its repository table and Python harness put both through one
+  combined JavaScript/TypeScript runtime bucket. Today the manifest labels
+  `vuejs/core`, `babel/babel`, `facebook/docusaurus`, and
+  `immutable-js/immutable-js` as TypeScript, and labels `mrdoob/three.js`,
+  `preactjs/preact`, and `axios/axios` as JavaScript, using each repository's
+  primary language. The unbuilt alternative treats those seven repositories
+  as one combined bucket, which follows the scorer more literally but makes
+  the planned “all nine languages” stratification impossible.
+- **The gap:** The spec requires nine separate language buckets and says the
+  map comes from the official harness, while the official harness exposes only
+  a combined JavaScript/TypeScript bucket. It does not define how to reconcile
+  those two facts.
+- **The reach:** This choice decides which three or four instances represent
+  JavaScript versus TypeScript in every arm. It does not affect official image
+  selection or scoring, which remain owned by the Python harness.
+- **Verdict:** **needs-user.** Recommended provisional call: keep the explicit
+  primary-language split because it satisfies the promised nine-language
+  sample without inspecting individual issues. It is reversible before any
+  measured rollout by changing the map, advancing the manifest algorithm, and
+  regenerating the committed manifest; never change it after measurement.
+- **Confidence:** **medium** that the user would preserve nine-way coverage
+  rather than collapse to the scorer's seven reporting groups.
+
+## Sound — slice 02
+
+### S13 — Every arm uses one benchmark-only general route
+
+- **When:** slice 02 routing-render implementation on 2026-07-20.
+- **The choice:** When a SWE-bench issue starts, the active project table has
+  one virtual tier named `swebench` and one `general` route. Every coding step
+  therefore stays on the arm's declared executor: GLM stays GLM and Kimi stays
+  Kimi. The classifier configuration is still copied from the product table,
+  but it has no second destination to choose. The unbuilt alternative copies a
+  normal multi-route product tier; then the classifier could send planning,
+  implementation, or visual phases to different models and “pure GLM” would no
+  longer mean one GLM executor.
+- **The gap:** The spec required a custom complete table and fixed executor but
+  did not name its virtual tier or state whether unused product routes should
+  remain.
+- **The reach:** Later rollout code must invoke `--model swebench` with the
+  selected render installed. Adding routes later would change the experiment,
+  not merely its configuration format.
+- **Verdict:** **sound.** One route is the direct guarantee that the compared
+  executor does all main-agent work while unchanged memory and advisor policy
+  remain available.
+- **Confidence:** **high** because the user explicitly rejected default model
+  definitions for this benchmark.
+
+### S14 — The dataset cache excludes gold answers
+
+- **When:** slice 02 dataset-fetch implementation on 2026-07-20.
+- **The choice:** The Hugging Face response contains issue text, tests, and the
+  human-written solution patch (“gold”). The local ignored cache keeps only
+  repository, instance id, and base commit—the fields needed to reproduce the
+  pairing. The unbuilt alternative caches the complete response, making future
+  code more convenient but putting reference solutions beside the rollout
+  tooling where accidental prompt or artifact contamination is easier.
+- **The gap:** The spec required a git-ignored cache but did not say whether it
+  should preserve full dataset rows.
+- **The reach:** Later slices fetch problem statements through their own
+  rollout/scorer boundary rather than importing gold-bearing cached objects.
+  Regenerating the manifest remains possible without retaining answer patches.
+- **Verdict:** **sound.** Least-privilege benchmark data reduces contamination
+  risk and the manifest needs no omitted field.
+- **Confidence:** **high**.
+
+### S15 — Remainder slots are assigned by the committed seed
+
+- **When:** slice 02 manifest implementation on 2026-07-20.
+- **The choice:** Thirty instances cannot divide evenly across nine languages:
+  three languages must receive four slots and six receive three. Today the same
+  seeded shuffle that samples instances also chooses the three extra-language
+  buckets, producing four Go, four Java, and four Ruby entries for seed
+  `20260720`. The unbuilt alternative always awards extra slots to the first
+  languages in a hard-coded list, which is deterministic but quietly favors
+  list order.
+- **The gap:** The spec required bucket sizes to differ by at most one but did
+  not allocate the remainder.
+- **The reach:** Changing this rule changes the pairing and requires a new
+  algorithm version plus a regenerated manifest before measurement.
+- **Verdict:** **sound.** Seeded allocation is reproducible without turning
+  enum order into sampling policy.
+- **Confidence:** **medium**; a different neutral remainder rule would also be
+  defensible, but none would improve the paired comparison after commitment.
 
 The former parent-step limit, zero-valued early context, built-in balanced tier,
 and fail-closed advisor accounting choices were resolved by the user below.

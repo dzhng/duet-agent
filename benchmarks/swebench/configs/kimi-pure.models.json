@@ -1,0 +1,34 @@
+{
+  "defaultTier": "swebench",
+  "tiers": {
+    "swebench": {
+      "routes": {
+        "general": {
+          "description": "Backend, systems, data, CLI, and other implementation or debugging work, including tests and code changes.",
+          "target": {
+            "modelName": "kimi-k3",
+            "thinkingLevel": "high"
+          },
+          "visionFallbackModelName": "kimi-k3"
+        }
+      },
+      "advisor": {
+        "enabled": false,
+        "target": {
+          "modelName": "fable-5",
+          "thinkingLevel": "high"
+        },
+        "minStepsBetween": 5,
+        "transcriptTokens": 10000
+      }
+    }
+  },
+  "classifier": {
+    "target": {
+      "modelName": "gpt-5.6-luna",
+      "thinkingLevel": "low"
+    },
+    "everySteps": 5,
+    "guidance": "Prefer continuity when the task has not materially changed, but switch routes when the work changes domains."
+  }
+}
