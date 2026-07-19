@@ -103,6 +103,55 @@ class NudgeRunner extends TurnRunner {
   }
 }
 
+/**
+ * Calls the real auxiliary models without asking an executor to choose whether
+ * to consult. The synthetic parent snapshot stands in for an already-completed
+ * parent call so this eval can inspect the production streaming event without
+ * paying for an unrelated third model request.
+ */
+class LiveAuxiliaryUsageRunner extends TurnRunner {
+  constructor() {
+    super({
+      model: "frontier",
+      mode: "agent",
+      memoryDbPath: false,
+      skillDiscovery: { includeDefaults: false },
+    });
+  }
+
+  installParentSnapshot(): void {
+    const usage = {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+    this.lastParentUsageSnapshot = {
+      lastMessageUsage: usage,
+      effectiveContextWindow: 200_000,
+      contextWindowUsage: { systemPrompt: 0, messages: 0, localMemory: 0, globalMemory: 0 },
+    };
+  }
+
+  classifySpawn() {
+    return this.selectSpawnModel("Implement the migration safely.", "frontier");
+  }
+
+  advisorTool() {
+    return this.requireParentAgent().state.tools.find((tool) => tool.name === "ask_advisor");
+  }
+
+  addUserMessage(): void {
+    this.requireParentAgent().state.messages.push({
+      role: "user",
+      content: "Review the migration plan and identify its highest-risk assumption.",
+      timestamp: Date.now(),
+    });
+  }
+}
+
 function captureToolCalls(runner: TurnRunner): CapturedToolCall[] {
   const calls: CapturedToolCall[] = [];
   runner.subscribe((event: TurnEvent) => {
@@ -125,6 +174,50 @@ function captureToolCalls(runner: TurnRunner): CapturedToolCall[] {
 }
 
 describe("advisor trigger and router interlock", () => {
+  testIfDocker(
+    "real classifier and advisor calls share one cumulative per-model ledger",
+    async () => {
+      const runner = new LiveAuxiliaryUsageRunner();
+      const usageEvents: TurnUsageEvent[] = [];
+      runner.subscribe((event) => {
+        if (event.type === "usage") usageEvents.push(event);
+      });
+
+      try {
+        await runner.start({ type: "start", mode: "agent" });
+        runner.installParentSnapshot();
+        await runner.classifySpawn();
+        runner.addUserMessage();
+        const advisor = runner.advisorTool();
+        if (!advisor) throw new Error("Expected ask_advisor tool");
+        await advisor.execute("live-auxiliary-accounting", {});
+
+        const usage = usageEvents.at(-1);
+        const classifierId = resolveModelName(
+          BUILT_IN_ROUTING_TABLE.classifier.target.modelName,
+        ).id;
+        const advisorId = resolveModelName(
+          BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName,
+        ).id;
+        expect(
+          usage?.usageByModel.find((entry) => entry.model === classifierId)?.usage.totalTokens ?? 0,
+        ).toBeGreaterThan(0);
+        expect(
+          usage?.usageByModel.find((entry) => entry.model === advisorId)?.usage.totalTokens ?? 0,
+        ).toBeGreaterThan(0);
+        expect(usage?.usageByModel.reduce((sum, entry) => sum + entry.usage.totalTokens, 0)).toBe(
+          usage?.turnUsage.totalTokens,
+        );
+        expect(
+          usage?.usageByModel.reduce((sum, entry) => sum + entry.usage.cost.total, 0),
+        ).toBeCloseTo(usage?.turnUsage.cost.total ?? 0, 9);
+      } finally {
+        await runner.dispose();
+      }
+    },
+    120_000,
+  );
+
   testIfDocker(
     "challenging underspecified architecture work consults the advisor and reclassifies",
     async () => {
