@@ -23,7 +23,12 @@ describe("bash task wait budget", () => {
       });
 
       const bashCalls: BashCall[] = [];
+      const settlements: Array<{ id: string; status: string }> = [];
       runner.subscribe((event: TurnEvent) => {
+        if (event.type === "task_settled") {
+          settlements.push({ id: event.settlement.id, status: event.settlement.status });
+          return;
+        }
         if (event.type !== "step") return;
         const step = event.step;
         if (step.type !== "tool_call_start") return;
@@ -35,13 +40,14 @@ describe("bash task wait budget", () => {
         });
       });
 
-      // Falsification target (Docker run pending): restore the old kill-deadline prompt;
-      // the model should choose a long timeout and make the upper-bound assertion red.
+      // Falsification (run 2026-07-19): reinstating a 5s inner kill in
+      // withoutBashKillTimeout makes the completed-settlement assertion red — the
+      // 8s sleep dies at 5s and settles failed. Restored green after revert.
       const terminal = await (
         await startTurn(runner, {
           mode: "agent",
           prompt: dedent`
-            Run this command for me: \`sleep 2 && echo build-finished\`.
+            Run this command for me: \`sleep 8 && echo build-finished\`.
 
             Give it a foreground wait budget of at most one second so it converts to a task instead of blocking. Do not stop it: wait for its settlement nudge, then confirm the build output.
           `,
@@ -59,6 +65,11 @@ describe("bash task wait budget", () => {
 
       expect(longRunningCall.timeout).toBeGreaterThan(0);
       expect(longRunningCall.timeout).toBeLessThanOrEqual(1);
+
+      // The no-kill contract itself: the 8s process outlives any reinstated kill
+      // deadline and settles completed, never failed/stopped.
+      expect(settlements.length).toBeGreaterThan(0);
+      expect(settlements.every((entry) => entry.status === "completed")).toBe(true);
     },
     120_000,
   );
