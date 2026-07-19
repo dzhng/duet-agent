@@ -276,26 +276,6 @@ describe("TaskManager", () => {
     expect(manager.pendingWork()).toEqual({ kind: "complete" });
   });
 
-  test("escalateStop replaces the final stop reason before unwind completes", async () => {
-    const manager = createTaskManager({ clock: new ManualRuntimeClock() });
-    const work = createFakeTaskWork();
-    const handle = startWork(manager, work);
-    await started();
-
-    const stopped = manager.stop(handle.id, "SIGTERM");
-    await started();
-    manager.escalateStop(handle.id, "SIGKILL");
-    work.completeCleanup();
-    await stopped;
-
-    expect(manager.output(handle.id)?.settlement).toEqual({
-      id: "t1",
-      status: "stopped",
-      settledAt: 0,
-      reason: "SIGKILL",
-    });
-  });
-
   test("recover marks in-process work lost, preserves schedules, and advances ids", () => {
     const clock = new ManualRuntimeClock(1_000);
     const manager = createTaskManager({ clock });

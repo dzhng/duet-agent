@@ -102,9 +102,10 @@ task/schedule paths.
 
 1. **Terminal ⇒ quiescent ⇒ reapable.** One terminal per turn, emitted at one exit, inside a
    try/finally (a thrown turn still terminates — today `Session.dispatchTurn` hangs waiters).
-2. **No hard kill.** Only `task_stop`, interrupt, or scope close abort work. Interrupt
-   escalates SIGTERM → SIGKILL after a grace period so the `interrupted` terminal is never
-   blocked by a stubborn child.
+2. **No hard kill by timeout; uniform SIGKILL on stop.** Only `task_stop`, interrupt, or
+   scope close abort work. Stopped process groups die by immediate SIGKILL across every
+   executor (bash and script alike) — the `interrupted` terminal is never gated on a grace
+   window. Graceful TERM cleanup, if ever needed, is a future explicit opt-in.
 3. **Settlements live only in TaskManager's pull FIFO.** Never in pi's steer/followUp queues
    (they revive terminated runs — confirmed agent-loop.js:154/157). Delivery = loop-owned
    re-prompt passes, batched; mid-run steer is best-effort and gated on no captured control
@@ -138,10 +139,10 @@ task/schedule paths.
 
 ## Open items / product calls recorded
 
-- **Bash children get SIGKILL on stop in v1** (decided at slice 08): pi's bash abort handler
-  kills the process group immediately; the wrapper cannot TERM-first without pi's tracked-pid
-  registry. Liveness (invariant 2's purpose) holds; graceful TERM-first for bash children is
-  deferred to slice 12's shutdown work. Script states and subagents stop gracefully.
+- **All process groups get immediate SIGKILL on stop** (decided at slice 08 for pi-bash,
+  extended to script states at slice 14 by user decision): one stop semantics everywhere
+  beats a TERM-grace guarantee that held on only one of two paths. The former script-state
+  escalation machinery (escalateStop, grace race, forceKill) was deleted.
 
 - Ledger #15 OPEN: does spawn_agent eventually subsume state-machine agent states?
 - Task settlements remain deliberately absent from the editable follow-up panel. They bypass

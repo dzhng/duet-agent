@@ -94,8 +94,6 @@ export interface TaskManager {
   nextSettled(): TaskSettlement | undefined;
   /** Abort a task once and resolve only after its executor has fully unwound. */
   stop(id: TaskId, reason: TaskStopReason): Promise<TaskSnapshot | undefined>;
-  /** Replace an in-flight stop reason when process teardown escalates. */
-  escalateStop(id: TaskId, reason: TaskStopReason): void;
   /** Stop descendant scopes before directly owned tasks and await every unwind. */
   closeScope(scopeId: string, reason: TaskStopReason): Promise<void>;
   /** Abort all active and scheduled work, reap processes, and await full unwind. */
@@ -371,12 +369,6 @@ export function createTaskManager(options: TaskManagerOptions): TaskManager {
         settle(record, { id, status: "stopped", settledAt: options.clock.now(), reason });
       }
       return snapshot(record);
-    },
-
-    escalateStop(id, reason) {
-      const record = records.get(id);
-      if (!record || record.settlement || record.stopReason === undefined) return;
-      record.stopReason = reason;
     },
 
     async closeScope(scopeId, reason) {

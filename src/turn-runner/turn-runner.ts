@@ -253,8 +253,6 @@ type StateTaskMetadata =
       pollPolicy?: PollPolicy;
     };
 
-const INTERRUPT_GRACE_MS = 1_000;
-
 /**
  * How many times the parent is re-prompted to emit the
  * select_state_machine_state it owes after a state completes before the runner
@@ -1436,18 +1434,17 @@ export class TurnRunner {
       successCodes: spec.successCodes,
     });
     let taskId!: TaskId;
-    let finished = false;
     let finish!: () => void;
     const finishedPromise = new Promise<void>((resolve) => {
       finish = resolve;
     });
+    // Stop semantics are uniform across executors: process groups die by SIGKILL
+    // immediately (matching pi-bash), so the interrupted terminal is never gated
+    // on a grace window. Graceful TERM cleanup, if ever needed, is a future
+    // explicit opt-in, not a blanket default.
     const unregisterReaper = this.taskManager.registerReaper(async (reason) => {
       shell.interrupt(reason);
-      await Promise.race([finishedPromise, this.clock.sleep(INTERRUPT_GRACE_MS)]);
-      if (finished) return;
-      const escalated = `${reason} (SIGTERM grace expired; escalated to SIGKILL)`;
-      this.taskManager.escalateStop(taskId, escalated);
-      shell.forceKill(escalated);
+      await finishedPromise;
     });
     const handle = this.taskManager.start({
       kind: "tool",
@@ -1471,7 +1468,6 @@ export class TurnRunner {
           } satisfies ShellSettlement;
         } finally {
           signal.removeEventListener("abort", interrupt);
-          finished = true;
           finish();
           unregisterReaper();
         }
