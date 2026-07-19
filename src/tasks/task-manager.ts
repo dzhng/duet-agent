@@ -78,6 +78,8 @@ export interface RecoverResult {
 }
 
 export interface TaskManager {
+  /** Register a child scope before work begins so depth is rejected at the executor boundary. */
+  openScope(scopeId: string, parentScopeId?: string): void;
   /** Allocate an id and either spawn in-process work or record a schedule. */
   start<T>(spec: TaskSpec<T>): TaskHandle;
   /** Wait through a foreground budget without aborting on expiry. */
@@ -205,6 +207,10 @@ export function createTaskManager(options: TaskManagerOptions): TaskManager {
   };
 
   const manager: TaskManager = {
+    openScope(scopeId, parentScopeId) {
+      registerScope(scopeId, parentScopeId);
+    },
+
     start<T>(spec: TaskSpec<T>): TaskHandle {
       if (spec.kind === "scheduled" && !Number.isFinite(spec.wakeAt)) {
         throw new RangeError("wakeAt must be a finite Unix-epoch timestamp");

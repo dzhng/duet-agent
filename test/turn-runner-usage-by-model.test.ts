@@ -7,6 +7,8 @@ import {
 } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnTerminalEvent, TurnTokenUsage } from "../src/types/protocol.js";
 import type { SubagentRun } from "../src/turn-runner/subagent.js";
+import type { SubagentSpec } from "../src/turn-runner/subagent.js";
+import type { TaskId } from "../src/tasks/types.js";
 import { createOutreachStateMachine } from "./helpers/turn-runner-protocol.js";
 
 const STATE_MODEL_ID = "test-state-model/v1";
@@ -27,6 +29,15 @@ const STATE_USAGE: TurnTokenUsage = {
   cacheWrite: 0,
   totalTokens: 1200,
   cost: { input: 0.2, output: 0.05, cacheRead: 0, cacheWrite: 0, total: 0.25 },
+};
+
+const CHILD_USAGE: TurnTokenUsage = {
+  input: 300,
+  output: 50,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 350,
+  cost: { input: 0.03, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.05 },
 };
 
 /**
@@ -131,6 +142,58 @@ class MultiModelTurnRunner extends TurnRunner {
   }
 }
 
+class ConcurrentSpawnUsageRunner extends TurnRunner {
+  constructor() {
+    super({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+  }
+
+  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    this.lastParentUsageSnapshot = {
+      effectiveContextWindow: 200_000,
+      contextWindowUsage: { systemPrompt: 100, messages: 200, localMemory: 0, globalMemory: 0 },
+      lastMessageUsage: PARENT_USAGE,
+    };
+    this.recordUsage(PARENT_USAGE, this.requireParentAgent().state.model.id);
+    this.emitTurnUsage();
+    const spawn = this.createTools("agent").tools.find((tool) => tool.name === "spawn_agent");
+    if (!spawn) throw new Error("spawn_agent missing");
+    await Promise.all([
+      spawn.execute("spawn-a", { prompt: "first child" }),
+      spawn.execute("spawn-b", { prompt: "second child" }),
+    ]);
+    return {
+      control: { type: "none" },
+      outcome: {
+        type: "complete",
+        status: "completed",
+        result: "children complete",
+        state: { ...input.state, status: "completed" },
+      },
+    };
+  }
+
+  protected override async createSpawnedSubagentRun(
+    _spec: SubagentSpec,
+    taskId: TaskId,
+    ownerScopeId: string,
+  ): Promise<SubagentRun> {
+    return {
+      prompt: async () => {
+        await Promise.resolve();
+        this.recordUsage(CHILD_USAGE, `fake-child/${taskId}`);
+        this.emitTurnUsage({ kind: "task", taskId, ownerScopeId });
+        return { type: "complete", result: `${taskId} report` };
+      },
+      interrupt: () => undefined,
+      interruptedReason: () => undefined,
+      partialAssistantText: () => undefined,
+    };
+  }
+}
+
 describe("TurnRunner per-model cost breakdown", () => {
   test("attributes a mixed-model relay turn to per-model entries that sum to the turn total", async () => {
     const runner = new MultiModelTurnRunner();
@@ -166,5 +229,52 @@ describe("TurnRunner per-model cost breakdown", () => {
     const summed = usageByModel!.reduce((acc, entry) => acc + entry.usage.cost.total, 0);
     expect(summed).toBeCloseTo(turnUsage!.cost.total, 10);
     expect(summed).toBeCloseTo(0.35, 10);
+  });
+
+  test("two concurrent spawned children contribute task-origin usage that sums to the turn aggregate", async () => {
+    const runner = new ConcurrentSpawnUsageRunner();
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+    await runner.start({ type: "start", mode: "agent" });
+
+    const terminal = await runner.turn({
+      type: "prompt",
+      message: "spawn both",
+      behavior: "follow_up",
+    });
+
+    expect(terminal.type).toBe("complete");
+    const taskUsage = events.filter(
+      (event): event is Extract<TurnEvent, { type: "usage" }> =>
+        event.type === "usage" && event.origin?.kind === "task",
+    );
+    expect(taskUsage.map((event) => event.origin?.kind === "task" && event.origin.taskId)).toEqual([
+      "t1",
+      "t2",
+    ]);
+    const allUsage = events.filter(
+      (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
+    );
+    let previousTotal = 0;
+    const taskDeltas = new Map<string, number>();
+    for (const event of allUsage) {
+      const delta = event.turnUsage.cost.total - previousTotal;
+      previousTotal = event.turnUsage.cost.total;
+      if (event.origin?.kind === "task") taskDeltas.set(event.origin.taskId, delta);
+    }
+    for (const delta of taskDeltas.values()) expect(delta).toBeCloseTo(0.05, 10);
+    expect(terminal.usageByModel!.map((entry) => entry.model)).toEqual(
+      expect.arrayContaining(["fake-child/t1", "fake-child/t2"]),
+    );
+    const perModelTotal = terminal.usageByModel!.reduce(
+      (sum, entry) => sum + entry.usage.cost.total,
+      0,
+    );
+    expect(perModelTotal).toBeCloseTo(terminal.turnUsage!.cost.total, 10);
+    expect(
+      PARENT_USAGE.cost.total + [...taskDeltas.values()].reduce((a, b) => a + b, 0),
+    ).toBeCloseTo(terminal.turnUsage!.cost.total, 10);
+    expect(perModelTotal).toBeCloseTo(0.2, 10);
+    await runner.dispose();
   });
 });

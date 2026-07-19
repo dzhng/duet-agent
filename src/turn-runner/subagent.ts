@@ -68,6 +68,16 @@ export interface SubagentAgentConfigInput {
   skills?: Skill[];
   /** Runtime tools bound to this child's working directory and permissions. */
   tools: AgentTool[];
+  /** Child-only memory identity and wire horizon; omission selects the parent runtime. */
+  memoryContext?: SubagentMemoryContext;
+}
+
+/** Child-local memory identity and mutable wire-shaping state. */
+export interface SubagentMemoryContext {
+  /** Durable scratch namespace derived from the parent session and task id. */
+  sessionId?: string;
+  /** Horizon mutated only by this child's context transform. */
+  horizon: import("../types/protocol.js").WireGuardHorizon;
 }
 
 interface SubagentMachineContext {
@@ -80,6 +90,19 @@ export interface SubagentExecutionContext {
   origin: TurnEventOrigin;
   /** Active relay definition used to keep a state worker inside its assigned state. */
   machineContext?: SubagentMachineContext;
+  /** Scope owned by a spawned child; its nested tasks are cascade-stopped on close. */
+  childScopeId?: string;
+  /** Scope that owns the spawn task and is the parent of childScopeId. */
+  ownerScopeId?: string;
+  /** Isolated observational-memory identity and horizon for this child. */
+  memoryContext?: SubagentMemoryContext;
+  /** Transcript source of the agent that called spawn_agent. */
+  forkSource?: {
+    messages(): AgentMessage[];
+    systemPrompt(): string | undefined;
+  };
+  /** Runtime agent published after construction for recursively spawned forks. */
+  agent?: Agent;
 }
 
 export interface SubagentExecutorDeps {
@@ -104,11 +127,11 @@ export interface SubagentExecutorDeps {
     model: string | undefined,
   ): Pick<ResolvedTarget, "modelName" | "thinkingLevel"> | undefined;
   /** Returns a snapshot of the parent transcript when forkContext is enabled. */
-  seedMessages(spec: SubagentSpec): AgentMessage[];
+  seedMessages(spec: SubagentSpec, ctx: SubagentExecutionContext): AgentMessage[];
   /** Returns the byte-identical parent system prompt used by unrestricted forks. */
-  parentSystemPrompt(): string | undefined;
+  parentSystemPrompt(ctx: SubagentExecutionContext): string | undefined;
   /** Creates coding tools using the child's resolved cwd. */
-  createTools(cwd: string | undefined): { tools: AgentTool[] };
+  createTools(cwd: string | undefined, ctx: SubagentExecutionContext): { tools: AgentTool[] };
   /** Retries the existing transient provider failures without changing child semantics. */
   retryTransientServerErrors(agent: Agent): Promise<void>;
   /** Streams pi events through the turn protocol with the child origin attached. */
@@ -123,7 +146,7 @@ export interface SubagentExecutorDeps {
 export function createSubagentExecutor(deps: SubagentExecutorDeps) {
   return (spec: SubagentSpec, ctx: SubagentExecutionContext): SubagentRun => {
     const controls: TurnRunnerControlResult[] = [];
-    const seedMessages = deps.seedMessages(spec);
+    const seedMessages = deps.seedMessages(spec, ctx);
     // Capture the seeded prefix length up front. The sub-agent's result,
     // partial text, and recorded usage are all computed by slicing this prefix
     // off agent.state.messages so a forked parent transcript isn't folded into
@@ -169,7 +192,7 @@ export function createSubagentExecutor(deps: SubagentExecutorDeps) {
     // trading the cache prefix for the allowlist contract.
     const forkSystemPrompt = forkContext
       ? childSkills === undefined
-        ? deps.parentSystemPrompt()
+        ? deps.parentSystemPrompt(ctx)
         : deps.skillContext.createSystemPromptWithAppendedLayers({ skills: childSkills })
       : undefined;
     const tailPrompt = forkContext
@@ -184,7 +207,8 @@ export function createSubagentExecutor(deps: SubagentExecutorDeps) {
         prependSystemPrompt: forkContext ? undefined : identityLayer,
         appendSystemPrompt: forkContext ? undefined : spec.systemPrompt,
         skills: childSkills,
-        ...deps.createTools(spec.cwd),
+        ...deps.createTools(spec.cwd, ctx),
+        ...(ctx.memoryContext ? { memoryContext: ctx.memoryContext } : {}),
       },
       (result) => {
         if (result.type === "none") return;
@@ -194,6 +218,7 @@ export function createSubagentExecutor(deps: SubagentExecutorDeps) {
         controls.push(result);
       },
     );
+    ctx.agent = agent;
     let unsubscribe: (() => void) | undefined;
     let interruptedReason: string | undefined;
     const finish = (): SubagentResult => {
