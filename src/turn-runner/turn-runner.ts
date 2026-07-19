@@ -1643,7 +1643,7 @@ export class TurnRunner {
   private async selectNextStateAfterCompletion(
     stateName: string,
     output?: unknown,
-  ): Promise<SettledDecision["outcome"]> {
+  ): Promise<SettledDecision["outcome"] | undefined> {
     const loopWarning = this.repeatedSelectionLoopWarning(stateName);
     return this.enforceParentTransition(
       (retryInstruction) =>
@@ -1677,16 +1677,16 @@ export class TurnRunner {
   /**
    * Shared bounded-retry loop for transitions the parent owes the machine.
    * Re-prompts up to `PARENT_TRANSITION_RETRY_BUDGET` times with `buildPrompt`
-   * (the second and later attempts carry a retry reminder); the first attempt
-   * that emits a control action returns its result. When the budget is
-   * exhausted with no control action, records an `error` terminal carrying
-   * `failureReason` — a runtime failure of the machine, not a deliberate
-   * `failed` selection.
+   * (the second and later attempts carry a retry reminder); the first accepted
+   * selection ends enforcement, with an immediate outcome only for synchronous
+   * work. When the budget is exhausted with no control action, records an
+   * `error` terminal carrying `failureReason` — a runtime failure of the
+   * machine, not a deliberate `failed` selection.
    */
   private async enforceParentTransition(
     buildPrompt: (retryInstruction: string | undefined) => string,
     failureReason: string,
-  ): Promise<SettledDecision["outcome"]> {
+  ): Promise<SettledDecision["outcome"] | undefined> {
     for (let attempt = 1; attempt <= PARENT_TRANSITION_RETRY_BUDGET; attempt++) {
       const retryInstruction =
         attempt === 1
@@ -1704,6 +1704,9 @@ export class TurnRunner {
         workerResult.outcome.state,
       );
       if (result) return result;
+      // Starting an asynchronous state has no immediate outcome. The select
+      // control itself proves the transition obligation was satisfied.
+      if (workerResult.control.type === "select_state_machine_state") return undefined;
     }
 
     const failed = failActiveSession(
