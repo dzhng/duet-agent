@@ -70,17 +70,17 @@ Two ways in, same audit:
 4. **Bank every choice in the ledger** (below), and promote load-bearing
    sound ones into the plan's handoff so later passes inherit them as givens
    instead of re-deciding.
-5. **Present the ledger as a ranked list — least confident first.** The
+5. **Present the ledger: grouped by verdict, ranked by confidence.** The
    audit's deliverable is the ledger, handed to whoever acts next — the
-   calling workflow mid-run, the user at run's end. Rank every choice by
-   confidence, ascending: the top of the report is whatever the audit is
-   least sure the user would have chosen (needs-user rows with their
-   provisional calls, unsound choices with their corrected decisions), and
-   confident-but-load-bearing sound decisions follow — sound is not
-   skippable; those are the architecture the user now owns. The user reads
-   top-down and can stop when confidence gets boring. Only trivial
-   discretion (internal naming, cosmetic calls) compresses to a one-line
-   count. It must stand alone without the diff.
+   calling workflow mid-run, the user at run's end. Each verdict group maps
+   to an action — needs-user (decide, with the provisional calls), unsound
+   (redo, with the corrected decisions), sound (acknowledge: the
+   architecture the user now owns) — and within each group choices are
+   ranked by confidence, least confident first. When the ledger is long,
+   open the report with the two or three least-confident choices overall,
+   whatever their group: the "review these first" line. Sound is not
+   skippable. Only trivial discretion (internal naming, cosmetic calls)
+   compresses to a one-line count. It must stand alone without the diff.
 
 ## The Choices Ledger
 
@@ -132,7 +132,7 @@ Rules of the ledger:
 The audit is done when every invented choice in the pass has a ledger entry
 with a verdict, every unsound entry names the corrected decision to redo
 from, every needs-user entry carries a reversible provisional call, and the
-ledger has been presented, ranked least-confident-first, to whoever acts
-next — with the tree untouched. A
+ledger has been presented — grouped by verdict, least-confident-first within
+each group — to whoever acts next, with the tree untouched. A
 handback that shows the diff instead of the choices, or a "fix" applied
 during the audit, is not done.
