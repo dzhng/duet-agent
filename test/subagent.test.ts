@@ -29,11 +29,14 @@ function poisonedModelRouter(): ModelRouter {
 }
 
 class PoisonedRouterTurnRunner extends TurnRunner {
+  childToolNames: string[] = [];
+
   protected override createAgent(
     input: AgentConfigInput,
     onControlResult?: Parameters<TurnRunner["createAgent"]>[1],
   ): Agent {
     const agent = super.createAgent(input, onControlResult);
+    if (input.prependSystemPrompt) this.childToolNames = input.tools.map((tool) => tool.name);
     agent.prompt = (async () => {}) as typeof agent.prompt;
     return agent;
   }
@@ -53,6 +56,45 @@ class PoisonedRouterTurnRunner extends TurnRunner {
   }
 }
 
+class LiveSpawnTurnRunner extends TurnRunner {
+  readonly childInputs: AgentConfigInput[] = [];
+  readonly selections: Array<{ prompt: string; parentSetting: string }> = [];
+
+  protected override createAgent(
+    input: AgentConfigInput,
+    onControlResult?: Parameters<TurnRunner["createAgent"]>[1],
+  ): Agent {
+    const agent = super.createAgent(input, onControlResult);
+    if (input.memoryContext) this.childInputs.push(input);
+    agent.prompt = (async () => {}) as typeof agent.prompt;
+    return agent;
+  }
+
+  protected override async selectSpawnModel(prompt: string, parentSetting: string) {
+    this.selections.push({ prompt, parentSetting });
+    return { modelName: "anthropic:claude-sonnet-4-6" };
+  }
+
+  poisonRouterAndOpenScope(): void {
+    const state = this.getState();
+    if (!state) throw new Error("Runner must be started before spawning.");
+    (this as unknown as { state: TurnState }).state = {
+      ...state,
+      options: { ...state.options, model: "frontier" },
+    };
+    this.modelRouter = poisonedModelRouter();
+    (this as unknown as { activeRootScopeId: string }).activeRootScopeId = "root";
+  }
+
+  spawn(prompt: string) {
+    const tool = this.createTools("agent").tools.find(
+      (candidate) => candidate.name === "spawn_agent",
+    );
+    if (!tool) throw new Error("spawn_agent tool missing");
+    return tool.execute(`spawn-${prompt}`, { prompt });
+  }
+}
+
 describe("sub-agent model routing isolation", () => {
   test("state-agent execution inherits the active concrete parent without touching ModelRouter", async () => {
     const runner = new PoisonedRouterTurnRunner({
@@ -69,6 +111,7 @@ describe("sub-agent model routing isolation", () => {
       .prompt();
 
     expect(result).toEqual({ type: "complete", result: "" });
+    expect(runner.childToolNames).not.toContain("ask_user_question");
     await runner.dispose();
   });
 
@@ -96,5 +139,46 @@ describe("sub-agent model routing isolation", () => {
     });
     expect(inputs).toHaveLength(1);
     expect(inputs[0]?.lastStepDelta).toBe("Write the patch.");
+  });
+
+  test("live spawn classifies the virtual parent once without the shared router and isolates child tools", async () => {
+    const runner = new LiveSpawnTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      mode: "agent",
+      memoryDbPath: false,
+      sessionId: "parent-session",
+      skillDiscovery: { includeDefaults: false },
+    });
+    await runner.start({ type: "start", mode: "agent" });
+    runner.poisonRouterAndOpenScope();
+
+    const [first, second] = await Promise.all([
+      runner.spawn("Audit auth."),
+      runner.spawn("Audit billing."),
+    ]);
+    expect(first.content[0]).toMatchObject({ type: "text" });
+    expect(second.content[0]).toMatchObject({ type: "text" });
+    expect(runner.selections).toEqual([
+      { prompt: "Audit auth.", parentSetting: "frontier" },
+      { prompt: "Audit billing.", parentSetting: "frontier" },
+    ]);
+    expect(runner.childInputs).toHaveLength(2);
+    expect(runner.childInputs.map((input) => input.memoryContext?.sessionId)).toEqual([
+      "parent-session:sub:t1",
+      "parent-session:sub:t2",
+    ]);
+    expect(runner.childInputs[0]?.memoryContext?.horizon).not.toBe(
+      runner.childInputs[1]?.memoryContext?.horizon,
+    );
+    runner.childInputs[0]!.memoryContext!.horizon.evictionHorizon = 7;
+    expect(runner.childInputs[1]?.memoryContext?.horizon.evictionHorizon).toBe(0);
+    for (const input of runner.childInputs) {
+      const names = input.tools.map((tool) => tool.name);
+      expect(names).toContain("spawn_agent");
+      expect(names).toContain("task_output");
+      expect(names).toContain("task_stop");
+      expect(names).not.toContain("ask_user_question");
+    }
+    await runner.dispose();
   });
 });

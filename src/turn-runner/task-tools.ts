@@ -3,6 +3,147 @@ import { Type, type Static, type TSchema } from "typebox";
 import type { RuntimeClock } from "./runtime-clock.js";
 import type { TaskManager } from "../tasks/task-manager.js";
 import type { TaskId, TaskSnapshot } from "../tasks/types.js";
+import type { SubagentResult, SubagentRun, SubagentSpec } from "./subagent.js";
+
+export const spawnAgentSchema = Type.Object({
+  prompt: Type.String({ description: "The task for the child agent." }),
+  fork_context: Type.Optional(
+    Type.Boolean({ description: "Seed the child with a copy of the caller's transcript." }),
+  ),
+  cwd: Type.Optional(Type.String({ description: "Working directory for the child." })),
+  allowed_skills: Type.Optional(
+    Type.Array(Type.String(), { description: "Skill names the child may use." }),
+  ),
+  run_in_background: Type.Optional(
+    Type.Boolean({ description: "Start the child in the background and return immediately." }),
+  ),
+  timeout: Type.Optional(
+    Type.Number({
+      minimum: 0,
+      description:
+        "Foreground wait budget in seconds. Expiry moves the child to the background; it does not stop it.",
+    }),
+  ),
+});
+
+export type SpawnAgentParams = Static<typeof spawnAgentSchema>;
+
+export interface SpawnAgentDependencies {
+  /** Single lifecycle owner shared with bash and the task administration tools. */
+  taskManager: TaskManager;
+  /** Default foreground wait budget in milliseconds. */
+  defaultWaitBudgetMs: number;
+  /** Runtime clock used by the shared B1 wording. */
+  clock: RuntimeClock;
+  /** Scope of the agent that called spawn_agent. */
+  ownerScopeId: () => string;
+  /** Build the child only after its stable task identity and scope exist. */
+  createRun(input: {
+    spec: SubagentSpec;
+    taskId: TaskId;
+    ownerScopeId: string;
+    childScopeId: string;
+  }): Promise<SubagentRun>;
+  /** Remove child-scoped scratch after all work in its scope has unwound. */
+  dropScratch?(taskId: TaskId): Promise<void>;
+  /** Register settlement delivery posture with the parent loop. */
+  onTaskStarted?: (id: TaskId, foregroundPending: boolean) => void;
+  /** Resolve foreground delivery bookkeeping. */
+  onForegroundResult?: (id: TaskId, converted: boolean) => void;
+}
+
+/** Create the restricted public spawn_agent surface on the shared task rails. */
+export function createSpawnAgentTool(
+  deps: SpawnAgentDependencies,
+): AgentTool<typeof spawnAgentSchema> {
+  return {
+    name: "spawn_agent",
+    label: "Spawn agent",
+    description:
+      "Run a subagent as a tool call and return its final report. Children may spawn tasks and agents within the depth limit.",
+    parameters: spawnAgentSchema,
+    async execute(_toolCallId, params) {
+      const ownerScopeId = deps.ownerScopeId();
+      const spec: SubagentSpec = {
+        prompt: params.prompt,
+        ...(params.fork_context ? { forkContext: true } : {}),
+        ...(params.cwd ? { cwd: params.cwd } : {}),
+        ...(params.allowed_skills ? { allowedSkills: params.allowed_skills } : {}),
+      };
+      let handle!: { id: TaskId };
+      handle = deps.taskManager.start({
+        kind: "subagent",
+        name: "spawn_agent",
+        label: params.prompt,
+        ownerScopeId,
+        execute: async ({ signal, onOutput }) => {
+          const childScopeId = `task:${handle.id}`;
+          try {
+            deps.taskManager.openScope(childScopeId, ownerScopeId);
+          } catch (error) {
+            if (error instanceof RangeError) {
+              throw new Error(`spawn_agent depth limit: ${error.message}`);
+            }
+            throw error;
+          }
+          let run: SubagentRun | undefined;
+          const interrupt = () => run?.interrupt(String(signal.reason ?? "Interrupted"));
+          signal.addEventListener("abort", interrupt, { once: true });
+          try {
+            run = await deps.createRun({ spec, taskId: handle.id, ownerScopeId, childScopeId });
+            if (signal.aborted) run.interrupt(String(signal.reason ?? "Interrupted"));
+            const result = await run.prompt();
+            const report = subagentResultText(result);
+            if (report) onOutput(report);
+            if (result.type === "failed") throw new Error(result.error);
+            if (result.type === "interrupted") {
+              throw new Error(run.interruptedReason() ?? "Subagent interrupted.");
+            }
+            return textResult(report || "Subagent completed without a report.");
+          } finally {
+            signal.removeEventListener("abort", interrupt);
+            await deps.taskManager.closeScope(
+              childScopeId,
+              String(signal.reason ?? "Subagent scope closed."),
+            );
+            await deps.dropScratch?.(handle.id);
+          }
+        },
+      });
+      deps.onTaskStarted?.(handle.id, !params.run_in_background);
+
+      if (params.run_in_background) {
+        const snapshot = deps.taskManager.output(handle.id);
+        if (!snapshot) throw new Error(`Task ${handle.id} disappeared after start.`);
+        return textResult(startedInBackgroundNotice(snapshot));
+      }
+
+      const budgetMs =
+        params.timeout === undefined ? deps.defaultWaitBudgetMs : params.timeout * 1_000;
+      const foreground = await deps.taskManager.raceForeground(handle, budgetMs);
+      if (foreground.kind === "settled") {
+        deps.onForegroundResult?.(handle.id, false);
+        if (foreground.settlement.status === "completed") {
+          return foreground.settlement.result as AgentToolResult<undefined>;
+        }
+        if (foreground.settlement.status === "stopped") {
+          throw new Error(`Task ${handle.id} stopped: ${foreground.settlement.reason}`);
+        }
+        if (foreground.settlement.status === "failed") throw foreground.settlement.error;
+        throw new Error(`Task ${handle.id} was lost.`);
+      }
+      deps.onForegroundResult?.(handle.id, true);
+      return textResult(stillRunningNotice(foreground.task, deps.clock.now()));
+    },
+  };
+}
+
+function subagentResultText(result: SubagentResult): string {
+  if (result.type === "complete") return result.result ?? "";
+  if (result.type === "failed") return result.error;
+  if (result.type === "interrupted") return "Subagent interrupted.";
+  return "Spawned agent attempted to ask the user a question.";
+}
 
 const MAX_INLINE_SETTLEMENT_CHARS = 2_000;
 

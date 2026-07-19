@@ -43,6 +43,7 @@ import { createEmbeddingClient } from "../memory/embedding.js";
 import {
   loadStoredMemory,
   readSessionObservations,
+  replaceSessionObservations,
   type MemoryPersistenceHandle,
 } from "../memory/storage.js";
 import { MemoryContextCache } from "../memory/store.js";
@@ -133,8 +134,10 @@ import {
 } from "./state-machine-decisions.js";
 import {
   createSubagentExecutor,
+  classifySpawnModel,
   type SubagentResult,
   type SubagentAgentConfigInput,
+  type SubagentExecutionContext,
   type SubagentRun,
   type SubagentSpec,
 } from "./subagent.js";
@@ -151,7 +154,12 @@ import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
 import type { TaskDescriptor, TaskEvent, TaskId, TaskSettlement } from "../tasks/types.js";
 import { createShellStateHandle, type ShellStateHandle } from "./shell-state-handle.js";
 import type { StateMachineSession } from "../types/state-machine.js";
-import { createTaskAdminTools, settlementNotice, wrapBackgroundable } from "./task-tools.js";
+import {
+  createSpawnAgentTool,
+  createTaskAdminTools,
+  settlementNotice,
+  wrapBackgroundable,
+} from "./task-tools.js";
 
 /** @internal Constructor-only lifecycle seams; these are deliberately absent from config. */
 interface TurnRunnerDependencies {
@@ -159,6 +167,17 @@ interface TurnRunnerDependencies {
   clock?: RuntimeClock;
   /** Internal schedule-validation override; production keeps the 15-minute floor. */
   minimumScheduledDelayMs?: number;
+}
+
+interface ChildToolContext {
+  /** Scope that owns tasks created by this child. */
+  ownerScopeId: string;
+  /** Session identity used by recall_memory. */
+  memorySessionId?: string;
+  /** Live caller transcript used by recursive fork_context spawns. */
+  forkSource: NonNullable<SubagentExecutionContext["forkSource"]>;
+  /** Concrete setting of the child that owns this recursively callable toolset. */
+  modelSetting(): string;
 }
 
 export type TurnEventHandler = (event: TurnEvent) => void;
@@ -382,7 +401,7 @@ export class TurnRunner {
   private interruptCleanup?: Promise<void>;
   /** Guards the single public terminal emission for the active turn. */
   private terminalEmitted = false;
-  /** Shared construction path for relay agent states and future spawned children. */
+  /** Shared construction path for relay agent states and spawned children. */
   private readonly subagentExecutor: ReturnType<typeof createSubagentExecutor>;
   /**
    * Set true by `interrupt()` while a parent-agent prompt is in flight, so
@@ -470,10 +489,34 @@ export class TurnRunner {
       },
       inheritedOptions: () => this.resolveSubagentInheritedOptions(),
       resolveModel: (model) => this.resolveStateModel(model),
-      seedMessages: (spec) =>
-        spec.forkContext ? [...(this.parentAgent?.state.messages ?? [])] : [],
-      parentSystemPrompt: () => this.parentAgent?.state.systemPrompt,
-      createTools: (cwd) => this.createTools("agent", cwd, false),
+      seedMessages: (spec, ctx) =>
+        spec.forkContext
+          ? [...(ctx.forkSource?.messages() ?? this.parentAgent?.state.messages ?? [])]
+          : [],
+      parentSystemPrompt: (ctx) =>
+        ctx.forkSource?.systemPrompt() ?? this.parentAgent?.state.systemPrompt,
+      createTools: (cwd, ctx) =>
+        this.createTools(
+          "agent",
+          cwd,
+          false,
+          ctx.childScopeId && ctx.ownerScopeId
+            ? {
+                ownerScopeId: ctx.childScopeId,
+                ...(ctx.memoryContext?.sessionId
+                  ? { memorySessionId: ctx.memoryContext.sessionId }
+                  : {}),
+                forkSource: {
+                  messages: () => [...(ctx.agent?.state.messages ?? [])],
+                  systemPrompt: () => ctx.agent?.state.systemPrompt,
+                },
+                modelSetting: () => {
+                  const model = ctx.agent?.state.model;
+                  return model ? `${model.provider}:${model.id}` : DEFAULT_CLI_MODEL;
+                },
+              }
+            : undefined,
+        ),
       retryTransientServerErrors: (agent) => this.retryTransientServerErrors(agent),
       emitAgentEvent: (event, origin) => this.emitAgentEvent(event, origin),
       recordUsage: (usage, modelId) => this.recordUsage(usage, modelId),
@@ -1648,6 +1691,62 @@ export class TurnRunner {
     });
   }
 
+  /** Build a public spawn only after TaskManager has allocated its identity and child scope. */
+  protected async createSpawnedSubagentRun(
+    publicSpec: SubagentSpec,
+    taskId: TaskId,
+    ownerScopeId: string,
+    childScopeId: string,
+    forkSource?: NonNullable<SubagentExecutionContext["forkSource"]>,
+    callerModelSetting?: string,
+  ): Promise<SubagentRun> {
+    const parentSetting =
+      callerModelSetting ??
+      this.requireRunnerState().options?.model ??
+      this.config.model ??
+      DEFAULT_CLI_MODEL;
+    const selection = await this.selectSpawnModel(publicSpec.prompt, parentSetting);
+    const memorySessionId = this.config.sessionId
+      ? `${this.config.sessionId}:sub:${taskId}`
+      : undefined;
+    return this.subagentExecutor(
+      {
+        ...publicSpec,
+        model: selection.modelName,
+        ...(selection.thinkingLevel ? { thinkingLevel: selection.thinkingLevel } : {}),
+      },
+      {
+        origin: { kind: "task", taskId, ownerScopeId },
+        childScopeId,
+        ownerScopeId,
+        memoryContext: {
+          ...(memorySessionId ? { sessionId: memorySessionId } : {}),
+          horizon: createInitialHorizon(),
+        },
+        ...(forkSource ? { forkSource } : {}),
+      },
+    );
+  }
+
+  /** Stateless spawn classifier seam; deliberately never consults the session ModelRouter. */
+  protected async selectSpawnModel(prompt: string, parentSetting: string) {
+    const table = this.routingTable ?? BUILT_IN_ROUTING_TABLE;
+    return classifySpawnModel(prompt, parentSetting, {
+      table,
+      resolveCatalog: routingCatalogAdapter,
+      classifierOptions: {
+        model: pinnedModelReference(table.classifier.target.modelName),
+        thinkingLevel: table.classifier.target.thinkingLevel,
+      },
+    });
+  }
+
+  protected async dropSubagentScratch(taskId: TaskId): Promise<void> {
+    const session = this.memoryPersistence?.session;
+    if (!session || !this.config.sessionId) return;
+    await replaceSessionObservations(session, `${this.config.sessionId}:sub:${taskId}`, []);
+  }
+
   private requireRunnerState(): TurnState {
     if (!this.state) {
       throw new Error("Turn runner has not been started.");
@@ -1980,6 +2079,7 @@ export class TurnRunner {
     mode: TurnMode,
     cwdOverride?: string,
     includeParentTools = true,
+    childContext?: ChildToolContext,
   ): {
     tools: AgentTool[];
   } {
@@ -1996,7 +2096,7 @@ export class TurnRunner {
     const recallStorage: RecallMemoryToolStorage = {
       getSession: () => this.memoryPersistence?.session,
       embed: this.memoryPersistence?.embed,
-      sessionId: this.config.sessionId,
+      sessionId: childContext?.memorySessionId ?? this.config.sessionId,
       // Reuse the resolved memory model so recall_memory's optional
       // expand flag goes to the same cheap model the observer uses.
       expansionModel: this.resolveMemoryActorModel(undefined),
@@ -2031,7 +2131,7 @@ export class TurnRunner {
             taskManager: this.taskManager,
             defaultWaitBudgetMs: this.taskWaitBudgetMs,
             clock: this.clock,
-            ownerScopeId: () => this.requireRootScope(),
+            ownerScopeId: () => childContext?.ownerScopeId ?? this.requireRootScope(),
             label: (params) => String(params.command ?? "bash command"),
             onTaskStarted: (id, foregroundPending) => {
               this.taskSettlementDelivery.set(
@@ -2049,12 +2149,42 @@ export class TurnRunner {
     return {
       tools: [
         ...taskAwareTools,
-        ...(includeParentTools
-          ? createTaskAdminTools({ taskManager: this.taskManager, clock: this.clock })
+        ...(includeParentTools || childContext
+          ? [
+              this.createSpawnTool(childContext),
+              ...createTaskAdminTools({ taskManager: this.taskManager, clock: this.clock }),
+            ]
           : []),
         ...mcpTools,
       ],
     };
+  }
+
+  private createSpawnTool(childContext?: ChildToolContext): AgentTool {
+    const ownerScopeId = () => childContext?.ownerScopeId ?? this.requireRootScope();
+    return createSpawnAgentTool({
+      taskManager: this.taskManager,
+      defaultWaitBudgetMs: this.taskWaitBudgetMs,
+      clock: this.clock,
+      ownerScopeId,
+      createRun: async ({ spec, taskId, ownerScopeId: callerScopeId, childScopeId }) =>
+        this.createSpawnedSubagentRun(
+          spec,
+          taskId,
+          callerScopeId,
+          childScopeId,
+          childContext?.forkSource,
+          childContext?.modelSetting(),
+        ),
+      dropScratch: async (taskId) => this.dropSubagentScratch(taskId),
+      onTaskStarted: (id, foregroundPending) => {
+        this.taskSettlementDelivery.set(id, foregroundPending ? "foreground_pending" : "deliver");
+      },
+      onForegroundResult: (id, converted) => {
+        this.taskSettlementDelivery.set(id, converted ? "deliver" : "suppress");
+        this.scheduleSettlementDelivery();
+      },
+    });
   }
 
   protected createAskAdvisorStorage(
@@ -2310,6 +2440,8 @@ export class TurnRunner {
   protected async updateMemoryAfterAgentRun(
     messages: AgentMessage[],
     options: TurnOptions | undefined,
+    sessionId = this.config.sessionId,
+    refreshReflections = true,
   ): Promise<void> {
     if (this.config.memoryDbPath === undefined) {
       return;
@@ -2325,7 +2457,7 @@ export class TurnRunner {
     const result = await updateObservationalMemory({
       session,
       memory: this.memory,
-      sessionId: this.config.sessionId,
+      sessionId,
       effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
       actorModel: memoryModel,
       settings: this.config.memory,
@@ -2348,7 +2480,7 @@ export class TurnRunner {
     // the new condensed view. Observer-only updates intentionally do
     // NOT refresh the pack — they leave the rendered prefix stable so
     // the provider's prompt cache survives.
-    if (result.reflections.length > 0) {
+    if (refreshReflections && result.reflections.length > 0) {
       await this.refreshMemoryContextPack();
     }
   }
@@ -2441,7 +2573,7 @@ export class TurnRunner {
         messages: input.state.agent.messages,
         tools: input.tools,
       },
-      transformContext: this.createMemoryTransform(),
+      transformContext: this.createMemoryTransform(input.memoryContext),
       ...(input.parentModelRouting
         ? {
             prepareNextTurn: async (signal?: AbortSignal) => {
@@ -2466,7 +2598,7 @@ export class TurnRunner {
     return agent;
   }
 
-  protected createMemoryTransform() {
+  protected createMemoryTransform(memoryContext?: SubagentAgentConfigInput["memoryContext"]) {
     // The memory transform owns history retention against both the token
     // budget (context-window cost on smaller models) and the wire-byte
     // budget (gateway request-body caps). It applies the sticky horizon
@@ -2477,8 +2609,27 @@ export class TurnRunner {
       effectiveContext: () =>
         this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
       settings: this.config.memory,
-      horizon: this.wireGuardHorizon,
+      horizon: memoryContext?.horizon ?? this.wireGuardHorizon,
       onCompaction: async (messages) => {
+        if (memoryContext) {
+          try {
+            await this.updateMemoryAfterAgentRun(
+              messages,
+              undefined,
+              memoryContext.sessionId,
+              false,
+            );
+          } catch (error) {
+            this.emit({
+              type: "system",
+              level: "warn",
+              message: `compact: child observation drain failed (${truncateForSystemMessage(
+                error instanceof Error ? error.message : String(error),
+              )}); evicting anyway.`,
+            });
+          }
+          return;
+        }
         await this.ensureMemoryCoverageForCompaction(messages);
         this.modelRouter?.noteCompaction("memory_budget");
       },

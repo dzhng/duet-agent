@@ -16,7 +16,7 @@ export interface TurnRunnerConfig extends TurnOptions {
    * so the memory loader can split them into the local layer (current
    * session) and the global layer (every other session). Sub-agents
    * spawned for state-machine work derive their own id from this one
-   * (`<parent>:sub:<nanoid>`) so their scratch observations stay scoped
+   * (`<parent>:sub:<taskId>`) so their scratch observations stay scoped
    * to the sub-agent and do not pollute the parent's local layer.
    *
    * Optional only because direct TurnRunner construction (tests, one-shot

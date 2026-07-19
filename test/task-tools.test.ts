@@ -3,12 +3,14 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { createTaskManager } from "../src/tasks/task-manager.js";
 import {
+  createSpawnAgentTool,
   createTaskAdminTools,
   settlementNotice,
   startedInBackgroundNotice,
   stillRunningNotice,
   wrapBackgroundable,
 } from "../src/turn-runner/task-tools.js";
+import type { SubagentRun } from "../src/turn-runner/subagent.js";
 import { ManualRuntimeClock } from "./helpers/manual-runtime-clock.js";
 
 function deferredTool(): {
@@ -45,6 +47,124 @@ function deferredTool(): {
 }
 
 describe("task-backed tools", () => {
+  test("spawn_agent exposes exactly the binding schema and starts a subagent task", async () => {
+    const clock = new ManualRuntimeClock();
+    const manager = createTaskManager({ clock });
+    let finish!: () => void;
+    const completed = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const run: SubagentRun = {
+      prompt: async () => {
+        await completed;
+        return { type: "complete", result: "child report" };
+      },
+      interrupt: () => finish(),
+      partialAssistantText: () => undefined,
+      interruptedReason: () => undefined,
+    };
+    const tool = createSpawnAgentTool({
+      taskManager: manager,
+      defaultWaitBudgetMs: 120_000,
+      clock,
+      ownerScopeId: () => "root",
+      createRun: async () => run,
+    });
+
+    expect(Object.keys((tool.parameters as { properties: object }).properties).sort()).toEqual([
+      "allowed_skills",
+      "cwd",
+      "fork_context",
+      "prompt",
+      "run_in_background",
+      "timeout",
+    ]);
+    const result = await tool.execute("spawn-1", {
+      prompt: "audit auth",
+      run_in_background: true,
+    });
+    expect(result.content[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("Started background task t1 (spawn_agent: `audit auth`)"),
+    });
+    expect(manager.list()).toMatchObject([
+      { id: "t1", kind: "subagent", ownerScopeId: "root", status: "running" },
+    ]);
+    finish();
+    await manager.waitForSettlement("t1");
+    expect(manager.output("t1")?.output).toEqual(["child report"]);
+  });
+
+  test("stopping a spawn closes its child scope and cascade-stops nested work", async () => {
+    const clock = new ManualRuntimeClock();
+    const manager = createTaskManager({ clock });
+    let finishParent!: () => void;
+    const parentFinished = new Promise<void>((resolve) => {
+      finishParent = resolve;
+    });
+    let nestedSignal: AbortSignal | undefined;
+    const tool = createSpawnAgentTool({
+      taskManager: manager,
+      defaultWaitBudgetMs: 120_000,
+      clock,
+      ownerScopeId: () => "root",
+      createRun: async ({ childScopeId }) => {
+        manager.start({
+          kind: "tool",
+          name: "fixture",
+          label: "nested fixture",
+          ownerScopeId: childScopeId,
+          execute: async ({ signal }) => {
+            nestedSignal = signal;
+            await new Promise<void>((resolve) =>
+              signal.addEventListener("abort", () => resolve(), { once: true }),
+            );
+          },
+        });
+        return {
+          prompt: async () => {
+            await parentFinished;
+            return { type: "interrupted" };
+          },
+          interrupt: () => finishParent(),
+          partialAssistantText: () => undefined,
+          interruptedReason: () => "stopped",
+        };
+      },
+    });
+
+    await tool.execute("spawn-cascade", { prompt: "spawn nested work", run_in_background: true });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(manager.list()).toMatchObject([{ id: "t1" }, { id: "t2", ownerScopeId: "task:t1" }]);
+
+    await manager.stop("t1", "test stop");
+    expect(nestedSignal?.aborted).toBe(true);
+    expect(manager.output("t1")?.settlement).toMatchObject({ status: "stopped" });
+    expect(manager.output("t2")?.settlement).toMatchObject({ status: "stopped" });
+  });
+
+  test("spawn surfaces the central scope cap as a clean depth-limit error", async () => {
+    const clock = new ManualRuntimeClock();
+    const manager = createTaskManager({ clock });
+    manager.openScope("root");
+    manager.openScope("task:parent", "root");
+    manager.openScope("task:grandparent", "task:parent");
+    const tool = createSpawnAgentTool({
+      taskManager: manager,
+      defaultWaitBudgetMs: 120_000,
+      clock,
+      ownerScopeId: () => "task:grandparent",
+      createRun: async () => {
+        throw new Error("must not construct a child past the depth limit");
+      },
+    });
+
+    await expect(tool.execute("spawn-too-deep", { prompt: "too deep" })).rejects.toThrow(
+      "spawn_agent depth limit: Task scope depth 3 exceeds maximum 2",
+    );
+  });
+
   test("foreground budget converts without aborting the task", async () => {
     const clock = new ManualRuntimeClock(5_000);
     const manager = createTaskManager({ clock });
