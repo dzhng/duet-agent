@@ -58,15 +58,23 @@ depends on prior work.
    before reviewing: collapse any sediment this pass introduced — dev-only shims,
    duplicated concepts, parallel abstractions, compatibility wrappers — into the
    clean contract with one owner, so the code reads as designed today, not tacked
-   on. Then run a code-review pass. Apply the fixes from both, rerun the
-   affected checks, then commit only the focused changes from this pass.
+   on. Then run a code-review pass and apply the fixes from both. Last, run
+   [audit-choices](../audit-choices/SKILL.md) on the cleaned pass — a pure
+   audit that appends every decision made where the spec was silent (your own,
+   and each delegated subagent's when integrating) to the spec's choices
+   ledger (`specs/<feature>/choices.md`) with verdicts, changing no code
+   itself. You act on its findings: redo unsound choices from their corrected
+   decisions, adopt the recorded provisional call on any user-only entry — the
+   audit never blocks the run. Rerun the affected checks, then commit only the
+   focused changes from this pass.
 7. Update the spec README's "Next Agent Prompt": status, completed work, next
    pickup point, blockers, changed gates, and any architecture decision that
    changed the plan.
 8. Run a **maintenance checkpoint** as part of the loop, not as endgame cleanup.
    Trigger it after a red pass, after every two or three slice commits, after a
    rebase/resume/compaction, before changing feature areas, when evidence
-   invalidates the plan, when the handoff contradicts the TODO/graph, or when the
+   invalidates the plan, when the handoff contradicts the TODO/graph, when the
+   choices ledger's entries cluster around one slice, or when the
    active prompt grows hard to scan. Long specs bloat repeatedly; cleanup is a
    normal pass, not a cosmetic chore.
 
@@ -155,6 +163,11 @@ The **spec** is done — and only then is this skill done — when every slice a
 global TODO is closed, all gates are green, the handoff shows nothing left to
 pick up, and the spec has been archived with [close-spec](../close-spec/SKILL.md).
 Anything short of that is mid-implementation: keep going.
+
+The final handback presents the choices ledger, not the diff, per
+[audit-choices](../audit-choices/SKILL.md) — a days-long unsupervised run
+earns its merge through this ledger; it is the user's review surface for
+everything decided without them.
 
 **Slices are not the only unit of scope.** A spec also records *decisions* —
 ledger rows, decision-table entries, invariants — and a decision can be agreed
