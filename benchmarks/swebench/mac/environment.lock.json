@@ -1,0 +1,33 @@
+{
+  "benchmark": {
+    "dataset": "SWE-bench/SWE-bench_Multilingual",
+    "datasetRevision": "2b7aced941b4873e9cad3e76abbae93f481d1beb",
+    "imageNamespace": "swebench",
+    "split": "test"
+  },
+  "docker": {
+    "architecture": "aarch64",
+    "clientVersion": "29.6.1",
+    "cpuCount": 10,
+    "emulation": "Docker Desktop amd64 emulation on Apple Silicon",
+    "instanceImagePlatform": "linux/amd64",
+    "memoryBytes": 8321515520,
+    "operatingSystem": "Docker Desktop",
+    "serverVersion": "29.6.1"
+  },
+  "host": {
+    "architecture": "arm64",
+    "cpuCount": 10,
+    "diskAvailableBytes": 34143166464,
+    "memoryBytes": 17179869184,
+    "os": "macOS",
+    "osVersion": "26.3"
+  },
+  "python": {
+    "miniSweAgentVersion": "2.4.5",
+    "swebenchVersion": "4.1.0",
+    "uvVersion": "0.9.27 (Homebrew 2026-01-26)",
+    "version": "3.12.12"
+  },
+  "schemaVersion": 1
+}

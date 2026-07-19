@@ -1,5 +1,11 @@
 # 04 — Mac environment, x86 gold gate, mini-swe-agent replication spike
 
+**Status (2026-07-20): partially complete.** The idempotent provisioner,
+environment lock, official image-key/pre-pull helper, sequential gold runner,
+and one-instance capacity gate are complete. The capacity instance resolved
+1/1 in 167 seconds with 2.41 GB peak container memory. The 30/30 manifest gate
+and mini-swe-agent replication spike remain pending; this slice is not done.
+
 Mac-local track; needs slice 02's manifest. No duet code. This slice kills the
 plan cheaply if official x86 images cannot run under Docker emulation or the
 local resource ceiling is untenable.
@@ -32,6 +38,12 @@ local resource ceiling is untenable.
 
 The capacity instance and gold manifest resolve officially; the spike scores
 end-to-end; lock file and fixtures are committed. Cost: <$5 model spend.
+
+Current evidence: `apache__druid-13704` resolves with the pinned official
+amd64 image under Docker Desktop emulation. See
+`benchmarks/swebench/fixtures/capacity-gold-report.json` and
+`capacity-metrics.json`. This is capacity evidence only, not a substitute for
+the remaining 30/30 and replication gates.
 
 ## Playable checkpoint
 

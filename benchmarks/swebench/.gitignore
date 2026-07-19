@@ -1,2 +1,4 @@
 .cache/
 artifacts/
+.venv/
+__pycache__/

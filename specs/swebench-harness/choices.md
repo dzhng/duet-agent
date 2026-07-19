@@ -327,6 +327,46 @@ ownerScopeId }`, even though both execute through the same task manager.
 - **Verdict:** **sound.** Target dependencies belong to the target build tree.
 - **Confidence:** **high**.
 
+### S14 — Capacity telemetry measures the scorer and its instance container separately
+
+- **When:** slice 04 Mac-local capacity tooling, 2026-07-20.
+- **The choice:** The capacity runner samples two kinds of memory once per
+  second: the Python scorer process plus its child processes, and any Docker
+  instance container whose name contains that run's id. It also watches the
+  lowest free space on the benchmark artifact disk. For example, a Java test
+  can consume memory inside Docker while the Python scorer remains small; the
+  report preserves both numbers instead of pretending one is the whole run.
+  The unbuilt alternative is a single host-wide memory number, which includes
+  unrelated applications and cannot tell whether scorer or testbed caused a
+  spike.
+- **The gap:** The spec required peak disk and memory evidence but did not
+  define which processes count or how emulated-container memory is separated.
+- **The reach:** Every later capacity decision inherits these metric meanings.
+  They support one-worker safety decisions, not a claim about total Docker
+  Desktop VM overhead or safe parallelism.
+- **Verdict:** **sound.** The split is directly observable and avoids assigning
+  unrelated Mac memory to the benchmark.
+- **Confidence:** **medium** because a future operator may also want Docker VM
+  total memory pressure as a third metric.
+
+### S15 — The local replication tool is pinned to mini-swe-agent 2.4.5
+
+- **When:** slice 04 Mac-local provisioner, 2026-07-20.
+- **The choice:** Provisioning installs `mini-swe-agent==2.4.5` beside the
+  required `swebench==4.1.0`, and records both in the environment lock. Imagine
+  mini-swe-agent releases a new prompt or prediction format tomorrow: rerunning
+  this campaign still uses 2.4.5 instead of silently changing the replication
+  baseline. The alternative is an unversioned install that can change between
+  the spike and a later rerun.
+- **The gap:** The spec required a pinned mini-swe-agent but did not select its
+  exact package release.
+- **The reach:** The pending replication spike and its documented prompt shape
+  are tied to this version. Changing it is explicit: update the provisioner,
+  regenerate the lock, and rerun the spike.
+- **Verdict:** **sound.** A benchmark prerequisite must be reproducible.
+- **Confidence:** **medium** because compatibility still has to be proven by
+  the pending spike.
+
 ### S7 — Official x86 images remain the scoring authority on Apple Silicon
 
 - **When:** Mac-local campaign reconciliation on 2026-07-20.

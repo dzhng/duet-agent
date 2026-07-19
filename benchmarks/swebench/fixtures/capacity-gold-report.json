@@ -1,0 +1,16 @@
+{
+  "total_instances": 1,
+  "submitted_instances": 300,
+  "completed_instances": 1,
+  "resolved_instances": 1,
+  "unresolved_instances": 0,
+  "empty_patch_instances": 0,
+  "error_instances": 0,
+  "completed_ids": ["apache__druid-13704"],
+  "incomplete_ids": [],
+  "empty_patch_ids": [],
+  "resolved_ids": ["apache__druid-13704"],
+  "unresolved_ids": [],
+  "error_ids": [],
+  "schema_version": 2
+}

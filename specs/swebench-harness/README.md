@@ -13,10 +13,13 @@ about _our_ harness.
 **Status:** slice 01 complete, including the paid GLM/Kimi auxiliary-usage
 smoke. Slices 02 and 03 are complete: the pinned 30-instance manifest, four
 explicit routing renders, RPC client, telemetry, CLI checkpoints, and their
-tests are committed. Slice 05 has a green live Java checkpoint for Linux-x64
-packaging, single-owner RPC execution, and dirty-baseline patch round trip, but
-its nine-language matrix remains. Continue slices 04 and 05; slices 04–08 are
-not complete. Last updated 2026-07-20.
+tests are committed. Slice 04's Mac provisioner and one-instance capacity gate
+are complete: the official amd64 Java image resolved 1/1 under emulation with
+measured resource use; its 30/30 gold and mini-swe-agent gates remain open.
+Slice 05 has a green live Java checkpoint for Linux-x64 packaging, single-owner
+RPC execution, and dirty-baseline patch round trip, but its nine-language matrix
+remains. Continue slices 04 and 05; slices 04–08 are not complete. Last updated
+2026-07-20.
 
 You are implementing this spec. Read this README fully, then continue the Mac
 capacity/gold gate in [slice 04](slices/04-box-gold-gate-and-spike.md). Follow
@@ -26,10 +29,11 @@ says ADMIT.
 Local constraints to prove rather than assume:
 
 - The Mac is Apple Silicon with 16 GiB host RAM; Docker has 10 CPUs but only
-  8.3 GB RAM, and the host currently has about 37 GiB free. The official
-  harness recommends x86_64, 16 GB Docker RAM, and 120 GB free. Slice 04 starts
-  with one official x86_64 gold instance under Docker emulation and records the
-  measured peak before proceeding.
+  8.3 GB RAM, and the host has about 34 GB free. The official harness recommends
+  x86_64, 16 GB Docker RAM, and 120 GB free. Slice 04's one-worker capacity run
+  resolved in 167 seconds with 2.41 GB peak instance-container memory, 205 MB
+  peak scorer-process RSS, and 164 MB transient host disk. Keep concurrency at
+  one unless later measured evidence changes it.
 - A Vercel AI Gateway credential is present in the project `.env`. The harness
   enforces a $500 cumulative model-spend breaker, but that local breaker is not
   a substitute for an external provider-side hard cap.
@@ -40,9 +44,8 @@ Global TODO (owner slice in parens):
       usage metered; tool details forwarded; live provider smoke passes (01)
 - [x] Committed 30-instance manifest + all four routing-table renders (02)
 - [x] duet-client (RPC transport + limits) + telemetry derivation, fixture-tested (03)
-- [ ] Mac environment captured; x86 capacity gate + gold 30/30;
-      mini-swe-agent replication; scorer
-      fixture captured (04)
+- [ ] Mac environment captured and x86 capacity gate green; gold 30/30 and
+      mini-swe-agent replication still pending; scorer fixture captured (04)
 - [ ] Duet packaged into instance containers; 9-language smoke; patch
       round-trip integrity (05)
 - [ ] Rollout pipeline + resumable campaign orchestrator + predictions,
