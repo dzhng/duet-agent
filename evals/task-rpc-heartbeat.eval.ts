@@ -59,7 +59,12 @@ describe("RPC task heartbeat", () => {
 
         await writeFile(release, "go\n");
         const terminal = await rpc.waitFor(isTerminal, EVENT_TIMEOUT_MS);
-        const exitCode = await rpc.proc.exited;
+        const exitCode = await Promise.race([
+          rpc.proc.exited,
+          Bun.sleep(30_000).then(() => {
+            throw new Error("rpc process did not exit within 30s of its terminal");
+          }),
+        ]);
 
         expect(exitCode).toBe(0);
         expect(terminal.type).toBe("complete");
@@ -76,6 +81,12 @@ describe("RPC task heartbeat", () => {
         console.error(
           "HEARTBEAT_EVENT_DUMP",
           JSON.stringify(rpc.events.map((event) => event.type)),
+        );
+        console.error(
+          "RPC_STDERR",
+          (
+            await Promise.race([rpc.stderrText, Bun.sleep(2_000).then(() => "<stderr still open>")])
+          ).slice(-3_000),
         );
         throw error;
       } finally {
@@ -131,12 +142,13 @@ function spawnRpc(args: string[]): RpcHarness {
 
 class RpcHarness {
   readonly events: RpcWireEvent[] = [];
+  stderrText: Promise<string> = Promise.resolve("");
   private readonly waiters = new Set<() => void>();
   private readonly pump: Promise<void>;
 
   constructor(readonly proc: Subprocess<"pipe", "pipe", "pipe">) {
     this.pump = this.readEvents();
-    void new Response(proc.stderr).text();
+    this.stderrText = new Response(proc.stderr).text();
   }
 
   async send(command: TurnRunnerCommand): Promise<void> {

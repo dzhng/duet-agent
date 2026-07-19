@@ -537,6 +537,15 @@ export async function driveRpcLoop(
     }
   }
 
+  // Terminal means terminal: tear down the stdin reader so process exit never
+  // depends on the host closing its end of the pipe (D2 — the sandbox reaps at
+  // the first terminal). A pending iterator.next() parked on stdin would make
+  // an awaited iterator.return() queue behind it forever, so destroy the
+  // stream (settling the pending read) and let the generator finalize
+  // asynchronously.
+  process.stdin.destroy();
+  void iterator.return?.(undefined);
+
   if (chain) await chain;
 }
 
