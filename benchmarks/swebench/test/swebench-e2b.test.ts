@@ -13,6 +13,7 @@ import {
   retryE2BRead,
   retryE2BSandboxCreate,
   selectE2BInstanceIds,
+  selectE2BShards,
 } from "../e2b/run.js";
 import { buildE2BEnvironmentLock, e2bTemplateName, providerEnvironment } from "../e2b/support.js";
 import { testIfDocker } from "./helpers/docker-only.js";
@@ -128,22 +129,38 @@ describe("SWE-bench E2B execution", () => {
     );
   });
 
-  testIfDocker("integrates concurrent worker artifacts without racing on provenance", async () => {
+  test("runs every campaign trial as an independent E2B shard", () => {
+    const { spec, manifest } = campaignFixture();
+    spec.instanceIds = ["org__repo-2", "org__repo-1"];
+    spec.trials = 3;
+
+    expect(selectE2BShards(spec, manifest, [])).toEqual([
+      { instanceId: "org__repo-2", trial: 1 },
+      { instanceId: "org__repo-2", trial: 2 },
+      { instanceId: "org__repo-2", trial: 3 },
+      { instanceId: "org__repo-1", trial: 1 },
+      { instanceId: "org__repo-1", trial: 2 },
+      { instanceId: "org__repo-1", trial: 3 },
+    ]);
+  });
+
+  testIfDocker("integrates concurrent trial shards without racing on provenance", async () => {
     const root = await mkdtemp(join(tmpdir(), "swebench-e2b-artifacts-"));
     const destination = join(root, "campaign");
     const { spec } = campaignFixture();
+    spec.trials = 2;
     const provenance = (startedAt: string) =>
       `${JSON.stringify({ schemaVersion: 1, inputHash: "same", startedAt, frozen: { spec: "frozen" } })}\n`;
     const workers = [
-      { instanceId: "org__repo-1", evidence: "first-worker\n" },
-      { instanceId: "org__repo-2", evidence: "second-worker\n" },
+      { instanceId: "org__repo-1", trial: 1, evidence: "first-worker\n" },
+      { instanceId: "org__repo-1", trial: 2, evidence: "second-worker\n" },
     ];
 
     try {
       const stagedRoots = await Promise.all(
-        workers.map(async ({ instanceId, evidence }, index) => {
+        workers.map(async ({ instanceId, trial, evidence }, index) => {
           const stagedRoot = join(root, `staged-${index}`);
-          const attemptRoot = join(stagedRoot, "glm-pure", `${instanceId}-t1`);
+          const attemptRoot = join(stagedRoot, "glm-pure", `${instanceId}-t${trial}`);
           await mkdir(attemptRoot, { recursive: true });
           await Promise.all([
             writeFile(join(stagedRoot, "campaign.json"), provenance(`worker-${index}`)),
@@ -154,8 +171,8 @@ describe("SWE-bench E2B execution", () => {
       );
 
       await Promise.all(
-        workers.map(({ instanceId }, index) =>
-          integrateInstanceArtifacts(stagedRoots[index]!, destination, spec, instanceId),
+        workers.map(({ instanceId, trial }, index) =>
+          integrateInstanceArtifacts(stagedRoots[index]!, destination, spec, instanceId, trial),
         ),
       );
 
@@ -164,8 +181,11 @@ describe("SWE-bench E2B execution", () => {
       );
       expect(
         await Promise.all(
-          workers.map(({ instanceId }) =>
-            readFile(join(destination, "glm-pure", `${instanceId}-t1`, "evidence.txt"), "utf8"),
+          workers.map(({ instanceId, trial }) =>
+            readFile(
+              join(destination, "glm-pure", `${instanceId}-t${trial}`, "evidence.txt"),
+              "utf8",
+            ),
           ),
         ),
       ).toEqual(workers.map(({ evidence }) => evidence));

@@ -72,6 +72,18 @@ describe("SWE-bench campaign resume planning", () => {
       "Execution selection is not in the manifest: missing__repo-1",
     );
   });
+
+  test("filters a frozen plan to one remote instance-trial shard", () => {
+    const { campaign, runtime } = fixture();
+    campaign.trials = 3;
+    const plan = planCampaign(campaign, runtime, [], false);
+
+    const selected = filterPlanForExecution(plan, ["org__repo-2"], runtime.manifest, [2]);
+
+    expect(selected).toHaveLength(4);
+    expect(selected.every((item) => item.entry.instanceId === "org__repo-2")).toBe(true);
+    expect(selected.every((item) => item.trial === 2)).toBe(true);
+  });
 });
 
 function fixture(): { campaign: CampaignSpec; runtime: CampaignRuntime } {

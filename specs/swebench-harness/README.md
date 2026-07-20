@@ -35,9 +35,14 @@ tries to falsify adjacent behavior, and keeps its verdict compact; the executor
 also treats advice as a hypothesis rather than authority. A wire-faithful live
 eval reproduced the long, locally green completion shape: the old prompt missed
 the available history check, while the new prompt rejected completion and
-requested it on Fable; both Fable and Kimi reject the narrow fix. Next, run fresh
-paired diagnostics under new ids. Both-resolved is a pass; enabled-only is an
-improvement; neither-resolved is neutral for the comparison; any pure-only
+requested it on Fable; both Fable and Kimi reject the narrow fix. The first
+fresh trial then produced three official nonregressions: two both-resolved
+pairs and one Kimi/Fable enabled-only improvement. E2B had serialized repeated
+trials behind each issue, so the workers were stopped after those pairs and the
+controller was changed to shard by `(instance, trial)` while keeping paired
+arms together. The remaining repetitions run under v2 ids with twelve shards
+able to occupy twelve of the sixteen slots. Both-resolved is a pass;
+enabled-only is an improvement; neither-resolved is neutral for the comparison; any pure-only
 result stops the gate for trace-level diagnosis and another product fix. If the
 known-case batch is clean, expand to five newly sampled manifest tasks across
 both comparisons before freezing and launching one fresh 30×4 measurement

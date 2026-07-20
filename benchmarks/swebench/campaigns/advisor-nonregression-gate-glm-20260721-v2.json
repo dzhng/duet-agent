@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "advisor-nonregression-gate-glm-20260721-v2",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-30.json",
+  "instanceIds": ["fluent__fluentd-3616"],
+  "configs": ["glm-pure", "glm-kimi-advisor"],
+  "trials": 4,
+  "concurrency": 1,
+  "armOrderSeed": 20260726,
+  "limits": {
+    "costUsd": 3.1,
+    "wallClockMs": 1800000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 5242880
+  },
+  "budget": {
+    "totalUsd": 500,
+    "sunkUsd": 218.7395
+  },
+  "execution": {
+    "backend": "e2b",
+    "workerConcurrency": 16,
+    "workerCpuCount": 8,
+    "workerMemoryMb": 16384,
+    "workerTimeoutMs": 10800000
+  }
+}

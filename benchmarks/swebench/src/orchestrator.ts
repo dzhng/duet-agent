@@ -58,13 +58,13 @@ export interface CampaignSpec {
     | { backend: "local" }
     | {
         backend: "e2b";
-        /** Maximum E2B sandboxes running independent instance blocks at once. */
+        /** Maximum E2B sandboxes running independent instance-trial shards at once. */
         workerConcurrency: number;
         /** vCPUs frozen into the campaign's E2B template. */
         workerCpuCount: number;
         /** Memory in MiB frozen into the campaign's E2B template. */
         workerMemoryMb: number;
-        /** Lifetime allowed for one sandbox to finish its four-arm instance block. */
+        /** Lifetime allowed for one sandbox to finish every campaign arm in one trial. */
         workerTimeoutMs: number;
       };
 }
@@ -148,6 +148,8 @@ export async function runCampaign(
     retryFailed: boolean;
     /** Runtime-only shard selection; provenance always retains the full committed spec. */
     instanceIds?: readonly string[];
+    /** Runtime-only trial selection used to parallelize independent E2B pairs. */
+    trials?: readonly number[];
     onResult?: (result: RunRolloutResult) => void;
   } = {
     retryFailed: false,
@@ -155,7 +157,12 @@ export async function runCampaign(
 ): Promise<RunRolloutResult[]> {
   const attempts = await loadRolloutAttempts(runtime.runsRoot, spec.id);
   const fullPlan = planCampaign(spec, runtime, attempts, options.retryFailed);
-  const plan = filterPlanForExecution(fullPlan, options.instanceIds, runtime.manifest);
+  const plan = filterPlanForExecution(
+    fullPlan,
+    options.instanceIds,
+    runtime.manifest,
+    options.trials,
+  );
   const blocks = groupByInstance(plan);
   const results: RunRolloutResult[] = [];
   let accountedUsd = spec.budget.sunkUsd + accountedAttemptSpend(attempts);
@@ -223,21 +230,26 @@ export async function runCampaign(
   return results;
 }
 
-/** Select disjoint remote instance blocks without changing the campaign's frozen inputs. */
+/** Select a runtime-only subset without changing the campaign's frozen inputs. */
 export function filterPlanForExecution(
   plan: readonly PlannedRollout[],
   instanceIds: readonly string[] | undefined,
   manifest: InstanceManifest,
+  trials?: readonly number[],
 ): PlannedRollout[] {
-  if (instanceIds === undefined) return [...plan];
-  const requested = new Set(instanceIds);
+  const requested = instanceIds ? new Set(instanceIds) : undefined;
+  const requestedTrials = trials ? new Set(trials) : undefined;
   const known = new Set(manifest.entries.map((entry) => entry.instanceId));
-  for (const instanceId of requested) {
+  for (const instanceId of requested ?? []) {
     if (!known.has(instanceId)) {
       throw new Error(`Execution selection is not in the manifest: ${instanceId}.`);
     }
   }
-  return plan.filter((item) => requested.has(item.entry.instanceId));
+  return plan.filter(
+    (item) =>
+      (!requested || requested.has(item.entry.instanceId)) &&
+      (!requestedTrials || requestedTrials.has(item.trial)),
+  );
 }
 
 function assertAttemptsMatchCurrentInputs(

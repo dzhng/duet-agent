@@ -278,9 +278,17 @@ async function runCommittedCampaign(args: string[]): Promise<void> {
   });
   const retryFailed = args.includes("--retry-failed");
   const instanceIds = repeatedOptionValues(args, "--instance");
+  const trials = repeatedOptionValues(args, "--trial").map((value) => {
+    const trial = Number(value);
+    if (!Number.isInteger(trial) || trial < 1 || trial > spec.trials) {
+      throw new Error(`--trial must be an integer from 1 through ${spec.trials}.`);
+    }
+    return trial;
+  });
   const results = await runCampaign(spec, runtime, {
     retryFailed,
     ...(instanceIds.length > 0 ? { instanceIds } : {}),
+    ...(trials.length > 0 ? { trials } : {}),
     onResult: ({ attempt, status }) => {
       console.log(
         `${status.phase.padEnd(9)} ${attempt.spec.instanceId} ${attempt.spec.config} $${(status.costUsd ?? 0).toFixed(4)} ${status.terminalType ?? status.failureKind ?? ""}`,
@@ -401,7 +409,7 @@ else if (domain === "campaign" && action === "predictions") await writeCampaignP
 else if (domain === "campaign" && action === "report") await writeCampaignReport(rest);
 else {
   console.error(
-    "Usage: bun benchmarks/swebench/cli.ts <manifest update|manifest show|dataset cache|package build|config write|config show|rollout local --prompt TEXT|rollout smoke (--instance ID|--all-languages)|campaign run [--instance ID] [--environment-lock PATH]|status|predictions|report --spec PATH>",
+    "Usage: bun benchmarks/swebench/cli.ts <manifest update|manifest show|dataset cache|package build|config write|config show|rollout local --prompt TEXT|rollout smoke (--instance ID|--all-languages)|campaign run [--instance ID] [--trial N] [--environment-lock PATH]|status|predictions|report --spec PATH>",
   );
   process.exitCode = 1;
 }

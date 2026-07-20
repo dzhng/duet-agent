@@ -87,12 +87,16 @@ No full campaign starts until all of these are true:
    tasks, running both comparisons once on each (20 rollouts). More clean pairs
    increase confidence; they do not prove that a stochastic model can never
    regress.
-   The frozen known-case inputs are
-   `advisor-nonregression-gate-glm-20260721-v1` and
-   `advisor-nonregression-gate-kimi-20260721-v1`. Their conservative sunk values
-   reserve v3's lost artifacts plus all 16 successful prompt-eval calls at the
-   full rollout ceiling; the Kimi gate also reserves every GLM gate rollout so
-   both may execute concurrently without double-spending the global envelope.
+   Trial 1 under the v1 inputs produced zero pure-only regressions: GLM/Fluentd
+   was both-resolved, Kimi/Fable on Docusaurus 8927 was enabled-only, and
+   Kimi/Fable on Docusaurus 9897 was both-resolved. The serial workers were
+   stopped after those pairs because E2B sharded only by instance and therefore
+   used three of sixteen available slots. The v2 inputs run the remaining four
+   repetitions as independent instance-trial shards. Their conservative sunk
+   values reserve every completed v1 rollout plus each interrupted trial-2 arm
+   at the full `$3.10` cap. The Kimi v2 gate also reserves all eight GLM v2
+   rollouts so both controllers may execute concurrently without exceeding the
+   shared envelope.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails
@@ -117,9 +121,11 @@ observed outcomes, and never pool diagnostic/retry rows into its estimate.
 ## V5 campaign and reporting contract
 
 - `e2b/run.ts` launches the new committed v5 campaign over all 30 manifest
-  instances and all four configs, one trial each, in seeded instance-block
-  order. Sixteen E2B sandboxes may process disjoint blocks concurrently; each
-  block keeps its four arms serial and each arm gets a fresh official container.
+  instances and all four configs, one trial each, in seeded instance-trial
+  order. Sixteen E2B sandboxes may process disjoint shards concurrently; each
+  shard keeps all campaign arms serial and each arm gets a fresh official
+  container. Repeated diagnostic trials are separate shards, so the configured
+  concurrency is not artificially limited by the number of distinct issues.
 - `campaign.json` records the product commit and binary hash, prompt and config
   contents, manifest and dataset revisions, environment lock, limits, budget,
   and dates. Returned archives preserve only their requested instance subtree.

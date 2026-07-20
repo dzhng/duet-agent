@@ -61,6 +61,7 @@ interface E2BCampaignSpec extends CampaignSpec {
 
 interface WorkerRecord {
   instanceId: string;
+  trial: number;
   sandboxId: string;
   startedAt: string;
   finishedAt: string;
@@ -108,16 +109,16 @@ async function main(): Promise<void> {
   const environmentLock = await capacityProbe(e2bSpec, repositorySha, templateName, cacheRoot);
   if (options.capacityOnly) return;
 
-  const instanceIds = selectE2BInstanceIds(e2bSpec, manifest, options.instanceIds);
+  const shards = selectE2BShards(e2bSpec, manifest, options.instanceIds);
   console.log(
-    `Launching ${instanceIds.length} instance block(s) with ${e2bSpec.execution.workerConcurrency} E2B worker(s).`,
+    `Launching ${shards.length} instance-trial shard(s) with ${e2bSpec.execution.workerConcurrency} E2B worker(s).`,
   );
   const failures = await runPool(
-    instanceIds,
+    shards,
     e2bSpec.execution.workerConcurrency,
-    async (instanceId) => {
+    async ({ instanceId, trial }) => {
       try {
-        await runInstanceBlock({
+        await runInstanceTrial({
           spec: e2bSpec,
           specPath: relative(REPO_ROOT, specAbsolutePath),
           repositorySha,
@@ -125,11 +126,12 @@ async function main(): Promise<void> {
           environmentLock,
           cacheRoot,
           instanceId,
+          trial,
           retryFailed: options.retryFailed,
         });
         return undefined;
       } catch (error) {
-        return `${instanceId}: ${errorMessage(error)}`;
+        return `${instanceId}/t${trial}: ${errorMessage(error)}`;
       }
     },
   );
@@ -138,7 +140,7 @@ async function main(): Promise<void> {
       `E2B campaign left ${failures.length} failed block(s):\n${failures.join("\n")}`,
     );
   }
-  console.log(`E2B campaign ${e2bSpec.id} finished all requested instance blocks.`);
+  console.log(`E2B campaign ${e2bSpec.id} finished all requested instance-trial shards.`);
 }
 
 /** Resolve the committed campaign population, optionally narrowed to an explicit shard. */
@@ -167,6 +169,17 @@ export function selectE2BInstanceIds(
     pathSafeInstance(instanceId);
   }
   return requested;
+}
+
+/** Expand committed instances into independently runnable trial shards. */
+export function selectE2BShards(
+  spec: CampaignSpec,
+  manifest: InstanceManifest,
+  requestedInstanceIds: readonly string[],
+): Array<{ instanceId: string; trial: number }> {
+  return selectE2BInstanceIds(spec, manifest, requestedInstanceIds).flatMap((instanceId) =>
+    Array.from({ length: spec.trials }, (_, index) => ({ instanceId, trial: index + 1 })),
+  );
 }
 
 /** Retry read-only E2B controller requests that cannot create billable model work. */
@@ -387,7 +400,7 @@ function parseRuntimeAssetHashes(stdout: string): E2BEnvironmentProbe["runtimeAs
   return parsed as E2BEnvironmentProbe["runtimeAssetSha256"];
 }
 
-async function runInstanceBlock(input: {
+async function runInstanceTrial(input: {
   spec: E2BCampaignSpec;
   specPath: string;
   repositorySha: string;
@@ -395,6 +408,7 @@ async function runInstanceBlock(input: {
   environmentLock: string;
   cacheRoot: string;
   instanceId: string;
+  trial: number;
   retryFailed: boolean;
 }): Promise<void> {
   const startedAt = new Date().toISOString();
@@ -402,6 +416,7 @@ async function runInstanceBlock(input: {
     purpose: "duet-swebench-worker",
     campaign: input.spec.id,
     instanceId: input.instanceId,
+    trial: String(input.trial),
     repositorySha: input.repositorySha,
   };
   const sandbox = await retryE2BSandboxCreate(
@@ -422,7 +437,7 @@ async function runInstanceBlock(input: {
   let metrics: SandboxMetrics[] = [];
   try {
     await sandbox.files.write(REMOTE_ENVIRONMENT_LOCK, input.environmentLock);
-    const resume = await createResumeArchive(input.spec, input.instanceId);
+    const resume = await createResumeArchive(input.spec, input.instanceId, input.trial);
     if (resume) {
       await sandbox.files.write(REMOTE_RESUME_ARCHIVE, resume);
       await sandbox.commands.run(
@@ -439,6 +454,8 @@ async function runInstanceBlock(input: {
       input.specPath,
       "--instance",
       input.instanceId,
+      "--trial",
+      String(input.trial),
       "--environment-lock",
       REMOTE_ENVIRONMENT_LOCK,
       ...(input.retryFailed ? ["--retry-failed"] : []),
@@ -457,13 +474,14 @@ async function runInstanceBlock(input: {
     failure = error;
   } finally {
     try {
-      await downloadInstanceArtifacts(sandbox, input.spec, input.instanceId);
+      await downloadInstanceArtifacts(sandbox, input.spec, input.instanceId, input.trial);
     } catch (error) {
       failure ??= error;
     }
     metrics = await sandbox.getMetrics().catch(() => []);
     const record: WorkerRecord = {
       instanceId: input.instanceId,
+      trial: input.trial,
       sandboxId: sandbox.sandboxId,
       startedAt,
       finishedAt: new Date().toISOString(),
@@ -474,7 +492,7 @@ async function runInstanceBlock(input: {
     const workersRoot = join(input.cacheRoot, "workers");
     await mkdir(workersRoot, { recursive: true });
     await writeFile(
-      join(workersRoot, `${pathSafeInstance(input.instanceId)}.json`),
+      join(workersRoot, `${pathSafeInstance(input.instanceId)}-t${input.trial}.json`),
       `${JSON.stringify(record, null, 2)}\n`,
     );
     await sandbox.kill().catch(() => false);
@@ -516,9 +534,10 @@ async function killOwnedSandboxes(metadata: Record<string, string>): Promise<voi
 async function createResumeArchive(
   spec: E2BCampaignSpec,
   instanceId: string,
+  trial: number,
 ): Promise<ArrayBuffer | undefined> {
   const campaignRoot = hostCampaignRoot(spec.id);
-  const entries = await existingInstanceEntries(campaignRoot, spec, instanceId);
+  const entries = await existingInstanceEntries(campaignRoot, spec, instanceId, trial);
   if (entries.length === 0) return undefined;
   const temporaryRoot = await mkdtemp(join(tmpdir(), "duet-swebench-resume-"));
   const archivePath = join(temporaryRoot, "resume.tar");
@@ -535,9 +554,10 @@ async function downloadInstanceArtifacts(
   sandbox: Sandbox,
   spec: E2BCampaignSpec,
   instanceId: string,
+  trial: number,
 ): Promise<void> {
   const campaignRoot = remoteCampaignRoot(spec.id);
-  const candidates = campaignArtifactRoots(spec, instanceId);
+  const candidates = campaignArtifactRoots(spec, instanceId, trial);
   const quotedCandidates = candidates.map(shellQuote).join(" ");
   await sandbox.commands.run(
     `set -eu; set --; cd ${shellQuote(campaignRoot)}; for item in ${quotedCandidates}; do if [ -e "$item" ]; then set -- "$@" "$item"; fi; done; [ "$#" -gt 0 ]; tar -cf ${shellQuote(REMOTE_RESULT_ARCHIVE)} "$@"`,
@@ -549,10 +569,16 @@ async function downloadInstanceArtifacts(
   try {
     await writeFile(archivePath, bytes);
     const { stdout } = await execFileAsync("tar", ["-tf", archivePath]);
-    validateArchiveEntries(stdout.split("\n").filter(Boolean), spec, instanceId);
+    validateArchiveEntries(stdout.split("\n").filter(Boolean), spec, instanceId, trial);
     await mkdir(extractedRoot);
     await execFileAsync("tar", ["-xf", archivePath, "-C", extractedRoot]);
-    await integrateInstanceArtifacts(extractedRoot, hostCampaignRoot(spec.id), spec, instanceId);
+    await integrateInstanceArtifacts(
+      extractedRoot,
+      hostCampaignRoot(spec.id),
+      spec,
+      instanceId,
+      trial,
+    );
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
@@ -564,6 +590,7 @@ export async function integrateInstanceArtifacts(
   destinationRoot: string,
   spec: CampaignSpec,
   instanceId: string,
+  trial?: number,
 ): Promise<void> {
   pathSafeInstance(instanceId);
   await mkdir(destinationRoot, { recursive: true });
@@ -572,7 +599,7 @@ export async function integrateInstanceArtifacts(
     join(destinationRoot, "campaign.json"),
   );
 
-  for (const candidate of instanceArtifactRoots(spec, instanceId)) {
+  for (const candidate of instanceArtifactRoots(spec, instanceId, trial)) {
     const source = join(extractedRoot, candidate);
     try {
       await access(source);
@@ -652,13 +679,14 @@ async function copyArtifactTree(source: string, destination: string): Promise<vo
   }
 }
 
-function campaignArtifactRoots(spec: CampaignSpec, instanceId: string): string[] {
-  return ["campaign.json", ...instanceArtifactRoots(spec, instanceId)];
+function campaignArtifactRoots(spec: CampaignSpec, instanceId: string, trial?: number): string[] {
+  return ["campaign.json", ...instanceArtifactRoots(spec, instanceId, trial)];
 }
 
-function instanceArtifactRoots(spec: CampaignSpec, instanceId: string): string[] {
+function instanceArtifactRoots(spec: CampaignSpec, instanceId: string, trial?: number): string[] {
+  const trials = trial ? [trial] : Array.from({ length: spec.trials }, (_, index) => index + 1);
   return spec.configs.flatMap((config) =>
-    Array.from({ length: spec.trials }, (_, index) => `${config}/${instanceId}-t${index + 1}`),
+    trials.map((trialNumber) => `${config}/${instanceId}-t${trialNumber}`),
   );
 }
 
@@ -666,8 +694,9 @@ function validateArchiveEntries(
   entries: readonly string[],
   spec: E2BCampaignSpec,
   instanceId: string,
+  trial: number,
 ): void {
-  const allowed = campaignArtifactRoots(spec, instanceId);
+  const allowed = campaignArtifactRoots(spec, instanceId, trial);
   for (const entry of entries) {
     if (entry.startsWith("/") || entry.split("/").includes("..")) {
       throw new Error(`Unsafe E2B artifact path: ${entry}.`);
@@ -682,8 +711,9 @@ async function existingInstanceEntries(
   campaignRoot: string,
   spec: E2BCampaignSpec,
   instanceId: string,
+  trial: number,
 ): Promise<string[]> {
-  const candidates = campaignArtifactRoots(spec, instanceId);
+  const candidates = campaignArtifactRoots(spec, instanceId, trial);
   const existing: string[] = [];
   for (const candidate of candidates) {
     try {

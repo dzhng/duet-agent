@@ -1875,6 +1875,27 @@ the number of rollouts or the independently enforced model-spend bound.
 - **Confidence:** **medium** because five versus ten new tasks is a cost and
   confidence tradeoff, not a statistically unique threshold.
 
+### S63 — E2B shards repeated campaigns by instance and trial
+
+- **When:** the first clean non-regression pairs showed that three known issues
+  occupied only three of sixteen E2B slots while later trials waited serially.
+- **The choice:** Run each `(instance, trial)` as one isolated E2B shard. Keep
+  all campaign arms serial inside that shard, publish only that trial's
+  artifact roots, and give worker records and metadata an explicit trial
+  identity. The CLI accepts a runtime-only `--trial` selection while committed
+  campaign provenance remains unchanged.
+- **The gap:** `workerConcurrency: 16` previously meant “up to the number of
+  distinct instances,” so a five-trial diagnostic over three known issues used
+  only three workers and delayed pair-level fail-fast scoring.
+- **The reach:** Repetitions now use real E2B concurrency without running a
+  pair's two arms on different workers. Concurrent shards for the same issue
+  merge disjoint trial directories under the same immutable provenance.
+- **Verdict:** **sound.** Trial repetitions are independent experiment units;
+  preserving pair locality retains the comparison while making the configured
+  concurrency truthful.
+- **Confidence:** **high** from type-checking and 79 Docker benchmark tests,
+  including concurrent same-issue/different-trial artifact integration.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper
