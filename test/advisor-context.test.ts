@@ -128,13 +128,13 @@ describe("buildAdvisorContext", () => {
   test("pins the first user task and newest tail when the real model window is exceeded", () => {
     const messages: Message[] = [
       { role: "user", content: "TASK DEFINING REQUEST", timestamp: 1 },
-      { role: "user", content: `old-1 ${"x".repeat(1_000)}`, timestamp: 2 },
-      { role: "user", content: `old-2 ${"y".repeat(1_000)}`, timestamp: 3 },
+      { role: "user", content: `old-1 ${"x".repeat(5_000)}`, timestamp: 2 },
+      { role: "user", content: `old-2 ${"y".repeat(5_000)}`, timestamp: 3 },
       { role: "user", content: "NEWEST CONTEXT", timestamp: 4 },
     ];
     const result = buildAdvisorContext({
       context: { systemPrompt: "SYS", tools: [], messages },
-      contextWindowTokens: 500,
+      contextWindowTokens: 2_000,
       reservedOutputTokens: 100,
     });
     const parsed = payload(result.text);
@@ -147,7 +147,7 @@ describe("buildAdvisorContext", () => {
       truncated: true,
     });
     expect(result.metadata.estimatedInputTokens).toBeLessThanOrEqual(
-      500 - 100 - result.metadata.safetyMarginTokens,
+      2_000 - 100 - result.metadata.safetyMarginTokens,
     );
   });
 

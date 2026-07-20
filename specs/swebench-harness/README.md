@@ -11,8 +11,8 @@ tasks; this harness uses different executors and advisors and a signal-seeking
 
 ## Next Agent Prompt
 
-**Status:** slices 01–07 are mechanically complete; slice 08 is ready for its
-focused restart gate.
+**Status:** slices 01–07 are mechanically complete; slice 08 is fixing a
+pure-only advisor regression before expanding its paired diagnostic gate.
 The first product-policy restart attempt was halted after six complete pairs;
 Kimi made zero advisor calls in all three enabled runs and GLM skipped one of
 four and called late in the others. Zero calls are valid product behavior, but
@@ -25,9 +25,27 @@ canonical issue directly while retaining normal memory, compaction, repository
 instructions, and the complete agent diff. The v2 focused gates made no model
 calls because the compiled binary lacked PGlite runtime sidecars; that
 packaging defect and the artifact-provenance race it exposed are fixed. Next,
-run the two committed v3 focused gates, then start a new campaign namespace and
-run the full 30×4 measurement. V1–v4 and prior restart attempts remain
-historical evidence only. Last updated 2026-07-20.
+the v3 gates were stopped immediately after Kimi resolved
+`facebook__docusaurus-8927` without the advisor while the advisor-enabled mate
+failed. The full advisor transcript was intact: the completion review endorsed
+a narrow regex change whose local tests passed, while official tests exposed
+two adjacent parser cases it missed. The product advisor now reviews
+independently, seeks authoritative evidence before approving an approximation,
+tries to falsify adjacent behavior, and keeps its verdict compact; the executor
+also treats advice as a hypothesis rather than authority. A wire-faithful live
+eval reproduced the long, locally green completion shape: the old prompt missed
+the available history check, while the new prompt rejected completion and
+requested it on Fable; both Fable and Kimi reject the narrow fix. Next, run fresh
+paired diagnostics under new ids. Both-resolved is a pass; enabled-only is an
+improvement; neither-resolved is neutral for the comparison; any pure-only
+result stops the gate for trace-level diagnosis and another product fix. If the
+known-case batch is clean, expand to five newly sampled manifest tasks across
+both comparisons before freezing and launching one fresh 30×4 measurement
+namespace. Diagnostic retries remain historical engineering evidence only. The
+stopped v3 workers finalized
+15/30 rollouts for `$12.6315597`; reserve up to `$21.9315597` including the
+three interrupted arms. Their remote artifacts were not recovered, so never
+resume or score that namespace. Last updated 2026-07-21.
 
 Local constraints to prove rather than assume:
 
@@ -249,8 +267,9 @@ knowingly exceed $500.
 - `bun build --compile` viability for duet (dynamic imports, sqlite); musl
   images; CA bundles for gateway egress (05).
 - Real per-rollout cost/duration across both pairs → final limits (07).
-- Advisor call frequency for both advisor targets under the shipped policy.
-  The repeated restart gate measures it before another 120-rollout launch (08).
+- Advisor non-regression across paired tasks under the shipped policy. The
+  repeated diagnostic gate stops on any pure-only outcome and expands to more
+  distinct tasks after a clean batch; call frequency remains telemetry (08).
 - n=30, 1 trial is signal-seeking and underpowered for modest effects; the
   report leads with discordant pairs and never treats a small or null delta as
   proof of equivalence (08).

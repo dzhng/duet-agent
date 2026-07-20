@@ -1,6 +1,6 @@
 # 08 — The measurement campaign: two advisor comparisons, 30×4 (LAST)
 
-**Status (2026-07-20): STOP after E2B v4.** V4 completed 25 four-arm
+**Status (2026-07-21): STOP during the v3 restart gates.** V4 completed 25 four-arm
 instance blocks (100 rollouts, $72.2112 recorded model spend); the remaining
 five blocks did not enter measurement. Official scoring reached 12 GLM pairs
 and 11 Kimi pairs. All three apparent pure-only wins in that subset were advised
@@ -12,7 +12,7 @@ those losses.
 
 The context, lifecycle, prompt, telemetry, repeated-trial identity, compiled
 memory packaging, and E2B collection corrections are now implemented and
-locally green. The replacement gate is frozen as two pair-specific campaigns:
+locally green. The replacement gate ran as two pair-specific campaigns:
 `advisor-restart-gate-glm-20260720-v3` (10 rollouts) and
 `advisor-restart-gate-kimi-20260720-v3` (20 rollouts). V2 made no model calls:
 the compiled Duet process exited while loading PGlite assets, and concurrent
@@ -24,7 +24,21 @@ resolved; the three scored Kimi pairs were two pure-only and one both-resolved.
 Zero calls are valid product behavior, but these rows do not measure the
 current lifecycle because the product and benchmark inputs changed afterward.
 The run also exposed E2B target-selection and concurrent artifact-integration
-races.
+races. V3 was stopped immediately after a scored Kimi/Fable pair on
+`facebook__docusaurus-8927` resolved without the advisor but failed with it.
+The advisor saw the complete transcript yet endorsed a narrow regex fix after
+self-selected tests passed; official hidden tests disproved it with a spaced
+local link and an HTTPS link. That pure-only outcome rejects the current
+advisor review behavior regardless of call count.
+
+At the user's fail-fast instruction, all three v3 workers and their controllers
+were terminated. Fifteen of 30 rollouts had finalized remotely for
+`$12.6315597`; three more were in flight, so conservative v3 spend is bounded
+at `$21.9315597`. The remote sandboxes ended before their instance archives
+were copied home. V3 is therefore frozen as lost-artifact diagnostic evidence
+and must never be resumed or scored. Its surviving trace-level diagnosis comes
+from the already-preserved v1/v4 runs of the same failing patch family and the
+live status/consultation output captured before termination.
 
 The next full measurement namespace is
 `multilingual-30-four-arm-e2b-20260720-v5`. Create it only after the product,
@@ -66,25 +80,33 @@ No full campaign starts until all of these are true:
    cooldown reset, final-evidence deduplication, and short work; disabling the
    lifecycle made the live eval produce zero calls, while restoration produced
    successful early and final calls.
-3. **Focused repetition (next):** under fresh restart-gate campaign ids, run five
-   fresh paired pure/enabled trials on each of the three v4 zero-call loss
-   instances. This is 30 rollouts: five GLM pairs on Fluentd and five Kimi pairs
-   on each Docusaurus task. Do not reuse, discard, or replace stochastic
-   outcomes.
-4. **Admission:** every pure trial remains advisor-silent; provider identity,
-   context fidelity, costs, patches, and official scores reconcile; and no
-   infrastructure or provenance failure remains. Zero, one, or multiple calls
-   in an enabled rollout are reported as product behavior and never determine
-   whether its score is admitted.
+3. **Non-regression diagnostics (next):** the product review correction is
+   implemented and live-falsified. Under fresh campaign ids, first repeat five
+   paired trials on each of the three known loss cases (30 rollouts). If that
+   batch has zero pure-only outcomes, expand once to five newly sampled manifest
+   tasks, running both comparisons once on each (20 rollouts). More clean pairs
+   increase confidence; they do not prove that a stochastic model can never
+   regress.
+4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
+   enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
+   for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails
+   immediately: stop the remaining work, preserve the exact artifacts, compare
+   the full transcripts, advisor outputs, events, patches, and scorer logs,
+   make a generic product fix, then restart diagnostics under a new frozen
+   campaign id. Zero, one, or multiple advisor calls remain valid telemetry;
+   call count is never the admission rule.
 5. **Budget:** add v4's $72.2112 to the prior $27.64 reserve, making cumulative
    sunk spend at least $99.8513 before the focused repeats. Add their spend,
    reserve unknown interrupted attempts at their full cap, then recompute one
    uniform v5 rollout ceiling. The frozen worst-case projection must remain
    within $500 before launching any of v5's 120 rollouts.
 
-Any product, prompt, context, or attribution change after this gate invalidates
-it and requires another campaign id plus another focused gate. A single green
-rerun is not admission evidence.
+These repeat-until-clean diagnostics are adaptively selected engineering
+evidence, not an effect estimate. Any product, prompt, context, or attribution
+change invalidates the current diagnostic namespace and requires a new id.
+After a sufficiently broad clean diagnostic set, freeze the product and launch
+one fresh 30×4 campaign. Do not tune or restart that final campaign based on its
+observed outcomes, and never pool diagnostic/retry rows into its estimate.
 
 ## V5 campaign and reporting contract
 

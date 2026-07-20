@@ -1500,7 +1500,7 @@ the number of rollouts or the independently enforced model-spend bound.
   strategy until the sharing boundary is proven rather than inferred.
 - **Confidence:** **high**.
 
-### S49 — The restart gate repeats the three known zero-call loss cases five times per pair
+### S49 — The restart gate repeats the three known zero-call loss cases five times per pair (superseded by S60)
 
 - **When:** defining what must replace the single targeted compliance rerun
   before E2B v5.
@@ -1512,14 +1512,11 @@ the number of rollouts or the independently enforced model-spend bound.
   before learning whether the same failure mode is stochastic and recurrent.
 - **The gap:** The user required focused repeated rollouts but did not set the
   repeat count or admission threshold.
-- **The reach:** V5 starts only if both pairings show at least one successful
-  consultation, pure arms stay silent, context and attribution reconcile, and
-  the budget is recalculated afterward. Five repeats are a reliability probe,
-  not enough to estimate task success or erase the full campaign's n=30 × 1
-  power limitation.
-- **Verdict:** **sound provisional call.** Five repeats make recurrence visible
-  without spending campaign scale; change the count only before the restart-gate
-  id is frozen, never after seeing outcomes.
+- **The reach:** Superseded. Consultation occurrence is telemetry, not an
+  outcome-safety threshold. The user later set the pairwise non-regression rule
+  and required clean batches to expand to more tasks.
+- **Verdict:** **superseded by S60.** The pair-specific campaign shape remains
+  useful, but its admission semantics were wrong.
 - **Confidence:** **medium** because three or ten repeats would also be
   defensible cost/reliability tradeoffs.
 
@@ -1622,7 +1619,8 @@ the number of rollouts or the independently enforced model-spend bound.
   S49 intentionally assigns different model pairs to different tasks.
 - **The reach:** The gate spends 30 rather than 60 rollouts, preserves pairwise
   denominators, and recalculates v5 from actual gate spend plus any unknown
-  interrupted reserve.
+  interrupted reserve. These are adaptive engineering diagnostics subject to
+  S60's per-pair fail-fast rule and never rows in the final estimate.
 - **Verdict:** **sound.** Pair-specific namespaces express the intended design
   directly without weakening provenance or the budget breaker.
 - **Confidence:** **high** in the accounting bound and report shape; the paid
@@ -1753,7 +1751,9 @@ the number of rollouts or the independently enforced model-spend bound.
   one complete diff and one complete path list, with no excluded-path sidecar.
   The focused gate also no longer requires any minimum number of consultations;
   zero calls is a valid product outcome. Historical campaigns remain historical
-  and are not resumed under the new prompt hash.
+  and are not resumed under the new prompt hash. Zero calls are not rejected by
+  themselves, but a pure-resolved/enabled-unresolved pair fails regardless of
+  how many consultations occurred.
 - **Verdict:** **sound.** Clean state, finite resources, provenance, and paired
   assignment belong to the experiment; workflow, memory policy, repo
   instructions, and patch interpretation belong to the product and official
@@ -1790,6 +1790,90 @@ the number of rollouts or the independently enforced model-spend bound.
 - **Confidence:** **high** from 77 benchmark tests, the full Docker product
   suite, and a real Linux x86 compiled-memory smoke returning an empty JSON row
   array.
+
+### S60 — Advisor admission means zero pure-only regressions, then broader diagnostics
+
+- **When:** correcting the v3 restart gate after the user clarified that an
+  advisor must never regress an executor that would otherwise resolve a task.
+- **The choice:** Treat both-resolved as a pass, enabled-only as improvement,
+  neither-resolved as neutral for the advisor comparison, and pure-only as an
+  immediate gate failure. On a pure-only result, stop remaining paid work,
+  preserve and compare the exact transcripts, advisor outputs, events, patches,
+  and scorer logs, make a generic product fix, and restart under a new frozen
+  diagnostic id. When a diagnostic batch has zero pure-only results, expand to
+  more distinct tasks rather than declaring victory from the small sample.
+  Zero, one, or multiple advisor calls are recorded but never decide admission.
+- **The gap:** S49 incorrectly treated at least one successful consultation as
+  sufficient even if another advised mate lost. V3 then produced the exact
+  counterexample: Kimi resolved `facebook__docusaurus-8927`, while Kimi plus
+  Fable failed after Fable endorsed a narrow, locally green regex fix that the
+  official scorer disproved on spaced-local and HTTPS-link cases.
+- **Operational stop:** All three active v3 workers were killed immediately.
+  Remote status showed 15 finalized rollouts costing `$12.6315597` and three
+  in-flight attempts, conservatively bounded at another `$9.30`. The sandboxes
+  ended before their archives reached the host, so v3 is immutable
+  lost-artifact evidence and cannot be resumed without duplicating paid work.
+- **The reach:** Repeat-until-clean gates are deliberately adaptive engineering
+  diagnostics and cannot be published as an unbiased advisor lift estimate.
+  Once a broad diagnostic set is clean, freeze the product and run one fresh
+  30×4 campaign exactly once, retaining every assigned row.
+- **Verdict:** **user-settled.** Non-regression is the product invariant; clean
+  evidence expands the test surface, while a single pure-only pair returns the
+  work to diagnosis.
+- **Confidence:** **high** in the rule; finite stochastic testing can increase
+  confidence but cannot prove a universal guarantee.
+
+### S61 — Completion advice is an independent, evidence-first falsification review
+
+- **When:** diagnosing the Kimi/Fable pure-only result on
+  `facebook__docusaurus-8927`.
+- **The choice:** Keep the existing advisor lifecycle and full-context transport,
+  because they delivered three successful, untruncated consultations. Change
+  the advisor's product prompt instead: it must independently challenge the
+  executor's conclusion, seek authoritative implementations or repository
+  history before approving a hand-designed approximation, and try to disprove a
+  finished change against neighboring behavior. Executor-written tests prove
+  only their covered examples. The response is capped at 250 words so the
+  highest-signal verdict and next check arrive before the model's output limit.
+  The executor now treats advice as a hypothesis to verify, not authority to
+  follow until contrary proof appears.
+- **The gap:** The user required a generic harness/product correction but did
+  not prescribe which prompt surface or whether consultation scheduling should
+  change.
+- **The reach:** Every product advisor call becomes more adversarial, not just
+  SWE-bench calls. It may reject more apparently complete work, trading some
+  extra executor verification for lower risk of an advisor anchoring the
+  executor on a locally green point fix.
+- **Verdict:** **sound.** The failure came from review judgment, not missing
+  context or too few calls; changing scheduling would repeat the same bad
+  anchor, while task-specific benchmark instructions would contaminate the
+  measurement.
+- **Confidence:** **medium-high.** The long-context Fable eval failed on the old
+  evidence priority and passed after the correction; both benchmark advisor
+  models now reject the narrow fix, but only expanded paired tasks can measure
+  downstream non-regression.
+
+### S62 — A clean known-case gate expands to five new four-arm tasks
+
+- **When:** turning the user's instruction to expand testing after zero
+  pure-only outcomes into a bounded next campaign.
+- **The choice:** First rerun the three known loss cases five times per relevant
+  pair (30 rollouts). If all 15 pairs avoid a pure-only result, sample five
+  additional committed-manifest tasks that were not used for prompt tuning and
+  run all four arms once on each (20 rollouts, ten more pairs). Any pure-only
+  result in either stage stops immediately under S60. The later final 30×4 run
+  remains a fresh, one-shot measurement and does not reuse these rows.
+- **The gap:** The user required more tests after a clean batch but did not set
+  the expansion size.
+- **The reach:** The product must survive repeated known regressions and a small
+  diversity check before the expensive final campaign. The five-task expansion
+  is large enough to add new repositories/languages while leaving room under
+  the `$500` envelope after actual diagnostic spend is reconciled.
+- **Verdict:** **sound provisional call.** It materially expands evidence while
+  preserving the clean final estimate; recalculate the budget before freezing
+  the expansion id rather than silently shrinking coverage after outcomes.
+- **Confidence:** **medium** because five versus ten new tasks is a cost and
+  confidence tradeoff, not a statistically unique threshold.
 
 ## Compressed trivial discretion
 
