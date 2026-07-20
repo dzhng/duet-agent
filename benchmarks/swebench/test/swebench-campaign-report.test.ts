@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { CampaignConfigName } from "../benchmarks/swebench/src/config-override.js";
+import type { CampaignConfigName } from "../src/config-override.js";
 import {
   buildCampaignReport,
   campaignReportPassesAdmission,
@@ -8,9 +8,9 @@ import {
   renderCampaignReport,
   type OfficialScoreRow,
   type ReportAttempt,
-} from "../benchmarks/swebench/src/report.js";
-import type { ManifestEntry } from "../benchmarks/swebench/src/manifest.js";
-import type { RolloutTelemetry } from "../benchmarks/swebench/src/telemetry.js";
+} from "../src/report.js";
+import type { ManifestEntry } from "../src/manifest.js";
+import type { RolloutTelemetry } from "../src/telemetry.js";
 
 const configs: CampaignConfigName[] = [
   "glm-pure",

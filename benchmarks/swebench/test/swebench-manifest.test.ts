@@ -6,7 +6,7 @@ import {
   CAMPAIGN_CONFIGS,
   renderCampaignConfigs,
   serializeModelsJson,
-} from "../benchmarks/swebench/src/config-override.js";
+} from "../src/config-override.js";
 import {
   CAMPAIGN_GOLD_EXCLUSIONS,
   LANGUAGES,
@@ -16,9 +16,9 @@ import {
   serializeManifest,
   type DatasetRow,
   type DatasetSnapshot,
-} from "../benchmarks/swebench/src/manifest.js";
-import { BUILT_IN_ROUTING_TABLE, validateRoutingTable } from "../src/model-routing/table.js";
-import { routingCatalogAdapter } from "../src/model-resolution/resolver.js";
+} from "../src/manifest.js";
+import { BUILT_IN_ROUTING_TABLE, validateRoutingTable } from "../../../src/model-routing/table.js";
+import { routingCatalogAdapter } from "../../../src/model-resolution/resolver.js";
 
 function fixtureSnapshot(): DatasetSnapshot {
   const rows: DatasetRow[] = [];
@@ -116,14 +116,7 @@ describe("SWE-bench manifest", () => {
   });
 
   test("commits the selected values and every language, not only the expected size", async () => {
-    const path = join(
-      import.meta.dir,
-      "..",
-      "benchmarks",
-      "swebench",
-      "manifests",
-      "multilingual-30.json",
-    );
+    const path = join(import.meta.dir, "..", "manifests", "multilingual-30.json");
     const manifest = JSON.parse(await readFile(path, "utf8")) as ReturnType<typeof selectManifest>;
 
     expect(manifest.datasetRevision).toBe("2b7aced941b4873e9cad3e76abbae93f481d1beb");
@@ -161,17 +154,11 @@ describe("SWE-bench manifest", () => {
 
   test("commits a pilot subset that matches its recorded selection seed", async () => {
     const manifest = JSON.parse(
-      await readFile(
-        join(import.meta.dir, "..", "benchmarks", "swebench", "manifests", "multilingual-30.json"),
-        "utf8",
-      ),
+      await readFile(join(import.meta.dir, "..", "manifests", "multilingual-30.json"), "utf8"),
     ) as ReturnType<typeof selectManifest>;
     for (const filename of ["pilot-3-v2.json", "pilot-3-v3.json"]) {
       const campaign = JSON.parse(
-        await readFile(
-          join(import.meta.dir, "..", "benchmarks", "swebench", "campaigns", filename),
-          "utf8",
-        ),
+        await readFile(join(import.meta.dir, "..", "campaigns", filename), "utf8"),
       ) as { instanceIds: string[]; instanceSelectionSeed: number };
 
       expect(campaign.instanceIds).toEqual(
@@ -238,14 +225,7 @@ describe("SWE-bench routing renders", () => {
   test("keeps every committed routing file byte-identical to its renderer", async () => {
     const renders = renderCampaignConfigs();
     for (const name of Object.keys(CAMPAIGN_CONFIGS) as (keyof typeof CAMPAIGN_CONFIGS)[]) {
-      const path = join(
-        import.meta.dir,
-        "..",
-        "benchmarks",
-        "swebench",
-        "configs",
-        `${name}.models.json`,
-      );
+      const path = join(import.meta.dir, "..", "configs", `${name}.models.json`);
       expect(await readFile(path, "utf8")).toBe(serializeModelsJson(renders[name]));
     }
   });

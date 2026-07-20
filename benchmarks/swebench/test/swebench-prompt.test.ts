@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "../benchmarks/swebench/src/prompt.js";
+import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "../src/prompt.js";
 
 describe("SWE-bench rollout prompt", () => {
   test("defines one controlled advisor exposure and a clean final patch", () => {

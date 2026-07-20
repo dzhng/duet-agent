@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { runDuetTurn, type ExecTransport } from "../benchmarks/swebench/src/duet-client.js";
-import type { RpcRunnerCommand, TurnEvent } from "../src/types/protocol.js";
+import { runDuetTurn, type ExecTransport } from "../src/duet-client.js";
+import type { RpcRunnerCommand, TurnEvent } from "../../../src/types/protocol.js";
 import { ManualRuntimeClock } from "./helpers/manual-runtime-clock.js";
 
 const STATE = { status: "completed", mode: "agent", agent: { status: "completed", messages: [] } };

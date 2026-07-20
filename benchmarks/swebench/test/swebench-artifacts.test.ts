@@ -8,9 +8,9 @@ import {
   completeRolloutAttempt,
   loadRolloutAttempts,
   type RolloutArtifactSpec,
-} from "../benchmarks/swebench/src/artifacts.js";
-import { deriveTelemetry } from "../benchmarks/swebench/src/telemetry.js";
-import type { TurnEvent } from "../src/types/protocol.js";
+} from "../src/artifacts.js";
+import { deriveTelemetry } from "../src/telemetry.js";
+import type { TurnEvent } from "../../../src/types/protocol.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let root: string | undefined;

@@ -3,10 +3,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import type { CommandResult, CommandRunner } from "../benchmarks/swebench/src/container.js";
-import type { ExecTransport } from "../benchmarks/swebench/src/duet-client.js";
-import type { CampaignSpec } from "../benchmarks/swebench/src/orchestrator.js";
-import { ensureCampaignProvenance } from "../benchmarks/swebench/src/provenance.js";
+import type { CommandResult, CommandRunner } from "../src/container.js";
+import type { ExecTransport } from "../src/duet-client.js";
+import type { CampaignSpec } from "../src/orchestrator.js";
+import { ensureCampaignProvenance } from "../src/provenance.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let root: string | undefined;

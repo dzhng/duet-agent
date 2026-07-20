@@ -1,12 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-  ContainerHandle,
-  type CommandResult,
-  type CommandRunner,
-} from "../benchmarks/swebench/src/container.js";
-import type { ExecTransport } from "../benchmarks/swebench/src/duet-client.js";
-import { capturePatchBaseline, extractPatch } from "../benchmarks/swebench/src/patch.js";
+import { ContainerHandle, type CommandResult, type CommandRunner } from "../src/container.js";
+import type { ExecTransport } from "../src/duet-client.js";
+import { capturePatchBaseline, extractPatch } from "../src/patch.js";
 
 class ScriptedCommands implements CommandRunner {
   readonly calls: string[][] = [];

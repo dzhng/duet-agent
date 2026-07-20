@@ -5,8 +5,8 @@ import {
   resolveAndPullOfficialImage,
   type CommandResult,
   type CommandRunner,
-} from "../benchmarks/swebench/src/container.js";
-import type { ExecTransport } from "../benchmarks/swebench/src/duet-client.js";
+} from "../src/container.js";
+import type { ExecTransport } from "../src/duet-client.js";
 
 class FakeCommands implements CommandRunner {
   readonly runs: { argv: readonly string[]; stdin?: string }[] = [];

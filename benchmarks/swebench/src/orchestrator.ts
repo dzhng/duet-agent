@@ -53,6 +53,20 @@ export interface CampaignSpec {
     /** Spend from prerequisite smokes or earlier campaign ids. */
     sunkUsd: number;
   };
+  /** Where instance blocks execute; omitted historical specs use the local Docker host. */
+  execution?:
+    | { backend: "local" }
+    | {
+        backend: "e2b";
+        /** Maximum E2B sandboxes running independent instance blocks at once. */
+        workerConcurrency: number;
+        /** vCPUs frozen into the campaign's E2B template. */
+        workerCpuCount: number;
+        /** Memory in MiB frozen into the campaign's E2B template. */
+        workerMemoryMb: number;
+        /** Lifetime allowed for one sandbox to finish its four-arm instance block. */
+        workerTimeoutMs: number;
+      };
 }
 
 /** Host paths and secrets intentionally absent from committed campaign specs. */
@@ -130,12 +144,18 @@ export function planCampaign(
 export async function runCampaign(
   spec: CampaignSpec,
   runtime: CampaignRuntime,
-  options: { retryFailed: boolean; onResult?: (result: RunRolloutResult) => void } = {
+  options: {
+    retryFailed: boolean;
+    /** Runtime-only shard selection; provenance always retains the full committed spec. */
+    instanceIds?: readonly string[];
+    onResult?: (result: RunRolloutResult) => void;
+  } = {
     retryFailed: false,
   },
 ): Promise<RunRolloutResult[]> {
   const attempts = await loadRolloutAttempts(runtime.runsRoot, spec.id);
-  const plan = planCampaign(spec, runtime, attempts, options.retryFailed);
+  const fullPlan = planCampaign(spec, runtime, attempts, options.retryFailed);
+  const plan = filterPlanForExecution(fullPlan, options.instanceIds, runtime.manifest);
   const blocks = groupByInstance(plan);
   const results: RunRolloutResult[] = [];
   let accountedUsd = spec.budget.sunkUsd + accountedAttemptSpend(attempts);
@@ -201,6 +221,23 @@ export async function runCampaign(
 
   await Promise.all(Array.from({ length: Math.min(spec.concurrency, blocks.length) }, worker));
   return results;
+}
+
+/** Select disjoint remote instance blocks without changing the campaign's frozen inputs. */
+export function filterPlanForExecution(
+  plan: readonly PlannedRollout[],
+  instanceIds: readonly string[] | undefined,
+  manifest: InstanceManifest,
+): PlannedRollout[] {
+  if (instanceIds === undefined) return [...plan];
+  const requested = new Set(instanceIds);
+  const known = new Set(manifest.entries.map((entry) => entry.instanceId));
+  for (const instanceId of requested) {
+    if (!known.has(instanceId)) {
+      throw new Error(`Execution selection is not in the manifest: ${instanceId}.`);
+    }
+  }
+  return plan.filter((item) => requested.has(item.entry.instanceId));
 }
 
 function assertAttemptsMatchCurrentInputs(
@@ -330,5 +367,17 @@ function validateCampaign(spec: CampaignSpec, manifest: InstanceManifest): void 
     spec.budget.sunkUsd,
   ]) {
     if (!Number.isFinite(value) || value < 0) throw new Error("Campaign limits must be finite.");
+  }
+  if (spec.execution?.backend === "e2b") {
+    for (const [name, value] of Object.entries({
+      workerConcurrency: spec.execution.workerConcurrency,
+      workerCpuCount: spec.execution.workerCpuCount,
+      workerMemoryMb: spec.execution.workerMemoryMb,
+      workerTimeoutMs: spec.execution.workerTimeoutMs,
+    })) {
+      if (!Number.isSafeInteger(value) || value < 1) {
+        throw new Error(`Campaign E2B ${name} must be a positive integer.`);
+      }
+    }
   }
 }

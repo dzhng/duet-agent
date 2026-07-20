@@ -5,17 +5,15 @@ import {
   hashText,
   type RolloutArtifactSpec,
   type RolloutAttempt,
-} from "../benchmarks/swebench/src/artifacts.js";
+} from "../src/artifacts.js";
+import { type CampaignConfigName, CAMPAIGN_CONFIGS } from "../src/config-override.js";
 import {
-  type CampaignConfigName,
-  CAMPAIGN_CONFIGS,
-} from "../benchmarks/swebench/src/config-override.js";
-import {
+  filterPlanForExecution,
   planCampaign,
   type CampaignRuntime,
   type CampaignSpec,
-} from "../benchmarks/swebench/src/orchestrator.js";
-import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "../benchmarks/swebench/src/prompt.js";
+} from "../src/orchestrator.js";
+import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "../src/prompt.js";
 
 describe("SWE-bench campaign resume planning", () => {
   test("orders four arms deterministically inside each instance block", () => {
@@ -59,6 +57,19 @@ describe("SWE-bench campaign resume planning", () => {
 
     runtime.configHashes["glm-pure"] = "changed";
     expect(() => planCampaign(campaign, runtime, [infra], true)).toThrow("specHash mismatch");
+  });
+
+  test("filters a full frozen plan to one remote instance block", () => {
+    const { campaign, runtime } = fixture();
+    const plan = planCampaign(campaign, runtime, [], false);
+
+    const selected = filterPlanForExecution(plan, ["org__repo-2"], runtime.manifest);
+
+    expect(selected).toHaveLength(4);
+    expect(selected.every((item) => item.entry.instanceId === "org__repo-2")).toBe(true);
+    expect(() => filterPlanForExecution(plan, ["missing__repo-1"], runtime.manifest)).toThrow(
+      "Execution selection is not in the manifest: missing__repo-1",
+    );
   });
 });
 

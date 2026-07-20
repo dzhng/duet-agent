@@ -3,11 +3,11 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import type { CommandResult } from "../benchmarks/swebench/src/container.js";
-import type { ExecTransport } from "../benchmarks/swebench/src/duet-client.js";
-import { SWEBENCH_SYSTEM_PROMPT } from "../benchmarks/swebench/src/prompt.js";
-import { runRollout, type RolloutContainer } from "../benchmarks/swebench/src/rollout.js";
-import { runContainerSmoke } from "../benchmarks/swebench/src/smoke.js";
+import type { CommandResult } from "../src/container.js";
+import type { ExecTransport } from "../src/duet-client.js";
+import { SWEBENCH_SYSTEM_PROMPT } from "../src/prompt.js";
+import { runRollout, type RolloutContainer } from "../src/rollout.js";
+import { runContainerSmoke } from "../src/smoke.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let root: string | undefined;

@@ -10,32 +10,27 @@ about _our_ harness.
 
 ## Next Agent Prompt
 
-**Status:** slice 01 complete, including the paid GLM/Kimi auxiliary-usage
-smoke. Slices 02 and 03 are complete: the pinned 30-instance manifest, four
-explicit routing renders, RPC client, telemetry, CLI checkpoints, and their
-tests are committed. Slice 04's Mac provisioner, one-instance capacity gate,
-corrected 30/30 gold gate, and mini-swe-agent 2/2 replication are complete under
-official amd64 emulation with measured resource use.
-Slice 05 is complete: the paid nine-language Linux-x64 packaging, single-owner
-RPC, pure-tool, sentinel patch, and fresh-image round-trip matrix passed 9/9 for
-$0.130053. Slice 06's rollout, immutable resume, budget, prediction, official
-scoring, and paired-report core is locally green; its paid n=2 gate remains.
-Continue the paid n=2 gate in slice 06; slices 06–08 are not complete.
+**Status:** slices 01–07 are complete. The paid three-language pilot and targeted
+advisor-compliance rerun admitted both comparisons. Slice 08's first Mac-local
+campaign was superseded after measuring one-worker throughput; the final clean
+campaign runs one four-arm instance block per E2B sandbox with eight sandboxes
+in flight. Each arm still runs in its own fresh official SWE-bench Docker
+container, and the official scorer remains authoritative. Build the immutable
+E2B template from the pushed commit, pass the no-model capacity probe, then run
+the committed `multilingual-30-four-arm-e2b-v1.json` campaign.
 Last updated 2026-07-20.
 
-You are implementing this spec. Read this README fully, then run the two-task
-four-arm campaign in [slice 06](slices/06-rollout-pipeline-and-resume.md). Follow
-the dependency graph below; never spend campaign-scale money before slice 07
-says ADMIT.
+You are implementing this spec. Read this README fully, then continue the E2B
+campaign in [slice 08](slices/08-campaign.md). Preserve Mac-local pilot artifacts
+as historical evidence; never mix them into the E2B campaign namespace.
 
 Local constraints to prove rather than assume:
 
-- The Mac is Apple Silicon with 16 GiB host RAM; Docker has 10 CPUs but only
-  8.3 GB RAM, and the host has about 34 GB free. The official harness recommends
-  x86_64, 16 GB Docker RAM, and 120 GB free. Slice 04's one-worker capacity run
-  resolved in 167 seconds with 2.41 GB peak instance-container memory, 205 MB
-  peak scorer-process RSS, and 164 MB transient host disk. Keep concurrency at
-  one unless later measured evidence changes it.
+- The Mac-local path remains the scorer and fallback execution path. Its Docker
+  VM admitted only one rollout worker. Final generation uses a commit-derived
+  E2B x86_64 template with Docker-in-sandbox, 8 vCPU and 16 GiB per worker. A
+  no-model probe must prove the exact commit, resources, Docker daemon, Python,
+  and pinned SWE-bench version before any rollout starts.
 - A Vercel AI Gateway credential is present in the project `.env`. The harness
   enforces a $500 cumulative model-spend breaker, but that local breaker is not
   a substitute for an external provider-side hard cap.
@@ -50,10 +45,10 @@ Global TODO (owner slice in parens):
       2/2 replication gates green; scorer fixtures captured (04)
 - [x] Duet packaged into instance containers; 9-language smoke; patch
       round-trip integrity (05)
-- [ ] Rollout pipeline + resumable campaign orchestrator + predictions,
-      locally complete; paid n=2 verification pending (06)
-- [ ] Two-comparison report; 3-instance four-arm pilot; limits recalibrated;
-      ADMIT/STOP decision (07)
+- [x] Rollout pipeline + resumable campaign orchestrator + predictions; paid
+      live verification and resume semantics complete (06)
+- [x] Two-comparison report; 3-instance four-arm pilot; limits recalibrated;
+      both comparisons admitted after targeted compliance proof (07)
 - [ ] 30×4 campaign + two paired comparisons in the final report (08)
 
 Update this section before ending every pass.
@@ -65,10 +60,11 @@ rationale.
 
 - **Dataset:** `SWE-bench/SWE-bench_Multilingual` (300 instances, 9
   languages). Official scorer only: `python -m swebench.harness.run_evaluation`.
-- **Infra:** this Mac runs rollouts and official scoring locally. Official
-  x86_64 images run under Docker Desktop's amd64 emulation; rollout and scorer
-  concurrency begin at 1. Cleanup targets only benchmark-owned images and
-  containers, never unrelated Docker state.
+- **Infra:** the Mac runs official scoring and remains the one-worker fallback.
+  The final generation campaign uses eight independent E2B x86_64 sandboxes;
+  each sandbox processes one instance's four arms sequentially and each arm
+  remains a fresh nested official Docker container. Cleanup targets only
+  benchmark-owned sandboxes, images, and containers.
 - **Replication spike first:** mini-swe-agent proves images+scoring end-to-end
   before duet is wired in (slice 04).
 - **First campaign:** four arms over one fixed 30-instance subset, 1 trial per
@@ -86,8 +82,10 @@ rationale.
 ## Architecture
 
 Code home: **`benchmarks/swebench/`** (follows the `benchmarks/longmemeval/`
-precedent). TypeScript/bun orchestration; python exists only as the pinned
-Mac-local `swebench` venv. Spec home:
+precedent). It owns its TypeScript tests, Mac Python tests, Docker test runner,
+E2B template/driver, orchestration, fixtures, and campaign inputs. The root
+`test/` directory is product-only. Python exists in the pinned Mac and E2B
+environments. Spec home:
 `specs/swebench-harness/`.
 
 Single-owner concepts (refactor-clean invariants — every slice must preserve
@@ -130,6 +128,10 @@ Cross-cutting rules:
   fallback. Files within a pair differ in exactly the advisor-enabled boolean
   and never enter `/testbed`.
 - **The official scorer is invoked, never ported or approximated.**
+- **E2B is an outer capacity layer, not a replacement harness.** A worker
+  receives only gateway credentials, the stable environment lock, and any
+  matching resume artifacts. The host E2B credential is never forwarded. The
+  worker returns only its instance's immutable artifact subtree.
 
 ## Slice graph
 

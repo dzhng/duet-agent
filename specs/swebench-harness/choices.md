@@ -1257,6 +1257,66 @@ ownerScopeId }`, even though both execute through the same task manager.
 - **Confidence:** **high** because the regression test failed on the missing id
   before the change and now asserts the exact serialized envelope.
 
+### S40 — Benchmark tests are owned and run outside the product test tree
+
+- **When:** while adding the E2B backend before the final campaign.
+- **The choice:** Move every SWE-bench TypeScript test to
+  `benchmarks/swebench/test/`, retain the Mac helper tests under
+  `benchmarks/swebench/mac/tests/`, and expose a separate `bun run
+test:swebench` Docker runner. The root `test/` tree and `bun run test` remain
+  product-only.
+- **The gap:** Benchmark tests depended on benchmark fixtures and execution
+  policy but were discovered as ordinary product tests, obscuring package
+  ownership and making the standard suite responsible for experimental code.
+- **The reach:** Benchmark changes have an explicit isolated gate without
+  shrinking product coverage. Shared generic test helpers may still be imported
+  from the product test infrastructure; benchmark-specific files do not live
+  there.
+- **Verdict:** **sound and user-directed.** The filesystem and commands now
+  express the intended ownership boundary directly.
+- **Confidence:** **high** because both isolated Docker suites pass after the
+  move: 54 benchmark tests and 1,146 product tests.
+
+### S41 — E2B parallelizes instance blocks without changing the harness
+
+- **When:** after Mac-local throughput projected roughly a day for the final
+  generation run and the user supplied an E2B key.
+- **The choice:** Start a new final campaign namespace on an immutable,
+  commit-derived x86_64 E2B template. Run up to eight independent instance
+  blocks concurrently, while each block preserves seeded four-arm serial order
+  and each arm still runs inside a fresh official SWE-bench Docker container.
+  Preserve but do not mix the partial Mac v2 outcomes.
+- **The gap:** Raising local concurrency exceeded the admitted Docker VM memory;
+  reusing partial local outcomes under a different execution environment would
+  weaken provenance.
+- **The reach:** Generation time falls with cloud concurrency while model,
+  prompt, image, patch, telemetry, and official-scoring semantics stay the same.
+  A stable environment lock and per-instance archive boundary make resume and
+  attribution auditable.
+- **Verdict:** **sound and user-directed.** E2B supplies capacity around the
+  existing official container boundary instead of replacing it.
+- **Confidence:** **medium-high** until the immutable template capacity probe
+  and first live instance block pass.
+
+### S42 — The E2B campaign preserves the global budget after the local pivot
+
+- **When:** freezing the new campaign after two valid Mac v2 arms recorded
+  $0.7933.
+- **The choice:** Round cumulative prerequisite and superseded-campaign spend to
+  a conservative $21, then set the uniform emergency ceiling to $3.99. The
+  frozen worst case is `$21 + 120 × $3.99 = $499.80`. E2B infrastructure cost
+  is accounted separately because it is not model-gateway spend.
+- **The gap:** Copying the prior `$20 + 120 × $4` inputs into a new campaign
+  would ignore the additional valid local generation and knowingly exceed the
+  user's $500 model envelope in the worst case.
+- **The reach:** Every one of the 120 logical outcomes retains a large,
+  non-binding generation ceiling while the reserve-first breaker has twenty
+  cents of arithmetic headroom.
+- **Verdict:** **sound.** It is the smallest uniform adjustment that preserves
+  the hard global guarantee without introducing per-arm treatment differences.
+- **Confidence:** **high** in the bound; measured rollouts remain far below the
+  $3.99 emergency cutoff.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

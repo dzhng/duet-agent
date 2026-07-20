@@ -5,6 +5,9 @@ images authoritative while running on Apple Silicon. Docker Desktop performs
 amd64 emulation; the harness starts with one worker because this Mac's Docker
 VM is below the scorer's recommended memory allocation.
 
+The benchmark owns its tests under `../test/`; run them independently from the
+product suite with `bun run test:swebench`.
+
 Provision the pinned Python 3.12 environment:
 
 ```sh

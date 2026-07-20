@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import type { RolloutAttempt } from "../benchmarks/swebench/src/artifacts.js";
-import { buildPredictions, serializePredictions } from "../benchmarks/swebench/src/predictions.js";
+import type { RolloutAttempt } from "../src/artifacts.js";
+import { buildPredictions, serializePredictions } from "../src/predictions.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let root: string | undefined;

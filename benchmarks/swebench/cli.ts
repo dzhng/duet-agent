@@ -245,6 +245,7 @@ async function buildCampaignRuntime(spec: CampaignSpec): Promise<CampaignRuntime
 async function runCommittedCampaign(args: string[]): Promise<void> {
   const spec = await readCampaignSpec(args);
   const runtime = await buildCampaignRuntime(spec);
+  const environmentLockPath = singleOptionValue(args, "--environment-lock");
   await ensureCampaignProvenance({
     repoRoot: REPO_ROOT,
     runsRoot: runtime.runsRoot,
@@ -252,11 +253,15 @@ async function runCommittedCampaign(args: string[]): Promise<void> {
     artifact: runtime.artifact,
     manifestPath: resolve(REPO_ROOT, spec.manifestPath),
     configPaths: runtime.configPaths,
-    environmentLockPath: join(ROOT, "mac", "environment.lock.json"),
+    environmentLockPath: environmentLockPath
+      ? resolve(REPO_ROOT, environmentLockPath)
+      : join(ROOT, "mac", "environment.lock.json"),
   });
   const retryFailed = args.includes("--retry-failed");
+  const instanceIds = repeatedOptionValues(args, "--instance");
   const results = await runCampaign(spec, runtime, {
     retryFailed,
+    ...(instanceIds.length > 0 ? { instanceIds } : {}),
     onResult: ({ attempt, status }) => {
       console.log(
         `${status.phase.padEnd(9)} ${attempt.spec.instanceId} ${attempt.spec.config} $${(status.costUsd ?? 0).toFixed(4)} ${status.terminalType ?? status.failureKind ?? ""}`,
@@ -264,6 +269,24 @@ async function runCommittedCampaign(args: string[]): Promise<void> {
     },
   });
   console.log(`Campaign ${spec.id}: ${results.length} rollout(s) executed.`);
+}
+
+function singleOptionValue(args: readonly string[], flag: string): string | undefined {
+  const values = repeatedOptionValues(args, flag);
+  if (values.length > 1) throw new Error(`${flag} may be provided only once.`);
+  return values[0];
+}
+
+function repeatedOptionValues(args: readonly string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== flag) continue;
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) throw new Error(`${flag} requires a value.`);
+    values.push(value);
+    index += 1;
+  }
+  return values;
 }
 
 async function showCampaignStatus(args: string[]): Promise<void> {
@@ -355,7 +378,7 @@ else if (domain === "campaign" && action === "predictions") await writeCampaignP
 else if (domain === "campaign" && action === "report") await writeCampaignReport(rest);
 else {
   console.error(
-    "Usage: bun benchmarks/swebench/cli.ts <manifest update|manifest show|config write|config show|rollout local --prompt TEXT|rollout smoke (--instance ID|--all-languages)|campaign run|status|predictions|report --spec PATH>",
+    "Usage: bun benchmarks/swebench/cli.ts <manifest update|manifest show|config write|config show|rollout local --prompt TEXT|rollout smoke (--instance ID|--all-languages)|campaign run [--instance ID] [--environment-lock PATH]|status|predictions|report --spec PATH>",
   );
   process.exitCode = 1;
 }

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { deriveTelemetry } from "../benchmarks/swebench/src/telemetry.js";
-import type { TurnEvent } from "../src/types/protocol.js";
+import { deriveTelemetry } from "../src/telemetry.js";
+import type { TurnEvent } from "../../../src/types/protocol.js";
 
-const FIXTURES = join(import.meta.dir, "../benchmarks/swebench/fixtures");
+const FIXTURES = join(import.meta.dir, "../fixtures");
 
 async function loadFixture(name: string): Promise<TurnEvent[]> {
   const text = await Bun.file(join(FIXTURES, name)).text();
