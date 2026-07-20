@@ -11,9 +11,10 @@ tasks; this harness uses different executors and advisors and a signal-seeking
 
 ## Next Agent Prompt
 
-**Status:** slices 01–07 are mechanically complete; slice 08 is optimizing the
-advisor context policy before the broader non-regression gate. Earlier gates exposed product lifecycle,
-E2B integration, binary-packaging, and advisor-review defects. The decisive
+**Status:** slices 01–07 are mechanically complete; slice 08 has frozen the
+advisor context policy and is ready for the broader non-regression gate.
+Earlier gates exposed product lifecycle, E2B integration, binary-packaging,
+and advisor-review defects. The decisive
 pure-only failure was Kimi resolving `facebook__docusaurus-8927` while Fable
 endorsed an advised narrow regex fix that official adjacent cases rejected.
 The shipped advisor now reviews independently, seeks authoritative evidence,
@@ -29,7 +30,7 @@ the complete available transcript with zero omitted messages. These adaptive
 repeats validate the quality baseline but also show that the current advisor
 request grows with raw executor history. They are not an unbiased lift estimate.
 
-The first efficient-context candidate is implemented: a 32k total-input target,
+The efficient-context policy is now frozen: a 32k total-input target,
 roughly 16k recent raw-message tail, normal observational compaction for older
 work, and a quality override that keeps the latest complete tool interaction
 even when it exceeds the soft target. The executor's own horizon is unchanged.
@@ -37,20 +38,22 @@ A live falsification carried 88,780 estimated raw tokens and zero compacted
 messages; the enabled path carried 8,759 estimated tokens, compacted two old
 messages, retained the first task plus the newest complete tool call/result, and
 recovered evidence from both observations and the raw tail. The product suite
-passes 1160/1160 and the benchmark suite passes 79/79.
+passes 1161/1161 and the benchmark suite passes 79/79.
 
-Next, build an immutable E2B template from this checkpoint and run
-`advisor-context-efficiency-kimi-20260721-v1` on the five highest-risk
-Docusaurus 8927 pairs first. If none is pure-only, run its Docusaurus 9897
-pairs alongside `advisor-context-efficiency-glm-20260721-v1`, completing all
-15 pairs. The hard
-gates are zero pure-only outcomes and 15/15 advisor resolves, matching the known
-quality baseline. The efficiency gate requires at least 10% reduction from
-1,410,521 estimated and 1,648,243 exact provider advisor tokens; 15% is the
-stretch target. Also verify that extra memory-observer work does not erase the
-overall auxiliary-token savings. Any pure-only result stops immediately for
-exact-trace diagnosis. Only after freezing this policy may new diversity
-campaigns be created. The stopped
+The immutable `4aa8791` E2B campaign then passed all 15 known pairs. Advisor
+arms resolved 15/15 versus 10/15 for pure arms: five advisor-only improvements,
+ten ties, and zero pure-only regressions. All 36 consultations succeeded.
+Estimated advisor input fell from 1,410,521 to 657,259 tokens (53.4%); exact
+provider-reported advisor tokens fell from 1,648,243 to 731,889 (55.6%); and
+advisor spend fell from $15.13 to $7.65 (49.5%). The normal memory observer added
+$0.89, so advisor plus observer still cost $8.54, 43.6% below the old advisor
+spend alone. The projection compacted 1,129 old messages with zero unrepresented
+omissions. This preserves the old 15/15 advisor quality baseline with two more
+consultations and roughly half the context, so the former provisional 10%/15%
+thresholds are superseded by measured evidence.
+
+Next, create fresh diversity campaign ids from this frozen policy. Any pure-only
+result still stops immediately for exact-trace diagnosis. The stopped
 `advisor-nonregression-expansion-*-20260721-v1` namespaces predate the policy
 change, have no completed pairs, and must never be resumed or scored. The stopped v3 workers
 finalized 15/30 rollouts for `$12.6315597`; reserve up to `$21.9315597`

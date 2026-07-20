@@ -68,7 +68,7 @@ immutable historical evidence and none contributes outcomes to v5.
 
 No full campaign starts until all of these are true:
 
-1. **Compacted-context fidelity (implemented, paid gate pending):** a deterministic captured-call
+1. **Compacted-context fidelity (implemented and paid-gated):** a deterministic captured-call
    fixture proves that the advisor receives the executor's resolved system
    prompt, exact tool definitions, first user task, observational summary of
    older history, and a generous recent wire-faithful tail containing complete
@@ -77,8 +77,9 @@ No full campaign starts until all of these are true:
    hard window remains a final safety ceiling. The latest complete tool
    interaction is protected even when it alone exceeds the soft target. Unit
    tests and a falsified live eval prove compaction, observation recovery,
-   recent-result fidelity, and token accounting; the 15-pair gate still decides
-   whether the chosen boundary preserves benchmark quality.
+   recent-result fidelity, and token accounting. The frozen 32k/16k policy then
+   preserved 15/15 advisor resolves across the paid known-case gate while
+   cutting total exact advisor tokens by 55.6%.
 2. **Product lifecycle (implemented):** the benchmark contains no advisor call
    schedule. The shipped product owns orientation and completion-review
    consultations for substantive work. Deterministic tests cover both phases,
@@ -112,7 +113,15 @@ No full campaign starts until all of these are true:
    ids are required after the context policy is fixed. The first 32k candidate
    uses `advisor-context-efficiency-kimi-20260721-v1` and
    `advisor-context-efficiency-glm-20260721-v1`: run the five Docusaurus 8927
-   pairs first, then the other ten pairs if that high-risk wave is clean.
+   pairs first, then the other ten pairs if that high-risk wave is clean. That
+   immutable `4aa8791` run completed 15/15 advisor resolves against 10/15 pure
+   resolves: five enabled-only improvements, ten both-resolved ties, and zero
+   pure-only regressions. Across 36 successful consultations, estimated input
+   fell 53.4%, exact advisor tokens fell 55.6%, and advisor spend fell 49.5%
+   from the earlier baseline. Normal observer work added $0.89; advisor plus
+   observer still cost 43.6% less than the old advisor calls alone. The policy
+   compacted 1,129 messages with zero unrepresented omissions and is now frozen
+   for fresh diversity diagnostics.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails

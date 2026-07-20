@@ -1949,20 +1949,19 @@ the number of rollouts or the independently enforced model-spend bound.
   rule. Changing it invalidates pending diagnostic namespaces, so the stopped
   `advisor-nonregression-expansion-*-20260721-v1` campaigns cannot be resumed or
   scored and fresh ids are required after the policy freezes.
-- **Verdict:** **needs-user on the final efficiency bar; provisional 10% gate
-  recommended.** The pre-change 34 calls carried 1,410,521 estimated advisor
-  input tokens and 1,648,243 exact provider-reported advisor tokens. Start with
-  a 32k input target and roughly 16k recent raw-message tail. A selected
-  candidate must reduce both totals by at least 10% (to at most 1,269,469
-  estimated and 1,483,419 exact); 15% is the stretch target. Select the
-  smallest candidate that preserves the known quality baseline rather than
-  maximizing use of the advisor's window. Call count and dollars remain
-  diagnostics, not admission rules. This is reversible: preserve the campaign
-  artifacts and raise the bar or try a smaller target if 10% is not efficient
-  enough after quality is proven.
-- **Confidence:** **high** in the architecture and quality gates, **medium-low**
-  that 10% is the user's preferred final efficiency threshold because no
-  numerical target was specified.
+- **Verdict:** **sound; the 32k/16k policy is frozen from measured evidence.**
+  The pre-change 34 calls carried 1,410,521 estimated advisor input tokens and
+  1,648,243 exact provider-reported advisor tokens. The frozen candidate made
+  36 successful calls while reducing those totals to 657,259 (53.4% lower) and
+  731,889 (55.6% lower). Advisor spend fell from $15.13 to $7.65; the normal
+  observer added $0.89, leaving combined advisor-plus-observer spend at $8.54,
+  43.6% below the old advisor spend alone. Official scoring kept advisor quality
+  at 15/15 resolves against 10/15 pure resolves: five advisor-only improvements,
+  ten ties, and zero regressions. The provisional 10% threshold and 15% stretch
+  target are superseded by this substantially stronger observed result.
+- **Confidence:** **high.** Unit tests, falsified live evals, 36 successful
+  consultations, zero unrepresented omissions, and the complete 15-pair paid
+  gate agree on both fidelity and efficiency.
 
 ### S66 — The newest complete tool interaction outranks the soft token target
 
@@ -2029,8 +2028,10 @@ the number of rollouts or the independently enforced model-spend bound.
 - **Verdict:** **sound.** It is the only existing product path that makes current
   older work observable without inventing a parallel summary format or changing
   the executor's continuation context.
-- **Confidence:** **medium-high** until the fresh paired campaign measures net
-  tokens and latency under realistic repeated consultations.
+- **Confidence:** **high.** The fresh paired campaign measured 36 successful
+  consultations, 55.6% fewer exact advisor tokens, and $8.54 combined
+  advisor-plus-observer spend versus $15.13 of old advisor spend alone, while
+  retaining 15/15 advisor resolves.
 
 ### S69 — Advisor preview uses frozen observations but never creates new ones
 
