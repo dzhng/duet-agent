@@ -20,7 +20,7 @@ import {
 } from "./src/manifest.js";
 import { loadRolloutAttempts } from "./src/artifacts.js";
 import { runCampaign, type CampaignRuntime, type CampaignSpec } from "./src/orchestrator.js";
-import { prepareDuetArtifact } from "./src/packaging.js";
+import { loadPrebuiltDuetArtifact, prepareDuetArtifact } from "./src/packaging.js";
 import { buildPredictions, serializePredictions } from "./src/predictions.js";
 import { ensureCampaignProvenance } from "./src/provenance.js";
 import {
@@ -44,7 +44,24 @@ const REPO_ROOT = resolve(ROOT, "..", "..");
 const MANIFEST_PATH = join(ROOT, "manifests", "multilingual-30.json");
 const CACHE_PATH = join(ROOT, ".cache", "multilingual-test.json");
 const CONFIG_DIR = join(ROOT, "configs");
+const RUNTIME_BUILD_DIR = join(ROOT, "runtime", "build");
 const MANIFEST_SEED = 20_260_720;
+
+async function cacheDataset(): Promise<void> {
+  const snapshot = await fetchDataset({ expectedRevision: PINNED_DATASET_REVISION });
+  await writeDatasetCache(CACHE_PATH, snapshot);
+  console.log(
+    `Cached ${snapshot.rows.length} rows at dataset revision ${snapshot.datasetRevision}.`,
+  );
+}
+
+async function buildDuetPackage(): Promise<void> {
+  const artifact = await prepareDuetArtifact({
+    repoRoot: REPO_ROOT,
+    outputDir: RUNTIME_BUILD_DIR,
+  });
+  console.log(`Built ${artifact.localPath} (${artifact.sha256}).`);
+}
 
 async function writeManifest(): Promise<void> {
   const snapshot = await fetchDataset({ expectedRevision: PINNED_DATASET_REVISION });
@@ -216,10 +233,12 @@ async function buildCampaignRuntime(spec: CampaignSpec): Promise<CampaignRuntime
     );
   }
 
-  const artifact = await prepareDuetArtifact({
-    repoRoot: REPO_ROOT,
-    outputDir: join(ROOT, "runtime", "build"),
-  });
+  const artifact = process.env.DUET_SWEBENCH_PREBUILT_ARTIFACT
+    ? await loadPrebuiltDuetArtifact(process.env.DUET_SWEBENCH_PREBUILT_ARTIFACT)
+    : await prepareDuetArtifact({
+        repoRoot: REPO_ROOT,
+        outputDir: RUNTIME_BUILD_DIR,
+      });
   const names = Object.keys(CAMPAIGN_CONFIGS) as CampaignConfigName[];
   const configPaths = Object.fromEntries(
     names.map((name) => [name, join(CONFIG_DIR, `${name}.models.json`)]),
@@ -368,6 +387,8 @@ async function loadProviderEnv(): Promise<Record<string, string>> {
 const [domain, action, ...rest] = process.argv.slice(2);
 if (domain === "manifest" && action === "update") await writeManifest();
 else if (domain === "manifest" && action === "show") await showManifest();
+else if (domain === "dataset" && action === "cache") await cacheDataset();
+else if (domain === "package" && action === "build") await buildDuetPackage();
 else if (domain === "config" && action === "write") await writeConfigs();
 else if (domain === "config" && action === "show") await showConfigs();
 else if (domain === "rollout" && action === "local") await runLocalRollout(rest);
@@ -378,7 +399,7 @@ else if (domain === "campaign" && action === "predictions") await writeCampaignP
 else if (domain === "campaign" && action === "report") await writeCampaignReport(rest);
 else {
   console.error(
-    "Usage: bun benchmarks/swebench/cli.ts <manifest update|manifest show|config write|config show|rollout local --prompt TEXT|rollout smoke (--instance ID|--all-languages)|campaign run [--instance ID] [--environment-lock PATH]|status|predictions|report --spec PATH>",
+    "Usage: bun benchmarks/swebench/cli.ts <manifest update|manifest show|dataset cache|package build|config write|config show|rollout local --prompt TEXT|rollout smoke (--instance ID|--all-languages)|campaign run [--instance ID] [--environment-lock PATH]|status|predictions|report --spec PATH>",
   );
   process.exitCode = 1;
 }

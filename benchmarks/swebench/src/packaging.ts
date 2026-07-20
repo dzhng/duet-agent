@@ -24,6 +24,20 @@ export interface PrepareDuetArtifactOptions {
 }
 
 /**
+ * Load a binary built into an immutable worker image instead of rebuilding it
+ * independently in every sandbox.
+ */
+export async function loadPrebuiltDuetArtifact(localPath: string): Promise<DuetArtifact> {
+  const resolvedPath = resolve(localPath);
+  return {
+    localPath: resolvedPath,
+    installPath: "/opt/duet/duet",
+    sha256: await sha256File(resolvedPath),
+    packagingMode: "compiled-linux-x64",
+  };
+}
+
+/**
  * Cross-compile duet for the official x86_64 images from an Apple-Silicon Mac.
  *
  * Bun resolves optional native packages for the install host by default. A

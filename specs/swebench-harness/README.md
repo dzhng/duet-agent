@@ -15,9 +15,12 @@ advisor-compliance rerun admitted both comparisons. Slice 08's first Mac-local
 campaign was superseded after measuring one-worker throughput; the final clean
 campaign runs one four-arm instance block per E2B sandbox with eight sandboxes
 in flight. Each arm still runs in its own fresh official SWE-bench Docker
-container, and the official scorer remains authoritative. Build the immutable
-E2B template from the pushed commit, pass the no-model capacity probe, then run
-the committed `multilingual-30-four-arm-e2b-v1.json` campaign.
+container, and the official scorer remains authoritative. The first E2B
+admission block passed rollout and scoring but exposed per-sandbox binary
+nondeterminism before expansion. Build the immutable E2B template with its
+single precompiled Duet artifact and pinned dataset cache, pass the no-model
+capacity probe, then run the committed
+`multilingual-30-four-arm-e2b-v2.json` campaign.
 Last updated 2026-07-20.
 
 You are implementing this spec. Read this README fully, then continue the E2B
@@ -31,6 +34,9 @@ Local constraints to prove rather than assume:
   E2B x86_64 template with Docker-in-sandbox, 8 vCPU and 16 GiB per worker. A
   no-model probe must prove the exact commit, resources, Docker daemon, Python,
   and pinned SWE-bench version before any rollout starts.
+- Every worker uses the byte-identical Duet binary compiled once into the
+  immutable E2B template. Workers never compile their own campaign artifact or
+  fetch the pinned dataset snapshot at launch.
 - A Vercel AI Gateway credential is present in the project `.env`. The harness
   enforces a $500 cumulative model-spend breaker, but that local breaker is not
   a substitute for an external provider-side hard cap.

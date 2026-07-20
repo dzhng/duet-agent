@@ -33,6 +33,8 @@ export interface E2BEnvironmentProbe {
   osRelease: string;
   dockerClientVersion: string;
   dockerServerVersion: string;
+  /** SHA-256 of the one Duet binary embedded in the worker template. */
+  duetArtifactSha256: string;
   pythonVersion: string;
   swebenchVersion: string;
 }
@@ -57,6 +59,7 @@ export function buildE2BEnvironmentLock(probe: E2BEnvironmentProbe): object {
       clientVersion: probe.dockerClientVersion,
       serverVersion: probe.dockerServerVersion,
     },
+    duetArtifact: { sha256: probe.duetArtifactSha256 },
     python: {
       version: probe.pythonVersion,
       swebenchVersion: probe.swebenchVersion,

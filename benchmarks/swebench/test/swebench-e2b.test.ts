@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { RolloutAttempt } from "../src/artifacts.js";
 import type { InstanceManifest } from "../src/manifest.js";
 import type { CampaignSpec } from "../src/orchestrator.js";
-import { calculateCampaignBudgetBound } from "../e2b/run.js";
+import { calculateCampaignBudgetBound, retryE2BSandboxCreate } from "../e2b/run.js";
 import { buildE2BEnvironmentLock, e2bTemplateName, providerEnvironment } from "../e2b/support.js";
 
 describe("SWE-bench E2B execution", () => {
@@ -43,6 +43,7 @@ describe("SWE-bench E2B execution", () => {
         osRelease: "Ubuntu 24.04.2 LTS",
         dockerClientVersion: "28.5.1",
         dockerServerVersion: "28.5.1",
+        duetArtifactSha256: "a".repeat(64),
         pythonVersion: "3.12.3",
         swebenchVersion: "4.1.0",
       }),
@@ -61,29 +62,60 @@ describe("SWE-bench E2B execution", () => {
         osRelease: "Ubuntu 24.04.2 LTS",
       },
       docker: { clientVersion: "28.5.1", serverVersion: "28.5.1" },
+      duetArtifact: { sha256: "a".repeat(64) },
       python: { version: "3.12.3", swebenchVersion: "4.1.0" },
     });
   });
 
   test("reserves the global model budget across independent E2B shards and retries", () => {
     const { spec, manifest } = campaignFixture();
-    expect(calculateCampaignBudgetBound(spec, manifest, [], false)).toEqual({
+    const initial = calculateCampaignBudgetBound(spec, manifest, [], false);
+    expect({ pending: initial.pending, priorUsd: initial.priorUsd }).toEqual({
       pending: 120,
       priorUsd: 0,
-      totalUsd: 499.8,
     });
+    expect(initial.totalUsd).toBeCloseTo(498.84, 8);
 
     const failedInfra = attemptFixture(spec);
-    expect(calculateCampaignBudgetBound(spec, manifest, [failedInfra], false)).toEqual({
+    const held = calculateCampaignBudgetBound(spec, manifest, [failedInfra], false);
+    expect({ pending: held.pending, priorUsd: held.priorUsd }).toEqual({
       pending: 119,
       priorUsd: 1,
-      totalUsd: 496.81,
     });
-    expect(calculateCampaignBudgetBound(spec, manifest, [failedInfra], true)).toEqual({
+    expect(held.totalUsd).toBeCloseTo(495.87, 8);
+
+    const retried = calculateCampaignBudgetBound(spec, manifest, [failedInfra], true);
+    expect({ pending: retried.pending, priorUsd: retried.priorUsd }).toEqual({
       pending: 120,
       priorUsd: 1,
-      totalUsd: 500.8,
     });
+    expect(retried.totalUsd).toBeCloseTo(499.84, 8);
+  });
+
+  test("retries sandbox creation only after cleaning an unconnected attempt", async () => {
+    let attempts = 0;
+    let cleanups = 0;
+    const delays: number[] = [];
+
+    const result = await retryE2BSandboxCreate(
+      async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error("transient controller failure");
+        return "sandbox";
+      },
+      async () => {
+        cleanups += 1;
+      },
+      [2, 5],
+      async (milliseconds) => {
+        delays.push(milliseconds);
+      },
+    );
+
+    expect(result).toBe("sandbox");
+    expect(attempts).toBe(3);
+    expect(cleanups).toBe(2);
+    expect(delays).toEqual([2, 5]);
   });
 });
 
@@ -99,12 +131,12 @@ function campaignFixture(): { spec: CampaignSpec; manifest: InstanceManifest } {
       concurrency: 1,
       armOrderSeed: 1,
       limits: {
-        costUsd: 3.99,
+        costUsd: 3.97,
         wallClockMs: 1_800_000,
         interruptGraceMs: 90_000,
         patchBytes: 5_242_880,
       },
-      budget: { totalUsd: 500, sunkUsd: 21 },
+      budget: { totalUsd: 500, sunkUsd: 22.44 },
     },
     manifest: {
       datasetRevision: "revision",

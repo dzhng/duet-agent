@@ -23,11 +23,13 @@ const execFileAsync = promisify(execFile);
 const REPO_ROOT = resolve(import.meta.dir, "../../..");
 const BENCH_ROOT = resolve(import.meta.dir, "..");
 const REMOTE_REPO_ROOT = "/work/duet-agent";
-const DEFAULT_SPEC = "benchmarks/swebench/campaigns/multilingual-30-four-arm-e2b-v1.json";
+const DEFAULT_SPEC = "benchmarks/swebench/campaigns/multilingual-30-four-arm-e2b-v2.json";
 const REMOTE_ENVIRONMENT_LOCK = "/tmp/duet-swebench-environment.lock.json";
 const REMOTE_RESUME_ARCHIVE = "/tmp/duet-swebench-resume.tar";
 const REMOTE_RESULT_ARCHIVE = "/tmp/duet-swebench-result.tar";
+const REMOTE_PREBUILT_ARTIFACT = `${REMOTE_REPO_ROOT}/benchmarks/swebench/runtime/build/duet-linux-x64`;
 const E2B_REQUEST_TIMEOUT_MS = 180_000;
+const E2B_CREATE_RETRY_DELAYS_MS = [2_000, 5_000] as const;
 
 interface DriverOptions {
   specPath: string;
@@ -135,15 +137,20 @@ async function capacityProbe(
   cacheRoot: string,
 ): Promise<string> {
   console.log(`Probing ${templateName} before launching model work.`);
-  const sandbox = await Sandbox.create(templateName, {
-    timeoutMs: 10 * 60_000,
-    requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
-    metadata: {
-      purpose: "duet-swebench-capacity",
-      campaign: spec.id,
-      repositorySha,
-    },
-  });
+  const metadata = {
+    purpose: "duet-swebench-capacity",
+    campaign: spec.id,
+    repositorySha,
+  };
+  const sandbox = await retryE2BSandboxCreate(
+    () =>
+      Sandbox.create(templateName, {
+        timeoutMs: 10 * 60_000,
+        requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
+        metadata,
+      }),
+    () => killOwnedSandboxes(metadata),
+  );
   const startedAt = new Date().toISOString();
   try {
     const commandOptions = { timeoutMs: 120_000 };
@@ -163,6 +170,10 @@ async function capacityProbe(
     );
     const dockerServerVersion = await sandbox.commands.run(
       "docker version --format '{{.Server.Version}}'",
+      commandOptions,
+    );
+    const duetArtifactHash = await sandbox.commands.run(
+      `sha256sum ${shellQuote(REMOTE_PREBUILT_ARTIFACT)}`,
       commandOptions,
     );
     const pythonVersion = await sandbox.commands.run(
@@ -193,6 +204,10 @@ async function capacityProbe(
     if (!dockerClient || !dockerServer) {
       throw new Error("E2B Docker capacity probe did not return client and server versions.");
     }
+    const duetArtifactSha256 = duetArtifactHash.stdout.trim().split(/\s+/, 1)[0];
+    if (!duetArtifactSha256 || !/^[0-9a-f]{64}$/.test(duetArtifactSha256)) {
+      throw new Error("E2B capacity probe did not return the prebuilt Duet artifact hash.");
+    }
     const probe: E2BEnvironmentProbe = {
       templateName,
       templateId: info.templateId,
@@ -203,10 +218,12 @@ async function capacityProbe(
       osRelease: osRelease.stdout.trim(),
       dockerClientVersion: dockerClient,
       dockerServerVersion: dockerServer,
+      duetArtifactSha256,
       pythonVersion: pythonVersion.stdout.trim().replace(/^Python\s+/, ""),
       swebenchVersion: swebenchVersion.stdout.trim(),
     };
     const environmentLock = `${JSON.stringify(buildE2BEnvironmentLock(probe), null, 2)}\n`;
+    await verifyPrebuiltArtifactReplica(spec, repositorySha, templateName, duetArtifactSha256);
     await Promise.all([
       writeFile(join(cacheRoot, "environment.lock.json"), environmentLock),
       writeFile(
@@ -225,9 +242,44 @@ async function capacityProbe(
       ),
     ]);
     console.log(
-      `Capacity gate passed: ${info.cpuCount} vCPU, ${info.memoryMB} MiB, ${probe.architecture}, Docker ${dockerServer}.`,
+      `Capacity gate passed: ${info.cpuCount} vCPU, ${info.memoryMB} MiB, ${probe.architecture}, Docker ${dockerServer}, Duet ${duetArtifactSha256.slice(0, 12)} on two fresh workers.`,
     );
     return environmentLock;
+  } finally {
+    await sandbox.kill().catch(() => false);
+  }
+}
+
+async function verifyPrebuiltArtifactReplica(
+  spec: E2BCampaignSpec,
+  repositorySha: string,
+  templateName: string,
+  expectedSha256: string,
+): Promise<void> {
+  const metadata = {
+    purpose: "duet-swebench-capacity-replica",
+    campaign: spec.id,
+    repositorySha,
+  };
+  const sandbox = await retryE2BSandboxCreate(
+    () =>
+      Sandbox.create(templateName, {
+        timeoutMs: 10 * 60_000,
+        requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
+        metadata,
+      }),
+    () => killOwnedSandboxes(metadata),
+  );
+  try {
+    const result = await sandbox.commands.run(`sha256sum ${shellQuote(REMOTE_PREBUILT_ARTIFACT)}`, {
+      timeoutMs: 120_000,
+    });
+    const actualSha256 = result.stdout.trim().split(/\s+/, 1)[0];
+    if (actualSha256 !== expectedSha256) {
+      throw new Error(
+        `E2B template artifact differs across fresh workers: ${expectedSha256} != ${actualSha256 ?? "missing"}.`,
+      );
+    }
   } finally {
     await sandbox.kill().catch(() => false);
   }
@@ -244,17 +296,25 @@ async function runInstanceBlock(input: {
   retryFailed: boolean;
 }): Promise<void> {
   const startedAt = new Date().toISOString();
-  const sandbox = await Sandbox.create(input.templateName, {
-    timeoutMs: input.spec.execution.workerTimeoutMs,
-    requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
-    envs: providerEnvironment(process.env),
-    metadata: {
-      purpose: "duet-swebench-worker",
-      campaign: input.spec.id,
-      instanceId: input.instanceId,
-      repositorySha: input.repositorySha,
-    },
-  });
+  const metadata = {
+    purpose: "duet-swebench-worker",
+    campaign: input.spec.id,
+    instanceId: input.instanceId,
+    repositorySha: input.repositorySha,
+  };
+  const sandbox = await retryE2BSandboxCreate(
+    () =>
+      Sandbox.create(input.templateName, {
+        timeoutMs: input.spec.execution.workerTimeoutMs,
+        requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
+        envs: {
+          ...providerEnvironment(process.env),
+          DUET_SWEBENCH_PREBUILT_ARTIFACT: REMOTE_PREBUILT_ARTIFACT,
+        },
+        metadata,
+      }),
+    () => killOwnedSandboxes(metadata),
+  );
   let commandSucceeded = false;
   let failure: unknown;
   let metrics: SandboxMetrics[] = [];
@@ -318,6 +378,37 @@ async function runInstanceBlock(input: {
     await sandbox.kill().catch(() => false);
   }
   if (failure) throw failure;
+}
+
+/** Retry controller-level sandbox creation before any model command can run. */
+export async function retryE2BSandboxCreate<T>(
+  create: () => Promise<T>,
+  cleanup: () => Promise<void>,
+  retryDelaysMs: readonly number[] = E2B_CREATE_RETRY_DELAYS_MS,
+  sleep: (milliseconds: number) => Promise<void> = (milliseconds) => Bun.sleep(milliseconds),
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await create();
+    } catch (error) {
+      const delay = retryDelaysMs[attempt];
+      if (delay === undefined) throw error;
+      await cleanup().catch(() => undefined);
+      await sleep(delay);
+    }
+  }
+}
+
+async function killOwnedSandboxes(metadata: Record<string, string>): Promise<void> {
+  const paginator = Sandbox.list({
+    query: { metadata, state: ["running"] },
+    requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
+  });
+  while (paginator.hasNext) {
+    for (const sandbox of await paginator.nextItems()) {
+      await Sandbox.kill(sandbox.sandboxId, { requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS });
+    }
+  }
 }
 
 async function createResumeArchive(

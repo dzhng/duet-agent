@@ -4,6 +4,10 @@
 model work on RPC-envelope drift and is preserved; v2 produced two valid Druid
 arms for $0.7933 before being intentionally stopped when the user supplied E2B
 capacity. Neither namespace contributes outcomes to the final E2B campaign.
+The first E2B namespace completed and officially scored a four-arm Druid
+admission block for $1.4304, then refused expansion because independently
+compiled worker binaries had different hashes. Those results remain admission
+evidence; the clean final E2B v2 namespace uses one template-built binary.
 
 Needs slice 07's explicit ADMIT. The deliverable.
 
@@ -19,7 +23,8 @@ Needs slice 07's explicit ADMIT. The deliverable.
   official Docker containers.
 - The immutable E2B template name derives from the pushed duet commit. It pins
   Bun 1.3.11, SWE-bench 4.1.0, mini-swe-agent 2.4.5, Docker, the repository SHA,
-  8 vCPU, and 16 GiB RAM. A no-model capacity probe writes one stable
+  one precompiled Duet binary, one pinned dataset cache, 8 vCPU, and 16 GiB
+  RAM. A no-model capacity probe writes one stable
   `environment.lock.json` shared byte-for-byte across workers and rejects any
   mismatch before generation.
 - E2B workers receive supported model-gateway credentials only, never the E2B
@@ -38,9 +43,12 @@ Needs slice 07's explicit ADMIT. The deliverable.
 
 - Exactly 120 scheduled rollouts; retries only for missing/failed infra
   attempts (never cherry-picking completed outcomes); campaign breaker keeps
-  cumulative model spend inside the envelope. The final committed bound is
-  `$21 sunk + 120 × $3.99 = $499.80`; E2B compute charges are separate from
+  cumulative model spend inside the envelope. The clean v2 committed bound is
+  `$22.44 sunk + 120 × $3.97 = $498.84`; E2B compute charges are separate from
   model-gateway spend.
+- A pre-model gate proves two fresh workers hash the same template-built Duet
+  artifact. Sandbox creation and pinned dataset download retry only transient
+  infrastructure failures; neither retry can issue a model request.
 - The E2B capacity record proves exact commit, x86_64 architecture, CPU, RAM,
   Docker client/server, Python, and SWE-bench versions before the first model
   call. Returned archives reject absolute paths, traversal, and files outside

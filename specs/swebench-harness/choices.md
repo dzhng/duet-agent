@@ -1275,7 +1275,7 @@ test:swebench` Docker runner. The root `test/` tree and `bun run test` remain
 - **Verdict:** **sound and user-directed.** The filesystem and commands now
   express the intended ownership boundary directly.
 - **Confidence:** **high** because both isolated Docker suites pass after the
-  move: 54 benchmark tests and 1,146 product tests.
+  move: 60 benchmark tests and 1,146 product tests.
 
 ### S41 — E2B parallelizes instance blocks without changing the harness
 
@@ -1316,6 +1316,49 @@ test:swebench` Docker runner. The root `test/` tree and `bun run test` remain
   the hard global guarantee without introducing per-arm treatment differences.
 - **Confidence:** **high** in the bound; measured rollouts remain far below the
   $3.99 emergency cutoff.
+
+### S43 — The immutable template owns the campaign binary and dataset
+
+- **When:** the first E2B Druid block passed all four rollout and official-score
+  gates, but expansion to fresh sandboxes triggered the provenance mismatch
+  guard before any additional model calls.
+- **The choice:** Compile Duet once while building the commit-derived E2B
+  template, cache the pinned dataset there, and make every worker hash and use
+  that exact prebuilt binary. Preserve the scored Druid block as admission
+  evidence and restart the final measurement under a clean v2 campaign id. The
+  unbuilt alternative disables binary provenance or treats independently
+  compiled, byte-different executables as one treatment.
+- **The gap:** Bun's compiled output is not byte-reproducible across independent
+  sandboxes even when every source input and tool version matches. Re-fetching
+  the same pinned dataset in every worker also introduced avoidable transient
+  5xx failures.
+- **The reach:** Campaign provenance now describes one actual executable shared
+  by all 120 rollouts. Dataset startup is offline, transient template downloads
+  retry before snapshotting, and controller-level sandbox creation retries only
+  before a worker can receive a model command.
+- **Verdict:** **sound.** One campaign must execute one byte-identical harness;
+  provenance rejection found treatment drift that scoring alone could not.
+- **Confidence:** **high** in the diagnosed cause because a disposable worker
+  reproduced a different binary SHA while spec, git SHA, manifest, renders, and
+  environment were byte-identical. Final confidence awaits the v2 two-worker
+  hash gate and full campaign.
+
+### S44 — The clean E2B restart accounts for the admitted block as sunk spend
+
+- **When:** after the v1 E2B Druid admission block spent $1.4304 and the binary
+  fix required a new campaign namespace.
+- **The choice:** Conservatively raise sunk model spend from $21 to $22.44 and
+  lower the uniform emergency ceiling from $3.99 to $3.97. The new worst case
+  is `$22.44 + 120 × $3.97 = $498.84`.
+- **The gap:** Reusing the old campaign id would violate write-once provenance;
+  omitting its model calls from the global envelope would undercount spend.
+- **The reach:** All four v1 outcomes stay auditable but none is mixed into the
+  v2 estimate. Every v2 arm retains the same non-binding cap and $1.16 of
+  arithmetic headroom remains.
+- **Verdict:** **sound.** Restarting a treatment requires both a new namespace
+  and honest cumulative accounting.
+- **Confidence:** **high** because the four persisted terminal ledgers sum to
+  $1.4304 and the bound is direct arithmetic.
 
 ## Compressed trivial discretion
 

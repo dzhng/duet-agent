@@ -10,6 +10,7 @@ export const PINNED_DATASET_REVISION = "2b7aced941b4873e9cad3e76abbae93f481d1beb
 
 const DATASETS_SERVER_ROWS_URL = "https://datasets-server.huggingface.co/rows";
 const PAGE_SIZE = 100;
+const DEFAULT_RETRY_DELAYS_MS = [1_000, 3_000, 10_000] as const;
 
 interface DatasetServerRow {
   row: {
@@ -31,6 +32,10 @@ export interface FetchDatasetOptions {
   expectedRevision?: string;
   /** Injectable HTTP boundary used by fixture tests. */
   fetchImpl?: typeof fetch;
+  /** Delays between retries for rate limits and transient server failures. */
+  retryDelaysMs?: readonly number[];
+  /** Injectable timer used to test retries without wall-clock delays. */
+  sleep?: (milliseconds: number) => Promise<void>;
 }
 
 function parseRow(value: DatasetServerRow, index: number): DatasetRow {
@@ -57,6 +62,8 @@ function parseRow(value: DatasetServerRow, index: number): DatasetRow {
 export async function fetchDataset(options: FetchDatasetOptions = {}): Promise<DatasetSnapshot> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const expectedRevision = options.expectedRevision ?? PINNED_DATASET_REVISION;
+  const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const sleep = options.sleep ?? ((milliseconds: number) => Bun.sleep(milliseconds));
   const rows: DatasetRow[] = [];
   let total = Number.POSITIVE_INFINITY;
 
@@ -69,7 +76,7 @@ export async function fetchDataset(options: FetchDatasetOptions = {}): Promise<D
     url.searchParams.set("offset", String(offset));
     url.searchParams.set("length", String(PAGE_SIZE));
 
-    const response = await fetchImpl(url);
+    const response = await fetchPage(fetchImpl, url, offset, retryDelaysMs, sleep);
     if (!response.ok) {
       throw new Error(`Dataset request failed (${response.status}) for offset ${offset}.`);
     }
@@ -95,6 +102,26 @@ export async function fetchDataset(options: FetchDatasetOptions = {}): Promise<D
     throw new Error(`Dataset returned ${rows.length} rows but declared ${total}.`);
   }
   return { datasetRevision: expectedRevision, rows };
+}
+
+async function fetchPage(
+  fetchImpl: typeof fetch,
+  url: URL,
+  offset: number,
+  retryDelaysMs: readonly number[],
+  sleep: (milliseconds: number) => Promise<void>,
+): Promise<Response> {
+  for (let attempt = 0; ; attempt += 1) {
+    const delay = retryDelaysMs[attempt];
+    try {
+      const response = await fetchImpl(url);
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || delay === undefined) return response;
+    } catch (error) {
+      if (delay === undefined) throw error;
+    }
+    await sleep(delay);
+  }
 }
 
 /** Persist the non-gold dataset fields used to regenerate prompts and the manifest offline. */
