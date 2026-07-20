@@ -917,6 +917,30 @@ ownerScopeId }`, even though both execute through the same task manager.
   model spend and the gold gate proves five minutes is enough for every image's
   official test path.
 
+### S24 — The paid campaign starts with a conservative $1 prerequisite reserve
+
+- **When:** immediately before slice 06's two-task four-arm campaign.
+- **The choice:** The campaign breaker treats $1 as already spent before it
+  launches the first measured rollout. The directly recovered prerequisite
+  charges are about $0.27: the original live packaging check, the successful
+  mini replication, and the nine-language matrix. A failed two-call mini probe
+  could not be priced locally because that missing price entry caused the
+  failure, so the reserve rounds the entire prerequisite phase up to $1. The
+  unbuilt alternative records only the known cents and implicitly claims the
+  failed provider calls were free.
+- **The gap:** The spec required prerequisite spend to count against $500 but
+  did not define how to account for a provider response whose third-party
+  runner threw before persisting its cost.
+- **The reach:** Every smoke, pilot, and full-campaign launch leaves at least
+  $499 for future reservations and cannot knowingly erase earlier spend. The
+  reserve is deliberately conservative; reports keep measured rollout spend
+  separate from this sunk allowance.
+- **Verdict:** **sound.** Over-reserving less than one dollar protects the hard
+  envelope without changing any comparison or materially reducing campaign
+  capacity.
+- **Confidence:** **high** because $1 exceeds recovered prerequisite spend by
+  more than 3× and the unknown probe made only two Luna calls.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper
