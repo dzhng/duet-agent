@@ -2054,6 +2054,39 @@ the number of rollouts or the independently enforced model-spend bound.
 - **Confidence:** **high** because the command's existing read-only contract rules
   out the mutating alternative.
 
+### S70 — Optimize evidence representation before shrinking evidence
+
+- **When:** the 32k/16k candidate preserved all 15 known advisor resolves but
+  the user asked to optimize both quality and token efficiency before the
+  untouched campaign.
+- **The choice:** Keep the 32k threshold that decides when paying for an
+  observer is worthwhile, but reduce the post-observation ordinary raw tail to
+  8k. The newest complete tool interaction remains protected even when larger.
+  Serialize only the transcript fields another model can actually see: roles,
+  visible text/reasoning, tool calls, complete tool-result content and error
+  state. Remove local timestamps, provider/model identity, usage/cost objects,
+  diagnostics, tool-result UI details, and opaque provider replay signatures.
+  Lower the built-in advisor effort from high to medium; the adversarial
+  narrow-fix live eval passed at both levels. Low also challenged the fix but
+  remains outside this conservative first candidate until broader evidence can
+  justify the additional reduction. Confirm the combined candidate by rerunning only the
+  15 advised known cases and comparing them with the immutable pure baseline.
+- **The gap:** Lowering the 32k trigger would cause more observer calls and can
+  spend more total tokens than it saves. The earlier serializer also called
+  runtime bookkeeping “wire-faithful” even though the executor provider never
+  exposes those fields to the model. High reasoning was inherited without a
+  measured advisor-quality reason.
+- **The reach:** The advisor keeps all decision evidence and exact tool
+  definitions/results while paying for less irrelevant JSON, less redundant
+  recent history after observation, and less private deliberation. Benchmark
+  configs still change only executor/advisor model identity and advisor
+  availability; effort continues to inherit the normal product definition.
+- **Verdict:** **provisional.** Deterministic fidelity tests and live marker
+  recovery pass, and medium effort catches the known narrow-fix trap. Freeze
+  only after official scoring preserves 15/15 advised resolves and telemetry
+  shows a total-token improvement over `4aa8791`.
+- **Confidence:** **medium** until the paid known-case confirmation completes.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

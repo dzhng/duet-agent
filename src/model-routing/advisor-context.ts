@@ -1,4 +1,4 @@
-import type { Context, ImageContent, Message, Tool } from "@earendil-works/pi-ai";
+import type { ImageContent, Message, Tool } from "@earendil-works/pi-ai";
 import type { AgentMessage, AgentState } from "@earendil-works/pi-agent-core";
 import { estimateTokens } from "../memory/observational.js";
 import { IMAGE_WIRE_TOKEN_ESTIMATE } from "../turn-runner/wire-shaping.js";
@@ -10,8 +10,13 @@ const CONTEXT_CLOSE = "</executor_context>";
 /** Soft total-input target chosen for advisor quality and repeated-call efficiency. */
 export const ADVISOR_INPUT_TARGET_TOKENS = 32_000;
 
-/** Recent raw executor-message allowance kept beside compacted observations. */
-export const ADVISOR_RECENT_MESSAGE_TARGET_TOKENS = 16_000;
+/**
+ * Recent raw executor-message allowance kept beside compacted observations.
+ * The newest complete tool interaction remains protected even when it exceeds
+ * this target, so the allowance buys ordinary continuity without clipping the
+ * evidence the advisor was called to inspect.
+ */
+export const ADVISOR_RECENT_MESSAGE_TARGET_TOKENS = 8_000;
 
 /** Minimal live-agent surface needed to capture the executor request faithfully. */
 export interface AdvisorContextSource {
@@ -196,10 +201,10 @@ function serializeContext(
   compactedMessages: number,
   omittedMessages: number,
 ): { text: string; images: ImageContent[] } {
-  const context: Context = {
+  const context = {
     systemPrompt,
     tools: [...tools],
-    messages: [...messages],
+    messages: messages.map(projectAdvisorWireMessage),
   };
   const images: ImageContent[] = [];
   const payload = {
@@ -214,6 +219,64 @@ function serializeContext(
     return { type: "image", mimeType: value.mimeType, attachmentIndex };
   });
   return { text: `${CONTEXT_OPEN}\n${json}\n${CONTEXT_CLOSE}`, images };
+}
+
+/**
+ * Project the executor's provider-neutral message into the fields that become
+ * model-visible request content. Pi keeps timestamps, provider identity,
+ * diagnostics, token accounting, and opaque replay signatures on messages so
+ * the runtime can resume and account for them; those fields are not transcript
+ * evidence and a different advisor model cannot replay the signatures. Visible
+ * reasoning, tool calls, complete tool-result content, and error state remain.
+ */
+function projectAdvisorWireMessage(message: Message): unknown {
+  if (message.role === "user") {
+    return {
+      role: message.role,
+      content:
+        typeof message.content === "string"
+          ? message.content
+          : message.content.map(projectAdvisorWireContent),
+    };
+  }
+  if (message.role === "toolResult") {
+    return {
+      role: message.role,
+      toolCallId: message.toolCallId,
+      toolName: message.toolName,
+      content: message.content.map(projectAdvisorWireContent),
+      isError: message.isError,
+    };
+  }
+  return {
+    role: message.role,
+    content: message.content.flatMap<unknown>((block) => {
+      if (block.type === "text") return [{ type: block.type, text: block.text }];
+      if (block.type === "thinking") {
+        if (block.redacted || block.thinking.trim().length === 0) return [];
+        return [{ type: block.type, thinking: block.thinking }];
+      }
+      return [
+        {
+          type: block.type,
+          id: block.id,
+          name: block.name,
+          arguments: block.arguments,
+        },
+      ];
+    }),
+  };
+}
+
+function projectAdvisorWireContent(content: {
+  type: "text" | "image";
+  text?: string;
+  data?: string;
+  mimeType?: string;
+}): unknown {
+  return content.type === "text"
+    ? { type: content.type, text: content.text }
+    : { type: content.type, data: content.data, mimeType: content.mimeType };
 }
 
 function isImageContent(value: unknown): value is ImageContent {

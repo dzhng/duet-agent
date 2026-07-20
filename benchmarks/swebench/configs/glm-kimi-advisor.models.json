@@ -16,7 +16,7 @@
         "enabled": true,
         "target": {
           "modelName": "kimi-k3",
-          "thinkingLevel": "high"
+          "thinkingLevel": "medium"
         },
         "minStepsBetween": 5
       }

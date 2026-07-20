@@ -247,7 +247,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
       },
       advisor: {
         enabled: true,
-        target: { modelName: "fable-5", thinkingLevel: "high" },
+        target: { modelName: "fable-5", thinkingLevel: "medium" },
         minStepsBetween: 5,
       },
     },
@@ -276,7 +276,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
       },
       advisor: {
         enabled: true,
-        target: { modelName: "fable-5", thinkingLevel: "high" },
+        target: { modelName: "fable-5", thinkingLevel: "medium" },
         minStepsBetween: 5,
       },
     },

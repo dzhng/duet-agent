@@ -3,6 +3,7 @@ import type { AssistantMessage, Message, Tool } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import {
   ADVISOR_INPUT_TARGET_TOKENS,
+  ADVISOR_RECENT_MESSAGE_TARGET_TOKENS,
   buildAdvisorContext,
   captureAdvisorExecutorContext,
   type AdvisorContextSource,
@@ -43,7 +44,7 @@ function payload(text: string) {
   const json = text.slice(text.indexOf("\n") + 1, text.lastIndexOf("\n"));
   return JSON.parse(json) as {
     truncation: { omittedMessages: number };
-    executorContext: { systemPrompt: string; messages: Message[]; tools: Tool[] };
+    executorContext: { systemPrompt: string; messages: unknown[]; tools: Tool[] };
   };
 }
 
@@ -51,6 +52,7 @@ describe("buildAdvisorContext", () => {
   test("reserves the documented compact advisor output allowance", () => {
     expect(ADVISOR_MAX_OUTPUT_TOKENS).toBe(2_048);
     expect(ADVISOR_INPUT_TARGET_TOKENS).toBe(32_000);
+    expect(ADVISOR_RECENT_MESSAGE_TARGET_TOKENS).toBe(8_000);
     expect(build([]).metadata.inputTargetTokens).toBe(32_000);
   });
 
@@ -106,7 +108,11 @@ describe("buildAdvisorContext", () => {
       reservedOutputTokens: 2_048,
     });
 
-    expect(payload(result.text).executorContext.messages).toEqual([task, observation, recent]);
+    expect(payload(result.text).executorContext.messages).toEqual([
+      { role: "user", content: task.content },
+      { role: "user", content: observation.content },
+      { role: "user", content: recent.content },
+    ]);
     expect(result.text).toContain("OLD WORK SUMMARY");
     expect(result.text).not.toContain("OLD EXECUTOR WORK");
     expect(result.metadata).toMatchObject({
@@ -117,7 +123,7 @@ describe("buildAdvisorContext", () => {
     });
   });
 
-  test("preserves the resolved prompt, exact tools, thinking, tool calls, and full tool results", () => {
+  test("preserves model-visible evidence without local message bookkeeping", () => {
     const tools = [
       {
         name: "edit_file",
@@ -153,7 +159,29 @@ describe("buildAdvisorContext", () => {
 
     expect(parsed.executorContext).toEqual({
       systemPrompt: "EXECUTOR SYSTEM",
-      messages,
+      messages: [
+        { role: "user", content: "Implement the fix." },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "private reasoning that the observer used to drop" },
+            { type: "text", text: "I found the faulty boundary." },
+            {
+              type: "toolCall",
+              id: "call-1",
+              name: "edit_file",
+              arguments: { path: "src/a.ts", patch: "full patch" },
+            },
+          ],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call-1",
+          toolName: "edit_file",
+          content: [{ type: "text", text: TOOL_RESULT }],
+          isError: false,
+        },
+      ],
       tools,
     });
     expect(result.text).toContain("private reasoning that the observer used to drop");
@@ -165,6 +193,58 @@ describe("buildAdvisorContext", () => {
       truncated: false,
       attachedImages: 0,
     });
+  });
+
+  test("removes signatures, diagnostics, accounting, timestamps, and tool details", () => {
+    const message = assistant([
+      {
+        type: "thinking",
+        thinking: "inspect the boundary",
+        thinkingSignature: "opaque-thinking-replay-payload",
+      },
+      {
+        type: "text",
+        text: "Evidence found.",
+        textSignature: "opaque-text-replay-payload",
+      },
+      {
+        type: "toolCall",
+        id: "call-1",
+        name: "read",
+        arguments: { path: "src/a.ts" },
+        thoughtSignature: "opaque-tool-replay-payload",
+      },
+    ]);
+    message.diagnostics = [
+      {
+        type: "warning",
+        timestamp: 3,
+        error: { message: "local diagnostic" },
+      },
+    ];
+    const result = build([
+      message,
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        toolName: "read",
+        content: [{ type: "text", text: "complete file contents" }],
+        details: { duplicatedLocalPayload: "must not be sent" },
+        isError: true,
+        timestamp: 3,
+      },
+    ]);
+
+    const serialized = result.text;
+    expect(serialized).toContain("inspect the boundary");
+    expect(serialized).toContain("complete file contents");
+    expect(serialized).toContain('"isError":true');
+    expect(serialized).not.toContain("opaque-");
+    expect(serialized).not.toContain("local diagnostic");
+    expect(serialized).not.toContain("duplicatedLocalPayload");
+    expect(serialized).not.toContain('"timestamp"');
+    expect(serialized).not.toContain('"usage"');
+    expect(serialized).not.toContain('"provider"');
   });
 
   test("pins the first user task and newest tail when the real model window is exceeded", () => {
@@ -181,7 +261,10 @@ describe("buildAdvisorContext", () => {
     });
     const parsed = payload(result.text);
 
-    expect(parsed.executorContext.messages).toEqual([messages[0], messages[3]]);
+    expect(parsed.executorContext.messages).toEqual([
+      { role: "user", content: "TASK DEFINING REQUEST" },
+      { role: "user", content: "NEWEST CONTEXT" },
+    ]);
     expect(parsed.truncation.omittedMessages).toBe(2);
     expect(result.metadata).toMatchObject({
       includedMessages: 2,
@@ -211,8 +294,8 @@ describe("buildAdvisorContext", () => {
     expect(result.metadata.safetyMarginTokens).toBe(20);
     expect(result.metadata.truncated).toBe(true);
     expect(payload(result.text).executorContext.messages).toEqual([
-      { role: "user", content: "TASK", timestamp: 1 },
-      { role: "user", content: "LATEST", timestamp: 3 },
+      { role: "user", content: "TASK" },
+      { role: "user", content: "LATEST" },
     ]);
   });
 

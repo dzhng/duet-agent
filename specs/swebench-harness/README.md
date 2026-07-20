@@ -11,8 +11,9 @@ tasks; this harness uses different executors and advisors and a signal-seeking
 
 ## Next Agent Prompt
 
-**Status:** slices 01–07 are mechanically complete; slice 08 has frozen the
-advisor context policy and is ready for the broader non-regression gate.
+**Status:** slices 01–07 are mechanically complete; slice 08 is using the
+15-case known-loss suite for one more advisor-efficiency pass before the broader
+non-regression gate.
 Earlier gates exposed product lifecycle, E2B integration, binary-packaging,
 and advisor-review defects. The decisive
 pure-only failure was Kimi resolving `facebook__docusaurus-8927` while Fable
@@ -30,7 +31,7 @@ the complete available transcript with zero omitted messages. These adaptive
 repeats validate the quality baseline but also show that the current advisor
 request grows with raw executor history. They are not an unbiased lift estimate.
 
-The efficient-context policy is now frozen: a 32k total-input target,
+The first efficient-context baseline uses a 32k total-input trigger,
 roughly 16k recent raw-message tail, normal observational compaction for older
 work, and a quality override that keeps the latest complete tool interaction
 even when it exceeds the soft target. The executor's own horizon is unchanged.
@@ -50,9 +51,17 @@ $0.89, so advisor plus observer still cost $8.54, 43.6% below the old advisor
 spend alone. The projection compacted 1,129 old messages with zero unrepresented
 omissions. This preserves the old 15/15 advisor quality baseline with two more
 consultations and roughly half the context, so the former provisional 10%/15%
-thresholds are superseded by measured evidence.
+thresholds are superseded by measured evidence. Optimization is now reopened
+against that exact quality baseline. The next candidate keeps the 32k observer
+trigger and latest-complete-tool override, projects only model-visible message
+fields (not timestamps, provider ids, accounting, diagnostics, or opaque replay
+signatures), reduces the ordinary recent raw tail to 8k, and lowers advisor
+reasoning from high to medium after the live narrow-fix eval passed at medium.
+It is not frozen until all 15 advised cases resolve again and measured total
+advisor-plus-observer tokens improve.
 
-Next, create fresh diversity campaign ids from this frozen policy. Any pure-only
+Next, run fresh advisor-only known-case campaign ids for this candidate, then
+create fresh diversity campaign ids only if it preserves 15/15. Any pure-only
 result still stops immediately for exact-trace diagnosis. The stopped
 `advisor-nonregression-expansion-*-20260721-v1` namespaces predate the policy
 change, have no completed pairs, and must never be resumed or scored. The stopped v3 workers

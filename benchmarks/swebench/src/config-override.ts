@@ -72,7 +72,10 @@ export function renderModelsJson(options: RenderModelsJsonOptions): RoutingTable
         advisor: {
           ...productAdvisor,
           enabled: options.advisorEnabled,
-          target: { modelName: options.advisorModel, thinkingLevel: "high" },
+          target: {
+            modelName: options.advisorModel,
+            thinkingLevel: productAdvisor.target.thinkingLevel,
+          },
         },
       },
     },

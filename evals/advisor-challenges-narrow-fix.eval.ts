@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ThinkingLevel } from "@earendil-works/pi-ai";
 import dedent from "dedent";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,6 +11,10 @@ import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
 const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const advisorThinking = parseThinkingLevel(
+  process.env.EVAL_ADVISOR_THINKING ??
+    BUILT_IN_ROUTING_TABLE.tiers.frontier.advisor.target.thinkingLevel,
+);
 
 class AdvisorReviewEvalRunner extends TurnRunner {
   constructor(cwd: string) {
@@ -178,7 +182,7 @@ describe("advisor completion review", () => {
           },
           advisor: {
             enabled: true,
-            target: { modelName: model, thinkingLevel: "high" },
+            target: { modelName: model, thinkingLevel: advisorThinking },
             minStepsBetween: 1,
           },
         },
@@ -203,7 +207,17 @@ describe("advisor completion review", () => {
           .map((content) => content.text)
           .join("\n");
         console.log(
-          JSON.stringify({ model, advice, details: result.details, systemEvents }, null, 2),
+          JSON.stringify(
+            {
+              model,
+              advisorThinking,
+              advice,
+              details: result.details,
+              systemEvents,
+            },
+            null,
+            2,
+          ),
         );
 
         expect(advice).toMatch(/history|upstream|reference implementation/i);
@@ -218,6 +232,13 @@ describe("advisor completion review", () => {
     120_000,
   );
 });
+
+function parseThinkingLevel(value: string): ThinkingLevel {
+  if (["minimal", "low", "medium", "high", "xhigh"].includes(value)) {
+    return value as ThinkingLevel;
+  }
+  throw new Error(`Unsupported EVAL_ADVISOR_THINKING: ${value}`);
+}
 
 function assistant(content: AssistantMessage["content"]): AssistantMessage {
   return {

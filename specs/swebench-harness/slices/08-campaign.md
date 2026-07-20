@@ -77,9 +77,13 @@ No full campaign starts until all of these are true:
    hard window remains a final safety ceiling. The latest complete tool
    interaction is protected even when it alone exceeds the soft target. Unit
    tests and a falsified live eval prove compaction, observation recovery,
-   recent-result fidelity, and token accounting. The frozen 32k/16k policy then
+   recent-result fidelity, and token accounting. The first 32k/16k baseline then
    preserved 15/15 advisor resolves across the paid known-case gate while
-   cutting total exact advisor tokens by 55.6%.
+   cutting total exact advisor tokens by 55.6%. A second candidate retains the
+   32k observation trigger but removes runtime-only message metadata, keeps an
+   8k ordinary raw tail, and uses medium advisor reasoning. The latest complete
+   tool interaction still overrides the soft tail. Freeze it only if the same
+   15 advised cases all resolve and advisor-plus-observer tokens improve.
 2. **Product lifecycle (implemented):** the benchmark contains no advisor call
    schedule. The shipped product owns orientation and completion-review
    consultations for substantive work. Deterministic tests cover both phases,
@@ -120,8 +124,10 @@ No full campaign starts until all of these are true:
    fell 53.4%, exact advisor tokens fell 55.6%, and advisor spend fell 49.5%
    from the earlier baseline. Normal observer work added $0.89; advisor plus
    observer still cost 43.6% less than the old advisor calls alone. The policy
-   compacted 1,129 messages with zero unrepresented omissions and is now frozen
-   for fresh diversity diagnostics.
+   compacted 1,129 messages with zero unrepresented omissions. This is the
+   fallback baseline while the model-visible/8k/medium candidate runs under new
+   advisor-only diagnostic ids; frozen pure results remain the comparison and
+   are not paid for again.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails

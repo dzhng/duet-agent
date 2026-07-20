@@ -16,7 +16,7 @@
         "enabled": true,
         "target": {
           "modelName": "fable-5",
-          "thinkingLevel": "high"
+          "thinkingLevel": "medium"
         },
         "minStepsBetween": 5
       }
