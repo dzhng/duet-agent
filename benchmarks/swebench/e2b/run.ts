@@ -30,6 +30,7 @@ const REMOTE_RESULT_ARCHIVE = "/tmp/duet-swebench-result.tar";
 const REMOTE_PREBUILT_ARTIFACT = `${REMOTE_REPO_ROOT}/benchmarks/swebench/runtime/build/duet-linux-x64`;
 const E2B_REQUEST_TIMEOUT_MS = 180_000;
 const E2B_CREATE_RETRY_DELAYS_MS = [2_000, 5_000] as const;
+const E2B_READ_RETRY_DELAYS_MS = [2_000, 5_000, 15_000] as const;
 
 interface DriverOptions {
   specPath: string;
@@ -82,7 +83,8 @@ async function main(): Promise<void> {
   await assertCampaignBudgetBound(e2bSpec, manifest, options.retryFailed);
 
   const templateName = e2bTemplateName(repositorySha);
-  if (!(await Template.exists(templateName))) {
+  const templateExists = await retryE2BRead(() => Template.exists(templateName));
+  if (!templateExists) {
     throw new Error(`E2B template ${templateName} is missing; run e2b/template.ts first.`);
   }
   const cacheRoot = join(BENCH_ROOT, ".cache", e2bSpec.id, "e2b");
@@ -128,6 +130,23 @@ async function main(): Promise<void> {
     );
   }
   console.log(`E2B campaign ${e2bSpec.id} finished all requested instance blocks.`);
+}
+
+/** Retry read-only E2B controller requests that cannot create billable model work. */
+export async function retryE2BRead<T>(
+  read: () => Promise<T>,
+  retryDelaysMs: readonly number[] = E2B_READ_RETRY_DELAYS_MS,
+  sleep: (milliseconds: number) => Promise<void> = (milliseconds) => Bun.sleep(milliseconds),
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await read();
+    } catch (error) {
+      const delay = retryDelaysMs[attempt];
+      if (delay === undefined) throw error;
+      await sleep(delay);
+    }
+  }
 }
 
 async function capacityProbe(

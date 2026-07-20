@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { RolloutAttempt } from "../src/artifacts.js";
 import type { InstanceManifest } from "../src/manifest.js";
 import type { CampaignSpec } from "../src/orchestrator.js";
-import { calculateCampaignBudgetBound, retryE2BSandboxCreate } from "../e2b/run.js";
+import { calculateCampaignBudgetBound, retryE2BRead, retryE2BSandboxCreate } from "../e2b/run.js";
 import { buildE2BEnvironmentLock, e2bTemplateName, providerEnvironment } from "../e2b/support.js";
 
 describe("SWE-bench E2B execution", () => {
@@ -115,6 +115,27 @@ describe("SWE-bench E2B execution", () => {
     expect(result).toBe("sandbox");
     expect(attempts).toBe(3);
     expect(cleanups).toBe(2);
+    expect(delays).toEqual([2, 5]);
+  });
+
+  test("retries read-only controller requests without cleanup side effects", async () => {
+    let attempts = 0;
+    const delays: number[] = [];
+
+    const result = await retryE2BRead(
+      async () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error("transient controller failure");
+        return true;
+      },
+      [2, 5],
+      async (milliseconds) => {
+        delays.push(milliseconds);
+      },
+    );
+
+    expect(result).toBeTrue();
+    expect(attempts).toBe(3);
     expect(delays).toEqual([2, 5]);
   });
 });
