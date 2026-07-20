@@ -1,17 +1,16 @@
 # 07 — Two-comparison report, 3-instance four-arm pilot, admission gate
 
-**Progress (2026-07-20): ADMIT.** The semantically corrected three-language
+**Progress (2026-07-20): historical gate complete.** The three-language
 pilot completed for $9.4612 and officially scored every admissible patch. Its
 only STOP findings were one missed Kimi consultation and one patch containing
 generated test fixtures; both are now machine-visible admission failures. A
 targeted Rust compliance rerun then made exactly one successful intended
 advisor call in each treated arm, kept both patches production-only, and
 officially resolved both outcomes for another $1.9072. The old $1.25 pilot
-cutoff is retired: the full campaign reserves a deliberately non-binding $4
-emergency ceiling per rollout and a 30-minute wall. The original Mac production
-spec reserved `$20 + 120 × $4 = $500`. After $0.7933 of valid v2 generation was
-recorded before the E2B pivot, the final clean E2B campaign conservatively uses
-`$21 + 120 × $3.99 = $499.80`. Both treatment comparisons are admitted to slice 08.
+cutoff was retired. This gate proved scoring, attribution, and patch policy,
+but one successful rerun per executor did not prove stable consultation
+behavior. Slice 08's v4 evidence supersedes that admission claim and owns the
+repeated restart gate before any new full campaign.
 
 Needs 04 (scorer fixture) and 06. The report is built and verified against
 existing artifacts first — zero new spend — then a small pilot produces the

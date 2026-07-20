@@ -5,10 +5,9 @@ Decision audit for the prerequisite RPC and TurnRunner corrections made on
 
 ## Review these first
 
-N7 is the only open choice: the official benchmark names JavaScript and
-TypeScript separately but publishes one combined repository group, so slice 02
-uses the repositories' pinned primary-language classification to preserve the
-spec's nine-way sample.
+N7 remains the only open user choice. For the active campaign, also review
+S49's five-repeat restart-gate size: it is a provisional balance between
+stochastic evidence and the remaining $500 envelope, not a claim of power.
 
 ## Needs user — slice 02
 
@@ -981,6 +980,9 @@ ownerScopeId }`, even though both execute through the same task manager.
   is part of the treatment, not prompt tuning for task success.
 - **Confidence:** **medium-high** until the fresh paid pilot proves both
   executors obey the instruction without disturbing pure arms.
+- **Resolution after stopped E2B v4:** Superseded by U2. Exactly-once remains a
+  historical controlled-exposure protocol, not the product-policy treatment or
+  an Anthropic reproduction.
 
 ### S27 — Patch policy is enforced at rollout completion, before prediction export
 
@@ -1199,6 +1201,8 @@ ownerScopeId }`, even though both execute through the same task manager.
   resolved under the official scorer. That rerun also falsified the assumption
   that pager variables alone bound all validation, motivating the shared
   two-minute instruction before the full campaign.
+- **Resolution after stopped E2B v4:** The single targeted success did not prove
+  repeated compliance. S49 replaces it as the restart gate.
 
 ### S37 — The production campaign retires the $1.25 pilot cutoff
 
@@ -1414,6 +1418,125 @@ the number of rollouts or the independently enforced model-spend bound.
 - **Confidence:** **medium-high** until the v4 live Druid admission proves Kimi
   calls Fable. The composed-prompt regression was observed red before the fix
   and green after it, and the focused product test pins the same contract.
+- **Resolution after stopped E2B v4:** Superseded by U2. V4 still produced three
+  zero-call attempts and one double call, so prompt precedence did not turn the
+  protocol into deterministic or product-representative exposure.
+
+## Unsound after stopped E2B v4
+
+### U2 — Mandatory exactly-once exposure was treated as the advisor strategy
+
+- **When:** slice 08 stopped-v4 diagnosis on 2026-07-20.
+- **The choice:** Earlier passes told every enabled executor to call its advisor
+  exactly once before editing and described a successful call as the treatment
+  the campaign was meant to measure. Imagine enabling advice on a routine task:
+  shipped Duet lets the executor decide that no consultation is worthwhile,
+  while the benchmark ordered one anyway. Anthropic's server tool also leaves
+  timing to the executor, sends the full transcript, and its coding guidance
+  aims for early and completion-time review—roughly two or three calls—not
+  exactly one. The unbuilt alternative was to make advisor availability the
+  assignment, keep every rollout in the primary comparison, and report actual
+  calls separately.
+- **The gap:** Zero calls made the first pilot uninterpretable, and the plan
+  solved exposure by prescribing a call without revisiting which real-world
+  behavior the resulting number represented.
+- **The reach:** V1–v4 may describe their own controlled protocols, but none can
+  be presented as the effect of shipped Duet's advisor policy or a reproduction
+  of Anthropic's published result. Future campaigns must name assignment and
+  exposure separately.
+- **Verdict:** **unsound.** Correct decision: the primary estimate is assignment
+  to shipped advisor availability; observed successful consultation is a
+  secondary per-protocol description, and forced-call experiments are labeled
+  as a different protocol.
+- **Confidence:** **high** because Anthropic's official documentation and v4's
+  observed zero- and double-call attempts directly contradict exact-one
+  equivalence.
+
+## Sound after stopped E2B v4
+
+### S47 — Product-policy assignment is primary; per-protocol exposure is descriptive
+
+- **When:** slice 08 stopped-v4 reporting correction on 2026-07-20.
+- **The choice:** Pair every pure outcome with the outcome assigned to the
+  advisor-enabled product, even if that executor called zero or several times.
+  Then show a second table for the tasks where advice actually returned. For
+  example, the three scored v4 rows where pure resolved and enabled did not are
+  real assignment outcomes, but all three enabled runs made zero calls, so they
+  are not evidence that advice content caused harm. The unbuilt alternative
+  drops non-callers and reports only exposed tasks as though models chose to
+  call at random.
+- **The gap:** The old report had one “advisor effect” label for both tool
+  availability and successful use.
+- **The reach:** The primary result answers a product decision—whether to enable
+  the policy. The secondary result explains mechanism and compliance but is
+  visibly selection-prone because harder tasks may be more likely to trigger a
+  call.
+- **Verdict:** **sound.** Assignment is fixed by the experiment; exposure is a
+  model behavior observed after assignment and cannot replace it causally.
+- **Confidence:** **high**.
+
+### S48 — Full available transcript fidelity is an admission gate
+
+- **When:** comparing Duet's client-side advisor with Anthropic's official
+  server-side advisor during the stopped-v4 diagnosis.
+- **The choice:** Before another full campaign, capture a call after meaningful
+  inspection and prove the advisor receives the executor's system prompt, tool
+  definitions, ordered messages, tool calls/results, and current-turn text. If
+  that material fits the advisor context window, no text-preview conversion or
+  configured elision is allowed. The current curated 10,000-token summary keeps
+  selected headlines and a recent tail; the unbuilt alternative calls that
+  equivalent to the complete transcript even when earlier evidence or tool
+  structure was removed.
+- **The gap:** The campaign borrowed Anthropic's “shared context” rationale but
+  never gated the custom advisor transport against the documented full-context
+  contract.
+- **The reach:** A future report can state exactly which context the advisor saw.
+  Passing this gate still does not make different models and client-side system
+  prompts identical to Anthropic's service; it removes one known semantic gap.
+- **Verdict:** **sound.** Advice quality cannot be attributed to a shared-context
+  strategy until the sharing boundary is proven rather than inferred.
+- **Confidence:** **high**.
+
+### S49 — The restart gate repeats the three known zero-call loss cases five times per pair
+
+- **When:** defining what must replace the single targeted compliance rerun
+  before E2B v5.
+- **The choice:** Run five fresh pure/enabled pairs on each of the three v4
+  cases where the enabled arm lost without calling: one Fluentd task for
+  GLM/Kimi and two Docusaurus tasks for Kimi/Fable. This produces 30 rollouts.
+  Keep all attempts, including zero and multiple calls. The unbuilt alternatives
+  accept one green rerun again, or spend on another full 120-rollout campaign
+  before learning whether the same failure mode is stochastic and recurrent.
+- **The gap:** The user required focused repeated rollouts but did not set the
+  repeat count or admission threshold.
+- **The reach:** V5 starts only if both pairings show at least one successful
+  consultation, pure arms stay silent, context and attribution reconcile, and
+  the budget is recalculated afterward. Five repeats are a reliability probe,
+  not enough to estimate task success or erase the full campaign's n=30 × 1
+  power limitation.
+- **Verdict:** **sound provisional call.** Five repeats make recurrence visible
+  without spending campaign scale; change the count only before the restart-gate
+  id is frozen, never after seeing outcomes.
+- **Confidence:** **medium** because three or ten repeats would also be
+  defensible cost/reliability tradeoffs.
+
+### S50 — Prompt or product changes require a clean v5 measurement namespace
+
+- **When:** freezing v4 after its diagnosis.
+- **The choice:** Preserve every v4 artifact, count its $72.2112 recorded spend,
+  and reserve `multilingual-30-four-arm-e2b-20260720-v5` for the next full run
+  after context and prompt changes pass the focused gate. The unbuilt
+  alternative resumes v4 with a different binary and prompt, making one report
+  combine incompatible treatments.
+- **The gap:** V4 stopped after 100 generated rollouts, so resuming it would be
+  cheaper than repeating completed work but would break the campaign's own
+  frozen-hash contract.
+- **The reach:** V1–v4 remain useful engineering evidence and global budget
+  inputs, while every v5 outcome shares one product, prompt, binary, and
+  reporting definition.
+- **Verdict:** **sound.** Experimental provenance is worth more than salvaging
+  outcomes produced under a rejected treatment definition.
+- **Confidence:** **high**.
 
 ## Compressed trivial discretion
 

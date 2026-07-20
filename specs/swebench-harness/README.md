@@ -1,36 +1,23 @@
 # SWE-bench Multilingual harness
 
 Measure duet-agent's router-tier and `ask_advisor` deltas on SWE-bench
-Multilingual with the official evaluation harness — Anthropic's
-[advisor-strategy post](https://claude.com/blog/the-advisor-strategy)
-methodology at signal scale, not leaderboard scale. Anthropic published the
-numbers (Sonnet 4.6: 72.1% → 74.8% with an Opus advisor, −11.9% cost/task) but
-not the scaffold; this spec builds our own scaffold so the numbers we get are
-about _our_ harness.
+Multilingual with the official evaluation harness. Anthropic's
+[advisor-strategy post](https://claude.com/blog/the-advisor-strategy) motivates
+the question, but this is a Duet product evaluation, not a reproduction of
+Anthropic's protocol. Anthropic used its server-side advisor, a full executor
+transcript, suggested coding guidance, thinking off, and five trials of all 300
+tasks; this harness uses different executors and advisors and a signal-seeking
+30-task sample.
 
 ## Next Agent Prompt
 
-**Status:** slices 01–07 are complete. The paid three-language pilot and targeted
-advisor-compliance rerun admitted both comparisons. Slice 08's first Mac-local
-campaign was superseded after measuring one-worker throughput; the final clean
-campaign runs one four-arm instance block per E2B sandbox with sixteen sandboxes
-in flight. Each arm still runs in its own fresh official SWE-bench Docker
-container, and the official scorer remains authoritative. The first E2B
-admission block passed rollout and scoring but exposed per-sandbox binary
-nondeterminism before expansion. Build the immutable E2B template with its
-single precompiled Duet artifact and pinned dataset cache, pass the no-model
-capacity probe, then run the committed
-`multilingual-30-four-arm-e2b-v4.json` campaign. The v2 admission was stopped
-because provider credentials appeared in Docker process arguments; v3 proved
-that boundary fixed, then stopped because Kimi skipped its required Fable
-consultation. V4 makes the normal optional-advisor guidance yield to the
-benchmark's stricter exactly-once rule. V1–v3 remain admission evidence only
-and must not enter the final estimate.
-Last updated 2026-07-20.
-
-You are implementing this spec. Read this README fully, then continue the E2B
-campaign in [slice 08](slices/08-campaign.md). Preserve Mac-local pilot artifacts
-as historical evidence; never mix them into the E2B campaign namespace.
+**Status:** slices 01–07 are mechanically complete; slice 08 is stopped after
+E2B v4. Freeze v1–v4 as historical evidence. Next, make Duet's advisor input
+faithfully carry the executor's full available transcript, remove the
+benchmark's forced exactly-once call rule, and run slice 08's repeated restart
+gate on the three v4 zero-call loss cases. Only after that gate passes, create
+and run `multilingual-30-four-arm-e2b-20260720-v5`; no v1–v4 outcome enters its
+estimate. Last updated 2026-07-20.
 
 Local constraints to prove rather than assume:
 
@@ -42,6 +29,10 @@ Local constraints to prove rather than assume:
 - Every worker uses the byte-identical Duet binary compiled once into the
   immutable E2B template. Workers never compile their own campaign artifact or
   fetch the pinned dataset snapshot at launch.
+- Before another paid campaign, a deterministic fixture must prove that a
+  successful `ask_advisor` call receives the full available executor context,
+  and focused live repeats must report any truncation. The present budgeted
+  text projection is not equivalent to Anthropic's full-transcript server tool.
 - A Vercel AI Gateway credential is present in the project `.env`. The harness
   enforces a $500 cumulative model-spend breaker, but that local breaker is not
   a substitute for an external provider-side hard cap.
@@ -58,9 +49,10 @@ Global TODO (owner slice in parens):
       round-trip integrity (05)
 - [x] Rollout pipeline + resumable campaign orchestrator + predictions; paid
       live verification and resume semantics complete (06)
-- [x] Two-comparison report; 3-instance four-arm pilot; limits recalibrated;
-      both comparisons admitted after targeted compliance proof (07)
-- [ ] 30×4 campaign + two paired comparisons in the final report (08)
+- [x] Two-comparison report and 3-instance four-arm pilot; historical limits
+      calibrated and reporting gates implemented (07)
+- [ ] Full-context fidelity + repeated restart gate; new 30×4 product-policy
+      campaign + product and per-protocol reports (08)
 
 Update this section before ending every pass.
 
@@ -78,7 +70,7 @@ rationale.
   benchmark-owned sandboxes, images, and containers.
 - **Replication spike first:** mini-swe-agent proves images+scoring end-to-end
   before duet is wired in (slice 04).
-- **First campaign:** four arms over one fixed 30-instance subset, 1 trial per
+- **Measurement design:** four arms over one fixed 30-instance subset, 1 trial per
   arm, reported as two paired comparisons: pure GLM-5.2 vs GLM-5.2 with Kimi K3
   advisor, and pure Kimi K3 vs Kimi K3 with Fable advisor. “Pure” means the
   advisor tool is disabled; product-default memory still runs. Every complete
@@ -89,6 +81,28 @@ rationale.
   spend envelope is **$500**, including prerequisite live smoke and pilots.
   Economy-vs-balanced, frontier ceiling, and trials>1 remain future campaigns.
 - Greenfield tooling: no backward compat, no migrations.
+
+## Measurement claims
+
+- **Product-policy estimate (primary):** compare every pure rollout with its
+  advisor-enabled mate, whether the executor calls zero, one, or several times.
+  This answers “what happens when the shipped advisor policy is enabled?” Call
+  rate and timing are part of the product behavior, not failed rows to discard.
+- **Per-protocol view (secondary, descriptive):** separately show pairs where
+  the configured advisor actually returned advice, along with call count,
+  timing, and context fidelity. Conditioning on a model's decision to call can
+  select harder tasks, so this subgroup must not be presented as a causal
+  advisor delta.
+- **Controlled-exposure history:** the old exactly-once prompt tested a custom
+  mandatory-call protocol. Anthropic's own tool lets the executor choose when
+  to call and its coding guidance targets roughly two to three calls, including
+  early and completion-time review. Exact-one compliance is therefore neither
+  shipped Duet behavior nor an Anthropic reproduction.
+- **Power:** n=30 × 1 trial can find large directional signals, not a modest
+  effect like Anthropic's published 2.7 percentage points. One resolved task is
+  3.33 points; an exact paired two-sided test needs at least six unopposed
+  discordant wins even to cross 0.05. Report paired outcomes and uncertainty,
+  but do not turn a null or small delta into evidence of no effect.
 
 ## Architecture
 
@@ -153,8 +167,8 @@ Cross-cutting rules:
 04 Mac preflight + x86 gold gate + mini-swe-agent spike (needs 02 manifest)
 05 duet-in-container packaging + smoke + patch integrity (needs 03, 04)
 06 rollout pipeline + resume + predictions (needs 02, 03, 05)
-07 report + 3-instance pilot + admission gate (needs 04 fixture, 06)
-08 30×4 campaign + two-comparison final report (LAST; needs 07 ADMIT)
+07 report + 3-instance pilot + historical admission gate (needs 04 fixture, 06)
+08 context/restart gate + 30×4 final report (LAST; needs 07 artifacts)
 
 01 ──► 03 ──┬──► 05 ──► 06 ──► 07 ──► 08
 02 ──┬──────┘         ▲       ▲
@@ -163,8 +177,8 @@ Cross-cutting rules:
 
 Parallel lanes: {01, 02} immediately; 03 and 04 concurrently after their
 parents; 05+ serial on the Mac. Live-model spend before slice 07 is small. The
-30-instance four-arm campaign is the last slice, gated by an explicit ADMIT
-decision.
+30-instance four-arm campaign is the last slice, gated by slice 08's focused
+repeated admission decision.
 
 Slice plans: [01](slices/01-rpc-config-and-telemetry.md),
 [02](slices/02-manifest-and-configs.md),
@@ -193,7 +207,8 @@ knowingly exceed $500.
   arm order, and explicit benchmark-tier invocations. Within each comparison
   the only varying bit is `advisor.enabled`. All arms use product defaults for
   classifier, memory model, and every non-advisor policy, plus the same fixed
-  Kimi vision fallback.
+  Kimi vision fallback. The shared task prompt must not force an advisor call;
+  treatment assignment is tool availability under the shipped product policy.
 - Isolation: fresh official image + fresh `HOME` per rollout; `--incognito`
   (no memory-db carryover), `--no-system-prompt-files` (no stray AGENTS.md in
   target repos). Scoring applies the patch in the harness's own pristine
@@ -220,11 +235,11 @@ knowingly exceed $500.
 - `bun build --compile` viability for duet (dynamic imports, sqlite); musl
   images; CA bundles for gateway egress (05).
 - Real per-rollout cost/duration across both pairs → final limits (07).
-- Advisor call frequency for both advisor targets on real SWE tasks — too low a
-  rate makes the corresponding comparison inconclusive; the pilot reports it
-  before the campaign spends (07).
-- n=30, 1 trial is signal-seeking, not leaderboard-stable; the report states
-  this and leads with discordant pairs, not the raw delta (07/08).
+- Advisor call frequency for both advisor targets under the shipped policy.
+  The repeated restart gate measures it before another 120-rollout launch (08).
+- n=30, 1 trial is signal-seeking and underpowered for modest effects; the
+  report leads with discordant pairs and never treats a small or null delta as
+  proof of equivalence (08).
 
 ## Dead ends (recorded so nobody re-walks them)
 
@@ -248,8 +263,10 @@ knowingly exceed $500.
 
 - Anthropic advisor strategy post: https://claude.com/blog/the-advisor-strategy
   (methodology footnotes: 5×300 trials, suggested coding system prompt,
-  thinking off for advisor arms) and advisor tool docs:
-  https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool
+  thinking off for advisor arms) and
+  [advisor tool docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/advisor-tool)
+  (executor-selected calls, full-transcript context, and coding call-timing
+  guidance).
 - SWE-bench harness: https://github.com/swe-bench/SWE-bench — quickstart,
   docker setup (x86_64, ~120GB, gold `--predictions_path gold`).
 - mini-swe-agent SWE-bench runner: https://mini-swe-agent.com/latest/usage/swebench/
