@@ -149,7 +149,8 @@ async function capacityProbe(
       shaResult,
       architecture,
       osRelease,
-      dockerVersions,
+      dockerClientVersion,
+      dockerServerVersion,
       pythonVersion,
       swebenchVersion,
     ] = await Promise.all([
@@ -157,7 +158,8 @@ async function capacityProbe(
       sandbox.commands.run("git rev-parse HEAD", { cwd: REMOTE_REPO_ROOT }),
       sandbox.commands.run("uname -m"),
       sandbox.commands.run(". /etc/os-release && printf '%s' \"$PRETTY_NAME\""),
-      sandbox.commands.run("docker version --format '{{.Client.Version}}\\n{{.Server.Version}}'"),
+      sandbox.commands.run("docker version --format '{{.Client.Version}}'"),
+      sandbox.commands.run("docker version --format '{{.Server.Version}}'"),
       sandbox.commands.run(`${REMOTE_REPO_ROOT}/benchmarks/swebench/.venv/bin/python --version`),
       sandbox.commands.run(
         `${REMOTE_REPO_ROOT}/benchmarks/swebench/.venv/bin/python -c "import importlib.metadata; print(importlib.metadata.version('swebench'))"`,
@@ -178,8 +180,9 @@ async function capacityProbe(
         `E2B worker has ${info.memoryMB} MiB, expected ${spec.execution.workerMemoryMb}.`,
       );
     }
-    const [dockerClientVersion, dockerServerVersion] = dockerVersions.stdout.trim().split(/\s+/);
-    if (!dockerClientVersion || !dockerServerVersion) {
+    const dockerClient = dockerClientVersion.stdout.trim();
+    const dockerServer = dockerServerVersion.stdout.trim();
+    if (!dockerClient || !dockerServer) {
       throw new Error("E2B Docker capacity probe did not return client and server versions.");
     }
     const probe: E2BEnvironmentProbe = {
@@ -190,8 +193,8 @@ async function capacityProbe(
       repositorySha,
       architecture: architecture.stdout.trim(),
       osRelease: osRelease.stdout.trim(),
-      dockerClientVersion,
-      dockerServerVersion,
+      dockerClientVersion: dockerClient,
+      dockerServerVersion: dockerServer,
       pythonVersion: pythonVersion.stdout.trim().replace(/^Python\s+/, ""),
       swebenchVersion: swebenchVersion.stdout.trim(),
     };
@@ -214,7 +217,7 @@ async function capacityProbe(
       ),
     ]);
     console.log(
-      `Capacity gate passed: ${info.cpuCount} vCPU, ${info.memoryMB} MiB, ${probe.architecture}, Docker ${dockerServerVersion}.`,
+      `Capacity gate passed: ${info.cpuCount} vCPU, ${info.memoryMB} MiB, ${probe.architecture}, Docker ${dockerServer}.`,
     );
     return environmentLock;
   } finally {
