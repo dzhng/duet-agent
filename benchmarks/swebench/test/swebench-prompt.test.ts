@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "../src/prompt.js";
 
 describe("SWE-bench rollout prompt", () => {
-  test("leaves advisor scheduling to the product package and asks for a clean final patch", () => {
+  test("leaves advisor scheduling to the product package and states only the submission contract", () => {
     const prompt = buildRolloutPrompt({
       entry: {
         instanceId: "org__repo-1",
@@ -16,15 +16,12 @@ describe("SWE-bench rollout prompt", () => {
 
     expect(`${SWEBENCH_SYSTEM_PROMPT}\n${prompt}`).not.toContain("ask_advisor");
     expect(`${SWEBENCH_SYSTEM_PROMPT}\n${prompt}`).not.toContain("consultation");
-    expect(prompt).toContain(
-      "Before finishing, revert any test, cache, benchmark, or runtime files changed during your work",
-    );
+    expect(SWEBENCH_SYSTEM_PROMPT).toContain("do not modify existing tests");
+    expect(`${SWEBENCH_SYSTEM_PROMPT}\n${prompt}`).not.toMatch(/commit changes/i);
+    expect(`${SWEBENCH_SYSTEM_PROMPT}\n${prompt}`).not.toMatch(/cache|artifact|runtime file/i);
   });
 
-  test("bounds unattended validation without discarding the completed patch", () => {
-    expect(SWEBENCH_SYSTEM_PROMPT).toMatch(
-      /If a validation command is still running after two\s+minutes, stop that command/,
-    );
-    expect(SWEBENCH_SYSTEM_PROMPT).toMatch(/finish with the best patch\s+already produced/);
+  test("does not prescribe work duration, tool counts, or validation scheduling", () => {
+    expect(SWEBENCH_SYSTEM_PROMPT).not.toMatch(/minute|step limit|exactly once|must call/i);
   });
 });

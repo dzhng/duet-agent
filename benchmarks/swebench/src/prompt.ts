@@ -2,15 +2,10 @@ import dedent from "dedent";
 
 import type { ManifestEntry } from "./manifest.js";
 
-/** Identical benchmark hygiene instruction used by every arm. */
+/** Minimal unattended-run contract shared byte-for-byte by every arm. */
 export const SWEBENCH_SYSTEM_PROMPT = dedent`
-  SWE-BENCH WORK RULES
-
-  Keep validation non-interactive and bounded. If a validation command is still running after two
-  minutes, stop that command and continue with another relevant check or finish with the best patch
-  already produced. Before finishing, inspect the final git status and remove every test fixture,
-  cache, benchmark artifact, and runtime file created during the turn. Submit only the production
-  implementation needed for the issue.
+  Complete the SWE-bench task unattended. Change only the production implementation in /testbed;
+  do not modify existing tests.
 `;
 
 /** Immutable issue input shared byte-for-byte by every arm for one instance. */
@@ -29,9 +24,7 @@ export function buildRolloutPrompt(input: RolloutPromptInput): string {
   return dedent`
     You are fixing SWE-bench instance ${input.entry.instanceId} in the repository at /testbed.
 
-    Work directly in /testbed and continue unattended until you have implemented the best complete fix you can. Inspect the repository, edit the implementation, and run relevant tests or checks. Do not ask the user questions. Do not commit changes. Do not modify existing tests or benchmark/runtime files.
-
-    Before finishing, revert any test, cache, benchmark, or runtime files changed during your work so the final patch contains only the production implementation needed for the fix.
+    Inspect the repository, implement the best complete fix you can, and run relevant tests or checks. Do not ask the user questions.
 
     The required fix is:
 
