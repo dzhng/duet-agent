@@ -1862,7 +1862,9 @@ the number of rollouts or the independently enforced model-spend bound.
   additional committed-manifest tasks that were not used for prompt tuning and
   run all four arms once on each (20 rollouts, ten more pairs). Any pure-only
   result in either stage stops immediately under S60. The later final 30×4 run
-  remains a fresh, one-shot measurement and does not reuse these rows.
+  remains a fresh, one-shot measurement and does not reuse these rollout
+  artifacts; diagnostic task ids may also belong to the committed final
+  manifest.
 - **The gap:** The user required more tests after a clean batch but did not set
   the expansion size.
 - **The reach:** The product must survive repeated known regressions and a small
@@ -1895,6 +1897,31 @@ the number of rollouts or the independently enforced model-spend bound.
   concurrency truthful.
 - **Confidence:** **high** from type-checking and 79 Docker benchmark tests,
   including concurrent same-issue/different-trial artifact integration.
+
+### S64 — The diversity gate is deterministic and blind to task contents
+
+- **When:** expanding after the known-case gate reached zero pure-only pairs.
+- **The choice:** Exclude the three tuned issue ids and their two repositories,
+  hash each remaining committed-manifest id with the fixed
+  `advisor-expansion-20260721` seed, retain the lowest hash per language, then
+  take the five lowest language winners. This selects Nushell 13605, Caddy
+  4943, Laravel 53206, Gson 2061, and Vue 11915: five tasks from five
+  repositories and five languages. Selection reads only manifest ids and
+  language labels, never problem statements, gold patches, or tests. Run the
+  GLM/Kimi-advisor and Kimi/Fable-advisor comparisons as separate frozen
+  campaigns so ten pair-local E2B workers can run concurrently.
+- **The gap:** S62 required five broader tasks but did not freeze a sampling
+  rule or say whether the two comparisons should occupy five or ten workers.
+- **The reach:** The diagnostic adds ten independent pair outcomes without
+  selecting tasks for expected advisor wins. Its two conservative sunk values
+  reserve every earlier diagnostic rollout and then reserve the full GLM
+  expansion before admitting the Kimi expansion, bounding both concurrent
+  campaigns at `$355.1395` under the shared `$500` envelope.
+- **Verdict:** **sound.** The sample is reproducible, diverse, content-blind,
+  and uses the concurrency already paid for without separating either pair
+  across sandboxes.
+- **Confidence:** **high** in provenance and budget admission; outcome evidence
+  remains pending until the official scorer evaluates all ten pairs.
 
 ## Compressed trivial discretion
 

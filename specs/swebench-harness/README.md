@@ -11,46 +11,35 @@ tasks; this harness uses different executors and advisors and a signal-seeking
 
 ## Next Agent Prompt
 
-**Status:** slices 01–07 are mechanically complete; slice 08 is fixing a
-pure-only advisor regression before expanding its paired diagnostic gate.
-The first product-policy restart attempt was halted after six complete pairs;
-Kimi made zero advisor calls in all three enabled runs and GLM skipped one of
-four and called late in the others. Zero calls are valid product behavior, but
-that attempt cannot estimate the current product because its lifecycle and
-benchmark inputs have since changed. It also exposed E2B target-selection and
-concurrent artifact-integration defects. Product-owned
-orientation and completion-review checkpoints are now implemented and
-live-falsified, the E2B defects are fixed, and the benchmark now passes the
-canonical issue directly while retaining normal memory, compaction, repository
-instructions, and the complete agent diff. The v2 focused gates made no model
-calls because the compiled binary lacked PGlite runtime sidecars; that
-packaging defect and the artifact-provenance race it exposed are fixed. Next,
-the v3 gates were stopped immediately after Kimi resolved
-`facebook__docusaurus-8927` without the advisor while the advisor-enabled mate
-failed. The full advisor transcript was intact: the completion review endorsed
-a narrow regex change whose local tests passed, while official tests exposed
-two adjacent parser cases it missed. The product advisor now reviews
-independently, seeks authoritative evidence before approving an approximation,
-tries to falsify adjacent behavior, and keeps its verdict compact; the executor
-also treats advice as a hypothesis rather than authority. A wire-faithful live
-eval reproduced the long, locally green completion shape: the old prompt missed
-the available history check, while the new prompt rejected completion and
-requested it on Fable; both Fable and Kimi reject the narrow fix. The first
-fresh trial then produced three official nonregressions: two both-resolved
-pairs and one Kimi/Fable enabled-only improvement. E2B had serialized repeated
-trials behind each issue, so the workers were stopped after those pairs and the
-controller was changed to shard by `(instance, trial)` while keeping paired
-arms together. The remaining repetitions run under v2 ids with twelve shards
-able to occupy twelve of the sixteen slots. Both-resolved is a pass;
-enabled-only is an improvement; neither-resolved is neutral for the comparison; any pure-only
-result stops the gate for trace-level diagnosis and another product fix. If the
-known-case batch is clean, expand to five newly sampled manifest tasks across
-both comparisons before freezing and launching one fresh 30×4 measurement
-namespace. Diagnostic retries remain historical engineering evidence only. The
-stopped v3 workers finalized
-15/30 rollouts for `$12.6315597`; reserve up to `$21.9315597` including the
-three interrupted arms. Their remote artifacts were not recovered, so never
-resume or score that namespace. Last updated 2026-07-21.
+**Status:** slices 01–07 are mechanically complete; slice 08 is running the
+broader advisor non-regression gate. Earlier gates exposed product lifecycle,
+E2B integration, binary-packaging, and advisor-review defects. The decisive
+pure-only failure was Kimi resolving `facebook__docusaurus-8927` while Fable
+endorsed an advised narrow regex fix that official adjacent cases rejected.
+The shipped advisor now reviews independently, seeks authoritative evidence,
+tries to falsify completion against neighboring behavior, and keeps its verdict
+compact; the executor treats advice as a hypothesis to verify. A wire-faithful
+live eval falsified the old prompt and passed with the correction.
+
+The fresh known-case diagnostic is now fully scored: 15/15 pairs avoid
+regression, with eight advisor-only improvements and seven both-resolved ties.
+GLM plus Kimi resolved 4/4 v2 trials versus 2/4 for pure GLM; Kimi plus Fable
+resolved 8/8 versus 3/8 for pure Kimi. Every successful consultation retained
+the complete available transcript with zero omitted messages. These adaptive
+repeats validate the fix but are not an unbiased lift estimate.
+
+Next, run the two frozen `advisor-nonregression-expansion-*-20260721-v1`
+campaigns. They cover Nushell 13605, Caddy 4943, Laravel 53206, Gson 2061, and
+Vue 11915—five repositories and languages selected deterministically from ids
+and labels without reading task contents or gold patches. The two comparisons
+use ten pair-local E2B workers concurrently. Both-resolved and advisor-only
+pass; neither-resolved is neutral; any pure-only result stops all remaining
+work for exact-trace diagnosis and a generic product fix. If all ten pairs are
+clean, freeze and launch one fresh 30×4 measurement namespace. Diagnostic
+retries remain historical engineering evidence only. The stopped v3 workers
+finalized 15/30 rollouts for `$12.6315597`; reserve up to `$21.9315597`
+including the three interrupted arms. Their remote artifacts were not
+recovered, so never resume or score that namespace. Last updated 2026-07-21.
 
 Local constraints to prove rather than assume:
 

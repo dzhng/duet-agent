@@ -80,7 +80,7 @@ No full campaign starts until all of these are true:
    cooldown reset, final-evidence deduplication, and short work; disabling the
    lifecycle made the live eval produce zero calls, while restoration produced
    successful early and final calls.
-3. **Non-regression diagnostics (next):** the product review correction is
+3. **Non-regression diagnostics (in progress):** the product review correction is
    implemented and live-falsified. Under fresh campaign ids, first repeat five
    paired trials on each of the three known loss cases (30 rollouts). If that
    batch has zero pure-only outcomes, expand once to five newly sampled manifest
@@ -96,7 +96,13 @@ No full campaign starts until all of these are true:
    values reserve every completed v1 rollout plus each interrupted trial-2 arm
    at the full `$3.10` cap. The Kimi v2 gate also reserves all eight GLM v2
    rollouts so both controllers may execute concurrently without exceeding the
-   shared envelope.
+   shared envelope. The completed known-case gate has 15/15 non-regressions:
+   eight enabled-only improvements and seven both-resolved ties. The v2 GLM
+   comparison is 2 enabled-only and 2 both-resolved; the v2 Kimi comparison is
+   5 enabled-only and 3 both-resolved. The frozen expansion now adds Nushell
+   13605, Caddy 4943, Laravel 53206, Gson 2061, and Vue 11915 under both
+   comparisons, selected from ids and language labels without task-content or
+   gold-patch inspection.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails

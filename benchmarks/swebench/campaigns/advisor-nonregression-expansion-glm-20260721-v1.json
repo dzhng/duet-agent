@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "advisor-nonregression-expansion-glm-20260721-v1",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-30.json",
+  "instanceIds": [
+    "nushell__nushell-13605",
+    "caddyserver__caddy-4943",
+    "laravel__framework-53206",
+    "google__gson-2061",
+    "vuejs__core-11915"
+  ],
+  "configs": ["glm-pure", "glm-kimi-advisor"],
+  "trials": 1,
+  "concurrency": 1,
+  "armOrderSeed": 20260727,
+  "limits": {
+    "costUsd": 3.1,
+    "wallClockMs": 1800000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 5242880
+  },
+  "budget": {
+    "totalUsd": 500,
+    "sunkUsd": 293.1395
+  },
+  "execution": {
+    "backend": "e2b",
+    "workerConcurrency": 16,
+    "workerCpuCount": 8,
+    "workerMemoryMb": 16384,
+    "workerTimeoutMs": 10800000
+  }
+}
