@@ -32,7 +32,15 @@ export async function buildSwebenchTemplate(): Promise<{
   const worktree = "/work/duet-agent";
   const template = Template()
     .fromUbuntuImage("24.04")
-    .aptInstall(["ca-certificates", "curl", "git", "python3", "python3-pip", "python3-venv"])
+    .aptInstall([
+      "ca-certificates",
+      "curl",
+      "git",
+      "python3",
+      "python3-pip",
+      "python3-venv",
+      "unzip",
+    ])
     .runCmd("curl -fsSL https://get.docker.com | sh")
     .runCmd(
       "curl -fsSL https://bun.sh/install | bash -s 'bun-v1.3.11' && ln -sf /root/.bun/bin/bun /usr/local/bin/bun",
