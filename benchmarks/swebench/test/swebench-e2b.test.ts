@@ -1,10 +1,21 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, test } from "bun:test";
 
 import type { RolloutAttempt } from "../src/artifacts.js";
 import type { InstanceManifest } from "../src/manifest.js";
 import type { CampaignSpec } from "../src/orchestrator.js";
-import { calculateCampaignBudgetBound, retryE2BRead, retryE2BSandboxCreate } from "../e2b/run.js";
+import {
+  calculateCampaignBudgetBound,
+  integrateInstanceArtifacts,
+  retryE2BRead,
+  retryE2BSandboxCreate,
+  selectE2BInstanceIds,
+} from "../e2b/run.js";
 import { buildE2BEnvironmentLock, e2bTemplateName, providerEnvironment } from "../e2b/support.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 
 describe("SWE-bench E2B execution", () => {
   test("derives an immutable path-safe template name from the full git SHA", () => {
@@ -90,6 +101,89 @@ describe("SWE-bench E2B execution", () => {
       priorUsd: 1,
     });
     expect(retried.totalUsd).toBeCloseTo(499.84, 8);
+  });
+
+  test("defaults E2B workers to the campaign instance subset", () => {
+    const { spec, manifest } = campaignFixture();
+    spec.instanceIds = ["org__repo-3", "org__repo-1"];
+
+    expect(selectE2BInstanceIds(spec, manifest, [])).toEqual(["org__repo-3", "org__repo-1"]);
+    expect(selectE2BInstanceIds(spec, manifest, ["org__repo-1"])).toEqual(["org__repo-1"]);
+    expect(() => selectE2BInstanceIds(spec, manifest, ["org__repo-2"])).toThrow(
+      "not selected by the campaign",
+    );
+  });
+
+  testIfDocker("integrates concurrent worker artifacts without racing on provenance", async () => {
+    const root = await mkdtemp(join(tmpdir(), "swebench-e2b-artifacts-"));
+    const destination = join(root, "campaign");
+    const { spec } = campaignFixture();
+    const provenance = '{"campaign":"frozen"}\n';
+    const workers = [
+      { instanceId: "org__repo-1", evidence: "first-worker\n" },
+      { instanceId: "org__repo-2", evidence: "second-worker\n" },
+    ];
+
+    try {
+      const stagedRoots = await Promise.all(
+        workers.map(async ({ instanceId, evidence }, index) => {
+          const stagedRoot = join(root, `staged-${index}`);
+          const attemptRoot = join(stagedRoot, "glm-pure", `${instanceId}-t1`);
+          await mkdir(attemptRoot, { recursive: true });
+          await Promise.all([
+            writeFile(join(stagedRoot, "campaign.json"), provenance),
+            writeFile(join(attemptRoot, "evidence.txt"), evidence),
+          ]);
+          return stagedRoot;
+        }),
+      );
+
+      await Promise.all(
+        workers.map(({ instanceId }, index) =>
+          integrateInstanceArtifacts(stagedRoots[index]!, destination, spec, instanceId),
+        ),
+      );
+
+      expect(await readFile(join(destination, "campaign.json"), "utf8")).toBe(provenance);
+      expect(
+        await Promise.all(
+          workers.map(({ instanceId }) =>
+            readFile(join(destination, "glm-pure", `${instanceId}-t1`, "evidence.txt"), "utf8"),
+          ),
+        ),
+      ).toEqual(workers.map(({ evidence }) => evidence));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker("rejects worker artifacts from conflicting campaign provenance", async () => {
+    const root = await mkdtemp(join(tmpdir(), "swebench-e2b-provenance-"));
+    const destination = join(root, "campaign");
+    const first = join(root, "first");
+    const conflicting = join(root, "conflicting");
+    const { spec } = campaignFixture();
+
+    try {
+      await Promise.all([
+        mkdir(join(first, "glm-pure", "org__repo-1-t1"), { recursive: true }),
+        mkdir(join(conflicting, "glm-pure", "org__repo-2-t1"), { recursive: true }),
+      ]);
+      await Promise.all([
+        writeFile(join(first, "campaign.json"), '{"campaign":"first"}\n'),
+        writeFile(join(conflicting, "campaign.json"), '{"campaign":"other"}\n'),
+      ]);
+
+      await integrateInstanceArtifacts(first, destination, spec, "org__repo-1");
+      await expect(
+        integrateInstanceArtifacts(conflicting, destination, spec, "org__repo-2"),
+      ).rejects.toThrow("does not match existing campaign.json");
+      expect(await readFile(join(destination, "campaign.json"), "utf8")).toBe(
+        '{"campaign":"first"}\n',
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("retries sandbox creation only after cleaning an unconnected attempt", async () => {

@@ -1,8 +1,20 @@
 #!/usr/bin/env bun
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import {
+  access,
+  copyFile,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { Sandbox, Template, type SandboxMetrics } from "e2b";
@@ -92,14 +104,7 @@ async function main(): Promise<void> {
   const environmentLock = await capacityProbe(e2bSpec, repositorySha, templateName, cacheRoot);
   if (options.capacityOnly) return;
 
-  const known = new Set(manifest.entries.map((entry) => entry.instanceId));
-  const instanceIds = options.instanceIds.length
-    ? options.instanceIds
-    : manifest.entries.map((entry) => entry.instanceId);
-  for (const instanceId of instanceIds) {
-    if (!known.has(instanceId)) throw new Error(`Instance is not in the manifest: ${instanceId}.`);
-    pathSafeInstance(instanceId);
-  }
+  const instanceIds = selectE2BInstanceIds(e2bSpec, manifest, options.instanceIds);
   console.log(
     `Launching ${instanceIds.length} instance block(s) with ${e2bSpec.execution.workerConcurrency} E2B worker(s).`,
   );
@@ -130,6 +135,34 @@ async function main(): Promise<void> {
     );
   }
   console.log(`E2B campaign ${e2bSpec.id} finished all requested instance blocks.`);
+}
+
+/** Resolve the committed campaign population, optionally narrowed to an explicit shard. */
+export function selectE2BInstanceIds(
+  spec: CampaignSpec,
+  manifest: InstanceManifest,
+  requestedInstanceIds: readonly string[],
+): string[] {
+  const known = new Set(manifest.entries.map((entry) => entry.instanceId));
+  const campaignInstanceIds = [
+    ...new Set(spec.instanceIds ?? manifest.entries.map((entry) => entry.instanceId)),
+  ];
+  for (const instanceId of campaignInstanceIds) {
+    if (!known.has(instanceId)) throw new Error(`Instance is not in the manifest: ${instanceId}.`);
+    pathSafeInstance(instanceId);
+  }
+  if (requestedInstanceIds.length === 0) return campaignInstanceIds;
+
+  const selected = new Set(campaignInstanceIds);
+  const requested = [...new Set(requestedInstanceIds)];
+  for (const instanceId of requested) {
+    if (!known.has(instanceId)) throw new Error(`Instance is not in the manifest: ${instanceId}.`);
+    if (!selected.has(instanceId)) {
+      throw new Error(`Instance is not selected by the campaign: ${instanceId}.`);
+    }
+    pathSafeInstance(instanceId);
+  }
+  return requested;
 }
 
 /** Retry read-only E2B controller requests that cannot create billable model work. */
@@ -454,12 +487,7 @@ async function downloadInstanceArtifacts(
   instanceId: string,
 ): Promise<void> {
   const campaignRoot = remoteCampaignRoot(spec.id);
-  const candidates = [
-    "campaign.json",
-    ...spec.configs.flatMap((config) =>
-      Array.from({ length: spec.trials }, (_, index) => `${config}/${instanceId}-t${index + 1}`),
-    ),
-  ];
+  const candidates = campaignArtifactRoots(spec, instanceId);
   const quotedCandidates = candidates.map(shellQuote).join(" ");
   await sandbox.commands.run(
     `set -eu; set --; cd ${shellQuote(campaignRoot)}; for item in ${quotedCandidates}; do if [ -e "$item" ]; then set -- "$@" "$item"; fi; done; [ "$#" -gt 0 ]; tar -cf ${shellQuote(REMOTE_RESULT_ARCHIVE)} "$@"`,
@@ -467,16 +495,101 @@ async function downloadInstanceArtifacts(
   const bytes = await sandbox.files.read(REMOTE_RESULT_ARCHIVE, { format: "bytes" });
   const temporaryRoot = await mkdtemp(join(tmpdir(), "duet-swebench-result-"));
   const archivePath = join(temporaryRoot, "result.tar");
+  const extractedRoot = join(temporaryRoot, "extracted");
   try {
     await writeFile(archivePath, bytes);
     const { stdout } = await execFileAsync("tar", ["-tf", archivePath]);
     validateArchiveEntries(stdout.split("\n").filter(Boolean), spec, instanceId);
-    const destination = hostCampaignRoot(spec.id);
-    await mkdir(destination, { recursive: true });
-    await execFileAsync("tar", ["-xf", archivePath, "-C", destination]);
+    await mkdir(extractedRoot);
+    await execFileAsync("tar", ["-xf", archivePath, "-C", extractedRoot]);
+    await integrateInstanceArtifacts(extractedRoot, hostCampaignRoot(spec.id), spec, instanceId);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
+}
+
+/** Install one worker's staged output while preserving immutable campaign provenance. */
+export async function integrateInstanceArtifacts(
+  extractedRoot: string,
+  destinationRoot: string,
+  spec: CampaignSpec,
+  instanceId: string,
+): Promise<void> {
+  pathSafeInstance(instanceId);
+  await mkdir(destinationRoot, { recursive: true });
+  await installCampaignProvenance(
+    join(extractedRoot, "campaign.json"),
+    join(destinationRoot, "campaign.json"),
+  );
+
+  for (const candidate of instanceArtifactRoots(spec, instanceId)) {
+    const source = join(extractedRoot, candidate);
+    try {
+      await access(source);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    await copyArtifactTree(source, join(destinationRoot, candidate));
+  }
+}
+
+async function installCampaignProvenance(source: string, destination: string): Promise<void> {
+  const sourceBytes = await readFile(source);
+  const temporary = join(dirname(destination), `.campaign-${randomUUID()}.json`);
+  await writeFile(temporary, sourceBytes, { flag: "wx" });
+  try {
+    try {
+      await link(temporary, destination);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const existingBytes = await readFile(destination);
+      if (!existingBytes.equals(sourceBytes)) {
+        throw new Error("E2B worker campaign provenance does not match existing campaign.json.");
+      }
+    }
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
+async function copyArtifactTree(source: string, destination: string): Promise<void> {
+  await mkdir(destination, { recursive: true });
+  const entries = await readdir(source, { withFileTypes: true });
+  // A rollout status is its completion marker, so publish it only after its evidence files.
+  entries.sort((left, right) => {
+    if (left.name === "status.json") return 1;
+    if (right.name === "status.json") return -1;
+    return left.name.localeCompare(right.name);
+  });
+  for (const entry of entries) {
+    const sourcePath = join(source, entry.name);
+    const destinationPath = join(destination, entry.name);
+    if (entry.isDirectory()) {
+      await copyArtifactTree(sourcePath, destinationPath);
+      continue;
+    }
+    if (!entry.isFile()) {
+      throw new Error(`Unsupported E2B artifact entry: ${sourcePath}.`);
+    }
+    const temporary = `${destinationPath}.tmp-${randomUUID()}`;
+    try {
+      await copyFile(sourcePath, temporary);
+      await rename(temporary, destinationPath);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
+}
+
+function campaignArtifactRoots(spec: CampaignSpec, instanceId: string): string[] {
+  return ["campaign.json", ...instanceArtifactRoots(spec, instanceId)];
+}
+
+function instanceArtifactRoots(spec: CampaignSpec, instanceId: string): string[] {
+  return spec.configs.flatMap((config) =>
+    Array.from({ length: spec.trials }, (_, index) => `${config}/${instanceId}-t${index + 1}`),
+  );
 }
 
 function validateArchiveEntries(
@@ -484,12 +597,7 @@ function validateArchiveEntries(
   spec: E2BCampaignSpec,
   instanceId: string,
 ): void {
-  const allowed = [
-    "campaign.json",
-    ...spec.configs.flatMap((config) =>
-      Array.from({ length: spec.trials }, (_, index) => `${config}/${instanceId}-t${index + 1}`),
-    ),
-  ];
+  const allowed = campaignArtifactRoots(spec, instanceId);
   for (const entry of entries) {
     if (entry.startsWith("/") || entry.split("/").includes("..")) {
       throw new Error(`Unsafe E2B artifact path: ${entry}.`);
@@ -505,12 +613,7 @@ async function existingInstanceEntries(
   spec: E2BCampaignSpec,
   instanceId: string,
 ): Promise<string[]> {
-  const candidates = [
-    "campaign.json",
-    ...spec.configs.flatMap((config) =>
-      Array.from({ length: spec.trials }, (_, index) => `${config}/${instanceId}-t${index + 1}`),
-    ),
-  ];
+  const candidates = campaignArtifactRoots(spec, instanceId);
   const existing: string[] = [];
   for (const candidate of candidates) {
     try {
