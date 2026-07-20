@@ -170,7 +170,7 @@ import {
 interface TurnRunnerDependencies {
   /** Internal wall-clock seam for deterministic task and schedule lifecycle tests. */
   clock?: RuntimeClock;
-  /** Internal schedule-validation override; production keeps the 15-minute floor. */
+  /** Internal schedule-validation override; production keeps the 30-second floor. */
   minimumScheduledDelayMs?: number;
 }
 

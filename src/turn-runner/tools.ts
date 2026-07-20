@@ -939,7 +939,7 @@ export function createTodoWriteTool(
 
       Prefer a state machine over this tool when the steps are well-scoped enough that a sub-agent or script could complete each one on its own ("do X with these inputs and return the result"). State-machine states run outside this transcript, so their intermediate output does not consume your context — using todo_write for that kind of work pollutes the parent context with tool output you do not actually need to keep.
 
-      Hard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 15-minute floor. If you can already see the work will not fit in one session and you are tempted to recommend the user "continue in the next session," that is the signal that this tool was the wrong choice and a state machine was the right one. When work meets this cutoff it goes to create_state_machine_definition, and once it does, do NOT also call todo_write to mirror or track it: the state machine's states ARE the visible, live plan, so a parallel todo list duplicating those same phases is redundant and wrong. Dropping the todo list is the fix here, never dropping the state machine — session-spanning many-unit work still requires the state machine.
+      Hard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 30-second floor. If you can already see the work will not fit in one session and you are tempted to recommend the user "continue in the next session," that is the signal that this tool was the wrong choice and a state machine was the right one. When work meets this cutoff it goes to create_state_machine_definition, and once it does, do NOT also call todo_write to mirror or track it: the state machine's states ARE the visible, live plan, so a parallel todo list duplicating those same phases is redundant and wrong. Dropping the todo list is the fix here, never dropping the state machine — session-spanning many-unit work still requires the state machine.
 
       How to use it well:
       - Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.
@@ -1092,7 +1092,7 @@ function createStateMachineDefinitionTool(
         "firstState": "step-1"
       }
 
-      State \`kind\` is one of \`agent\`, \`script\`, \`poll\`, \`timer\`, \`park\`, \`terminal\`. A park holds the machine without running work or scheduling a wake while you converse with or ask the user. Poll \`intervalMs\`, timer \`wakeAt\`, and timer \`wakeAfterMs\` must be ≥ 15 minutes; agent/script states have no minimum duration. Durations accept human-readable strings like \`"3h"\` or \`"5d"\` parsed by the \`ms\` package, and \`wakeAt\` accepts ISO 8601 strings like \`"2026-05-24T18:00:00Z"\`; raw millisecond numbers still work as a fallback. Timer states must set exactly one of \`wakeAt\` (absolute) or \`wakeAfterMs\` (relative from selection time). Every definition needs at least one \`terminal\` state with status "completed"; "failed" and "cancelled" terminals are auto-injected if omitted.
+      State \`kind\` is one of \`agent\`, \`script\`, \`poll\`, \`timer\`, \`park\`, \`terminal\`. A park holds the machine without running work or scheduling a wake while you converse with or ask the user. Poll \`intervalMs\`, timer \`wakeAt\`, and timer \`wakeAfterMs\` must be ≥ 30 seconds; agent/script states have no minimum duration. Durations accept human-readable strings like \`"3h"\` or \`"5d"\` parsed by the \`ms\` package, and \`wakeAt\` accepts ISO 8601 strings like \`"2026-05-24T18:00:00Z"\`; raw millisecond numbers still work as a fallback. Timer states must set exactly one of \`wakeAt\` (absolute) or \`wakeAfterMs\` (relative from selection time). Every definition needs at least one \`terminal\` state with status "completed"; "failed" and "cancelled" terminals are auto-injected if omitted.
 
       State prompts and script commands may use \`{{ input.foo }}\` templates — declare \`inputSchema\` on those states and pass matching \`input\` when selecting them via select_state_machine_state. Agent states may set \`allowedSkills\` to restrict the skill set for that sub-agent.
 
@@ -1322,7 +1322,7 @@ function assertValidStateInput(state: StateMachineState, input: unknown): void {
 // work that survives sleeps, wakes, and background execution; anything shorter
 // than this should be performed directly in the parent turn rather than paid
 // for with the orchestration overhead of a state machine.
-export const MINIMUM_STATE_MACHINE_DELAY_MS = 15 * 60 * 1000;
+export const MINIMUM_STATE_MACHINE_DELAY_MS = 30_000;
 
 function assertValidDefinition(
   definition: StateMachineDefinition,
@@ -1453,7 +1453,7 @@ function assertValidStateScheduleMinimum(
 
 function scheduleFloorDescription(delayMs: number, includeMilliseconds = false): string {
   if (delayMs === MINIMUM_STATE_MACHINE_DELAY_MS) {
-    return includeMilliseconds ? `15 minutes (${delayMs} ms)` : "15 minutes";
+    return includeMilliseconds ? `30 seconds (${delayMs} ms)` : "30 seconds";
   }
   return `${delayMs} ms`;
 }

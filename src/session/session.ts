@@ -616,7 +616,7 @@ export class Session {
       this.dispatchTurn({ type: "wake" });
     };
     // Poll every 30s so a sleeping laptop still wakes the turn shortly after the lid reopens.
-    // Jitter is bounded by the poll interval and is acceptable given the 15-minute minimum
+    // Jitter is bounded by the poll interval and is acceptable given the 30-second minimum
     // wakeAt enforced upstream.
     this.wakeTimer = this.clock.repeat(fire, WAKE_POLL_INTERVAL_MS);
     // Fast-path for deadlines closer than the poll interval so short waits stay tight.

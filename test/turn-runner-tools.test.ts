@@ -1218,7 +1218,7 @@ describe("TurnRunner tools", () => {
     );
   });
 
-  test("rejects poll states with intervalMs shorter than 15 minutes", async () => {
+  test("rejects poll states with intervalMs shorter than 30 seconds", async () => {
     const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
     const createDefinitionTool = tools.find(
       (tool) => tool.name === "create_state_machine_definition",
@@ -1236,17 +1236,49 @@ describe("TurnRunner tools", () => {
             kind: "poll",
             name: "wait_for_reply",
             command: "check reply",
-            intervalMs: 60_000,
+            intervalMs: 29_999,
           },
           { kind: "terminal", name: "done", status: "completed" },
         ],
       },
     });
 
-    await expect(result).rejects.toThrow("intervalMs must be at least 15 minutes");
+    await expect(result).rejects.toThrow("intervalMs must be at least 30 seconds");
   });
 
-  test("rejects timer states with wakeAt sooner than 15 minutes from now", async () => {
+  test("accepts poll and relative timer schedules at the 30-second floor", async () => {
+    const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
+    const createDefinitionTool = tools.find(
+      (tool) => tool.name === "create_state_machine_definition",
+    );
+
+    expect(createDefinitionTool).toBeDefined();
+    if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
+
+    await expect(
+      createDefinitionTool.execute("tool-1", {
+        definition: {
+          name: "short reminder",
+          prompt: "Use for a short durable reminder.",
+          states: [
+            {
+              kind: "poll",
+              name: "check_once_ready",
+              command: "check ready",
+              intervalMs: 30_000,
+            },
+            { kind: "timer", name: "wait_briefly", wakeAfterMs: 30_000 },
+            { kind: "terminal", name: "done", status: "completed" },
+          ],
+        },
+        firstState: "wait_briefly",
+      }),
+    ).resolves.toMatchObject({
+      details: { type: "create_state_machine_definition", firstState: "wait_briefly" },
+    });
+  });
+
+  test("rejects timer states with wakeAt sooner than 30 seconds from now", async () => {
     const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
     const createDefinitionTool = tools.find(
       (tool) => tool.name === "create_state_machine_definition",
@@ -1260,13 +1292,13 @@ describe("TurnRunner tools", () => {
         name: "outreach",
         prompt: "Use for outreach work.",
         states: [
-          { kind: "timer", name: "wait_briefly", wakeAt: Date.now() + 60_000 },
+          { kind: "timer", name: "wait_briefly", wakeAt: Date.now() + 29_999 },
           { kind: "terminal", name: "done", status: "completed" },
         ],
       },
     });
 
-    await expect(result).rejects.toThrow("wakeAt must be at least 15 minutes in the future");
+    await expect(result).rejects.toThrow("wakeAt must be at least 30 seconds in the future");
   });
 
   test("rejects timer states without a finite wakeAt", async () => {

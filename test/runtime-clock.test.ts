@@ -72,15 +72,15 @@ describe("ManualRuntimeClock", () => {
 });
 
 describe("task lifecycle production defaults", () => {
-  test("keeps the two-minute task budget and 15-minute schedule floor without injection", () => {
+  test("keeps the two-minute task budget and 30-second schedule floor without injection", () => {
     const runner = new InspectableTurnRunner({ skillDiscovery: { includeDefaults: false } });
 
     expect(DEFAULT_TASK_WAIT_BUDGET_MS).toBe(120_000);
-    expect(MINIMUM_STATE_MACHINE_DELAY_MS).toBe(15 * 60 * 1_000);
+    expect(MINIMUM_STATE_MACHINE_DELAY_MS).toBe(30_000);
     expect(runner.productionLifecycleDefaults()).toEqual({
       clock: expect.any(SystemRuntimeClock),
       taskWaitBudgetMs: 120_000,
-      minimumScheduledDelayMs: 15 * 60 * 1_000,
+      minimumScheduledDelayMs: 30_000,
     });
   });
 
