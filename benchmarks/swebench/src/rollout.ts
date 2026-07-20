@@ -21,7 +21,7 @@ import {
 import type { DuetArtifact } from "./packaging.js";
 import { capturePatchBaseline, extractPatch } from "./patch.js";
 import { lintPatch } from "./patch-policy.js";
-import { buildRolloutPrompt } from "./prompt.js";
+import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "./prompt.js";
 import type { DatasetRow, ManifestEntry } from "./manifest.js";
 import { deriveTelemetry, type RolloutTelemetry } from "./telemetry.js";
 
@@ -87,6 +87,7 @@ export async function runRollout(
     image: spec.image,
     duetSha256: dependencies.artifact.sha256,
     configSha256: spec.configSha256,
+    systemPromptSha256: hashText(SWEBENCH_SYSTEM_PROMPT),
     promptSha256: hashText(prompt),
     limits: {
       costUsd: spec.limits.costUsd,
@@ -128,11 +129,21 @@ export async function runRollout(
         "swebench",
         "--workdir",
         "/testbed",
+        "--system-prompt",
+        SWEBENCH_SYSTEM_PROMPT,
         "--no-system-prompt-files",
       ],
       {
         cwd: "/testbed",
-        env: { HOME: "/opt/duet/home", ...dependencies.providerEnv },
+        env: {
+          ...dependencies.providerEnv,
+          HOME: "/opt/duet/home",
+          CI: "1",
+          PAGER: "cat",
+          GIT_PAGER: "cat",
+          BAT_PAGER: "cat",
+          TERM: "dumb",
+        },
       },
     );
     outcome = await runDuetTurn(

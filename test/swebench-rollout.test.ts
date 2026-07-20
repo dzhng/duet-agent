@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 
 import type { CommandResult } from "../benchmarks/swebench/src/container.js";
 import type { ExecTransport } from "../benchmarks/swebench/src/duet-client.js";
+import { SWEBENCH_SYSTEM_PROMPT } from "../benchmarks/swebench/src/prompt.js";
 import { runRollout, type RolloutContainer } from "../benchmarks/swebench/src/rollout.js";
 import { runContainerSmoke } from "../benchmarks/swebench/src/smoke.js";
 import { testIfDocker } from "./helpers/docker-only.js";
@@ -66,9 +67,26 @@ describe("SWE-bench rollout pipeline", () => {
         [configPath, "/opt/duet/home/.duet/models.json"],
       ]);
       expect(container.rpcOptions?.cwd).toBe("/testbed");
+      expect(container.rpcArgv).toEqual([
+        "/opt/duet/duet",
+        "--rpc",
+        "--incognito",
+        "--model",
+        "swebench",
+        "--workdir",
+        "/testbed",
+        "--system-prompt",
+        SWEBENCH_SYSTEM_PROMPT,
+        "--no-system-prompt-files",
+      ]);
       expect(container.rpcOptions?.env).toEqual({
-        HOME: "/opt/duet/home",
         AI_GATEWAY_API_KEY: "secret",
+        HOME: "/opt/duet/home",
+        CI: "1",
+        PAGER: "cat",
+        GIT_PAGER: "cat",
+        BAT_PAGER: "cat",
+        TERM: "dumb",
       });
       expect(await readFile(join(result.attempt.directory, "patch.diff"), "utf8")).toContain(
         "src/a.ts",
@@ -279,6 +297,7 @@ describe("SWE-bench rollout pipeline", () => {
 class FakeRolloutContainer implements RolloutContainer {
   readonly copies: string[][] = [];
   stopped = false;
+  rpcArgv?: readonly string[];
   rpcOptions?: { cwd?: string; env?: Record<string, string> };
   private gitCall = 0;
 
@@ -307,9 +326,10 @@ class FakeRolloutContainer implements RolloutContainer {
   }
 
   execStream(
-    _argv: readonly string[],
+    argv: readonly string[],
     options?: { cwd?: string; env?: Record<string, string> },
   ): ExecTransport {
+    this.rpcArgv = argv;
     this.rpcOptions = options;
     return {
       stdin: { write: () => {} },

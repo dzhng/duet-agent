@@ -87,6 +87,27 @@ describe("SWE-bench paired report", () => {
     ]);
   });
 
+  test("fails patch integrity when artifact admission rejected the rollout", () => {
+    const entries = fixtureEntries().slice(0, 1);
+    const attempts = fixtureAttempts(entries);
+    const rejected = attempts.find((attempt) => attempt.config === "kimi-fable-advisor")!;
+    rejected.phase = "failed";
+    rejected.failureKind = "patch";
+    rejected.failureMessage = "Patch policy violation: test file modified: tests/tmp.test.js";
+    const report = buildCampaignReport(
+      entries,
+      attempts,
+      fixtureScores(configs.map((config) => [config, [false]])),
+    );
+
+    expect(report.patchAssertion).toEqual({
+      passed: false,
+      violations: [
+        "kimi-fable-advisor/org__repo-1: Patch policy violation: test file modified: tests/tmp.test.js",
+      ],
+    });
+  });
+
   test("fails the pure-arm assertion when telemetry contains an advisor call", () => {
     const entries = fixtureEntries().slice(0, 1);
     const attempts = fixtureAttempts(entries);
@@ -99,6 +120,29 @@ describe("SWE-bench paired report", () => {
     expect(report.pureAdvisorAssertion).toEqual({
       passed: false,
       violations: ["kimi-pure/org__repo-1"],
+    });
+  });
+
+  test("fails advised-arm attribution unless the intended advisor succeeds exactly once", () => {
+    const entries = fixtureEntries().slice(0, 1);
+    const attempts = fixtureAttempts(entries);
+    const wrongAdvisor = attempts.find((attempt) => attempt.config === "kimi-fable-advisor")!
+      .telemetry!.advisorCalls;
+    wrongAdvisor.total = 1;
+    wrongAdvisor.success = 1;
+    wrongAdvisor.successByModel = { "moonshotai/kimi-k3": 1 };
+    const report = buildCampaignReport(
+      entries,
+      attempts,
+      fixtureScores(configs.map((config) => [config, [false]])),
+    );
+
+    expect(report.advisedAdvisorAssertion).toEqual({
+      passed: false,
+      violations: [
+        "glm-kimi-advisor/org__repo-1: expected 1 successful moonshotai/kimi-k3 call; observed total=0, success=0, models={}",
+        'kimi-fable-advisor/org__repo-1: expected 1 successful anthropic/claude-fable-5 call; observed total=1, success=1, models={"moonshotai/kimi-k3":1}',
+      ],
     });
   });
 

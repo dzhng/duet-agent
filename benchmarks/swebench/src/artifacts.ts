@@ -19,6 +19,8 @@ export interface RolloutArtifactSpec extends RolloutIdentity {
   image: string;
   duetSha256: string;
   configSha256: string;
+  /** Hash of the benchmark-owned system instruction passed identically to every arm. */
+  systemPromptSha256: string;
   promptSha256: string;
   limits: {
     costUsd: number;

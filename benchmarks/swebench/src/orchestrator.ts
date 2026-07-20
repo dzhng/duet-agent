@@ -19,7 +19,7 @@ import {
   type InstanceManifest,
   type ManifestEntry,
 } from "./manifest.js";
-import { buildRolloutPrompt } from "./prompt.js";
+import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "./prompt.js";
 import { runRollout, type RolloutContainer, type RunRolloutResult } from "./rollout.js";
 
 /** Committed, self-contained execution policy for a resumable campaign. */
@@ -221,6 +221,7 @@ function assertAttemptsMatchCurrentInputs(
       image: attempt.spec.image,
       duetSha256: runtime.artifact.sha256,
       configSha256: runtime.configHashes[config],
+      systemPromptSha256: hashText(SWEBENCH_SYSTEM_PROMPT),
       promptSha256: hashText(
         buildRolloutPrompt({ entry, problemStatement: datasetRow.problemStatement }),
       ),

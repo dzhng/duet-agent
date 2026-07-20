@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "multilingual-advisor-compliance-rust-20260720-v4",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-30.json",
+  "instanceIds": ["sharkdp__bat-1892"],
+  "configs": ["glm-kimi-advisor", "kimi-fable-advisor"],
+  "trials": 1,
+  "concurrency": 1,
+  "armOrderSeed": 20260722,
+  "limits": {
+    "costUsd": 4,
+    "wallClockMs": 1800000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 5242880
+  },
+  "budget": {
+    "totalUsd": 500,
+    "sunkUsd": 16
+  }
+}

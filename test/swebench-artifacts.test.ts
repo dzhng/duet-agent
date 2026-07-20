@@ -58,6 +58,7 @@ function fixtureSpec(): RolloutArtifactSpec {
     image: "official/image",
     duetSha256: "a".repeat(64),
     configSha256: "b".repeat(64),
+    systemPromptSha256: "d".repeat(64),
     promptSha256: "c".repeat(64),
     limits: { costUsd: 1, wallClockMs: 1000, interruptGraceMs: 10, patchBytes: 1000 },
   };

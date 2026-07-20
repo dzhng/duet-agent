@@ -54,6 +54,7 @@ async function attempt(
       image: "image",
       duetSha256: "a",
       configSha256: "b",
+      systemPromptSha256: "d",
       promptSha256: "c",
       limits: { costUsd: 1, wallClockMs: 1, patchBytes: 1 },
     },

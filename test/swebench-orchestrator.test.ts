@@ -15,7 +15,7 @@ import {
   type CampaignRuntime,
   type CampaignSpec,
 } from "../benchmarks/swebench/src/orchestrator.js";
-import { buildRolloutPrompt } from "../benchmarks/swebench/src/prompt.js";
+import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "../benchmarks/swebench/src/prompt.js";
 
 describe("SWE-bench campaign resume planning", () => {
   test("orders four arms deterministically inside each instance block", () => {
@@ -140,6 +140,7 @@ function fixtureAttempt(
     image: "official/image",
     duetSha256: runtime.artifact.sha256,
     configSha256: runtime.configHashes[config],
+    systemPromptSha256: hashText(SWEBENCH_SYSTEM_PROMPT),
     promptSha256: hashText(buildRolloutPrompt({ entry, problemStatement: row.problemStatement })),
     limits: campaign.limits,
   };

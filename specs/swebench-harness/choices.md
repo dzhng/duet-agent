@@ -1147,6 +1147,53 @@ ownerScopeId }`, even though both execute through the same task manager.
   bug and a red/green regression drives two arms through the wrapper while
   simulating deletion semantics.
 
+### S35 — Admission assertions include rejected patches and intended advisor identity
+
+- **When:** the v3 report correctly counted the rejected Rust Kimi+Fable arm as
+  unresolved but still printed `Patch integrity assertion: PASS`, while the
+  GLM+Kimi advisor miss appeared only as an aggregate call count of two.
+- **The choice:** Preserve failed status messages in report attempts, fail patch
+  integrity on every patch-admission failure, and require each advised rollout
+  to record exactly one successful call to its configured concrete advisor.
+  The unbuilt alternative relies on a human to reconcile status files against
+  a superficially green report footer.
+- **The gap:** Completed artifacts carried patch lint, but rejected artifacts
+  carried their actionable evidence only in `status.json`; advisor totals did
+  not prove per-instance attribution or model identity.
+- **The reach:** The machine report now makes both treatment contamination and
+  patch contamination explicit STOP conditions without dropping the rollout
+  from paired denominators.
+- **Verdict:** **sound.** An admission assertion must cover the failures that
+  admission itself produced, and advisor-effect claims require the intended
+  model to have been consulted on every treated sample.
+- **Confidence:** **high** because independent red/green tests cover both a
+  rejected patch message and a successful call attributed to the wrong model.
+
+### S36 — Exact advisor timing is a shared system rule, not a routing-protocol change
+
+- **When:** GLM followed the byte-identical user prompt on two pilot tasks but
+  skipped `ask_advisor` on Rust, and three Rust arms lost substantial time to
+  interactive pager behavior during validation.
+- **The choice:** Pass one benchmark-owned system instruction identically to all
+  four arms. It makes a present advisor mandatory exactly once after read-only
+  inspection and before edits; a pure arm proceeds when the tool is absent.
+  Normalize `CI`, `PAGER`, `GIT_PAGER`, `BAT_PAGER`, and `TERM` identically in
+  every container. Record the system instruction's hash in each rollout spec.
+  The unbuilt alternative adds benchmark-only required-advisor state to the RPC
+  or public routing schema.
+- **The gap:** Product guidance correctly says routine tasks may skip optional
+  advice, which conflicts with this experiment's deliberately controlled
+  exposure. Official images can also expose interactive pager defaults through
+  a pseudo-terminal.
+- **The reach:** Treatment compliance becomes stronger without changing Duet's
+  general advisor semantics or the user prompt between arms; pager behavior no
+  longer consumes a whole rollout. Resume rejects artifacts from a different
+  system instruction.
+- **Verdict:** **sound.** The benchmark owns experimental instructions and
+  non-interactive process policy; the product protocol should remain general.
+- **Confidence:** **medium** until the targeted live Rust rerun proves both
+  advisor models comply and final patches are clean.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

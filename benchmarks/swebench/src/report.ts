@@ -29,7 +29,10 @@ export interface ReportAttempt {
   instanceId: string;
   config: CampaignConfigName;
   phase: "running" | "completed" | "failed";
+  /** Classifies a failed attempt so reports keep model and infrastructure failures distinct. */
   failureKind?: RolloutFailureKind;
+  /** Preserves the actionable failure detail written by the rollout artifact status. */
+  failureMessage?: string;
   terminalType?: string;
   costUsd: number;
   telemetry?: RolloutTelemetry;
@@ -66,6 +69,8 @@ export interface CampaignReport {
   comparisons: ComparisonReport[];
   totalCostUsd: number;
   pureAdvisorAssertion: { passed: boolean; violations: string[] };
+  /** Proves every treatment arm received exactly one successful call to its configured advisor. */
+  advisedAdvisorAssertion: { passed: boolean; violations: string[] };
   patchAssertion: { passed: boolean; violations: string[] };
 }
 
@@ -73,6 +78,11 @@ const COMPARISONS: [CampaignConfigName, CampaignConfigName][] = [
   ["glm-pure", "glm-kimi-advisor"],
   ["kimi-pure", "kimi-fable-advisor"],
 ];
+
+const EXPECTED_ADVISORS: Partial<Record<CampaignConfigName, string>> = {
+  "glm-kimi-advisor": "moonshotai/kimi-k3",
+  "kimi-fable-advisor": "anthropic/claude-fable-5",
+};
 
 /** Build paired statistics without excluding failed or missing outcomes. */
 export function buildCampaignReport(
@@ -94,6 +104,7 @@ export function buildCampaignReport(
     "kimi-fable-advisor",
   ];
   const violations: string[] = [];
+  const advisedViolations: string[] = [];
   const patchViolations: string[] = [];
 
   for (const config of allConfigs) {
@@ -132,6 +143,26 @@ export function buildCampaignReport(
       }
       if (config.endsWith("-pure") && (attempt?.telemetry?.advisorCalls.total ?? 0) !== 0) {
         violations.push(`${config}/${entry.instanceId}`);
+      }
+      const expectedAdvisor = EXPECTED_ADVISORS[config];
+      if (expectedAdvisor) {
+        const calls = attempt?.telemetry?.advisorCalls;
+        const models = calls?.successByModel ?? {};
+        if (
+          calls?.total !== 1 ||
+          calls.success !== 1 ||
+          Object.keys(models).length !== 1 ||
+          models[expectedAdvisor] !== 1
+        ) {
+          advisedViolations.push(
+            `${config}/${entry.instanceId}: expected 1 successful ${expectedAdvisor} call; observed total=${calls?.total ?? 0}, success=${calls?.success ?? 0}, models=${JSON.stringify(models)}`,
+          );
+        }
+      }
+      if (attempt?.failureKind === "patch") {
+        patchViolations.push(
+          `${config}/${entry.instanceId}: ${attempt.failureMessage ?? "patch artifact admission failed"}`,
+        );
       }
       for (const violation of attempt?.patchLint?.violations ?? []) {
         const labelled = `${config}/${entry.instanceId}: ${violation}`;
@@ -175,6 +206,10 @@ export function buildCampaignReport(
     comparisons,
     totalCostUsd: attempts.reduce((total, attempt) => total + attempt.costUsd, 0),
     pureAdvisorAssertion: { passed: violations.length === 0, violations },
+    advisedAdvisorAssertion: {
+      passed: advisedViolations.length === 0,
+      violations: advisedViolations,
+    },
     patchAssertion: { passed: patchViolations.length === 0, violations: patchViolations },
   };
 }
@@ -223,6 +258,7 @@ export async function loadReportAttempts(
         config: attempt.spec.config,
         phase: attempt.status.phase,
         ...(attempt.status.failureKind ? { failureKind: attempt.status.failureKind } : {}),
+        ...(attempt.status.message ? { failureMessage: attempt.status.message } : {}),
         ...(attempt.status.terminalType ? { terminalType: attempt.status.terminalType } : {}),
         costUsd: attempt.status.costUsd ?? 0,
         ...(telemetry ? { telemetry } : {}),
@@ -267,6 +303,7 @@ export function renderCampaignReport(report: CampaignReport): string {
     "",
     `Total model spend: $${report.totalCostUsd.toFixed(2)}.`,
     `Pure-arm advisor assertion: ${report.pureAdvisorAssertion.passed ? "PASS" : `FAIL (${report.pureAdvisorAssertion.violations.join(", ")})`}.`,
+    `Advised-arm advisor assertion: ${report.advisedAdvisorAssertion.passed ? "PASS" : `FAIL (${report.advisedAdvisorAssertion.violations.join(", ")})`}.`,
     `Patch integrity assertion: ${report.patchAssertion.passed ? "PASS" : `FAIL (${report.patchAssertion.violations.join(", ")})`}.`,
     "",
   );
