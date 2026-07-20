@@ -1104,6 +1104,28 @@ ownerScopeId }`, even though both execute through the same task manager.
 - **Confidence:** **high** because campaign ids are the documented boundary for
   frozen-input changes and $6 conservatively exceeds known cumulative spend.
 
+### S33 — The official scorer decides preserved cutoff-patch outcomes
+
+- **When:** the corrected pilot's C++ arms reached a cost or wall limit after
+  writing production patches that remained valid benchmark submissions.
+- **The choice:** Count an official `resolved` result whenever the rollout
+  completed its artifact bundle, even if Duet's terminal status is
+  `interrupted`. Keep that terminal status as reliability and throughput data.
+  The unbuilt alternative overrides a resolved official score merely because
+  the harness stopped further model work at its configured limit.
+- **The gap:** The report originally required both an exported artifact and a
+  normal agent terminal, conflating whether a patch was scoreable with how the
+  agent stopped producing it.
+- **The reach:** Cost- and wall-limited patches stay in the denominator and can
+  resolve normally; actual infrastructure failures still lack a completed
+  artifact and cannot become successes. Paired comparisons use the same rule.
+- **Verdict:** **sound.** SWE-bench evaluates the submitted repository diff;
+  the terminal label describes the generation process and must not replace the
+  official test outcome.
+- **Confidence:** **high** because the distinction is represented directly in
+  the artifact tree and a regression test covers an interrupted rollout with a
+  resolved official score.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

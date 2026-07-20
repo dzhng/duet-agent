@@ -116,7 +116,7 @@ export function buildCampaignReport(
       const status = scoreByKey.get(key) ?? "missing";
       const language = (summary.byLanguage[entry.language] ??= { resolved: 0, total: 0 });
       language.total += 1;
-      if (status === "resolved" && isAgentComplete(attempt)) {
+      if (status === "resolved" && hasCompletedArtifact(attempt)) {
         summary.resolved += 1;
         language.resolved += 1;
       } else {
@@ -157,10 +157,10 @@ export function buildCampaignReport(
     for (const entry of entries) {
       const pureResolved =
         scoreByKey.get(`${pure}:${entry.instanceId}`) === "resolved" &&
-        isAgentComplete(attemptByKey.get(`${pure}:${entry.instanceId}`));
+        hasCompletedArtifact(attemptByKey.get(`${pure}:${entry.instanceId}`));
       const advisedResolved =
         scoreByKey.get(`${advised}:${entry.instanceId}`) === "resolved" &&
-        isAgentComplete(attemptByKey.get(`${advised}:${entry.instanceId}`));
+        hasCompletedArtifact(attemptByKey.get(`${advised}:${entry.instanceId}`));
       if (pureResolved && advisedResolved) comparison.bothResolve.push(entry.instanceId);
       else if (pureResolved) comparison.pureOnlyWins.push(entry.instanceId);
       else if (advisedResolved) comparison.advisorOnlyWins.push(entry.instanceId);
@@ -290,12 +290,8 @@ function formatIds(ids: readonly string[]): string {
   return ids.length > 0 ? ` (${ids.join(", ")})` : "";
 }
 
-function isAgentComplete(attempt: ReportAttempt | undefined): boolean {
-  return (
-    attempt?.phase === "completed" &&
-    attempt.terminalType === "complete" &&
-    attempt.telemetry?.terminalStatus === "completed"
-  );
+function hasCompletedArtifact(attempt: ReportAttempt | undefined): boolean {
+  return attempt?.phase === "completed";
 }
 
 function executorCostUsd(

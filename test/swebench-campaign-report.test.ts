@@ -101,6 +101,27 @@ describe("SWE-bench paired report", () => {
       violations: ["kimi-pure/org__repo-1"],
     });
   });
+
+  test("lets the official scorer decide a budget-interrupted patch outcome", () => {
+    const entries = fixtureEntries().slice(0, 1);
+    const attempts = fixtureAttempts(entries);
+    const interrupted = attempts.find((attempt) => attempt.config === "glm-pure")!;
+    interrupted.terminalType = "interrupted";
+    interrupted.telemetry!.terminalStatus = "interrupted";
+    const report = buildCampaignReport(
+      entries,
+      attempts,
+      fixtureScores([
+        ["glm-pure", [true]],
+        ["glm-kimi-advisor", [false]],
+        ["kimi-pure", [false]],
+        ["kimi-fable-advisor", [false]],
+      ]),
+    );
+
+    expect(report.configs["glm-pure"].resolved).toBe(1);
+    expect(report.comparisons[0]!.pureOnlyWins).toEqual(["org__repo-1"]);
+  });
 });
 
 function fixtureEntries(): ManifestEntry[] {
