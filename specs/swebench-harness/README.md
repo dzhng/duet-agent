@@ -13,7 +13,7 @@ about _our_ harness.
 **Status:** slices 01–07 are complete. The paid three-language pilot and targeted
 advisor-compliance rerun admitted both comparisons. Slice 08's first Mac-local
 campaign was superseded after measuring one-worker throughput; the final clean
-campaign runs one four-arm instance block per E2B sandbox with eight sandboxes
+campaign runs one four-arm instance block per E2B sandbox with sixteen sandboxes
 in flight. Each arm still runs in its own fresh official SWE-bench Docker
 container, and the official scorer remains authoritative. The first E2B
 admission block passed rollout and scoring but exposed per-sandbox binary
@@ -67,7 +67,7 @@ rationale.
 - **Dataset:** `SWE-bench/SWE-bench_Multilingual` (300 instances, 9
   languages). Official scorer only: `python -m swebench.harness.run_evaluation`.
 - **Infra:** the Mac runs official scoring and remains the one-worker fallback.
-  The final generation campaign uses eight independent E2B x86_64 sandboxes;
+  The final generation campaign uses sixteen independent E2B x86_64 sandboxes;
   each sandbox processes one instance's four arms sequentially and each arm
   remains a fresh nested official Docker container. Cleanup targets only
   benchmark-owned sandboxes, images, and containers.

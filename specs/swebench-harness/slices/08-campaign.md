@@ -17,7 +17,7 @@ Needs slice 07's explicit ADMIT. The deliverable.
   configs `glm-pure`,
   `glm-kimi-advisor`, `kimi-pure`, and `kimi-fable-advisor`, explicit virtual
   tiers, product-default memory model, 1 trial, limits from the pilot
-  recalibration, and seeded per-instance arm order. Eight E2B sandboxes process
+  recalibration, and seeded per-instance arm order. Sixteen E2B sandboxes process
   disjoint instance blocks concurrently; each sandbox keeps local campaign
   concurrency at one and runs the four arms sequentially in fresh nested
   official Docker containers.

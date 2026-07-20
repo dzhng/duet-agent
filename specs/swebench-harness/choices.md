@@ -1282,7 +1282,7 @@ test:swebench` Docker runner. The root `test/` tree and `bun run test` remain
 - **When:** after Mac-local throughput projected roughly a day for the final
   generation run and the user supplied an E2B key.
 - **The choice:** Start a new final campaign namespace on an immutable,
-  commit-derived x86_64 E2B template. Run up to eight independent instance
+  commit-derived x86_64 E2B template. Run up to sixteen independent instance
   blocks concurrently, while each block preserves seeded four-arm serial order
   and each arm still runs inside a fresh official SWE-bench Docker container.
   Preserve but do not mix the partial Mac v2 outcomes.
@@ -1297,6 +1297,10 @@ test:swebench` Docker runner. The root `test/` tree and `bun run test` remain
   existing official container boundary instead of replacing it.
 - **Confidence:** **medium-high** until the immutable template capacity probe
   and first live instance block pass.
+
+The initial value was eight workers. Before final generation, the user
+explicitly raised it to sixteen; this changes elapsed time and E2B compute, not
+the number of rollouts or the independently enforced model-spend bound.
 
 ### S42 — The E2B campaign preserves the global budget after the local pivot
 

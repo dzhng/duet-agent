@@ -18,7 +18,7 @@
   },
   "execution": {
     "backend": "e2b",
-    "workerConcurrency": 8,
+    "workerConcurrency": 16,
     "workerCpuCount": 8,
     "workerMemoryMb": 16384,
     "workerTimeoutMs": 10800000
