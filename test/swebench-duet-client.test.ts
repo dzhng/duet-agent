@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { runDuetTurn, type ExecTransport } from "../benchmarks/swebench/src/duet-client.js";
-import type { TurnEvent, TurnRunnerCommand } from "../src/types/protocol.js";
+import type { RpcRunnerCommand, TurnEvent } from "../src/types/protocol.js";
 import { ManualRuntimeClock } from "./helpers/manual-runtime-clock.js";
 
 const STATE = { status: "completed", mode: "agent", agent: { status: "completed", messages: [] } };
@@ -34,7 +34,7 @@ class LineQueue implements AsyncIterable<string> {
 }
 
 class FakeTransport implements ExecTransport {
-  readonly commands: TurnRunnerCommand[] = [];
+  readonly commands: RpcRunnerCommand[] = [];
   readonly stdout = new LineQueue();
   readonly stderr = new LineQueue();
   readonly stdoutLines = this.stdout;
@@ -45,7 +45,7 @@ class FakeTransport implements ExecTransport {
 
   readonly stdin = {
     write: async (line: string): Promise<void> => {
-      const command = JSON.parse(line) as TurnRunnerCommand;
+      const command = JSON.parse(line) as RpcRunnerCommand;
       this.commands.push(command);
       if (command.type === "interrupt" && this.interruptResponse) {
         this.stdout.push(JSON.stringify(this.interruptResponse));
@@ -109,7 +109,12 @@ describe("SWE-bench duet RPC client", () => {
     const outcome = await result;
     expect(transport.commands).toEqual([
       { type: "start", mode: "agent" },
-      { type: "prompt", message: "Fix the issue.", behavior: "follow_up" },
+      {
+        type: "prompt",
+        requestId: "swebench-rollout-prompt",
+        message: "Fix the issue.",
+        behavior: "follow_up",
+      },
     ]);
     expect(outcome.terminal).toEqual(
       expect.objectContaining({ type: "complete", status: "completed" }),

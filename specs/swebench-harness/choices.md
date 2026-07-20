@@ -1236,6 +1236,27 @@ ownerScopeId }`, even though both execute through the same task manager.
 - **Confidence:** **high** because a red/green report test proves a wrong
   advisor identity makes the aggregate gate false.
 
+### S39 — The benchmark client speaks the correlated RPC envelope
+
+- **When:** after rebasing onto `v0.2.4`, the first production attempt remained
+  read-only because RPC correctly rejected its prompt: the new transport
+  requires `requestId`, while the benchmark still serialized the internal
+  `TurnRunnerCommand` shape.
+- **The choice:** Type outbound benchmark commands as `RpcRunnerCommand` and
+  attach one stable request id to the single rollout prompt. Preserve the
+  zero-cost v1 attempt and restart under v2 after rebuilding Duet. The unbuilt
+  alternative weakens the new RPC validation or deletes evidence to reuse the
+  original campaign id.
+- **The gap:** Unit tests modeled the pre-`v0.2.4` wire contract and therefore
+  accepted a command the live CLI rejected.
+- **The reach:** Future RPC-envelope changes become type errors at the benchmark
+  boundary. The v2 campaign has clean provenance; v1 remains an auditable
+  zero-spend rejected launch.
+- **Verdict:** **sound.** A wire client must depend on the wire type, not the
+  runner's internal command union.
+- **Confidence:** **high** because the regression test failed on the missing id
+  before the change and now asserts the exact serialized envelope.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { SystemRuntimeClock, type RuntimeClock } from "../../../src/turn-runner/runtime-clock.js";
 import type {
+  RpcRunnerCommand,
   TurnEvent,
-  TurnRunnerCommand,
   TurnStartCommand,
   TurnTerminalEvent,
 } from "../../../src/types/protocol.js";
@@ -86,7 +86,12 @@ export async function runDuetTurn(
     type: "start",
     mode: spec.start?.mode ?? "agent",
   });
-  await writeCommand(transport, { type: "prompt", message: prompt, behavior: "follow_up" });
+  await writeCommand(transport, {
+    type: "prompt",
+    requestId: "swebench-rollout-prompt",
+    message: prompt,
+    behavior: "follow_up",
+  });
 
   let pendingRead: Promise<IteratorResult<string>> | undefined;
   const nextLine = (): Promise<IteratorResult<string>> => {
@@ -176,7 +181,7 @@ export function spawnLocalDuetRpc(args: readonly string[]): ExecTransport {
   };
 }
 
-async function writeCommand(transport: ExecTransport, command: TurnRunnerCommand): Promise<void> {
+async function writeCommand(transport: ExecTransport, command: RpcRunnerCommand): Promise<void> {
   await transport.stdin.write(`${JSON.stringify(command)}\n`);
 }
 
