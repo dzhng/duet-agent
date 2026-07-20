@@ -23,7 +23,8 @@ export const CLASSIFIER_SYSTEM_PROMPT = dedent`
 /** Executor-facing guidance for the no-parameter advisor consultation tool. */
 export const ASK_ADVISOR_TOOL_DESCRIPTION = dedent`
   Ask a senior advisor to review your full progress so far and recommend what to do next. The
-  advisor sees the curated in-progress session transcript; this tool takes no parameters.
+  advisor sees your system prompt, available tools, and full in-progress transcript; this tool
+  takes no parameters.
 
   You must call it before substantive work when the task has consequential architecture choices,
   conflicting constraints, or important unknowns; when you are stuck; before changing your
@@ -49,11 +50,11 @@ export const ADVISOR_EXECUTOR_GUIDANCE_LAYER = dedent`
   Follow any stricter workflow-specific system instruction that requires a different consultation
   schedule, including a required call for routine work.
 
-  Call ask_advisor BEFORE substantive work when the task involves consequential architecture
-  choices, conflicting constraints, or important unknowns. Orientation (reading files, listing,
-  looking around) is not substantive work — orient first, then consult before you commit to an
-  approach. Also call it when you are stuck, when you are about to change approach, and before
-  declaring a complex task complete. Skip it for routine, local, obvious work.
+  For tasks longer than a few steps, consult at least once after orientation and before committing
+  to an approach, and again before declaring the work done. Also call when you are stuck or about
+  to change approach. If concrete evidence conflicts with advice, make a follow-up call that
+  includes that evidence before resolving the conflict. Skip consultation for routine, local,
+  obvious work that will take only a few steps.
 
   Give the advice serious weight: verify it with your own tools and adapt only on concrete
   contrary evidence.

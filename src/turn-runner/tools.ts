@@ -1,4 +1,4 @@
-import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import {
   type BashOperations,
@@ -31,10 +31,13 @@ import type {
 } from "../types/state-machine.js";
 import { INTERRUPTED_STATE_MACHINE_STATE } from "../types/state-machine.js";
 import type { EmbedFn } from "../memory/embedding.js";
-import { serializeMessageForObserver } from "../memory/observational.js";
 import { recallMemoryExpanded, type RecallScope } from "../memory/recall.js";
-import { buildAdvisorTranscript } from "../model-routing/advisor-transcript.js";
 import {
+  buildAdvisorContext,
+  type AdvisorExecutorContext,
+} from "../model-routing/advisor-context.js";
+import {
+  ADVISOR_MAX_OUTPUT_TOKENS,
   callAdvisor,
   type AdvisorResult,
   type CallAdvisorInput,
@@ -569,16 +572,15 @@ export interface RecallMemoryToolStorage {
 
 /** Lazy runtime inputs and router actions used by the parent-only advisor tool. */
 export interface AskAdvisorToolStorage {
-  /** Current parent transcript, read only when the tool executes. */
-  getMessages: () => readonly AgentMessage[];
-  /** Fully resolved executor prompt quoted into transcript content. */
-  getSystemPrompt: () => string;
-  /** Live local-session observation contents; empty when memory is disabled. */
-  getObservations: () => Promise<readonly string[]>;
-  /** Uniform transcript budget selected by the routed tier. */
-  budgetTokens: number;
-  /** Gateway-native advisor id, or a callback that resolves it lazily at tool execution. */
-  modelName: string | (() => string);
+  /** Captures the executor's resolved prompt, tools, and LLM-compatible messages at call time. */
+  getContext: () => Promise<AdvisorExecutorContext>;
+  /** Resolves the advisor identity and hard model window lazily at tool execution. */
+  resolveModel: () => {
+    /** Gateway-native `provider/model` identifier passed to the shared gateway. */
+    modelName: string;
+    /** Advertised input-plus-output context window used as the only transcript ceiling. */
+    contextWindowTokens: number;
+  };
   /** Reasoning effort selected by the routed tier. */
   thinkingLevel: ThinkingLevel;
   /** Atomically checks the floor and reserves the router's advisor slot when allowed. */
@@ -679,21 +681,10 @@ export function createAskAdvisorTool(
         };
       }
 
-      const messages = storage.getMessages();
-      const firstUserMessage = messages.find((message) => message.role === "user");
-      if (!firstUserMessage) {
-        endConsult(false);
-        return {
-          content: [{ type: "text", text: "The advisor transcript has no user message yet." }],
-          details: { type: "ask_advisor", unavailable: true },
-          terminate: false,
-        };
-      }
-      let modelName: string;
+      let resolvedModel: ReturnType<AskAdvisorToolStorage["resolveModel"]>;
       try {
-        modelName =
-          typeof storage.modelName === "function" ? storage.modelName() : storage.modelName;
-        if (!modelName) throw new Error("advisor model unavailable");
+        resolvedModel = storage.resolveModel();
+        if (!resolvedModel.modelName) throw new Error("advisor model unavailable");
       } catch {
         endConsult(false);
         return {
@@ -708,16 +699,15 @@ export function createAskAdvisorTool(
         };
       }
       try {
-        const transcript = buildAdvisorTranscript({
-          firstUserMessage: serializeMessageForObserver(firstUserMessage),
-          executorSystemPrompt: storage.getSystemPrompt(),
-          observations: await storage.getObservations(),
-          tailMessages: messages.map(serializeMessageForObserver),
-          budgetTokens: storage.budgetTokens,
+        const advisorContext = buildAdvisorContext({
+          context: await storage.getContext(),
+          contextWindowTokens: resolvedModel.contextWindowTokens,
+          reservedOutputTokens: ADVISOR_MAX_OUTPUT_TOKENS,
         });
         const result = await (storage.callAdvisor ?? callAdvisor)({
-          transcriptText: transcript.text,
-          modelName,
+          contextText: advisorContext.text,
+          images: advisorContext.images,
+          modelName: resolvedModel.modelName,
           thinkingLevel: storage.thinkingLevel,
           signal,
         });
@@ -735,8 +725,8 @@ export function createAskAdvisorTool(
           content: [{ type: "text", text: result.advice }],
           details: {
             type: "ask_advisor",
-            model: modelName,
-            tokens: transcript.tokens,
+            model: resolvedModel.modelName,
+            context: advisorContext.metadata,
           },
           terminate: false,
         };

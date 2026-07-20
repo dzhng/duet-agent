@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import type { LanguageModelUsage } from "ai";
 import dedent from "dedent";
+import { Type } from "typebox";
 import {
   createAskAdvisorTool,
   createTurnRunnerTools as createTurnRunnerToolsWithStorage,
@@ -16,6 +17,7 @@ import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import { ModelRouter } from "../src/model-routing/router.js";
 import { BUILT_IN_ROUTING_TABLE, type AdvisorPolicy } from "../src/model-routing/table.js";
 import { resolveModelName } from "../src/model-resolution/resolver.js";
+import type { CallAdvisorInput } from "../src/model-routing/advisor.js";
 import * as structuredOutput from "../src/core/structured-output.js";
 import type { TurnEvent, TurnTodo } from "../src/types/protocol.js";
 import { testIfDocker } from "./helpers/docker-only.js";
@@ -56,11 +58,11 @@ describe("TurnRunner tools", () => {
   test("ask_advisor returns a graceful details-tagged refusal while gated", async () => {
     let advisorCalled = false;
     const tool = createAskAdvisorTool({
-      getMessages: () => [],
-      getSystemPrompt: () => "executor prompt",
-      getObservations: async () => [],
-      budgetTokens: 10_000,
-      modelName: () => "anthropic/claude-fable-5",
+      getContext: async () => ({ systemPrompt: "executor prompt", messages: [], tools: [] }),
+      resolveModel: () => ({
+        modelName: "anthropic/claude-fable-5",
+        contextWindowTokens: 200_000,
+      }),
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: false, stepsUntilAllowed: 3 }),
       noteAdvisorConsult: () => {},
@@ -91,30 +93,31 @@ describe("TurnRunner tools", () => {
     let recordedUsage: LanguageModelUsage | undefined;
     let consults = 0;
     const tool = createAskAdvisorTool({
-      getMessages: () => [
-        { role: "user", content: "Build the router.", timestamp: 1 },
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "I inspected the implementation." }],
-          api: "anthropic-messages",
-          provider: "vercel-ai-gateway",
-          model: "anthropic/claude-fable-5",
-          usage: {
-            input: 1,
-            output: 1,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 2,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      getContext: async () => ({
+        systemPrompt: "You are the executor.",
+        tools: [
+          {
+            name: "inspect_router",
+            description: "Inspect the router.",
+            parameters: Type.Object({}),
           },
-          stopReason: "stop",
-          timestamp: 2,
-        },
-      ],
-      getSystemPrompt: () => "You are the executor.",
-      getObservations: async () => ["The router API already owns the advisor gate."],
-      budgetTokens: 10_000,
-      modelName: () => "anthropic/claude-fable-5",
+        ],
+        messages: [
+          { role: "user", content: "Build the router.", timestamp: 1 },
+          {
+            role: "toolResult",
+            toolCallId: "inspect-1",
+            toolName: "inspect_router",
+            content: [{ type: "text", text: "The router API already owns the advisor gate." }],
+            isError: false,
+            timestamp: 2,
+          },
+        ],
+      }),
+      resolveModel: () => ({
+        modelName: "anthropic/claude-fable-5",
+        contextWindowTokens: 200_000,
+      }),
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
       noteAdvisorConsult: (success) => {
@@ -125,9 +128,11 @@ describe("TurnRunner tools", () => {
       },
       callAdvisor: async (input) => {
         receivedSignal = input.signal;
-        expect(input.transcriptText).toContain("Build the router.");
-        expect(input.transcriptText).toContain("> You are the executor.");
-        expect(input.transcriptText).toContain("router API already owns");
+        expect(input.contextText).toContain("Build the router.");
+        expect(input.contextText).toContain("You are the executor.");
+        expect(input.contextText).toContain("router API already owns");
+        expect(input.contextText).toContain("inspect_router");
+        expect(input.images).toEqual([]);
         return {
           advice: "Verify the storage closure at the parent-agent boundary.",
           usage: ADVISOR_USAGE,
@@ -147,7 +152,11 @@ describe("TurnRunner tools", () => {
     expect(result.details).toEqual({
       type: "ask_advisor",
       model: "anthropic/claude-fable-5",
-      tokens: expect.any(Number),
+      context: expect.objectContaining({
+        contextWindowTokens: 200_000,
+        truncated: false,
+        omittedMessages: 0,
+      }),
     });
   });
 
@@ -155,11 +164,12 @@ describe("TurnRunner tools", () => {
     const warnings: unknown[] = [];
     let successfulConsults = 0;
     const tool = createAskAdvisorTool({
-      getMessages: () => [{ role: "user", content: "Review this plan.", timestamp: 1 }],
-      getSystemPrompt: () => "You are the executor.",
-      getObservations: async () => [],
-      budgetTokens: 10_000,
-      modelName: () => "moonshotai/kimi-k3",
+      getContext: async () => ({
+        systemPrompt: "You are the executor.",
+        messages: [{ role: "user", content: "Review this plan.", timestamp: 1 }],
+        tools: [],
+      }),
+      resolveModel: () => ({ modelName: "moonshotai/kimi-k3", contextWindowTokens: 200_000 }),
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
       noteAdvisorConsult: (success) => {
@@ -178,7 +188,7 @@ describe("TurnRunner tools", () => {
     expect(result.details).toEqual({
       type: "ask_advisor",
       model: "moonshotai/kimi-k3",
-      tokens: expect.any(Number),
+      context: expect.objectContaining({ truncated: false }),
     });
     expect(successfulConsults).toBe(1);
     expect(warnings).toEqual([expect.objectContaining({ message: "pricing catalog unavailable" })]);
@@ -187,11 +197,15 @@ describe("TurnRunner tools", () => {
   test("ask_advisor does not record a failed consult", async () => {
     let consults = 0;
     const tool = createAskAdvisorTool({
-      getMessages: () => [{ role: "user", content: "Review this plan.", timestamp: 1 }],
-      getSystemPrompt: () => "You are the executor.",
-      getObservations: async () => [],
-      budgetTokens: 10_000,
-      modelName: () => "anthropic/claude-fable-5",
+      getContext: async () => ({
+        systemPrompt: "You are the executor.",
+        messages: [{ role: "user", content: "Review this plan.", timestamp: 1 }],
+        tools: [],
+      }),
+      resolveModel: () => ({
+        modelName: "anthropic/claude-fable-5",
+        contextWindowTokens: 200_000,
+      }),
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
       noteAdvisorConsult: (success) => {
@@ -223,11 +237,15 @@ describe("TurnRunner tools", () => {
       announceStarted = resolve;
     });
     const storage: AskAdvisorToolStorage = {
-      getMessages: () => [{ role: "user", content: "Review this plan.", timestamp: 1 }],
-      getSystemPrompt: () => "You are the executor.",
-      getObservations: async () => [],
-      budgetTokens: 10_000,
-      modelName: () => "anthropic/claude-fable-5",
+      getContext: async () => ({
+        systemPrompt: "You are the executor.",
+        messages: [{ role: "user", content: "Review this plan.", timestamp: 1 }],
+        tools: [],
+      }),
+      resolveModel: () => ({
+        modelName: "anthropic/claude-fable-5",
+        contextWindowTokens: 200_000,
+      }),
       thinkingLevel: "high",
       advisorGate: () => router.beginAdvisorConsult(),
       noteAdvisorConsult: (success = true) => router.endAdvisorConsult(success),
@@ -272,6 +290,54 @@ describe("TurnRunner tools", () => {
       expect(concrete.toolNames()).not.toContain("ask_advisor");
       await concrete.dispose();
     } finally {
+      if (priorKey === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = priorKey;
+    }
+  });
+
+  test("TurnRunner captures the live executor prompt, tools, and current assistant turn", async () => {
+    const priorKey = process.env.DUET_API_KEY;
+    process.env.DUET_API_KEY = "advisor-context-test-key";
+    const runner = new ToolListTurnRunner("frontier");
+    try {
+      await runner.start({ type: "start", mode: "agent" });
+      runner.parentMessages().push(
+        { role: "user", content: "Review the live context.", timestamp: 1 },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "CURRENT TURN REASONING" },
+            { type: "text", text: "CURRENT TURN TEXT" },
+            { type: "toolCall", id: "advisor-live", name: "ask_advisor", arguments: {} },
+          ],
+          api: "anthropic-messages",
+          provider: "duet-gateway",
+          model: "executor-model",
+          usage: {
+            input: 1,
+            output: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 2,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+          stopReason: "toolUse",
+          timestamp: 2,
+        },
+      );
+      const advisor = runner.advisorTool();
+      if (!advisor) throw new Error("ask_advisor tool missing");
+
+      await advisor.execute("advisor-live", {});
+
+      const sent = runner.lastAdvisorInput;
+      expect(sent?.contextText).toContain("CURRENT TURN REASONING");
+      expect(sent?.contextText).toContain("CURRENT TURN TEXT");
+      expect(sent?.contextText).toContain('"name":"ask_advisor"');
+      expect(sent?.contextText).toContain('"name":"bash"');
+      expect(sent?.contextText).toContain("ADVISOR");
+    } finally {
+      await runner.dispose();
       if (priorKey === undefined) delete process.env.DUET_API_KEY;
       else process.env.DUET_API_KEY = priorKey;
     }
@@ -1759,6 +1825,7 @@ class ToolListTurnRunner extends TurnRunner {
   readonly consultedRouters: ModelRouter[] = [];
   readonly completedConsultRouters: ModelRouter[] = [];
   private failAdvisorAccounting = false;
+  lastAdvisorInput?: CallAdvisorInput;
 
   constructor(model: string, cwd?: string) {
     super({
@@ -1834,10 +1901,13 @@ class ToolListTurnRunner extends TurnRunner {
       if (success) this.completedConsultRouters.push(router);
       note(success);
     };
-    storage.callAdvisor = async () => ({
-      advice: "Proceed with the new tier.",
-      usage: ADVISOR_USAGE,
-    });
+    storage.callAdvisor = async (input) => {
+      this.lastAdvisorInput = input;
+      return {
+        advice: "Proceed with the new tier.",
+        usage: ADVISOR_USAGE,
+      };
+    };
     return storage;
   }
 }

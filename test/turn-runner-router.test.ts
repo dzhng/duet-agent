@@ -780,14 +780,14 @@ describe("advisor executor guidance layer", () => {
     const frontier = new RouterTurnRunner({ classify: scriptedClassifier([]) });
     await startRunner(frontier, []);
     expect(frontier.parentAgentForTest().state.systemPrompt).toContain(
-      "Call ask_advisor BEFORE substantive work",
+      "For tasks longer than a few steps, consult at least once",
     );
     await frontier.dispose();
 
     const economy = new RouterTurnRunner({ model: "economy", classify: scriptedClassifier([]) });
     await startRunner(economy, []);
     expect(economy.parentAgentForTest().state.systemPrompt).not.toContain(
-      "Call ask_advisor BEFORE substantive work",
+      "For tasks longer than a few steps, consult at least once",
     );
     await economy.dispose();
 
@@ -797,7 +797,7 @@ describe("advisor executor guidance layer", () => {
     });
     await startRunner(concrete, []);
     expect(concrete.parentAgentForTest().state.systemPrompt).not.toContain(
-      "Call ask_advisor BEFORE substantive work",
+      "For tasks longer than a few steps, consult at least once",
     );
     await concrete.dispose();
   });
@@ -812,7 +812,7 @@ describe("advisor executor guidance layer", () => {
 
     const systemPrompt = runner.parentAgentForTest().state.systemPrompt;
     expect(systemPrompt).toContain(workflowRule);
-    expect(systemPrompt).toContain("Skip it for routine, local, obvious work.");
+    expect(systemPrompt).toContain("Skip consultation for routine, local,");
     expect(systemPrompt).toContain("Follow any stricter workflow-specific system instruction");
     await runner.dispose();
   });

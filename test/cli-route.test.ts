@@ -103,8 +103,6 @@ describe("runRouteCommand", () => {
     const result = await runRouteCommand(["advisor-preview"], {
       cwd: process.cwd(),
       sessionsRoot,
-      memoryDbPath: false,
-      readObservations: async (sessionId) => [`Live observation for ${sessionId}.`],
       write: (text) => {
         output += text;
       },
@@ -121,7 +119,8 @@ describe("runRouteCommand", () => {
     ]);
     expect(result.estimates.every((estimate) => typeof estimate.inputUsd === "number")).toBe(true);
     expect(result.transcript).toContain("Design the model router before implementing it.");
-    expect(result.transcript).toContain("## Executor system prompt (quoted content)");
+    expect(result.transcript).toContain('"systemPrompt"');
+    expect(result.transcript).toContain('"tools"');
     expect(output).toContain("Session: session_fixture");
     expect(output).toContain(`Transcript tokens: ${result.tokens}`);
     expect(output).toContain("frontier: fable-5");

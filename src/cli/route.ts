@@ -1,22 +1,23 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { buildAdvisorTranscript } from "../model-routing/advisor-transcript.js";
+import {
+  buildAdvisorContext,
+  captureAdvisorExecutorContext,
+  type AdvisorExecutorContext,
+} from "../model-routing/advisor-context.js";
+import { ADVISOR_MAX_OUTPUT_TOKENS } from "../model-routing/advisor.js";
 import { classifyRoute, type ClassifierDecision } from "../model-routing/classifier.js";
 import { loadRoutingTable, type LoadedRoutingTable } from "../model-routing/loader.js";
 import { resolveRoute } from "../model-routing/resolve.js";
 import type { TurnFacts } from "../model-routing/step-triggers.js";
-import { serializeMessageForObserver } from "../memory/observational.js";
-import { MemorySession } from "../memory/session.js";
-import { readSessionObservations } from "../memory/storage.js";
 import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
 import {
   pinnedModelReference,
   resolveModelName,
   routingCatalogAdapter,
 } from "../model-resolution/resolver.js";
-import { DEFAULT_MEMORY_DB_PATH, DEFAULT_SESSION_STORAGE_DIR } from "../session/session-manager.js";
+import { DEFAULT_SESSION_STORAGE_DIR } from "../session/session-manager.js";
 import { listRecentSessions } from "../tui/recent-sessions.js";
 import { TurnRunner } from "../turn-runner/turn-runner.js";
 import type { TurnState } from "../types/protocol.js";
@@ -75,10 +76,6 @@ export interface RouteCommandOptions {
   now?: () => number;
   /** Session root override used by preview tests and alternate installations. */
   sessionsRoot?: string;
-  /** Memory database override; false disables observation reads. */
-  memoryDbPath?: string | false;
-  /** Observation seam used by deterministic preview tests. */
-  readObservations?: (sessionId: string) => Promise<readonly string[]>;
 }
 
 function printRouteHelp(write: (text: string) => void): void {
@@ -133,13 +130,13 @@ export function parseRouteArgs(args: string[]): RouteArgs {
 export interface AdvisorPreviewResult {
   /** Stored session whose transcript was assembled. */
   sessionId: string;
-  /** Routed tier whose transcript budget was applied. */
+  /** Routed tier whose advisor model window was applied. */
   tier: string;
-  /** Exact curated content the advisor tool would send. */
+  /** Exact structured text content the advisor tool would send. */
   transcript: string;
-  /** Memory-system estimate for the curated transcript. */
+  /** Heuristic token estimate for the complete advisor request, including images. */
   tokens: number;
-  /** Whether any source content was omitted by the tier budget. */
+  /** Whether the advisor model window forced oldest-message omission. */
   truncated: boolean;
   /** Input-only cost projection for every configured tier's advisor target. */
   estimates: Array<{
@@ -260,45 +257,46 @@ async function runAdvisorPreview(
   if (!stored.state) throw new Error(`Stored session "${sessionId}" has no turn state.`);
   const messages = stored.state.agent?.messages;
   if (!Array.isArray(messages)) throw new Error(`Stored session "${sessionId}" has no transcript.`);
-  const firstUserMessage = messages.find((message) => message.role === "user");
-  if (!firstUserMessage) throw new Error(`Stored session "${sessionId}" has no user message.`);
+  if (!messages.some((message) => message.role === "user")) {
+    throw new Error(`Stored session "${sessionId}" has no user message.`);
+  }
 
   const loaded = await loadRoutingTable({ cwd, catalogAdapter: routingCatalogAdapter });
   const selectedTier = stored.state.options?.model;
   const tier =
     selectedTier && loaded.table.tiers[selectedTier] ? selectedTier : loaded.table.defaultTier;
   const policy = loaded.table.tiers[tier]!.advisor;
-  const [executorSystemPrompt, observations] = await Promise.all([
-    rebuildExecutorSystemPrompt(stored.state, sessionId, cwd),
-    options.readObservations
-      ? options.readObservations(sessionId)
-      : readPreviewObservations(options.memoryDbPath ?? DEFAULT_MEMORY_DB_PATH, sessionId),
-  ]);
-  const transcript = buildAdvisorTranscript({
-    firstUserMessage: serializeMessageForObserver(firstUserMessage),
-    executorSystemPrompt,
-    observations,
-    tailMessages: (messages as AgentMessage[]).map(serializeMessageForObserver),
-    budgetTokens: policy.transcriptTokens,
+  const model = resolveModelName(policy.target.modelName);
+  const executorContext = await rebuildExecutorContext(stored.state, sessionId, cwd);
+  const transcript = buildAdvisorContext({
+    context: executorContext,
+    contextWindowTokens: model.contextWindow,
+    reservedOutputTokens: ADVISOR_MAX_OUTPUT_TOKENS,
   });
   const estimates = Object.entries(loaded.table.tiers).map(([tierName, definition]) => {
     const model = definition.advisor.target.modelName;
     // Derived from the catalog's per-model cost (the same source the sidebar
     // and usage accounting bill from); zero means the catalog has no price.
-    const price = resolveModelName(model).cost?.input;
+    const resolvedModel = resolveModelName(model);
+    const price = resolvedModel.cost?.input;
+    const tierContext = buildAdvisorContext({
+      context: executorContext,
+      contextWindowTokens: resolvedModel.contextWindow,
+      reservedOutputTokens: ADVISOR_MAX_OUTPUT_TOKENS,
+    });
     return {
       tier: tierName,
       model,
       enabled: definition.advisor.enabled,
-      inputUsd: price ? (transcript.tokens / 1_000_000) * price : undefined,
+      inputUsd: price ? (tierContext.metadata.estimatedInputTokens / 1_000_000) * price : undefined,
     };
   });
   const result: AdvisorPreviewResult = {
     sessionId,
     tier,
     transcript: transcript.text,
-    tokens: transcript.tokens,
-    truncated: transcript.truncated,
+    tokens: transcript.metadata.estimatedInputTokens,
+    truncated: transcript.metadata.truncated,
     estimates,
   };
   write(renderAdvisorPreview(result));
@@ -324,16 +322,16 @@ function renderAdvisorPreview(result: AdvisorPreviewResult): string {
 }
 
 class AdvisorPreviewTurnRunner extends TurnRunner {
-  systemPrompt(): string {
-    return this.requireParentAgent().state.systemPrompt;
+  async advisorContext(): Promise<AdvisorExecutorContext> {
+    return await captureAdvisorExecutorContext(this.requireParentAgent());
   }
 }
 
-async function rebuildExecutorSystemPrompt(
+async function rebuildExecutorContext(
   state: TurnState,
   sessionId: string,
   cwd: string,
-): Promise<string> {
+): Promise<AdvisorExecutorContext> {
   const runner = new AdvisorPreviewTurnRunner({
     cwd,
     sessionId,
@@ -342,32 +340,9 @@ async function rebuildExecutorSystemPrompt(
   });
   try {
     await runner.start({ type: "start", mode: state.mode, state });
-    return runner.systemPrompt();
+    return await runner.advisorContext();
   } finally {
     await runner.dispose();
-  }
-}
-
-async function readPreviewObservations(
-  memoryDbPath: string | false,
-  sessionId: string,
-): Promise<readonly string[]> {
-  if (!memoryDbPath || !(await pathExists(memoryDbPath))) return [];
-  const session = new MemorySession({ path: memoryDbPath, openOptions: {} });
-  try {
-    const snapshot = await readSessionObservations(session, sessionId);
-    return snapshot.observations.map((observation) => observation.content);
-  } finally {
-    await session.dispose();
-  }
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
   }
 }
 

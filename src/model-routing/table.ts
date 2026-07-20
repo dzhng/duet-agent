@@ -47,9 +47,6 @@ const AdvisorPolicySchema = Type.Object(
     minStepsBetween: Type.Integer({
       description: "Minimum assistant-completion steps between ordinary advisor calls.",
     }),
-    transcriptTokens: Type.Integer({
-      description: "Maximum token budget used to assemble the advisor transcript.",
-    }),
   },
   { additionalProperties: false },
 );
@@ -143,15 +140,13 @@ export interface AdvisorPolicy {
   target: RouteTarget;
   /** Minimum completed assistant steps between ordinary advisor calls. */
   minStepsBetween: number;
-  /** Token budget for the curated advisor transcript; validation caps it at 20,000. */
-  transcriptTokens: number;
 }
 
 /** Routes and policies owned by one virtual model tier. */
 export interface TierDefinition {
   /** Named classifier routes; an absent requested route falls through to `general`. */
   routes: Record<string, RouteRule>;
-  /** Advisor availability, target, cadence, and transcript budget for this tier. */
+  /** Advisor availability, target, and cadence for this tier. */
   advisor: AdvisorPolicy;
 }
 
@@ -202,7 +197,6 @@ export interface RoutingTableIssue {
     | "virtual_cycle"
     | "invalid_effort"
     | "invalid_cadence"
-    | "invalid_transcript_budget"
     | "invalid_vision_fallback_model"
     | "invalid_step_trigger_name"
     | "duplicate_step_trigger_name"
@@ -255,7 +249,6 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         enabled: true,
         target: { modelName: "fable-5", thinkingLevel: "high" },
         minStepsBetween: 5,
-        transcriptTokens: 10_000,
       },
     },
     balanced: {
@@ -285,7 +278,6 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         enabled: true,
         target: { modelName: "fable-5", thinkingLevel: "high" },
         minStepsBetween: 5,
-        transcriptTokens: 10_000,
       },
     },
     economy: {
@@ -313,7 +305,6 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         enabled: false,
         target: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },
         minStepsBetween: 5,
-        transcriptTokens: 10_000,
       },
     },
   },
@@ -407,13 +398,6 @@ export function validateRoutingTable(
         code: "invalid_cadence",
         path: `tiers.${tier}.advisor.minStepsBetween`,
         message: "Advisor cadence must be a positive number of steps.",
-      });
-    }
-    if (definition.advisor.transcriptTokens <= 0 || definition.advisor.transcriptTokens > 20_000) {
-      issues.push({
-        code: "invalid_transcript_budget",
-        path: `tiers.${tier}.advisor.transcriptTokens`,
-        message: "Advisor transcript budget must be between 1 and 20,000 tokens.",
       });
     }
   }

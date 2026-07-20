@@ -404,11 +404,15 @@ describe("advisor trigger and router interlock", () => {
 
     let successfulConsults = 0;
     const advisor = createAskAdvisorTool({
-      getMessages: () => [{ role: "user", content: "Plan the migration.", timestamp: 1 }],
-      getSystemPrompt: () => "You are the executor.",
-      getObservations: async () => [],
-      budgetTokens: 10_000,
-      modelName: "anthropic/claude-fable-5",
+      getContext: async () => ({
+        systemPrompt: "You are the executor.",
+        messages: [{ role: "user", content: "Plan the migration.", timestamp: 1 }],
+        tools: [],
+      }),
+      resolveModel: () => ({
+        modelName: "anthropic/claude-fable-5",
+        contextWindowTokens: 200_000,
+      }),
       thinkingLevel: "high",
       advisorGate: () => router.beginAdvisorConsult(),
       noteAdvisorConsult: (success = true) => {

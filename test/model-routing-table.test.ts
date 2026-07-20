@@ -78,14 +78,12 @@ describe("built-in model routing table", () => {
       enabled: true,
       target: { modelName: "fable-5", thinkingLevel: "high" },
       minStepsBetween: 5,
-      transcriptTokens: 10_000,
     });
     expect(table.tiers.balanced.advisor).toEqual(table.tiers.frontier.advisor);
     expect(table.tiers.economy.advisor).toEqual({
       enabled: false,
       target: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },
       minStepsBetween: 5,
-      transcriptTokens: 10_000,
     });
     expect(table.classifier).toEqual({
       target: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
@@ -183,14 +181,13 @@ describe("built-in model routing table", () => {
     );
   });
 
-  test("reports dangling refs, invalid efforts and cadences, oversized budgets, and text-only vision fallbacks", () => {
+  test("reports dangling refs, invalid efforts and cadences, and text-only vision fallbacks", () => {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
     table.defaultTier = "missing";
     table.tiers.frontier.routes.plan.visionFallbackModelName = "glm-5.2";
     table.tiers.frontier.routes.plan.target.modelName = "missing-model";
     Reflect.set(table.tiers.frontier.routes.plan.target, "thinkingLevel", "extreme");
     table.tiers.frontier.advisor.minStepsBetween = 0;
-    table.tiers.frontier.advisor.transcriptTokens = 20_001;
     table.classifier.everySteps = -1;
 
     const issues = validateRoutingTable(table, catalog);
@@ -200,7 +197,6 @@ describe("built-in model routing table", () => {
         "dangling_reference",
         "invalid_effort",
         "invalid_cadence",
-        "invalid_transcript_budget",
         "invalid_vision_fallback_model",
       ]),
     );
@@ -280,7 +276,6 @@ describe("routing table file loading and export", () => {
           enabled: false,
           target: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },
           minStepsBetween: 5,
-          transcriptTokens: 10_000,
         },
       },
     };

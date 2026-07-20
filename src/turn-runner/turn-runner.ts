@@ -16,6 +16,7 @@ import { classifyRoute } from "../model-routing/classifier.js";
 import type { ClassifyRouteOptions } from "../model-routing/classifier.js";
 import { loadRoutingTable } from "../model-routing/loader.js";
 import { ADVISOR_EXECUTOR_GUIDANCE_LAYER } from "../model-routing/prompts.js";
+import { captureAdvisorExecutorContext } from "../model-routing/advisor-context.js";
 import { resolveTierDefault, type RouteResolutionCatalog } from "../model-routing/resolve.js";
 import type { StepObservation } from "../model-routing/step-triggers.js";
 import {
@@ -43,7 +44,6 @@ import { rebuildMemoryContextPack } from "../memory/context-pack.js";
 import { createEmbeddingClient } from "../memory/embedding.js";
 import {
   loadStoredMemory,
-  readSessionObservations,
   replaceSessionObservations,
   type MemoryPersistenceHandle,
 } from "../memory/storage.js";
@@ -2273,17 +2273,14 @@ export class TurnRunner {
   ): AskAdvisorToolStorage {
     const resolveAdvisorModel = () => resolveModelName(policy.target.modelName);
     return {
-      getMessages: () => this.parentAgent?.state.messages ?? this.state?.agent.messages ?? [],
-      getSystemPrompt: () => this.parentAgent?.state.systemPrompt ?? "",
-      getObservations: async () => {
-        const session = this.memoryPersistence?.session;
-        const sessionId = this.config.sessionId;
-        if (!session || !sessionId) return [];
-        const snapshot = await readSessionObservations(session, sessionId);
-        return snapshot.observations.map((observation) => observation.content);
+      getContext: async () => {
+        const agent = this.requireParentAgent();
+        return await captureAdvisorExecutorContext(agent);
       },
-      budgetTokens: policy.transcriptTokens,
-      modelName: () => resolveAdvisorModel().id,
+      resolveModel: () => {
+        const model = resolveAdvisorModel();
+        return { modelName: model.id, contextWindowTokens: model.contextWindow };
+      },
       thinkingLevel: policy.target.thinkingLevel,
       advisorGate: () => router.beginAdvisorConsult(),
       noteAdvisorConsult: (success = true) => router.endAdvisorConsult(success),
