@@ -13,6 +13,8 @@ export interface AdvisorContextObservation {
   contextWindowTokens: number;
   /** Output allowance reserved before fitting executor context. */
   reservedOutputTokens: number;
+  /** Conservative slack retained for provider tokenizer and request framing differences. */
+  safetyMarginTokens: number;
   /** Maximum executor-context estimate after system and output reservations. */
   inputLimitTokens: number;
   /** Estimated total advisor input, including the shared per-image charge. */
@@ -71,7 +73,7 @@ export interface AdvisorCallTelemetry {
 /** Re-derivable benchmark metrics computed only from the raw RPC event stream. */
 export interface RolloutTelemetry {
   /** Version of the persisted `telemetry.json` contract. */
-  schemaVersion: 2;
+  schemaVersion: 3;
   costUsdTotal: number;
   /** Provider spend grouped by concrete model id, never inferred as a runtime role. */
   costUsdByModel: Record<string, number>;
@@ -181,7 +183,7 @@ export function deriveTelemetry(events: readonly TurnEvent[]): RolloutTelemetry 
   const costUsdByModel: Record<string, number> = {};
   for (const entry of usageByModel) increment(costUsdByModel, entry.model, entry.usage.cost.total);
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     costUsdTotal: usage.cost.total,
     costUsdByModel,
     tokens: {
@@ -196,6 +198,43 @@ export function deriveTelemetry(events: readonly TurnEvent[]): RolloutTelemetry 
     routerSwitches,
     steps,
     terminalStatus: terminalStatus(terminal),
+  };
+}
+
+/**
+ * Upgrade persisted telemetry before report code consumes it. Version 2 did
+ * not record advisor request safety margins, so otherwise-successful context
+ * observations from that schema are retained as malformed evidence instead of
+ * being rendered as if they satisfied the current fidelity contract.
+ */
+export function normalizePersistedTelemetry(value: unknown): RolloutTelemetry {
+  if (!value || typeof value !== "object") throw new Error("Malformed rollout telemetry.");
+  const persisted = value as Omit<RolloutTelemetry, "schemaVersion"> & {
+    schemaVersion: number;
+  };
+  if (persisted.schemaVersion !== 2 && persisted.schemaVersion !== 3) {
+    throw new Error(`Unsupported rollout telemetry schemaVersion: ${persisted.schemaVersion}.`);
+  }
+
+  const attempts = persisted.advisorCalls.attempts.map((attempt) => {
+    const context = attempt.context as Partial<AdvisorContextObservation> | undefined;
+    if (
+      attempt.contextStatus !== "valid" ||
+      (context &&
+        Number.isInteger(context.safetyMarginTokens) &&
+        (context.safetyMarginTokens ?? -1) >= 0)
+    ) {
+      return attempt;
+    }
+    const { context: omittedContext, ...withoutContext } = attempt;
+    void omittedContext;
+    return { ...withoutContext, contextStatus: "malformed" as const };
+  });
+
+  return {
+    ...persisted,
+    schemaVersion: 3,
+    advisorCalls: { ...persisted.advisorCalls, attempts },
   };
 }
 
@@ -233,6 +272,7 @@ function asAdvisorContext(value: unknown): AdvisorContextObservation | undefined
   const context = value as Record<string, unknown>;
   const contextWindowTokens = positiveInteger(context.contextWindowTokens);
   const reservedOutputTokens = nonnegativeInteger(context.reservedOutputTokens);
+  const safetyMarginTokens = nonnegativeInteger(context.safetyMarginTokens);
   const inputLimitTokens = positiveInteger(context.inputLimitTokens);
   const estimatedInputTokens = positiveInteger(context.estimatedInputTokens);
   const includedMessages = nonnegativeInteger(context.includedMessages);
@@ -241,6 +281,7 @@ function asAdvisorContext(value: unknown): AdvisorContextObservation | undefined
   if (
     contextWindowTokens === undefined ||
     reservedOutputTokens === undefined ||
+    safetyMarginTokens === undefined ||
     inputLimitTokens === undefined ||
     estimatedInputTokens === undefined ||
     includedMessages === undefined ||
@@ -253,6 +294,7 @@ function asAdvisorContext(value: unknown): AdvisorContextObservation | undefined
   return {
     contextWindowTokens,
     reservedOutputTokens,
+    safetyMarginTokens,
     inputLimitTokens,
     estimatedInputTokens,
     includedMessages,

@@ -580,6 +580,8 @@ export interface AskAdvisorToolStorage {
     modelName: string;
     /** Advertised input-plus-output context window used as the only transcript ceiling. */
     contextWindowTokens: number;
+    /** Whether this concrete provider model accepts image request parts. */
+    acceptsImages: boolean;
   };
   /** Reasoning effort selected by the routed tier. */
   thinkingLevel: ThinkingLevel;
@@ -591,6 +593,8 @@ export interface AskAdvisorToolStorage {
   recordUsage: (usage: LanguageModelUsage) => void;
   /** Reports accounting failures without discarding advice the provider already returned. */
   onUsageError?: (error: unknown) => void;
+  /** Reports a failed consultation while allowing the executor to continue. */
+  onAdvisorError?: (error: unknown) => void;
   /** Network seam for deterministic tool tests; production uses callAdvisor. */
   callAdvisor?: (input: CallAdvisorInput) => Promise<AdvisorResult>;
 }
@@ -704,6 +708,11 @@ export function createAskAdvisorTool(
           contextWindowTokens: resolvedModel.contextWindowTokens,
           reservedOutputTokens: ADVISOR_MAX_OUTPUT_TOKENS,
         });
+        if (advisorContext.images.length > 0 && !resolvedModel.acceptsImages) {
+          throw new Error(
+            `Advisor model ${resolvedModel.modelName} cannot inspect ${advisorContext.images.length} image attachment(s).`,
+          );
+        }
         const result = await (storage.callAdvisor ?? callAdvisor)({
           contextText: advisorContext.text,
           images: advisorContext.images,
@@ -732,7 +741,22 @@ export function createAskAdvisorTool(
         };
       } catch (error) {
         endConsult(false);
-        throw error;
+        if (signal?.aborted) throw error;
+        try {
+          storage.onAdvisorError?.(error);
+        } catch {
+          // Logging is best-effort; the executor must still continue.
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: "The advisor consultation failed. Continue using the available context.",
+            },
+          ],
+          details: { type: "ask_advisor", failed: true },
+          terminate: false,
+        };
       }
     },
   };

@@ -29,9 +29,10 @@ export interface AdvisorResult {
 }
 
 /**
- * Run a plain text advisor call through the shared gateway constructor. No
- * provider options are supplied, so this path opts into neither prompt
- * caching nor any provider-specific request behavior.
+ * Run an advisor call through the shared gateway constructor. The caller sends
+ * images only after checking the resolved model capability. No provider options
+ * are supplied, so this path opts into neither prompt caching nor any
+ * provider-specific request behavior.
  */
 export async function callAdvisor(input: CallAdvisorInput): Promise<AdvisorResult> {
   const gateway = createDuetModelGateway();

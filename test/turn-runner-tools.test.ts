@@ -62,6 +62,7 @@ describe("TurnRunner tools", () => {
       resolveModel: () => ({
         modelName: "anthropic/claude-fable-5",
         contextWindowTokens: 200_000,
+        acceptsImages: true,
       }),
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: false, stepsUntilAllowed: 3 }),
@@ -117,6 +118,7 @@ describe("TurnRunner tools", () => {
       resolveModel: () => ({
         modelName: "anthropic/claude-fable-5",
         contextWindowTokens: 200_000,
+        acceptsImages: true,
       }),
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
@@ -169,7 +171,11 @@ describe("TurnRunner tools", () => {
         messages: [{ role: "user", content: "Review this plan.", timestamp: 1 }],
         tools: [],
       }),
-      resolveModel: () => ({ modelName: "moonshotai/kimi-k3", contextWindowTokens: 200_000 }),
+      resolveModel: () => ({
+        modelName: "moonshotai/kimi-k3",
+        contextWindowTokens: 200_000,
+        acceptsImages: true,
+      }),
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
       noteAdvisorConsult: (success) => {
@@ -194,8 +200,9 @@ describe("TurnRunner tools", () => {
     expect(warnings).toEqual([expect.objectContaining({ message: "pricing catalog unavailable" })]);
   });
 
-  test("ask_advisor does not record a failed consult", async () => {
+  test("ask_advisor logs a failed consult and lets the executor continue", async () => {
     let consults = 0;
+    const warnings: unknown[] = [];
     const tool = createAskAdvisorTool({
       getContext: async () => ({
         systemPrompt: "You are the executor.",
@@ -205,6 +212,7 @@ describe("TurnRunner tools", () => {
       resolveModel: () => ({
         modelName: "anthropic/claude-fable-5",
         contextWindowTokens: 200_000,
+        acceptsImages: true,
       }),
       thinkingLevel: "high",
       advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
@@ -212,13 +220,100 @@ describe("TurnRunner tools", () => {
         if (success) consults += 1;
       },
       recordUsage: () => {},
+      onAdvisorError: (error) => warnings.push(error),
       callAdvisor: async () => {
         throw new Error("advisor unavailable");
       },
     });
 
-    await expect(tool.execute("advisor-failed", {})).rejects.toThrow("advisor unavailable");
+    const result = await tool.execute("advisor-failed", {});
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The advisor consultation failed. Continue using the available context.",
+        },
+      ],
+      details: { type: "ask_advisor", failed: true },
+      terminate: false,
+    });
     expect(consults).toBe(0);
+    expect(warnings).toEqual([expect.objectContaining({ message: "advisor unavailable" })]);
+  });
+
+  test("ask_advisor does not send image parts to a text-only model", async () => {
+    let advisorCalled = false;
+    const warnings: unknown[] = [];
+    const tool = createAskAdvisorTool({
+      getContext: async () => ({
+        systemPrompt: "You are the executor.",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Inspect this image." },
+              { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+            ],
+            timestamp: 1,
+          },
+        ],
+        tools: [],
+      }),
+      resolveModel: () => ({
+        modelName: "zai/glm-5.2",
+        contextWindowTokens: 200_000,
+        acceptsImages: false,
+      }),
+      thinkingLevel: "high",
+      advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
+      noteAdvisorConsult: () => {},
+      recordUsage: () => {},
+      onAdvisorError: (error) => warnings.push(error),
+      callAdvisor: async () => {
+        advisorCalled = true;
+        return { advice: "unreachable", usage: ADVISOR_USAGE };
+      },
+    });
+
+    const result = await tool.execute("advisor-image-text-only", {});
+
+    expect(result.details).toEqual({ type: "ask_advisor", failed: true });
+    expect(advisorCalled).toBe(false);
+    expect(warnings).toEqual([
+      expect.objectContaining({ message: expect.stringContaining("cannot inspect 1 image") }),
+    ]);
+  });
+
+  test("ask_advisor preserves parent cancellation instead of logging a provider failure", async () => {
+    const controller = new AbortController();
+    const warnings: unknown[] = [];
+    const tool = createAskAdvisorTool({
+      getContext: async () => ({
+        systemPrompt: "You are the executor.",
+        messages: [{ role: "user", content: "Review this plan.", timestamp: 1 }],
+        tools: [],
+      }),
+      resolveModel: () => ({
+        modelName: "anthropic/claude-fable-5",
+        contextWindowTokens: 200_000,
+        acceptsImages: true,
+      }),
+      thinkingLevel: "high",
+      advisorGate: () => ({ allowed: true, stepsUntilAllowed: 0 }),
+      noteAdvisorConsult: () => {},
+      recordUsage: () => {},
+      onAdvisorError: (error) => warnings.push(error),
+      callAdvisor: async () => {
+        controller.abort();
+        throw new Error("parent aborted");
+      },
+    });
+
+    await expect(tool.execute("advisor-aborted", {}, controller.signal)).rejects.toThrow(
+      "parent aborted",
+    );
+    expect(warnings).toEqual([]);
   });
 
   test("overlapping ask_advisor executions reserve one router-owned consult slot", async () => {
@@ -245,6 +340,7 @@ describe("TurnRunner tools", () => {
       resolveModel: () => ({
         modelName: "anthropic/claude-fable-5",
         contextWindowTokens: 200_000,
+        acceptsImages: true,
       }),
       thinkingLevel: "high",
       advisorGate: () => router.beginAdvisorConsult(),

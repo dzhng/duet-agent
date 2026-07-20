@@ -5,7 +5,11 @@ import type { CampaignConfigName } from "./config-override.js";
 import type { ManifestEntry } from "./manifest.js";
 import { lintPatch, type PatchLint } from "./patch-policy.js";
 import { parseScoringModelName, type ScoringIdentity } from "./scoring-identity.js";
-import type { AdvisorContextObservation, RolloutTelemetry } from "./telemetry.js";
+import {
+  normalizePersistedTelemetry,
+  type AdvisorContextObservation,
+  type RolloutTelemetry,
+} from "./telemetry.js";
 
 export { lintPatch, type PatchLint } from "./patch-policy.js";
 
@@ -417,9 +421,9 @@ export async function loadReportAttempts(
       let telemetry: RolloutTelemetry | undefined;
       let patchLint: PatchLint | undefined;
       try {
-        telemetry = JSON.parse(
-          await readFile(`${attempt.directory}/telemetry.json`, "utf8"),
-        ) as RolloutTelemetry;
+        telemetry = normalizePersistedTelemetry(
+          JSON.parse(await readFile(`${attempt.directory}/telemetry.json`, "utf8")),
+        );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
@@ -683,7 +687,7 @@ function formatContextFidelity(context: ConsultationContextReport): string {
   if (context.valid > 0) {
     const observation = context.observations[0];
     const window = observation
-      ? `, ${observation.estimatedInputTokens}/${observation.contextWindowTokens} estimated tokens, ${observation.includedMessages} included/${observation.omittedMessages} omitted messages, ${observation.attachedImages} images`
+      ? `, ${observation.estimatedInputTokens}/${observation.contextWindowTokens} estimated tokens (${observation.safetyMarginTokens} safety margin), ${observation.includedMessages} included/${observation.omittedMessages} omitted messages, ${observation.attachedImages} images`
       : "";
     parts.push(`${context.valid} valid${window}`);
   }

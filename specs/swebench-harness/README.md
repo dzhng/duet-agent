@@ -32,10 +32,13 @@ Local constraints to prove rather than assume:
 - Every worker uses the byte-identical Duet binary compiled once into the
   immutable E2B template. Workers never compile their own campaign artifact or
   fetch the pinned dataset snapshot at launch.
-- Every successful `ask_advisor` call records its real model window, estimated
-  input, included and omitted messages, images, and truncation. The deterministic
-  fixture and live GLM/Kimi eval prove complete tool results survive the old
-  projection boundary; focused repeats must retain that evidence.
+- Every successful call records its real model window, conservative safety
+  margin, estimated input, included and omitted messages, images, and
+  truncation. Text-only advisors remain usable for text transcripts; an
+  image-bearing consultation they cannot inspect is logged as failed without
+  failing the executor tool. The deterministic fixture and live GLM/Kimi eval
+  prove complete tool results survive the old projection boundary; focused
+  repeats must retain that evidence.
 - A Vercel AI Gateway credential is present in the project `.env`. The harness
   enforces a $500 cumulative model-spend breaker, but that local breaker is not
   a substitute for an external provider-side hard cap.

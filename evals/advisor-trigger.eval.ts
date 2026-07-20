@@ -412,6 +412,7 @@ describe("advisor trigger and router interlock", () => {
       resolveModel: () => ({
         modelName: "anthropic/claude-fable-5",
         contextWindowTokens: 200_000,
+        acceptsImages: true,
       }),
       thinkingLevel: "high",
       advisorGate: () => router.beginAdvisorConsult(),

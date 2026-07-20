@@ -2279,7 +2279,11 @@ export class TurnRunner {
       },
       resolveModel: () => {
         const model = resolveAdvisorModel();
-        return { modelName: model.id, contextWindowTokens: model.contextWindow };
+        return {
+          modelName: model.id,
+          contextWindowTokens: model.contextWindow,
+          acceptsImages: model.input.includes("image"),
+        };
       },
       thinkingLevel: policy.target.thinkingLevel,
       advisorGate: () => router.beginAdvisorConsult(),
@@ -2294,6 +2298,14 @@ export class TurnRunner {
           type: "system",
           level: "warn",
           message: `Advisor usage accounting failed; advice was retained: ${reason}`,
+        });
+      },
+      onAdvisorError: (error) => {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.emit({
+          type: "system",
+          level: "warn",
+          message: `Advisor consultation failed; executor continued: ${reason}`,
         });
       },
     };

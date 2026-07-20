@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { deriveTelemetry } from "../src/telemetry.js";
+import { deriveTelemetry, normalizePersistedTelemetry } from "../src/telemetry.js";
 import type { TurnEvent } from "../../../src/types/protocol.js";
 
 const FIXTURES = join(import.meta.dir, "../fixtures");
@@ -102,6 +102,7 @@ describe("SWE-bench telemetry derivation", () => {
             context: {
               contextWindowTokens: 262144,
               reservedOutputTokens: 2048,
+              safetyMarginTokens: 5200,
               inputLimitTokens: 259000,
               estimatedInputTokens: 12000,
               includedMessages: 8,
@@ -151,6 +152,7 @@ describe("SWE-bench telemetry derivation", () => {
           context: {
             contextWindowTokens: 262144,
             reservedOutputTokens: 2048,
+            safetyMarginTokens: 5200,
             inputLimitTokens: 259000,
             estimatedInputTokens: 12000,
             includedMessages: 8,
@@ -192,6 +194,56 @@ describe("SWE-bench telemetry derivation", () => {
       expect.objectContaining({ outcome: "success", contextStatus: "malformed" }),
     );
     expect(telemetry.advisorCalls.attempts[0]).not.toHaveProperty("context");
+  });
+
+  test("migrates schema-v2 context evidence without inventing a safety margin", () => {
+    const persisted = structuredClone(
+      deriveTelemetry([
+        {
+          type: "step",
+          step: {
+            type: "tool_call",
+            toolName: "ask_advisor",
+            toolCallId: "a1",
+            isError: false,
+            details: {
+              type: "ask_advisor",
+              model: "moonshotai/kimi-k3",
+              context: {
+                contextWindowTokens: 262144,
+                reservedOutputTokens: 2048,
+                safetyMarginTokens: 5200,
+                inputLimitTokens: 259000,
+                estimatedInputTokens: 12000,
+                includedMessages: 8,
+                omittedMessages: 2,
+                truncated: true,
+                attachedImages: 1,
+              },
+            },
+          },
+        },
+      ] as TurnEvent[]),
+    ) as unknown as {
+      schemaVersion: number;
+      advisorCalls: {
+        attempts: Array<{ contextStatus: string; context?: Record<string, unknown> }>;
+      };
+    };
+    persisted.schemaVersion = 2;
+    const contextualAttempt = persisted.advisorCalls.attempts.find((attempt) => attempt.context);
+    expect(contextualAttempt).toBeDefined();
+    delete contextualAttempt!.context!.safetyMarginTokens;
+
+    const telemetry = normalizePersistedTelemetry(persisted);
+
+    expect(telemetry.schemaVersion).toBe(3);
+    expect(
+      telemetry.advisorCalls.attempts.find((attempt) => attempt.outcome === "success"),
+    ).toEqual(expect.objectContaining({ outcome: "success", contextStatus: "malformed" }));
+    expect(
+      telemetry.advisorCalls.attempts.find((attempt) => attempt.outcome === "success"),
+    ).not.toHaveProperty("context");
   });
 
   test("builds switch histograms, excludes deltas and child steps, and tolerates new events", async () => {

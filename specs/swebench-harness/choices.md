@@ -1545,10 +1545,13 @@ the number of rollouts or the independently enforced model-spend bound.
   definitions, converted messages, thinking, tool calls, complete tool results,
   current turn, and images at tool execution time. Send that structured context
   without the observer projection or a tier-configured 10,000-token cap. Reserve
-  2,048 tokens for advice; only if the receiving model's advertised window is
-  exceeded, keep the first user task plus the newest whole-message suffix and
-  report every omission. The unbuilt alternative preserved a smaller
-  configurable transcript budget even when the advisor could accept more.
+  2,048 tokens for advice and two percent for provider-tokenizer and framing
+  differences; only if the remaining receiving-model window is exceeded, keep
+  the first user task plus the newest whole-message suffix and report every
+  omission. Multibyte text is also charged by UTF-8 size so CJK-heavy context
+  cannot appear artificially cheap. The unbuilt alternative preserved a
+  smaller configurable transcript budget even when the advisor could accept
+  more, or trusted a rough character estimate all the way to the hard limit.
 - **The gap:** Anthropic's result depends on shared working context, while v4
   silently discarded tool structure, thinking, and most long tool results.
 - **The reach:** Product config no longer exposes `transcriptTokens`; runtime
@@ -1561,6 +1564,28 @@ the number of rollouts or the independently enforced model-spend bound.
 - **Confidence:** **high** after GLM and Kimi recovered an unguessable marker
   beyond the former tool-result cutoff, the temporary old cutoff made the eval
   fail, and restoration made it pass again.
+
+### S51a — Image capability is checked on the concrete consultation
+
+- **When:** the independent review of the full-context implementation.
+- **The choice:** Keep text-only advisors valid for text-only transcripts. At
+  tool execution, inspect the resolved model capability and the captured
+  context together. If the context contains images the advisor cannot inspect,
+  do not send the invalid provider request: log the failed consultation, release
+  the reserved cooldown slot, and let the executor continue. The first review
+  response rejected every enabled text-only advisor at configuration time; the
+  live GLM fidelity eval proved that was broader than the actual failure mode,
+  so it was removed before the restart gate.
+- **The gap:** The routing schema previously guaranteed image support only for
+  executor fallbacks, not for advisors that now receive the same context.
+- **The reach:** Text-only advisors still work for ordinary coding transcripts;
+  image-bearing consultations require a vision-capable target and remain
+  observable as failed exposure when that condition is not met.
+- **Verdict:** **sound.** The direct request boundary checks the one condition
+  that matters without rejecting configurations that can work, and it neither
+  sends an invalid request nor silently degrades visual evidence.
+- **Confidence:** **high** after the text-only live eval exposed the overbroad
+  configuration rule and the request-boundary unit test pinned the real case.
 
 ### S52 — Repeated trials receive distinct official scorer identities
 

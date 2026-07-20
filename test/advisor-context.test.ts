@@ -117,6 +117,7 @@ describe("buildAdvisorContext", () => {
     expect(result.text).toContain("private reasoning that the observer used to drop");
     expect(result.text).toContain(TOOL_RESULT);
     expect(result.metadata).toMatchObject({
+      safetyMarginTokens: 4_000,
       includedMessages: 3,
       omittedMessages: 0,
       truncated: false,
@@ -145,7 +146,32 @@ describe("buildAdvisorContext", () => {
       omittedMessages: 2,
       truncated: true,
     });
-    expect(result.metadata.estimatedInputTokens).toBeLessThanOrEqual(500 - 100);
+    expect(result.metadata.estimatedInputTokens).toBeLessThanOrEqual(
+      500 - 100 - result.metadata.safetyMarginTokens,
+    );
+  });
+
+  test("reserves framing headroom and charges multibyte text conservatively", () => {
+    const result = buildAdvisorContext({
+      context: {
+        systemPrompt: "SYS",
+        tools: [],
+        messages: [
+          { role: "user", content: "TASK", timestamp: 1 },
+          { role: "user", content: "界".repeat(800), timestamp: 2 },
+          { role: "user", content: "LATEST", timestamp: 3 },
+        ],
+      },
+      contextWindowTokens: 1_000,
+      reservedOutputTokens: 100,
+    });
+
+    expect(result.metadata.safetyMarginTokens).toBe(20);
+    expect(result.metadata.truncated).toBe(true);
+    expect(payload(result.text).executorContext.messages).toEqual([
+      { role: "user", content: "TASK", timestamp: 1 },
+      { role: "user", content: "LATEST", timestamp: 3 },
+    ]);
   });
 
   test("forwards image blocks as multimodal attachments instead of base64 prompt text", () => {

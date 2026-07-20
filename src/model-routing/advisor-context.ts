@@ -41,6 +41,8 @@ export interface AdvisorContextMetadata {
   contextWindowTokens: number;
   /** Output allowance kept free when calculating the input ceiling. */
   reservedOutputTokens: number;
+  /** Conservative slack retained for provider-tokenizer differences and request framing. */
+  safetyMarginTokens: number;
   /** Maximum estimated tokens available to the quoted executor context. */
   inputLimitTokens: number;
   /** Heuristic token estimate including the shared coarse per-image charge. */
@@ -101,10 +103,11 @@ export function buildAdvisorContext(input: BuildAdvisorContextInput): AdvisorCon
     positiveInteger(input.reservedOutputTokens),
     Math.max(0, contextWindowTokens - 1),
   );
-  const advisorSystemTokens = estimateTokens(ADVISOR_SYSTEM_PROMPT);
+  const safetyMarginTokens = Math.floor(contextWindowTokens * 0.02);
+  const advisorSystemTokens = estimateContextTokens(ADVISOR_SYSTEM_PROMPT);
   const inputLimitTokens = Math.max(
     1,
-    contextWindowTokens - reservedOutputTokens - advisorSystemTokens,
+    contextWindowTokens - reservedOutputTokens - safetyMarginTokens - advisorSystemTokens,
   );
   let messages = [...input.context.messages];
   let serialized = serializeContext(input.context.systemPrompt, input.context.tools, messages, 0);
@@ -137,6 +140,7 @@ export function buildAdvisorContext(input: BuildAdvisorContextInput): AdvisorCon
     metadata: {
       contextWindowTokens,
       reservedOutputTokens,
+      safetyMarginTokens,
       inputLimitTokens,
       estimatedInputTokens: advisorSystemTokens + estimateSerializedTokens(serialized),
       includedMessages: messages.length,
@@ -186,7 +190,17 @@ function estimateSerializedTokens(serialized: {
   text: string;
   images: readonly ImageContent[];
 }): number {
-  return estimateTokens(serialized.text) + serialized.images.length * IMAGE_WIRE_TOKEN_ESTIMATE;
+  return (
+    estimateContextTokens(serialized.text) + serialized.images.length * IMAGE_WIRE_TOKEN_ESTIMATE
+  );
+}
+
+/**
+ * Keep the existing text estimate for ordinary ASCII while charging multibyte
+ * text by UTF-8 size so CJK-heavy transcripts do not look artificially cheap.
+ */
+function estimateContextTokens(text: string): number {
+  return Math.max(estimateTokens(text), Math.ceil(Buffer.byteLength(text, "utf8") / 3));
 }
 
 function positiveInteger(value: number): number {

@@ -257,7 +257,7 @@ describe("SWE-bench paired report", () => {
       expect.objectContaining({ valid: 1, truncated: 1, missing: 0, malformed: 0 }),
     );
     expect(renderCampaignReport(report)).toContain(
-      "1 valid, 12000/262144 estimated tokens, 8 included/4 omitted messages, 1 images, 1 truncated",
+      "1 valid, 12000/262144 estimated tokens (5200 safety margin), 8 included/4 omitted messages, 1 images, 1 truncated",
     );
     expect(campaignReportPassesAdmission(report)).toBe(false);
   });
@@ -416,7 +416,7 @@ function fixtureScores(
 
 function emptyTelemetry(): RolloutTelemetry {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     costUsdTotal: 0.25,
     costUsdByModel: { model: 0.25 },
     tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2 },
@@ -451,6 +451,7 @@ function successfulCall(
     context: {
       contextWindowTokens: 262144,
       reservedOutputTokens: 2048,
+      safetyMarginTokens: 5200,
       inputLimitTokens: 259000,
       estimatedInputTokens: 12000,
       includedMessages: 8,
