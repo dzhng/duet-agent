@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import type { RolloutAttempt, RolloutFailureKind } from "./artifacts.js";
 import type { CampaignConfigName } from "./config-override.js";
 import type { ManifestEntry } from "./manifest.js";
+import { lintPatch, type PatchLint } from "./patch-policy.js";
 import type { RolloutTelemetry } from "./telemetry.js";
+
+export { lintPatch, type PatchLint } from "./patch-policy.js";
 
 export type OfficialStatus =
   | "resolved"
@@ -31,11 +34,6 @@ export interface ReportAttempt {
   costUsd: number;
   telemetry?: RolloutTelemetry;
   patchLint?: PatchLint;
-}
-
-export interface PatchLint {
-  paths: string[];
-  violations: string[];
 }
 
 export interface ConfigReport {
@@ -292,28 +290,6 @@ function isAgentComplete(attempt: ReportAttempt | undefined): boolean {
     attempt.terminalType === "complete" &&
     attempt.telemetry?.terminalStatus === "completed"
   );
-}
-
-/** Check exact staged paths rather than guessing from diff text. */
-export function lintPatch(patch: string, paths: readonly string[], maxBytes: number): PatchLint {
-  const violations: string[] = [];
-  const bytes = Buffer.byteLength(patch);
-  if (bytes === 0) violations.push("patch is empty");
-  if (bytes > maxBytes) violations.push(`patch is ${bytes} bytes (limit ${maxBytes})`);
-  for (const path of paths) {
-    const segments = path.toLowerCase().split("/");
-    const filename = segments.at(-1) ?? "";
-    if (
-      segments.some((segment) => ["test", "tests", "__tests__"].includes(segment)) ||
-      /(?:^|[._-])test(?:[._-]|$)/.test(filename)
-    ) {
-      violations.push(`test file modified: ${path}`);
-    }
-    if (segments.includes(".duet") || path.startsWith("opt/duet/")) {
-      violations.push(`runtime file leaked: ${path}`);
-    }
-  }
-  return { paths: [...paths], violations };
 }
 
 function executorCostUsd(

@@ -56,17 +56,15 @@ def remove_if_present(image: str) -> None:
 def score_one(row: dict[str, Any], output_root: Path) -> dict[str, Any]:
     instance_id = row["instance_id"]
     model = row["model_name_or_path"]
-    work_dir = output_root / model / instance_id
+    work_dir = output_root.resolve() / model / instance_id
+    cached = cached_score(row, output_root)
+    if cached is not None:
+        return cached
     final_report = work_dir / "official-report.json"
-    if final_report.exists():
-        report = json.loads(final_report.read_text())
-        return {"instanceId": instance_id, "model": model, "status": report_status(instance_id, report)}
 
     work_dir.mkdir(parents=True, exist_ok=True)
     prediction_path = work_dir / "prediction.jsonl"
     prediction_path.write_text(json.dumps(row) + "\n")
-    image = resolve_image(instance_id)
-    pull_image(image)
     run_id = f"score-{model}-{instance_id}".replace("/", "-")
     command = [
         os.fspath(Path(sys.executable)),
@@ -89,16 +87,73 @@ def score_one(row: dict[str, Any], output_root: Path) -> dict[str, Any]:
         "--run_id",
         run_id,
     ]
-    try:
-        subprocess.run(command, cwd=work_dir, check=True)
-    finally:
-        remove_if_present(image)
+    subprocess.run(command, cwd=work_dir, check=True)
     matches = list(work_dir.glob(f"*.{run_id}.json"))
     if len(matches) != 1:
         raise RuntimeError(f"expected one scorer report for {instance_id}, found {len(matches)}")
     report = json.loads(matches[0].read_text())
     final_report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return {"instanceId": instance_id, "model": model, "status": report_status(instance_id, report)}
+
+
+def score_instance(rows: list[dict[str, Any]], output_root: Path) -> list[dict[str, Any]]:
+    instance_ids = {row["instance_id"] for row in rows}
+    if len(instance_ids) != 1:
+        raise ValueError("score_instance requires predictions for exactly one instance")
+    instance_id = next(iter(instance_ids))
+    results: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    for row in rows:
+        cached = cached_score(row, output_root)
+        if cached is None:
+            pending.append(row)
+        else:
+            results.append(cached)
+    if not pending:
+        return results
+
+    image = resolve_image(instance_id)
+    try:
+        pull_image(image)
+    except Exception as error:
+        remove_if_present(image)
+        return results + [infra_result(row, error) for row in pending]
+
+    try:
+        for row in pending:
+            try:
+                results.append(score_one(row, output_root))
+            except Exception as error:
+                results.append(infra_result(row, error))
+    finally:
+        remove_if_present(image)
+    return results
+
+
+def cached_score(row: dict[str, Any], output_root: Path) -> dict[str, Any] | None:
+    report_path = (
+        output_root.resolve()
+        / row["model_name_or_path"]
+        / row["instance_id"]
+        / "official-report.json"
+    )
+    if not report_path.exists():
+        return None
+    report = json.loads(report_path.read_text())
+    return {
+        "instanceId": row["instance_id"],
+        "model": row["model_name_or_path"],
+        "status": report_status(row["instance_id"], report),
+    }
+
+
+def infra_result(row: dict[str, Any], error: Exception) -> dict[str, Any]:
+    return {
+        "instanceId": row["instance_id"],
+        "model": row["model_name_or_path"],
+        "status": "infra_error",
+        "error": str(error),
+    }
 
 
 def main() -> None:
@@ -110,19 +165,18 @@ def main() -> None:
     if not prediction_files:
         parser.error("predictions directory contains no JSONL files")
 
+    rows: list[dict[str, Any]] = []
+    for path in prediction_files:
+        rows.extend(load_jsonl(path))
+
+    rows_by_instance: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        rows_by_instance.setdefault(row["instance_id"], []).append(row)
+
     results: list[dict[str, Any]] = []
     failures = 0
-    for path in prediction_files:
-        for row in load_jsonl(path):
-            try:
-                result = score_one(row, args.output_dir)
-            except Exception as error:
-                result = {
-                    "instanceId": row["instance_id"],
-                    "model": row["model_name_or_path"],
-                    "status": "infra_error",
-                    "error": str(error),
-                }
+    for instance_id in sorted(rows_by_instance):
+        for result in score_instance(rows_by_instance[instance_id], args.output_dir):
             results.append(result)
             print(f"{result['status']:12} {result['model']} {result['instanceId']}", flush=True)
             if result["status"] in {"infra_error", "missing", "error"}:

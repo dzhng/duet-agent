@@ -20,6 +20,7 @@ import {
 } from "./duet-client.js";
 import type { DuetArtifact } from "./packaging.js";
 import { capturePatchBaseline, extractPatch } from "./patch.js";
+import { lintPatch } from "./patch-policy.js";
 import { buildRolloutPrompt } from "./prompt.js";
 import type { DatasetRow, ManifestEntry } from "./manifest.js";
 import { deriveTelemetry, type RolloutTelemetry } from "./telemetry.js";
@@ -152,6 +153,10 @@ export async function runRollout(
     const extracted = await extractPatch(container, baseline, spec.limits.patchBytes);
     patch = extracted.patch;
     patchPaths = extracted.paths;
+    const patchLint = lintPatch(patch, patchPaths, spec.limits.patchBytes);
+    if (patchLint.violations.length > 0) {
+      throw new Error(`Patch policy violation: ${patchLint.violations.join("; ")}`);
+    }
     const terminalType = terminalName(outcome);
     const status = await completeRolloutAttempt(attempt, {
       events,

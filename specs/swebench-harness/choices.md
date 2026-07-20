@@ -941,6 +941,88 @@ ownerScopeId }`, even though both execute through the same task manager.
 - **Confidence:** **high** because $1 exceeds recovered prerequisite spend by
   more than 3× and the unknown probe made only two Luna calls.
 
+### S25 — The zero-consult smoke is retained as a STOP, not called an advisor comparison
+
+- **When:** slice 07's first two-instance, four-arm paid campaign.
+- **The choice:** Preserve its artifacts and official 8/8 resolved scores, but
+  exclude it from any claim about advisor effect. All four nominally advised
+  attempts made zero consultations, and three final Carbon patches contained
+  forbidden test/cache paths. The unbuilt alternative treats tool availability
+  as treatment exposure and reports ordinary stochastic reruns as advisor ON.
+- **The gap:** The report could label an enabled arm even when no advisor call
+  occurred, and patch lint was only a late report assertion.
+- **The reach:** Future reports can cite this run as packaging and patch-quality
+  evidence only. Admission still requires a fresh campaign id whose advised
+  arms demonstrably consult and whose patches pass policy before export.
+- **Verdict:** **sound.** A treatment that never occurs cannot explain an
+  outcome, regardless of the patches' official scores.
+- **Confidence:** **high** because raw telemetry records zero calls in all four
+  enabled attempts and the official report records the exact path violations.
+
+### S26 — Every arm receives one identical controlled-advisor instruction
+
+- **When:** the STOP loop from the zero-consult smoke returned to prompt
+  ownership in slice 06.
+- **The choice:** The shared benchmark prompt says to call `ask_advisor`
+  exactly once after initial inspection and before implementation when that
+  tool is available; pure arms see the same text and continue normally because
+  the tool is absent. Think of a medical trial where the prescription is the
+  same sheet for everyone, but only the treatment group receives the tablet.
+  The unbuilt alternatives rely on optional product guidance that all sampled
+  models skipped, or inject a hidden reroute message only into advised arms.
+- **The gap:** Tool availability alone did not produce treatment exposure, so
+  the original comparison could not answer the user's question.
+- **The reach:** Advisor-enabled campaigns now measure one standardized
+  consultation while keeping issue text, executor, memory, classifier, and
+  visible prompt bytes fixed inside each pair. Telemetry remains the acceptance
+  proof that the prescribed call actually occurred.
+- **Verdict:** **sound.** The benchmark is explicitly comparing an executor
+  alone with that executor plus one advisor consultation; guaranteed exposure
+  is part of the treatment, not prompt tuning for task success.
+- **Confidence:** **medium-high** until the fresh paid pilot proves both
+  executors obey the instruction without disturbing pure arms.
+
+### S27 — Patch policy is enforced at rollout completion, before prediction export
+
+- **When:** the stopped smoke report found test and cache paths in otherwise
+  officially resolving Carbon patches.
+- **The choice:** Run the same exact-path lint immediately after patch
+  extraction and persist a `patch` failure instead of a completed rollout when
+  it finds tests, runtime files, emptiness, or oversize output. The shared prompt
+  also tells agents to revert test-run cache side effects before finishing. The
+  unbuilt alternative scores first and merely prints a failed assertion later.
+- **The gap:** `buildPredictions` legitimately trusted the completed marker, but
+  completion was written before the report-owned policy ran.
+- **The reach:** Forbidden patches cannot enter official prediction files or a
+  resumed campaign's completed set. Reporting and runtime import one policy
+  owner, so their definitions cannot drift.
+- **Verdict:** **sound.** Admission invariants belong at the boundary that marks
+  an artifact admissible, with reporting as a second check rather than the only
+  check.
+- **Confidence:** **high** because a falsified regression test observed the old
+  completed status and now proves a durable patch failure plus teardown.
+
+### S28 — Official scoring groups all arms by instance and uses absolute work paths
+
+- **When:** the first live campaign score pass and its subsequent throughput
+  review.
+- **The choice:** Resolve the output root before changing directories, group
+  predictions by instance, pull that official image once, score every pending
+  arm, then remove it. Cached official reports bypass Docker entirely on resume.
+  The unbuilt alternative keeps config-major order, re-pulling every multi-GB
+  image four times and repeating those pulls after interruption.
+- **The gap:** Relative prediction paths became unreadable under the scorer's
+  per-attempt working directory, and lifecycle ownership was scoped to one arm
+  rather than the instance block.
+- **The reach:** A 30-instance four-arm campaign performs at most 30 image
+  lifecycles instead of 120, while still using one official worker and exact-
+  image cleanup on this Mac.
+- **Verdict:** **sound.** Image identity belongs to the SWE-bench instance, not
+  the model label, and absolute paths survive working-directory changes.
+- **Confidence:** **high** because the path regression failed with the exact
+  doubled live path, batching is unit-tested, and an eight-result live resume
+  completed with no Docker pulls.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

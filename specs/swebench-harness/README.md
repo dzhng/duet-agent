@@ -175,7 +175,7 @@ knowingly exceed $500.
 ## Firewalls & invariants
 
 - Pairing validity: one committed manifest, one committed prompt template
-  (`prompt.ts` — frozen input for campaign 1; prompt tuning is out of scope),
+  (`prompt.ts` — frozen by hash within a campaign id; a STOP requires a new id),
   one duet binary hash, explicit renders for all four arms, seeded per-instance
   arm order, and explicit benchmark-tier invocations. Within each comparison
   the only varying bit is `advisor.enabled`. All arms use product defaults for

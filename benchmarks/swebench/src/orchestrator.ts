@@ -26,9 +26,9 @@ export interface CampaignSpec {
   manifestPath: string;
   /** Optional fixed subset used by pilot campaigns. */
   instanceIds?: string[];
-  /** Explicit arms; campaign 1 supplies all four committed renders. */
+  /** Explicit model-treatment arms included in this campaign. */
   configs: CampaignConfigName[];
-  /** Independent attempts per logical arm; campaign 1 fixes this to one. */
+  /** Independent attempts per logical arm. */
   trials: number;
   /** Maximum simultaneous instance blocks. This Mac is admitted only at one. */
   concurrency: number;

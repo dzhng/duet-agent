@@ -120,6 +120,54 @@ describe("SWE-bench rollout pipeline", () => {
     expect(container.stopped).toBe(true);
   });
 
+  testIfDocker("rejects forbidden test paths before a patch can be exported", async () => {
+    root = await mkdtemp(join(tmpdir(), "duet-swebench-rollout-test-path-"));
+    const configPath = join(root, "models.json");
+    await writeFile(configPath, "{}\n");
+    const container = new FakeRolloutContainer(false, ["src/a.ts", "tests/a.test.ts"]);
+    const result = await runRollout(
+      {
+        runsRoot: root,
+        artifact: {
+          localPath: "/host/duet",
+          installPath: "/opt/duet/duet",
+          sha256: "a".repeat(64),
+          packagingMode: "compiled-linux-x64",
+        },
+        providerEnv: {},
+        containerFactory: () => container,
+      },
+      {
+        campaignId: "test-campaign",
+        config: "glm-pure",
+        entry: {
+          instanceId: "org__repo-1",
+          language: "Go",
+          repo: "org/repo",
+          baseCommit: "base",
+        },
+        datasetRow: {
+          instanceId: "org__repo-1",
+          repo: "org/repo",
+          baseCommit: "base",
+          problemStatement: "Fix it.",
+        },
+        trial: 1,
+        image: "official/image",
+        configPath,
+        configSha256: "b".repeat(64),
+        limits: { costUsd: 1, wallClockMs: 1000, patchBytes: 1000 },
+      },
+    );
+
+    expect(result.status).toMatchObject({
+      phase: "failed",
+      failureKind: "patch",
+      message: "Patch policy violation: test file modified: tests/a.test.ts",
+    });
+    expect(container.stopped).toBe(true);
+  });
+
   testIfDocker("smoke proves a pure one-file patch in a fresh container", async () => {
     root = await mkdtemp(join(tmpdir(), "duet-swebench-smoke-"));
     const configPath = join(root, "models.json");
@@ -189,7 +237,10 @@ class FakeRolloutContainer implements RolloutContainer {
   rpcOptions?: { cwd?: string; env?: Record<string, string> };
   private gitCall = 0;
 
-  constructor(private readonly failStart: boolean) {}
+  constructor(
+    private readonly failStart: boolean,
+    private readonly patchPaths: readonly string[] = ["src/a.ts"],
+  ) {}
 
   async start(): Promise<void> {
     if (this.failStart) throw new Error("start failed");
@@ -204,7 +255,7 @@ class FakeRolloutContainer implements RolloutContainer {
     this.gitCall += 1;
     if (this.gitCall === 3) return ok(`${"c".repeat(40)}\n`);
     if (this.gitCall === 4) return ok("");
-    if (this.gitCall === 6) return ok("src/a.ts\0");
+    if (this.gitCall === 6) return ok(`${this.patchPaths.join("\0")}\0`);
     if (this.gitCall === 7) return ok("diff --git a/src/a.ts b/src/a.ts\n+fixed\n");
     return ok("");
   }

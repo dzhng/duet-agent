@@ -12,9 +12,10 @@ campaign money.
 ## Contract
 
 - `prompt.ts`: `buildRolloutPrompt(entry) → string` — problem statement,
-  "work in /testbed", do not modify tests, do not commit; adapted from
-  mini-swe-agent's template (slice 04 notes). **Frozen input for campaign 1** —
-  prompt tuning is out of scope.
+  "work in /testbed", do not modify tests, do not commit, and one controlled
+  advisor consultation when the tool is available; adapted from
+  mini-swe-agent's template (slice 04 notes). The exact prompt hash is frozen
+  within each campaign id; changing it after a STOP requires a new id.
 - `rollout.ts`: `runRollout(deps, spec) → artifact dir`: container up →
   install duet + arm's models.json (slice 05 recipe) → `runDuetTurn` →
   extract patch (`patch.ts`) → write artifacts → teardown in `finally`.

@@ -1,5 +1,15 @@
 # 07 — Two-comparison report, 3-instance four-arm pilot, admission gate
 
+**Progress (2026-07-20): stopped pilot loop.** The first two-instance,
+four-arm live campaign completed and officially resolved all 8/8 patches for
+$3.6834, but every advisor-enabled rollout made zero advisor calls. Patch lint
+also found forbidden Carbon test/cache paths in three attempts. The result is
+retained as a harness smoke, not advisor evidence. Rollout admission now rejects
+forbidden paths before export, the scorer resolves output paths and reuses one
+image across all arms for an instance, and the next campaign uses a new,
+byte-identical four-arm prompt that requires exactly one consultation when the
+tool is available. A fresh three-language pilot remains required before ADMIT.
+
 Needs 04 (scorer fixture) and 06. The report is built and verified against
 existing artifacts first — zero new spend — then a small pilot produces the
 exact final artifact at 1/10 scale and decides ADMIT/STOP.
