@@ -87,6 +87,12 @@ No full campaign starts until all of these are true:
    tasks, running both comparisons once on each (20 rollouts). More clean pairs
    increase confidence; they do not prove that a stochastic model can never
    regress.
+   The frozen known-case inputs are
+   `advisor-nonregression-gate-glm-20260721-v1` and
+   `advisor-nonregression-gate-kimi-20260721-v1`. Their conservative sunk values
+   reserve v3's lost artifacts plus all 16 successful prompt-eval calls at the
+   full rollout ceiling; the Kimi gate also reserves every GLM gate rollout so
+   both may execute concurrently without double-spending the global envelope.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails
