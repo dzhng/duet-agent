@@ -15,7 +15,12 @@ import { assistantText } from "../core/serializer.js";
 import { classifyRoute } from "../model-routing/classifier.js";
 import type { ClassifyRouteOptions } from "../model-routing/classifier.js";
 import { loadRoutingTable } from "../model-routing/loader.js";
-import { ADVISOR_EXECUTOR_GUIDANCE_LAYER } from "../model-routing/prompts.js";
+import { AdvisorTurnLifecycle } from "../model-routing/advisor-lifecycle.js";
+import {
+  ADVISOR_COMPLETION_REVIEW_REMINDER,
+  ADVISOR_EXECUTOR_GUIDANCE_LAYER,
+  ADVISOR_ORIENTATION_REMINDER,
+} from "../model-routing/prompts.js";
 import { captureAdvisorExecutorContext } from "../model-routing/advisor-context.js";
 import { resolveTierDefault, type RouteResolutionCatalog } from "../model-routing/resolve.js";
 import type { StepObservation } from "../model-routing/step-triggers.js";
@@ -243,6 +248,9 @@ export type ParentLoopInput =
   | { type: "terminal_acknowledgment" }
   | { type: "wake"; queued?: boolean };
 
+/** Runner-owned continuation that never crosses the public command or event protocol. */
+type PendingParentLoopInput = ParentLoopInput | { type: "advisor_completion_review" };
+
 type StateTaskMetadata =
   | { kind: "agent"; stateName: string; run?: SubagentRun }
   | {
@@ -370,6 +378,8 @@ export class TurnRunner {
   private pendingModelSelection?: string;
   /** Advisor target and transcript budget selected with the current virtual tier. */
   private advisorPolicy?: AdvisorPolicy;
+  /** Product-owned early/final consultation checkpoints for the active public agent-mode turn. */
+  private advisorTurnLifecycle?: AdvisorTurnLifecycle;
   /** True only while the parent pi agent is actively producing the public terminal event. */
   private parentAgentRunning = false;
   /** Control results captured during the current parent pass. More than one is a protocol error. */
@@ -388,7 +398,7 @@ export class TurnRunner {
   /** Legacy persisted user-lane projection retained until the next loop owns it. */
   private hydratedQueuedCommands?: TurnCommand[];
   /** Inputs waiting for the single parent slot between sequential passes. */
-  private readonly parentInputs: ParentLoopInput[] = [];
+  private readonly parentInputs: PendingParentLoopInput[] = [];
   /** Wakes the loop when a user command arrives while task work is in process. */
   private readonly parentInputWaiters = new Set<() => void>();
   /** Settlements already folded into the ledger during replacement/interrupt. */
@@ -810,6 +820,11 @@ export class TurnRunner {
     this.interruptCleanup = undefined;
     this.terminalEmitted = false;
     this.activeRootScopeId = `turn-${this.nextRootScope++}` as const;
+    const routeStatus = this.modelRouter?.status();
+    this.advisorTurnLifecycle =
+      this.requireRunnerState().mode === "agent" && this.advisorPolicy?.enabled && routeStatus
+        ? new AdvisorTurnLifecycle(routeStatus.assistantSteps)
+        : undefined;
     this.turnTools = this.createTools(this.requireRunnerState().mode).tools;
     this.enqueueParentInput(
       command.type === "wake" ? { type: "wake" } : { type: "user_command", command },
@@ -894,6 +909,7 @@ export class TurnRunner {
           });
         }
         if (result?.type === "terminal") {
+          if (this.queueAdvisorCompletionReviewIfDue(result.status)) continue;
           completion = {
             status: result.status === "error" ? "failed" : "completed",
             ...(result.result !== undefined ? { result: result.result } : {}),
@@ -975,6 +991,7 @@ export class TurnRunner {
       this.setState(terminal.state);
       this.emitTerminalOnce(terminal);
       this.turnTools = undefined;
+      this.advisorTurnLifecycle = undefined;
       this.activeRootScopeId = undefined;
       this.turnUsage = undefined;
       this.turnUsageByModel = undefined;
@@ -1237,7 +1254,7 @@ export class TurnRunner {
   }
 
   private async processParentLoopInput(
-    input: ParentLoopInput,
+    input: PendingParentLoopInput,
   ): Promise<SettledDecision["outcome"] | undefined> {
     switch (input.type) {
       case "user_command":
@@ -1248,6 +1265,8 @@ export class TurnRunner {
         return this.selectNextStateAfterCompletion(input.stateName, input.output);
       case "terminal_acknowledgment":
         return this.runTerminalAcknowledgmentPass();
+      case "advisor_completion_review":
+        return this.runAdvisorCompletionReviewPass();
       case "wake":
         return this.runWakeInput();
     }
@@ -1367,6 +1386,53 @@ export class TurnRunner {
     this.setState(worker.outcome.state);
     if (worker.outcome.type === "interrupted") return { type: "interrupted" } as const;
     return this.stateMachineResultFromWorker(worker, worker.outcome.state);
+  }
+
+  private async runAdvisorCompletionReviewPass() {
+    const worker = await this.runParentPass({
+      state: this.snapshotState({ ...this.requireRunnerState(), status: "running" }),
+      prompt: systemReminder(ADVISOR_COMPLETION_REVIEW_REMINDER),
+      continuation: true,
+    });
+    this.setState(worker.outcome.state);
+    if (worker.outcome.type === "interrupted") return { type: "interrupted" } as const;
+    if (worker.control.type === "ask_user_question") {
+      return { type: "ask", questions: worker.control.questions } as const;
+    }
+    return worker.outcome.status === "failed"
+      ? ({ type: "terminal", status: "error", error: worker.outcome.error } as const)
+      : ({ type: "terminal", status: "completed", result: worker.outcome.result } as const);
+  }
+
+  /**
+   * Queue a fresh parent continuation only when a completed agent-mode turn did enough work to
+   * benefit from review. A successful consultation with no subsequent real-world tool work already
+   * saw the final available evidence and satisfies this checkpoint without call counting. Otherwise
+   * completion starts a distinct consultation phase, so its first call gets a fresh ordinary floor
+   * even when the orientation call was recent. The checkpoint is marked before enqueueing so
+   * failures and ignored reminders remain non-recursive.
+   */
+  private queueAdvisorCompletionReviewIfDue(
+    status: "completed" | "failed" | "cancelled" | "error",
+  ): boolean {
+    const lifecycle = this.advisorTurnLifecycle;
+    const routeStatus = this.modelRouter?.status();
+    if (
+      status !== "completed" ||
+      !lifecycle ||
+      !routeStatus ||
+      this.taskManager.pendingWork().kind === "open" ||
+      !lifecycle.takeCompletionCheckpoint(routeStatus.assistantSteps)
+    ) {
+      return false;
+    }
+    // Completion review is a distinct product lifecycle phase, just like a
+    // replacement model starts a fresh phase after a route switch. Reset the
+    // step floor instead of bypassing the advisor gate so the ordinary
+    // in-flight reservation and post-success cooldown still apply.
+    this.modelRouter?.resetAdvisorCooldown();
+    this.parentInputs.unshift({ type: "advisor_completion_review" });
+    return true;
   }
 
   private async executePlannedWork(
@@ -2287,7 +2353,12 @@ export class TurnRunner {
       },
       thinkingLevel: policy.target.thinkingLevel,
       advisorGate: () => router.beginAdvisorConsult(),
-      noteAdvisorConsult: (success = true) => router.endAdvisorConsult(success),
+      noteAdvisorConsult: (success = true) => {
+        router.endAdvisorConsult(success);
+        if (success && this.advisorTurnLifecycle) {
+          this.advisorTurnLifecycle.noteSuccessfulConsult(router.status().assistantSteps);
+        }
+      },
       recordUsage: (usage) => {
         const model = resolveAdvisorModel();
         this.recordAndEmitUsage(usageFromAiSdk(usage, model), model.id);
@@ -2901,6 +2972,10 @@ export class TurnRunner {
     this.emitAgentEvent(event);
     if (event.type === "turn_end" && event.message.role === "assistant") {
       this.modelRouter?.noteAssistantStep(routerStepObservation(event.message, event.toolResults));
+      this.advisorTurnLifecycle?.noteExecutedTools(
+        event.toolResults.map((result) => result.toolName),
+      );
+      this.steerAdvisorOrientationIfDue();
     }
     if (event.type !== "message_end" || event.message.role !== "assistant") return;
 
@@ -2924,6 +2999,22 @@ export class TurnRunner {
     // emit a degenerate all-zero bar.
     this.recordUsage(event.message.usage, event.message.model);
     if (event.message.usage.totalTokens > 0) this.emitTurnUsage();
+  }
+
+  /** Deliver one in-transcript orientation checkpoint without changing the public protocol. */
+  private steerAdvisorOrientationIfDue(): void {
+    const lifecycle = this.advisorTurnLifecycle;
+    const routeStatus = this.modelRouter?.status();
+    if (
+      !lifecycle ||
+      !routeStatus ||
+      !lifecycle.takeOrientationCheckpoint(routeStatus.assistantSteps)
+    ) {
+      return;
+    }
+    this.requireParentAgent().steer(
+      buildUserAgentMessage(systemReminder(ADVISOR_ORIENTATION_REMINDER), undefined),
+    );
   }
 
   /**

@@ -12,9 +12,9 @@ campaign money.
 ## Contract
 
 - `prompt.ts`: `buildRolloutPrompt(entry) → string` — problem statement,
-  "work in /testbed", do not modify tests, do not commit, and one controlled
-  advisor consultation when the tool is available; adapted from
-  mini-swe-agent's template (slice 04 notes). The exact prompt hash is frozen
+  "work in /testbed", do not modify tests, and proceed unattended. Advisor
+  availability and scheduling belong entirely to the installed product; the
+  benchmark prompt does not mention them. The exact prompt hash is frozen
   within each campaign id; changing it after a STOP requires a new id.
 - `rollout.ts`: `runRollout(deps, spec) → artifact dir`: container up →
   install duet + arm's models.json (slice 05 recipe) → `runDuetTurn` →
@@ -46,7 +46,7 @@ campaign money.
   mismatch refuses to mix; concurrency respected.
 - Live (Mac, ≤$10): 2 manifest instances (different languages) across all four
   arms — artifacts complete; `telemetry.json` cost equals terminal
-  `usageByModel` sum; advisor cadence plausible against `minStepsBetween`;
+  `usageByModel` sum; advisor behavior is captured without prescribing it;
   kill mid-campaign → resume skips finished work; all 8 predictions score
   cleanly through the official harness (slice 04's proven invocation). Both
   advisor-OFF configs show zero advisor tool calls in `events.ndjson`.

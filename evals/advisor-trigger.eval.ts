@@ -1,7 +1,5 @@
 import { describe, expect } from "bun:test";
 import { bestOfAttempts } from "../test/helpers/best-of.js";
-import { Agent } from "@earendil-works/pi-agent-core";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import dedent from "dedent";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,11 +12,9 @@ import {
   type ModelRouterOptions,
   type RouteClassifier,
 } from "../src/model-routing/router.js";
-import { createAskAdvisorTool } from "../src/turn-runner/tools.js";
-import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
+import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnUsageEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
-import { createAssistantMessage } from "../test/helpers/messages.js";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 
 const executorModel = process.env.EVAL_MODEL ?? "sonnet-4.6";
@@ -31,10 +27,11 @@ interface CapturedToolCall {
 class CapturingRunner extends TurnRunner {
   readonly classifierInputs: ClassifierInput[] = [];
 
-  constructor(model: "frontier" | "economy", systemInstructions?: string) {
+  constructor(model: "frontier" | "economy", systemInstructions?: string, cwd?: string) {
     super({
       model,
       mode: "agent",
+      cwd,
       memoryDbPath: false,
       skillDiscovery: { includeDefaults: false },
       systemInstructions,
@@ -61,52 +58,6 @@ class CapturingRunner extends TurnRunner {
       return options.classify(input, signal);
     };
     return new ModelRouter({ ...options, table, classify });
-  }
-}
-
-class NudgeRunner extends TurnRunner {
-  router?: ModelRouter;
-
-  constructor() {
-    super({
-      model: "frontier",
-      mode: "agent",
-      memoryDbPath: false,
-      skillDiscovery: { includeDefaults: false },
-    });
-  }
-
-  protected override createModelRouter(options: ModelRouterOptions): ModelRouter {
-    const classify: RouteClassifier = async () => ({
-      route: "plan",
-      rationale: "The task moved into architectural planning.",
-    });
-    this.router = new ModelRouter({ ...options, classify });
-    return this.router;
-  }
-
-  protected override createAgent(
-    input: AgentConfigInput,
-    onControlResult?: Parameters<TurnRunner["createAgent"]>[1],
-  ): Agent {
-    const agent = super.createAgent(input, onControlResult);
-    agent.streamFn = (model) => {
-      const stream = createAssistantMessageEventStream();
-      queueMicrotask(() => {
-        stream.push({
-          type: "done",
-          reason: "stop",
-          message: {
-            ...createAssistantMessage({ text: "Acknowledged.", usage: { input: 1, output: 1 } }),
-            model: model.id,
-            provider: model.provider,
-            api: model.api,
-          },
-        });
-      });
-      return stream;
-    };
-    return agent;
   }
 }
 
@@ -284,8 +235,8 @@ describe("advisor trigger and router interlock", () => {
           const advisorCalls = toolCalls.filter((call) => call.name === "ask_advisor");
 
           expect(terminal.type).toBe("complete");
-          expect(advisorCalls).toHaveLength(1);
-          expect(advisorCalls[0]?.output?.length).toBeGreaterThan(0);
+          expect(advisorCalls.length).toBeGreaterThanOrEqual(1);
+          expect(advisorCalls.some((call) => (call.output?.length ?? 0) > 0)).toBe(true);
           expect(runner.classifierInputs.map((input) => input.trigger)).toContain("advisor");
 
           const classifierId = resolveModelName(
@@ -318,6 +269,84 @@ describe("advisor trigger and router interlock", () => {
       });
     },
     360_000,
+  );
+
+  testIfDocker(
+    "substantive sequential work consults after orientation and at completion",
+    async () => {
+      await bestOfAttempts(2, async () => {
+        const workDir = await mkdtemp(join(tmpdir(), "duet-advisor-lifecycle-"));
+        const chainDir = join(workDir, "chain");
+        await mkdir(chainDir);
+        const chainLength = 10;
+        await Promise.all(
+          Array.from({ length: chainLength }, (_unused, index) => {
+            const next = index === chainLength - 1 ? "END" : `node-${index + 1}.txt`;
+            return writeFile(
+              join(chainDir, `node-${index}.txt`),
+              `fragment-${index}\nnext: ${next}\n`,
+            );
+          }),
+        );
+
+        const runner = new CapturingRunner(
+          "frontier",
+          dedent`
+            This is a bounded live lifecycle evaluation. Use only the read and write tools for the
+            task. Do not use bash, glob, search, or sub-agents. Each chain file reveals the only next
+            filename you should read, so inspect one node at a time in the discovered order.
+          `,
+          workDir,
+        );
+        const toolCalls = captureToolCalls(runner);
+        try {
+          const { turn } = await startTurn(runner, {
+            mode: "agent",
+            prompt: dedent`
+              Start at chain/node-0.txt and follow each next pointer until END. Preserve every
+              fragment in order, write them one per line to answer.txt, read answer.txt back to
+              verify it, then report completion.
+            `,
+          });
+          const terminal = await turn;
+          const names = toolCalls.map((call) => call.name);
+          const advisorIndexes = names.flatMap((name, index) =>
+            name === "ask_advisor" ? [index] : [],
+          );
+          const transcript = JSON.stringify(terminal.state.agent.messages);
+          process.stdout.write(
+            `${JSON.stringify({
+              eval: "advisor-lifecycle",
+              costUsd: terminal.turnUsage?.cost.total,
+              costUsdByModel: terminal.usageByModel?.map((entry) => ({
+                model: entry.model,
+                costUsd: entry.usage.cost.total,
+              })),
+            })}\n`,
+          );
+
+          expect(terminal.type).toBe("complete");
+          expect(transcript).toContain("orientation checkpoint");
+          expect(transcript).toContain("completion-review checkpoint");
+          expect(advisorIndexes.length).toBeGreaterThanOrEqual(2);
+          expect(
+            names.slice(0, advisorIndexes[0]).filter((name) => name === "read").length,
+          ).toBeGreaterThanOrEqual(2);
+          expect(
+            names
+              .slice(0, advisorIndexes.at(-1))
+              .filter((name) => name === "read" || name === "write").length,
+          ).toBeGreaterThanOrEqual(chainLength);
+          expect(
+            toolCalls.filter((call) => call.name === "ask_advisor").every((call) => call.output),
+          ).toBe(true);
+        } finally {
+          await runner.dispose();
+          await rm(workDir, { recursive: true, force: true });
+        }
+      });
+    },
+    600_000,
   );
 
   testIfDocker(
@@ -368,80 +397,6 @@ describe("advisor trigger and router interlock", () => {
     await runner.start({ type: "start", mode: "agent" });
 
     expect(runner.toolNames()).not.toContain("ask_advisor");
-    await runner.dispose();
-  });
-
-  testIfDocker("a delivered reroute nudge bypasses a closed gate exactly once", async () => {
-    const runner = new NudgeRunner();
-    await runner.start({ type: "start", mode: "agent" });
-    const router = runner.router;
-    if (!router) throw new Error("Expected routed runner");
-    router.beginAdvisorConsult();
-    router.endAdvisorConsult(true);
-
-    const turn = runner.turn({
-      type: "prompt",
-      message: "Move from general implementation into architecture planning.",
-      behavior: "follow_up",
-    });
-    const terminal = await turn;
-    const injectedNudge = terminal.state.agent.messages
-      .filter((message) => message.role === "user")
-      .map((message) =>
-        typeof message.content === "string"
-          ? message.content
-          : message.content
-              .filter((content) => content.type === "text")
-              .map((content) => content.text)
-              .join("\n"),
-      )
-      .find((text) => text.includes("This consult is cap-exempt"));
-
-    expect(terminal.type).toBe("complete");
-    expect(injectedNudge).toContain("changed from gpt-5.6-sol to fable-5 for the plan route");
-    expect(router.advisorGate().allowed).toBe(false);
-    expect(router.advisorGate().stepsUntilAllowed).toBeGreaterThan(0);
-
-    let successfulConsults = 0;
-    const advisor = createAskAdvisorTool({
-      getContext: async () => ({
-        systemPrompt: "You are the executor.",
-        messages: [{ role: "user", content: "Plan the migration.", timestamp: 1 }],
-        tools: [],
-      }),
-      resolveModel: () => ({
-        modelName: "anthropic/claude-fable-5",
-        contextWindowTokens: 200_000,
-        acceptsImages: true,
-      }),
-      thinkingLevel: "high",
-      advisorGate: () => router.beginAdvisorConsult(),
-      noteAdvisorConsult: (success = true) => {
-        if (success) successfulConsults += 1;
-        router.endAdvisorConsult(success);
-      },
-      recordUsage: () => {},
-      callAdvisor: async () => ({
-        advice: "Validate lease ownership before queue selection.",
-        usage: {
-          inputTokens: 12,
-          inputTokenDetails: { noCacheTokens: 12, cacheReadTokens: 0, cacheWriteTokens: 0 },
-          outputTokens: 3,
-          outputTokenDetails: { textTokens: 3, reasoningTokens: 0 },
-          totalTokens: 15,
-        },
-      }),
-    });
-    const first = await advisor.execute("nudge-consult-1", {});
-    const second = await advisor.execute("nudge-consult-2", {});
-
-    expect(first.content).toEqual([
-      { type: "text", text: "Validate lease ownership before queue selection." },
-    ]);
-    expect(second.details).toEqual(
-      expect.objectContaining({ type: "ask_advisor", rateLimited: true }),
-    );
-    expect(successfulConsults).toBe(1);
     await runner.dispose();
   });
 });

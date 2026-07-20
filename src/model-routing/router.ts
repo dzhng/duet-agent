@@ -188,7 +188,7 @@ export class ModelRouter {
     }
   }
 
-  /** Arm one cap-exempt classification after an independent wire-prefix compaction. */
+  /** Arm one cadence-independent classification after an independent wire-prefix compaction. */
   noteCompaction(): void {
     this.compactionClassificationPending = true;
   }
@@ -277,7 +277,7 @@ export class ModelRouter {
       // A replacement model starts with a fresh advisor floor. Its first
       // consult is authorized by the ordinary gate; a successful consult then
       // starts the normal step-based cooldown again.
-      this.lastAdvisorStep = undefined;
+      this.resetAdvisorCooldown();
       return switched;
     } catch {
       return undefined;
@@ -291,6 +291,15 @@ export class ModelRouter {
     const elapsed = this.assistantSteps - this.lastAdvisorStep;
     const stepsUntilAllowed = Math.max(0, minStepsBetween - elapsed);
     return { allowed: stepsUntilAllowed === 0, stepsUntilAllowed };
+  }
+
+  /**
+   * Start a distinct consultation phase with a fresh ordinary advisor floor.
+   * Route changes and the product's completion-review checkpoint use this same
+   * transition; the in-flight interlock remains independent and cannot be reset.
+   */
+  resetAdvisorCooldown(): void {
+    this.lastAdvisorStep = undefined;
   }
 
   /** Atomically authorize one advisor attempt and reserve the session's consult slot. */

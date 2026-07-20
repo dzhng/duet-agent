@@ -16,7 +16,9 @@ import {
   type ModelRouterOptions,
   type RouteClassifier,
 } from "../src/model-routing/router.js";
+import type { AdvisorPolicy } from "../src/model-routing/table.js";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
+import type { AskAdvisorToolStorage } from "../src/turn-runner/tools.js";
 import { settlementNotice } from "../src/turn-runner/task-tools.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import type { StateMachineAgentState } from "../src/types/state-machine.js";
@@ -45,10 +47,12 @@ class RouterTurnRunner extends TurnRunner {
   readonly requestModels: Model<any>[] = [];
   readonly requestMessages: Context["messages"][] = [];
   readonly createdAgentOptions: Array<{ model?: string; thinkingLevel?: string }> = [];
+  readonly advisorContextTexts: string[] = [];
   private readonly classify: RouteClassifier;
   private readonly everySteps: number;
   private readonly planTarget?: { modelName: string; thinkingLevel: "low" | "medium" | "high" };
   private readonly stepKeywords?: string[];
+  private readonly stubAdvisor: boolean;
 
   constructor(options: {
     classify: RouteClassifier;
@@ -59,6 +63,7 @@ class RouterTurnRunner extends TurnRunner {
     cwd?: string;
     stepKeywords?: string[];
     systemInstructions?: string;
+    stubAdvisor?: boolean;
   }) {
     super({
       model: options.model ?? "frontier",
@@ -73,6 +78,7 @@ class RouterTurnRunner extends TurnRunner {
     this.everySteps = options.everySteps ?? 1;
     this.planTarget = options.planTarget;
     this.stepKeywords = options.stepKeywords;
+    this.stubAdvisor = options.stubAdvisor ?? false;
   }
 
   parentAgentForTest(): Agent {
@@ -126,6 +132,28 @@ class RouterTurnRunner extends TurnRunner {
 
   protected override async updateMemoryAfterAgentRun(): Promise<void> {
     // Routing tests exercise the parent loop only; durable memory is unrelated.
+  }
+
+  protected override createAskAdvisorStorage(
+    router: ModelRouter,
+    policy: AdvisorPolicy,
+  ): AskAdvisorToolStorage {
+    const storage = super.createAskAdvisorStorage(router, policy);
+    if (!this.stubAdvisor) return storage;
+    storage.callAdvisor = async (input) => {
+      this.advisorContextTexts.push(input.contextText);
+      return {
+        advice: `Advisor review ${this.advisorContextTexts.length}: inspect the boundary carefully.`,
+        usage: {
+          inputTokens: 12,
+          inputTokenDetails: { noCacheTokens: 12, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          outputTokens: 3,
+          outputTokenDetails: { textTokens: 3, reasoningTokens: 0 },
+          totalTokens: 15,
+        },
+      };
+    };
+    return storage;
   }
 
   protected override createAgent(
@@ -776,6 +804,173 @@ describe("TurnRunner virtual-model adapter", () => {
 });
 
 describe("advisor executor guidance layer", () => {
+  test("completion review resets a recent orientation consultation's cooldown", async () => {
+    const runner = new RouterTurnRunner({
+      everySteps: 99,
+      stubAdvisor: true,
+      classify: async () => ({ route: "general", rationale: "Keep the executor stable." }),
+    });
+    const events: TurnEvent[] = [];
+    await startRunner(runner, events);
+
+    const turn = runner.turn({
+      type: "prompt",
+      message: "Implement the durable queue migration.",
+      behavior: "follow_up",
+    });
+    for (let step = 0; step < 3; step++) {
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({
+        tool: { name: "bash", arguments: { command: "true" } },
+        usageTokens: 5,
+      });
+    }
+
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(JSON.stringify(runner.requestMessages.at(-1))).toContain("orientation checkpoint");
+    runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+    await waitFor(() => runner.advisorContextTexts.length === 1);
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({
+      tool: { name: "bash", arguments: { command: "true" } },
+      usageTokens: 5,
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(runner.routeStatus()?.advisorGate.allowed).toBe(false);
+    expect(runner.routeStatus()?.advisorGate.stepsUntilAllowed).toBeGreaterThan(0);
+    runner.completeNext({ text: "The migration is implemented.", usageTokens: 5 });
+
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(runner.routeStatus()?.advisorGate).toEqual({ allowed: true, stepsUntilAllowed: 0 });
+    const completionRequest = JSON.stringify(runner.requestMessages.at(-1));
+    expect(completionRequest).toContain("completion-review checkpoint");
+    expect(completionRequest).toContain("Implement the durable queue migration.");
+    expect(completionRequest).toContain("Advisor review 1");
+    runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+    await waitFor(() => runner.advisorContextTexts.length === 2);
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Migration complete and reviewed.", usageTokens: 5 });
+
+    const terminal = await turn;
+    expect(terminal.type).toBe("complete");
+    if (terminal.type !== "complete") throw new Error(`Unexpected terminal: ${terminal.type}`);
+    expect(terminal.result).toBe("Migration complete and reviewed.");
+    expect(runner.advisorContextTexts[1]).toContain("The migration is implemented.");
+    expect(runner.advisorContextTexts[1]).toContain("completion-review checkpoint");
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "step" &&
+          event.step.type === "tool_call_start" &&
+          event.step.toolName === "ask_advisor",
+      ),
+    ).toHaveLength(2);
+    await runner.dispose();
+  });
+
+  test("a third-step final response consumes the orientation steer before the pass stops", async () => {
+    const runner = new RouterTurnRunner({
+      everySteps: 99,
+      stubAdvisor: true,
+      classify: async () => ({ route: "general", rationale: "Keep the executor stable." }),
+    });
+    await startRunner(runner, []);
+
+    const turn = runner.turn({
+      type: "prompt",
+      message: "Investigate the migration and finish after the evidence is clear.",
+      behavior: "follow_up",
+    });
+    for (let step = 0; step < 2; step++) {
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({
+        tool: { name: "bash", arguments: { command: "true" } },
+        usageTokens: 5,
+      });
+    }
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "The evidence looks complete.", usageTokens: 5 });
+
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(JSON.stringify(runner.requestMessages.at(-1))).toContain("orientation checkpoint");
+    runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+    await waitFor(() => runner.advisorContextTexts.length === 1);
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Evidence reviewed; migration complete.", usageTokens: 5 });
+
+    const terminal = await turn;
+    expect(terminal.type).toBe("complete");
+    expect(runner.advisorContextTexts).toHaveLength(1);
+    expect(JSON.stringify(terminal.state.agent.messages)).not.toContain(
+      "completion-review checkpoint",
+    );
+    await runner.dispose();
+  });
+
+  test("a voluntary final-evidence consultation does not trigger an immediate duplicate", async () => {
+    const runner = new RouterTurnRunner({
+      everySteps: 99,
+      stubAdvisor: true,
+      classify: async () => ({ route: "general", rationale: "Keep the executor stable." }),
+    });
+    await startRunner(runner, []);
+
+    const turn = runner.turn({
+      type: "prompt",
+      message: "Inspect the evidence, obtain strategic review when ready, and finish.",
+      behavior: "follow_up",
+    });
+    for (let step = 0; step < 2; step++) {
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({
+        tool: { name: "bash", arguments: { command: "true" } },
+        usageTokens: 5,
+      });
+    }
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+    await waitFor(() => runner.advisorContextTexts.length === 1);
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Reviewed and complete.", usageTokens: 5 });
+
+    const terminal = await turn;
+    expect(terminal.type).toBe("complete");
+    expect(runner.advisorContextTexts).toHaveLength(1);
+    const transcript = JSON.stringify(terminal.state.agent.messages);
+    expect(transcript).not.toContain("orientation checkpoint");
+    expect(transcript).not.toContain("completion-review checkpoint");
+    await runner.dispose();
+  });
+
+  test("routine agent work finishes without lifecycle consultation checkpoints", async () => {
+    const runner = new RouterTurnRunner({
+      everySteps: 99,
+      stubAdvisor: true,
+      classify: async () => ({ route: "general", rationale: "Keep the executor stable." }),
+    });
+    await startRunner(runner, []);
+
+    const turn = runner.turn({
+      type: "prompt",
+      message: "Read one value and answer.",
+      behavior: "follow_up",
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({
+      tool: { name: "bash", arguments: { command: "true" } },
+      usageTokens: 5,
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "Done.", usageTokens: 5 });
+
+    const terminal = await turn;
+    expect(terminal.type).toBe("complete");
+    expect(runner.advisorContextTexts).toEqual([]);
+    expect(JSON.stringify(terminal.state.agent.messages)).not.toContain("checkpoint");
+    expect(runner.requestMessages).toHaveLength(2);
+    await runner.dispose();
+  });
+
   testIfDocker("routed tiers with the advisor enabled carry the timing layer", async () => {
     const frontier = new RouterTurnRunner({ classify: scriptedClassifier([]) });
     await startRunner(frontier, []);

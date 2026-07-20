@@ -57,6 +57,23 @@ export const ADVISOR_EXECUTOR_GUIDANCE_LAYER = dedent`
   contrary evidence.
 `;
 
+/** Turn-local checkpoint delivered after a substantive agent has oriented itself. */
+export const ADVISOR_ORIENTATION_REMINDER = dedent`
+  This substantive turn has reached its orientation checkpoint. Before making further
+  consequential changes, call \`ask_advisor\` now so the advisor can review the task, the evidence
+  you gathered, and your intended approach. Then continue with your own tools and judgment. If the
+  consultation fails, continue from the evidence you already have.
+`;
+
+/** Turn-local checkpoint delivered when substantive agent-mode work is ready to finish. */
+export const ADVISOR_COMPLETION_REVIEW_REMINDER = dedent`
+  This substantive turn has reached its completion-review checkpoint. Before finalizing, call
+  \`ask_advisor\` now so the advisor can inspect the complete work and identify anything still
+  missing or unsafe. Verify the advice, make any warranted corrections, run the relevant checks,
+  and then give the user the finished result. If the consultation fails, finish from the evidence
+  you already have.
+`;
+
 /** Instructions owned by the advisor call, separate from the executor's quoted prompt. */
 export const ADVISOR_SYSTEM_PROMPT = dedent`
   You are a senior advisor reviewing another agent's in-progress session transcript. Give
