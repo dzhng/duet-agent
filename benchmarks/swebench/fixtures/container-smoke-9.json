@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "config": "glm-pure",
+  "totalCostUsd": 0.130053,
+  "advisorCalls": 0,
+  "models": ["openai/gpt-5.6-luna", "zai/glm-5.2"],
+  "results": [
+    {
+      "language": "C",
+      "instanceId": "micropython__micropython-13039",
+      "status": "completed",
+      "terminalType": "complete",
+      "costUsd": 0.0113404,
+      "patchBytes": 283,
+      "patchPaths": ["duet-swebench-smoke.txt"]
+    },
+    {
+      "language": "C++",
+      "instanceId": "fmtlib__fmt-1683",
+      "status": "completed",
+      "terminalType": "complete",
+      "costUsd": 0.0150279,
+      "patchBytes": 269,
+      "patchPaths": ["duet-swebench-smoke.txt"]
+    },
+    {
+      "language": "Go",
+      "instanceId": "caddyserver__caddy-4943",
+      "status": "completed",
+      "terminalType": "complete",
+      "costUsd": 0.0142738,
+      "patchBytes": 276,
+      "patchPaths": ["duet-swebench-smoke.txt"]
+    },
+    {
+      "language": "Java",
+      "instanceId": "apache__druid-16875",
+      "status": "completed",
+      "terminalType": "complete",
+      "costUsd": 0.0198512,
+      "patchBytes": 272,
+      "patchPaths": ["duet-swebench-smoke.txt"]
+    },
+    {
+      "language": "JavaScript",
+      "instanceId": "preactjs__preact-2757",
+      "status": "completed",
+      "terminalType": "complete",
+      "costUsd": 0.0116245,
+      "patchBytes": 274,
+      "patchPaths": ["duet-swebench-smoke.txt"]
+    },
+    {
+      "language": "TypeScript",
+      "instanceId": "facebook__docusaurus-8927",
+      "status": "completed",
+      "terminalType": "complete",
+      "costUsd": 0.0157676,
+      "patchBytes": 278,
+      "patchPaths": ["duet-swebench-smoke.txt"]
+    },
+    {
+      "language": "PHP",
+      "instanceId": "briannesbitt__carbon-2981",
+      "status": "completed",
+      "terminalType": "complete",
+      "costUsd": 0.0119863,
+      "patchBytes": 278,
+      "patchPaths": ["duet-swebench-smoke.txt"]
+    },
+    {
+      "language": "Ruby",
+      "instanceId": "fastlane__fastlane-20975",
+      "status": "completed",
+      "terminalType": "complete",
+      "costUsd": 0.0140219,
+      "patchBytes": 277,
+      "patchPaths": ["duet-swebench-smoke.txt"]
+    },
+    {
+      "language": "Rust",
+      "instanceId": "nushell__nushell-13605",
+      "status": "completed",
+      "terminalType": "complete",
+      "costUsd": 0.0161594,
+      "patchBytes": 275,
+      "patchPaths": ["duet-swebench-smoke.txt"]
+    }
+  ]
+}

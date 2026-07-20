@@ -26,3 +26,8 @@ directories remain under `benchmarks/swebench/.cache/gold-30-20260720/`.
 untouched two-task `preds.json`. It proves that mini's dictionary of official
 prediction rows is accepted directly and that both non-empty patches completed
 without scorer errors; see `spike-notes.md` for the exact commands.
+
+`container-smoke-9.json` cross-foots the live packaging matrix over one
+committed task per language. Every pure-GLM turn completed, used only GLM-5.2
+plus the product-default Luna memory model, made zero advisor calls, changed one
+sentinel path, and reproduced its patch in a fresh official container.

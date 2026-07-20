@@ -1,10 +1,9 @@
 # 05 — Duet in the instance container: packaging, smoke matrix, patch integrity
 
-**Status (2026-07-20): command complete; live matrix pending.** The compiled
-artifact, container boundary, dirty-baseline extraction, fresh-image round trip,
-and `rollout smoke --instance|--all-languages` workflow are implemented and
-fixture-tested. The paid sequential nine-language run remains before this slice
-is complete.
+**Status (2026-07-20): complete.** The compiled artifact, container boundary,
+dirty-baseline extraction, fresh-image round trip, and
+`rollout smoke --instance|--all-languages` workflow are implemented and
+fixture-tested. The paid sequential matrix passed 9/9 for $0.130053 total.
 
 Mac-local; needs slices 03 (client) and 04 (images). The architecture's kill-shot
 assumption gets falsified here for under a dollar, before the runner exists.
@@ -46,7 +45,12 @@ terminal, wrote the sentinel in `/testbed`, retained the product-default Luna
 memory model, and cost $0.0108392. Druid's official image starts with a modified
 `pom.xml`; baseline-relative extraction omitted it, captured only the sentinel,
 and round-tripped into a fresh image. The remaining acceptance work is the full
-nine-language matrix and advisor-OFF tool-list assertion.
+nine-language matrix then completed every language with only the product-default
+Luna memory model and GLM-5.2 in its usage ledger, zero advisor calls, one exact
+sentinel path, and a byte-identical fresh-container round trip. Total spend was
+$0.130053; see `benchmarks/swebench/fixtures/container-smoke-9.json`. The
+advisor-OFF injection contract remains pinned by the product tool-list test,
+while the live telemetry proves silence end to end.
 
 - Unit (FakeCmd, no docker): exact docker argv construction, timeout kill,
   teardown-on-error.

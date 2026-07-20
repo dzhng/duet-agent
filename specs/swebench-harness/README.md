@@ -16,17 +16,15 @@ explicit routing renders, RPC client, telemetry, CLI checkpoints, and their
 tests are committed. Slice 04's Mac provisioner, one-instance capacity gate,
 corrected 30/30 gold gate, and mini-swe-agent 2/2 replication are complete under
 official amd64 emulation with measured resource use.
-Slice 05 has a green live Java checkpoint and a locally green deterministic
-nine-language smoke command for Linux-x64 packaging, single-owner RPC execution,
-and fresh-image patch round trip; its paid matrix remains. Slice 06's rollout,
-immutable resume, budget, prediction, official
+Slice 05 is complete: the paid nine-language Linux-x64 packaging, single-owner
+RPC, pure-tool, sentinel patch, and fresh-image round-trip matrix passed 9/9 for
+$0.130053. Slice 06's rollout, immutable resume, budget, prediction, official
 scoring, and paired-report core is locally green; its paid n=2 gate remains.
-Continue the live Duet gates in slices 05–06; slices 05–08 are not complete.
+Continue the paid n=2 gate in slice 06; slices 06–08 are not complete.
 Last updated 2026-07-20.
 
-You are implementing this spec. Read this README fully, then run
-`bun benchmarks/swebench/cli.ts rollout smoke --all-languages` for
-[slice 05](slices/05-duet-in-container.md). Follow
+You are implementing this spec. Read this README fully, then run the two-task
+four-arm campaign in [slice 06](slices/06-rollout-pipeline-and-resume.md). Follow
 the dependency graph below; never spend campaign-scale money before slice 07
 says ADMIT.
 
@@ -50,7 +48,7 @@ Global TODO (owner slice in parens):
 - [x] duet-client (RPC transport + limits) + telemetry derivation, fixture-tested (03)
 - [x] Mac environment captured; x86 capacity, gold 30/30, and mini-swe-agent
       2/2 replication gates green; scorer fixtures captured (04)
-- [ ] Duet packaged into instance containers; 9-language smoke; patch
+- [x] Duet packaged into instance containers; 9-language smoke; patch
       round-trip integrity (05)
 - [ ] Rollout pipeline + resumable campaign orchestrator + predictions,
       locally complete; paid n=2 verification pending (06)
