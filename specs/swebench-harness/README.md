@@ -11,8 +11,8 @@ tasks; this harness uses different executors and advisors and a signal-seeking
 
 ## Next Agent Prompt
 
-**Status:** slices 01–07 are mechanically complete; slice 08 is running the
-broader advisor non-regression gate. Earlier gates exposed product lifecycle,
+**Status:** slices 01–07 are mechanically complete; slice 08 is optimizing the
+advisor context policy before the broader non-regression gate. Earlier gates exposed product lifecycle,
 E2B integration, binary-packaging, and advisor-review defects. The decisive
 pure-only failure was Kimi resolving `facebook__docusaurus-8927` while Fable
 endorsed an advised narrow regex fix that official adjacent cases rejected.
@@ -26,17 +26,33 @@ regression, with eight advisor-only improvements and seven both-resolved ties.
 GLM plus Kimi resolved 4/4 v2 trials versus 2/4 for pure GLM; Kimi plus Fable
 resolved 8/8 versus 3/8 for pure Kimi. Every successful consultation retained
 the complete available transcript with zero omitted messages. These adaptive
-repeats validate the fix but are not an unbiased lift estimate.
+repeats validate the quality baseline but also show that the current advisor
+request grows with raw executor history. They are not an unbiased lift estimate.
 
-Next, run the two frozen `advisor-nonregression-expansion-*-20260721-v1`
-campaigns. They cover Nushell 13605, Caddy 4943, Laravel 53206, Gson 2061, and
-Vue 11915—five repositories and languages selected deterministically from ids
-and labels without reading task contents or gold patches. The two comparisons
-use ten pair-local E2B workers concurrently. Both-resolved and advisor-only
-pass; neither-resolved is neutral; any pure-only result stops all remaining
-work for exact-trace diagnosis and a generic product fix. If all ten pairs are
-clean, freeze and launch one fresh 30×4 measurement namespace. Diagnostic
-retries remain historical engineering evidence only. The stopped v3 workers
+The first efficient-context candidate is implemented: a 32k total-input target,
+roughly 16k recent raw-message tail, normal observational compaction for older
+work, and a quality override that keeps the latest complete tool interaction
+even when it exceeds the soft target. The executor's own horizon is unchanged.
+A live falsification carried 88,780 estimated raw tokens and zero compacted
+messages; the enabled path carried 8,759 estimated tokens, compacted two old
+messages, retained the first task plus the newest complete tool call/result, and
+recovered evidence from both observations and the raw tail. The product suite
+passes 1160/1160 and the benchmark suite passes 79/79.
+
+Next, build an immutable E2B template from this checkpoint and run
+`advisor-context-efficiency-kimi-20260721-v1` on the five highest-risk
+Docusaurus 8927 pairs first. If none is pure-only, run its Docusaurus 9897
+pairs alongside `advisor-context-efficiency-glm-20260721-v1`, completing all
+15 pairs. The hard
+gates are zero pure-only outcomes and 15/15 advisor resolves, matching the known
+quality baseline. The efficiency gate requires at least 10% reduction from
+1,410,521 estimated and 1,648,243 exact provider advisor tokens; 15% is the
+stretch target. Also verify that extra memory-observer work does not erase the
+overall auxiliary-token savings. Any pure-only result stops immediately for
+exact-trace diagnosis. Only after freezing this policy may new diversity
+campaigns be created. The stopped
+`advisor-nonregression-expansion-*-20260721-v1` namespaces predate the policy
+change, have no completed pairs, and must never be resumed or scored. The stopped v3 workers
 finalized 15/30 rollouts for `$12.6315597`; reserve up to `$21.9315597`
 including the three interrupted arms. Their remote artifacts were not
 recovered, so never resume or score that namespace. Last updated 2026-07-21.
@@ -51,9 +67,12 @@ Local constraints to prove rather than assume:
 - Every worker uses the byte-identical Duet binary compiled once into the
   immutable E2B template. Workers never compile their own campaign artifact or
   fetch the pinned dataset snapshot at launch.
-- Every successful call records its real model window, conservative safety
-  margin, estimated input, included and omitted messages, images, and
-  truncation. Text-only advisors remain usable for text transcripts; an
+- Every successful call records its real model window, policy input target,
+  conservative safety margin, estimated input, raw and compacted message
+  counts, images, and whether compaction occurred. The hard model window is a
+  safety ceiling, not an input target. The newest complete tool interaction may
+  exceed the soft target and must be reported honestly in telemetry. Text-only
+  advisors remain usable for text transcripts; an
   image-bearing consultation they cannot inspect is logged as failed without
   failing the executor tool. The deterministic fixture and live GLM/Kimi eval
   prove complete tool results survive the old projection boundary; focused

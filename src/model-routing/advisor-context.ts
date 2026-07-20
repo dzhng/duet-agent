@@ -7,6 +7,12 @@ import { ADVISOR_SYSTEM_PROMPT } from "./prompts.js";
 const CONTEXT_OPEN = "<executor_context>";
 const CONTEXT_CLOSE = "</executor_context>";
 
+/** Soft total-input target chosen for advisor quality and repeated-call efficiency. */
+export const ADVISOR_INPUT_TARGET_TOKENS = 32_000;
+
+/** Recent raw executor-message allowance kept beside compacted observations. */
+export const ADVISOR_RECENT_MESSAGE_TARGET_TOKENS = 16_000;
+
 /** Minimal live-agent surface needed to capture the executor request faithfully. */
 export interface AdvisorContextSource {
   /** Current prompt, transcript, tools, and any partial assistant message. */
@@ -23,6 +29,14 @@ export interface AdvisorExecutorContext {
   messages: readonly Message[];
   /** Exact tool definitions available to the executor for the current turn. */
   tools: readonly Tool[];
+  /** Raw executor messages represented by observational context instead of repeated verbatim. */
+  compactedMessages?: number;
+}
+
+/** Optional advisor-only projection applied before conversion to provider messages. */
+export interface CaptureAdvisorContextOptions {
+  /** Replaces older history with normal observational context and a recent raw tail. */
+  transformMessages: (messages: AgentMessage[]) => Promise<AgentMessage[]>;
 }
 
 /** Inputs for fitting the executor context into the advisor model's real request window. */
@@ -45,10 +59,14 @@ export interface AdvisorContextMetadata {
   safetyMarginTokens: number;
   /** Maximum estimated tokens available to the quoted executor context. */
   inputLimitTokens: number;
+  /** Preferred total advisor input; the hard model limit remains a safety ceiling. */
+  inputTargetTokens: number;
   /** Heuristic token estimate including the shared coarse per-image charge. */
   estimatedInputTokens: number;
   /** Number of executor messages included in the serialized context. */
   includedMessages: number;
+  /** Raw executor messages represented by observational context rather than copied verbatim. */
+  compactedMessages: number;
   /** Number of older executor messages omitted at whole-message boundaries. */
   omittedMessages: number;
   /** True only when the advisor model's real window forced message omission. */
@@ -74,28 +92,39 @@ export interface AdvisorContext {
  */
 export async function captureAdvisorExecutorContext(
   source: AdvisorContextSource,
+  options?: CaptureAdvisorContextOptions,
 ): Promise<AdvisorExecutorContext> {
   const messages = [...source.state.messages];
   const streamingMessage = source.state.streamingMessage;
   if (streamingMessage && messages.at(-1) !== streamingMessage) {
     messages.push(streamingMessage);
   }
+  let selectedMessages = options ? await options.transformMessages(messages) : messages;
+  const firstUserMessage = messages.find((message) => message.role === "user");
+  if (firstUserMessage && !selectedMessages.includes(firstUserMessage)) {
+    selectedMessages = [firstUserMessage, ...selectedMessages];
+  }
+  const compactedMessages = messages.filter(
+    (message) => !selectedMessages.includes(message),
+  ).length;
   return {
     systemPrompt: source.state.systemPrompt,
-    messages: await source.convertToLlm(messages),
+    messages: await source.convertToLlm(selectedMessages),
     tools: source.state.tools.map(({ name, description, parameters }) => ({
       name,
       description,
       parameters,
     })),
+    compactedMessages,
   };
 }
 
 /**
- * Serialize the actual executor context without observer projection. When the
- * advisor model cannot fit it, remove only the oldest complete messages; tool
- * definitions, the resolved system prompt, and retained message structures
- * remain intact. Image bytes travel as matching multimodal attachments.
+ * Serialize the captured raw or observationally compacted executor context.
+ * When the advisor's hard model window still cannot fit it, remove only the
+ * oldest complete messages; tool definitions, the resolved system prompt, and
+ * retained message structures remain intact. Image bytes travel as matching
+ * multimodal attachments.
  */
 export function buildAdvisorContext(input: BuildAdvisorContextInput): AdvisorContext {
   const contextWindowTokens = positiveInteger(input.contextWindowTokens);
@@ -110,7 +139,13 @@ export function buildAdvisorContext(input: BuildAdvisorContextInput): AdvisorCon
     contextWindowTokens - reservedOutputTokens - safetyMarginTokens - advisorSystemTokens,
   );
   let messages = [...input.context.messages];
-  let serialized = serializeContext(input.context.systemPrompt, input.context.tools, messages, 0);
+  let serialized = serializeContext(
+    input.context.systemPrompt,
+    input.context.tools,
+    messages,
+    input.context.compactedMessages ?? 0,
+    0,
+  );
   const firstUserMessage = messages.find((message) => message.role === "user");
   while (
     messages.length > (firstUserMessage ? 1 : 0) &&
@@ -123,6 +158,7 @@ export function buildAdvisorContext(input: BuildAdvisorContextInput): AdvisorCon
       input.context.systemPrompt,
       input.context.tools,
       messages,
+      input.context.compactedMessages ?? 0,
       input.context.messages.length - messages.length,
     );
   }
@@ -142,8 +178,10 @@ export function buildAdvisorContext(input: BuildAdvisorContextInput): AdvisorCon
       reservedOutputTokens,
       safetyMarginTokens,
       inputLimitTokens,
+      inputTargetTokens: Math.min(ADVISOR_INPUT_TARGET_TOKENS, inputLimitTokens),
       estimatedInputTokens: advisorSystemTokens + estimateSerializedTokens(serialized),
       includedMessages: messages.length,
+      compactedMessages: input.context.compactedMessages ?? 0,
       omittedMessages,
       truncated: omittedMessages > 0,
       attachedImages: serialized.images.length,
@@ -155,6 +193,7 @@ function serializeContext(
   systemPrompt: string,
   tools: readonly Tool[],
   messages: readonly Message[],
+  compactedMessages: number,
   omittedMessages: number,
 ): { text: string; images: ImageContent[] } {
   const context: Context = {
@@ -164,6 +203,7 @@ function serializeContext(
   };
   const images: ImageContent[] = [];
   const payload = {
+    compaction: { compactedMessages },
     truncation: { omittedMessages },
     executorContext: context,
   };

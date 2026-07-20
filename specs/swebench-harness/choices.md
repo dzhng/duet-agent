@@ -1538,7 +1538,7 @@ the number of rollouts or the independently enforced model-spend bound.
   outcomes produced under a rejected treatment definition.
 - **Confidence:** **high**.
 
-### S51 — Advisor context is bounded only by the receiving model's real window
+### S51 — Advisor context is bounded only by the receiving model's real window (superseded by S65)
 
 - **When:** implementing the stopped-v4 context-fidelity correction.
 - **The choice:** Capture the executor's resolved system prompt, exact tool
@@ -1559,8 +1559,10 @@ the number of rollouts or the independently enforced model-spend bound.
   must carry parseable context-window telemetry. A smaller advisor model can
   still truncate, but the report makes that explicit instead of calling a
   projection “full context.”
-- **Verdict:** **sound.** The real provider limit is the direct local guarantee;
-  a second arbitrary cap only removes evidence from the reviewer.
+- **Verdict:** **sound for removing the old lossy 10k projection, superseded for
+  steady-state policy by S65.** The hard provider limit remains the final safety
+  guarantee, but observations plus a measured soft target now bound repeated
+  advisor cost without reviving the old preview projection.
 - **Confidence:** **high** after GLM and Kimi recovered an unguessable marker
   beyond the former tool-result cutoff, the temporary old cutoff made the eval
   fail, and restoration made it pass again.
@@ -1827,7 +1829,7 @@ the number of rollouts or the independently enforced model-spend bound.
 
 - **When:** diagnosing the Kimi/Fable pure-only result on
   `facebook__docusaurus-8927`.
-- **The choice:** Keep the existing advisor lifecycle and full-context transport,
+- **The choice:** Keep the existing advisor lifecycle and evidence-rich context transport,
   because they delivered three successful, untruncated consultations. Change
   the advisor's product prompt instead: it must independently challenge the
   executor's conclusion, seek authoritative implementations or repository
@@ -1922,6 +1924,134 @@ the number of rollouts or the independently enforced model-spend bound.
   across sandboxes.
 - **Confidence:** **high** in provenance and budget admission; outcome evidence
   remains pending until the official scorer evaluates all ten pairs.
+
+### S65 — Advisor history is compacted before the model's hard window
+
+- **When:** after the 15 known pairs established a 15/15 advisor-resolve quality
+  baseline but showed consultations carrying as many as roughly 43k estimated
+  input tokens.
+- **The choice:** Treat the advisor model's advertised context window as a hard
+  safety ceiling, not the desired request size. Keep the executor's resolved
+  system prompt, exact tool definitions, first user task, and a generous recent
+  wire-faithful tail. Represent older complete messages through the same local
+  observational-memory semantics used by normal compaction. Tune the policy
+  envelope against the 15 known pairs: zero pure-only outcomes and 15/15
+  advisor resolves are hard quality gates; measured advisor input tokens choose
+  among passing candidates. Use offline captured-transcript and live fidelity
+  checks before each paid paired campaign.
+- **The gap:** The user rejected both the old fixed 10k limit and the replacement
+  policy that filled almost the entire advisor window. They did not prescribe a
+  single token number because the right boundary must balance evidence quality
+  against repeated-call cost.
+- **The reach:** Advisor calls become bounded even for million-token models,
+  while older work remains available as observations instead of disappearing at
+  a raw-message cutoff. The policy is generic product behavior, not a SWE-bench
+  rule. Changing it invalidates pending diagnostic namespaces, so the stopped
+  `advisor-nonregression-expansion-*-20260721-v1` campaigns cannot be resumed or
+  scored and fresh ids are required after the policy freezes.
+- **Verdict:** **needs-user on the final efficiency bar; provisional 10% gate
+  recommended.** The pre-change 34 calls carried 1,410,521 estimated advisor
+  input tokens and 1,648,243 exact provider-reported advisor tokens. Start with
+  a 32k input target and roughly 16k recent raw-message tail. A selected
+  candidate must reduce both totals by at least 10% (to at most 1,269,469
+  estimated and 1,483,419 exact); 15% is the stretch target. Select the
+  smallest candidate that preserves the known quality baseline rather than
+  maximizing use of the advisor's window. Call count and dollars remain
+  diagnostics, not admission rules. This is reversible: preserve the campaign
+  artifacts and raise the bar or try a smaller target if 10% is not efficient
+  enough after quality is proven.
+- **Confidence:** **high** in the architecture and quality gates, **medium-low**
+  that 10% is the user's preferred final efficiency threshold because no
+  numerical target was specified.
+
+### S66 — The newest complete tool interaction outranks the soft token target
+
+- **When:** the first live compaction eval showed that whole-message eviction
+  could summarize away one oversized latest test result while retaining only
+  the assistant's subsequent `ask_advisor` call.
+- **The choice:** Protect the newest tool call, its complete tool result, and
+  every following message from advisor-only eviction. The 32k target remains a
+  soft efficiency target; if that protected interaction is larger, send it and
+  expose the overage in telemetry. Continue compacting all older eligible work
+  into observations.
+- **The gap:** Normal actor compaction guarantees only a one-message recent tail.
+  That is provider-valid, but it is not enough for an advisor whose central job
+  is to review the executor's freshest evidence.
+- **The reach:** Final test output, diffs, and inspection results remain
+  wire-faithful even when unusually large. A pathological latest result can
+  exceed the target, so aggregate token efficiency must be measured rather than
+  inferred from the constant.
+- **Verdict:** **sound.** Quality evidence is the reason to consult an advisor;
+  dropping the freshest evidence to hit a soft budget would optimize the wrong
+  objective.
+- **Confidence:** **high** from a deterministic oversized-result regression and
+  a live eval that compacted older work while preserving the newest complete
+  call/result pair.
+
+### S67 — A memory-disabled advisor keeps raw history instead of silently dropping it
+
+- **When:** composing the soft context target with incognito and explicitly
+  memory-disabled runners.
+- **The choice:** Compact only when a durable memory session exists to receive
+  the normal observation drain. If memory is disabled or unavailable, retain
+  the raw transcript up to the advisor model's hard window and report any
+  hard-window omission through the existing truncation telemetry. The unbuilt
+  alternative would hit 32k by deleting old messages with no observation that
+  represents them.
+- **The gap:** The user required observation-based compaction but did not specify
+  what to do when the observation system is intentionally absent.
+- **The reach:** Incognito and memory-disabled product use can cost more advisor
+  tokens, but it does not pretend that deleted history was summarized. Benchmark
+  runs use the default durable memory path, so they exercise the efficient path.
+- **Verdict:** **sound.** Fidelity should degrade only at the real model limit
+  when the mechanism that makes soft compaction information-preserving is absent.
+- **Confidence:** **high** because silent lossy compaction would violate the
+  user's stated design more directly than a documented soft-target miss.
+
+### S68 — Advisor compaction drains observations on demand without moving the executor horizon
+
+- **When:** deciding how older work from one still-active executor turn becomes
+  visible as observations before an advisor call.
+- **The choice:** When the raw advisor request first crosses the 32k target, run
+  the existing default memory observer immediately, refresh the same frozen
+  memory pack normal compaction uses, and advance a separate advisor-only
+  horizon. Do not move the executor's horizon or add a second summarizer. At the
+  end of the turn, normal memory processing sees only the still-unobserved suffix,
+  although this can split one large observer pass into two smaller passes.
+- **The gap:** Reusing only the previously frozen pack would miss all older work
+  produced during the current active turn; applying normal `/compact` would also
+  change what the executor sees next.
+- **The reach:** Advisor calls can add observer latency before generation and can
+  alter when durable observations are written, but they use the default memory
+  model and their usage remains in the turn's normal per-model ledger. The 15-pair
+  efficiency gate must verify that advisor savings are not erased by extra
+  auxiliary work.
+- **Verdict:** **sound.** It is the only existing product path that makes current
+  older work observable without inventing a parallel summary format or changing
+  the executor's continuation context.
+- **Confidence:** **medium-high** until the fresh paired campaign measures net
+  tokens and latency under realistic repeated consultations.
+
+### S69 — Advisor preview uses frozen observations but never creates new ones
+
+- **When:** keeping `duet route advisor-preview` aligned with the new runtime
+  context policy.
+- **The choice:** Load the normal durable memory pack and apply the same 32k
+  projection for a stored-session preview, but disable the on-demand observer
+  drain. A preview may show observations already written by completed turns; it
+  never calls a model or writes memory merely because someone inspected it. If
+  memory is unavailable, the preview stays raw.
+- **The gap:** Calling the exact runtime capture path would make a command labeled
+  read-only spend tokens and mutate memory, while leaving preview raw would make
+  its token and cost estimates disagree with real advisor calls.
+- **The reach:** Stored-session estimates track production whenever the frozen
+  pack covers the session, without surprising side effects. A transcript whose
+  newest long turn was never observed can still preview larger than production's
+  eventual on-demand projection.
+- **Verdict:** **sound.** Read-only inspection must not trigger paid generation or
+  durable writes; reusing the frozen pack is the closest side-effect-free view.
+- **Confidence:** **high** because the command's existing read-only contract rules
+  out the mutating alternative.
 
 ## Compressed trivial discretion
 

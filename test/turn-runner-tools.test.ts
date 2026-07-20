@@ -93,28 +93,32 @@ describe("TurnRunner tools", () => {
     let receivedSignal: AbortSignal | undefined;
     let recordedUsage: LanguageModelUsage | undefined;
     let consults = 0;
+    let capturedContextWindow: number | undefined;
     const tool = createAskAdvisorTool({
-      getContext: async () => ({
-        systemPrompt: "You are the executor.",
-        tools: [
-          {
-            name: "inspect_router",
-            description: "Inspect the router.",
-            parameters: Type.Object({}),
-          },
-        ],
-        messages: [
-          { role: "user", content: "Build the router.", timestamp: 1 },
-          {
-            role: "toolResult",
-            toolCallId: "inspect-1",
-            toolName: "inspect_router",
-            content: [{ type: "text", text: "The router API already owns the advisor gate." }],
-            isError: false,
-            timestamp: 2,
-          },
-        ],
-      }),
+      getContext: async (contextWindowTokens) => {
+        capturedContextWindow = contextWindowTokens;
+        return {
+          systemPrompt: "You are the executor.",
+          tools: [
+            {
+              name: "inspect_router",
+              description: "Inspect the router.",
+              parameters: Type.Object({}),
+            },
+          ],
+          messages: [
+            { role: "user", content: "Build the router.", timestamp: 1 },
+            {
+              role: "toolResult",
+              toolCallId: "inspect-1",
+              toolName: "inspect_router",
+              content: [{ type: "text", text: "The router API already owns the advisor gate." }],
+              isError: false,
+              timestamp: 2,
+            },
+          ],
+        };
+      },
       resolveModel: () => ({
         modelName: "anthropic/claude-fable-5",
         contextWindowTokens: 200_000,
@@ -145,6 +149,7 @@ describe("TurnRunner tools", () => {
     const result = await tool.execute("advisor-2", {}, controller.signal);
 
     expect(receivedSignal).toBe(controller.signal);
+    expect(capturedContextWindow).toBe(200_000);
     expect(consults).toBe(1);
     expect(recordedUsage).toEqual(ADVISOR_USAGE);
     expect(result.terminate).toBe(false);

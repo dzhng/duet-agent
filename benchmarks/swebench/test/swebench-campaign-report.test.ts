@@ -75,6 +75,11 @@ describe("SWE-bench paired report", () => {
       executorCostUsd: 0,
       auxiliaryCostUsd: 0.75,
     });
+    expect(report.configs["glm-kimi-advisor"]!.consultation).toMatchObject({
+      estimatedInputTokens: 12_000,
+      compactedMessages: 3,
+      exactAdvisorTokens: 0,
+    });
     const markdown = renderCampaignReport(report);
     expect(markdown).toContain("Enabled-only: 1 (org__repo-2)");
     expect(markdown).toContain("org__repo-1 | pure only | not called");
@@ -251,7 +256,7 @@ describe("SWE-bench paired report", () => {
       expect.objectContaining({ valid: 1, truncated: 1, missing: 0, malformed: 0 }),
     );
     expect(renderCampaignReport(report)).toContain(
-      "1 valid, 12000/262144 estimated tokens (5200 safety margin), 8 included/4 omitted messages, 1 images, 1 truncated",
+      "1 valid, 12000 estimated/32000 target/262144 window tokens (5200 safety margin), 8 included/3 compacted/4 omitted messages, 1 images, 1 truncated",
     );
     expect(campaignReportPassesAdmission(report)).toBe(false);
   });
@@ -447,8 +452,10 @@ function successfulCall(
       reservedOutputTokens: 2048,
       safetyMarginTokens: 5200,
       inputLimitTokens: 259000,
+      inputTargetTokens: 32000,
       estimatedInputTokens: 12000,
       includedMessages: 8,
+      compactedMessages: 3,
       omittedMessages: 0,
       truncated: false,
       attachedImages: 1,

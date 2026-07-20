@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AssistantMessage, Message, Tool } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import {
+  ADVISOR_INPUT_TARGET_TOKENS,
   buildAdvisorContext,
   captureAdvisorExecutorContext,
   type AdvisorContextSource,
@@ -49,6 +50,8 @@ function payload(text: string) {
 describe("buildAdvisorContext", () => {
   test("reserves the documented compact advisor output allowance", () => {
     expect(ADVISOR_MAX_OUTPUT_TOKENS).toBe(2_048);
+    expect(ADVISOR_INPUT_TARGET_TOKENS).toBe(32_000);
+    expect(build([]).metadata.inputTargetTokens).toBe(32_000);
   });
 
   test("captures a partial assistant message once for runtime and preview callers", async () => {
@@ -73,6 +76,45 @@ describe("buildAdvisorContext", () => {
     expect((await captureAdvisorExecutorContext(source)).messages).toEqual([user, streaming]);
     source.state.messages = [user, streaming];
     expect((await captureAdvisorExecutorContext(source)).messages).toEqual([user, streaming]);
+  });
+
+  test("represents compacted history with observations while preserving the first task and recent tail", async () => {
+    const task = { role: "user" as const, content: "ORIGINAL TASK", timestamp: 1 };
+    const old = assistant([{ type: "text", text: "OLD EXECUTOR WORK" }]);
+    const recent = { role: "user" as const, content: "RECENT EVIDENCE", timestamp: 3 };
+    const observation = {
+      role: "user" as const,
+      content: "<local_observations>OLD WORK SUMMARY</local_observations>",
+      timestamp: 4,
+    };
+    const source: AdvisorContextSource = {
+      state: {
+        systemPrompt: "SYS",
+        messages: [task, old, recent],
+        tools: [],
+        streamingMessage: undefined,
+      },
+      convertToLlm: (messages) => messages as Message[],
+    };
+
+    const context = await captureAdvisorExecutorContext(source, {
+      transformMessages: async () => [observation, recent],
+    });
+    const result = buildAdvisorContext({
+      context,
+      contextWindowTokens: 200_000,
+      reservedOutputTokens: 2_048,
+    });
+
+    expect(payload(result.text).executorContext.messages).toEqual([task, observation, recent]);
+    expect(result.text).toContain("OLD WORK SUMMARY");
+    expect(result.text).not.toContain("OLD EXECUTOR WORK");
+    expect(result.metadata).toMatchObject({
+      includedMessages: 3,
+      compactedMessages: 1,
+      omittedMessages: 0,
+      truncated: false,
+    });
   });
 
   test("preserves the resolved prompt, exact tools, thinking, tool calls, and full tool results", () => {

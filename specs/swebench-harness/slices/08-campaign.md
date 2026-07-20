@@ -68,12 +68,17 @@ immutable historical evidence and none contributes outcomes to v5.
 
 No full campaign starts until all of these are true:
 
-1. **Full-context fidelity (implemented):** a deterministic captured-call fixture proves that
-   the advisor receives the executor's full available system prompt, tool
-   definitions, prior messages, tool calls/results, and current-turn text in
-   order. For a transcript that fits the advisor model's context window, no
-   text-preview projection, elision marker, or configured token truncation is
-   allowed. Focused live artifacts record whether any call was truncated.
+1. **Compacted-context fidelity (implemented, paid gate pending):** a deterministic captured-call
+   fixture proves that the advisor receives the executor's resolved system
+   prompt, exact tool definitions, first user task, observational summary of
+   older history, and a generous recent wire-faithful tail containing complete
+   tool calls/results and current-turn text in order. The configured advisor
+   envelope is intentionally smaller than the model's hard context window; the
+   hard window remains a final safety ceiling. The latest complete tool
+   interaction is protected even when it alone exceeds the soft target. Unit
+   tests and a falsified live eval prove compaction, observation recovery,
+   recent-result fidelity, and token accounting; the 15-pair gate still decides
+   whether the chosen boundary preserves benchmark quality.
 2. **Product lifecycle (implemented):** the benchmark contains no advisor call
    schedule. The shipped product owns orientation and completion-review
    consultations for substantive work. Deterministic tests cover both phases,
@@ -99,10 +104,15 @@ No full campaign starts until all of these are true:
    shared envelope. The completed known-case gate has 15/15 non-regressions:
    eight enabled-only improvements and seven both-resolved ties. The v2 GLM
    comparison is 2 enabled-only and 2 both-resolved; the v2 Kimi comparison is
-   5 enabled-only and 3 both-resolved. The frozen expansion now adds Nushell
-   13605, Caddy 4943, Laravel 53206, Gson 2061, and Vue 11915 under both
-   comparisons, selected from ids and language labels without task-content or
-   gold-patch inspection.
+   5 enabled-only and 3 both-resolved. Before broadening, use these 15 pairs as
+   an adaptive tuning set for advisor-context efficiency. A candidate must keep
+   zero pure-only outcomes and all 15 advisor resolves while reducing measured
+   advisor input tokens. The first diversity namespaces were stopped before a
+   pair completed when this product-policy change superseded them; new frozen
+   ids are required after the context policy is fixed. The first 32k candidate
+   uses `advisor-context-efficiency-kimi-20260721-v1` and
+   `advisor-context-efficiency-glm-20260721-v1`: run the five Docusaurus 8927
+   pairs first, then the other ten pairs if that high-risk wave is clean.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails

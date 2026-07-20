@@ -17,10 +17,14 @@ export interface AdvisorContextObservation {
   safetyMarginTokens: number;
   /** Maximum executor-context estimate after system and output reservations. */
   inputLimitTokens: number;
+  /** Preferred total advisor input under the active product context policy. */
+  inputTargetTokens?: number;
   /** Estimated total advisor input, including the shared per-image charge. */
   estimatedInputTokens: number;
   /** Executor messages retained in the advisor request. */
   includedMessages: number;
+  /** Raw executor messages represented by observational context. */
+  compactedMessages?: number;
   /** Oldest executor messages omitted at whole-message boundaries. */
   omittedMessages: number;
   /** True when the real advisor model window forced message omission. */
@@ -274,8 +278,10 @@ function asAdvisorContext(value: unknown): AdvisorContextObservation | undefined
   const reservedOutputTokens = nonnegativeInteger(context.reservedOutputTokens);
   const safetyMarginTokens = nonnegativeInteger(context.safetyMarginTokens);
   const inputLimitTokens = positiveInteger(context.inputLimitTokens);
+  const inputTargetTokens = positiveInteger(context.inputTargetTokens);
   const estimatedInputTokens = positiveInteger(context.estimatedInputTokens);
   const includedMessages = nonnegativeInteger(context.includedMessages);
+  const compactedMessages = nonnegativeInteger(context.compactedMessages);
   const omittedMessages = nonnegativeInteger(context.omittedMessages);
   const attachedImages = nonnegativeInteger(context.attachedImages);
   if (
@@ -296,8 +302,10 @@ function asAdvisorContext(value: unknown): AdvisorContextObservation | undefined
     reservedOutputTokens,
     safetyMarginTokens,
     inputLimitTokens,
+    ...(inputTargetTokens !== undefined ? { inputTargetTokens } : {}),
     estimatedInputTokens,
     includedMessages,
+    ...(compactedMessages !== undefined ? { compactedMessages } : {}),
     omittedMessages,
     truncated: context.truncated,
     attachedImages,
