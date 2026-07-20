@@ -118,7 +118,7 @@ import {
 } from "./tools.js";
 import { connectMcpServers, type McpRuntime } from "./mcp.js";
 import { SkillContext } from "./skill-context.js";
-import { currentParkState } from "./state-machine-session.js";
+import { currentParkState, currentScheduledState } from "./state-machine-session.js";
 import {
   failActiveSession,
   markTerminalAcknowledged,
@@ -1675,6 +1675,29 @@ export class TurnRunner {
   }
 
   private async interruptTasks(reason: string): Promise<void> {
+    const scheduledState = currentScheduledState(this.stateMachine);
+    const scheduledTask = scheduledState
+      ? this.taskManager
+          .list()
+          .find(
+            (task) =>
+              task.kind === "scheduled" &&
+              task.status === "scheduled" &&
+              task.name === scheduledState.name,
+          )
+      : undefined;
+    if (scheduledState && scheduledTask) {
+      const recorded = recordSettled(
+        this.requireStateMachine(),
+        scheduledState.name,
+        scheduledState.kind,
+        { type: "interrupted", reason },
+        undefined,
+        this.clock.now(),
+      );
+      this.setStateMachine(recorded.session);
+      this.ignoredTaskSettlements.add(scheduledTask.id);
+    }
     for (const [id, metadata] of this.stateTasks) {
       if (this.taskManager.output(id)?.descriptor.status !== "running") continue;
       const recorded = recordSettled(

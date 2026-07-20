@@ -6,6 +6,7 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnState } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
+import { waitFor } from "./helpers/async.js";
 
 class InterruptTurnRunner extends TurnRunner {
   streamStarted: Promise<void>;
@@ -88,5 +89,71 @@ describe("TurnRunner interrupts", () => {
         agent: { status: "cancelled" },
       },
     });
+  });
+
+  test("interrupting a hydrated timer records the state-machine interruption", async () => {
+    const runner = new InterruptTurnRunner();
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+    const now = Date.now();
+    const wakeAt = now + 60_000;
+    const sleepingState: TurnState = {
+      status: "sleeping",
+      mode: "agent",
+      agent: { status: "waiting", messages: [] },
+      stateMachine: {
+        definition: {
+          name: "hydrated timer",
+          prompt: "Wait, then continue.",
+          states: [{ name: "wait", kind: "timer", wakeAfterMs: 60_000 }],
+        },
+        prompt: "",
+        currentState: "wait",
+        progress: {
+          states: {
+            wait: { kind: "timer", runs: 1, sleeps: 1, startedAt: now, nextWakeAt: wakeAt },
+          },
+        },
+        history: [
+          { type: "state_machine_started", timestamp: now },
+          { type: "state_started", timestamp: now, state: "wait" },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      },
+      tasks: [
+        {
+          id: "t1",
+          kind: "scheduled",
+          name: "wait",
+          label: "Wait for wait",
+          ownerScopeId: "turn-1",
+          status: "scheduled",
+          startedAt: now,
+          wakeAt,
+        },
+      ],
+      nextTaskId: 2,
+    };
+    await runner.start({ type: "start", state: sleepingState });
+
+    runner.interrupt({ type: "interrupt" });
+    await waitFor(() => events.some((event) => event.type === "interrupted"));
+    const interrupted = events.find((event) => event.type === "interrupted");
+    assert(interrupted?.type === "interrupted");
+
+    expect(interrupted.state).toMatchObject({
+      status: "interrupted",
+      stateMachine: {
+        currentState: "interrupted",
+        progress: { states: { wait: { nextWakeAt: undefined } } },
+      },
+    });
+    expect(interrupted.state.stateMachine?.history).toContainEqual(
+      expect.objectContaining({ type: "state_interrupted", state: "wait" }),
+    );
+    expect(interrupted.state.tasks).toContainEqual(
+      expect.objectContaining({ id: "t1", status: "stopped" }),
+    );
   });
 });
