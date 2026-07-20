@@ -146,27 +146,33 @@ async function capacityProbe(
   });
   const startedAt = new Date().toISOString();
   try {
-    const [
-      info,
-      shaResult,
-      architecture,
-      osRelease,
-      dockerClientVersion,
-      dockerServerVersion,
-      pythonVersion,
-      swebenchVersion,
-    ] = await Promise.all([
-      sandbox.getInfo(),
-      sandbox.commands.run("git rev-parse HEAD", { cwd: REMOTE_REPO_ROOT }),
-      sandbox.commands.run("uname -m"),
-      sandbox.commands.run(". /etc/os-release && printf '%s' \"$PRETTY_NAME\""),
-      sandbox.commands.run("docker version --format '{{.Client.Version}}'"),
-      sandbox.commands.run("docker version --format '{{.Server.Version}}'"),
-      sandbox.commands.run(`${REMOTE_REPO_ROOT}/benchmarks/swebench/.venv/bin/python --version`),
-      sandbox.commands.run(
-        `${REMOTE_REPO_ROOT}/benchmarks/swebench/.venv/bin/python -c "import importlib.metadata; print(importlib.metadata.version('swebench'))"`,
-      ),
-    ]);
+    const commandOptions = { timeoutMs: 120_000 };
+    const info = await sandbox.getInfo();
+    const shaResult = await sandbox.commands.run("git rev-parse HEAD", {
+      ...commandOptions,
+      cwd: REMOTE_REPO_ROOT,
+    });
+    const architecture = await sandbox.commands.run("uname -m", commandOptions);
+    const osRelease = await sandbox.commands.run(
+      ". /etc/os-release && printf '%s' \"$PRETTY_NAME\"",
+      commandOptions,
+    );
+    const dockerClientVersion = await sandbox.commands.run(
+      "docker version --format '{{.Client.Version}}'",
+      commandOptions,
+    );
+    const dockerServerVersion = await sandbox.commands.run(
+      "docker version --format '{{.Server.Version}}'",
+      commandOptions,
+    );
+    const pythonVersion = await sandbox.commands.run(
+      `${REMOTE_REPO_ROOT}/benchmarks/swebench/.venv/bin/python --version`,
+      commandOptions,
+    );
+    const swebenchVersion = await sandbox.commands.run(
+      `${REMOTE_REPO_ROOT}/benchmarks/swebench/.venv/bin/python -c "import importlib.metadata; print(importlib.metadata.version('swebench'))"`,
+      commandOptions,
+    );
     if (shaResult.stdout.trim() !== repositorySha) {
       throw new Error(
         `Template repository SHA is ${shaResult.stdout.trim()}, expected ${repositorySha}.`,
