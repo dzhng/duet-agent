@@ -56,6 +56,14 @@ export interface SelectManifestOptions {
   excludedInstanceIds?: readonly string[];
 }
 
+/** Inputs for a small, language-diverse pilot drawn from a committed manifest. */
+export interface SelectPilotOptions {
+  /** Unsigned 32-bit seed consumed by the same PRNG as full manifest selection. */
+  seed: number;
+  /** Number of instances and therefore distinct languages to select. */
+  size: number;
+}
+
 export const MANIFEST_ALGORITHM_VERSION = "language-stratified-v2";
 
 /**
@@ -210,6 +218,29 @@ export function selectManifest(
     excludedInstanceIds,
     entries: selected,
   };
+}
+
+/** Select a seeded pilot without allowing alphabetic manifest order to choose its tasks. */
+export function selectPilotInstanceIds(
+  manifest: InstanceManifest,
+  options: SelectPilotOptions,
+): string[] {
+  if (!Number.isSafeInteger(options.seed) || options.seed < 0 || options.seed > 0xffff_ffff) {
+    throw new Error("Pilot seed must be an unsigned 32-bit integer.");
+  }
+  if (!Number.isSafeInteger(options.size) || options.size < 1 || options.size > LANGUAGES.length) {
+    throw new Error(`Pilot size must be an integer from 1 to ${LANGUAGES.length}.`);
+  }
+
+  const selected: string[] = [];
+  const languages = new Set<Language>();
+  for (const entry of shuffle(manifest.entries, makePrng(options.seed))) {
+    if (languages.has(entry.language)) continue;
+    languages.add(entry.language);
+    selected.push(entry.instanceId);
+    if (selected.length === options.size) return selected.sort();
+  }
+  throw new Error(`Manifest contains only ${languages.size} distinct languages.`);
 }
 
 /** Canonical on-disk representation used for reproducibility and hashing. */

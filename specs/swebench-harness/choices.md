@@ -1023,6 +1023,46 @@ ownerScopeId }`, even though both execute through the same task manager.
   doubled live path, batching is unit-tested, and an eight-result live resume
   completed with no Docker pulls.
 
+### S29 — The three-task pilot is a seeded distinct-language draw from the committed 30
+
+- **When:** preparing the fresh slice 07 pilot after the stopped smoke.
+- **The choice:** Shuffle the committed manifest with the same checked-in PRNG,
+  then take the first three entries whose languages have not appeared yet. The
+  campaign records seed `20260721`, which selects `fmtlib__fmt-3729`,
+  `preactjs__preact-2757`, and `sharkdp__bat-1892` (C++, JavaScript, Rust). The
+  runtime validates the recorded ids against that seed. The unbuilt alternative
+  takes the alphabetically first rows or reuses the two already-observed smoke
+  tasks and adds a convenient third.
+- **The gap:** The spec required three languages and a recorded seed but the
+  full-manifest selector deliberately requires all nine languages, so it could
+  not represent a three-task subset directly.
+- **The reach:** Pilot admission cannot be steered toward easy tasks, cached
+  images, or known 100% smoke outcomes. Future pilot subsets use the same public
+  rule and fail validation if someone hand-edits their ids.
+- **Verdict:** **sound.** A distinct-language seeded draw preserves diversity
+  and makes the small sample reproducible without pretending it is a new full
+  manifest.
+- **Confidence:** **high** because selection is pure, red/green tested, and the
+  committed campaign is checked against its seed.
+
+### S30 — The fresh pilot carries a conservative $5 sunk-spend reserve
+
+- **When:** freezing the fresh three-task campaign after the $3.6834 stopped
+  smoke.
+- **The choice:** Advance the earlier $1 prerequisite reserve to $5, rounding
+  up after adding the entire stopped-smoke model spend. The unbuilt alternative
+  starts a new campaign id with its breaker reset to the old prerequisite-only
+  value.
+- **The gap:** Campaign ids isolate provenance and artifacts, but the user's
+  $500 envelope spans the whole experiment rather than one id.
+- **The reach:** Every fresh-pilot launch reserves against all known earlier
+  spend while retaining over $495 of the envelope. Final reports can keep each
+  campaign's measured cost separate without weakening the global breaker.
+- **Verdict:** **sound.** Rounding upward is conservative and immaterial to
+  capacity, while forgetting prior campaign spend would violate the hard cap.
+- **Confidence:** **high** because $5 exceeds the known prerequisite plus
+  stopped-smoke spend and the per-rollout breaker reserves before launch.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

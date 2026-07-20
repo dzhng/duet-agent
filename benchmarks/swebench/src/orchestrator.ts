@@ -13,7 +13,12 @@ import {
   resolveAndPullOfficialImage,
   type CommandRunner,
 } from "./container.js";
-import type { DatasetRow, InstanceManifest, ManifestEntry } from "./manifest.js";
+import {
+  selectPilotInstanceIds,
+  type DatasetRow,
+  type InstanceManifest,
+  type ManifestEntry,
+} from "./manifest.js";
 import { buildRolloutPrompt } from "./prompt.js";
 import { runRollout, type RolloutContainer, type RunRolloutResult } from "./rollout.js";
 
@@ -26,6 +31,8 @@ export interface CampaignSpec {
   manifestPath: string;
   /** Optional fixed subset used by pilot campaigns. */
   instanceIds?: string[];
+  /** Seed proving an instance subset came from the committed pilot selector. */
+  instanceSelectionSeed?: number;
   /** Explicit model-treatment arms included in this campaign. */
   configs: CampaignConfigName[];
   /** Independent attempts per logical arm. */
@@ -300,6 +307,18 @@ function validateCampaign(spec: CampaignSpec, manifest: InstanceManifest): void 
   for (const instanceId of spec.instanceIds ?? []) {
     if (!manifestIds.has(instanceId))
       throw new Error(`Campaign instance not in manifest: ${instanceId}.`);
+  }
+  if (spec.instanceSelectionSeed !== undefined) {
+    if (!spec.instanceIds?.length) {
+      throw new Error("Campaign instanceSelectionSeed requires a non-empty instanceIds subset.");
+    }
+    const expected = selectPilotInstanceIds(manifest, {
+      seed: spec.instanceSelectionSeed,
+      size: spec.instanceIds.length,
+    });
+    if (JSON.stringify([...spec.instanceIds].sort()) !== JSON.stringify(expected)) {
+      throw new Error("Campaign instanceIds do not match the recorded pilot selection seed.");
+    }
   }
   for (const value of [
     spec.limits.costUsd,

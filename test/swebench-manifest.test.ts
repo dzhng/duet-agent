@@ -12,6 +12,7 @@ import {
   LANGUAGES,
   REPO_LANGUAGE,
   selectManifest,
+  selectPilotInstanceIds,
   serializeManifest,
   type DatasetRow,
   type DatasetSnapshot,
@@ -89,6 +90,17 @@ describe("SWE-bench manifest", () => {
     }
   });
 
+  test("selects a seeded pilot with one instance per language", () => {
+    const manifest = selectManifest(fixtureSnapshot(), { seed: 12345, size: 30 });
+    const first = selectPilotInstanceIds(manifest, { seed: 67890, size: 3 });
+    const second = selectPilotInstanceIds(manifest, { seed: 67890, size: 3 });
+    const entriesById = new Map(manifest.entries.map((entry) => [entry.instanceId, entry]));
+
+    expect(first).toEqual(second);
+    expect(first).toHaveLength(3);
+    expect(new Set(first.map((id) => entriesById.get(id)!.language)).size).toBe(3);
+  });
+
   test("rejects unclassified repositories instead of guessing", () => {
     const snapshot = fixtureSnapshot();
     snapshot.rows.push({
@@ -145,6 +157,28 @@ describe("SWE-bench manifest", () => {
     expect(
       manifest.entries.filter((entry) => entry.language === "C++").map((entry) => entry.instanceId),
     ).toEqual(["fmtlib__fmt-1683", "fmtlib__fmt-2457", "fmtlib__fmt-3729"]);
+  });
+
+  test("commits a pilot subset that matches its recorded selection seed", async () => {
+    const manifest = JSON.parse(
+      await readFile(
+        join(import.meta.dir, "..", "benchmarks", "swebench", "manifests", "multilingual-30.json"),
+        "utf8",
+      ),
+    ) as ReturnType<typeof selectManifest>;
+    const campaign = JSON.parse(
+      await readFile(
+        join(import.meta.dir, "..", "benchmarks", "swebench", "campaigns", "pilot-3-v2.json"),
+        "utf8",
+      ),
+    ) as { instanceIds: string[]; instanceSelectionSeed: number };
+
+    expect(campaign.instanceIds).toEqual(
+      selectPilotInstanceIds(manifest, {
+        seed: campaign.instanceSelectionSeed,
+        size: campaign.instanceIds.length,
+      }),
+    );
   });
 });
 
