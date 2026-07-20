@@ -4,7 +4,7 @@ import type { RolloutAttempt, RolloutFailureKind } from "./artifacts.js";
 import type { CampaignConfigName } from "./config-override.js";
 import type { ManifestEntry } from "./manifest.js";
 import { lintPatch, type PatchLint } from "./patch-policy.js";
-import type { RolloutTelemetry } from "./telemetry.js";
+import type { AdvisorContextObservation, RolloutTelemetry } from "./telemetry.js";
 
 export { lintPatch, type PatchLint } from "./patch-policy.js";
 
@@ -51,26 +51,107 @@ export interface ConfigReport {
   failures: Record<string, number>;
   patchViolations: string[];
   byLanguage: Record<string, { resolved: number; total: number }>;
+  /** Present only for advisor-enabled arms; it describes exposure without gating ITT. */
+  consultation: ConfigConsultationReport | null;
+}
+
+export type PairedOutcome = "enabled_only" | "pure_only" | "both_resolve" | "neither_resolves";
+
+export interface PairedOutcomeBuckets {
+  /** Enabled arm resolved and paired pure arm did not. */
+  enabledOnly: string[];
+  /** Pure arm resolved and paired enabled arm did not. */
+  pureOnly: string[];
+  /** Both paired arms resolved. */
+  bothResolve: string[];
+  /** Neither paired arm resolved, including denominator-visible failures. */
+  neitherResolves: string[];
+}
+
+export type ConsultationStatus = "successful" | "not_called" | "unsuccessful" | "missing_telemetry";
+
+/** Per-instance exposure evidence retained alongside the primary randomized comparison. */
+export interface ConsultationEvidenceReport {
+  /** Manifest id that binds this evidence to one randomized pair. */
+  instanceId: string;
+  /** Primary ITT outcome retained regardless of consultation status. */
+  outcome: PairedOutcome;
+  /** Whether the configured model actually returned advice on this enabled attempt. */
+  status: ConsultationStatus;
+  /** Concrete advisor model configured for this enabled arm. */
+  expectedModel: string;
+  /** Every advisor tool completion, including unsuccessful attempts. */
+  totalCalls: number;
+  /** Successful calls that returned the configured concrete advisor. */
+  successfulExpectedModelCalls: number;
+  /** Successful calls to another model, which do not enter the consultation subset. */
+  successfulOtherModels: Record<string, number>;
+  /** Cadence-gated attempts. */
+  rateLimited: number;
+  /** Attempts without an available advisor route. */
+  unavailable: number;
+  /** Tool errors or malformed successful-result details. */
+  failed: number;
+  /** Canonical parent-step indices for every advisor attempt. */
+  callSteps: number[];
+  /** First observable explicit edit/write step; null does not prove no shell mutation. */
+  firstExplicitRepositoryMutationStep: number | null;
+  /** Request-window provenance attached to successful calls. */
+  context: ConsultationContextReport;
+}
+
+/** Context-fidelity evidence for successful tool calls on one enabled attempt. */
+export interface ConsultationContextReport {
+  /** Successful calls with complete structurally valid metadata. */
+  valid: number;
+  /** Successful calls whose details predate or omit context metadata. */
+  missing: number;
+  /** Successful calls whose context metadata has an invalid field shape. */
+  malformed: number;
+  /** Valid calls that omitted old messages to fit the real model window. */
+  truncated: number;
+  /** Parsed values retained for machine checks and report rendering. */
+  observations: AdvisorContextObservation[];
+}
+
+export interface ConfigConsultationReport {
+  /** Concrete advisor required for an attempt to enter the descriptive subset. */
+  expectedModel: string;
+  /** Enabled attempts with at least one successful expected-model call. */
+  successfulAttempts: number;
+  /** Enabled attempts where the executor never invoked the tool. */
+  notCalledAttempts: number;
+  /** Enabled attempts with calls but no successful expected-model response. */
+  unsuccessfulAttempts: number;
+  /** Enabled attempts lacking telemetry; distinct from a known zero-call attempt. */
+  missingTelemetryAttempts: number;
 }
 
 export interface ComparisonReport {
+  /** Arm with the advisor tool disabled. */
   pure: CampaignConfigName;
-  advised: CampaignConfigName;
-  advisorOnlyWins: string[];
-  pureOnlyWins: string[];
-  bothResolve: string[];
-  neitherResolves: string[];
+  /** Paired arm with the normal product advisor package enabled. */
+  enabled: CampaignConfigName;
+  /** Primary intention-to-treat comparison; every manifest instance stays in this denominator. */
+  intentionToTreat: PairedOutcomeBuckets;
+  /**
+   * Descriptive subset where the configured advisor actually returned advice. This is not a
+   * randomized estimate and never replaces the intention-to-treat result.
+   */
+  successfulConsultationSubset: PairedOutcomeBuckets;
+  /** One exposure row per manifest instance, including zero and unsuccessful calls. */
+  consultationEvidence: ConsultationEvidenceReport[];
 }
 
 /** Machine-checkable paired campaign result. */
 export interface CampaignReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   configs: Record<CampaignConfigName, ConfigReport>;
   comparisons: ComparisonReport[];
   totalCostUsd: number;
   pureAdvisorAssertion: { passed: boolean; violations: string[] };
-  /** Proves every treatment arm received exactly one successful call to its configured advisor. */
-  advisedAdvisorAssertion: { passed: boolean; violations: string[] };
+  /** Successful calls must prove which bounded executor context reached the advisor. */
+  contextFidelityAssertion: { passed: boolean; violations: string[] };
   patchAssertion: { passed: boolean; violations: string[] };
 }
 
@@ -78,7 +159,7 @@ export interface CampaignReport {
 export function campaignReportPassesAdmission(report: CampaignReport): boolean {
   return (
     report.pureAdvisorAssertion.passed &&
-    report.advisedAdvisorAssertion.passed &&
+    report.contextFidelityAssertion.passed &&
     report.patchAssertion.passed
   );
 }
@@ -113,10 +194,11 @@ export function buildCampaignReport(
     "kimi-fable-advisor",
   ];
   const violations: string[] = [];
-  const advisedViolations: string[] = [];
+  const contextFidelityViolations: string[] = [];
   const patchViolations: string[] = [];
 
   for (const config of allConfigs) {
+    const configuredAdvisor = EXPECTED_ADVISORS[config];
     const summary: ConfigReport = {
       resolved: 0,
       total: entries.length,
@@ -129,6 +211,7 @@ export function buildCampaignReport(
       failures: {},
       patchViolations: [],
       byLanguage: {},
+      consultation: configuredAdvisor ? emptyConfigConsultation(configuredAdvisor) : null,
     };
     for (const entry of entries) {
       const key = `${config}:${entry.instanceId}`;
@@ -153,20 +236,24 @@ export function buildCampaignReport(
       if (config.endsWith("-pure") && (attempt?.telemetry?.advisorCalls.total ?? 0) !== 0) {
         violations.push(`${config}/${entry.instanceId}`);
       }
+      collectContextFidelityViolations(
+        config,
+        entry.instanceId,
+        attempt,
+        contextFidelityViolations,
+      );
       const expectedAdvisor = EXPECTED_ADVISORS[config];
       if (expectedAdvisor) {
-        const calls = attempt?.telemetry?.advisorCalls;
-        const models = calls?.successByModel ?? {};
-        if (
-          calls?.total !== 1 ||
-          calls.success !== 1 ||
-          Object.keys(models).length !== 1 ||
-          models[expectedAdvisor] !== 1
-        ) {
-          advisedViolations.push(
-            `${config}/${entry.instanceId}: expected 1 successful ${expectedAdvisor} call; observed total=${calls?.total ?? 0}, success=${calls?.success ?? 0}, models=${JSON.stringify(models)}`,
-          );
+        const evidence = consultationEvidence(
+          entry.instanceId,
+          "neither_resolves",
+          expectedAdvisor,
+          attempt,
+        );
+        if (!summary.consultation) {
+          throw new Error(`Advisor-enabled config has no consultation summary: ${config}.`);
         }
+        incrementConsultationSummary(summary.consultation, evidence.status);
       }
       if (attempt?.failureKind === "patch") {
         patchViolations.push(
@@ -185,39 +272,49 @@ export function buildCampaignReport(
     configs[config] = summary;
   }
 
-  const comparisons = COMPARISONS.map(([pure, advised]) => {
+  const comparisons = COMPARISONS.map(([pure, enabled]) => {
+    const expectedAdvisor = EXPECTED_ADVISORS[enabled];
+    if (!expectedAdvisor)
+      throw new Error(`Advisor-enabled config has no expected model: ${enabled}.`);
     const comparison: ComparisonReport = {
       pure,
-      advised,
-      advisorOnlyWins: [],
-      pureOnlyWins: [],
-      bothResolve: [],
-      neitherResolves: [],
+      enabled,
+      intentionToTreat: emptyOutcomeBuckets(),
+      successfulConsultationSubset: emptyOutcomeBuckets(),
+      consultationEvidence: [],
     };
     for (const entry of entries) {
       const pureResolved =
         scoreByKey.get(`${pure}:${entry.instanceId}`) === "resolved" &&
         hasCompletedArtifact(attemptByKey.get(`${pure}:${entry.instanceId}`));
-      const advisedResolved =
-        scoreByKey.get(`${advised}:${entry.instanceId}`) === "resolved" &&
-        hasCompletedArtifact(attemptByKey.get(`${advised}:${entry.instanceId}`));
-      if (pureResolved && advisedResolved) comparison.bothResolve.push(entry.instanceId);
-      else if (pureResolved) comparison.pureOnlyWins.push(entry.instanceId);
-      else if (advisedResolved) comparison.advisorOnlyWins.push(entry.instanceId);
-      else comparison.neitherResolves.push(entry.instanceId);
+      const enabledResolved =
+        scoreByKey.get(`${enabled}:${entry.instanceId}`) === "resolved" &&
+        hasCompletedArtifact(attemptByKey.get(`${enabled}:${entry.instanceId}`));
+      const outcome = pairedOutcome(pureResolved, enabledResolved);
+      addOutcome(comparison.intentionToTreat, outcome, entry.instanceId);
+      const evidence = consultationEvidence(
+        entry.instanceId,
+        outcome,
+        expectedAdvisor,
+        attemptByKey.get(`${enabled}:${entry.instanceId}`),
+      );
+      comparison.consultationEvidence.push(evidence);
+      if (evidence.status === "successful") {
+        addOutcome(comparison.successfulConsultationSubset, outcome, entry.instanceId);
+      }
     }
     return comparison;
   });
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     configs,
     comparisons,
     totalCostUsd: attempts.reduce((total, attempt) => total + attempt.costUsd, 0),
     pureAdvisorAssertion: { passed: violations.length === 0, violations },
-    advisedAdvisorAssertion: {
-      passed: advisedViolations.length === 0,
-      violations: advisedViolations,
+    contextFidelityAssertion: {
+      passed: contextFidelityViolations.length === 0,
+      violations: contextFidelityViolations,
     },
     patchAssertion: { passed: patchViolations.length === 0, violations: patchViolations },
   };
@@ -287,13 +384,31 @@ export function renderCampaignReport(report: CampaignReport): string {
     "",
   ];
   for (const comparison of report.comparisons) {
+    const itt = comparison.intentionToTreat;
+    const consulted = comparison.successfulConsultationSubset;
     lines.push(
-      `### ${comparison.pure} vs ${comparison.advised}`,
+      `### ${comparison.pure} vs ${comparison.enabled}`,
       "",
-      `- Advisor-only wins: ${comparison.advisorOnlyWins.length}${formatIds(comparison.advisorOnlyWins)}`,
-      `- Pure-only wins: ${comparison.pureOnlyWins.length}${formatIds(comparison.pureOnlyWins)}`,
-      `- Both resolve: ${comparison.bothResolve.length}`,
-      `- Neither resolves: ${comparison.neitherResolves.length}`,
+      "Primary intention-to-treat result (advisor disabled vs enabled):",
+      "",
+      `- Enabled-only: ${itt.enabledOnly.length}${formatIds(itt.enabledOnly)}`,
+      `- Pure-only: ${itt.pureOnly.length}${formatIds(itt.pureOnly)}`,
+      `- Both resolve: ${itt.bothResolve.length}`,
+      `- Neither resolves: ${itt.neitherResolves.length}`,
+      "",
+      "Successful-consultation subset (descriptive, not randomized, and not a replacement for ITT):",
+      "",
+      `- Enabled-only: ${consulted.enabledOnly.length}${formatIds(consulted.enabledOnly)}`,
+      `- Pure-only: ${consulted.pureOnly.length}${formatIds(consulted.pureOnly)}`,
+      `- Both resolve: ${consulted.bothResolve.length}`,
+      `- Neither resolves: ${consulted.neitherResolves.length}`,
+      "",
+      "| Instance | ITT outcome | Consultation | Context fidelity | Calls | Call steps | First explicit repository mutation |",
+      "| --- | --- | --- | --- | ---: | --- | ---: |",
+      ...comparison.consultationEvidence.map(
+        (evidence) =>
+          `| ${evidence.instanceId} | ${formatOutcome(evidence.outcome)} | ${formatConsultation(evidence)} | ${formatContextFidelity(evidence.context)} | ${evidence.totalCalls} | ${formatSteps(evidence.callSteps)} | ${evidence.firstExplicitRepositoryMutationStep ?? "unknown"} |`,
+      ),
       "",
     );
   }
@@ -312,11 +427,173 @@ export function renderCampaignReport(report: CampaignReport): string {
     "",
     `Total model spend: $${report.totalCostUsd.toFixed(2)}.`,
     `Pure-arm advisor assertion: ${report.pureAdvisorAssertion.passed ? "PASS" : `FAIL (${report.pureAdvisorAssertion.violations.join(", ")})`}.`,
-    `Advised-arm advisor assertion: ${report.advisedAdvisorAssertion.passed ? "PASS" : `FAIL (${report.advisedAdvisorAssertion.violations.join(", ")})`}.`,
+    `Advisor context fidelity assertion: ${report.contextFidelityAssertion.passed ? "PASS" : `FAIL (${report.contextFidelityAssertion.violations.join(", ")})`}.`,
     `Patch integrity assertion: ${report.patchAssertion.passed ? "PASS" : `FAIL (${report.patchAssertion.violations.join(", ")})`}.`,
     "",
   );
   return lines.join("\n");
+}
+
+function emptyOutcomeBuckets(): PairedOutcomeBuckets {
+  return { enabledOnly: [], pureOnly: [], bothResolve: [], neitherResolves: [] };
+}
+
+function pairedOutcome(pureResolved: boolean, enabledResolved: boolean): PairedOutcome {
+  if (pureResolved && enabledResolved) return "both_resolve";
+  if (pureResolved) return "pure_only";
+  if (enabledResolved) return "enabled_only";
+  return "neither_resolves";
+}
+
+function addOutcome(
+  buckets: PairedOutcomeBuckets,
+  outcome: PairedOutcome,
+  instanceId: string,
+): void {
+  if (outcome === "enabled_only") buckets.enabledOnly.push(instanceId);
+  else if (outcome === "pure_only") buckets.pureOnly.push(instanceId);
+  else if (outcome === "both_resolve") buckets.bothResolve.push(instanceId);
+  else buckets.neitherResolves.push(instanceId);
+}
+
+function consultationEvidence(
+  instanceId: string,
+  outcome: PairedOutcome,
+  expectedModel: string,
+  attempt: ReportAttempt | undefined,
+): ConsultationEvidenceReport {
+  const calls = attempt?.telemetry?.advisorCalls;
+  const successfulExpectedModelCalls = calls?.successByModel[expectedModel] ?? 0;
+  const successfulOtherModels = Object.fromEntries(
+    Object.entries(calls?.successByModel ?? {}).filter(([model]) => model !== expectedModel),
+  );
+  const status: ConsultationStatus = !attempt?.telemetry
+    ? "missing_telemetry"
+    : calls.total === 0
+      ? "not_called"
+      : successfulExpectedModelCalls > 0
+        ? "successful"
+        : "unsuccessful";
+  const context = consultationContext(calls);
+  return {
+    instanceId,
+    outcome,
+    status,
+    expectedModel,
+    totalCalls: calls?.total ?? 0,
+    successfulExpectedModelCalls,
+    successfulOtherModels,
+    rateLimited: calls?.rateLimited ?? 0,
+    unavailable: calls?.unavailable ?? 0,
+    failed: calls?.failed ?? 0,
+    callSteps: calls?.attempts?.map((call) => call.step) ?? [],
+    firstExplicitRepositoryMutationStep: calls?.firstExplicitRepositoryMutationStep ?? null,
+    context,
+  };
+}
+
+function consultationContext(
+  calls: RolloutTelemetry["advisorCalls"] | undefined,
+): ConsultationContextReport {
+  const successfulAttempts = calls?.attempts?.filter((call) => call.outcome === "success") ?? [];
+  const validAttempts = successfulAttempts.filter(
+    (call) => call.contextStatus === "valid" && call.context,
+  );
+  const malformed = successfulAttempts.filter(
+    (call) =>
+      call.contextStatus === "malformed" || (call.contextStatus === "valid" && !call.context),
+  ).length;
+  const explicitMissing = successfulAttempts.filter(
+    (call) => !call.contextStatus || call.contextStatus === "missing",
+  ).length;
+  const unlocatedSuccessfulCalls = Math.max(0, (calls?.success ?? 0) - successfulAttempts.length);
+  return {
+    valid: validAttempts.length,
+    missing: explicitMissing + unlocatedSuccessfulCalls,
+    malformed,
+    truncated: validAttempts.filter((call) => call.context?.truncated).length,
+    observations: validAttempts.flatMap((call) => (call.context ? [call.context] : [])),
+  };
+}
+
+function collectContextFidelityViolations(
+  config: CampaignConfigName,
+  instanceId: string,
+  attempt: ReportAttempt | undefined,
+  violations: string[],
+): void {
+  const context = consultationContext(attempt?.telemetry?.advisorCalls);
+  if (context.missing > 0) {
+    violations.push(
+      `${config}/${instanceId}: ${context.missing} successful advisor call(s) missing context metadata`,
+    );
+  }
+  if (context.malformed > 0) {
+    violations.push(
+      `${config}/${instanceId}: ${context.malformed} successful advisor call(s) have malformed context metadata`,
+    );
+  }
+}
+
+function emptyConfigConsultation(expectedModel: string): ConfigConsultationReport {
+  return {
+    expectedModel,
+    successfulAttempts: 0,
+    notCalledAttempts: 0,
+    unsuccessfulAttempts: 0,
+    missingTelemetryAttempts: 0,
+  };
+}
+
+function incrementConsultationSummary(
+  summary: ConfigConsultationReport,
+  status: ConsultationStatus,
+): void {
+  if (status === "successful") summary.successfulAttempts += 1;
+  else if (status === "not_called") summary.notCalledAttempts += 1;
+  else if (status === "unsuccessful") summary.unsuccessfulAttempts += 1;
+  else summary.missingTelemetryAttempts += 1;
+}
+
+function formatOutcome(outcome: PairedOutcome): string {
+  if (outcome === "enabled_only") return "enabled only";
+  if (outcome === "pure_only") return "pure only";
+  if (outcome === "both_resolve") return "both resolve";
+  return "neither resolves";
+}
+
+function formatConsultation(evidence: ConsultationEvidenceReport): string {
+  if (evidence.status === "successful") return `successful ${evidence.expectedModel}`;
+  if (evidence.status === "not_called") return "not called";
+  if (evidence.status === "missing_telemetry") return "missing telemetry";
+  const outcomes = [
+    evidence.rateLimited > 0 ? `${evidence.rateLimited} rate-limited` : "",
+    evidence.unavailable > 0 ? `${evidence.unavailable} unavailable` : "",
+    evidence.failed > 0 ? `${evidence.failed} failed` : "",
+    Object.keys(evidence.successfulOtherModels).length > 0
+      ? `wrong model ${JSON.stringify(evidence.successfulOtherModels)}`
+      : "",
+  ].filter(Boolean);
+  return outcomes.length > 0 ? outcomes.join(", ") : "unsuccessful";
+}
+
+function formatContextFidelity(context: ConsultationContextReport): string {
+  const parts: string[] = [];
+  if (context.valid > 0) {
+    const observation = context.observations[0];
+    const window = observation
+      ? `, ${observation.estimatedInputTokens}/${observation.contextWindowTokens} estimated tokens, ${observation.includedMessages} included/${observation.omittedMessages} omitted messages, ${observation.attachedImages} images`
+      : "";
+    parts.push(`${context.valid} valid${window}`);
+  }
+  if (context.truncated > 0) parts.push(`${context.truncated} truncated`);
+  if (context.missing > 0) parts.push(`${context.missing} missing`);
+  if (context.malformed > 0) parts.push(`${context.malformed} malformed`);
+  return parts.length > 0 ? parts.join(", ") : "not applicable";
+}
+
+function formatSteps(steps: readonly number[]): string {
+  return steps.length > 0 ? steps.join(", ") : "none";
 }
 
 function configFromModel(model: string): CampaignConfigName {

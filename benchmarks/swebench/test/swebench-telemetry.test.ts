@@ -39,7 +39,30 @@ describe("SWE-bench telemetry derivation", () => {
       success: 1,
       rateLimited: 1,
       unavailable: 1,
+      failed: 0,
       successByModel: { "moonshotai/kimi-k3": 1 },
+      firstExplicitRepositoryMutationStep: null,
+      attempts: [
+        {
+          step: 2,
+          outcome: "success",
+          model: "moonshotai/kimi-k3",
+          contextStatus: "missing",
+          relativeToFirstExplicitRepositoryMutation: "unknown",
+        },
+        {
+          step: 3,
+          outcome: "rate_limited",
+          contextStatus: "missing",
+          relativeToFirstExplicitRepositoryMutation: "unknown",
+        },
+        {
+          step: 4,
+          outcome: "unavailable",
+          contextStatus: "missing",
+          relativeToFirstExplicitRepositoryMutation: "unknown",
+        },
+      ],
     });
 
     const fable = deriveTelemetry(await loadFixture("fable-advisor.ndjson"));
@@ -48,8 +71,127 @@ describe("SWE-bench telemetry derivation", () => {
       success: 1,
       rateLimited: 0,
       unavailable: 0,
+      failed: 0,
       successByModel: { "anthropic/claude-fable-5": 1 },
+      firstExplicitRepositoryMutationStep: null,
+      attempts: [
+        {
+          step: 1,
+          outcome: "success",
+          model: "anthropic/claude-fable-5",
+          contextStatus: "missing",
+          relativeToFirstExplicitRepositoryMutation: "unknown",
+        },
+      ],
     });
+  });
+
+  test("records each consultation attempt at its canonical step relative to explicit edits", () => {
+    const events = [
+      { type: "step", step: { type: "reasoning", text: "inspect" } },
+      {
+        type: "step",
+        step: {
+          type: "tool_call",
+          toolName: "ask_advisor",
+          toolCallId: "a1",
+          isError: false,
+          details: {
+            type: "ask_advisor",
+            model: "moonshotai/kimi-k3",
+            context: {
+              contextWindowTokens: 262144,
+              reservedOutputTokens: 2048,
+              inputLimitTokens: 259000,
+              estimatedInputTokens: 12000,
+              includedMessages: 8,
+              omittedMessages: 2,
+              truncated: true,
+              attachedImages: 1,
+            },
+          },
+        },
+      },
+      {
+        type: "step",
+        step: {
+          type: "tool_call",
+          toolName: "edit",
+          toolCallId: "e1",
+          input: { path: "/testbed/src/main.ts" },
+          isError: false,
+        },
+      },
+      {
+        type: "step",
+        step: {
+          type: "tool_call",
+          toolName: "ask_advisor",
+          toolCallId: "a2",
+          isError: false,
+          details: { type: "ask_advisor", rateLimited: true },
+        },
+      },
+    ] as TurnEvent[];
+
+    expect(deriveTelemetry(events).advisorCalls).toEqual({
+      total: 2,
+      success: 1,
+      rateLimited: 1,
+      unavailable: 0,
+      failed: 0,
+      successByModel: { "moonshotai/kimi-k3": 1 },
+      firstExplicitRepositoryMutationStep: 3,
+      attempts: [
+        {
+          step: 2,
+          outcome: "success",
+          model: "moonshotai/kimi-k3",
+          contextStatus: "valid",
+          context: {
+            contextWindowTokens: 262144,
+            reservedOutputTokens: 2048,
+            inputLimitTokens: 259000,
+            estimatedInputTokens: 12000,
+            includedMessages: 8,
+            omittedMessages: 2,
+            truncated: true,
+            attachedImages: 1,
+          },
+          relativeToFirstExplicitRepositoryMutation: "before",
+        },
+        {
+          step: 4,
+          outcome: "rate_limited",
+          contextStatus: "missing",
+          relativeToFirstExplicitRepositoryMutation: "after",
+        },
+      ],
+    });
+  });
+
+  test("marks incomplete advisor context metadata malformed instead of treating it as fidelity proof", () => {
+    const telemetry = deriveTelemetry([
+      {
+        type: "step",
+        step: {
+          type: "tool_call",
+          toolName: "ask_advisor",
+          toolCallId: "a1",
+          isError: false,
+          details: {
+            type: "ask_advisor",
+            model: "moonshotai/kimi-k3",
+            context: { contextWindowTokens: 262144, truncated: false },
+          },
+        },
+      },
+    ] as TurnEvent[]);
+
+    expect(telemetry.advisorCalls.attempts[0]).toEqual(
+      expect.objectContaining({ outcome: "success", contextStatus: "malformed" }),
+    );
+    expect(telemetry.advisorCalls.attempts[0]).not.toHaveProperty("context");
   });
 
   test("builds switch histograms, excludes deltas and child steps, and tolerates new events", async () => {
