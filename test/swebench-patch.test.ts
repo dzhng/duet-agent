@@ -76,4 +76,24 @@ describe("SWE-bench patch extraction", () => {
     await container.start();
     await expect(capturePatchBaseline(container)).rejects.toThrow("not-a-tree");
   });
+
+  test("preserves an empty model patch as a scoreable outcome", async () => {
+    const tree = "a".repeat(40);
+    const commands = new ScriptedCommands([
+      { stdout: "container-id", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: `${tree}\n`, stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+    ]);
+    const container = new ContainerHandle("empty-patch-test", "official/image", commands);
+    await container.start();
+
+    const extracted = await extractPatch(container, await capturePatchBaseline(container), 10_000);
+
+    expect(extracted).toEqual({ patch: "", bytes: 0, paths: [] });
+  });
 });

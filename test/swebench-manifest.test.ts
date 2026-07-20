@@ -166,19 +166,21 @@ describe("SWE-bench manifest", () => {
         "utf8",
       ),
     ) as ReturnType<typeof selectManifest>;
-    const campaign = JSON.parse(
-      await readFile(
-        join(import.meta.dir, "..", "benchmarks", "swebench", "campaigns", "pilot-3-v2.json"),
-        "utf8",
-      ),
-    ) as { instanceIds: string[]; instanceSelectionSeed: number };
+    for (const filename of ["pilot-3-v2.json", "pilot-3-v3.json"]) {
+      const campaign = JSON.parse(
+        await readFile(
+          join(import.meta.dir, "..", "benchmarks", "swebench", "campaigns", filename),
+          "utf8",
+        ),
+      ) as { instanceIds: string[]; instanceSelectionSeed: number };
 
-    expect(campaign.instanceIds).toEqual(
-      selectPilotInstanceIds(manifest, {
-        seed: campaign.instanceSelectionSeed,
-        size: campaign.instanceIds.length,
-      }),
-    );
+      expect(campaign.instanceIds).toEqual(
+        selectPilotInstanceIds(manifest, {
+          seed: campaign.instanceSelectionSeed,
+          size: campaign.instanceIds.length,
+        }),
+      );
+    }
   });
 });
 

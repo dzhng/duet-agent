@@ -136,7 +136,9 @@ export function buildCampaignReport(
       for (const violation of attempt?.patchLint?.violations ?? []) {
         const labelled = `${config}/${entry.instanceId}: ${violation}`;
         summary.patchViolations.push(labelled);
-        patchViolations.push(labelled);
+      }
+      for (const violation of attempt?.patchLint?.admissionViolations ?? []) {
+        patchViolations.push(`${config}/${entry.instanceId}: ${violation}`);
       }
     }
     summary.resolveRate = summary.total === 0 ? 0 : summary.resolved / summary.total;
@@ -209,7 +211,11 @@ export async function loadReportAttempts(
           patchLint = lintPatch(patch, paths, attempt.spec.limits.patchBytes);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-          patchLint = { paths: [], violations: ["completed artifact is missing patch evidence"] };
+          patchLint = {
+            paths: [],
+            violations: ["completed artifact is missing patch evidence"],
+            admissionViolations: ["completed artifact is missing patch evidence"],
+          };
         }
       }
       return {
@@ -261,7 +267,7 @@ export function renderCampaignReport(report: CampaignReport): string {
     "",
     `Total model spend: $${report.totalCostUsd.toFixed(2)}.`,
     `Pure-arm advisor assertion: ${report.pureAdvisorAssertion.passed ? "PASS" : `FAIL (${report.pureAdvisorAssertion.violations.join(", ")})`}.`,
-    `Patch assertion: ${report.patchAssertion.passed ? "PASS" : `FAIL (${report.patchAssertion.violations.join(", ")})`}.`,
+    `Patch integrity assertion: ${report.patchAssertion.passed ? "PASS" : `FAIL (${report.patchAssertion.violations.join(", ")})`}.`,
     "",
   );
   return lines.join("\n");

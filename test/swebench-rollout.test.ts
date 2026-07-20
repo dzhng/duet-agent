@@ -168,6 +168,51 @@ describe("SWE-bench rollout pipeline", () => {
     expect(container.stopped).toBe(true);
   });
 
+  testIfDocker("completes an empty patch so the scorer can count the model outcome", async () => {
+    root = await mkdtemp(join(tmpdir(), "duet-swebench-rollout-empty-"));
+    const configPath = join(root, "models.json");
+    await writeFile(configPath, "{}\n");
+    const container = new FakeRolloutContainer(false, [], "");
+    const result = await runRollout(
+      {
+        runsRoot: root,
+        artifact: {
+          localPath: "/host/duet",
+          installPath: "/opt/duet/duet",
+          sha256: "a".repeat(64),
+          packagingMode: "compiled-linux-x64",
+        },
+        providerEnv: {},
+        containerFactory: () => container,
+      },
+      {
+        campaignId: "test-campaign",
+        config: "glm-pure",
+        entry: {
+          instanceId: "org__repo-1",
+          language: "Go",
+          repo: "org/repo",
+          baseCommit: "base",
+        },
+        datasetRow: {
+          instanceId: "org__repo-1",
+          repo: "org/repo",
+          baseCommit: "base",
+          problemStatement: "Fix it.",
+        },
+        trial: 1,
+        image: "official/image",
+        configPath,
+        configSha256: "b".repeat(64),
+        limits: { costUsd: 1, wallClockMs: 1000, patchBytes: 1000 },
+      },
+    );
+
+    expect(result.status).toMatchObject({ phase: "completed", terminalType: "complete" });
+    expect(await readFile(join(result.attempt.directory, "patch.diff"), "utf8")).toBe("");
+    expect(container.stopped).toBe(true);
+  });
+
   testIfDocker("smoke proves a pure one-file patch in a fresh container", async () => {
     root = await mkdtemp(join(tmpdir(), "duet-swebench-smoke-"));
     const configPath = join(root, "models.json");
@@ -240,6 +285,7 @@ class FakeRolloutContainer implements RolloutContainer {
   constructor(
     private readonly failStart: boolean,
     private readonly patchPaths: readonly string[] = ["src/a.ts"],
+    private readonly patch = "diff --git a/src/a.ts b/src/a.ts\n+fixed\n",
   ) {}
 
   async start(): Promise<void> {
@@ -256,7 +302,7 @@ class FakeRolloutContainer implements RolloutContainer {
     if (this.gitCall === 3) return ok(`${"c".repeat(40)}\n`);
     if (this.gitCall === 4) return ok("");
     if (this.gitCall === 6) return ok(`${this.patchPaths.join("\0")}\0`);
-    if (this.gitCall === 7) return ok("diff --git a/src/a.ts b/src/a.ts\n+fixed\n");
+    if (this.gitCall === 7) return ok(this.patch);
     return ok("");
   }
 

@@ -2,8 +2,10 @@
 export interface PatchLint {
   /** Paths staged into the final baseline-relative patch. */
   paths: string[];
-  /** Human-readable policy violations that make the patch inadmissible. */
+  /** Human-readable findings, including scoreable model outcomes such as emptiness. */
   violations: string[];
+  /** Integrity violations that block export; an empty model answer remains scoreable. */
+  admissionViolations: string[];
 }
 
 /** Check exact staged paths rather than guessing from diff text. */
@@ -25,5 +27,9 @@ export function lintPatch(patch: string, paths: readonly string[], maxBytes: num
       violations.push(`runtime file leaked: ${path}`);
     }
   }
-  return { paths: [...paths], violations };
+  return {
+    paths: [...paths],
+    violations,
+    admissionViolations: violations.filter((violation) => violation !== "patch is empty"),
+  };
 }

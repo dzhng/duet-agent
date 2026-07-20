@@ -154,8 +154,8 @@ export async function runRollout(
     patch = extracted.patch;
     patchPaths = extracted.paths;
     const patchLint = lintPatch(patch, patchPaths, spec.limits.patchBytes);
-    if (patchLint.violations.length > 0) {
-      throw new Error(`Patch policy violation: ${patchLint.violations.join("; ")}`);
+    if (patchLint.admissionViolations.length > 0) {
+      throw new Error(`Patch policy violation: ${patchLint.admissionViolations.join("; ")}`);
     }
     const terminalType = terminalName(outcome);
     const status = await completeRolloutAttempt(attempt, {

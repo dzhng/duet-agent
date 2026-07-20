@@ -59,7 +59,32 @@ describe("SWE-bench paired report", () => {
         "test file modified: test/main.test.ts",
         "runtime file leaked: .duet/models.json",
       ],
+      admissionViolations: [
+        "test file modified: test/main.test.ts",
+        "runtime file leaked: .duet/models.json",
+      ],
     });
+  });
+
+  test("reports an empty patch without failing the integrity assertion", () => {
+    const patchLint = lintPatch("", [], 100);
+    expect(patchLint).toEqual({
+      paths: [],
+      violations: ["patch is empty"],
+      admissionViolations: [],
+    });
+    const entries = fixtureEntries().slice(0, 1);
+    const attempts = fixtureAttempts(entries);
+    attempts[0]!.patchLint = patchLint;
+    const report = buildCampaignReport(
+      entries,
+      attempts,
+      fixtureScores(configs.map((config) => [config, [false]])),
+    );
+    expect(report.patchAssertion).toEqual({ passed: true, violations: [] });
+    expect(report.configs[attempts[0]!.config].patchViolations).toEqual([
+      `${attempts[0]!.config}/org__repo-1: patch is empty`,
+    ]);
   });
 
   test("fails the pure-arm assertion when telemetry contains an advisor call", () => {

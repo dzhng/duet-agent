@@ -72,7 +72,6 @@ export async function extractPatch(
   );
   const paths = splitPaths(names.stdout);
   const bytes = Buffer.byteLength(diff.stdout);
-  if (bytes === 0) throw new Error("Rollout produced an empty patch.");
   if (bytes > maxBytes) {
     throw new Error(`Rollout patch is ${bytes} bytes, above the ${maxBytes}-byte limit.`);
   }

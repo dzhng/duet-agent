@@ -1063,6 +1063,47 @@ ownerScopeId }`, even though both execute through the same task manager.
 - **Confidence:** **high** because $5 exceeds the known prerequisite plus
   stopped-smoke spend and the per-rollout breaker reserves before launch.
 
+### S31 — An empty patch is a scoreable model failure, not broken infrastructure
+
+- **When:** the first pure-GLM task in the corrected pilot investigated
+  `fmtlib__fmt-3729`, announced an implementation step, then terminated without
+  editing.
+- **The choice:** Complete the rollout with an empty `patch.diff`, export it in
+  the official prediction schema, and let SWE-bench report `empty_patch` in the
+  denominator. Lint still exposes emptiness as a model outcome, but the patch
+  integrity assertion covers only blocking conditions such as test/runtime
+  edits and oversize output. The unbuilt alternative stores a `patch` failure,
+  omits the prediction, and makes a weak model answer look like harness damage.
+- **The gap:** Extraction treated zero bytes as malformed even though the
+  official scorer has a first-class empty-patch outcome and the report promised
+  never to drop failures from denominators.
+- **The reach:** Full-campaign reliability and resolve rates now include agents
+  that stop before editing. Resume planning can distinguish a completed poor
+  answer from infrastructure that deserves a retry.
+- **Verdict:** **sound.** Benchmarks measure model failures; they must not erase
+  or relabel them merely to keep the patch assertion green.
+- **Confidence:** **high** because the live transcript proves the agent ended
+  normally, and red/green tests cover extraction through prediction export.
+
+### S32 — The semantically corrected pilot restarts under v3 with $6 sunk
+
+- **When:** after v2 completed the first GLM pair, proved one successful Kimi
+  consultation, and was interrupted as its next arm started.
+- **The choice:** Keep v2 immutable as evidence and restart all twelve logical
+  rollouts under `multilingual-pilot-3-20260720-v3`, with a $6 sunk reserve. The
+  unbuilt alternatives mutate v2's failed status into completed or splice its
+  two results into artifacts produced under different harness semantics.
+- **The gap:** Harness source is not part of the Duet binary hash recorded in a
+  rollout spec, so changing empty-patch admission cannot safely reuse the same
+  filesystem namespace.
+- **The reach:** Every v3 result shares one treatment prompt, one binary, one
+  patch-admission definition, and one resumable campaign tree. The extra reserve
+  covers v2's recorded $0.8106 plus its interrupted sub-minute arm.
+- **Verdict:** **sound.** Repeating two tasks costs little relative to the
+  envelope and avoids provenance ambiguity in the final admission report.
+- **Confidence:** **high** because campaign ids are the documented boundary for
+  frozen-input changes and $6 conservatively exceeds known cumulative spend.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

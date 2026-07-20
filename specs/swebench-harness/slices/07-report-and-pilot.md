@@ -8,7 +8,12 @@ retained as a harness smoke, not advisor evidence. Rollout admission now rejects
 forbidden paths before export, the scorer resolves output paths and reuses one
 image across all arms for an instance, and the next campaign uses a new,
 byte-identical four-arm prompt that requires exactly one consultation when the
-tool is available. A fresh three-language pilot remains required before ADMIT.
+tool is available. The first corrected C++ pair then proved one successful Kimi
+consultation, but also exposed that a genuine empty model answer was being
+misclassified as patch infrastructure. Empty answers now complete and flow to
+the official scorer as denominator-visible `empty_patch` outcomes; only patch
+integrity violations block export. A fresh three-language campaign id remains
+required before ADMIT.
 
 Needs 04 (scorer fixture) and 06. The report is built and verified against
 existing artifacts first — zero new spend — then a small pilot produces the
@@ -57,7 +62,7 @@ explicit `ADMIT` or `STOP` line with the projection arithmetic.
 
 ## STOP conditions
 
-Any attribution/config/patch failure, projection above $500, unstable
+Any attribution/config/patch-integrity failure, projection above $500, unstable
 container lifecycle, or an advisor call rate so low the corresponding
 comparison cannot move. STOP loops back to the owning slice; it does not
 proceed to 08.

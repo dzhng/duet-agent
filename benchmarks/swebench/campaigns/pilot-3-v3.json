@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "multilingual-pilot-3-20260720-v3",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-30.json",
+  "instanceIds": ["fmtlib__fmt-3729", "preactjs__preact-2757", "sharkdp__bat-1892"],
+  "instanceSelectionSeed": 20260721,
+  "configs": ["glm-pure", "glm-kimi-advisor", "kimi-pure", "kimi-fable-advisor"],
+  "trials": 1,
+  "concurrency": 1,
+  "armOrderSeed": 20260720,
+  "limits": {
+    "costUsd": 1.25,
+    "wallClockMs": 1200000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 5242880
+  },
+  "budget": {
+    "totalUsd": 500,
+    "sunkUsd": 6
+  }
+}
