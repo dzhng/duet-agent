@@ -22,10 +22,12 @@ concurrent artifact-integration defects. Product-owned
 orientation and completion-review checkpoints are now implemented and
 live-falsified, the E2B defects are fixed, and the benchmark now passes the
 canonical issue directly while retaining normal memory, compaction, repository
-instructions, and the complete agent diff. Next, run the two committed v2
-focused gates, then start a new campaign namespace and run the full 30×4
-measurement. V1–v4 and the partial restart attempt remain historical evidence
-only. Last updated 2026-07-20.
+instructions, and the complete agent diff. The v2 focused gates made no model
+calls because the compiled binary lacked PGlite runtime sidecars; that
+packaging defect and the artifact-provenance race it exposed are fixed. Next,
+run the two committed v3 focused gates, then start a new campaign namespace and
+run the full 30×4 measurement. V1–v4 and prior restart attempts remain
+historical evidence only. Last updated 2026-07-20.
 
 Local constraints to prove rather than assume:
 

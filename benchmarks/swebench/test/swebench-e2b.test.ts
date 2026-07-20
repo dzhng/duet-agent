@@ -55,6 +55,12 @@ describe("SWE-bench E2B execution", () => {
         dockerClientVersion: "28.5.1",
         dockerServerVersion: "28.5.1",
         duetArtifactSha256: "a".repeat(64),
+        runtimeAssetSha256: {
+          "pglite.data": "b".repeat(64),
+          "pglite.wasm": "c".repeat(64),
+          "initdb.wasm": "d".repeat(64),
+          "vector.tar.gz": "e".repeat(64),
+        },
         pythonVersion: "3.12.3",
         swebenchVersion: "4.1.0",
       }),
@@ -73,7 +79,15 @@ describe("SWE-bench E2B execution", () => {
         osRelease: "Ubuntu 24.04.2 LTS",
       },
       docker: { clientVersion: "28.5.1", serverVersion: "28.5.1" },
-      duetArtifact: { sha256: "a".repeat(64) },
+      duetArtifact: {
+        sha256: "a".repeat(64),
+        runtimeAssetSha256: {
+          "pglite.data": "b".repeat(64),
+          "pglite.wasm": "c".repeat(64),
+          "initdb.wasm": "d".repeat(64),
+          "vector.tar.gz": "e".repeat(64),
+        },
+      },
       python: { version: "3.12.3", swebenchVersion: "4.1.0" },
     });
   });
@@ -118,7 +132,8 @@ describe("SWE-bench E2B execution", () => {
     const root = await mkdtemp(join(tmpdir(), "swebench-e2b-artifacts-"));
     const destination = join(root, "campaign");
     const { spec } = campaignFixture();
-    const provenance = '{"campaign":"frozen"}\n';
+    const provenance = (startedAt: string) =>
+      `${JSON.stringify({ schemaVersion: 1, inputHash: "same", startedAt, frozen: { spec: "frozen" } })}\n`;
     const workers = [
       { instanceId: "org__repo-1", evidence: "first-worker\n" },
       { instanceId: "org__repo-2", evidence: "second-worker\n" },
@@ -131,7 +146,7 @@ describe("SWE-bench E2B execution", () => {
           const attemptRoot = join(stagedRoot, "glm-pure", `${instanceId}-t1`);
           await mkdir(attemptRoot, { recursive: true });
           await Promise.all([
-            writeFile(join(stagedRoot, "campaign.json"), provenance),
+            writeFile(join(stagedRoot, "campaign.json"), provenance(`worker-${index}`)),
             writeFile(join(attemptRoot, "evidence.txt"), evidence),
           ]);
           return stagedRoot;
@@ -144,7 +159,9 @@ describe("SWE-bench E2B execution", () => {
         ),
       );
 
-      expect(await readFile(join(destination, "campaign.json"), "utf8")).toBe(provenance);
+      expect(JSON.parse(await readFile(join(destination, "campaign.json"), "utf8"))).toEqual(
+        expect.objectContaining({ inputHash: "same", frozen: { spec: "frozen" } }),
+      );
       expect(
         await Promise.all(
           workers.map(({ instanceId }) =>
@@ -170,16 +187,22 @@ describe("SWE-bench E2B execution", () => {
         mkdir(join(conflicting, "glm-pure", "org__repo-2-t1"), { recursive: true }),
       ]);
       await Promise.all([
-        writeFile(join(first, "campaign.json"), '{"campaign":"first"}\n'),
-        writeFile(join(conflicting, "campaign.json"), '{"campaign":"other"}\n'),
+        writeFile(
+          join(first, "campaign.json"),
+          '{"schemaVersion":1,"inputHash":"first","frozen":{"spec":"first"}}\n',
+        ),
+        writeFile(
+          join(conflicting, "campaign.json"),
+          '{"schemaVersion":1,"inputHash":"other","frozen":{"spec":"other"}}\n',
+        ),
       ]);
 
       await integrateInstanceArtifacts(first, destination, spec, "org__repo-1");
       await expect(
         integrateInstanceArtifacts(conflicting, destination, spec, "org__repo-2"),
       ).rejects.toThrow("does not match existing campaign.json");
-      expect(await readFile(join(destination, "campaign.json"), "utf8")).toBe(
-        '{"campaign":"first"}\n',
+      expect(await readFile(join(destination, "campaign.json"), "utf8")).toContain(
+        '"inputHash":"first"',
       );
     } finally {
       await rm(root, { recursive: true, force: true });

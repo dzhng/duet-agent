@@ -20,6 +20,7 @@ import { promisify } from "node:util";
 import { Sandbox, Template, type SandboxMetrics } from "e2b";
 import { parse as parseDotenv } from "dotenv";
 
+import { PGLITE_RUNTIME_ASSET_NAMES } from "../../../src/memory/pglite.js";
 import { loadRolloutAttempts, type RolloutAttempt } from "../src/artifacts.js";
 import type { InstanceManifest } from "../src/manifest.js";
 import type { CampaignSpec } from "../src/orchestrator.js";
@@ -40,6 +41,9 @@ const REMOTE_ENVIRONMENT_LOCK = "/tmp/duet-swebench-environment.lock.json";
 const REMOTE_RESUME_ARCHIVE = "/tmp/duet-swebench-resume.tar";
 const REMOTE_RESULT_ARCHIVE = "/tmp/duet-swebench-result.tar";
 const REMOTE_PREBUILT_ARTIFACT = `${REMOTE_REPO_ROOT}/benchmarks/swebench/runtime/build/duet-linux-x64`;
+const REMOTE_RUNTIME_ASSETS = PGLITE_RUNTIME_ASSET_NAMES.map(
+  (name) => `${REMOTE_REPO_ROOT}/benchmarks/swebench/runtime/build/${name}`,
+);
 const E2B_REQUEST_TIMEOUT_MS = 180_000;
 const E2B_CREATE_RETRY_DELAYS_MS = [2_000, 5_000] as const;
 const E2B_READ_RETRY_DELAYS_MS = [2_000, 5_000, 15_000] as const;
@@ -228,6 +232,14 @@ async function capacityProbe(
       `sha256sum ${shellQuote(REMOTE_PREBUILT_ARTIFACT)}`,
       commandOptions,
     );
+    const runtimeAssetHashes = await sandbox.commands.run(
+      `sha256sum ${REMOTE_RUNTIME_ASSETS.map(shellQuote).join(" ")}`,
+      commandOptions,
+    );
+    const compiledMemorySmoke = await sandbox.commands.run(
+      `HOME=/tmp/duet-swebench-capacity-home ${shellQuote(REMOTE_PREBUILT_ARTIFACT)} memory --json`,
+      commandOptions,
+    );
     const pythonVersion = await sandbox.commands.run(
       `${REMOTE_REPO_ROOT}/benchmarks/swebench/.venv/bin/python --version`,
       commandOptions,
@@ -260,6 +272,17 @@ async function capacityProbe(
     if (!duetArtifactSha256 || !/^[0-9a-f]{64}$/.test(duetArtifactSha256)) {
       throw new Error("E2B capacity probe did not return the prebuilt Duet artifact hash.");
     }
+    const runtimeAssetSha256 = parseRuntimeAssetHashes(runtimeAssetHashes.stdout);
+    if (compiledMemorySmoke.exitCode !== 0) {
+      throw new Error(
+        `Compiled Duet could not open default memory: ${compiledMemorySmoke.stderr || compiledMemorySmoke.stdout}`,
+      );
+    }
+    try {
+      if (!Array.isArray(JSON.parse(compiledMemorySmoke.stdout))) throw new Error("not an array");
+    } catch {
+      throw new Error("Compiled Duet memory smoke did not return its JSON row array.");
+    }
     const probe: E2BEnvironmentProbe = {
       templateName,
       templateId: info.templateId,
@@ -271,11 +294,15 @@ async function capacityProbe(
       dockerClientVersion: dockerClient,
       dockerServerVersion: dockerServer,
       duetArtifactSha256,
+      runtimeAssetSha256,
       pythonVersion: pythonVersion.stdout.trim().replace(/^Python\s+/, ""),
       swebenchVersion: swebenchVersion.stdout.trim(),
     };
     const environmentLock = `${JSON.stringify(buildE2BEnvironmentLock(probe), null, 2)}\n`;
-    await verifyPrebuiltArtifactReplica(spec, repositorySha, templateName, duetArtifactSha256);
+    await verifyPrebuiltArtifactReplica(spec, repositorySha, templateName, {
+      duetArtifactSha256,
+      runtimeAssetSha256,
+    });
     await Promise.all([
       writeFile(join(cacheRoot, "environment.lock.json"), environmentLock),
       writeFile(
@@ -306,7 +333,7 @@ async function verifyPrebuiltArtifactReplica(
   spec: E2BCampaignSpec,
   repositorySha: string,
   templateName: string,
-  expectedSha256: string,
+  expected: Pick<E2BEnvironmentProbe, "duetArtifactSha256" | "runtimeAssetSha256">,
 ): Promise<void> {
   const metadata = {
     purpose: "duet-swebench-capacity-replica",
@@ -323,18 +350,41 @@ async function verifyPrebuiltArtifactReplica(
     () => killOwnedSandboxes(metadata),
   );
   try {
-    const result = await sandbox.commands.run(`sha256sum ${shellQuote(REMOTE_PREBUILT_ARTIFACT)}`, {
-      timeoutMs: 120_000,
-    });
-    const actualSha256 = result.stdout.trim().split(/\s+/, 1)[0];
-    if (actualSha256 !== expectedSha256) {
-      throw new Error(
-        `E2B template artifact differs across fresh workers: ${expectedSha256} != ${actualSha256 ?? "missing"}.`,
-      );
+    const result = await sandbox.commands.run(
+      `sha256sum ${[REMOTE_PREBUILT_ARTIFACT, ...REMOTE_RUNTIME_ASSETS].map(shellQuote).join(" ")}`,
+      { timeoutMs: 120_000 },
+    );
+    const [artifactLine, ...runtimeLines] = result.stdout.trim().split("\n");
+    const actualArtifactSha256 = artifactLine?.trim().split(/\s+/, 1)[0];
+    const actualRuntimeSha256 = parseRuntimeAssetHashes(runtimeLines.join("\n"));
+    if (
+      actualArtifactSha256 !== expected.duetArtifactSha256 ||
+      JSON.stringify(actualRuntimeSha256) !== JSON.stringify(expected.runtimeAssetSha256)
+    ) {
+      throw new Error("E2B template artifact bundle differs across fresh workers.");
     }
   } finally {
     await sandbox.kill().catch(() => false);
   }
+}
+
+function parseRuntimeAssetHashes(stdout: string): E2BEnvironmentProbe["runtimeAssetSha256"] {
+  const parsed = Object.fromEntries(
+    stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [sha256, path] = line.trim().split(/\s+/, 2);
+        return [path ? path.split("/").at(-1) : undefined, sha256];
+      }),
+  );
+  for (const name of PGLITE_RUNTIME_ASSET_NAMES) {
+    if (!parsed[name] || !/^[0-9a-f]{64}$/.test(parsed[name])) {
+      throw new Error(`E2B capacity probe did not return the PGlite ${name} hash.`);
+    }
+  }
+  return parsed as E2BEnvironmentProbe["runtimeAssetSha256"];
 }
 
 async function runInstanceBlock(input: {
@@ -544,13 +594,33 @@ async function installCampaignProvenance(source: string, destination: string): P
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       const existingBytes = await readFile(destination);
-      if (!existingBytes.equals(sourceBytes)) {
+      if (!sameCampaignProvenance(existingBytes, sourceBytes)) {
         throw new Error("E2B worker campaign provenance does not match existing campaign.json.");
       }
     }
   } finally {
     await rm(temporary, { force: true });
   }
+}
+
+function sameCampaignProvenance(leftBytes: Buffer, rightBytes: Buffer): boolean {
+  try {
+    const left = JSON.parse(leftBytes.toString("utf8")) as CampaignProvenanceIdentity;
+    const right = JSON.parse(rightBytes.toString("utf8")) as CampaignProvenanceIdentity;
+    return (
+      left.schemaVersion === right.schemaVersion &&
+      left.inputHash === right.inputHash &&
+      JSON.stringify(left.frozen) === JSON.stringify(right.frozen)
+    );
+  } catch {
+    return leftBytes.equals(rightBytes);
+  }
+}
+
+interface CampaignProvenanceIdentity {
+  schemaVersion?: unknown;
+  inputHash?: unknown;
+  frozen?: unknown;
 }
 
 async function copyArtifactTree(source: string, destination: string): Promise<void> {

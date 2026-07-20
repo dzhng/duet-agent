@@ -113,6 +113,9 @@ export async function runRollout(
     await container.exec(["mkdir", "-p", "/opt/duet/home/.duet"]);
     await Promise.all([
       container.cpIn(dependencies.artifact.localPath, dependencies.artifact.installPath),
+      ...dependencies.artifact.runtimeAssets.map((asset) =>
+        container.cpIn(asset.localPath, asset.installPath),
+      ),
       container.cpIn(spec.configPath, "/opt/duet/home/.duet/models.json"),
     ]);
     const chmod = await container.exec(["chmod", "0755", dependencies.artifact.installPath]);
@@ -158,6 +161,9 @@ export async function runRollout(
     );
     events = outcome.events;
     telemetry = deriveTelemetry(events);
+    if (outcome.killedReason === "process_exit") {
+      throw new Error("Duet RPC process exited before emitting a terminal event.");
+    }
     const extracted = await extractPatch(container, baseline, spec.limits.patchBytes);
     patch = extracted.patch;
     patchPaths = extracted.paths;
@@ -228,7 +234,7 @@ function terminalName(outcome: RolloutOutcome): string {
 }
 
 function classifyFailure(error: unknown, outcome: RolloutOutcome | undefined) {
-  if (!outcome) return "infra" as const;
+  if (!outcome || outcome.killedReason === "process_exit") return "infra" as const;
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("patch") || message.includes("Patch")) return "patch" as const;
   return "agent" as const;

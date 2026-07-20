@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { PGLITE_RUNTIME_ASSET_NAMES } from "../../../src/memory/pglite.js";
 import type { CommandResult, CommandRunner } from "../src/container.js";
 import type { ExecTransport } from "../src/duet-client.js";
 import type { CampaignSpec } from "../src/orchestrator.js";
@@ -38,6 +39,12 @@ describe("SWE-bench campaign provenance", () => {
         localPath: "/duet",
         installPath: "/opt/duet/duet" as const,
         sha256: "a".repeat(64),
+        runtimeAssets: PGLITE_RUNTIME_ASSET_NAMES.map((name) => ({
+          name,
+          localPath: `/${name}`,
+          installPath: `/opt/duet/${name}` as const,
+          sha256: "b".repeat(64),
+        })),
         packagingMode: "compiled-linux-x64" as const,
       },
       manifestPath,

@@ -3,8 +3,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { PGLITE_RUNTIME_ASSET_NAMES } from "../../../src/memory/pglite.js";
 import type { CommandResult } from "../src/container.js";
 import type { ExecTransport } from "../src/duet-client.js";
+import type { DuetArtifact } from "../src/packaging.js";
 import { SWEBENCH_SYSTEM_PROMPT } from "../src/prompt.js";
 import { runRollout, type RolloutContainer } from "../src/rollout.js";
 import { runContainerSmoke } from "../src/smoke.js";
@@ -28,12 +30,7 @@ describe("SWE-bench rollout pipeline", () => {
       const result = await runRollout(
         {
           runsRoot: root,
-          artifact: {
-            localPath: "/host/duet",
-            installPath: "/opt/duet/duet",
-            sha256: "a".repeat(64),
-            packagingMode: "compiled-linux-x64",
-          },
+          artifact: fixtureArtifact(),
           providerEnv: { AI_GATEWAY_API_KEY: "secret" },
           containerFactory: () => container,
         },
@@ -64,6 +61,10 @@ describe("SWE-bench rollout pipeline", () => {
       expect(container.stopped).toBe(true);
       expect(container.copies).toEqual([
         ["/host/duet", "/opt/duet/duet"],
+        ["/host/pglite.data", "/opt/duet/pglite.data"],
+        ["/host/pglite.wasm", "/opt/duet/pglite.wasm"],
+        ["/host/initdb.wasm", "/opt/duet/initdb.wasm"],
+        ["/host/vector.tar.gz", "/opt/duet/vector.tar.gz"],
         [configPath, "/opt/duet/home/.duet/models.json"],
       ]);
       expect(container.rpcOptions?.cwd).toBe("/testbed");
@@ -100,12 +101,7 @@ describe("SWE-bench rollout pipeline", () => {
     const result = await runRollout(
       {
         runsRoot: root,
-        artifact: {
-          localPath: "/host/duet",
-          installPath: "/opt/duet/duet",
-          sha256: "a".repeat(64),
-          packagingMode: "compiled-linux-x64",
-        },
+        artifact: fixtureArtifact(),
         providerEnv: {},
         containerFactory: () => container,
       },
@@ -136,6 +132,49 @@ describe("SWE-bench rollout pipeline", () => {
     expect(container.stopped).toBe(true);
   });
 
+  testIfDocker("records an RPC process exit as infrastructure failure", async () => {
+    root = await mkdtemp(join(tmpdir(), "duet-swebench-rollout-exit-"));
+    const configPath = join(root, "models.json");
+    await writeFile(configPath, "{}\n");
+    const container = new FakeRolloutContainer(false, ["src/a.ts"], "", true);
+    const result = await runRollout(
+      {
+        runsRoot: root,
+        artifact: fixtureArtifact(),
+        providerEnv: {},
+        containerFactory: () => container,
+      },
+      {
+        campaignId: "test-campaign",
+        config: "glm-pure",
+        entry: {
+          instanceId: "org__repo-1",
+          language: "Go",
+          repo: "org/repo",
+          baseCommit: "base",
+        },
+        datasetRow: {
+          instanceId: "org__repo-1",
+          repo: "org/repo",
+          baseCommit: "base",
+          problemStatement: "Fix it.",
+        },
+        trial: 1,
+        image: "official/image",
+        configPath,
+        configSha256: "b".repeat(64),
+        limits: { costUsd: 1, wallClockMs: 1000, patchBytes: 1000 },
+      },
+    );
+
+    expect(result.status).toMatchObject({
+      phase: "failed",
+      failureKind: "infra",
+      terminalType: "killed",
+    });
+    expect(container.stopped).toBe(true);
+  });
+
   testIfDocker("exports the agent's complete patch including test paths", async () => {
     root = await mkdtemp(join(tmpdir(), "duet-swebench-rollout-test-path-"));
     const configPath = join(root, "models.json");
@@ -144,12 +183,7 @@ describe("SWE-bench rollout pipeline", () => {
     const result = await runRollout(
       {
         runsRoot: root,
-        artifact: {
-          localPath: "/host/duet",
-          installPath: "/opt/duet/duet",
-          sha256: "a".repeat(64),
-          packagingMode: "compiled-linux-x64",
-        },
+        artifact: fixtureArtifact(),
         providerEnv: {},
         containerFactory: () => container,
       },
@@ -191,12 +225,7 @@ describe("SWE-bench rollout pipeline", () => {
     const result = await runRollout(
       {
         runsRoot: root,
-        artifact: {
-          localPath: "/host/duet",
-          installPath: "/opt/duet/duet",
-          sha256: "a".repeat(64),
-          packagingMode: "compiled-linux-x64",
-        },
+        artifact: fixtureArtifact(),
         providerEnv: {},
         containerFactory: () => container,
       },
@@ -249,12 +278,7 @@ describe("SWE-bench rollout pipeline", () => {
     const result = await runContainerSmoke(
       {
         runsRoot: root,
-        artifact: {
-          localPath: "/host/duet",
-          installPath: "/opt/duet/duet",
-          sha256: "a".repeat(64),
-          packagingMode: "compiled-linux-x64",
-        },
+        artifact: fixtureArtifact(),
         providerEnv: {},
         containerFactory: () => containers.shift()!,
       },
@@ -302,6 +326,7 @@ class FakeRolloutContainer implements RolloutContainer {
     private readonly failStart: boolean,
     private readonly patchPaths: readonly string[] = ["src/a.ts"],
     private readonly patch = "diff --git a/src/a.ts b/src/a.ts\n+fixed\n",
+    private readonly exitBeforeTerminal = false,
   ) {}
 
   async start(): Promise<void> {
@@ -330,10 +355,14 @@ class FakeRolloutContainer implements RolloutContainer {
     this.rpcOptions = options;
     return {
       stdin: { write: () => {} },
-      stdoutLines: lines([
-        '{"type":"turn_started","state":{"status":"running","mode":"agent","agent":{"status":"running","messages":[]}}}',
-        '{"type":"complete","status":"completed","result":"done","state":{"status":"completed","mode":"agent","agent":{"status":"completed","messages":[]}},"turnUsage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}},"usageByModel":[{"model":"model","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}}}],"lastMessageUsage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}},"effectiveContextWindow":1000,"contextWindowUsage":{"systemPrompt":1,"messages":1,"localMemory":0,"globalMemory":0}}',
-      ]),
+      stdoutLines: lines(
+        this.exitBeforeTerminal
+          ? ['{"type":"system","level":"error","message":"fatal startup error"}']
+          : [
+              '{"type":"turn_started","state":{"status":"running","mode":"agent","agent":{"status":"running","messages":[]}}}',
+              '{"type":"complete","status":"completed","result":"done","state":{"status":"completed","mode":"agent","agent":{"status":"completed","messages":[]}},"turnUsage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}},"usageByModel":[{"model":"model","usage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}}}],"lastMessageUsage":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0,"totalTokens":2,"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}},"effectiveContextWindow":1000,"contextWindowUsage":{"systemPrompt":1,"messages":1,"localMemory":0,"globalMemory":0}}',
+            ],
+      ),
       kill: () => {},
       exited: Promise.resolve({ code: 0, signal: null }),
     };
@@ -389,6 +418,21 @@ class FakeSmokeContainer implements RolloutContainer {
 
 function ok(stdout: string): CommandResult {
   return { stdout, stderr: "", exitCode: 0 };
+}
+
+function fixtureArtifact(): DuetArtifact {
+  return {
+    localPath: "/host/duet",
+    installPath: "/opt/duet/duet",
+    sha256: "a".repeat(64),
+    runtimeAssets: PGLITE_RUNTIME_ASSET_NAMES.map((name) => ({
+      name,
+      localPath: `/host/${name}`,
+      installPath: `/opt/duet/${name}` as const,
+      sha256: "c".repeat(64),
+    })),
+    packagingMode: "compiled-linux-x64",
+  };
 }
 
 async function* lines(values: readonly string[]): AsyncGenerator<string> {

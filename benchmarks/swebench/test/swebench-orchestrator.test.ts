@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
+import { PGLITE_RUNTIME_ASSET_NAMES } from "../../../src/memory/pglite.js";
 import {
   hashJson,
   hashText,
@@ -104,6 +105,12 @@ function fixture(): { campaign: CampaignSpec; runtime: CampaignRuntime } {
       localPath: "/duet",
       installPath: "/opt/duet/duet",
       sha256: "a".repeat(64),
+      runtimeAssets: PGLITE_RUNTIME_ASSET_NAMES.map((name) => ({
+        name,
+        localPath: `/${name}`,
+        installPath: `/opt/duet/${name}` as const,
+        sha256: "b".repeat(64),
+      })),
       packagingMode: "compiled-linux-x64",
     },
     manifest: {

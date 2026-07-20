@@ -170,9 +170,31 @@ describe("SWE-bench duet RPC client", () => {
 
     const outcome = await result;
     expect(outcome).toEqual(
-      expect.objectContaining({ terminal: "killed", timedOut: true, wallClockMs: 1_100 }),
+      expect.objectContaining({
+        terminal: "killed",
+        timedOut: true,
+        killedReason: "wall_clock",
+        wallClockMs: 1_100,
+      }),
     );
     expect(transport.killed).toBe(true);
+  });
+
+  test("distinguishes an RPC process exit from an enforced resource cutoff", async () => {
+    const transport = new FakeTransport();
+    const { result } = await startTurn(transport);
+    transport.stdout.push(
+      JSON.stringify({ type: "system", level: "error", message: "fatal startup error" }),
+    );
+    transport.stdout.end();
+
+    expect(await result).toEqual(
+      expect.objectContaining({
+        terminal: "killed",
+        timedOut: false,
+        killedReason: "process_exit",
+      }),
+    );
   });
 
   test("skips garbage stdout and drains but never parses the stderr banner", async () => {

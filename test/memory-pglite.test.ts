@@ -14,10 +14,33 @@ import {
   openPGliteWaitingForLock,
   quarantineDataDirectory,
   releaseOpenLock,
+  resolvePGliteExtensionBundle,
   tryAcquireOpenLock,
 } from "../src/memory/pglite.js";
 
 import { testIfDocker } from "./helpers/docker-only.js";
+
+describe("resolvePGliteExtensionBundle", () => {
+  test("keeps an upstream archive that exists in a normal package install", () => {
+    const upstream = new URL("file:///node_modules/pglite/vector.tar.gz");
+    expect(
+      resolvePGliteExtensionBundle(upstream, "/opt/duet/duet", (path) =>
+        path.includes("node_modules"),
+      ),
+    ).toBe(upstream);
+  });
+
+  test("uses the executable sidecar when a compiled bunfs URL is not readable", () => {
+    const upstream = new URL("file:///$bunfs/vector.tar.gz");
+    expect(
+      resolvePGliteExtensionBundle(
+        upstream,
+        "/opt/duet/duet",
+        (path) => path === "/opt/duet/vector.tar.gz",
+      ).href,
+    ).toBe("file:///opt/duet/vector.tar.gz");
+  });
+});
 
 describe("clearStalePostmasterLock", () => {
   testIfDocker("does nothing when the data directory does not exist", async () => {

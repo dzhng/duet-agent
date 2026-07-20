@@ -10,12 +10,14 @@ One other GLM run called twice. V4 therefore diagnoses unstable compliance with
 the custom exactly-once protocol; it does not show that received advice caused
 those losses.
 
-The context, lifecycle, prompt, telemetry, repeated-trial identity, and E2B
-collection corrections are now implemented and locally green. The replacement
-gate is frozen as two pair-specific campaigns:
-`advisor-restart-gate-glm-20260720-v2` (10 rollouts) and
-`advisor-restart-gate-kimi-20260720-v2` (20 rollouts). Their v1 predecessor was
-stopped after six complete pairs: Kimi made zero calls in three enabled runs,
+The context, lifecycle, prompt, telemetry, repeated-trial identity, compiled
+memory packaging, and E2B collection corrections are now implemented and
+locally green. The replacement gate is frozen as two pair-specific campaigns:
+`advisor-restart-gate-glm-20260720-v3` (10 rollouts) and
+`advisor-restart-gate-kimi-20260720-v3` (20 rollouts). V2 made no model calls:
+the compiled Duet process exited while loading PGlite assets, and concurrent
+workers exposed a provenance merge mismatch. Their v1 predecessor was stopped
+after six complete pairs: Kimi made zero calls in three enabled runs,
 while GLM skipped one of four and called only after substantial work in the
 others. Partial official scoring found all seven generated GLM patches
 resolved; the three scored Kimi pairs were two pure-only and one both-resolved.

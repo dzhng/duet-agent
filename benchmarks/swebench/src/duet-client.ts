@@ -53,6 +53,8 @@ export interface RolloutOutcome {
   events: TurnEvent[];
   /** True only when the wall-clock ceiling fired, not when spend caused interruption. */
   timedOut: boolean;
+  /** Why no protocol terminal arrived; absent when `terminal` is a real event. */
+  killedReason?: "process_exit" | "wall_clock" | "cost";
   /** Elapsed time measured by the injected monotonic runtime clock. */
   wallClockMs: number;
 }
@@ -114,7 +116,7 @@ export async function runDuetTurn(
 
     if (raced.result.done) {
       await transport.kill();
-      return outcome("killed", false);
+      return outcome("killed", false, "process_exit");
     }
 
     const event = parseRpcEvent(raced.result.value);
@@ -148,11 +150,21 @@ export async function runDuetTurn(
     }
 
     await transport.kill();
-    return outcome("killed", timedOut);
+    return outcome("killed", timedOut, timedOut ? "wall_clock" : "cost");
   }
 
-  function outcome(terminal: TurnTerminalEvent | "killed", timedOut: boolean): RolloutOutcome {
-    return { terminal, events, timedOut, wallClockMs: clock.now() - startedAt };
+  function outcome(
+    terminal: TurnTerminalEvent | "killed",
+    timedOut: boolean,
+    killedReason?: RolloutOutcome["killedReason"],
+  ): RolloutOutcome {
+    return {
+      terminal,
+      events,
+      timedOut,
+      ...(killedReason ? { killedReason } : {}),
+      wallClockMs: clock.now() - startedAt,
+    };
   }
 }
 

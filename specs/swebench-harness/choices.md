@@ -1762,6 +1762,35 @@ the number of rollouts or the independently enforced model-spend bound.
   diff, and round-trip tests; live gate evidence remains required before the
   final campaign.
 
+### S59 — Compiled memory assets and worker provenance are artifact invariants
+
+- **When:** validating the first unconstrained E2B restart after removing
+  `--incognito`.
+- **The choice:** Package PGlite's data archive, both WASM modules, and vector
+  extension beside the compiled Duet executable. The product loads these
+  sidecars only when they are present, while source and npm installs retain
+  PGlite's upstream import-relative behavior. Capacity admission opens default
+  memory with the compiled x86 binary and hashes every sidecar on two fresh
+  workers. Concurrent campaign files compare their immutable input hash and
+  frozen inputs rather than their worker-local `startedAt`. An RPC process that
+  closes without a protocol terminal is recorded as infrastructure failure,
+  not a completed model cutoff.
+- **The gap:** V2 reached no model. Bun embedded PGlite URLs under `$bunfs`,
+  where PGlite's filesystem loader could not read them; ten Kimi attempts from
+  one worker were also rejected because independently created but otherwise
+  identical provenance records had different timestamps. The old client then
+  mislabeled process exit as a killed completion.
+- **The reach:** A fresh campaign cannot spend model budget until the exact
+  compiled artifact proves normal memory startup. All workers can merge
+  byte-different timestamps for the same frozen experiment, but still reject
+  real input drift. V2 remains immutable zero-model-spend infrastructure
+  evidence; V3 uses new ids.
+- **Verdict:** **sound.** These checks validate the executable environment and
+  artifact identity without prescribing model workflow.
+- **Confidence:** **high** from 77 benchmark tests, the full Docker product
+  suite, and a real Linux x86 compiled-memory smoke returning an empty JSON row
+  array.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

@@ -1,3 +1,5 @@
+import type { PGliteRuntimeAssetName } from "../../../src/memory/pglite.js";
+
 const GIT_SHA = /^[0-9a-f]{40}$/i;
 
 /** Stable E2B template name tied to every committed benchmark input. */
@@ -35,6 +37,8 @@ export interface E2BEnvironmentProbe {
   dockerServerVersion: string;
   /** SHA-256 of the one Duet binary embedded in the worker template. */
   duetArtifactSha256: string;
+  /** SHA-256 of every PGlite sidecar beside the compiled binary. */
+  runtimeAssetSha256: Record<PGliteRuntimeAssetName, string>;
   pythonVersion: string;
   swebenchVersion: string;
 }
@@ -59,7 +63,10 @@ export function buildE2BEnvironmentLock(probe: E2BEnvironmentProbe): object {
       clientVersion: probe.dockerClientVersion,
       serverVersion: probe.dockerServerVersion,
     },
-    duetArtifact: { sha256: probe.duetArtifactSha256 },
+    duetArtifact: {
+      sha256: probe.duetArtifactSha256,
+      runtimeAssetSha256: probe.runtimeAssetSha256,
+    },
     python: {
       version: probe.pythonVersion,
       swebenchVersion: probe.swebenchVersion,

@@ -1,8 +1,9 @@
-import { PGlite } from "@electric-sql/pglite";
-import { vector } from "@electric-sql/pglite/vector";
+import { PGlite, type PGliteOptions } from "@electric-sql/pglite";
+import { vector as upstreamVector } from "@electric-sql/pglite/vector";
 import {
   closeSync,
   cpSync,
+  existsSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -13,7 +14,9 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { basename, dirname, resolve as resolvePath, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /**
  * pgvector ships with PGlite as an opt-in WASM extension. We load it
@@ -23,7 +26,87 @@ import { basename, dirname, resolve as resolvePath, join } from "node:path";
  * succeeds inside migration v3 where the embedding tables and HNSW
  * index live.
  */
+const vector = {
+  ...upstreamVector,
+  async setup(...args: Parameters<typeof upstreamVector.setup>) {
+    const setup = await upstreamVector.setup(...args);
+    return { ...setup, bundlePath: resolvePGliteExtensionBundle(setup.bundlePath) };
+  },
+};
 const MEMORY_EXTENSIONS = { vector } as const;
+
+/** Files PGlite must load from the host filesystem when Duet is a compiled executable. */
+export const PGLITE_RUNTIME_ASSET_NAMES = [
+  "pglite.data",
+  "pglite.wasm",
+  "initdb.wasm",
+  "vector.tar.gz",
+] as const;
+
+/** Basename of one required compiled-runtime PGlite sidecar. */
+export type PGliteRuntimeAssetName = (typeof PGLITE_RUNTIME_ASSET_NAMES)[number];
+
+type PGliteRuntimeOptions = Pick<
+  PGliteOptions,
+  "fsBundle" | "pgliteWasmModule" | "initdbWasmModule"
+>;
+
+let pgliteRuntimeOptionsPromise: Promise<PGliteRuntimeOptions> | undefined;
+
+/**
+ * Bun's single-file compiler retains an extension's `import.meta.url` inside
+ * `$bunfs`, but PGlite loads extension archives through ordinary filesystem
+ * URLs. Source/npm installs use the upstream archive directly; compiled
+ * distributions place the same archive beside the executable as a sidecar.
+ */
+export function resolvePGliteExtensionBundle(
+  upstreamBundle: URL,
+  executablePath = process.execPath,
+  pathExists: (path: string) => boolean = existsSync,
+): URL {
+  if (upstreamBundle.protocol !== "file:") return upstreamBundle;
+  const upstreamPath = fileURLToPath(upstreamBundle);
+  if (pathExists(upstreamPath)) return upstreamBundle;
+  const sidecarPath = join(dirname(executablePath), basename(upstreamPath));
+  return pathExists(sidecarPath) ? pathToFileURL(sidecarPath) : upstreamBundle;
+}
+
+/**
+ * Load PGlite's core assets from executable sidecars when present. Normal source and package
+ * installs keep using PGlite's own import-relative URLs. A partial compiled distribution fails
+ * clearly instead of falling through to an unreadable `$bunfs` path.
+ */
+async function pgliteRuntimeOptions(): Promise<PGliteRuntimeOptions> {
+  pgliteRuntimeOptionsPromise ??= loadPGliteRuntimeOptions(process.execPath);
+  return pgliteRuntimeOptionsPromise;
+}
+
+async function loadPGliteRuntimeOptions(executablePath: string): Promise<PGliteRuntimeOptions> {
+  const assetPaths = Object.fromEntries(
+    PGLITE_RUNTIME_ASSET_NAMES.map((name) => [name, join(dirname(executablePath), name)]),
+  ) as Record<PGliteRuntimeAssetName, string>;
+  const present = PGLITE_RUNTIME_ASSET_NAMES.filter((name) => existsSync(assetPaths[name]));
+  if (present.length === 0) return {};
+  if (present.length !== PGLITE_RUNTIME_ASSET_NAMES.length) {
+    const missing = PGLITE_RUNTIME_ASSET_NAMES.filter((name) => !existsSync(assetPaths[name]));
+    throw new Error(`Compiled PGlite runtime is missing sidecars: ${missing.join(", ")}.`);
+  }
+
+  const [fsBundleBytes, pgliteWasmBytes, initdbWasmBytes] = await Promise.all([
+    readFile(assetPaths["pglite.data"]),
+    readFile(assetPaths["pglite.wasm"]),
+    readFile(assetPaths["initdb.wasm"]),
+  ]);
+  const [pgliteWasmModule, initdbWasmModule] = await Promise.all([
+    WebAssembly.compile(new Uint8Array(pgliteWasmBytes)),
+    WebAssembly.compile(new Uint8Array(initdbWasmBytes)),
+  ]);
+  return {
+    fsBundle: new Blob([new Uint8Array(fsBundleBytes)]),
+    pgliteWasmModule,
+    initdbWasmModule,
+  };
+}
 
 /**
  * Filename used for the cross-process open-lock written into each
@@ -397,7 +480,11 @@ async function openAndProbe(
   // extensions at construction time — the bare `new PGlite(path)` form
   // skips the extension registry, leaving `CREATE EXTENSION vector` to
   // fail with "extension is not available" once migration v3 runs.
-  const db = await PGlite.create({ dataDir: path, extensions: MEMORY_EXTENSIONS });
+  const db = await PGlite.create({
+    dataDir: path,
+    extensions: MEMORY_EXTENSIONS,
+    ...(await pgliteRuntimeOptions()),
+  });
   try {
     if (init) await init(db);
     return db;
@@ -424,7 +511,11 @@ async function openAndProbe(
  */
 export async function openForRecovery(path: string): Promise<PGlite> {
   clearStalePostmasterLock(path);
-  return PGlite.create({ dataDir: path, extensions: MEMORY_EXTENSIONS });
+  return PGlite.create({
+    dataDir: path,
+    extensions: MEMORY_EXTENSIONS,
+    ...(await pgliteRuntimeOptions()),
+  });
 }
 
 /**
