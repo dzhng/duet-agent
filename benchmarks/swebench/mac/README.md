@@ -28,7 +28,11 @@ bash benchmarks/swebench/mac/gold-check.sh \
 key and then pulls that exact key with `--platform linux/amd64`. This pre-pull
 is required on Apple Silicon; an unqualified Docker pull selects the wrong
 platform before the scorer gets a chance to run. The scorer invocation itself
-is unchanged and uses `--max_workers 1 --cache_level none --clean true`.
+uses one worker and no harness cache. The gold checker scores one row at a time
+with `--clean true`. Campaign scoring groups every arm for one instance, uses
+`--clean false` for those individual invocations, then removes that exact image
+once after the group. This keeps one arm from deleting the image needed by the
+next arm.
 
 After checking the capacity metrics, run the committed manifest:
 

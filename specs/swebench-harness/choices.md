@@ -1126,6 +1126,27 @@ ownerScopeId }`, even though both execute through the same task manager.
   the artifact tree and a regression test covers an interrupted rollout with a
   resolved official score.
 
+### S34 — Campaign scoring owns image cleanup outside each official invocation
+
+- **When:** the corrected pilot's first Fmt arm resolved, then the official
+  scorer's `--clean true` removed the shared image and the next arm failed with
+  `No such image`.
+- **The choice:** Invoke the unmodified official scorer with `--clean false`
+  while scoring every arm for one instance, then remove that exact image once
+  in the campaign wrapper's `finally` block. The one-row gold checker keeps
+  `--clean true`. The unbuilt alternative pulls the same multi-gigabyte image
+  again before every arm.
+- **The gap:** Grouping arms around one explicit pull did not help while each
+  nested scorer invocation still owned image deletion.
+- **The reach:** All arms for an instance see the same official image, scoring
+  remains serial, interrupted scoring still releases the owned image, and no
+  unrelated Docker images are pruned.
+- **Verdict:** **sound.** Cleanup belongs to the layer that knows the image is
+  shared; the official test execution itself is unchanged.
+- **Confidence:** **high** because the live failure reproduced the lifecycle
+  bug and a red/green regression drives two arms through the wrapper while
+  simulating deletion semantics.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

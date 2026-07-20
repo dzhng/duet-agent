@@ -83,7 +83,7 @@ def score_one(row: dict[str, Any], output_root: Path) -> dict[str, Any]:
         "--cache_level",
         "none",
         "--clean",
-        "true",
+        "false",
         "--run_id",
         run_id,
     ]

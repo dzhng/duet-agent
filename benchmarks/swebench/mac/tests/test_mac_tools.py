@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -55,6 +56,54 @@ class MetricsTest(unittest.TestCase):
 
 
 class ScorePredictionsTest(unittest.TestCase):
+    def test_scores_all_arms_before_releasing_the_shared_image(self) -> None:
+        rows = [
+            {
+                "instance_id": "org__repo-1",
+                "model_name_or_path": model,
+                "model_patch": "diff",
+            }
+            for model in ("model-a", "model-b")
+        ]
+        image_present = False
+
+        def pull(_image: str) -> None:
+            nonlocal image_present
+            image_present = True
+
+        def remove(_image: str) -> None:
+            nonlocal image_present
+            image_present = False
+
+        def run(command, *, cwd, check):
+            nonlocal image_present
+            if not image_present:
+                raise subprocess.CalledProcessError(1, command)
+            run_id = command[command.index("--run_id") + 1]
+            instance_id = command[command.index("--instance_ids") + 1]
+            (Path(cwd) / f"result.{run_id}.json").write_text(
+                json.dumps({"resolved_ids": [instance_id]})
+            )
+            if command[command.index("--clean") + 1] == "true":
+                image_present = False
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(score_predictions, "resolve_image", return_value="official/image"),
+            patch.object(score_predictions, "pull_image", side_effect=pull),
+            patch.object(score_predictions, "remove_if_present", side_effect=remove),
+            patch.object(score_predictions.subprocess, "run", side_effect=run),
+        ):
+            results = score_predictions.score_instance(rows, Path(directory))
+
+        self.assertEqual(
+            results,
+            [
+                {"instanceId": "org__repo-1", "model": "model-a", "status": "resolved"},
+                {"instanceId": "org__repo-1", "model": "model-b", "status": "resolved"},
+            ],
+        )
+
     def test_relative_output_root_still_passes_a_readable_prediction_path(self) -> None:
         row = {
             "instance_id": "org__repo-1",
