@@ -42,6 +42,7 @@ export async function buildSwebenchTemplate(): Promise<{
       "unzip",
     ])
     .runCmd("curl -fsSL https://get.docker.com | sh")
+    .runCmd("sudo systemctl disable --now docker.service docker.socket")
     .runCmd(
       "curl -fsSL https://bun.sh/install | bash -s 'bun-v1.3.11' && sudo ln -sf /home/user/.bun/bin/bun /usr/local/bin/bun",
     )
