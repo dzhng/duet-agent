@@ -27,6 +27,7 @@ const DEFAULT_SPEC = "benchmarks/swebench/campaigns/multilingual-30-four-arm-e2b
 const REMOTE_ENVIRONMENT_LOCK = "/tmp/duet-swebench-environment.lock.json";
 const REMOTE_RESUME_ARCHIVE = "/tmp/duet-swebench-resume.tar";
 const REMOTE_RESULT_ARCHIVE = "/tmp/duet-swebench-result.tar";
+const E2B_REQUEST_TIMEOUT_MS = 180_000;
 
 interface DriverOptions {
   specPath: string;
@@ -136,6 +137,7 @@ async function capacityProbe(
   console.log(`Probing ${templateName} before launching model work.`);
   const sandbox = await Sandbox.create(templateName, {
     timeoutMs: 10 * 60_000,
+    requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
     metadata: {
       purpose: "duet-swebench-capacity",
       campaign: spec.id,
@@ -238,6 +240,7 @@ async function runInstanceBlock(input: {
   const startedAt = new Date().toISOString();
   const sandbox = await Sandbox.create(input.templateName, {
     timeoutMs: input.spec.execution.workerTimeoutMs,
+    requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
     envs: providerEnvironment(process.env),
     metadata: {
       purpose: "duet-swebench-worker",
