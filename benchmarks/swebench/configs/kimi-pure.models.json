@@ -18,8 +18,7 @@
           "modelName": "fable-5",
           "thinkingLevel": "high"
         },
-        "minStepsBetween": 5,
-        "transcriptTokens": 10000
+        "minStepsBetween": 5
       }
     }
   },

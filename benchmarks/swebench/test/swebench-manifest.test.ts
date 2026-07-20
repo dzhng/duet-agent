@@ -188,9 +188,6 @@ describe("SWE-bench routing renders", () => {
       expect(table.tiers.swebench!.advisor.minStepsBetween).toBe(
         BUILT_IN_ROUTING_TABLE.tiers.frontier.advisor.minStepsBetween,
       );
-      expect(table.tiers.swebench!.advisor.transcriptTokens).toBe(
-        BUILT_IN_ROUTING_TABLE.tiers.frontier.advisor.transcriptTokens,
-      );
     }
 
     expect(renders["glm-pure"].tiers.swebench!.routes.general!.target).toEqual({

@@ -47,9 +47,6 @@ export const ADVISOR_EXECUTOR_GUIDANCE_LAYER = dedent`
   your progress so far is forwarded automatically; the advisor sees the task, your steps, and
   their results.
 
-  Follow any stricter workflow-specific system instruction that requires a different consultation
-  schedule, including a required call for routine work.
-
   For tasks longer than a few steps, consult at least once after orientation and before committing
   to an approach, and again before declaring the work done. Also call when you are stuck or about
   to change approach. If concrete evidence conflicts with advice, make a follow-up call that

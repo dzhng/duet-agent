@@ -802,8 +802,8 @@ describe("advisor executor guidance layer", () => {
     await concrete.dispose();
   });
 
-  testIfDocker("general advisor timing yields to a stricter workflow rule", async () => {
-    const workflowRule = "WORKFLOW-REQUIRES-ADVISOR-EVEN-WHEN-ROUTINE";
+  testIfDocker("advisor guidance retains an unrelated workflow rule", async () => {
+    const workflowRule = "WORKFLOW-USES-BOUNDED-VALIDATION";
     const runner = new RouterTurnRunner({
       classify: scriptedClassifier([]),
       systemInstructions: workflowRule,
@@ -813,7 +813,7 @@ describe("advisor executor guidance layer", () => {
     const systemPrompt = runner.parentAgentForTest().state.systemPrompt;
     expect(systemPrompt).toContain(workflowRule);
     expect(systemPrompt).toContain("Skip consultation for routine, local,");
-    expect(systemPrompt).toContain("Follow any stricter workflow-specific system instruction");
+    expect(systemPrompt).not.toContain("Follow any stricter workflow-specific system instruction");
     await runner.dispose();
   });
 });
