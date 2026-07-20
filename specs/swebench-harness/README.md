@@ -12,11 +12,14 @@ tasks; this harness uses different executors and advisors and a signal-seeking
 ## Next Agent Prompt
 
 **Status:** slices 01–07 are mechanically complete; slice 08 is stopped after
-E2B v4. Freeze v1–v4 as historical evidence. Next, make Duet's advisor input
-faithfully carry the executor's full available transcript, remove the
-benchmark's forced exactly-once call rule, and run slice 08's repeated restart
-gate on the three v4 zero-call loss cases. Only after that gate passes, create
-and run `multilingual-30-four-arm-e2b-20260720-v5`; no v1–v4 outcome enters its
+E2B v4. Freeze v1–v4 as historical evidence. The product now forwards the
+executor's structured context up to the advisor model's real window, the old
+configured transcript cap and observer projection are gone, live GLM and Kimi
+fidelity evals pass, the benchmark no longer forces calls, and repeated trials
+have unique official scorer identities. Next, push the frozen product and run
+the two committed restart-gate campaigns on the three v4 zero-call loss cases.
+Only after that gate passes, create and run
+`multilingual-30-four-arm-e2b-20260720-v5`; no v1–v4 outcome enters its
 estimate. Last updated 2026-07-20.
 
 Local constraints to prove rather than assume:
@@ -29,10 +32,10 @@ Local constraints to prove rather than assume:
 - Every worker uses the byte-identical Duet binary compiled once into the
   immutable E2B template. Workers never compile their own campaign artifact or
   fetch the pinned dataset snapshot at launch.
-- Before another paid campaign, a deterministic fixture must prove that a
-  successful `ask_advisor` call receives the full available executor context,
-  and focused live repeats must report any truncation. The present budgeted
-  text projection is not equivalent to Anthropic's full-transcript server tool.
+- Every successful `ask_advisor` call records its real model window, estimated
+  input, included and omitted messages, images, and truncation. The deterministic
+  fixture and live GLM/Kimi eval prove complete tool results survive the old
+  projection boundary; focused repeats must retain that evidence.
 - A Vercel AI Gateway credential is present in the project `.env`. The harness
   enforces a $500 cumulative model-spend breaker, but that local breaker is not
   a substitute for an external provider-side hard cap.
@@ -74,7 +77,7 @@ rationale.
   arm, reported as two paired comparisons: pure GLM-5.2 vs GLM-5.2 with Kimi K3
   advisor, and pure Kimi K3 vs Kimi K3 with Fable advisor. “Pure” means the
   advisor tool is disabled; product-default memory still runs. Every complete
-  render derives classifier, memory, cadence, and transcript policy from the
+  render derives classifier, memory, and cadence policy from the
   built-in table. The campaign fixes the executor and advisor targets and uses
   Kimi K3 as its vision fallback, including for the text-only GLM executor.
   Within each pair ON/OFF differs only in `advisor.enabled`. The shared model-

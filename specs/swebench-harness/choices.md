@@ -1538,6 +1538,68 @@ the number of rollouts or the independently enforced model-spend bound.
   outcomes produced under a rejected treatment definition.
 - **Confidence:** **high**.
 
+### S51 — Advisor context is bounded only by the receiving model's real window
+
+- **When:** implementing the stopped-v4 context-fidelity correction.
+- **The choice:** Capture the executor's resolved system prompt, exact tool
+  definitions, converted messages, thinking, tool calls, complete tool results,
+  current turn, and images at tool execution time. Send that structured context
+  without the observer projection or a tier-configured 10,000-token cap. Reserve
+  2,048 tokens for advice; only if the receiving model's advertised window is
+  exceeded, keep the first user task plus the newest whole-message suffix and
+  report every omission. The unbuilt alternative preserved a smaller
+  configurable transcript budget even when the advisor could accept more.
+- **The gap:** Anthropic's result depends on shared working context, while v4
+  silently discarded tool structure, thinking, and most long tool results.
+- **The reach:** Product config no longer exposes `transcriptTokens`; runtime
+  calls and CLI previews share one capture owner; successful benchmark calls
+  must carry parseable context-window telemetry. A smaller advisor model can
+  still truncate, but the report makes that explicit instead of calling a
+  projection “full context.”
+- **Verdict:** **sound.** The real provider limit is the direct local guarantee;
+  a second arbitrary cap only removes evidence from the reviewer.
+- **Confidence:** **high** after GLM and Kimi recovered an unguessable marker
+  beyond the former tool-result cutoff, the temporary old cutoff made the eval
+  fail, and restoration made it pass again.
+
+### S52 — Repeated trials receive distinct official scorer identities
+
+- **When:** preparing S49's five-repeat restart gate.
+- **The choice:** Keep trial one's historical scorer name `duet-<config>` and
+  name later trials `duet-<config>-trial-<n>`. Parse that identity back into the
+  arm and trial, reject duplicates or unscheduled rows, and make every report
+  outcome and consultation row trial-explicit. The unbuilt alternative emitted
+  the same scorer model name for every repeat, allowing SWE-bench outputs and
+  caches to overwrite one another.
+- **The gap:** The orchestrator already supported `trials > 1`, but prediction,
+  scoring, and report identities did not.
+- **The reach:** Focused reports now cross-foot every repetition independently;
+  single-trial historical artifacts retain their existing names.
+- **Verdict:** **sound.** One logical rollout must map to one official scorer
+  identity or repeated evidence is not auditable.
+- **Confidence:** **high** from the duplicate-rejection and two-trial scorer and
+  report tests.
+
+### S53 — The restart gate is two pair-specific campaigns with a conservative shared reserve
+
+- **When:** freezing the paid gate inputs after trial-aware reporting landed.
+- **The choice:** Run one 10-rollout GLM/Kimi campaign on Fluentd and one
+  20-rollout Kimi/Fable campaign on the two Docusaurus tasks. Each report accepts
+  only its scheduled arms and complete comparison. The second campaign's sunk
+  value reserves all ten GLM rollouts at their $3.93 ceiling, so the combined
+  worst case remains inside the global $500 envelope even if both E2B jobs
+  overlap. The unbuilt alternative put all four arms on all three tasks for 60
+  rollouts or let unrelated arms appear as phantom missing rows.
+- **The gap:** Campaign specs apply one arm list to every selected instance, but
+  S49 intentionally assigns different model pairs to different tasks.
+- **The reach:** The gate spends 30 rather than 60 rollouts, preserves pairwise
+  denominators, and recalculates v5 from actual gate spend plus any unknown
+  interrupted reserve.
+- **Verdict:** **sound.** Pair-specific namespaces express the intended design
+  directly without weakening provenance or the budget breaker.
+- **Confidence:** **high** in the accounting bound and report shape; the paid
+  gate remains to be observed.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper
