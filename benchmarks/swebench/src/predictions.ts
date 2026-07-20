@@ -2,10 +2,12 @@ import { readFile } from "node:fs/promises";
 
 import type { CampaignConfigName } from "./config-override.js";
 import type { RolloutAttempt } from "./artifacts.js";
+import { scoringModelName } from "./scoring-identity.js";
 
 /** Exact row accepted by the official SWE-bench predictions loader. */
 export interface SwebenchPrediction {
   instance_id: string;
+  /** Opaque official run identity; repeated trials must use different values. */
   model_name_or_path: string;
   model_patch: string;
 }
@@ -24,14 +26,19 @@ export async function buildPredictions(
       latestByRollout.set(key, attempt);
     }
   }
-  const predictions = await Promise.all(
-    [...latestByRollout.values()].map(async (attempt) => ({
-      instance_id: attempt.spec.instanceId,
-      model_name_or_path: `duet-${config}`,
-      model_patch: await readFile(`${attempt.directory}/patch.diff`, "utf8"),
-    })),
+  return Promise.all(
+    [...latestByRollout.values()]
+      .sort(
+        (left, right) =>
+          left.spec.instanceId.localeCompare(right.spec.instanceId) ||
+          left.spec.trial - right.spec.trial,
+      )
+      .map(async (attempt) => ({
+        instance_id: attempt.spec.instanceId,
+        model_name_or_path: scoringModelName(config, attempt.spec.trial),
+        model_patch: await readFile(`${attempt.directory}/patch.diff`, "utf8"),
+      })),
   );
-  return predictions.sort((left, right) => left.instance_id.localeCompare(right.instance_id));
 }
 
 export function serializePredictions(predictions: readonly SwebenchPrediction[]): string {

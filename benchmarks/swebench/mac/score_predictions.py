@@ -101,6 +101,9 @@ def score_instance(rows: list[dict[str, Any]], output_root: Path) -> list[dict[s
     if len(instance_ids) != 1:
         raise ValueError("score_instance requires predictions for exactly one instance")
     instance_id = next(iter(instance_ids))
+    models = [row["model_name_or_path"] for row in rows]
+    if len(set(models)) != len(models):
+        raise ValueError(f"duplicate official scorer identity for {instance_id}")
     results: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     for row in rows:

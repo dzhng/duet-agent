@@ -42,6 +42,9 @@ export const CAMPAIGN_CONFIGS = {
 
 export type CampaignConfigName = keyof typeof CAMPAIGN_CONFIGS;
 
+/** Canonical campaign arm order used by generation, scoring, and reporting. */
+export const CAMPAIGN_CONFIG_NAMES = Object.keys(CAMPAIGN_CONFIGS) as CampaignConfigName[];
+
 /**
  * Build the complete project routing table consumed by RPC rollouts.
  *
@@ -88,7 +91,7 @@ export function renderModelsJson(options: RenderModelsJsonOptions): RoutingTable
 /** Materialize all four explicit routing files in deterministic name order. */
 export function renderCampaignConfigs(): Record<CampaignConfigName, RoutingTable> {
   return Object.fromEntries(
-    Object.entries(CAMPAIGN_CONFIGS).map(([name, options]) => [name, renderModelsJson(options)]),
+    CAMPAIGN_CONFIG_NAMES.map((name) => [name, renderModelsJson(CAMPAIGN_CONFIGS[name])]),
   ) as Record<CampaignConfigName, RoutingTable>;
 }
 

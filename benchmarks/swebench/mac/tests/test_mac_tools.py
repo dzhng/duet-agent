@@ -56,6 +56,16 @@ class MetricsTest(unittest.TestCase):
 
 
 class ScorePredictionsTest(unittest.TestCase):
+    def test_rejects_duplicate_official_run_identities(self) -> None:
+        row = {
+            "instance_id": "org__repo-1",
+            "model_name_or_path": "duet-glm-pure",
+            "model_patch": "diff",
+        }
+
+        with self.assertRaisesRegex(ValueError, "duplicate official scorer identity"):
+            score_predictions.score_instance([row, row.copy()], Path("scores"))
+
     def test_scores_all_arms_before_releasing_the_shared_image(self) -> None:
         rows = [
             {

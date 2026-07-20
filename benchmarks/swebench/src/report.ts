@@ -4,6 +4,7 @@ import type { RolloutAttempt, RolloutFailureKind } from "./artifacts.js";
 import type { CampaignConfigName } from "./config-override.js";
 import type { ManifestEntry } from "./manifest.js";
 import { lintPatch, type PatchLint } from "./patch-policy.js";
+import { parseScoringModelName, type ScoringIdentity } from "./scoring-identity.js";
 import type { AdvisorContextObservation, RolloutTelemetry } from "./telemetry.js";
 
 export { lintPatch, type PatchLint } from "./patch-policy.js";
@@ -19,6 +20,7 @@ export type OfficialStatus =
 /** One normalized official scorer row written by `score_predictions.py`. */
 export interface OfficialScoreRow {
   instanceId: string;
+  /** Canonical scorer model identity encoding the campaign config and trial. */
   model: string;
   status: OfficialStatus;
   error?: string;
@@ -28,6 +30,8 @@ export interface OfficialScoreRow {
 export interface ReportAttempt {
   instanceId: string;
   config: CampaignConfigName;
+  /** One-based campaign repetition that produced this attempt. */
+  trial: number;
   phase: "running" | "completed" | "failed";
   /** Classifies a failed attempt so reports keep model and infrastructure failures distinct. */
   failureKind?: RolloutFailureKind;
@@ -51,21 +55,41 @@ export interface ConfigReport {
   failures: Record<string, number>;
   patchViolations: string[];
   byLanguage: Record<string, { resolved: number; total: number }>;
+  /** Aggregate result for each one-based campaign repetition. */
+  byTrial: TrialConfigReport[];
   /** Present only for advisor-enabled arms; it describes exposure without gating ITT. */
   consultation: ConfigConsultationReport | null;
+}
+
+/** Aggregate result for one repetition of a campaign configuration. */
+export interface TrialConfigReport {
+  /** One-based campaign repetition. */
+  trial: number;
+  /** Rollouts resolved in this repetition. */
+  resolved: number;
+  /** Manifest instances scheduled in this repetition. */
+  total: number;
+}
+
+/** One instance repetition in a paired comparison bucket. */
+export interface TrialResult {
+  /** SWE-bench instance evaluated by both sides of the pair. */
+  instanceId: string;
+  /** One-based repetition shared by both sides of the pair. */
+  trial: number;
 }
 
 export type PairedOutcome = "enabled_only" | "pure_only" | "both_resolve" | "neither_resolves";
 
 export interface PairedOutcomeBuckets {
   /** Enabled arm resolved and paired pure arm did not. */
-  enabledOnly: string[];
+  enabledOnly: TrialResult[];
   /** Pure arm resolved and paired enabled arm did not. */
-  pureOnly: string[];
+  pureOnly: TrialResult[];
   /** Both paired arms resolved. */
-  bothResolve: string[];
+  bothResolve: TrialResult[];
   /** Neither paired arm resolved, including denominator-visible failures. */
-  neitherResolves: string[];
+  neitherResolves: TrialResult[];
 }
 
 export type ConsultationStatus = "successful" | "not_called" | "unsuccessful" | "missing_telemetry";
@@ -74,6 +98,8 @@ export type ConsultationStatus = "successful" | "not_called" | "unsuccessful" | 
 export interface ConsultationEvidenceReport {
   /** Manifest id that binds this evidence to one randomized pair. */
   instanceId: string;
+  /** One-based repetition that binds this evidence to one randomized pair. */
+  trial: number;
   /** Primary ITT outcome retained regardless of consultation status. */
   outcome: PairedOutcome;
   /** Whether the configured model actually returned advice on this enabled attempt. */
@@ -139,14 +165,19 @@ export interface ComparisonReport {
    * randomized estimate and never replaces the intention-to-treat result.
    */
   successfulConsultationSubset: PairedOutcomeBuckets;
-  /** One exposure row per manifest instance, including zero and unsuccessful calls. */
+  /** One exposure row per instance repetition, including zero and unsuccessful calls. */
   consultationEvidence: ConsultationEvidenceReport[];
 }
 
 /** Machine-checkable paired campaign result. */
 export interface CampaignReport {
-  schemaVersion: 2;
-  configs: Record<CampaignConfigName, ConfigReport>;
+  schemaVersion: 3;
+  /** Number of manifest instances included in every configuration. */
+  instanceCount: number;
+  /** Number of scheduled repetitions for every instance and configuration. */
+  trials: number;
+  /** Results for exactly the arms scheduled by the campaign spec. */
+  configs: Partial<Record<CampaignConfigName, ConfigReport>>;
   comparisons: ComparisonReport[];
   totalCostUsd: number;
   pureAdvisorAssertion: { passed: boolean; violations: string[] };
@@ -177,31 +208,67 @@ const EXPECTED_ADVISORS: Partial<Record<CampaignConfigName, string>> = {
 /** Build paired statistics without excluding failed or missing outcomes. */
 export function buildCampaignReport(
   entries: readonly ManifestEntry[],
+  scheduledConfigs: readonly CampaignConfigName[],
+  trials: number,
   attempts: readonly ReportAttempt[],
   scores: readonly OfficialScoreRow[],
 ): CampaignReport {
-  const scoreByKey = new Map(
-    scores.map((score) => [`${configFromModel(score.model)}:${score.instanceId}`, score.status]),
-  );
-  const attemptByKey = new Map(
-    attempts.map((attempt) => [`${attempt.config}:${attempt.instanceId}`, attempt]),
-  );
-  const configs = {} as Record<CampaignConfigName, ConfigReport>;
-  const allConfigs: CampaignConfigName[] = [
-    "glm-pure",
-    "glm-kimi-advisor",
-    "kimi-pure",
-    "kimi-fable-advisor",
-  ];
+  if (!Number.isSafeInteger(trials) || trials < 1) {
+    throw new Error("Report trials must be a positive integer.");
+  }
+  const scheduledConfigSet = new Set(scheduledConfigs);
+  if (scheduledConfigs.length === 0 || scheduledConfigSet.size !== scheduledConfigs.length) {
+    throw new Error("Report configs must be a non-empty unique list.");
+  }
+  const instanceIds = new Set(entries.map((entry) => entry.instanceId));
+  if (instanceIds.size !== entries.length) {
+    throw new Error("Report manifest has duplicate instances.");
+  }
+  const scoreByKey = new Map<string, OfficialStatus>();
+  for (const score of scores) {
+    const identity = parseScoringModelName(score.model);
+    assertScheduledRollout(
+      scheduledConfigSet,
+      instanceIds,
+      trials,
+      identity,
+      score.instanceId,
+      "official score",
+    );
+    setUnique(
+      scoreByKey,
+      rolloutKey(identity.config, score.instanceId, identity.trial),
+      score.status,
+      "score",
+    );
+  }
+  const attemptByKey = new Map<string, ReportAttempt>();
+  for (const attempt of attempts) {
+    assertScheduledRollout(
+      scheduledConfigSet,
+      instanceIds,
+      trials,
+      attempt,
+      attempt.instanceId,
+      "report attempt",
+    );
+    setUnique(
+      attemptByKey,
+      rolloutKey(attempt.config, attempt.instanceId, attempt.trial),
+      attempt,
+      "attempt",
+    );
+  }
+  const configs: Partial<Record<CampaignConfigName, ConfigReport>> = {};
   const violations: string[] = [];
   const contextFidelityViolations: string[] = [];
   const patchViolations: string[] = [];
 
-  for (const config of allConfigs) {
+  for (const config of scheduledConfigs) {
     const configuredAdvisor = EXPECTED_ADVISORS[config];
     const summary: ConfigReport = {
       resolved: 0,
-      total: entries.length,
+      total: entries.length * trials,
       resolveRate: 0,
       costUsd: 0,
       executorCostUsd: 0,
@@ -211,68 +278,76 @@ export function buildCampaignReport(
       failures: {},
       patchViolations: [],
       byLanguage: {},
+      byTrial: Array.from({ length: trials }, (_, index) => ({
+        trial: index + 1,
+        resolved: 0,
+        total: entries.length,
+      })),
       consultation: configuredAdvisor ? emptyConfigConsultation(configuredAdvisor) : null,
     };
-    for (const entry of entries) {
-      const key = `${config}:${entry.instanceId}`;
-      const attempt = attemptByKey.get(key);
-      const status = scoreByKey.get(key) ?? "missing";
-      const language = (summary.byLanguage[entry.language] ??= { resolved: 0, total: 0 });
-      language.total += 1;
-      if (status === "resolved" && hasCompletedArtifact(attempt)) {
-        summary.resolved += 1;
-        language.resolved += 1;
-      } else {
-        increment(summary.failures, attempt?.failureKind ?? status);
-      }
-      summary.costUsd += attempt?.costUsd ?? 0;
-      const executorCost = executorCostUsd(config, attempt?.telemetry);
-      summary.executorCostUsd += executorCost;
-      summary.auxiliaryCostUsd += (attempt?.costUsd ?? 0) - executorCost;
-      summary.advisorCalls += attempt?.telemetry?.advisorCalls.total ?? 0;
-      for (const [switchName, count] of Object.entries(attempt?.telemetry?.routerSwitches ?? {})) {
-        increment(summary.routerSwitches, switchName, count);
-      }
-      if (config.endsWith("-pure") && (attempt?.telemetry?.advisorCalls.total ?? 0) !== 0) {
-        violations.push(`${config}/${entry.instanceId}`);
-      }
-      collectContextFidelityViolations(
-        config,
-        entry.instanceId,
-        attempt,
-        contextFidelityViolations,
-      );
-      const expectedAdvisor = EXPECTED_ADVISORS[config];
-      if (expectedAdvisor) {
-        const evidence = consultationEvidence(
-          entry.instanceId,
-          "neither_resolves",
-          expectedAdvisor,
-          attempt,
-        );
-        if (!summary.consultation) {
-          throw new Error(`Advisor-enabled config has no consultation summary: ${config}.`);
+    for (let trial = 1; trial <= trials; trial += 1) {
+      for (const entry of entries) {
+        const result = { instanceId: entry.instanceId, trial };
+        const label = `${config}/${formatTrialResult(result, trials)}`;
+        const attempt = attemptByKey.get(rolloutKey(config, entry.instanceId, trial));
+        const status = scoreByKey.get(rolloutKey(config, entry.instanceId, trial)) ?? "missing";
+        const language = (summary.byLanguage[entry.language] ??= { resolved: 0, total: 0 });
+        language.total += 1;
+        if (status === "resolved" && hasCompletedArtifact(attempt)) {
+          summary.resolved += 1;
+          summary.byTrial[trial - 1]!.resolved += 1;
+          language.resolved += 1;
+        } else {
+          increment(summary.failures, attempt?.failureKind ?? status);
         }
-        incrementConsultationSummary(summary.consultation, evidence.status);
-      }
-      if (attempt?.failureKind === "patch") {
-        patchViolations.push(
-          `${config}/${entry.instanceId}: ${attempt.failureMessage ?? "patch artifact admission failed"}`,
-        );
-      }
-      for (const violation of attempt?.patchLint?.violations ?? []) {
-        const labelled = `${config}/${entry.instanceId}: ${violation}`;
-        summary.patchViolations.push(labelled);
-      }
-      for (const violation of attempt?.patchLint?.admissionViolations ?? []) {
-        patchViolations.push(`${config}/${entry.instanceId}: ${violation}`);
+        summary.costUsd += attempt?.costUsd ?? 0;
+        const executorCost = executorCostUsd(config, attempt?.telemetry);
+        summary.executorCostUsd += executorCost;
+        summary.auxiliaryCostUsd += (attempt?.costUsd ?? 0) - executorCost;
+        summary.advisorCalls += attempt?.telemetry?.advisorCalls.total ?? 0;
+        for (const [switchName, count] of Object.entries(
+          attempt?.telemetry?.routerSwitches ?? {},
+        )) {
+          increment(summary.routerSwitches, switchName, count);
+        }
+        if (config.endsWith("-pure") && (attempt?.telemetry?.advisorCalls.total ?? 0) !== 0) {
+          violations.push(label);
+        }
+        collectContextFidelityViolations(label, attempt, contextFidelityViolations);
+        const expectedAdvisor = EXPECTED_ADVISORS[config];
+        if (expectedAdvisor) {
+          const evidence = consultationEvidence(
+            entry.instanceId,
+            trial,
+            "neither_resolves",
+            expectedAdvisor,
+            attempt,
+          );
+          if (!summary.consultation) {
+            throw new Error(`Advisor-enabled config has no consultation summary: ${config}.`);
+          }
+          incrementConsultationSummary(summary.consultation, evidence.status);
+        }
+        if (attempt?.failureKind === "patch") {
+          patchViolations.push(
+            `${label}: ${attempt.failureMessage ?? "patch artifact admission failed"}`,
+          );
+        }
+        for (const violation of attempt?.patchLint?.violations ?? []) {
+          summary.patchViolations.push(`${label}: ${violation}`);
+        }
+        for (const violation of attempt?.patchLint?.admissionViolations ?? []) {
+          patchViolations.push(`${label}: ${violation}`);
+        }
       }
     }
     summary.resolveRate = summary.total === 0 ? 0 : summary.resolved / summary.total;
     configs[config] = summary;
   }
 
-  const comparisons = COMPARISONS.map(([pure, enabled]) => {
+  const comparisons = COMPARISONS.filter(
+    ([pure, enabled]) => scheduledConfigSet.has(pure) && scheduledConfigSet.has(enabled),
+  ).map(([pure, enabled]) => {
     const expectedAdvisor = EXPECTED_ADVISORS[enabled];
     if (!expectedAdvisor)
       throw new Error(`Advisor-enabled config has no expected model: ${enabled}.`);
@@ -283,31 +358,38 @@ export function buildCampaignReport(
       successfulConsultationSubset: emptyOutcomeBuckets(),
       consultationEvidence: [],
     };
-    for (const entry of entries) {
-      const pureResolved =
-        scoreByKey.get(`${pure}:${entry.instanceId}`) === "resolved" &&
-        hasCompletedArtifact(attemptByKey.get(`${pure}:${entry.instanceId}`));
-      const enabledResolved =
-        scoreByKey.get(`${enabled}:${entry.instanceId}`) === "resolved" &&
-        hasCompletedArtifact(attemptByKey.get(`${enabled}:${entry.instanceId}`));
-      const outcome = pairedOutcome(pureResolved, enabledResolved);
-      addOutcome(comparison.intentionToTreat, outcome, entry.instanceId);
-      const evidence = consultationEvidence(
-        entry.instanceId,
-        outcome,
-        expectedAdvisor,
-        attemptByKey.get(`${enabled}:${entry.instanceId}`),
-      );
-      comparison.consultationEvidence.push(evidence);
-      if (evidence.status === "successful") {
-        addOutcome(comparison.successfulConsultationSubset, outcome, entry.instanceId);
+    for (let trial = 1; trial <= trials; trial += 1) {
+      for (const entry of entries) {
+        const result = { instanceId: entry.instanceId, trial };
+        const pureKey = rolloutKey(pure, entry.instanceId, trial);
+        const enabledKey = rolloutKey(enabled, entry.instanceId, trial);
+        const pureResolved =
+          scoreByKey.get(pureKey) === "resolved" && hasCompletedArtifact(attemptByKey.get(pureKey));
+        const enabledResolved =
+          scoreByKey.get(enabledKey) === "resolved" &&
+          hasCompletedArtifact(attemptByKey.get(enabledKey));
+        const outcome = pairedOutcome(pureResolved, enabledResolved);
+        addOutcome(comparison.intentionToTreat, outcome, result);
+        const evidence = consultationEvidence(
+          entry.instanceId,
+          trial,
+          outcome,
+          expectedAdvisor,
+          attemptByKey.get(enabledKey),
+        );
+        comparison.consultationEvidence.push(evidence);
+        if (evidence.status === "successful") {
+          addOutcome(comparison.successfulConsultationSubset, outcome, result);
+        }
       }
     }
     return comparison;
   });
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
+    instanceCount: entries.length,
+    trials,
     configs,
     comparisons,
     totalCostUsd: attempts.reduce((total, attempt) => total + attempt.costUsd, 0),
@@ -326,7 +408,7 @@ export async function loadReportAttempts(
 ): Promise<ReportAttempt[]> {
   const newest = new Map<string, RolloutAttempt>();
   for (const attempt of attempts) {
-    const key = `${attempt.spec.config}:${attempt.spec.instanceId}:t${attempt.spec.trial}`;
+    const key = rolloutKey(attempt.spec.config, attempt.spec.instanceId, attempt.spec.trial);
     const prior = newest.get(key);
     if (!prior || prior.status.attempt < attempt.status.attempt) newest.set(key, attempt);
   }
@@ -362,6 +444,7 @@ export async function loadReportAttempts(
       return {
         instanceId: attempt.spec.instanceId,
         config: attempt.spec.config,
+        trial: attempt.spec.trial,
         phase: attempt.status.phase,
         ...(attempt.status.failureKind ? { failureKind: attempt.status.failureKind } : {}),
         ...(attempt.status.message ? { failureMessage: attempt.status.message } : {}),
@@ -378,7 +461,7 @@ export function renderCampaignReport(report: CampaignReport): string {
   const lines = [
     "# SWE-bench Multilingual campaign report",
     "",
-    `This is a signal-seeking n=${report.configs["glm-pure"].total} × 1 trial experiment, not a leaderboard estimate.`,
+    `This is a signal-seeking n=${report.instanceCount} × ${report.trials} ${report.trials === 1 ? "trial" : "trials"} experiment, not a leaderboard estimate.`,
     "",
     "## Paired comparisons",
     "",
@@ -391,23 +474,23 @@ export function renderCampaignReport(report: CampaignReport): string {
       "",
       "Primary intention-to-treat result (advisor disabled vs enabled):",
       "",
-      `- Enabled-only: ${itt.enabledOnly.length}${formatIds(itt.enabledOnly)}`,
-      `- Pure-only: ${itt.pureOnly.length}${formatIds(itt.pureOnly)}`,
+      `- Enabled-only: ${itt.enabledOnly.length}${formatResults(itt.enabledOnly, report.trials)}`,
+      `- Pure-only: ${itt.pureOnly.length}${formatResults(itt.pureOnly, report.trials)}`,
       `- Both resolve: ${itt.bothResolve.length}`,
       `- Neither resolves: ${itt.neitherResolves.length}`,
       "",
       "Successful-consultation subset (descriptive, not randomized, and not a replacement for ITT):",
       "",
-      `- Enabled-only: ${consulted.enabledOnly.length}${formatIds(consulted.enabledOnly)}`,
-      `- Pure-only: ${consulted.pureOnly.length}${formatIds(consulted.pureOnly)}`,
+      `- Enabled-only: ${consulted.enabledOnly.length}${formatResults(consulted.enabledOnly, report.trials)}`,
+      `- Pure-only: ${consulted.pureOnly.length}${formatResults(consulted.pureOnly, report.trials)}`,
       `- Both resolve: ${consulted.bothResolve.length}`,
       `- Neither resolves: ${consulted.neitherResolves.length}`,
       "",
-      "| Instance | ITT outcome | Consultation | Context fidelity | Calls | Call steps | First explicit repository mutation |",
+      "| Rollout | ITT outcome | Consultation | Context fidelity | Calls | Call steps | First explicit repository mutation |",
       "| --- | --- | --- | --- | ---: | --- | ---: |",
       ...comparison.consultationEvidence.map(
         (evidence) =>
-          `| ${evidence.instanceId} | ${formatOutcome(evidence.outcome)} | ${formatConsultation(evidence)} | ${formatContextFidelity(evidence.context)} | ${evidence.totalCalls} | ${formatSteps(evidence.callSteps)} | ${evidence.firstExplicitRepositoryMutationStep ?? "unknown"} |`,
+          `| ${formatTrialResult(evidence, report.trials)} | ${formatOutcome(evidence.outcome)} | ${formatConsultation(evidence)} | ${formatContextFidelity(evidence.context)} | ${evidence.totalCalls} | ${formatSteps(evidence.callSteps)} | ${evidence.firstExplicitRepositoryMutationStep ?? "unknown"} |`,
       ),
       "",
     );
@@ -422,6 +505,23 @@ export function renderCampaignReport(report: CampaignReport): string {
     lines.push(
       `| ${name} | ${config.resolved}/${config.total} | ${(config.resolveRate * 100).toFixed(1)}% | $${config.costUsd.toFixed(2)} | $${config.executorCostUsd.toFixed(2)} | $${config.auxiliaryCostUsd.toFixed(2)} | ${config.advisorCalls} |`,
     );
+  }
+  if (report.trials > 1) {
+    lines.push(
+      "",
+      "## Trial totals",
+      "",
+      "| Arm | Trial | Resolved | Rate |",
+      "| --- | ---: | ---: | ---: |",
+    );
+    for (const [name, config] of Object.entries(report.configs)) {
+      for (const trial of config.byTrial) {
+        const rate = trial.total === 0 ? 0 : trial.resolved / trial.total;
+        lines.push(
+          `| ${name} | ${trial.trial} | ${trial.resolved}/${trial.total} | ${(rate * 100).toFixed(1)}% |`,
+        );
+      }
+    }
   }
   lines.push(
     "",
@@ -448,16 +548,17 @@ function pairedOutcome(pureResolved: boolean, enabledResolved: boolean): PairedO
 function addOutcome(
   buckets: PairedOutcomeBuckets,
   outcome: PairedOutcome,
-  instanceId: string,
+  result: TrialResult,
 ): void {
-  if (outcome === "enabled_only") buckets.enabledOnly.push(instanceId);
-  else if (outcome === "pure_only") buckets.pureOnly.push(instanceId);
-  else if (outcome === "both_resolve") buckets.bothResolve.push(instanceId);
-  else buckets.neitherResolves.push(instanceId);
+  if (outcome === "enabled_only") buckets.enabledOnly.push(result);
+  else if (outcome === "pure_only") buckets.pureOnly.push(result);
+  else if (outcome === "both_resolve") buckets.bothResolve.push(result);
+  else buckets.neitherResolves.push(result);
 }
 
 function consultationEvidence(
   instanceId: string,
+  trial: number,
   outcome: PairedOutcome,
   expectedModel: string,
   attempt: ReportAttempt | undefined,
@@ -477,6 +578,7 @@ function consultationEvidence(
   const context = consultationContext(calls);
   return {
     instanceId,
+    trial,
     outcome,
     status,
     expectedModel,
@@ -517,20 +619,19 @@ function consultationContext(
 }
 
 function collectContextFidelityViolations(
-  config: CampaignConfigName,
-  instanceId: string,
+  label: string,
   attempt: ReportAttempt | undefined,
   violations: string[],
 ): void {
   const context = consultationContext(attempt?.telemetry?.advisorCalls);
   if (context.missing > 0) {
     violations.push(
-      `${config}/${instanceId}: ${context.missing} successful advisor call(s) missing context metadata`,
+      `${label}: ${context.missing} successful advisor call(s) missing context metadata`,
     );
   }
   if (context.malformed > 0) {
     violations.push(
-      `${config}/${instanceId}: ${context.malformed} successful advisor call(s) have malformed context metadata`,
+      `${label}: ${context.malformed} successful advisor call(s) have malformed context metadata`,
     );
   }
 }
@@ -596,21 +697,10 @@ function formatSteps(steps: readonly number[]): string {
   return steps.length > 0 ? steps.join(", ") : "none";
 }
 
-function configFromModel(model: string): CampaignConfigName {
-  const value = model.startsWith("duet-") ? model.slice("duet-".length) : model;
-  if (
-    value !== "glm-pure" &&
-    value !== "glm-kimi-advisor" &&
-    value !== "kimi-pure" &&
-    value !== "kimi-fable-advisor"
-  ) {
-    throw new Error(`Unknown campaign model_name_or_path: ${model}.`);
-  }
-  return value;
-}
-
-function formatIds(ids: readonly string[]): string {
-  return ids.length > 0 ? ` (${ids.join(", ")})` : "";
+function formatResults(results: readonly TrialResult[], trials: number): string {
+  return results.length > 0
+    ? ` (${results.map((result) => formatTrialResult(result, trials)).join(", ")})`
+    : "";
 }
 
 function hasCompletedArtifact(attempt: ReportAttempt | undefined): boolean {
@@ -631,4 +721,36 @@ function executorCostUsd(
 
 function increment(values: Record<string, number>, key: string, amount = 1): void {
   values[key] = (values[key] ?? 0) + amount;
+}
+
+function rolloutKey(config: CampaignConfigName, instanceId: string, trial: number): string {
+  return `${config}\0${instanceId}\0${trial}`;
+}
+
+function assertScheduledRollout(
+  scheduledConfigs: ReadonlySet<CampaignConfigName>,
+  instanceIds: ReadonlySet<string>,
+  trials: number,
+  identity: ScoringIdentity,
+  instanceId: string,
+  kind: "report attempt" | "official score",
+): void {
+  if (!scheduledConfigs.has(identity.config)) {
+    throw new Error(`${kind} references unscheduled config ${identity.config}.`);
+  }
+  if (!instanceIds.has(instanceId)) {
+    throw new Error(`${kind} references unscheduled instance ${instanceId}.`);
+  }
+  if (!Number.isSafeInteger(identity.trial) || identity.trial < 1 || identity.trial > trials) {
+    throw new Error(`${kind} references unscheduled trial ${identity.trial} for ${instanceId}.`);
+  }
+}
+
+function setUnique<T>(map: Map<string, T>, key: string, value: T, kind: string): void {
+  if (map.has(key)) throw new Error(`Duplicate ${kind} identity: ${key.replaceAll("\0", "/")}.`);
+  map.set(key, value);
+}
+
+function formatTrialResult(result: TrialResult, trials: number): string {
+  return `${result.instanceId}${trials === 1 ? "" : `/t${result.trial}`}`;
 }

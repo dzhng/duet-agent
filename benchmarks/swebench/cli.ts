@@ -353,6 +353,8 @@ async function writeCampaignReport(args: string[]): Promise<void> {
   const selected = new Set(spec.instanceIds ?? manifest.entries.map((entry) => entry.instanceId));
   const report = buildCampaignReport(
     manifest.entries.filter((entry) => selected.has(entry.instanceId)),
+    spec.configs,
+    spec.trials,
     await loadReportAttempts(attempts),
     scoreSummary.results,
   );
