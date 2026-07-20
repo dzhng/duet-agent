@@ -43,14 +43,16 @@ export async function buildSwebenchTemplate(): Promise<{
     ])
     .runCmd("curl -fsSL https://get.docker.com | sh")
     .runCmd(
-      "curl -fsSL https://bun.sh/install | bash -s 'bun-v1.3.11' && ln -sf /root/.bun/bin/bun /usr/local/bin/bun",
+      "curl -fsSL https://bun.sh/install | bash -s 'bun-v1.3.11' && sudo ln -sf /home/user/.bun/bin/bun /usr/local/bin/bun",
     )
-    .runCmd(`mkdir -p /work && git clone ${repo} ${worktree} && git -C ${worktree} checkout ${sha}`)
+    .runCmd(
+      `sudo mkdir -p /work && sudo chown user:user /work && git clone ${repo} ${worktree} && git -C ${worktree} checkout ${sha}`,
+    )
     .runCmd(`cd ${worktree} && bun install --frozen-lockfile`)
     .runCmd(
       `python3 -m venv ${worktree}/benchmarks/swebench/.venv && ${worktree}/benchmarks/swebench/.venv/bin/pip install --no-cache-dir swebench==4.1.0 mini-swe-agent==2.4.5`,
     )
-    .runCmd(`usermod -aG docker user && chown -R user:user ${worktree}`)
+    .runCmd(`sudo usermod -aG docker user && sudo chown -R user:user ${worktree}`)
     .setStartCmd(
       "sudo dockerd --host=unix:///var/run/docker.sock >/tmp/duet-swebench-dockerd.log 2>&1",
       "sudo docker info >/dev/null",
