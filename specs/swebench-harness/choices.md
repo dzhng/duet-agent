@@ -1364,6 +1364,27 @@ the number of rollouts or the independently enforced model-spend bound.
 - **Confidence:** **high** because the four persisted terminal ledgers sum to
   $1.4304 and the bound is direct arithmetic.
 
+### S45 — Provider credentials stay out of Docker process arguments
+
+- **When:** while inspecting the v2 security admission before expansion.
+- **The choice:** Pass provider variables to the Docker client through its
+  process environment and use name-only `docker exec --env NAME` arguments.
+  Stop the active v2 admission, reserve its full $3.97 per-arm ceiling as sunk
+  spend, and restart under a v3 namespace with a uniform $3.94 cap. The new
+  worst case is `$26.41 + 120 × $3.94 = $499.21`.
+- **The gap:** `--env NAME=value` made credential values visible in process
+  listings and command-failure text. The stopped sandbox was destroyed before
+  telemetry download, so its exact partial spend cannot be proven.
+- **The reach:** Containerized evals still receive exactly the requested
+  provider variables, but their values are absent from argv. No v2 outcome can
+  enter the v3 estimate, and reserving the maximum possible interrupted spend
+  preserves the global model-spend guarantee.
+- **Verdict:** **sound.** Credential transport and campaign accounting both
+  fail closed without changing the benchmark treatment.
+- **Confidence:** **high** in the argv boundary because the regression test was
+  observed red on the old behavior and green on the new behavior; the spend
+  reservation is deliberately worst-case because exact telemetry was lost.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

@@ -20,7 +20,7 @@ admission block passed rollout and scoring but exposed per-sandbox binary
 nondeterminism before expansion. Build the immutable E2B template with its
 single precompiled Duet artifact and pinned dataset cache, pass the no-model
 capacity probe, then run the committed
-`multilingual-30-four-arm-e2b-v2.json` campaign.
+`multilingual-30-four-arm-e2b-v3.json` campaign.
 Last updated 2026-07-20.
 
 You are implementing this spec. Read this README fully, then continue the E2B

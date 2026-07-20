@@ -132,13 +132,12 @@ export class ContainerHandle {
     this.requireStarted();
     const dockerArgs = ["docker", "exec", "--interactive"];
     if (options.cwd) dockerArgs.push("--workdir", options.cwd);
-    for (const [name, value] of Object.entries(options.env ?? {}).sort(([a], [b]) =>
-      a.localeCompare(b),
-    )) {
-      dockerArgs.push("--env", `${name}=${value}`);
-    }
+    const commandEnv = forwardContainerEnvironment(dockerArgs, options.env);
     dockerArgs.push(this.name, ...argv);
-    return this.commands.run(dockerArgs, { stdin: options.stdin });
+    return this.commands.run(dockerArgs, {
+      stdin: options.stdin,
+      ...(commandEnv ? { env: commandEnv } : {}),
+    });
   }
 
   /** Open a streaming `docker exec -i` transport for duet RPC. */
@@ -149,13 +148,9 @@ export class ContainerHandle {
     this.requireStarted();
     const dockerArgs = ["exec", "--interactive"];
     if (options.cwd) dockerArgs.push("--workdir", options.cwd);
-    for (const [name, value] of Object.entries(options.env ?? {}).sort(([a], [b]) =>
-      a.localeCompare(b),
-    )) {
-      dockerArgs.push("--env", `${name}=${value}`);
-    }
+    const commandEnv = forwardContainerEnvironment(dockerArgs, options.env);
     dockerArgs.push(this.name, ...argv);
-    return this.commands.stream(["docker", ...dockerArgs]);
+    return this.commands.stream(["docker", ...dockerArgs], commandEnv ? { env: commandEnv } : {});
   }
 
   /** Stop and remove only this benchmark-owned container. */
@@ -177,6 +172,20 @@ export class ContainerHandle {
   private requireStarted(): void {
     if (!this.started) throw new Error(`Container ${this.name} is not started.`);
   }
+}
+
+/**
+ * Let Docker inherit named values from its own environment so credentials do
+ * not become visible in process arguments or command-failure messages.
+ */
+function forwardContainerEnvironment(
+  dockerArgs: string[],
+  environment: Record<string, string> | undefined,
+): NodeJS.ProcessEnv | undefined {
+  const entries = Object.entries(environment ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length === 0) return undefined;
+  for (const [name] of entries) dockerArgs.push("--env", name);
+  return { ...process.env, ...Object.fromEntries(entries) };
 }
 
 /**

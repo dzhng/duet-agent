@@ -11,12 +11,14 @@ import type { ExecTransport } from "../src/duet-client.js";
 class FakeCommands implements CommandRunner {
   readonly runs: { argv: readonly string[]; stdin?: string }[] = [];
   readonly streams: string[][] = [];
+  readonly environments: NodeJS.ProcessEnv[] = [];
   results: CommandResult[] = [];
 
   async run(
     argv: readonly string[],
     options?: { cwd?: string; env?: NodeJS.ProcessEnv; stdin?: string },
   ): Promise<CommandResult> {
+    if (options?.env) this.environments.push(options.env);
     this.runs.push({
       argv: [...argv],
       ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
@@ -24,7 +26,11 @@ class FakeCommands implements CommandRunner {
     return this.results.shift() ?? { stdout: "", stderr: "", exitCode: 0 };
   }
 
-  stream(argv: readonly string[]): ExecTransport {
+  stream(
+    argv: readonly string[],
+    options?: { cwd?: string; env?: NodeJS.ProcessEnv },
+  ): ExecTransport {
+    if (options?.env) this.environments.push(options.env);
     this.streams.push([...argv]);
     return {
       stdin: { write: () => {} },
@@ -76,9 +82,9 @@ describe("SWE-bench container boundary", () => {
           "exec",
           "--interactive",
           "--env",
-          "A_KEY=a",
+          "A_KEY",
           "--env",
-          "Z_KEY=z",
+          "Z_KEY",
           "duet-bench-1",
           "/opt/duet/duet",
           "--version",
@@ -95,7 +101,7 @@ describe("SWE-bench container boundary", () => {
         "--workdir",
         "/testbed",
         "--env",
-        "HOME=/opt/duet/home",
+        "HOME",
         "duet-bench-1",
         "/opt/duet/duet",
         "--rpc",
@@ -111,6 +117,22 @@ describe("SWE-bench container boundary", () => {
     await container.stop();
     await container.stop();
     expect(commands.runs.filter((call) => call.argv[1] === "rm")).toHaveLength(1);
+  });
+
+  test("forwards container environment without exposing values in Docker argv", async () => {
+    const commands = new FakeCommands();
+    const container = new ContainerHandle("duet-bench-env", "official/image:latest", commands);
+    const credential = "not-a-real-gateway-secret";
+    await container.start();
+
+    await container.exec(["true"], { env: { AI_GATEWAY_API_KEY: credential } });
+    container.execStream(["true"], { env: { AI_GATEWAY_API_KEY: credential } });
+
+    expect(JSON.stringify([commands.runs, commands.streams])).not.toContain(credential);
+    expect(commands.environments.map((env) => env.AI_GATEWAY_API_KEY)).toEqual([
+      credential,
+      credential,
+    ]);
   });
 
   test("accepts only a complete official amd64 image record from the pinned helper", async () => {

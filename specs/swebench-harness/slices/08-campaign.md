@@ -7,7 +7,10 @@ capacity. Neither namespace contributes outcomes to the final E2B campaign.
 The first E2B namespace completed and officially scored a four-arm Druid
 admission block for $1.4304, then refused expansion because independently
 compiled worker binaries had different hashes. Those results remain admission
-evidence; the clean final E2B v2 namespace uses one template-built binary.
+evidence. A v2 security admission was stopped during its first arm after its
+Docker process arguments exposed a provider credential; no v2 outcome is used.
+The clean final E2B v3 namespace uses one template-built binary and passes
+provider values through process environments rather than command arguments.
 
 Needs slice 07's explicit ADMIT. The deliverable.
 
@@ -43,8 +46,8 @@ Needs slice 07's explicit ADMIT. The deliverable.
 
 - Exactly 120 scheduled rollouts; retries only for missing/failed infra
   attempts (never cherry-picking completed outcomes); campaign breaker keeps
-  cumulative model spend inside the envelope. The clean v2 committed bound is
-  `$22.44 sunk + 120 × $3.97 = $498.84`; E2B compute charges are separate from
+  cumulative model spend inside the envelope. The clean v3 committed bound is
+  `$26.41 sunk + 120 × $3.94 = $499.21`; E2B compute charges are separate from
   model-gateway spend.
 - A pre-model gate proves two fresh workers hash the same template-built Duet
   artifact. Sandbox creation and pinned dataset download retry only transient

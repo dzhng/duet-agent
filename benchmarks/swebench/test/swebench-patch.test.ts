@@ -6,10 +6,15 @@ import { capturePatchBaseline, extractPatch } from "../src/patch.js";
 
 class ScriptedCommands implements CommandRunner {
   readonly calls: string[][] = [];
+  readonly environments: NodeJS.ProcessEnv[] = [];
   constructor(readonly results: CommandResult[]) {}
 
-  async run(argv: readonly string[]): Promise<CommandResult> {
+  async run(
+    argv: readonly string[],
+    options?: { cwd?: string; env?: NodeJS.ProcessEnv; stdin?: string },
+  ): Promise<CommandResult> {
     this.calls.push([...argv]);
+    if (options?.env) this.environments.push(options.env);
     return this.results.shift() ?? { stdout: "", stderr: "", exitCode: 0 };
   }
 
@@ -54,11 +59,11 @@ describe("SWE-bench patch extraction", () => {
       tree,
       "--",
     ]);
-    const privateIndexArgs = gitCalls.flatMap((argv) =>
-      argv.filter((arg) => arg.startsWith("GIT_INDEX_FILE=")),
-    );
-    expect(privateIndexArgs.length).toBeGreaterThan(0);
-    expect(privateIndexArgs.every((value) => value === privateIndexArgs[0])).toBe(true);
+    const privateIndexes = commands.environments
+      .map((environment) => environment.GIT_INDEX_FILE)
+      .filter((value): value is string => value !== undefined);
+    expect(privateIndexes.length).toBeGreaterThan(0);
+    expect(privateIndexes.every((value) => value === privateIndexes[0])).toBe(true);
   });
 
   test("rejects an invalid baseline tree instead of accepting indirect evidence", async () => {
