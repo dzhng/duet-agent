@@ -138,7 +138,7 @@ describe("SWE-bench rollout pipeline", () => {
     expect(container.stopped).toBe(true);
   });
 
-  testIfDocker("rejects forbidden test paths before a patch can be exported", async () => {
+  testIfDocker("exports production changes while recording excluded test paths", async () => {
     root = await mkdtemp(join(tmpdir(), "duet-swebench-rollout-test-path-"));
     const configPath = join(root, "models.json");
     await writeFile(configPath, "{}\n");
@@ -178,11 +178,15 @@ describe("SWE-bench rollout pipeline", () => {
       },
     );
 
-    expect(result.status).toMatchObject({
-      phase: "failed",
-      failureKind: "patch",
-      message: "Patch policy violation: test file modified: tests/a.test.ts",
-    });
+    expect(result.status).toMatchObject({ phase: "completed", terminalType: "complete" });
+    expect(
+      JSON.parse(await readFile(join(result.attempt.directory, "patch-paths.json"), "utf8")),
+    ).toEqual(["src/a.ts"]);
+    expect(
+      JSON.parse(
+        await readFile(join(result.attempt.directory, "patch-excluded-paths.json"), "utf8"),
+      ),
+    ).toEqual(["tests/a.test.ts"]);
     expect(container.stopped).toBe(true);
   });
 

@@ -48,16 +48,19 @@ describe("SWE-bench patch extraction", () => {
       patch,
       bytes: Buffer.byteLength(patch),
       paths: ["src/a.ts", "new file.txt"],
+      excludedPaths: [],
     });
 
     const gitCalls = commands.calls.filter((argv) => argv[0] === "docker" && argv[1] === "exec");
-    expect(gitCalls.map((argv) => argv.slice(-6))).toContainEqual([
+    expect(gitCalls.map((argv) => argv.slice(-8))).toContainEqual([
       "diff",
       "--cached",
       "--binary",
       "--full-index",
       tree,
       "--",
+      "src/a.ts",
+      "new file.txt",
     ]);
     const privateIndexes = commands.environments
       .map((environment) => environment.GIT_INDEX_FILE)
@@ -95,6 +98,67 @@ describe("SWE-bench patch extraction", () => {
 
     const extracted = await extractPatch(container, await capturePatchBaseline(container), 10_000);
 
-    expect(extracted).toEqual({ patch: "", bytes: 0, paths: [] });
+    expect(extracted).toEqual({ patch: "", bytes: 0, paths: [], excludedPaths: [] });
+  });
+
+  test("keeps production changes while excluding test and runtime paths from scoring", async () => {
+    const tree = "a".repeat(40);
+    const patch = "diff --git a/src/a.ts b/src/a.ts\n+fixed\n";
+    const commands = new ScriptedCommands([
+      { stdout: "container-id", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: `${tree}\n`, stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      {
+        stdout: "src/a.ts\0tests/a.test.ts\0.duet/session.json\0",
+        stderr: "",
+        exitCode: 0,
+      },
+      { stdout: patch, stderr: "", exitCode: 0 },
+    ]);
+    const container = new ContainerHandle("mixed-patch-test", "official/image", commands);
+    await container.start();
+
+    const extracted = await extractPatch(container, await capturePatchBaseline(container), 10_000);
+
+    expect(extracted).toEqual({
+      patch,
+      bytes: Buffer.byteLength(patch),
+      paths: ["src/a.ts"],
+      excludedPaths: ["tests/a.test.ts", ".duet/session.json"],
+    });
+    const diffCall = commands.calls.find(
+      (argv) => argv.includes("--binary") && argv.includes("--full-index"),
+    );
+    expect(diffCall?.at(-1)).toBe("src/a.ts");
+    expect(diffCall).not.toContain("tests/a.test.ts");
+    expect(diffCall).not.toContain(".duet/session.json");
+  });
+
+  test("turns test-only work into an empty scoreable prediction without diffing it", async () => {
+    const tree = "a".repeat(40);
+    const commands = new ScriptedCommands([
+      { stdout: "container-id", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: `${tree}\n`, stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "", stderr: "", exitCode: 0 },
+      { stdout: "tests/a.test.ts\0", stderr: "", exitCode: 0 },
+    ]);
+    const container = new ContainerHandle("test-only-patch", "official/image", commands);
+    await container.start();
+
+    const extracted = await extractPatch(container, await capturePatchBaseline(container), 10_000);
+
+    expect(extracted).toEqual({
+      patch: "",
+      bytes: 0,
+      paths: [],
+      excludedPaths: ["tests/a.test.ts"],
+    });
+    expect(commands.calls.some((argv) => argv.includes("--binary"))).toBe(false);
   });
 });

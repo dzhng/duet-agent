@@ -4,8 +4,7 @@ import type { ManifestEntry } from "./manifest.js";
 
 /** Minimal unattended-run contract shared byte-for-byte by every arm. */
 export const SWEBENCH_SYSTEM_PROMPT = dedent`
-  Complete the SWE-bench task unattended. Change only the production implementation in /testbed;
-  do not modify existing tests.
+  Complete the SWE-bench task unattended in /testbed.
 `;
 
 /** Immutable issue input shared byte-for-byte by every arm for one instance. */

@@ -34,6 +34,7 @@ describe("SWE-bench rollout artifacts", () => {
       events,
       patch: "diff --git a/a b/a\n",
       patchPaths: ["a"],
+      excludedPatchPaths: [],
       telemetry: deriveTelemetry(events),
       terminalType: "complete",
     });

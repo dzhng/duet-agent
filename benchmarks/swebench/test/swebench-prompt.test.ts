@@ -16,7 +16,7 @@ describe("SWE-bench rollout prompt", () => {
 
     expect(`${SWEBENCH_SYSTEM_PROMPT}\n${prompt}`).not.toContain("ask_advisor");
     expect(`${SWEBENCH_SYSTEM_PROMPT}\n${prompt}`).not.toContain("consultation");
-    expect(SWEBENCH_SYSTEM_PROMPT).toContain("do not modify existing tests");
+    expect(`${SWEBENCH_SYSTEM_PROMPT}\n${prompt}`).not.toMatch(/modify existing tests/i);
     expect(`${SWEBENCH_SYSTEM_PROMPT}\n${prompt}`).not.toMatch(/commit changes/i);
     expect(`${SWEBENCH_SYSTEM_PROMPT}\n${prompt}`).not.toMatch(/cache|artifact|runtime file/i);
   });

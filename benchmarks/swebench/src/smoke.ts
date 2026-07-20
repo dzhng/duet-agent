@@ -90,6 +90,7 @@ export async function runContainerSmoke(
     patch,
     bytes: Buffer.byteLength(patch),
     paths: patchPaths,
+    excludedPaths: [],
   };
   const roundTrip = dependencies.containerFactory(
     `duet-swebench-smoke-roundtrip-${randomUUID()}`,

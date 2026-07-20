@@ -1003,6 +1003,9 @@ ownerScopeId }`, even though both execute through the same task manager.
   check.
 - **Confidence:** **high** because a falsified regression test observed the old
   completed status and now proves a durable patch failure plus teardown.
+- **Resolution after product-policy cleanup:** Superseded by S54 for test and
+  harness-runtime paths. Oversize output still fails at extraction; empty
+  production output remains scoreable.
 
 ### S28 — Official scoring groups all arms by instance and uses absolute work paths
 
@@ -1624,6 +1627,33 @@ the number of rollouts or the independently enforced model-spend bound.
   directly without weakening provenance or the budget breaker.
 - **Confidence:** **high** in the accounting bound and report shape; the paid
   gate remains to be observed.
+
+### S54 — Working tests are allowed; only production paths enter scoring
+
+- **When:** removing benchmark-owned workflow constraints before restarting
+  slice 08.
+- **The choice:** Let the coding agent create or edit tests while it investigates
+  a task, just as it would in the product. When the run ends, the harness splits
+  the changed paths into two lists: production paths become the official
+  prediction, while test and `.duet` runtime paths are recorded in a separate
+  sidecar and omitted. For example, if an agent fixes `src/parser.ts` and adds
+  `tests/parser.test.ts`, the scorer receives only the parser fix and the
+  artifact still records that the test existed. If it writes only a test, the
+  scorer receives an honest empty patch. The unbuilt alternatives either tell
+  the model not to write tests and reject an otherwise useful production fix,
+  or submit changed tests and risk letting the candidate patch influence the
+  checks that judge it.
+- **The gap:** The original spec required production-only scoring but did not
+  say whether that policy should constrain the model's work or the submission
+  boundary. Earlier code chose both: a prompt prohibition plus rollout failure.
+- **The reach:** Pure and advisor-enabled arms can use normal coding workflows
+  without test-writing becoming a hidden failure mode. The same path
+  classifier owns both new extraction and historical artifact linting, and the
+  excluded-path sidecar keeps the transformation auditable.
+- **Verdict:** **sound.** Experimental integrity belongs at the prediction
+  boundary; it should not distort how the product attempts the task.
+- **Confidence:** **high** because mixed and test-only regressions assert the
+  exact submitted patch, retained production paths, and recorded exclusions.
 
 ## Compressed trivial discretion
 

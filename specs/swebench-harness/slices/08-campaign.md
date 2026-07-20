@@ -11,10 +11,16 @@ the custom exactly-once protocol; it does not show that received advice caused
 those losses.
 
 The context, prompt, telemetry, and repeated-trial identity corrections are now
-implemented and locally green. The restart gate is frozen as two committed
+implemented and locally green. The restart gate was frozen as two committed
 campaigns so each report contains only its actual pair:
 `advisor-restart-gate-glm-20260720-v1` (10 rollouts) and
-`advisor-restart-gate-kimi-20260720-v1` (20 rollouts). They have not yet run.
+`advisor-restart-gate-kimi-20260720-v1` (20 rollouts). Their first E2B attempt
+was stopped after six complete pairs: Kimi made zero calls in three enabled
+runs, while GLM skipped one of four and called only after substantial work in
+the others. Partial official scoring found all seven generated GLM patches
+resolved; the three scored Kimi pairs were two pure-only and one both-resolved.
+These rows measure failed soft-guidance exposure, not advisor quality. The run
+also exposed E2B target-selection and concurrent artifact-integration races.
 
 The next full measurement namespace is
 `multilingual-30-four-arm-e2b-20260720-v5`. Create it only after the product,
@@ -46,10 +52,11 @@ No full campaign starts until all of these are true:
    order. For a transcript that fits the advisor model's context window, no
    text-preview projection, elision marker, or configured token truncation is
    allowed. Focused live artifacts record whether any call was truncated.
-2. **Product prompt (implemented):** remove the benchmark's mandatory exactly-once language
-   from both prompt layers. Pin the resulting product commit, binary, prompt
-   hash, and rendered configs before paid repeats.
-3. **Focused repetition (next):** under separate restart-gate campaign ids, run five
+2. **Product lifecycle (in progress):** the benchmark contains no advisor call
+   schedule. The shipped product owns early and completion-review consultations
+   for substantive work, and deterministic plus live gates prove the behavior
+   before another campaign is pinned.
+3. **Focused repetition (next):** under fresh restart-gate campaign ids, run five
    fresh paired pure/enabled trials on each of the three v4 zero-call loss
    instances. This is 30 rollouts: five GLM pairs on Fluentd and five Kimi pairs
    on each Docusaurus task. Do not reuse, discard, or replace stochastic

@@ -106,6 +106,7 @@ export async function runRollout(
   let outcome: RolloutOutcome | undefined;
   let patch: string | undefined;
   let patchPaths: string[] | undefined;
+  let excludedPatchPaths: string[] | undefined;
   let result: RunRolloutResult | undefined;
   let pendingError: unknown;
 
@@ -164,6 +165,7 @@ export async function runRollout(
     const extracted = await extractPatch(container, baseline, spec.limits.patchBytes);
     patch = extracted.patch;
     patchPaths = extracted.paths;
+    excludedPatchPaths = extracted.excludedPaths;
     const patchLint = lintPatch(patch, patchPaths, spec.limits.patchBytes);
     if (patchLint.admissionViolations.length > 0) {
       throw new Error(`Patch policy violation: ${patchLint.admissionViolations.join("; ")}`);
@@ -173,6 +175,7 @@ export async function runRollout(
       events,
       patch,
       patchPaths,
+      excludedPatchPaths,
       telemetry,
       terminalType,
     });
@@ -186,6 +189,7 @@ export async function runRollout(
         ...(events.length > 0 && telemetry ? { events, telemetry } : {}),
         ...(patch === undefined ? {} : { patch }),
         ...(patchPaths === undefined ? {} : { patchPaths }),
+        ...(excludedPatchPaths === undefined ? {} : { excludedPatchPaths }),
         ...(outcome ? { terminalType: terminalName(outcome) } : {}),
       });
       result = { attempt, status };
@@ -205,6 +209,7 @@ export async function runRollout(
       ...(events.length > 0 && telemetry ? { events, telemetry } : {}),
       ...(patch === undefined ? {} : { patch }),
       ...(patchPaths === undefined ? {} : { patchPaths }),
+      ...(excludedPatchPaths === undefined ? {} : { excludedPatchPaths }),
       ...(outcome ? { terminalType: terminalName(outcome) } : {}),
     });
     result = { attempt, status };

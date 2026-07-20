@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { CommandResult } from "./container.js";
+import { isExcludedSubmissionPath } from "./patch-policy.js";
 
 /** Minimal container operations required by staged-index patch handling. */
 export interface PatchContainer {
@@ -22,7 +23,10 @@ export interface PatchBaseline {
 export interface ExtractedPatch {
   patch: string;
   bytes: number;
+  /** Production paths included in the official prediction. */
   paths: string[];
+  /** Test and harness-runtime paths left out of the official prediction. */
+  excludedPaths: string[];
 }
 
 /**
@@ -65,18 +69,35 @@ export async function extractPatch(
     ["git", "-C", "/testbed", "diff", "--cached", "--name-only", "-z", baseline.tree, "--"],
     env,
   );
-  const diff = await requireGit(
-    container,
-    ["git", "-C", "/testbed", "diff", "--cached", "--binary", "--full-index", baseline.tree, "--"],
-    env,
-  );
-  const paths = splitPaths(names.stdout);
-  const bytes = Buffer.byteLength(diff.stdout);
+  const changedPaths = splitPaths(names.stdout);
+  const paths = changedPaths.filter((path) => !isExcludedSubmissionPath(path));
+  const excludedPaths = changedPaths.filter(isExcludedSubmissionPath);
+  const patch =
+    paths.length === 0
+      ? ""
+      : (
+          await requireGit(
+            container,
+            [
+              "git",
+              "-C",
+              "/testbed",
+              "diff",
+              "--cached",
+              "--binary",
+              "--full-index",
+              baseline.tree,
+              "--",
+              ...paths,
+            ],
+            env,
+          )
+        ).stdout;
+  const bytes = Buffer.byteLength(patch);
   if (bytes > maxBytes) {
     throw new Error(`Rollout patch is ${bytes} bytes, above the ${maxBytes}-byte limit.`);
   }
-  assertNoHarnessPollution(paths);
-  return { patch: diff.stdout, bytes, paths };
+  return { patch, bytes, paths, excludedPaths };
 }
 
 /** Apply a patch to the same official baseline and prove it reproduces the path set. */
@@ -117,15 +138,6 @@ export async function verifyPatchRoundTrip(
 
 function splitPaths(value: string): string[] {
   return value.split("\0").filter(Boolean);
-}
-
-function assertNoHarnessPollution(paths: readonly string[]): void {
-  const polluted = paths.filter(
-    (path) => path === ".duet" || path.startsWith(".duet/") || path.startsWith("opt/duet/"),
-  );
-  if (polluted.length > 0) {
-    throw new Error(`Patch contains harness runtime files: ${polluted.join(", ")}.`);
-  }
 }
 
 async function requireGit(
