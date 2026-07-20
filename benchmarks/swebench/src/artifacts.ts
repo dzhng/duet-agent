@@ -101,8 +101,6 @@ export async function completeRolloutAttempt(
     events: readonly TurnEvent[];
     patch: string;
     patchPaths: readonly string[];
-    /** Worktree changes deliberately omitted from the official prediction. */
-    excludedPatchPaths: readonly string[];
     telemetry: RolloutTelemetry;
     terminalType: string;
   },
@@ -111,10 +109,6 @@ export async function completeRolloutAttempt(
   await Promise.all([
     atomicWrite(join(attempt.directory, "patch.diff"), values.patch),
     atomicWriteJson(join(attempt.directory, "patch-paths.json"), values.patchPaths),
-    atomicWriteJson(
-      join(attempt.directory, "patch-excluded-paths.json"),
-      values.excludedPatchPaths,
-    ),
   ]);
   const status: RolloutStatus = {
     ...attempt.status,
@@ -137,7 +131,6 @@ export async function failRolloutAttempt(
     telemetry?: RolloutTelemetry;
     patch?: string;
     patchPaths?: readonly string[];
-    excludedPatchPaths?: readonly string[];
     terminalType?: string;
   },
 ): Promise<RolloutStatus> {
@@ -148,12 +141,6 @@ export async function failRolloutAttempt(
     await atomicWrite(join(attempt.directory, "patch.diff"), values.patch);
   if (values.patchPaths !== undefined) {
     await atomicWriteJson(join(attempt.directory, "patch-paths.json"), values.patchPaths);
-  }
-  if (values.excludedPatchPaths !== undefined) {
-    await atomicWriteJson(
-      join(attempt.directory, "patch-excluded-paths.json"),
-      values.excludedPatchPaths,
-    );
   }
   const status: RolloutStatus = {
     ...attempt.status,

@@ -76,7 +76,6 @@ export async function runRollout(
     throw new Error(`Dataset row does not match manifest entry ${spec.entry.instanceId}.`);
   }
   const prompt = buildRolloutPrompt({
-    entry: spec.entry,
     problemStatement: spec.datasetRow.problemStatement,
   });
   const artifactSpec: RolloutArtifactSpec = {
@@ -106,7 +105,6 @@ export async function runRollout(
   let outcome: RolloutOutcome | undefined;
   let patch: string | undefined;
   let patchPaths: string[] | undefined;
-  let excludedPatchPaths: string[] | undefined;
   let result: RunRolloutResult | undefined;
   let pendingError: unknown;
 
@@ -125,14 +123,12 @@ export async function runRollout(
       [
         dependencies.artifact.installPath,
         "--rpc",
-        "--incognito",
         "--model",
         "swebench",
         "--workdir",
         "/testbed",
         "--system-prompt",
         SWEBENCH_SYSTEM_PROMPT,
-        "--no-system-prompt-files",
       ],
       {
         cwd: "/testbed",
@@ -165,7 +161,6 @@ export async function runRollout(
     const extracted = await extractPatch(container, baseline, spec.limits.patchBytes);
     patch = extracted.patch;
     patchPaths = extracted.paths;
-    excludedPatchPaths = extracted.excludedPaths;
     const patchLint = lintPatch(patch, patchPaths, spec.limits.patchBytes);
     if (patchLint.admissionViolations.length > 0) {
       throw new Error(`Patch policy violation: ${patchLint.admissionViolations.join("; ")}`);
@@ -175,7 +170,6 @@ export async function runRollout(
       events,
       patch,
       patchPaths,
-      excludedPatchPaths,
       telemetry,
       terminalType,
     });
@@ -189,7 +183,6 @@ export async function runRollout(
         ...(events.length > 0 && telemetry ? { events, telemetry } : {}),
         ...(patch === undefined ? {} : { patch }),
         ...(patchPaths === undefined ? {} : { patchPaths }),
-        ...(excludedPatchPaths === undefined ? {} : { excludedPatchPaths }),
         ...(outcome ? { terminalType: terminalName(outcome) } : {}),
       });
       result = { attempt, status };
@@ -209,7 +202,6 @@ export async function runRollout(
       ...(events.length > 0 && telemetry ? { events, telemetry } : {}),
       ...(patch === undefined ? {} : { patch }),
       ...(patchPaths === undefined ? {} : { patchPaths }),
-      ...(excludedPatchPaths === undefined ? {} : { excludedPatchPaths }),
       ...(outcome ? { terminalType: terminalName(outcome) } : {}),
     });
     result = { attempt, status };

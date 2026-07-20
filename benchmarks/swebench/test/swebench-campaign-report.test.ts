@@ -83,19 +83,13 @@ describe("SWE-bench paired report", () => {
     expect(report.contextFidelityAssertion).toEqual({ passed: true, violations: [] });
   });
 
-  test("patch lint rejects tests and runtime files from exact staged paths", () => {
+  test("patch lint records all staged paths without imposing a path policy", () => {
     expect(
       lintPatch("diff", ["src/main.ts", "test/main.test.ts", ".duet/models.json"], 100),
     ).toEqual({
       paths: ["src/main.ts", "test/main.test.ts", ".duet/models.json"],
-      violations: [
-        "test file modified: test/main.test.ts",
-        "runtime file leaked: .duet/models.json",
-      ],
-      admissionViolations: [
-        "test file modified: test/main.test.ts",
-        "runtime file leaked: .duet/models.json",
-      ],
+      violations: [],
+      admissionViolations: [],
     });
   });
 

@@ -48,7 +48,6 @@ describe("SWE-bench patch extraction", () => {
       patch,
       bytes: Buffer.byteLength(patch),
       paths: ["src/a.ts", "new file.txt"],
-      excludedPaths: [],
     });
 
     const gitCalls = commands.calls.filter((argv) => argv[0] === "docker" && argv[1] === "exec");
@@ -98,12 +97,12 @@ describe("SWE-bench patch extraction", () => {
 
     const extracted = await extractPatch(container, await capturePatchBaseline(container), 10_000);
 
-    expect(extracted).toEqual({ patch: "", bytes: 0, paths: [], excludedPaths: [] });
+    expect(extracted).toEqual({ patch: "", bytes: 0, paths: [] });
   });
 
-  test("keeps production changes while excluding test and runtime paths from scoring", async () => {
+  test("keeps test and runtime-looking paths in the exact agent patch", async () => {
     const tree = "a".repeat(40);
-    const patch = "diff --git a/src/a.ts b/src/a.ts\n+fixed\n";
+    const patch = "complete patch";
     const commands = new ScriptedCommands([
       { stdout: "container-id", stderr: "", exitCode: 0 },
       { stdout: "", stderr: "", exitCode: 0 },
@@ -126,19 +125,19 @@ describe("SWE-bench patch extraction", () => {
     expect(extracted).toEqual({
       patch,
       bytes: Buffer.byteLength(patch),
-      paths: ["src/a.ts"],
-      excludedPaths: ["tests/a.test.ts", ".duet/session.json"],
+      paths: ["src/a.ts", "tests/a.test.ts", ".duet/session.json"],
     });
     const diffCall = commands.calls.find(
       (argv) => argv.includes("--binary") && argv.includes("--full-index"),
     );
-    expect(diffCall?.at(-1)).toBe("src/a.ts");
-    expect(diffCall).not.toContain("tests/a.test.ts");
-    expect(diffCall).not.toContain(".duet/session.json");
+    expect(diffCall).toContain("src/a.ts");
+    expect(diffCall).toContain("tests/a.test.ts");
+    expect(diffCall).toContain(".duet/session.json");
   });
 
-  test("turns test-only work into an empty scoreable prediction without diffing it", async () => {
+  test("keeps a test-only agent patch scoreable", async () => {
     const tree = "a".repeat(40);
+    const patch = "test patch";
     const commands = new ScriptedCommands([
       { stdout: "container-id", stderr: "", exitCode: 0 },
       { stdout: "", stderr: "", exitCode: 0 },
@@ -147,6 +146,7 @@ describe("SWE-bench patch extraction", () => {
       { stdout: "", stderr: "", exitCode: 0 },
       { stdout: "", stderr: "", exitCode: 0 },
       { stdout: "tests/a.test.ts\0", stderr: "", exitCode: 0 },
+      { stdout: patch, stderr: "", exitCode: 0 },
     ]);
     const container = new ContainerHandle("test-only-patch", "official/image", commands);
     await container.start();
@@ -154,11 +154,10 @@ describe("SWE-bench patch extraction", () => {
     const extracted = await extractPatch(container, await capturePatchBaseline(container), 10_000);
 
     expect(extracted).toEqual({
-      patch: "",
-      bytes: 0,
-      paths: [],
-      excludedPaths: ["tests/a.test.ts"],
+      patch,
+      bytes: Buffer.byteLength(patch),
+      paths: ["tests/a.test.ts"],
     });
-    expect(commands.calls.some((argv) => argv.includes("--binary"))).toBe(false);
+    expect(commands.calls.some((argv) => argv.includes("--binary"))).toBe(true);
   });
 });

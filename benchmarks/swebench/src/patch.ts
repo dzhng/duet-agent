@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import type { CommandResult } from "./container.js";
-import { isExcludedSubmissionPath } from "./patch-policy.js";
-
 /** Minimal container operations required by staged-index patch handling. */
 export interface PatchContainer {
   exec(
@@ -23,10 +21,8 @@ export interface PatchBaseline {
 export interface ExtractedPatch {
   patch: string;
   bytes: number;
-  /** Production paths included in the official prediction. */
+  /** Every path changed by the agent and included in the official prediction. */
   paths: string[];
-  /** Test and harness-runtime paths left out of the official prediction. */
-  excludedPaths: string[];
 }
 
 /**
@@ -70,10 +66,8 @@ export async function extractPatch(
     env,
   );
   const changedPaths = splitPaths(names.stdout);
-  const paths = changedPaths.filter((path) => !isExcludedSubmissionPath(path));
-  const excludedPaths = changedPaths.filter(isExcludedSubmissionPath);
   const patch =
-    paths.length === 0
+    changedPaths.length === 0
       ? ""
       : (
           await requireGit(
@@ -88,7 +82,7 @@ export async function extractPatch(
               "--full-index",
               baseline.tree,
               "--",
-              ...paths,
+              ...changedPaths,
             ],
             env,
           )
@@ -97,7 +91,7 @@ export async function extractPatch(
   if (bytes > maxBytes) {
     throw new Error(`Rollout patch is ${bytes} bytes, above the ${maxBytes}-byte limit.`);
   }
-  return { patch, bytes, paths, excludedPaths };
+  return { patch, bytes, paths: changedPaths };
 }
 
 /** Apply a patch to the same official baseline and prove it reproduces the path set. */

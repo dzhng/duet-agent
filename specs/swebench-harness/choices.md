@@ -1628,7 +1628,7 @@ the number of rollouts or the independently enforced model-spend bound.
 - **Confidence:** **high** in the accounting bound and report shape; the paid
   gate remains to be observed.
 
-### S54 — Working tests are allowed; only production paths enter scoring
+### S54 — Working tests are allowed; only production paths enter scoring (superseded by S58)
 
 - **When:** removing benchmark-owned workflow constraints before restarting
   slice 08.
@@ -1650,10 +1650,117 @@ the number of rollouts or the independently enforced model-spend bound.
   without test-writing becoming a hidden failure mode. The same path
   classifier owns both new extraction and historical artifact linting, and the
   excluded-path sidecar keeps the transformation auditable.
-- **Verdict:** **sound.** Experimental integrity belongs at the prediction
-  boundary; it should not distort how the product attempts the task.
+- **Verdict:** **superseded.** The production-only boundary still made the
+  benchmark reinterpret a legitimate repository diff. S58 removes it.
 - **Confidence:** **high** because mixed and test-only regressions assert the
   exact submitted patch, retained production paths, and recorded exclusions.
+
+### S55 — The committed campaign subset is the E2B worker population
+
+- **When:** hardening the E2B controller after the first restart-gate attempt.
+- **The choice:** If a campaign names one or two `instanceIds`, the controller
+  launches workers only for those tasks. An operator may pass `--instance` to
+  run an even smaller shard, but cannot use it to add a task outside the frozen
+  campaign. The stopped driver instead launched all 30 manifest tasks and let
+  27 workers discover they had zero work after startup. The unbuilt alternative
+  keeps treating the full manifest as the controller default and relies on the
+  inner orchestrator to discard irrelevant workers.
+- **The gap:** The local orchestrator honored the campaign subset, but the outer
+  E2B capacity layer independently chose its default population from the full
+  manifest.
+- **The reach:** Focused gates now create only the sandboxes that can run model
+  work; CLI sharding remains a narrowing operation and cannot silently change
+  the committed experiment.
+- **Verdict:** **sound.** The campaign spec already owns task selection, so the
+  capacity layer must consume rather than re-derive it.
+- **Confidence:** **high** because the regression reproduces the old 30-worker
+  population and asserts the exact committed two-task order plus a rejected
+  out-of-campaign request.
+
+### S56 — Worker artifacts stage privately and publish completion last
+
+- **When:** hardening the E2B controller after two same-campaign workers raced
+  while extracting `campaign.json` into one host directory.
+- **The choice:** Download and validate each worker archive in its own temporary
+  directory. Install the shared `campaign.json` atomically; a later worker must
+  match it byte-for-byte or fail. Copy each instance's immutable evidence with
+  temporary filenames and atomic renames, publishing `status.json` last because
+  that file means the attempt is complete. For example, two workers finishing
+  together can install different instance trees without both trying to create
+  the same provenance file through `tar`. The unbuilt alternative serializes
+  every download behind one broad lock, which avoids the collision but discards
+  useful network concurrency and still exposes partially copied attempts.
+- **The gap:** Archive validation proved paths were safe, but the plan did not
+  specify how multiple valid archives should merge into one immutable campaign
+  tree.
+- **The reach:** Concurrent collection retains all worker evidence, resumability
+  never observes a completion marker before its files, and provenance drift is
+  rejected instead of overwritten.
+- **Verdict:** **sound.** Private staging plus atomic publication gives each
+  artifact one clear lifecycle without reducing worker concurrency.
+- **Confidence:** **high** because concurrent two-worker and conflicting-
+  provenance regressions exercise the actual filesystem boundary in Docker.
+
+### S57 — Unknown stopped work is reserved before the replacement gate
+
+- **When:** freezing the v2 restart campaigns after stopping the exposure-
+  invalid v1 attempt and falsifying the product lifecycle eval.
+- **The choice:** Start from the previously reserved `$99.8513`, add the exact
+  `$6.5853068` from 14 downloaded v1 gate attempts, and reserve five unreturned
+  attempts at their full `$3.93` ceiling. Five covers the two additional
+  completions observed before snapshot plus at most one in-flight attempt in
+  each of the three sequential workers when they were killed. Add the exact
+  `$0.0317247` falsification and `$0.3451325` restored live eval costs, then
+  reserve another `$3.93` for the initial live eval whose completed process did
+  not print recoverable usage. Round the resulting `$130.393464` upward to
+  `$130.3935`. The GLM v2 gate gets a `$3.10` per-run emergency ceiling; the
+  Kimi v2 gate starts from `$161.3935`, which additionally reserves all ten GLM
+  runs at that ceiling so both campaigns may overlap safely. The unbuilt
+  alternative guesses missing costs from neighboring runs or counts only
+  downloaded artifacts, making the `$500` claim depend on lost evidence.
+- **The gap:** Sandboxes were deliberately killed after a manual partial
+  snapshot, so provider-side model work can exist without a returned telemetry
+  file; the lifecycle eval also originally omitted terminal cost output.
+- **The reach:** Both v2 campaigns can run concurrently while their combined
+  worst case remains `$223.3935`. The full campaign is not frozen from that
+  worst case: after the gate, its sunk value and uniform ceiling are recomputed
+  from returned exact costs plus any new interrupted reserves.
+- **Verdict:** **sound.** Unknown spend is bounded by the number of sequential
+  attempts that could have existed and their enforced ceilings, never silently
+  treated as zero.
+- **Confidence:** **high** in the upper bound; it deliberately overstates spend
+  because the missing attempts were likely far below their ceilings.
+
+### S58 — The benchmark observes normal product behavior instead of prescribing it
+
+- **When:** auditing the harness after the user rejected exact-one as an
+  implementation-detail rule.
+- **The choice:** Give Duet the canonical dataset `problem_statement` directly
+  and keep only the minimal system fact that the run is unattended. Remove the
+  benchmark's inspection/test workflow wrapper, `--incognito`, and
+  `--no-system-prompt-files`. A fresh per-rollout `HOME` isolates runs while
+  preserving default observational memory and compaction; normal repository
+  `AGENTS.md` discovery remains part of the product. Submit the exact
+  baseline-relative agent diff, including test and `.duet`-looking paths, and
+  let the official scorer judge it. The replaced design stripped selected
+  paths and disabled normal product features in pursuit of benchmark policy.
+- **The gap:** Advisor call counts were not the only harness-owned behavior.
+  The prompt prescribed a coding workflow, incognito disabled the default
+  memory pipeline, system-prompt-file suppression bypassed repository context,
+  and path filtering changed the candidate patch after the agent finished.
+- **The reach:** ON/OFF arms now differ only in advisor availability while both
+  exercise the same ordinary product lifecycle. Patch artifacts are simpler:
+  one complete diff and one complete path list, with no excluded-path sidecar.
+  The focused gate also no longer requires any minimum number of consultations;
+  zero calls is a valid product outcome. Historical campaigns remain historical
+  and are not resumed under the new prompt hash.
+- **Verdict:** **sound.** Clean state, finite resources, provenance, and paired
+  assignment belong to the experiment; workflow, memory policy, repo
+  instructions, and patch interpretation belong to the product and official
+  scorer.
+- **Confidence:** **high** from the exact argv, prompt pass-through, complete
+  diff, and round-trip tests; live gate evidence remains required before the
+  final campaign.
 
 ## Compressed trivial discretion
 

@@ -11,16 +11,21 @@ tasks; this harness uses different executors and advisors and a signal-seeking
 
 ## Next Agent Prompt
 
-**Status:** slices 01–07 are mechanically complete; slice 08 remains stopped.
-The first product-policy restart attempt was halted after six complete pairs
-because Kimi made zero advisor calls in all three enabled runs and GLM skipped
-one of four and called late in the others. Those outcomes are exposure-invalid
-diagnostics, not an advisor-lift estimate. The run also exposed E2B target
-selection and concurrent artifact-integration defects. Next, land product-owned
-early and completion-review advisor checkpoints plus those E2B corrections,
-prove both executor/advisor pairs in a focused live gate, then start a new
-campaign namespace and run the full 30×4 measurement. V1–v4 and the partial
-restart attempt remain historical evidence only. Last updated 2026-07-20.
+**Status:** slices 01–07 are mechanically complete; slice 08 is ready for its
+focused restart gate.
+The first product-policy restart attempt was halted after six complete pairs;
+Kimi made zero advisor calls in all three enabled runs and GLM skipped one of
+four and called late in the others. Zero calls are valid product behavior, but
+that attempt cannot estimate the current product because its lifecycle and
+benchmark inputs have since changed. It also exposed E2B target-selection and
+concurrent artifact-integration defects. Product-owned
+orientation and completion-review checkpoints are now implemented and
+live-falsified, the E2B defects are fixed, and the benchmark now passes the
+canonical issue directly while retaining normal memory, compaction, repository
+instructions, and the complete agent diff. Next, run the two committed v2
+focused gates, then start a new campaign namespace and run the full 30×4
+measurement. V1–v4 and the partial restart attempt remain historical evidence
+only. Last updated 2026-07-20.
 
 Local constraints to prove rather than assume:
 
@@ -131,7 +136,7 @@ these ownerships; no parallel abstractions):
 | Duet-into-container packaging                 | `packaging.ts` — compile-vs-tarball decision confined here                                                                                                                                  |
 | Rollout telemetry                             | `telemetry.ts` — pure `deriveTelemetry(TurnEvent[])`; raw `events.ndjson` is ground truth, every number re-derivable                                                                        |
 | Run artifact + resumability                   | `artifacts.ts` — filesystem is the state; `status.json` + `specHash`; orchestrator holds no state of its own                                                                                |
-| Patch extraction + integrity                  | `patch.ts` — staged-index extraction, production-only prediction partition, round-trip verification                                                                                         |
+| Patch extraction + integrity                  | `patch.ts` — staged-index extraction of the agent's complete diff plus round-trip verification                                                                                              |
 | Predictions + scorer quarantine               | `predictions.ts` + `mac/score.sh` + `swebench-report.ts` (narrow parser); nothing else reads harness output                                                                                 |
 | Comparison report                             | `report.ts` — pure over artifact trees + parsed scores                                                                                                                                      |
 
@@ -215,17 +220,16 @@ knowingly exceed $500.
   classifier, memory model, and every non-advisor policy, plus the same fixed
   Kimi vision fallback. The shared task prompt must not force an advisor call;
   treatment assignment is tool availability under the shipped product policy.
-- Isolation: fresh official image + fresh `HOME` per rollout; `--incognito`
-  (no memory-db carryover), `--no-system-prompt-files` (no stray AGENTS.md in
-  target repos). Scoring applies the patch in the harness's own pristine
-  container.
+- Isolation: fresh official image + fresh `HOME` per rollout. Duet otherwise
+  runs normally: default observational memory, compaction, and repository
+  `AGENTS.md` discovery stay enabled. Scoring applies the patch in the
+  harness's own pristine container.
 - Contamination: runtime files, config, credentials, and logs live outside
-  `/testbed`. Agents may create tests as part of normal coding, but patch
-  extraction records and omits test and harness-runtime paths from the official
-  prediction. Historical artifacts are still linted for those paths; empty and
-  oversized predictions remain visible. Failures are artifacts, never dropped
-  from denominators; infra failures are separated from agent timeouts and mark
-  the campaign invalid if unrecovered.
+  `/testbed`. Patch extraction submits the complete baseline-relative agent
+  diff, including tests; the benchmark does not second-guess which repository
+  paths belong to a valid fix. Empty and oversized predictions remain visible.
+  Failures are artifacts, never dropped from denominators; infra failures are
+  separated from agent timeouts and mark the campaign invalid if unrecovered.
 - Security: credentials are passed per exec, never baked into images or
   artifacts, and no Docker socket is mounted into instance containers.
 - Version pinning: `swebench` venv version, dataset revision, duet commit +

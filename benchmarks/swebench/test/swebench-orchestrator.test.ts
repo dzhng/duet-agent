@@ -152,7 +152,7 @@ function fixtureAttempt(
     duetSha256: runtime.artifact.sha256,
     configSha256: runtime.configHashes[config],
     systemPromptSha256: hashText(SWEBENCH_SYSTEM_PROMPT),
-    promptSha256: hashText(buildRolloutPrompt({ entry, problemStatement: row.problemStatement })),
+    promptSha256: hashText(buildRolloutPrompt({ problemStatement: row.problemStatement })),
     limits: campaign.limits,
   };
   return {

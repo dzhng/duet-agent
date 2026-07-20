@@ -259,9 +259,7 @@ function assertAttemptsMatchCurrentInputs(
       duetSha256: runtime.artifact.sha256,
       configSha256: runtime.configHashes[config],
       systemPromptSha256: hashText(SWEBENCH_SYSTEM_PROMPT),
-      promptSha256: hashText(
-        buildRolloutPrompt({ entry, problemStatement: datasetRow.problemStatement }),
-      ),
+      promptSha256: hashText(buildRolloutPrompt({ problemStatement: datasetRow.problemStatement })),
       limits: {
         costUsd: campaign.limits.costUsd,
         wallClockMs: campaign.limits.wallClockMs,

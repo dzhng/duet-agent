@@ -70,14 +70,12 @@ describe("SWE-bench rollout pipeline", () => {
       expect(container.rpcArgv).toEqual([
         "/opt/duet/duet",
         "--rpc",
-        "--incognito",
         "--model",
         "swebench",
         "--workdir",
         "/testbed",
         "--system-prompt",
         SWEBENCH_SYSTEM_PROMPT,
-        "--no-system-prompt-files",
       ]);
       expect(container.rpcOptions?.env).toEqual({
         AI_GATEWAY_API_KEY: "secret",
@@ -138,7 +136,7 @@ describe("SWE-bench rollout pipeline", () => {
     expect(container.stopped).toBe(true);
   });
 
-  testIfDocker("exports production changes while recording excluded test paths", async () => {
+  testIfDocker("exports the agent's complete patch including test paths", async () => {
     root = await mkdtemp(join(tmpdir(), "duet-swebench-rollout-test-path-"));
     const configPath = join(root, "models.json");
     await writeFile(configPath, "{}\n");
@@ -181,12 +179,7 @@ describe("SWE-bench rollout pipeline", () => {
     expect(result.status).toMatchObject({ phase: "completed", terminalType: "complete" });
     expect(
       JSON.parse(await readFile(join(result.attempt.directory, "patch-paths.json"), "utf8")),
-    ).toEqual(["src/a.ts"]);
-    expect(
-      JSON.parse(
-        await readFile(join(result.attempt.directory, "patch-excluded-paths.json"), "utf8"),
-      ),
-    ).toEqual(["tests/a.test.ts"]);
+    ).toEqual(["src/a.ts", "tests/a.test.ts"]);
     expect(container.stopped).toBe(true);
   });
 

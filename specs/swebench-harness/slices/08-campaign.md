@@ -10,17 +10,19 @@ One other GLM run called twice. V4 therefore diagnoses unstable compliance with
 the custom exactly-once protocol; it does not show that received advice caused
 those losses.
 
-The context, prompt, telemetry, and repeated-trial identity corrections are now
-implemented and locally green. The restart gate was frozen as two committed
-campaigns so each report contains only its actual pair:
-`advisor-restart-gate-glm-20260720-v1` (10 rollouts) and
-`advisor-restart-gate-kimi-20260720-v1` (20 rollouts). Their first E2B attempt
-was stopped after six complete pairs: Kimi made zero calls in three enabled
-runs, while GLM skipped one of four and called only after substantial work in
-the others. Partial official scoring found all seven generated GLM patches
+The context, lifecycle, prompt, telemetry, repeated-trial identity, and E2B
+collection corrections are now implemented and locally green. The replacement
+gate is frozen as two pair-specific campaigns:
+`advisor-restart-gate-glm-20260720-v2` (10 rollouts) and
+`advisor-restart-gate-kimi-20260720-v2` (20 rollouts). Their v1 predecessor was
+stopped after six complete pairs: Kimi made zero calls in three enabled runs,
+while GLM skipped one of four and called only after substantial work in the
+others. Partial official scoring found all seven generated GLM patches
 resolved; the three scored Kimi pairs were two pure-only and one both-resolved.
-These rows measure failed soft-guidance exposure, not advisor quality. The run
-also exposed E2B target-selection and concurrent artifact-integration races.
+Zero calls are valid product behavior, but these rows do not measure the
+current lifecycle because the product and benchmark inputs changed afterward.
+The run also exposed E2B target-selection and concurrent artifact-integration
+races.
 
 The next full measurement namespace is
 `multilingual-30-four-arm-e2b-20260720-v5`. Create it only after the product,
@@ -34,9 +36,13 @@ immutable historical evidence and none contributes outcomes to v5.
   scheduling, artifact isolation, and $500 global model-spend envelope remain
   unchanged.
 - Pure and enabled arms within a pair still differ only in
-  `advisor.enabled`. For v5, the shared task prompt must not prescribe call
-  count or timing; the shipped product policy decides whether and when to
-  consult.
+  `advisor.enabled`. The user message is the canonical dataset problem
+  statement with no benchmark workflow wrapper. The shared minimal system
+  prompt only says the task is unattended; shipped product policy decides how
+  to work and whether and when to consult.
+- Every rollout gets a fresh `HOME`, but the benchmark does not disable normal
+  memory, compaction, or repository `AGENTS.md` discovery. The complete agent
+  diff, including tests, goes to the official scorer.
 - The primary report includes every assigned pair. A secondary per-protocol
   table describes successful consultations but makes no causal claim from that
   selected subgroup. The [measurement claims](../README.md#measurement-claims)
@@ -52,21 +58,22 @@ No full campaign starts until all of these are true:
    order. For a transcript that fits the advisor model's context window, no
    text-preview projection, elision marker, or configured token truncation is
    allowed. Focused live artifacts record whether any call was truncated.
-2. **Product lifecycle (in progress):** the benchmark contains no advisor call
-   schedule. The shipped product owns early and completion-review consultations
-   for substantive work, and deterministic plus live gates prove the behavior
-   before another campaign is pinned.
+2. **Product lifecycle (implemented):** the benchmark contains no advisor call
+   schedule. The shipped product owns orientation and completion-review
+   consultations for substantive work. Deterministic tests cover both phases,
+   cooldown reset, final-evidence deduplication, and short work; disabling the
+   lifecycle made the live eval produce zero calls, while restoration produced
+   successful early and final calls.
 3. **Focused repetition (next):** under fresh restart-gate campaign ids, run five
    fresh paired pure/enabled trials on each of the three v4 zero-call loss
    instances. This is 30 rollouts: five GLM pairs on Fluentd and five Kimi pairs
    on each Docusaurus task. Do not reuse, discard, or replace stochastic
    outcomes.
 4. **Admission:** every pure trial remains advisor-silent; provider identity,
-   context fidelity, costs, patches, and official scores reconcile; neither
-   executor/advisor pairing has zero successful consultations across all its
-   enabled repeats; and no infrastructure or provenance failure remains. Zero
-   or multiple calls in an individual enabled rollout are reported as product
-   behavior, not patched into exact-one compliance.
+   context fidelity, costs, patches, and official scores reconcile; and no
+   infrastructure or provenance failure remains. Zero, one, or multiple calls
+   in an enabled rollout are reported as product behavior and never determine
+   whether its score is admitted.
 5. **Budget:** add v4's $72.2112 to the prior $27.64 reserve, making cumulative
    sunk spend at least $99.8513 before the focused repeats. Add their spend,
    reserve unknown interrupted attempts at their full cap, then recompute one
