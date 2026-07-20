@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { buildRolloutPrompt } from "../benchmarks/swebench/src/prompt.js";
+import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "../benchmarks/swebench/src/prompt.js";
 
 describe("SWE-bench rollout prompt", () => {
   test("defines one controlled advisor exposure and a clean final patch", () => {
@@ -20,5 +20,12 @@ describe("SWE-bench rollout prompt", () => {
     expect(prompt).toContain(
       "Before finishing, revert any test, cache, benchmark, or runtime files changed during your work",
     );
+  });
+
+  test("bounds unattended validation without discarding the completed patch", () => {
+    expect(SWEBENCH_SYSTEM_PROMPT).toMatch(
+      /If a validation command is still running after two\s+minutes, stop that command/,
+    );
+    expect(SWEBENCH_SYSTEM_PROMPT).toMatch(/finish with the best patch\s+already produced/);
   });
 });

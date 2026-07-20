@@ -1172,27 +1172,69 @@ ownerScopeId }`, even though both execute through the same task manager.
 ### S36 — Exact advisor timing is a shared system rule, not a routing-protocol change
 
 - **When:** GLM followed the byte-identical user prompt on two pilot tasks but
-  skipped `ask_advisor` on Rust, and three Rust arms lost substantial time to
-  interactive pager behavior during validation.
+  skipped `ask_advisor` on Rust, and Rust validation commands remained alive
+  after their foreground wait budgets.
 - **The choice:** Pass one benchmark-owned system instruction identically to all
   four arms. It makes a present advisor mandatory exactly once after read-only
   inspection and before edits; a pure arm proceeds when the tool is absent.
   Normalize `CI`, `PAGER`, `GIT_PAGER`, `BAT_PAGER`, and `TERM` identically in
-  every container. Record the system instruction's hash in each rollout spec.
-  The unbuilt alternative adds benchmark-only required-advisor state to the RPC
-  or public routing schema.
+  every container, and tell every arm to stop a validation command that is
+  still running after two minutes. Record the system instruction's hash in each
+  rollout spec. The unbuilt alternative adds benchmark-only required-advisor
+  state to the RPC or public routing schema.
 - **The gap:** Product guidance correctly says routine tasks may skip optional
   advice, which conflicts with this experiment's deliberately controlled
   exposure. Official images can also expose interactive pager defaults through
   a pseudo-terminal.
 - **The reach:** Treatment compliance becomes stronger without changing Duet's
-  general advisor semantics or the user prompt between arms; pager behavior no
-  longer consumes a whole rollout. Resume rejects artifacts from a different
-  system instruction.
+  general advisor semantics or the user prompt between arms. Non-interactive
+  environment defaults remove pager variance, while the explicit two-minute
+  rule bounds any candidate or validation process that still remains alive.
+  Resume rejects artifacts from a different system instruction.
 - **Verdict:** **sound.** The benchmark owns experimental instructions and
   non-interactive process policy; the product protocol should remain general.
-- **Confidence:** **medium** until the targeted live Rust rerun proves both
-  advisor models comply and final patches are clean.
+- **Confidence:** **high.** The targeted live Rust rerun recorded exactly one
+  successful `moonshotai/kimi-k3` call from GLM and one successful
+  `anthropic/claude-fable-5` call from Kimi. Both production-only patches then
+  resolved under the official scorer. That rerun also falsified the assumption
+  that pager variables alone bound all validation, motivating the shared
+  two-minute instruction before the full campaign.
+
+### S37 — The production campaign retires the $1.25 pilot cutoff
+
+- **When:** The compliance GLM rollout completed normally at $1.2622, directly
+  proving that the pilot ceiling could interrupt a valid treatment outcome.
+- **The choice:** Give every production rollout the same $4 emergency spend
+  ceiling and 30-minute wall, with concurrency one. Carry a conservative $20
+  allowance for all prerequisite live work. The unbuilt alternative keeps the
+  pilot's $1.25 cutoff even though the budget can support materially more work.
+- **The gap:** A campaign-wide $500 envelope still needs a finite per-launch
+  reservation so the breaker can prove it will not knowingly overspend.
+- **The reach:** The old treatment-limiting cutoff is gone, while the worst-case
+  reservation remains exact: `$20 + 120 × $4 = $500`. Cost and time cutoffs are
+  denominator-visible unresolved outcomes, never dropped attempts.
+- **Verdict:** **sound.** Four dollars is over three times the falsified pilot
+  ceiling and much larger than the observed complete rollouts, while preserving
+  a hard global guarantee.
+- **Confidence:** **high** in the arithmetic and **medium** that no unusually
+  expensive task reaches $4; the full report will expose any such cutoff.
+
+### S38 — Report admission has one executable gate
+
+- **When:** the report rendered advised-arm attribution failures correctly, but
+  the CLI exit status checked only pure-arm silence and patch integrity.
+- **The choice:** Centralize the three report admission assertions in
+  `campaignReportPassesAdmission` and use it for the CLI exit decision. The
+  unbuilt alternative leaves human-readable STOP output with a successful
+  process status.
+- **The gap:** Rendering a failed assertion is not sufficient for unattended
+  orchestration or release checks.
+- **The reach:** Pure-arm contamination, missing/wrong advisor treatment, and
+  patch contamination now all fail the report command consistently.
+- **Verdict:** **sound.** One admission concept should have one executable
+  definition.
+- **Confidence:** **high** because a red/green report test proves a wrong
+  advisor identity makes the aggregate gate false.
 
 ## Compressed trivial discretion
 

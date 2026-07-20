@@ -613,9 +613,19 @@ describe("driveRpcLoop", () => {
     const loop = driveRpcLoop(
       runner,
       commandStream([
-        { type: "prompt", requestId: "request-before", message: "too early", behavior: "follow_up" },
+        {
+          type: "prompt",
+          requestId: "request-before",
+          message: "too early",
+          behavior: "follow_up",
+        },
         { type: "start" },
-        { type: "prompt", requestId: "request-after", message: "after start", behavior: "follow_up" },
+        {
+          type: "prompt",
+          requestId: "request-after",
+          message: "after start",
+          behavior: "follow_up",
+        },
       ]),
       { emit: sink.emit },
     );
@@ -748,11 +758,31 @@ describe("driveRpcLoop", () => {
       status: "completed",
       state: {} as never,
     };
-    const first = { type: "prompt" as const, requestId: "request-1", message: "one", behavior: "follow_up" as const };
-    const second = { type: "prompt" as const, requestId: "request-2", message: "two", behavior: "follow_up" as const };
+    const first = {
+      type: "prompt" as const,
+      requestId: "request-1",
+      message: "one",
+      behavior: "follow_up" as const,
+    };
+    const second = {
+      type: "prompt" as const,
+      requestId: "request-2",
+      message: "two",
+      behavior: "follow_up" as const,
+    };
     const wake = { type: "wake" as const, requestId: "request-3" };
-    const third = { type: "prompt" as const, requestId: "request-4", message: "three", behavior: "steer" as const };
-    const fourth = { type: "prompt" as const, requestId: "request-5", message: "four", behavior: "follow_up" as const };
+    const third = {
+      type: "prompt" as const,
+      requestId: "request-4",
+      message: "three",
+      behavior: "steer" as const,
+    };
+    const fourth = {
+      type: "prompt" as const,
+      requestId: "request-5",
+      message: "four",
+      behavior: "follow_up" as const,
+    };
     const loop = driveRpcLoop(
       runner,
       commandStream([{ type: "start" }, first, second, wake, third, fourth]),

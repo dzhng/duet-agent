@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { CampaignConfigName } from "../benchmarks/swebench/src/config-override.js";
 import {
   buildCampaignReport,
+  campaignReportPassesAdmission,
   lintPatch,
   renderCampaignReport,
   type OfficialScoreRow,
@@ -144,6 +145,7 @@ describe("SWE-bench paired report", () => {
         'kimi-fable-advisor/org__repo-1: expected 1 successful anthropic/claude-fable-5 call; observed total=1, success=1, models={"moonshotai/kimi-k3":1}',
       ],
     });
+    expect(campaignReportPassesAdmission(report)).toBe(false);
   });
 
   test("lets the official scorer decide a budget-interrupted patch outcome", () => {

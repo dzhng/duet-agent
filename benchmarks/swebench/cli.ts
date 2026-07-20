@@ -25,6 +25,7 @@ import { buildPredictions, serializePredictions } from "./src/predictions.js";
 import { ensureCampaignProvenance } from "./src/provenance.js";
 import {
   buildCampaignReport,
+  campaignReportPassesAdmission,
   loadReportAttempts,
   renderCampaignReport,
   type OfficialScoreRow,
@@ -320,7 +321,7 @@ async function writeCampaignReport(args: string[]): Promise<void> {
     writeFile(join(outputRoot, "report.md"), renderCampaignReport(report)),
   ]);
   console.log(renderCampaignReport(report));
-  if (!report.pureAdvisorAssertion.passed || !report.patchAssertion.passed) process.exitCode = 1;
+  if (!campaignReportPassesAdmission(report)) process.exitCode = 1;
 }
 
 async function loadProviderEnv(): Promise<Record<string, string>> {

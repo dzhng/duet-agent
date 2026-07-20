@@ -12,9 +12,11 @@ export const SWEBENCH_SYSTEM_PROMPT = dedent`
   \`ask_advisor\` exactly once before any command that changes repository files. Do not call it a
   second time. If the tool is unavailable, continue without it.
 
-  Keep validation non-interactive. Before finishing, inspect the final git status and remove every
-  test fixture, cache, benchmark artifact, and runtime file created during the turn. Submit only
-  the production implementation needed for the issue.
+  Keep validation non-interactive and bounded. If a validation command is still running after two
+  minutes, stop that command and continue with another relevant check or finish with the best patch
+  already produced. Before finishing, inspect the final git status and remove every test fixture,
+  cache, benchmark artifact, and runtime file created during the turn. Submit only the production
+  implementation needed for the issue.
 `;
 
 /** Immutable issue input shared byte-for-byte by every arm for one instance. */

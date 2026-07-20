@@ -74,6 +74,15 @@ export interface CampaignReport {
   patchAssertion: { passed: boolean; violations: string[] };
 }
 
+/** Decide whether a scored campaign satisfies every experiment-admission invariant. */
+export function campaignReportPassesAdmission(report: CampaignReport): boolean {
+  return (
+    report.pureAdvisorAssertion.passed &&
+    report.advisedAdvisorAssertion.passed &&
+    report.patchAssertion.passed
+  );
+}
+
 const COMPARISONS: [CampaignConfigName, CampaignConfigName][] = [
   ["glm-pure", "glm-kimi-advisor"],
   ["kimi-pure", "kimi-fable-advisor"],

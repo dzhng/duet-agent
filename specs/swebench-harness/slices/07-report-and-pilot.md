@@ -1,19 +1,16 @@
 # 07 — Two-comparison report, 3-instance four-arm pilot, admission gate
 
-**Progress (2026-07-20): stopped pilot loop.** The first two-instance,
-four-arm live campaign completed and officially resolved all 8/8 patches for
-$3.6834, but every advisor-enabled rollout made zero advisor calls. Patch lint
-also found forbidden Carbon test/cache paths in three attempts. The result is
-retained as a harness smoke, not advisor evidence. Rollout admission now rejects
-forbidden paths before export, the scorer resolves output paths and reuses one
-image across all arms for an instance, and the next campaign uses a new,
-byte-identical four-arm prompt that requires exactly one consultation when the
-tool is available. The first corrected C++ pair then proved one successful Kimi
-consultation, but also exposed that a genuine empty model answer was being
-misclassified as patch infrastructure. Empty answers now complete and flow to
-the official scorer as denominator-visible `empty_patch` outcomes; only patch
-integrity violations block export. A fresh three-language campaign id remains
-required before ADMIT.
+**Progress (2026-07-20): ADMIT.** The semantically corrected three-language
+pilot completed for $9.4612 and officially scored every admissible patch. Its
+only STOP findings were one missed Kimi consultation and one patch containing
+generated test fixtures; both are now machine-visible admission failures. A
+targeted Rust compliance rerun then made exactly one successful intended
+advisor call in each treated arm, kept both patches production-only, and
+officially resolved both outcomes for another $1.9072. The old $1.25 pilot
+cutoff is retired: the full campaign reserves a deliberately non-binding $4
+emergency ceiling per rollout and a 30-minute wall. With a conservative $20
+sunk allowance, the breaker proof is `$20 + 120 × $4 = $500`. Both treatment
+comparisons are admitted to slice 08.
 
 Needs 04 (scorer fixture) and 06. The report is built and verified against
 existing artifacts first — zero new spend — then a small pilot produces the
