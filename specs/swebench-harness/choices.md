@@ -1385,6 +1385,36 @@ the number of rollouts or the independently enforced model-spend bound.
   observed red on the old behavior and green on the new behavior; the spend
   reservation is deliberately worst-case because exact telemetry was lost.
 
+### S46 — General advisor timing yields to stricter workflow rules
+
+- **When:** the v3 Druid admission completed all four arms, but Kimi skipped
+  Fable despite the benchmark's mandatory exactly-once system instruction.
+- **The choice:** In an ordinary Duet task, the working model is told to ask a
+  second model for advice only when the work is consequential or unclear, and
+  to skip advice for a routine fix. A workflow can add a stricter rule: this
+  benchmark tells the working model to consult exactly once even when the fix
+  looks routine, because the experiment is invalid if the “advisor on” arm
+  never exposes the advisor. Make the ordinary rule explicitly yield in that
+  situation while leaving normal Duet tasks optional. The unbuilt alternatives
+  reorder every system-prompt layer, or add a new protocol switch that forces a
+  tool call. Preserve v3 as failed admission evidence and restart v4 with
+  `$27.64` sunk and a uniform `$3.93` emergency ceiling; the worst case is
+  `$27.64 + 120 × $3.93 = $499.24`.
+- **The gap:** The benchmark instruction appeared before a later general layer
+  saying to skip routine work. Both were system instructions, so Kimi sometimes
+  followed the later default while GLM and earlier Kimi samples followed the
+  experiment-specific requirement.
+- **The reach:** Product behavior remains optional unless a workflow explicitly
+  imposes a stricter schedule; the benchmark needs no protocol/config special
+  case. V3's exact $1.2233279 is conservatively included in sunk spend and none
+  of its outcomes enters the v4 estimate.
+- **Verdict:** **sound.** A general default should not contradict a deliberate
+  workflow invariant, and explicit precedence is narrower than reordering all
+  system layers or adding required-advisor protocol state.
+- **Confidence:** **medium-high** until the v4 live Druid admission proves Kimi
+  calls Fable. The composed-prompt regression was observed red before the fix
+  and green after it, and the focused product test pins the same contract.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

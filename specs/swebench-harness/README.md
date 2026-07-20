@@ -20,7 +20,12 @@ admission block passed rollout and scoring but exposed per-sandbox binary
 nondeterminism before expansion. Build the immutable E2B template with its
 single precompiled Duet artifact and pinned dataset cache, pass the no-model
 capacity probe, then run the committed
-`multilingual-30-four-arm-e2b-v3.json` campaign.
+`multilingual-30-four-arm-e2b-v4.json` campaign. The v2 admission was stopped
+because provider credentials appeared in Docker process arguments; v3 proved
+that boundary fixed, then stopped because Kimi skipped its required Fable
+consultation. V4 makes the normal optional-advisor guidance yield to the
+benchmark's stricter exactly-once rule. V1–v3 remain admission evidence only
+and must not enter the final estimate.
 Last updated 2026-07-20.
 
 You are implementing this spec. Read this README fully, then continue the E2B

@@ -46,6 +46,9 @@ export const ADVISOR_EXECUTOR_GUIDANCE_LAYER = dedent`
   your progress so far is forwarded automatically; the advisor sees the task, your steps, and
   their results.
 
+  Follow any stricter workflow-specific system instruction that requires a different consultation
+  schedule, including a required call for routine work.
+
   Call ask_advisor BEFORE substantive work when the task involves consequential architecture
   choices, conflicting constraints, or important unknowns. Orientation (reading files, listing,
   looking around) is not substantive work — orient first, then consult before you commit to an

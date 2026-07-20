@@ -58,6 +58,7 @@ class RouterTurnRunner extends TurnRunner {
     model?: string;
     cwd?: string;
     stepKeywords?: string[];
+    systemInstructions?: string;
   }) {
     super({
       model: options.model ?? "frontier",
@@ -66,6 +67,7 @@ class RouterTurnRunner extends TurnRunner {
       memoryDbPath: false,
       skillDiscovery: { includeDefaults: false },
       effectiveContext: options.effectiveContext,
+      systemInstructions: options.systemInstructions,
     });
     this.classify = options.classify;
     this.everySteps = options.everySteps ?? 1;
@@ -798,5 +800,20 @@ describe("advisor executor guidance layer", () => {
       "Call ask_advisor BEFORE substantive work",
     );
     await concrete.dispose();
+  });
+
+  testIfDocker("general advisor timing yields to a stricter workflow rule", async () => {
+    const workflowRule = "WORKFLOW-REQUIRES-ADVISOR-EVEN-WHEN-ROUTINE";
+    const runner = new RouterTurnRunner({
+      classify: scriptedClassifier([]),
+      systemInstructions: workflowRule,
+    });
+    await startRunner(runner, []);
+
+    const systemPrompt = runner.parentAgentForTest().state.systemPrompt;
+    expect(systemPrompt).toContain(workflowRule);
+    expect(systemPrompt).toContain("Skip it for routine, local, obvious work.");
+    expect(systemPrompt).toContain("Follow any stricter workflow-specific system instruction");
+    await runner.dispose();
   });
 });

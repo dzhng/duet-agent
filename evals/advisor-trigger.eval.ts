@@ -45,6 +45,10 @@ class CapturingRunner extends TurnRunner {
     return this.requireParentAgent().state.tools.map((tool) => tool.name);
   }
 
+  systemPrompt(): string {
+    return this.requireParentAgent().state.systemPrompt;
+  }
+
   protected override createModelRouter(options: ModelRouterOptions): ModelRouter {
     const table = structuredClone(options.table);
     if (options.tier === "frontier") {
@@ -340,6 +344,23 @@ describe("advisor trigger and router interlock", () => {
       await runner.dispose();
     },
     120_000,
+  );
+
+  testIfDocker(
+    "workflow-specific advisor precedence reaches the executor prompt",
+    async () => {
+      const workflowRule = "WORKFLOW-REQUIRES-ADVISOR-EVEN-WHEN-ROUTINE";
+      const runner = new CapturingRunner("frontier", workflowRule);
+      await runner.start({ type: "start", mode: "agent" });
+
+      expect(runner.systemPrompt()).toContain(workflowRule);
+      expect(runner.systemPrompt()).toContain("Skip it for routine, local, obvious work.");
+      expect(runner.systemPrompt()).toContain(
+        "Follow any stricter workflow-specific system instruction",
+      );
+      await runner.dispose();
+    },
+    30_000,
   );
 
   testIfDocker("economy tier omits the advisor tool", async () => {
