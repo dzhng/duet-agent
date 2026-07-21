@@ -81,9 +81,19 @@ advisor calls total (2.2 per run), incurred no cost-cap interruptions, and
 consumed 402,590 advisor-plus-observer tokens—12.1% below the same five-case v3
 subset. The candidate now advances to the complete 15-case gate.
 
-Next, run all 15 known advisor cases under the fresh v6 GLM and Kimi campaign
-ids, and create fresh diversity campaign ids only if the full gate preserves
-15/15 while beating the 1,543,369-token combined baseline. Any pure-only
+The v6 expansion officially resolved all 15/15 known cases. Its 31 successful
+consultations used 494,436 advisor tokens and 841,440 observer tokens, for
+1,335,876 combined—13.4% below the 1,543,369-token quality baseline. That split
+shows the remaining inefficiency is premature observation, not an oversized
+post-compaction tail. Replay of the exact consultation boundaries found every
+complete raw request near or below 64k. The next candidate raises only the soft
+compaction trigger to 64k; the 8k raw tail after compaction, observation format,
+tool protection, lifecycle, prompts, model effort, and hard-window behavior stay
+unchanged. Rerun the five high-risk 8927 cases before expanding to 15.
+
+Next, run the five 8927 cases under the fresh v7 campaign id, expand to all 15
+only if they remain 5/5 and beat v6's same-case token total, and create fresh
+diversity campaign ids only if the full gate preserves 15/15. Any pure-only
 result still stops immediately for exact-trace diagnosis. The stopped
 `advisor-nonregression-expansion-*-20260721-v1` namespaces predate the policy
 change, have no completed pairs, and must never be resumed or scored. The stopped v3 workers

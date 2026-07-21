@@ -2152,6 +2152,33 @@ the number of rollouts or the independently enforced model-spend bound.
   usage was 402,590 tokens, 12.1% below the same five-case v3 subset, with no
   cost-cap interruptions. The full 15-case gate remains the broader check.
 
+### S73 — Compact at the measured break-even region, not at 32k by habit
+
+- **When:** the lifecycle-corrected v6 policy restored 15/15 official resolves
+  and exposed the exact split between advisor and observer usage.
+- **The choice:** Raise the advisor soft input target from 32k to 64k while
+  retaining the 8k recent-message target once compaction is actually needed.
+  Below 64k, forward the complete wire-faithful transcript and do not invoke the
+  observer merely to make the advisor request smaller. Above 64k, keep using
+  normal observations for older work, the latest-complete-tool protection, and
+  the advisor model's hard window as the final ceiling.
+- **The gap:** Across the 15 v6 runs, advisor models consumed 494,436 tokens but
+  the observer consumed 841,440. Replay of all 31 consultation boundaries puts
+  their complete raw requests at roughly 64k or less. At 32k the product paid
+  an observer to replace context the advisor could cheaply inspect directly;
+  that reduces the advisor line item while increasing the whole consultation
+  pipeline.
+- **The reach:** Typical two-review coding turns keep more exact evidence and
+  avoid observer latency. Truly long turns still compact well below the
+  executor's 200k horizon and far below Fable's hard window. The 88k live
+  compaction fixture remains above the trigger and must still recover both old
+  observations and recent raw evidence.
+- **Verdict:** **promising, paid confirmation pending.** Run the five high-risk
+  Docusaurus 8927 trials first; expand only if all five resolve and combined
+  advisor-plus-observer tokens improve over v6's same-case subset.
+- **Confidence:** **high** in the token diagnosis; **medium** until the paid
+  quality gate confirms that stochastic behavior remains non-regressive.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

@@ -146,11 +146,11 @@ describe("advisor context compaction", () => {
           context?: { compactedMessages?: number; estimatedInputTokens?: number };
         };
         expect(Number(details.context?.compactedMessages)).toBeGreaterThan(0);
-        expect(Number(details.context?.estimatedInputTokens)).toBeLessThanOrEqual(32_000);
+        expect(Number(details.context?.estimatedInputTokens)).toBeLessThanOrEqual(64_000);
         expect(details).toMatchObject({
           type: "ask_advisor",
           context: {
-            inputTargetTokens: 32_000,
+            inputTargetTokens: 64_000,
             compactedMessages: expect.any(Number),
             omittedMessages: 0,
             truncated: false,
