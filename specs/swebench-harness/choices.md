@@ -2244,6 +2244,29 @@ the number of rollouts or the independently enforced model-spend bound.
   behavior and has strong deterministic coverage, but its first post-repair
   paid evidence will be the final population itself.
 
+### S77 — Retry E2B transport only outside the model command
+
+- **When:** the first final launch lost one worker during idle setup and lost a
+  second worker's archive after all four arms had completed.
+- **The choice:** Retry idempotent E2B requests at 2, 5, and 15 seconds: template
+  lookup, environment upload, resume upload/extraction, and result download.
+  Record whether the campaign command may have started. Never retry that command
+  itself. A failure proven to precede it releases its active budget reservation;
+  later or ambiguous failures retain the reservation.
+- **The gap:** Sandbox creation already retried safely, but every request after
+  creation was single-shot. The first v5 launch therefore lost Apache Druid
+  before model work and lost Carbon's completed patches during one archive-read
+  connection failure.
+- **The reach:** Transient controller outages no longer destroy completed model
+  evidence or consume a full shard reserve before generation. Non-idempotent
+  model work is still at-most-once, and uncertain work cannot be retried as if it
+  were free.
+- **Verdict:** **sound.** The retry boundary follows the external side effect
+  rather than the E2B API method name.
+- **Confidence:** **high.** The retry helper is covered for bounded delays and
+  no cleanup side effects; the first campaign supplied direct failure evidence
+  on both sides of the model-command boundary.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

@@ -65,6 +65,8 @@ interface WorkerRecord {
   sandboxId: string;
   startedAt: string;
   finishedAt: string;
+  /** True once the non-idempotent campaign command may have reached the sandbox. */
+  modelCommandStarted: boolean;
   commandSucceeded: boolean;
   metrics: SandboxMetrics[];
   error?: string;
@@ -78,6 +80,16 @@ interface BudgetReservationRecord {
   /** Worst-case spend held until the worker's artifacts are integrated. */
   reservedUsd: number;
   createdAt: string;
+}
+
+class E2BWorkerFailure extends Error {
+  readonly modelCommandStarted: boolean;
+
+  constructor(error: unknown, modelCommandStarted: boolean) {
+    super(errorMessage(error));
+    this.name = "E2BWorkerFailure";
+    this.modelCommandStarted = modelCommandStarted;
+  }
 }
 
 async function main(): Promise<void> {
@@ -126,7 +138,7 @@ async function main(): Promise<void> {
   }
 
   const templateName = e2bTemplateName(repositorySha);
-  const templateExists = await retryE2BRead(() => Template.exists(templateName));
+  const templateExists = await retryE2BNonModelRequest(() => Template.exists(templateName));
   if (!templateExists) {
     throw new Error(`E2B template ${templateName} is missing; run e2b/template.ts first.`);
   }
@@ -167,7 +179,12 @@ async function main(): Promise<void> {
           retryFailed: options.retryFailed,
         });
       } catch (error) {
-        throw new Error(`${instanceId}/t${trial}: ${errorMessage(error)}`);
+        const failure = `${instanceId}/t${trial}: ${errorMessage(error)}`;
+        if (error instanceof E2BWorkerFailure && !error.modelCommandStarted) {
+          await rm(reservationPath);
+          return { spentUsd: 0, failure };
+        }
+        throw new Error(failure);
       }
       const currentAttempts = await loadRolloutAttempts(join(BENCH_ROOT, "runs"), e2bSpec.id);
       const remainingReservation = calculateShardBudgetReservation(
@@ -243,15 +260,15 @@ export function selectE2BShards(
   );
 }
 
-/** Retry read-only E2B controller requests that cannot create billable model work. */
-export async function retryE2BRead<T>(
-  read: () => Promise<T>,
+/** Retry idempotent E2B controller requests that cannot create billable model work. */
+export async function retryE2BNonModelRequest<T>(
+  request: () => Promise<T>,
   retryDelaysMs: readonly number[] = E2B_READ_RETRY_DELAYS_MS,
   sleep: (milliseconds: number) => Promise<void> = (milliseconds) => Bun.sleep(milliseconds),
 ): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await read();
+      return await request();
     } catch (error) {
       const delay = retryDelaysMs[attempt];
       if (delay === undefined) throw error;
@@ -494,15 +511,20 @@ async function runInstanceTrial(input: {
     () => killOwnedSandboxes(metadata),
   );
   let commandSucceeded = false;
+  let modelCommandStarted = false;
   let failure: unknown;
   let metrics: SandboxMetrics[] = [];
   try {
-    await sandbox.files.write(REMOTE_ENVIRONMENT_LOCK, input.environmentLock);
+    await retryE2BNonModelRequest(() =>
+      sandbox.files.write(REMOTE_ENVIRONMENT_LOCK, input.environmentLock),
+    );
     const resume = await createResumeArchive(input.spec, input.instanceId, input.trial);
     if (resume) {
-      await sandbox.files.write(REMOTE_RESUME_ARCHIVE, resume);
-      await sandbox.commands.run(
-        `mkdir -p ${shellQuote(remoteCampaignRoot(input.spec.id))} && tar -xf ${shellQuote(REMOTE_RESUME_ARCHIVE)} -C ${shellQuote(remoteCampaignRoot(input.spec.id))}`,
+      await retryE2BNonModelRequest(() => sandbox.files.write(REMOTE_RESUME_ARCHIVE, resume));
+      await retryE2BNonModelRequest(() =>
+        sandbox.commands.run(
+          `mkdir -p ${shellQuote(remoteCampaignRoot(input.spec.id))} && tar -xf ${shellQuote(REMOTE_RESUME_ARCHIVE)} -C ${shellQuote(remoteCampaignRoot(input.spec.id))}`,
+        ),
       );
     }
 
@@ -523,6 +545,7 @@ async function runInstanceTrial(input: {
     ]
       .map(shellQuote)
       .join(" ");
+    modelCommandStarted = true;
     await sandbox.commands.run(command, {
       cwd: REMOTE_REPO_ROOT,
       user: "user",
@@ -535,7 +558,9 @@ async function runInstanceTrial(input: {
     failure = error;
   } finally {
     try {
-      await downloadInstanceArtifacts(sandbox, input.spec, input.instanceId, input.trial);
+      await retryE2BNonModelRequest(() =>
+        downloadInstanceArtifacts(sandbox, input.spec, input.instanceId, input.trial),
+      );
     } catch (error) {
       failure ??= error;
     }
@@ -546,6 +571,7 @@ async function runInstanceTrial(input: {
       sandboxId: sandbox.sandboxId,
       startedAt,
       finishedAt: new Date().toISOString(),
+      modelCommandStarted,
       commandSucceeded,
       metrics,
       ...(failure ? { error: errorMessage(failure) } : {}),
@@ -558,7 +584,7 @@ async function runInstanceTrial(input: {
     );
     await sandbox.kill().catch(() => false);
   }
-  if (failure) throw failure;
+  if (failure) throw new E2BWorkerFailure(failure, modelCommandStarted);
 }
 
 /** Retry controller-level sandbox creation before any model command can run. */

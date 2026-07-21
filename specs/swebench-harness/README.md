@@ -135,6 +135,15 @@ another paid adaptive repeat: the unchanged advisor policy already passed its
 15/15 gate, and the fresh 30-task paired campaign is both a broader live check
 and the only evidence eligible for the requested effect estimate.
 
+The first v5 launch returned four complete shards: 16 terminal artifacts costing
+`$15.6848066`. One worker failed while its sandbox stayed at idle-template CPU
+and memory levels, before any artifact existed. A second worker completed all
+four model arms but lost its archive to one E2B connection error. The controller
+now retries idempotent pre-model setup and post-model artifact recovery; it never
+retries the campaign model command. Worker records persist whether that
+non-idempotent boundary was reached, so a proven pre-command failure releases
+its reservation while an ambiguous or post-command failure remains held.
+
 Local constraints to prove rather than assume:
 
 - The Mac-local path remains the scorer and fallback execution path. Its Docker

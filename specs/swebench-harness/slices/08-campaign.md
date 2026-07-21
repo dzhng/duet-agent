@@ -195,6 +195,13 @@ Validate the repaired session attribution in this population instead of buying
 another adaptive 15-case replay; only the final rows are eligible for the effect
 estimate.
 
+The first v5 admission launched six shards. Four returned 16 terminal artifacts
+for `$15.6848066`; one failed before model work, and one completed generation but
+lost its archive on an E2B connection error. Retry only idempotent no-model E2B
+setup and recovery requests. Persist the model-command stage, release reserves
+only for proven pre-command failures, and never automatically replay ambiguous
+model work.
+
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution
 change invalidates the current diagnostic namespace and requires a new id.

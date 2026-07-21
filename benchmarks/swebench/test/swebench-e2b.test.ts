@@ -11,7 +11,7 @@ import {
   calculateCampaignBudgetBound,
   calculateShardBudgetReservation,
   integrateInstanceArtifacts,
-  retryE2BRead,
+  retryE2BNonModelRequest,
   retryE2BSandboxCreate,
   runBudgetedPool,
   selectE2BInstanceIds,
@@ -342,11 +342,11 @@ describe("SWE-bench E2B execution", () => {
     expect(delays).toEqual([2, 5]);
   });
 
-  test("retries read-only controller requests without cleanup side effects", async () => {
+  test("retries idempotent no-model controller requests without cleanup side effects", async () => {
     let attempts = 0;
     const delays: number[] = [];
 
-    const result = await retryE2BRead(
+    const result = await retryE2BNonModelRequest(
       async () => {
         attempts += 1;
         if (attempts < 3) throw new Error("transient controller failure");
