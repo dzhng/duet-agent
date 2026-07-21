@@ -2361,6 +2361,10 @@ the number of rollouts or the independently enforced model-spend bound.
   admits Fastlane 20975, the fourth row of the same seeded population, under a
   fresh v9 id with four full `$3.10` reservations. Further rows remain
   conditional only on exact returned spend, not observed outcomes.
+  Fastlane cost `$1.7418539` and produced a both-resolve result in both
+  comparisons, reconciling the ledger to `$485.2611987`. The remaining
+  `$14.7388013` admits Vue 11915, the fifth seeded-population row, under v10
+  with the same four full reservations.
 - **Confidence:** **high** in the accounting and pairing guarantee; **low** in
   the statistical precision of the small sample, which the report must state
   plainly.

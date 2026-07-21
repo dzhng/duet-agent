@@ -185,11 +185,13 @@ The core and first expansion are now officially scored. All four arms resolved
 Laravel and Lombok; on Prometheus, both advisor arms resolved while both pure
 arms did not. The three-task result is therefore 2/3 pure versus 3/3 advised in
 both comparisons, with one enabled-only row and zero pure-only rows apiece.
-Prometheus cost exactly `$2.2010546`, reconciling conservative campaign spend
-to `$483.5193448`. The remaining `$16.4806552` admits the fourth seeded row,
-Fastlane 20975, as `multilingual-four-arm-mac-20260721-v9-expansion` with four
-unchanged `$3.10` reservations. Further admission depends only on returned
-exact spend retaining another complete block.
+Prometheus cost exactly `$2.2010546`; Fastlane then added a both-resolve row in
+both comparisons for `$1.7418539`. The four-task result is 3/4 pure versus 4/4
+advised in both comparisons, with one enabled-only row, three ties, and zero
+pure-only rows apiece. Conservative campaign spend is now `$485.2611987`. The
+remaining `$14.7388013` admits the fifth seeded row, Vue 11915, as
+`multilingual-four-arm-mac-20260721-v10-expansion` with four unchanged `$3.10`
+reservations. Further admission still depends only on returned exact spend.
 
 Local constraints to prove rather than assume:
 
