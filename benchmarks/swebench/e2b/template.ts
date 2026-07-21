@@ -9,6 +9,7 @@ import { e2bTemplateName, shellQuote } from "./support.js";
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = resolve(import.meta.dir, "../../..");
 const REPOSITORY_URL = "https://github.com/dzhng/duet-agent.git";
+const E2B_REQUEST_TIMEOUT_MS = 180_000;
 
 /** Build the immutable x86 Docker worker image used by an E2B campaign. */
 export async function buildSwebenchTemplate(): Promise<{
@@ -25,7 +26,9 @@ export async function buildSwebenchTemplate(): Promise<{
   }
   const repositorySha = shaOutput.trim();
   const name = e2bTemplateName(repositorySha);
-  if (await Template.exists(name)) return { name, repositorySha };
+  if (await Template.exists(name, { requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS })) {
+    return { name, repositorySha };
+  }
 
   const repo = shellQuote(REPOSITORY_URL);
   const sha = shellQuote(repositorySha);
@@ -65,6 +68,7 @@ export async function buildSwebenchTemplate(): Promise<{
   const built = await Template.build(template, name, {
     cpuCount: 8,
     memoryMB: 16_384,
+    requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
     onBuildLogs: defaultBuildLogger(),
   });
   return { name, templateId: built.templateId, repositorySha };
