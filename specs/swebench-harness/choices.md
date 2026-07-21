@@ -2321,11 +2321,37 @@ the number of rollouts or the independently enforced model-spend bound.
   the one-arm v1 diagnostic cannot be compared with new output. The v2 Mac gate
   therefore reruns both GLM arms under a fresh id. Its sunk ledger includes the
   v1 run's exact `$0.302353` cost.
-- **Verdict:** **sound; paid paired confirmation pending.** The prompt regression
-  test was red on the ambiguous wording and green on the outcome contract while
-  continuing to reject advisor and workflow prescriptions.
-- **Confidence:** **high** that a patch benchmark must request a repository
-  solution; **medium** until both fresh Caddy arms produce scoreable patches.
+- **Verdict:** **sound and paid-confirmed.** The prompt regression test was red
+  on the ambiguous wording and green on the outcome contract while continuing
+  to reject advisor and workflow prescriptions. Both fresh arms produced
+  scoreable patches; the advisor arm resolved and the pure arm did not.
+- **Confidence:** **high.** The official scorer recorded one enabled-only pair
+  and zero pure-only outcomes under the fresh prompt hash.
+
+### S80 — Spend the remaining envelope on complete Mac blocks
+
+- **When:** the paid Caddy confirmation reconciled the conservative ledger to
+  `$467.938068`, leaving `$32.061932` under the user-set `$500` cap.
+- **The choice:** Run a fresh seed-20260722 two-language core sample—Laravel
+  53206 and Lombok 3697—with all four arms, one trial, serially on this Mac. Keep
+  the calibrated `$3.10` emergency ceiling. The eight worst-case reservations
+  total `$24.80`, so every assigned arm can finish without relying on average
+  cost. After exact costs return, admit another complete seeded block only if
+  four more full reservations still fit.
+- **The gap:** Reusing the old 30-task E2B artifacts would mix prompt hashes.
+  Scheduling all 30 fresh tasks would claim an estimate the remaining hard
+  budget cannot finish. Lowering the per-rollout ceiling would silently change
+  treatment quality after the user explicitly rejected the old small cap.
+- **The reach:** The core result is an n=2 signal-seeking estimate and must be
+  labeled accordingly. Historical 15-case diagnostics and Caddy remain
+  engineering evidence, not rows silently pooled into the core estimate.
+  Budget-only expansion may add disjoint fresh rows because its admission does
+  not depend on their outcomes.
+- **Verdict:** **sound under the hard budget; generation pending.** It maximizes
+  guaranteed complete paired blocks without changing models, prompt, policy,
+  limits, or scoring.
+- **Confidence:** **high** in the accounting and pairing guarantee; **low** in
+  the statistical precision of two tasks, which the report must state plainly.
 
 ## Compressed trivial discretion
 

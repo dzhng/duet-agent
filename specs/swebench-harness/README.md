@@ -127,13 +127,11 @@ per-shard reservation survives controller loss, and exhausted headroom leaves
 the remaining shards unstarted. This preserves the hard cap without requiring
 all 120 emergency per-rollout ceilings to fit simultaneously.
 
-The final frozen generation namespace is
-`multilingual-30-four-arm-e2b-20260721-v5`. It retains the full `$3.10`
+The superseded E2B generation namespace is
+`multilingual-30-four-arm-e2b-20260721-v5`. It retained the full `$3.10`
 per-rollout ceiling, all four paired configurations, 30 committed instances,
-and 16-worker E2B maximum. The session-attribution repair is not followed by
-another paid adaptive repeat: the unchanged advisor policy already passed its
-15/15 gate, and the fresh 30-task paired campaign is both a broader live check
-and the only evidence eligible for the requested effect estimate.
+and 16-worker E2B maximum, but its prompt hash predates S79. Its artifacts are
+diagnostic only and cannot contribute to the requested effect estimate.
 
 The first v5 launch returned four complete shards: 16 terminal artifacts costing
 `$15.6848066`. One worker failed while its sandbox stayed at idle-template CPU
@@ -162,22 +160,35 @@ the shared benchmark system prompt required only unattended completion. That is
 a pair-neutral task-definition defect, not evidence about advisor quality. The
 shared prompt now requires resolving the repository task and leaving the
 working tree with the complete solution, without naming tools, schedules, or
-workflow. This prompt change invalidates both prior arms for comparison. The
-next pickup is the committed two-arm Mac-only
-`advisor-scope-regression-glm-mac-20260721-v2` gate, followed by official
-scoring. Do not resume broader generation until that fresh pair has no
-pure-only outcome.
+workflow. This prompt change invalidated both prior arms for comparison. The
+fresh two-arm Mac-only `advisor-scope-regression-glm-mac-20260721-v2` gate then
+reran both sides before broader generation.
+
+The v2 Mac pair is now officially scored: GLM plus Kimi resolved Caddy while
+pure GLM did not, an enabled-only result with zero pure-only regression. Both
+Kimi consultations succeeded; the first preceded mutation and the second
+reviewed the completed work. Their advisor requests represented all history
+with 206 old messages compacted and zero messages omitted. The pair cost
+`$3.2956061`, leaving `$32.061932` under the conservative `$500` ledger.
+
+Because the prompt changed, none of the old v5 final artifacts can contribute
+to the requested estimate. The fresh Mac core campaign is
+`multilingual-four-arm-mac-20260721-v6-core`: a seeded two-language sample of
+Laravel 53206 and Lombok 3697, all four arms, one trial, and the unchanged
+`$3.10` per-rollout ceiling. Its eight worst-case reservations total `$24.80`
+and therefore fit the remaining envelope. Run it serially on this Mac, score
+each completed instance block, and stop immediately on any pure-only result.
+Only after all eight exact costs return may another predeclared seeded block be
+admitted; never weaken the rollout ceiling to buy a larger nominal sample.
 
 Local constraints to prove rather than assume:
 
-- The Mac-local path remains the scorer and fallback execution path. Its Docker
-  VM admitted only one rollout worker. Final generation uses a commit-derived
-  E2B x86_64 template with Docker-in-sandbox, 8 vCPU and 16 GiB per worker. A
-  no-model probe must prove the exact commit, resources, Docker daemon, Python,
-  and pinned SWE-bench version before any rollout starts.
-- Every worker uses the byte-identical Duet binary compiled once into the
-  immutable E2B template. Workers never compile their own campaign artifact or
-  fetch the pinned dataset snapshot at launch.
+- The Mac-local path is both generator and scorer for the remaining campaign.
+  Its Docker VM admitted one rollout worker, so all arms execute serially in
+  fresh official containers.
+- Every rollout uses the byte-identical Duet binary compiled once from the
+  clean campaign commit. Rollout containers never compile their own campaign
+  artifact or fetch a different dataset snapshot.
 - Every successful call records its real model window, policy input target,
   conservative safety margin, estimated input, raw and compacted message
   counts, images, and whether compaction occurred. The hard model window is a
@@ -218,16 +229,18 @@ rationale.
 
 - **Dataset:** `SWE-bench/SWE-bench_Multilingual` (300 instances, 9
   languages). Official scorer only: `python -m swebench.harness.run_evaluation`.
-- **Infra:** the Mac runs official scoring and remains the one-worker fallback.
-  The final generation campaign uses sixteen independent E2B x86_64 sandboxes;
-  each sandbox processes one instance's four arms sequentially and each arm
-  remains a fresh nested official Docker container. Cleanup targets only
-  benchmark-owned sandboxes, images, and containers.
+- **Infra:** the remaining campaign runs and scores on this Mac with one local
+  rollout worker. Every arm uses a fresh official Docker container. Cleanup
+  targets only benchmark-owned images and containers. E2B remains historical
+  capacity evidence, not the active execution backend.
 - **Replication spike first:** mini-swe-agent proves images+scoring end-to-end
   before duet is wired in (slice 04).
-- **Measurement design:** four arms over one fixed 30-instance subset, 1 trial per
-  arm, reported as two paired comparisons: pure GLM-5.2 vs GLM-5.2 with Kimi K3
-  advisor, and pure Kimi K3 vs Kimi K3 with Fable advisor. “Pure” means the
+- **Measurement design:** four arms over one seeded subset, 1 trial per arm,
+  reported as two paired comparisons: pure GLM-5.2 vs GLM-5.2 with Kimi K3
+  advisor, and pure Kimi K3 vs Kimi K3 with Fable advisor. The original
+  30-instance population remains the sampling frame; after prerequisite spend,
+  only complete blocks whose full emergency reservations fit may enter the
+  fresh current-prompt estimate. “Pure” means the
   advisor tool is disabled; product-default memory still runs. Every complete
   render derives classifier, memory, and cadence policy from the
   built-in table. The campaign fixes the executor and advisor targets and uses

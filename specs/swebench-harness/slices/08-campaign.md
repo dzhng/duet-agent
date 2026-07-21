@@ -220,18 +220,29 @@ but returned only upgrade advice and an empty patch: the issue itself ends in
 a repository change. Treat that artifact as an invalid task-definition probe,
 not a scored advisor result. The minimal shared prompt now requires a complete
 working-tree solution without prescribing workflow or advisor behavior. Since
-that paired input changed, rerun both pure GLM and GLM plus Kimi under
-`advisor-scope-regression-glm-mac-20260721-v2` before broader generation
-resumes.
+that paired input changed, both pure GLM and GLM plus Kimi reran under
+`advisor-scope-regression-glm-mac-20260721-v2` before broader generation.
+
+The v2 pair officially scored enabled-only: GLM plus Kimi resolved and pure GLM
+did not. It used two successful consultations, compacted 206 old messages with
+zero omissions, and cost `$3.2956061`. Add that exact spend to the conservative
+ledger, leaving `$32.061932`. Freeze the next Mac measurement as
+`multilingual-four-arm-mac-20260721-v6-core`: the seed-20260722 two-language
+subset (Laravel 53206 and Lombok 3697), four arms, one trial, serial local
+execution. Eight `$3.10` emergency reservations fit the remaining budget. Score
+each complete block and fail fast on a pure-only outcome. Expand only after
+returned exact costs prove another complete four-arm block can retain the same
+ceiling under `$500`.
 
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution
 change invalidates the current diagnostic namespace and requires a new id.
 After a sufficiently broad clean diagnostic set, freeze the product and launch
-one fresh 30×4 campaign. Do not tune or restart that final campaign based on its
-observed outcomes, and never pool diagnostic/retry rows into its estimate.
+one fresh four-arm population that fits the remaining hard budget. Do not tune
+or restart that measurement based on its observed outcomes, and never pool
+diagnostic/retry rows into its estimate.
 
-## V5 campaign and reporting contract
+## Superseded V5 campaign and reporting contract
 
 - `e2b/run.ts` launches the new committed v5 campaign over all 30 manifest
   instances and all four configs, one trial each, in seeded instance-trial
