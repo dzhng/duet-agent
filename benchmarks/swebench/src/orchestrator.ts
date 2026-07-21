@@ -12,6 +12,7 @@ import {
   removeOfficialImage,
   resolveAndPullOfficialImage,
   type CommandRunner,
+  type OfficialImage,
 } from "./container.js";
 import {
   selectPilotInstanceIds,
@@ -48,7 +49,7 @@ export interface CampaignSpec {
     patchBytes: number;
   };
   budget: {
-    /** Shared experiment envelope enforced before each rollout launch. */
+    /** Local-process admission envelope checked before each pending instance block. */
     totalUsd: number;
     /** Spend from prerequisite smokes or earlier campaign ids. */
     sunkUsd: number;
@@ -69,6 +70,22 @@ export interface CampaignSpec {
       };
 }
 
+/** Reserve every pending arm before an instance block can begin paid work. */
+export function reserveInstanceBlock(
+  accountedUsd: number,
+  pendingRollouts: number,
+  rolloutReserveUsd: number,
+  totalBudgetUsd: number,
+): number {
+  const reservedUsd = pendingRollouts * rolloutReserveUsd;
+  if (accountedUsd + reservedUsd > totalBudgetUsd) {
+    throw new Error(
+      `Campaign budget breaker: ${pendingRollouts} pending rollouts require a $${reservedUsd.toFixed(4)} reserve, but $${accountedUsd.toFixed(4)} is already accounted against the $${totalBudgetUsd.toFixed(2)} budget.`,
+    );
+  }
+  return accountedUsd + reservedUsd;
+}
+
 /** Host paths and secrets intentionally absent from committed campaign specs. */
 export interface CampaignRuntime {
   repoRoot: string;
@@ -83,6 +100,12 @@ export interface CampaignRuntime {
   imageHelperPath: string;
   commands?: CommandRunner;
   containerFactory?: (name: string, image: string) => RolloutContainer;
+  /** Injectable official-image boundary used by deterministic orchestrator tests. */
+  resolveOfficialImage?: (instanceId: string) => Promise<OfficialImage>;
+  /** Injectable cleanup paired with {@link resolveOfficialImage}. */
+  removeOfficialImage?: (imageId: string) => Promise<void>;
+  /** Injectable paid-rollout boundary; production uses {@link runRollout}. */
+  rolloutRunner?: typeof runRollout;
 }
 
 /** One pending logical rollout in deterministic execution order. */
@@ -140,7 +163,7 @@ export function planCampaign(
   return pending;
 }
 
-/** Execute pending instance blocks with exact-image cleanup and a reserve-first breaker. */
+/** Execute pending blocks with exact-image cleanup and process-local reserve-first admission. */
 export async function runCampaign(
   spec: CampaignSpec,
   runtime: CampaignRuntime,
@@ -173,21 +196,27 @@ export async function runCampaign(
       const blockIndex = nextBlock++;
       const block = blocks[blockIndex];
       if (!block) return;
-      const official = await resolveAndPullOfficialImage(block[0]!.entry.instanceId, {
-        pythonPath: runtime.pythonPath,
-        helperPath: runtime.imageHelperPath,
-        ...(runtime.commands ? { commands: runtime.commands } : {}),
-      });
+      const rolloutReserveUsd = spec.limits.costUsd;
+      accountedUsd = reserveInstanceBlock(
+        accountedUsd,
+        block.length,
+        rolloutReserveUsd,
+        spec.budget.totalUsd,
+      );
+      let unstartedReservations = block.length;
+      let official: Awaited<ReturnType<typeof resolveAndPullOfficialImage>> | undefined;
       try {
+        official = runtime.resolveOfficialImage
+          ? await runtime.resolveOfficialImage(block[0]!.entry.instanceId)
+          : await resolveAndPullOfficialImage(block[0]!.entry.instanceId, {
+              pythonPath: runtime.pythonPath,
+              helperPath: runtime.imageHelperPath,
+              ...(runtime.commands ? { commands: runtime.commands } : {}),
+            });
+        assertResolvedImageMatchesAttempts(block[0]!.entry.instanceId, attempts, official);
         for (const item of block) {
-          const reserved = spec.limits.costUsd;
-          if (accountedUsd + reserved > spec.budget.totalUsd) {
-            throw new Error(
-              `Campaign budget breaker: $${accountedUsd.toFixed(4)} accounted + $${reserved.toFixed(4)} reserve exceeds $${spec.budget.totalUsd.toFixed(2)}.`,
-            );
-          }
-          accountedUsd += reserved;
-          const result = await runRollout(
+          unstartedReservations -= 1;
+          const result = await (runtime.rolloutRunner ?? runRollout)(
             {
               runsRoot: runtime.runsRoot,
               artifact: runtime.artifact,
@@ -203,17 +232,23 @@ export async function runCampaign(
               datasetRow: item.datasetRow,
               trial: item.trial,
               image: official.image,
+              imageId: official.imageId,
               configPath: runtime.configPaths[item.config],
               configSha256: runtime.configHashes[item.config],
               limits: spec.limits,
             },
           );
-          accountedUsd -= reserved;
+          accountedUsd -= rolloutReserveUsd;
           accountedUsd +=
             result.status.costUsd ??
             (result.status.failureKind === "infra" ? spec.limits.costUsd : 0);
           results.push(result);
           options.onResult?.(result);
+          if (accountedUsd > spec.budget.totalUsd) {
+            throw new Error(
+              `Campaign budget exceeded after provider-reported spend: $${accountedUsd.toFixed(4)} accounted including active reservations against $${spec.budget.totalUsd.toFixed(2)}.`,
+            );
+          }
           if (result.status.failureKind === "infra") {
             throw new Error(
               `Infrastructure failure in ${item.entry.instanceId}/${item.config}: ${result.status.message}`,
@@ -221,7 +256,11 @@ export async function runCampaign(
           }
         }
       } finally {
-        await removeOfficialImage(official.image, runtime.commands);
+        accountedUsd -= unstartedReservations * rolloutReserveUsd;
+        if (official) {
+          if (runtime.removeOfficialImage) await runtime.removeOfficialImage(official.imageId);
+          else await removeOfficialImage(official.imageId, runtime.commands);
+        }
       }
     }
   };
@@ -268,6 +307,7 @@ function assertAttemptsMatchCurrentInputs(
       instanceId: entry.instanceId,
       trial,
       image: attempt.spec.image,
+      imageId: attempt.spec.imageId,
       duetSha256: runtime.artifact.sha256,
       configSha256: runtime.configHashes[config],
       systemPromptSha256: hashText(SWEBENCH_SYSTEM_PROMPT),
@@ -285,6 +325,21 @@ function assertAttemptsMatchCurrentInputs(
     ) {
       throw new Error(
         `specHash mismatch for ${entry.instanceId}/${config}/t${trial}; use a new campaign id.`,
+      );
+    }
+  }
+}
+
+function assertResolvedImageMatchesAttempts(
+  instanceId: string,
+  attempts: readonly RolloutAttempt[],
+  official: Pick<OfficialImage, "image" | "imageId">,
+): void {
+  for (const attempt of attempts) {
+    if (attempt.spec.instanceId !== instanceId) continue;
+    if (attempt.spec.image !== official.image || attempt.spec.imageId !== official.imageId) {
+      throw new Error(
+        `Official image changed for ${instanceId}; use a new campaign id instead of mixing task-image content.`,
       );
     }
   }

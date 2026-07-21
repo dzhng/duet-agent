@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   ContainerHandle,
+  removeOfficialImage,
   resolveAndPullOfficialImage,
   type CommandResult,
   type CommandRunner,
@@ -142,7 +143,7 @@ describe("SWE-bench container boundary", () => {
         image: "swebench/official:latest",
         platform: "linux/amd64",
         sizeBytes: 123,
-        imageId: "sha256:abc",
+        imageId: `sha256:${"a".repeat(64)}`,
       }),
       stderr: "",
       exitCode: 0,
@@ -158,7 +159,7 @@ describe("SWE-bench container boundary", () => {
       image: "swebench/official:latest",
       platform: "linux/amd64",
       sizeBytes: 123,
-      imageId: "sha256:abc",
+      imageId: `sha256:${"a".repeat(64)}`,
     });
     expect(commands.runs[0]?.argv).toEqual([
       "/venv/bin/python",
@@ -167,6 +168,37 @@ describe("SWE-bench container boundary", () => {
       "--pull",
       "--json",
     ]);
+  });
+
+  test("rejects an official image record without an immutable Docker id", async () => {
+    const commands = new FakeCommands();
+    commands.results.push({
+      stdout: JSON.stringify({
+        image: "swebench/official:latest",
+        platform: "linux/amd64",
+        sizeBytes: 123,
+        imageId: "latest",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await expect(
+      resolveAndPullOfficialImage("org__repo-1", {
+        pythonPath: "/venv/bin/python",
+        helperPath: "/bench/official_image.py",
+        commands,
+      }),
+    ).rejects.toThrow("invalid record");
+  });
+
+  test("removes the immutable image identity instead of its mutable tag", async () => {
+    const commands = new FakeCommands();
+    const imageId = `sha256:${"a".repeat(64)}`;
+
+    await removeOfficialImage(imageId, commands);
+
+    expect(commands.runs).toEqual([{ argv: ["docker", "image", "rm", imageId] }]);
   });
 });
 

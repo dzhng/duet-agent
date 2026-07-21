@@ -113,6 +113,7 @@ async function attempt(
       instanceId,
       trial,
       image: "image",
+      imageId: "sha256:image",
       duetSha256: "a",
       configSha256: "b",
       systemPromptSha256: "d",

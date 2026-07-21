@@ -818,9 +818,9 @@ export interface BudgetedPoolOptions<T> {
   concurrency: number;
   /** Model spend already charged before this pool starts. */
   accountedUsd: number;
-  /** Hard ceiling that accounted spend plus active reservations may never exceed. */
+  /** Admission envelope checked against accounted spend plus active reservations. */
   totalUsd: number;
-  /** Worst-case model spend that must be held while one value is running. */
+  /** Admission reserve held while one value is running. */
   reserveUsd: (value: T) => number;
   /** Run one value and return the exact spend that replaces its reservation. */
   run: (value: T) => Promise<{ spentUsd: number; failure?: string }>;
@@ -833,7 +833,7 @@ export interface BudgetedPoolResult<T> {
   failures: string[];
   /** Highest accounted-plus-reserved bound reached by the pool. */
   maximumBoundUsd: number;
-  /** Values withheld because work failed or the remaining hard budget could not reserve them. */
+  /** Values withheld because work failed or the remaining admission budget could not reserve them. */
   unstarted: T[];
 }
 

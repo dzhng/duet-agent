@@ -142,7 +142,7 @@ describe("SWE-bench duet RPC client", () => {
     expect((await asked.result).terminal).toEqual(expect.objectContaining({ type: "ask" }));
   });
 
-  test("interrupts at the cumulative cost cap and accepts the interrupted terminal", async () => {
+  test("interrupts at the cumulative cost threshold and accepts the terminal", async () => {
     const transport = new FakeTransport();
     transport.interruptResponse = {
       type: "interrupted",

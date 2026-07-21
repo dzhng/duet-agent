@@ -28,9 +28,9 @@ export interface ExecTransport {
   exited: Promise<{ code: number | null; signal: string | null }>;
 }
 
-/** Hard resource ceilings for one model rollout. */
+/** Client-side interruption thresholds for one model rollout. */
 export interface RolloutLimits {
-  /** Maximum cumulative provider-reported model spend for the turn. */
+  /** Cumulative reported spend that triggers interruption after the current request completes. */
   costUsd: number;
   /** Maximum elapsed time before the client interrupts the turn. */
   wallClockMs: number;
@@ -64,9 +64,10 @@ const DEFAULT_INTERRUPT_GRACE_MS = 90_000;
 /**
  * Drive one unattended duet RPC turn over an injected process transport.
  *
- * Resource ceilings are enforced from cumulative wire events. On a breach the
- * client requests a graceful interrupt, retains every subsequent event, and
- * force-kills only if no terminal arrives within the grace period.
+ * Thresholds are evaluated from cumulative wire events. On a breach the client
+ * requests a graceful interrupt, retains every subsequent event, and
+ * force-kills only if no terminal arrives within the grace period. A provider
+ * request can overshoot the dollar threshold before its usage event is visible.
  */
 export async function runDuetTurn(
   transport: ExecTransport,

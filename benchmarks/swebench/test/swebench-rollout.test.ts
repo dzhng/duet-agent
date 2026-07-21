@@ -27,12 +27,16 @@ describe("SWE-bench rollout pipeline", () => {
       const configPath = join(root, "models.json");
       await writeFile(configPath, "{}\n");
       const container = new FakeRolloutContainer(false);
+      let launchedImage: string | undefined;
       const result = await runRollout(
         {
           runsRoot: root,
           artifact: fixtureArtifact(),
           providerEnv: { AI_GATEWAY_API_KEY: "secret" },
-          containerFactory: () => container,
+          containerFactory: (_name, image) => {
+            launchedImage = image;
+            return container;
+          },
         },
         {
           campaignId: "test-campaign",
@@ -51,6 +55,7 @@ describe("SWE-bench rollout pipeline", () => {
           },
           trial: 1,
           image: "official/image",
+          imageId: `sha256:${"c".repeat(64)}`,
           configPath,
           configSha256: "b".repeat(64),
           limits: { costUsd: 1, wallClockMs: 1000, interruptGraceMs: 10, patchBytes: 1000 },
@@ -58,6 +63,11 @@ describe("SWE-bench rollout pipeline", () => {
       );
 
       expect(result.status.phase).toBe("completed");
+      expect(launchedImage).toBe(`sha256:${"c".repeat(64)}`);
+      expect(result.attempt.spec).toMatchObject({
+        image: "official/image",
+        imageId: `sha256:${"c".repeat(64)}`,
+      });
       expect(container.stopped).toBe(true);
       expect(container.copies).toEqual([
         ["/host/duet", "/opt/duet/duet"],
@@ -124,6 +134,7 @@ describe("SWE-bench rollout pipeline", () => {
         },
         trial: 1,
         image: "official/image",
+        imageId: "sha256:official",
         configPath,
         configSha256: "b".repeat(64),
         limits: { costUsd: 1, wallClockMs: 1000, patchBytes: 1000 },
@@ -163,6 +174,7 @@ describe("SWE-bench rollout pipeline", () => {
         },
         trial: 1,
         image: "official/image",
+        imageId: "sha256:official",
         configPath,
         configSha256: "b".repeat(64),
         limits: { costUsd: 1, wallClockMs: 1000, patchBytes: 1000 },
@@ -206,6 +218,7 @@ describe("SWE-bench rollout pipeline", () => {
         },
         trial: 1,
         image: "official/image",
+        imageId: "sha256:official",
         configPath,
         configSha256: "b".repeat(64),
         limits: { costUsd: 1, wallClockMs: 1000, patchBytes: 1000 },
@@ -248,6 +261,7 @@ describe("SWE-bench rollout pipeline", () => {
         },
         trial: 1,
         image: "official/image",
+        imageId: "sha256:official",
         configPath,
         configSha256: "b".repeat(64),
         limits: { costUsd: 1, wallClockMs: 1000, patchBytes: 1000 },

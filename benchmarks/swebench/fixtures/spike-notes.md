@@ -29,7 +29,8 @@ count one. It does not prove headroom for parallel workers.
 
 The corrected 30-instance manifest then resolved 30/30 sequentially. Its
 resource table is `gold-30-summary.tsv`; the only pre-selection incompatibility
-and replacement are documented in the manifest and slice 04.
+and replacement are documented by `CAMPAIGN_GOLD_EXCLUSIONS` and the committed
+manifest.
 
 ## mini-swe-agent replication
 

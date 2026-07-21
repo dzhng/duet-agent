@@ -222,14 +222,14 @@ export async function resolveAndPullOfficialImage(
   return value;
 }
 
-/** Remove exactly one image previously resolved for this benchmark. */
+/** Remove one immutable image identity previously resolved for this benchmark. */
 export async function removeOfficialImage(
-  image: string,
+  imageId: string,
   commands: CommandRunner = new LocalCommandRunner(),
 ): Promise<void> {
-  const result = await commands.run(["docker", "image", "rm", image]);
+  const result = await commands.run(["docker", "image", "rm", imageId]);
   if (result.exitCode !== 0 && !result.stderr.includes("No such image")) {
-    throw commandError(["docker", "image", "rm", image], result);
+    throw commandError(["docker", "image", "rm", imageId], result);
   }
 }
 
@@ -241,7 +241,8 @@ function isOfficialImage(value: unknown): value is OfficialImage {
     image.platform === "linux/amd64" &&
     typeof image.sizeBytes === "number" &&
     Number.isFinite(image.sizeBytes) &&
-    typeof image.imageId === "string"
+    typeof image.imageId === "string" &&
+    /^sha256:[0-9a-f]{64}$/.test(image.imageId)
   );
 }
 

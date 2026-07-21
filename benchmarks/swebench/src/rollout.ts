@@ -32,7 +32,10 @@ export interface RunRolloutSpec {
   entry: ManifestEntry;
   datasetRow: DatasetRow;
   trial: number;
+  /** Official harness image reference retained for diagnostics. */
   image: string;
+  /** Immutable content identity used for the container launch. */
+  imageId: string;
   configPath: string;
   configSha256: string;
   limits: RolloutLimits & { patchBytes: number };
@@ -84,6 +87,7 @@ export async function runRollout(
     instanceId: spec.entry.instanceId,
     trial: spec.trial,
     image: spec.image,
+    imageId: spec.imageId,
     duetSha256: dependencies.artifact.sha256,
     configSha256: spec.configSha256,
     systemPromptSha256: hashText(SWEBENCH_SYSTEM_PROMPT),
@@ -99,7 +103,7 @@ export async function runRollout(
   };
   const attempt = await beginRolloutAttempt(dependencies.runsRoot, artifactSpec);
   const containerName = benchmarkContainerName(spec, attempt.status.attempt);
-  const container = dependencies.containerFactory(containerName, spec.image);
+  const container = dependencies.containerFactory(containerName, spec.imageId);
   let events: TurnEvent[] = [];
   let telemetry: RolloutTelemetry | undefined;
   let outcome: RolloutOutcome | undefined;

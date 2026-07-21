@@ -56,6 +56,7 @@ function fixtureSpec(): RolloutArtifactSpec {
     instanceId: "org__repo-1",
     trial: 1,
     image: "official/image",
+    imageId: "sha256:official",
     duetSha256: "a".repeat(64),
     configSha256: "b".repeat(64),
     systemPromptSha256: "d".repeat(64),

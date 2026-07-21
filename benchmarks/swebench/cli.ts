@@ -200,7 +200,7 @@ async function runLiveSmoke(args: string[]): Promise<void> {
       );
       console.log(JSON.stringify(result));
     } finally {
-      await removeOfficialImage(image.image);
+      await removeOfficialImage(image.imageId);
     }
   }
 }

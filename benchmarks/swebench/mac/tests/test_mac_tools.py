@@ -77,9 +77,15 @@ class ScorePredictionsTest(unittest.TestCase):
         ]
         image_present = False
 
-        def pull(_image: str) -> None:
+        def pull(_image: str) -> dict[str, object]:
             nonlocal image_present
             image_present = True
+            return {
+                "image": _image,
+                "imageId": f"sha256:{'a' * 64}",
+                "platform": "linux/amd64",
+                "sizeBytes": 1,
+            }
 
         def remove(_image: str) -> None:
             nonlocal image_present
@@ -163,19 +169,84 @@ class ScorePredictionsTest(unittest.TestCase):
             for row in rows
         ]
 
-        with (
-            patch.object(score_predictions, "resolve_image", return_value="official/image") as resolve,
-            patch.object(score_predictions, "pull_image") as pull,
-            patch.object(score_predictions, "remove_if_present") as remove,
-            patch.object(score_predictions, "score_one", side_effect=expected) as score,
-        ):
-            results = score_predictions.score_instance(rows, Path("scores"))
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(
+                    score_predictions, "resolve_image", return_value="official/image"
+                ) as resolve,
+                patch.object(
+                    score_predictions,
+                    "pull_image",
+                    return_value={
+                        "image": "official/image",
+                        "imageId": f"sha256:{'a' * 64}",
+                        "platform": "linux/amd64",
+                        "sizeBytes": 1,
+                    },
+                ) as pull,
+                patch.object(score_predictions, "remove_if_present") as remove,
+                patch.object(score_predictions, "score_one", side_effect=expected) as score,
+            ):
+                results = score_predictions.score_instance(rows, Path(directory))
 
         self.assertEqual(results, expected)
         resolve.assert_called_once_with("org__repo-1")
         pull.assert_called_once_with("official/image")
-        remove.assert_called_once_with("official/image")
+        remove.assert_called_once_with(f"sha256:{'a' * 64}")
         self.assertEqual([call.args[0] for call in score.call_args_list], rows)
+
+    def test_records_the_exact_pulled_image_used_by_the_scorer(self) -> None:
+        row = {
+            "instance_id": "org__repo-1",
+            "model_name_or_path": "model",
+            "model_patch": "diff",
+        }
+        image_record = {
+            "image": "official/image:latest",
+            "imageId": f"sha256:{'a' * 64}",
+            "platform": "linux/amd64",
+            "sizeBytes": 123,
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(score_predictions, "resolve_image", return_value=image_record["image"]),
+            patch.object(score_predictions, "pull_image", return_value=image_record),
+            patch.object(score_predictions, "remove_if_present"),
+            patch.object(
+                score_predictions,
+                "score_one",
+                return_value={
+                    "instanceId": row["instance_id"],
+                    "model": row["model_name_or_path"],
+                    "status": "resolved",
+                },
+            ),
+        ):
+            score_predictions.score_instance([row], Path(directory))
+            stored = json.loads(
+                (Path(directory) / "images" / f"{row['instance_id']}.json").read_text()
+            )
+
+        self.assertEqual(stored, image_record)
+
+    def test_refuses_to_overwrite_scorer_image_identity(self) -> None:
+        first = {
+            "image": "official/image:latest",
+            "imageId": f"sha256:{'a' * 64}",
+            "platform": "linux/amd64",
+            "sizeBytes": 123,
+        }
+        changed = {**first, "imageId": f"sha256:{'b' * 64}"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            score_predictions.write_image_record("org__repo-1", first, root)
+            with self.assertRaisesRegex(ValueError, "official image changed"):
+                score_predictions.write_image_record("org__repo-1", changed, root)
+            stored = json.loads((root / "images" / "org__repo-1.json").read_text())
+
+        self.assertEqual(stored, first)
 
 
 if __name__ == "__main__":

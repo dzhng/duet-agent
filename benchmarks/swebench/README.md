@@ -4,6 +4,10 @@ This directory owns the complete SWE-bench Multilingual benchmark surface:
 campaign inputs, orchestration, E2B and Mac execution, fixtures, runtime
 artifacts, and tests. It is intentionally separate from the product test tree.
 
+The [closed advisor-harness rationale](../../specs/done/swebench-harness/README.md)
+records the benchmark invariants and tradeoffs. The final Mac comparison is
+preserved in the [compact result record](results/mac-advisor-comparison-20260721.json).
+
 Run its Dockerized TypeScript suite independently:
 
 ```sh

@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 1,
+  "dataset": "SWE-bench/SWE-bench_Multilingual",
+  "executionBackend": "local-mac-docker",
+  "selection": {
+    "seed": 20260722,
+    "size": 5,
+    "materialization": "two-row seeded core followed by three explicit rows from the same size-five sequence",
+    "tasks": [
+      {
+        "instanceId": "laravel__framework-53206",
+        "language": "PHP",
+        "imageReference": "swebench/sweb.eval.x86_64.laravel_1776_framework-53206:latest",
+        "promptSha256": "f7a5252a6488d393199e9420fb64c2ec01dcbeccc7a58c2312de0ab7a3cf7f1b",
+        "glmComparison": "both_resolve",
+        "kimiComparison": "both_resolve"
+      },
+      {
+        "instanceId": "projectlombok__lombok-3697",
+        "language": "Java",
+        "imageReference": "swebench/sweb.eval.x86_64.projectlombok_1776_lombok-3697:latest",
+        "promptSha256": "5cf8cace6591b37d7e12b8055a262967a44ed7a69815d205a55fdf710e1a35f3",
+        "glmComparison": "both_resolve",
+        "kimiComparison": "both_resolve"
+      },
+      {
+        "instanceId": "prometheus__prometheus-10633",
+        "language": "Go",
+        "imageReference": "swebench/sweb.eval.x86_64.prometheus_1776_prometheus-10633:latest",
+        "promptSha256": "330aafd96f7a88dc691918ceb08ad5345fd9327239c0cf86754651ce520bc4fa",
+        "glmComparison": "enabled_only",
+        "kimiComparison": "enabled_only"
+      },
+      {
+        "instanceId": "fastlane__fastlane-20975",
+        "language": "Ruby",
+        "imageReference": "swebench/sweb.eval.x86_64.fastlane_1776_fastlane-20975:latest",
+        "promptSha256": "aed00663720f565473adc5d5770829e4e50f2b88198924cb7473dfb7b0524575",
+        "glmComparison": "both_resolve",
+        "kimiComparison": "both_resolve"
+      },
+      {
+        "instanceId": "vuejs__core-11915",
+        "language": "TypeScript",
+        "imageReference": "swebench/sweb.eval.x86_64.vuejs_1776_core-11915:latest",
+        "promptSha256": "efcfb3e6d26ea2753c2909fd7e6fd91bcb8795093f424a83f260af97cb557b8c",
+        "glmComparison": "both_resolve",
+        "kimiComparison": "both_resolve"
+      }
+    ]
+  },
+  "campaigns": [
+    {
+      "id": "multilingual-four-arm-mac-20260721-v6-core",
+      "costUsd": 13.3802222,
+      "inputHash": "9b5f5da048becb433726fc113b459cf7a8b5c4634b411f36a0bf87cf6da9d5ea",
+      "duetGitSha": "0df5734a0d3cbf89c42977dcb230ef7a350f863d",
+      "duetArtifactSha256": "a9d839cc181175c74b164fe9cbb60cf4ba4dc7864271b1094643ca89c6f460c5",
+      "reportSha256": "c74475e2d5ff8f5cb7fd27f89fc08b4158b0e977f4705015182666595ff9b1b3",
+      "scoreSummarySha256": "3fdb9467114d826409cbf6d41497aa97fb82015fc76e8915ec739c24e8871124"
+    },
+    {
+      "id": "multilingual-four-arm-mac-20260721-v8-expansion",
+      "costUsd": 2.2010546,
+      "inputHash": "102081c1bb759550a9fcd02ece23441098d3c8896d92960d6748931dfb4b4aa2",
+      "duetGitSha": "159dfbef95e2e6fa76dc9b301a788f91747de727",
+      "duetArtifactSha256": "05f63b0a3c78769823976cbec7952328249944b3b32443a1be46a2b45d087e46",
+      "reportSha256": "ade4619625ee08176af1b5fefe97dbe0edef58ac085e78e85f337bfe86467e44",
+      "scoreSummarySha256": "7e763263d0fa7b19e4bc8aa48972c68cee5821eea3dd69599fc098def296ecbc"
+    },
+    {
+      "id": "multilingual-four-arm-mac-20260721-v9-expansion",
+      "costUsd": 1.7418539,
+      "inputHash": "38ef652e4ec26ad9f7cbe12797a5e6270ed777c8d1042f0255886c38c93e2ee2",
+      "duetGitSha": "7236b12cacd271e7490006d6a56d9de852599d00",
+      "duetArtifactSha256": "be807b3a0c23aaf80e4213c3ef9bd7f471ee5fbeb911f6abcf25042f4d228e5c",
+      "reportSha256": "c4544cb15146e0fc44fa1b6342b90a99cfa0b8953c70e9df7b0ad937dc17b11b",
+      "scoreSummarySha256": "425abd551c1d37862c97fc7210e1e8f03bcb639dbdadabb3c9a5d5bc2f14a8c3"
+    },
+    {
+      "id": "multilingual-four-arm-mac-20260721-v10-expansion",
+      "costUsd": 5.3871616,
+      "inputHash": "2d137dbce0287e95fcc1a11935ad8eba969c177e47f9f4364c1f2453d8aa9bd2",
+      "duetGitSha": "75b0731c05df9975f4d7d7ddd9cc95920ead3855",
+      "duetArtifactSha256": "da3eb4008bf626d1eca0cb150bc6dcb58d770353737ce088c388d2534d6d6c98",
+      "reportSha256": "dd7fc36472ed81a20a185805592d719ff2c58ca79e331d8e741ef6e070fd6b5c",
+      "scoreSummarySha256": "82e0f63f727d2adf52504958c867ceecf24274eecc562f322e1e53714d3b1d67"
+    }
+  ],
+  "sharedProvenance": {
+    "datasetRevision": "2b7aced941b4873e9cad3e76abbae93f481d1beb",
+    "manifestSha256": "4bcb99c804699486028dd8577e2575385a6f3f53d2d22e8a1387694fda8c4eee",
+    "environmentLockSha256": "5be92aeae952b1994b5326d1a9b0abc642739607d87e1eaf5075cc5626fd1ef0",
+    "systemPromptSha256": "d095fee3071ee8b1244eba5ebad89e8e23d0e4eb53d1dbf75dee6b4f275003e7",
+    "routingSha256": {
+      "glm-pure": "adaabc77fc8c2f77d67dd1a2035d1d76a5a22345448f935b474123290fcc50c5",
+      "glm-kimi-advisor": "8c4f6cd15b077dc699d30c03d2dbde29b647f0df8ab64aae497ad1a24a0361e3",
+      "kimi-pure": "907f3c7b44779a40eb9c832f7a2527b51fad601cdfd70c1b874d22e183286e05",
+      "kimi-fable-advisor": "30988eeabaf799a2da0341ccb1289b0b4b3b71c867602681b0abd8298a6dad95"
+    },
+    "publishedRunLimitation": "The paid v6-v10 artifacts captured mutable official image references but not Docker image IDs for rollout or scoring. The closed harness now records and launches rollout image IDs and records scorer image IDs; this improvement is not retroactive evidence for the published sample."
+  },
+  "comparisons": [
+    {
+      "executor": "zai/glm-5.2",
+      "advisor": "moonshotai/kimi-k3",
+      "withoutAdvisor": {
+        "resolved": 4,
+        "total": 5,
+        "costUsd": 5.7996515
+      },
+      "withAdvisor": {
+        "resolved": 5,
+        "total": 5,
+        "costUsd": 4.956659,
+        "calls": 11,
+        "successfulCalls": 11,
+        "estimatedInputTokens": 167323,
+        "billedTotalTokens": 135552,
+        "messagesProjectedFromRawHistory": 767
+      },
+      "pairedOutcomes": {
+        "enabledOnly": 1,
+        "bothResolve": 4,
+        "pureOnly": 0,
+        "neitherResolves": 0
+      }
+    },
+    {
+      "executor": "moonshotai/kimi-k3",
+      "advisor": "anthropic/claude-fable-5",
+      "withoutAdvisor": {
+        "resolved": 4,
+        "total": 5,
+        "costUsd": 4.2982086
+      },
+      "withAdvisor": {
+        "resolved": 5,
+        "total": 5,
+        "costUsd": 7.6557732,
+        "calls": 11,
+        "successfulCalls": 11,
+        "estimatedInputTokens": 192152,
+        "billedTotalTokens": 249057,
+        "messagesProjectedFromRawHistory": 433
+      },
+      "pairedOutcomes": {
+        "enabledOnly": 1,
+        "bothResolve": 4,
+        "pureOnly": 0,
+        "neitherResolves": 0
+      }
+    }
+  ],
+  "cost": {
+    "freshGenerationUsd": 22.7102923,
+    "declaredConservativePriorUsd": 467.938068,
+    "accountedTotalUsd": 490.6483603,
+    "budgetUsd": 500,
+    "remainingUsd": 9.3516397
+  },
+  "caveat": "Five tasks, one trial each, pooled from four sequential campaign namespaces; signal-seeking evidence rather than a leaderboard estimate."
+}

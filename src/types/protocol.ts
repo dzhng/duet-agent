@@ -748,8 +748,8 @@ export interface TurnContextWindowUsage {
  * context bar.
  *
  * Two distinct token totals are reported:
- *  - `turnUsage` is a per-turn aggregate across every metered LLM call
- *    (parent worker, state agents, classifier, advisor, and memory workers).
+ *  - `turnUsage` is a per-turn aggregate across every successfully recorded LLM
+ *    call (parent worker, state agents, classifier, advisor, and memory workers).
  *    Use it for cost accounting and "what did this turn cost" readouts. It is
  *    not comparable to `effectiveContextWindow` because the cap is per-request.
  *  - `lastMessageUsage` is the exact provider-reported usage of the

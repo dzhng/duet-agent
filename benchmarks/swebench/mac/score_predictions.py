@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -116,10 +117,13 @@ def score_instance(rows: list[dict[str, Any]], output_root: Path) -> list[dict[s
         return results
 
     image = resolve_image(instance_id)
+    cleanup_image = image
     try:
-        pull_image(image)
+        image_record = pull_image(image)
+        cleanup_image = validate_image_record(instance_id, image_record)
+        write_image_record(instance_id, image_record, output_root)
     except Exception as error:
-        remove_if_present(image)
+        remove_if_present(cleanup_image)
         return results + [infra_result(row, error) for row in pending]
 
     try:
@@ -129,8 +133,37 @@ def score_instance(rows: list[dict[str, Any]], output_root: Path) -> list[dict[s
             except Exception as error:
                 results.append(infra_result(row, error))
     finally:
-        remove_if_present(image)
+        remove_if_present(cleanup_image)
     return results
+
+
+def validate_image_record(instance_id: str, record: dict[str, Any]) -> str:
+    required = {
+        "image": str,
+        "imageId": str,
+        "platform": str,
+        "sizeBytes": int,
+    }
+    if any(not isinstance(record.get(key), value_type) for key, value_type in required.items()):
+        raise ValueError(f"invalid official image record for {instance_id}")
+    if re.fullmatch(r"sha256:[0-9a-f]{64}", record["imageId"]) is None:
+        raise ValueError(f"official image record has no immutable Docker id for {instance_id}")
+    return record["imageId"]
+
+
+def write_image_record(instance_id: str, record: dict[str, Any], output_root: Path) -> None:
+    validate_image_record(instance_id, record)
+    image_root = output_root.resolve() / "images"
+    image_root.mkdir(parents=True, exist_ok=True)
+    path = image_root / f"{instance_id}.json"
+    try:
+        with path.open("x") as file:
+            file.write(json.dumps(record, indent=2, sort_keys=True) + "\n")
+    except FileExistsError:
+        if json.loads(path.read_text()) != record:
+            raise ValueError(
+                f"official image changed for {instance_id}; use a new scoring directory"
+            )
 
 
 def cached_score(row: dict[str, Any], output_root: Path) -> dict[str, Any] | None:

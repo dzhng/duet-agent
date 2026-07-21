@@ -35,7 +35,8 @@ uses one worker and no harness cache. The gold checker scores one row at a time
 with `--clean true`. Campaign scoring groups every arm for one instance, uses
 `--clean false` for those individual invocations, then removes that exact image
 once after the group. This keeps one arm from deleting the image needed by the
-next arm.
+next arm. Campaign scoring records the pulled tag, immutable Docker image ID,
+platform, and size under its output directory's `images/` folder.
 
 After checking the capacity metrics, run the committed manifest:
 

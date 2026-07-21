@@ -161,6 +161,24 @@ describe("SWE-bench paired report", () => {
     });
   });
 
+  test("does not treat missing pure-arm telemetry as evidence of zero advisor calls", () => {
+    const entries = fixtureEntries().slice(0, 1);
+    const attempts = fixtureAttempts(entries);
+    attempts.find((attempt) => attempt.config === "kimi-pure")!.telemetry = undefined;
+    const report = buildCampaignReport(
+      entries,
+      configs,
+      1,
+      attempts,
+      fixtureScores(configs.map((config) => [config, [false]])),
+    );
+
+    expect(report.pureAdvisorAssertion).toEqual({
+      passed: false,
+      violations: ["kimi-pure/org__repo-1: missing telemetry"],
+    });
+  });
+
   test("surfaces wrong-model and unsuccessful calls without removing ITT outcomes", () => {
     const entries = fixtureEntries();
     const attempts = fixtureAttempts(entries);

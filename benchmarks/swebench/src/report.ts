@@ -320,8 +320,12 @@ export function buildCampaignReport(
         )) {
           increment(summary.routerSwitches, switchName, count);
         }
-        if (config.endsWith("-pure") && (attempt?.telemetry?.advisorCalls.total ?? 0) !== 0) {
-          violations.push(label);
+        if (config.endsWith("-pure")) {
+          if (!attempt?.telemetry) {
+            violations.push(`${label}: missing telemetry`);
+          } else if (attempt.telemetry.advisorCalls.total !== 0) {
+            violations.push(label);
+          }
         }
         collectContextFidelityViolations(label, attempt, contextFidelityViolations);
         const expectedAdvisor = EXPECTED_ADVISORS[config];

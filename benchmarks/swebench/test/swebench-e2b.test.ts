@@ -165,7 +165,7 @@ describe("SWE-bench E2B execution", () => {
     });
   });
 
-  test("leaves work unstarted when its reservation cannot fit the hard budget", async () => {
+  test("leaves work unstarted when its reservation cannot fit the admission budget", async () => {
     const result = await runBudgetedPool([1, 2], {
       concurrency: 2,
       accountedUsd: 95,
@@ -407,6 +407,7 @@ function attemptFixture(spec: CampaignSpec): RolloutAttempt {
       instanceId: "org__repo-1",
       trial: 1,
       image: "image",
+      imageId: "sha256:image",
       duetSha256: "duet",
       configSha256: "config",
       systemPromptSha256: "system",

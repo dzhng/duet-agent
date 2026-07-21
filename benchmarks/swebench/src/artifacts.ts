@@ -16,7 +16,10 @@ export interface RolloutIdentity {
 
 /** Frozen inputs whose hash decides whether an artifact can be resumed. */
 export interface RolloutArtifactSpec extends RolloutIdentity {
+  /** Human-readable official harness reference resolved for this task. */
   image: string;
+  /** Immutable Docker content identity actually used to launch the rollout. */
+  imageId: string;
   duetSha256: string;
   configSha256: string;
   /** Hash of the benchmark-owned system instruction passed identically to every arm. */
