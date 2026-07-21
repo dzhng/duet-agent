@@ -2223,6 +2223,27 @@ the number of rollouts or the independently enforced model-spend bound.
   later cheap shards, budget exhaustion leaves work unstarted, partial shards
   reserve only unfinished arms, and the first worker failure stops admission.
 
+### S76 — Validate the memory-session repair in the final population
+
+- **When:** deciding whether to buy another 15-case adaptive gate after adding
+  the benchmark's missing RPC session id.
+- **The choice:** Freeze the already accepted 32k advisor policy and proceed to
+  the fresh 30-task paired campaign. Do not spend the remaining hard-budget
+  headroom replaying the same adaptive cases first.
+- **The gap:** V6 proved the advisor policy at 15/15 before the session repair,
+  while the repair itself changes memory attribution: prior observations remain
+  available, but later observer passes process only the new transcript suffix.
+- **The reach:** The final population supplies a broader live test and preserves
+  the budget for the only rows eligible for the effect estimate. Product memory
+  tests and the benchmark RPC regression test cover the repaired range-marker
+  contract. Any pure-only final outcome remains visible in paired reporting.
+- **Verdict:** **sound under the hard budget.** A second adaptive run would not
+  contribute to the requested benchmark estimate and could prevent its
+  completion.
+- **Confidence:** **medium.** The semantic repair uses ordinary product session
+  behavior and has strong deterministic coverage, but its first post-repair
+  paid evidence will be the final population itself.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

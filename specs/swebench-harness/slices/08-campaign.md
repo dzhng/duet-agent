@@ -188,6 +188,13 @@ exact cost before admitting more. It may never spend past `$500`; a worker
 failure stops admission, and an exhausted envelope leaves the remaining shards
 unstarted as a denominator-visible stop.
 
+Freeze the final population as
+`multilingual-30-four-arm-e2b-20260721-v5`, with all four configurations, the
+30-instance manifest, the `$3.10` rollout ceiling, and at most 16 E2B workers.
+Validate the repaired session attribution in this population instead of buying
+another adaptive 15-case replay; only the final rows are eligible for the effect
+estimate.
+
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution
 change invalidates the current diagnostic namespace and requires a new id.

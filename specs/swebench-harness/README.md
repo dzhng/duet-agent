@@ -127,6 +127,14 @@ per-shard reservation survives controller loss, and exhausted headroom leaves
 the remaining shards unstarted. This preserves the hard cap without requiring
 all 120 emergency per-rollout ceilings to fit simultaneously.
 
+The final frozen generation namespace is
+`multilingual-30-four-arm-e2b-20260721-v5`. It retains the full `$3.10`
+per-rollout ceiling, all four paired configurations, 30 committed instances,
+and 16-worker E2B maximum. The session-attribution repair is not followed by
+another paid adaptive repeat: the unchanged advisor policy already passed its
+15/15 gate, and the fresh 30-task paired campaign is both a broader live check
+and the only evidence eligible for the requested effect estimate.
+
 Local constraints to prove rather than assume:
 
 - The Mac-local path remains the scorer and fallback execution path. Its Docker
