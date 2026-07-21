@@ -54,8 +54,8 @@ immutable historical evidence and none contributes outcomes to v5.
 - Pure and enabled arms within a pair still differ only in
   `advisor.enabled`. The user message is the canonical dataset problem
   statement with no benchmark workflow wrapper. The shared minimal system
-  prompt only says the task is unattended; shipped product policy decides how
-  to work and whether and when to consult.
+  prompt requires a complete repository solution and unattended work; shipped
+  product policy decides how to work and whether and when to consult.
 - Every rollout gets a fresh `HOME`, but the benchmark does not disable normal
   memory, compaction, or repository `AGENTS.md` discovery. The complete agent
   diff, including tests, goes to the official scorer.
@@ -68,12 +68,26 @@ immutable historical evidence and none contributes outcomes to v5.
 
 No full campaign starts until all of these are true:
 
-1. **Full-context fidelity (implemented):** a deterministic captured-call fixture proves that
-   the advisor receives the executor's full available system prompt, tool
-   definitions, prior messages, tool calls/results, and current-turn text in
-   order. For a transcript that fits the advisor model's context window, no
-   text-preview projection, elision marker, or configured token truncation is
-   allowed. Focused live artifacts record whether any call was truncated.
+1. **Compacted-context fidelity (implemented and paid-gated):** a deterministic captured-call
+   fixture proves that the advisor receives the executor's resolved system
+   prompt, exact tool definitions, first user task, observational summary of
+   older history, and a generous recent wire-faithful tail containing complete
+   tool calls/results and current-turn text in order. The configured advisor
+   envelope is intentionally smaller than the model's hard context window; the
+   hard window remains a final safety ceiling. The latest complete tool
+   interaction is protected even when it alone exceeds the soft target. Unit
+   tests and a falsified live eval prove compaction, observation recovery,
+   recent-result fidelity, and token accounting. The first 32k/16k baseline then
+   preserved 15/15 advisor resolves across the paid known-case gate while
+   cutting total exact advisor tokens by 55.6%. A second candidate retains the
+   32k observation trigger but removes runtime-only message metadata and keeps
+   an 8k ordinary raw tail. The latest complete tool interaction still overrides
+   the soft tail. A uniform-medium paid candidate scored 14/15 and increased
+   advisor-plus-observer tokens by 2.3%, so it is rejected. The next candidate
+   keeps Kimi at medium but restores Fable to high after the failed trace showed
+   medium conditionally approving a hand-designed regex instead of the exact
+   upstream fix. Freeze only if the same 15 advised cases all resolve and
+   advisor-plus-observer tokens improve.
 2. **Product lifecycle (implemented):** the benchmark contains no advisor call
    schedule. The shipped product owns orientation and completion-review
    consultations for substantive work. Deterministic tests cover both phases,
@@ -99,10 +113,55 @@ No full campaign starts until all of these are true:
    shared envelope. The completed known-case gate has 15/15 non-regressions:
    eight enabled-only improvements and seven both-resolved ties. The v2 GLM
    comparison is 2 enabled-only and 2 both-resolved; the v2 Kimi comparison is
-   5 enabled-only and 3 both-resolved. The frozen expansion now adds Nushell
-   13605, Caddy 4943, Laravel 53206, Gson 2061, and Vue 11915 under both
-   comparisons, selected from ids and language labels without task-content or
-   gold-patch inspection.
+   5 enabled-only and 3 both-resolved. Before broadening, use these 15 pairs as
+   an adaptive tuning set for advisor-context efficiency. A candidate must keep
+   zero pure-only outcomes and all 15 advisor resolves while reducing measured
+   advisor input tokens. The first diversity namespaces were stopped before a
+   pair completed when this product-policy change superseded them; new frozen
+   ids are required after the context policy is fixed. The first 32k candidate
+   uses `advisor-context-efficiency-kimi-20260721-v1` and
+   `advisor-context-efficiency-glm-20260721-v1`: run the five Docusaurus 8927
+   pairs first, then the other ten pairs if that high-risk wave is clean. That
+   immutable `4aa8791` run completed 15/15 advisor resolves against 10/15 pure
+   resolves: five enabled-only improvements, ten both-resolved ties, and zero
+   pure-only regressions. Across 36 successful consultations, estimated input
+   fell 53.4%, exact advisor tokens fell 55.6%, and advisor spend fell 49.5%
+   from the earlier baseline. Normal observer work added $0.89; advisor plus
+   observer still cost 43.6% less than the old advisor calls alone. The policy
+   compacted 1,129 messages with zero unrepresented omissions. This is the
+   fallback baseline. The model-visible/8k/uniform-medium v2 candidate reduced
+   exact advisor tokens from 731,889 to 595,251, but scored 14/15 and increased
+   combined advisor-plus-observer tokens from 1,543,369 to 1,578,537. Its single
+   unresolved Docusaurus 8927 trace hand-designed an incomplete regex despite
+   three successful consultations; the high-effort baseline found and applied
+   the authoritative upstream patch. The model-specific-effort v3 rerun then
+   reduced advisor-plus-observer tokens 15.3% (1,543,369 to 1,306,951) but also
+   scored 14/15. In its failed 8927 trace, the completion checkpoint fired after
+   diagnosis and before editing. Fable rejected the unimplemented regex and
+   named the exact adjacent risks, but later tool work did not re-arm the
+   checkpoint, so Fable never reviewed the final bad diff. A first generic fix
+   re-armed after every later tool and over-corrected: four recovered focused
+   runs used 3–7 Fable calls, two hit the cost cap, and one archive was lost when
+   the campaign stopped. The exact traces showed recursive mandatory review of
+   advisor-requested verification. Re-arm automatically once only when the early
+   completion checkpoint was issued before any successful consultation, and allow complete
+   evidence to receive an unconditional approval. Rerun the five 8927 cases
+   under a fresh id and expand to all 15 only after 5/5. Frozen pure results
+   remain the comparison and are not paid for again. The fresh v5 focus gate
+   passed 5/5 official resolves with 11 total advisor calls, no cost-cap
+   interruptions, and 402,590 combined advisor-plus-observer tokens—12.1%
+   below the same five-case v3 subset. Expand this exact policy to all 15 known
+   cases under the v6 namespaces before attempting another optimization.
+   V6 then restored 15/15 official resolves. Its advisor models used 494,436
+   tokens; event-boundary reconstruction assigns 808,182 Luna tokens to the
+   observer and 33,258 to GLM classification. V7 tested a 64k soft compaction
+   trigger on the five 8927 repeats. It remained 5/5 resolved but used 622,697
+   advisor-plus-observer tokens versus v6's 470,574, a 32.3% regression. Restore
+   32k and optimize observation work itself; do not expand the rejected setting.
+   The next trace audit found benchmark RPC omitted `--session`, so every later
+   observation restarted at the first user message. Supply the stable benchmark
+   session inside each fresh HOME and let normal range markers process only the
+   new suffix.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails
@@ -117,14 +176,73 @@ No full campaign starts until all of these are true:
    uniform v5 rollout ceiling. The frozen worst-case projection must remain
    within $500 before launching any of v5's 120 rollouts.
 
+The v5 focus gate recorded `$5.871627` of accepted generation. Conservatively
+reserve another `$3.10` for its initial E2B connection failure because no remote
+archive survived to prove that generation had not started. Cumulative sunk was
+recorded as `$439.2249`. A later audit proved `$45.4496162` of that lineage was
+a temporary 24-arm overlap reservation whose completed attempts have exact
+telemetry. The corrected post-v7 cumulative worst case is `$422.8553023`,
+leaving `$77.1446977`. The E2B controller now reserves active concurrent shards,
+persists each reservation before model work, and replaces it with returned
+exact cost before admitting more. It may never spend past `$500`; a worker
+failure stops admission, and an exhausted envelope leaves the remaining shards
+unstarted as a denominator-visible stop.
+
+Freeze the final population as
+`multilingual-30-four-arm-e2b-20260721-v5`, with all four configurations, the
+30-instance manifest, the `$3.10` rollout ceiling, and at most 16 E2B workers.
+Validate the repaired session attribution in this population instead of buying
+another adaptive 15-case replay; only the final rows are eligible for the effect
+estimate.
+
+The first v5 admission launched six shards. Four returned 16 terminal artifacts
+for `$15.6848066`; one failed before model work, and one completed generation but
+lost its archive on an E2B connection error. Retry only idempotent no-model E2B
+setup and recovery requests. Persist the model-command stage, release reserves
+only for proven pre-command failures, and never automatically replay ambiguous
+model work.
+
+Official scoring then found a pure-only result in its first pair and stopped:
+pure GLM resolved `caddyserver__caddy-4943`, while GLM plus Kimi did not. The
+enabled trace ported current upstream's broad array-filter refactor and changed
+an unrelated existing QueryFilter expectation; the scorer's untouched test
+caught that contract regression. The first consultation had no compaction and
+already widened the task, and the second explicitly approved the expectation
+change, so do not tune context or lifecycle for this failure. Correct general
+advisor scope policy instead: version-match reference evidence, isolate the
+requested behavior, prefer the smallest sufficient change, and presume an
+edited passing expectation is a regression until independent task evidence
+proves otherwise. The live Kimi review eval was red with the old policy and
+green with the correction. Its first Mac-only rerun under
+`advisor-scope-regression-glm-mac-20260721-v1` found the narrow historical fix
+but returned only upgrade advice and an empty patch: the issue itself ends in
+“Please advise,” while the old shared system prompt did not explicitly require
+a repository change. Treat that artifact as an invalid task-definition probe,
+not a scored advisor result. The minimal shared prompt now requires a complete
+working-tree solution without prescribing workflow or advisor behavior. Since
+that paired input changed, both pure GLM and GLM plus Kimi reran under
+`advisor-scope-regression-glm-mac-20260721-v2` before broader generation.
+
+The v2 pair officially scored enabled-only: GLM plus Kimi resolved and pure GLM
+did not. It used two successful consultations, compacted 206 old messages with
+zero omissions, and cost `$3.2956061`. Add that exact spend to the conservative
+ledger, leaving `$32.061932`. Freeze the next Mac measurement as
+`multilingual-four-arm-mac-20260721-v6-core`: the seed-20260722 two-language
+subset (Laravel 53206 and Lombok 3697), four arms, one trial, serial local
+execution. Eight `$3.10` emergency reservations fit the remaining budget. Score
+each complete block and fail fast on a pure-only outcome. Expand only after
+returned exact costs prove another complete four-arm block can retain the same
+ceiling under `$500`.
+
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution
 change invalidates the current diagnostic namespace and requires a new id.
 After a sufficiently broad clean diagnostic set, freeze the product and launch
-one fresh 30×4 campaign. Do not tune or restart that final campaign based on its
-observed outcomes, and never pool diagnostic/retry rows into its estimate.
+one fresh four-arm population that fits the remaining hard budget. Do not tune
+or restart that measurement based on its observed outcomes, and never pool
+diagnostic/retry rows into its estimate.
 
-## V5 campaign and reporting contract
+## Superseded V5 campaign and reporting contract
 
 - `e2b/run.ts` launches the new committed v5 campaign over all 30 manifest
   instances and all four configs, one trial each, in seeded instance-trial

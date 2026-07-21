@@ -1,4 +1,4 @@
-import type { Context, ImageContent, Message, Tool } from "@earendil-works/pi-ai";
+import type { ImageContent, Message, Tool } from "@earendil-works/pi-ai";
 import type { AgentMessage, AgentState } from "@earendil-works/pi-agent-core";
 import { estimateTokens } from "../memory/observational.js";
 import { IMAGE_WIRE_TOKEN_ESTIMATE } from "../turn-runner/wire-shaping.js";
@@ -6,6 +6,22 @@ import { ADVISOR_SYSTEM_PROMPT } from "./prompts.js";
 
 const CONTEXT_OPEN = "<executor_context>";
 const CONTEXT_CLOSE = "</executor_context>";
+
+/**
+ * Soft total-input target above which the consultation pipeline compacts older
+ * work into observations. Paid repeated-run telemetry showed that forwarding
+ * larger raw transcripts costs the advisor more than it saves the observer.
+ * The hard model window remains the final safety ceiling.
+ */
+export const ADVISOR_INPUT_TARGET_TOKENS = 32_000;
+
+/**
+ * Recent raw executor-message allowance kept beside compacted observations.
+ * The newest complete tool interaction remains protected even when it exceeds
+ * this target, so the allowance buys ordinary continuity without clipping the
+ * evidence the advisor was called to inspect.
+ */
+export const ADVISOR_RECENT_MESSAGE_TARGET_TOKENS = 8_000;
 
 /** Minimal live-agent surface needed to capture the executor request faithfully. */
 export interface AdvisorContextSource {
@@ -23,6 +39,14 @@ export interface AdvisorExecutorContext {
   messages: readonly Message[];
   /** Exact tool definitions available to the executor for the current turn. */
   tools: readonly Tool[];
+  /** Raw executor messages represented by observational context instead of repeated verbatim. */
+  compactedMessages?: number;
+}
+
+/** Optional advisor-only projection applied before conversion to provider messages. */
+export interface CaptureAdvisorContextOptions {
+  /** Replaces older history with normal observational context and a recent raw tail. */
+  transformMessages: (messages: AgentMessage[]) => Promise<AgentMessage[]>;
 }
 
 /** Inputs for fitting the executor context into the advisor model's real request window. */
@@ -45,10 +69,14 @@ export interface AdvisorContextMetadata {
   safetyMarginTokens: number;
   /** Maximum estimated tokens available to the quoted executor context. */
   inputLimitTokens: number;
+  /** Preferred total advisor input; the hard model limit remains a safety ceiling. */
+  inputTargetTokens: number;
   /** Heuristic token estimate including the shared coarse per-image charge. */
   estimatedInputTokens: number;
   /** Number of executor messages included in the serialized context. */
   includedMessages: number;
+  /** Raw executor messages represented by observational context rather than copied verbatim. */
+  compactedMessages: number;
   /** Number of older executor messages omitted at whole-message boundaries. */
   omittedMessages: number;
   /** True only when the advisor model's real window forced message omission. */
@@ -74,28 +102,39 @@ export interface AdvisorContext {
  */
 export async function captureAdvisorExecutorContext(
   source: AdvisorContextSource,
+  options?: CaptureAdvisorContextOptions,
 ): Promise<AdvisorExecutorContext> {
   const messages = [...source.state.messages];
   const streamingMessage = source.state.streamingMessage;
   if (streamingMessage && messages.at(-1) !== streamingMessage) {
     messages.push(streamingMessage);
   }
+  let selectedMessages = options ? await options.transformMessages(messages) : messages;
+  const firstUserMessage = messages.find((message) => message.role === "user");
+  if (firstUserMessage && !selectedMessages.includes(firstUserMessage)) {
+    selectedMessages = [firstUserMessage, ...selectedMessages];
+  }
+  const compactedMessages = messages.filter(
+    (message) => !selectedMessages.includes(message),
+  ).length;
   return {
     systemPrompt: source.state.systemPrompt,
-    messages: await source.convertToLlm(messages),
+    messages: await source.convertToLlm(selectedMessages),
     tools: source.state.tools.map(({ name, description, parameters }) => ({
       name,
       description,
       parameters,
     })),
+    compactedMessages,
   };
 }
 
 /**
- * Serialize the actual executor context without observer projection. When the
- * advisor model cannot fit it, remove only the oldest complete messages; tool
- * definitions, the resolved system prompt, and retained message structures
- * remain intact. Image bytes travel as matching multimodal attachments.
+ * Serialize the captured raw or observationally compacted executor context.
+ * When the advisor's hard model window still cannot fit it, remove only the
+ * oldest complete messages; tool definitions, the resolved system prompt, and
+ * retained message structures remain intact. Image bytes travel as matching
+ * multimodal attachments.
  */
 export function buildAdvisorContext(input: BuildAdvisorContextInput): AdvisorContext {
   const contextWindowTokens = positiveInteger(input.contextWindowTokens);
@@ -110,7 +149,13 @@ export function buildAdvisorContext(input: BuildAdvisorContextInput): AdvisorCon
     contextWindowTokens - reservedOutputTokens - safetyMarginTokens - advisorSystemTokens,
   );
   let messages = [...input.context.messages];
-  let serialized = serializeContext(input.context.systemPrompt, input.context.tools, messages, 0);
+  let serialized = serializeContext(
+    input.context.systemPrompt,
+    input.context.tools,
+    messages,
+    input.context.compactedMessages ?? 0,
+    0,
+  );
   const firstUserMessage = messages.find((message) => message.role === "user");
   while (
     messages.length > (firstUserMessage ? 1 : 0) &&
@@ -123,6 +168,7 @@ export function buildAdvisorContext(input: BuildAdvisorContextInput): AdvisorCon
       input.context.systemPrompt,
       input.context.tools,
       messages,
+      input.context.compactedMessages ?? 0,
       input.context.messages.length - messages.length,
     );
   }
@@ -142,8 +188,10 @@ export function buildAdvisorContext(input: BuildAdvisorContextInput): AdvisorCon
       reservedOutputTokens,
       safetyMarginTokens,
       inputLimitTokens,
+      inputTargetTokens: Math.min(ADVISOR_INPUT_TARGET_TOKENS, inputLimitTokens),
       estimatedInputTokens: advisorSystemTokens + estimateSerializedTokens(serialized),
       includedMessages: messages.length,
+      compactedMessages: input.context.compactedMessages ?? 0,
       omittedMessages,
       truncated: omittedMessages > 0,
       attachedImages: serialized.images.length,
@@ -155,15 +203,17 @@ function serializeContext(
   systemPrompt: string,
   tools: readonly Tool[],
   messages: readonly Message[],
+  compactedMessages: number,
   omittedMessages: number,
 ): { text: string; images: ImageContent[] } {
-  const context: Context = {
+  const context = {
     systemPrompt,
     tools: [...tools],
-    messages: [...messages],
+    messages: messages.map(projectAdvisorWireMessage),
   };
   const images: ImageContent[] = [];
   const payload = {
+    compaction: { compactedMessages },
     truncation: { omittedMessages },
     executorContext: context,
   };
@@ -174,6 +224,64 @@ function serializeContext(
     return { type: "image", mimeType: value.mimeType, attachmentIndex };
   });
   return { text: `${CONTEXT_OPEN}\n${json}\n${CONTEXT_CLOSE}`, images };
+}
+
+/**
+ * Project the executor's provider-neutral message into the fields that become
+ * model-visible request content. Pi keeps timestamps, provider identity,
+ * diagnostics, token accounting, and opaque replay signatures on messages so
+ * the runtime can resume and account for them; those fields are not transcript
+ * evidence and a different advisor model cannot replay the signatures. Visible
+ * reasoning, tool calls, complete tool-result content, and error state remain.
+ */
+function projectAdvisorWireMessage(message: Message): unknown {
+  if (message.role === "user") {
+    return {
+      role: message.role,
+      content:
+        typeof message.content === "string"
+          ? message.content
+          : message.content.map(projectAdvisorWireContent),
+    };
+  }
+  if (message.role === "toolResult") {
+    return {
+      role: message.role,
+      toolCallId: message.toolCallId,
+      toolName: message.toolName,
+      content: message.content.map(projectAdvisorWireContent),
+      isError: message.isError,
+    };
+  }
+  return {
+    role: message.role,
+    content: message.content.flatMap<unknown>((block) => {
+      if (block.type === "text") return [{ type: block.type, text: block.text }];
+      if (block.type === "thinking") {
+        if (block.redacted || block.thinking.trim().length === 0) return [];
+        return [{ type: block.type, thinking: block.thinking }];
+      }
+      return [
+        {
+          type: block.type,
+          id: block.id,
+          name: block.name,
+          arguments: block.arguments,
+        },
+      ];
+    }),
+  };
+}
+
+function projectAdvisorWireContent(content: {
+  type: "text" | "image";
+  text?: string;
+  data?: string;
+  mimeType?: string;
+}): unknown {
+  return content.type === "text"
+    ? { type: content.type, text: content.text }
+    : { type: content.type, data: content.data, mimeType: content.mimeType };
 }
 
 function isImageContent(value: unknown): value is ImageContent {

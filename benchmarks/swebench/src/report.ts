@@ -155,6 +155,12 @@ export interface ConfigConsultationReport {
   unsuccessfulAttempts: number;
   /** Enabled attempts lacking telemetry; distinct from a known zero-call attempt. */
   missingTelemetryAttempts: number;
+  /** Sum of call-level advisor input estimates used for model-neutral comparison. */
+  estimatedInputTokens: number;
+  /** Provider-reported total tokens for the configured advisor model. */
+  exactAdvisorTokens: number;
+  /** Raw executor messages represented through observational compaction. */
+  compactedMessages: number;
 }
 
 export interface ComparisonReport {
@@ -330,7 +336,7 @@ export function buildCampaignReport(
           if (!summary.consultation) {
             throw new Error(`Advisor-enabled config has no consultation summary: ${config}.`);
           }
-          incrementConsultationSummary(summary.consultation, evidence.status);
+          incrementConsultationSummary(summary.consultation, evidence, attempt?.telemetry);
         }
         if (attempt?.failureKind === "patch") {
           patchViolations.push(
@@ -510,6 +516,19 @@ export function renderCampaignReport(report: CampaignReport): string {
       `| ${name} | ${config.resolved}/${config.total} | ${(config.resolveRate * 100).toFixed(1)}% | $${config.costUsd.toFixed(2)} | $${config.executorCostUsd.toFixed(2)} | $${config.auxiliaryCostUsd.toFixed(2)} | ${config.advisorCalls} |`,
     );
   }
+  lines.push(
+    "",
+    "## Advisor efficiency",
+    "",
+    "| Arm | Estimated advisor input | Exact advisor tokens | Compacted messages |",
+    "| --- | ---: | ---: | ---: |",
+  );
+  for (const [name, config] of Object.entries(report.configs)) {
+    if (!config.consultation) continue;
+    lines.push(
+      `| ${name} | ${config.consultation.estimatedInputTokens} | ${config.consultation.exactAdvisorTokens} | ${config.consultation.compactedMessages} |`,
+    );
+  }
   if (report.trials > 1) {
     lines.push(
       "",
@@ -647,17 +666,33 @@ function emptyConfigConsultation(expectedModel: string): ConfigConsultationRepor
     notCalledAttempts: 0,
     unsuccessfulAttempts: 0,
     missingTelemetryAttempts: 0,
+    estimatedInputTokens: 0,
+    exactAdvisorTokens: 0,
+    compactedMessages: 0,
   };
 }
 
 function incrementConsultationSummary(
   summary: ConfigConsultationReport,
-  status: ConsultationStatus,
+  evidence: ConsultationEvidenceReport,
+  telemetry: RolloutTelemetry | undefined,
 ): void {
+  const status = evidence.status;
   if (status === "successful") summary.successfulAttempts += 1;
   else if (status === "not_called") summary.notCalledAttempts += 1;
   else if (status === "unsuccessful") summary.unsuccessfulAttempts += 1;
   else summary.missingTelemetryAttempts += 1;
+  summary.estimatedInputTokens += evidence.context.observations.reduce(
+    (total, observation) => total + observation.estimatedInputTokens,
+    0,
+  );
+  summary.compactedMessages += evidence.context.observations.reduce(
+    (total, observation) => total + (observation.compactedMessages ?? 0),
+    0,
+  );
+  summary.exactAdvisorTokens +=
+    telemetry?.usageByModel.find((entry) => entry.model === summary.expectedModel)?.usage
+      .totalTokens ?? 0;
 }
 
 function formatOutcome(outcome: PairedOutcome): string {
@@ -686,15 +721,24 @@ function formatContextFidelity(context: ConsultationContextReport): string {
   const parts: string[] = [];
   if (context.valid > 0) {
     const observation = context.observations[0];
-    const window = observation
-      ? `, ${observation.estimatedInputTokens}/${observation.contextWindowTokens} estimated tokens (${observation.safetyMarginTokens} safety margin), ${observation.includedMessages} included/${observation.omittedMessages} omitted messages, ${observation.attachedImages} images`
-      : "";
+    const window = observation ? formatContextObservation(observation) : "";
     parts.push(`${context.valid} valid${window}`);
   }
   if (context.truncated > 0) parts.push(`${context.truncated} truncated`);
   if (context.missing > 0) parts.push(`${context.missing} missing`);
   if (context.malformed > 0) parts.push(`${context.malformed} malformed`);
   return parts.length > 0 ? parts.join(", ") : "not applicable";
+}
+
+function formatContextObservation(observation: AdvisorContextObservation): string {
+  const tokenBudget = observation.inputTargetTokens
+    ? `${observation.estimatedInputTokens} estimated/${observation.inputTargetTokens} target/${observation.contextWindowTokens} window tokens`
+    : `${observation.estimatedInputTokens}/${observation.contextWindowTokens} estimated tokens`;
+  const compacted =
+    observation.compactedMessages === undefined
+      ? ""
+      : `/${observation.compactedMessages} compacted`;
+  return `, ${tokenBudget} (${observation.safetyMarginTokens} safety margin), ${observation.includedMessages} included${compacted}/${observation.omittedMessages} omitted messages, ${observation.attachedImages} images`;
 }
 
 function formatSteps(steps: readonly number[]): string {

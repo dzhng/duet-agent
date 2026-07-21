@@ -21,7 +21,13 @@ import {
   ADVISOR_EXECUTOR_GUIDANCE_LAYER,
   ADVISOR_ORIENTATION_REMINDER,
 } from "../model-routing/prompts.js";
-import { captureAdvisorExecutorContext } from "../model-routing/advisor-context.js";
+import {
+  ADVISOR_RECENT_MESSAGE_TARGET_TOKENS,
+  buildAdvisorContext,
+  captureAdvisorExecutorContext,
+  type AdvisorExecutorContext,
+} from "../model-routing/advisor-context.js";
+import { ADVISOR_MAX_OUTPUT_TOKENS } from "../model-routing/advisor.js";
 import { resolveTierDefault, type RouteResolutionCatalog } from "../model-routing/resolve.js";
 import type { StepObservation } from "../model-routing/step-triggers.js";
 import {
@@ -38,6 +44,7 @@ import {
 } from "../model-routing/table.js";
 import { toXML } from "../lib/xml.js";
 import {
+  compactObservationalContext,
   createObservationalContextTransform,
   DEFAULT_EFFECTIVE_CONTEXT,
   estimateTokens,
@@ -2362,10 +2369,8 @@ export class TurnRunner {
   ): AskAdvisorToolStorage {
     const resolveAdvisorModel = () => resolveModelName(policy.target.modelName);
     return {
-      getContext: async () => {
-        const agent = this.requireParentAgent();
-        return await captureAdvisorExecutorContext(agent);
-      },
+      getContext: async (contextWindowTokens) =>
+        await this.captureContextForAdvisor(contextWindowTokens),
       resolveModel: () => {
         const model = resolveAdvisorModel();
         return {
@@ -2403,6 +2408,65 @@ export class TurnRunner {
         });
       },
     };
+  }
+
+  /**
+   * Keep ordinary advisor calls raw when already efficient. Above the soft
+   * target, drain older work through the normal memory observer and project it
+   * with an advisor-owned horizon so the executor's next request is unchanged.
+   */
+  protected async captureContextForAdvisor(
+    contextWindowTokens: number,
+    options: { drainObservations?: boolean } = {},
+  ): Promise<AdvisorExecutorContext> {
+    const agent = this.requireParentAgent();
+    const rawContext = await captureAdvisorExecutorContext(agent);
+    const rawRequest = buildAdvisorContext({
+      context: rawContext,
+      contextWindowTokens,
+      reservedOutputTokens: ADVISOR_MAX_OUTPUT_TOKENS,
+    });
+    const inputTargetTokens = rawRequest.metadata.inputTargetTokens;
+    if (
+      !rawRequest.metadata.truncated &&
+      rawRequest.metadata.estimatedInputTokens <= inputTargetTokens
+    ) {
+      return rawContext;
+    }
+    if (!this.memoryPersistence?.session) return rawContext;
+
+    let recentMessageTarget = Math.min(
+      ADVISOR_RECENT_MESSAGE_TARGET_TOKENS,
+      Math.floor(inputTargetTokens / 2),
+    );
+    let projectedContext = rawContext;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      projectedContext = await captureAdvisorExecutorContext(agent, {
+        transformMessages: async (messages) =>
+          await compactObservationalContext({
+            messages,
+            memory: this.memory,
+            horizon: this.advisorWireGuardHorizon,
+            targetMessageTokens: recentMessageTarget,
+            protectRecentToolInteraction: true,
+            ...(options.drainObservations === false
+              ? {}
+              : {
+                  onCompaction: async (observable: AgentMessage[]) =>
+                    await this.ensureMemoryCoverageForCompaction(observable),
+                }),
+          }),
+      });
+      const projectedRequest = buildAdvisorContext({
+        context: projectedContext,
+        contextWindowTokens,
+        reservedOutputTokens: ADVISOR_MAX_OUTPUT_TOKENS,
+      });
+      const excess = projectedRequest.metadata.estimatedInputTokens - inputTargetTokens;
+      if (excess <= 0) return projectedContext;
+      recentMessageTarget = Math.max(1, recentMessageTarget - excess);
+    }
+    return projectedContext;
   }
 
   /**
@@ -2847,6 +2911,9 @@ export class TurnRunner {
   // `runAgentWorker` on a provider context-overflow error so the retry
   // sends the newer half of history.
   protected readonly wireGuardHorizon: WireGuardHorizon = createInitialHorizon();
+
+  /** Sticky only for repeated advisor projections; never persisted into executor state. */
+  protected readonly advisorWireGuardHorizon: WireGuardHorizon = createInitialHorizon();
 
   async getSkills(): Promise<readonly Skill[]> {
     await this.ensureSkillsLoaded();

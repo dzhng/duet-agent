@@ -1538,7 +1538,7 @@ the number of rollouts or the independently enforced model-spend bound.
   outcomes produced under a rejected treatment definition.
 - **Confidence:** **high**.
 
-### S51 — Advisor context is bounded only by the receiving model's real window
+### S51 — Advisor context is bounded only by the receiving model's real window (superseded by S65)
 
 - **When:** implementing the stopped-v4 context-fidelity correction.
 - **The choice:** Capture the executor's resolved system prompt, exact tool
@@ -1559,8 +1559,10 @@ the number of rollouts or the independently enforced model-spend bound.
   must carry parseable context-window telemetry. A smaller advisor model can
   still truncate, but the report makes that explicit instead of calling a
   projection “full context.”
-- **Verdict:** **sound.** The real provider limit is the direct local guarantee;
-  a second arbitrary cap only removes evidence from the reviewer.
+- **Verdict:** **sound for removing the old lossy 10k projection, superseded for
+  steady-state policy by S65.** The hard provider limit remains the final safety
+  guarantee, but observations plus a measured soft target now bound repeated
+  advisor cost without reviving the old preview projection.
 - **Confidence:** **high** after GLM and Kimi recovered an unguessable marker
   beyond the former tool-result cutoff, the temporary old cutoff made the eval
   fail, and restoration made it pass again.
@@ -1827,7 +1829,7 @@ the number of rollouts or the independently enforced model-spend bound.
 
 - **When:** diagnosing the Kimi/Fable pure-only result on
   `facebook__docusaurus-8927`.
-- **The choice:** Keep the existing advisor lifecycle and full-context transport,
+- **The choice:** Keep the existing advisor lifecycle and evidence-rich context transport,
   because they delivered three successful, untruncated consultations. Change
   the advisor's product prompt instead: it must independently challenge the
   executor's conclusion, seek authoritative implementations or repository
@@ -1923,9 +1925,437 @@ the number of rollouts or the independently enforced model-spend bound.
 - **Confidence:** **high** in provenance and budget admission; outcome evidence
   remains pending until the official scorer evaluates all ten pairs.
 
+### S65 — Advisor history is compacted before the model's hard window
+
+- **When:** after the 15 known pairs established a 15/15 advisor-resolve quality
+  baseline but showed consultations carrying as many as roughly 43k estimated
+  input tokens.
+- **The choice:** Treat the advisor model's advertised context window as a hard
+  safety ceiling, not the desired request size. Keep the executor's resolved
+  system prompt, exact tool definitions, first user task, and a generous recent
+  wire-faithful tail. Represent older complete messages through the same local
+  observational-memory semantics used by normal compaction. Tune the policy
+  envelope against the 15 known pairs: zero pure-only outcomes and 15/15
+  advisor resolves are hard quality gates; measured advisor input tokens choose
+  among passing candidates. Use offline captured-transcript and live fidelity
+  checks before each paid paired campaign.
+- **The gap:** The user rejected both the old fixed 10k limit and the replacement
+  policy that filled almost the entire advisor window. They did not prescribe a
+  single token number because the right boundary must balance evidence quality
+  against repeated-call cost.
+- **The reach:** Advisor calls become bounded even for million-token models,
+  while older work remains available as observations instead of disappearing at
+  a raw-message cutoff. The policy is generic product behavior, not a SWE-bench
+  rule. Changing it invalidates pending diagnostic namespaces, so the stopped
+  `advisor-nonregression-expansion-*-20260721-v1` campaigns cannot be resumed or
+  scored and fresh ids are required after the policy freezes.
+- **Verdict:** **sound; the 32k/16k policy is frozen from measured evidence.**
+  The pre-change 34 calls carried 1,410,521 estimated advisor input tokens and
+  1,648,243 exact provider-reported advisor tokens. The frozen candidate made
+  36 successful calls while reducing those totals to 657,259 (53.4% lower) and
+  731,889 (55.6% lower). Advisor spend fell from $15.13 to $7.65; the normal
+  observer added $0.89, leaving combined advisor-plus-observer spend at $8.54,
+  43.6% below the old advisor spend alone. Official scoring kept advisor quality
+  at 15/15 resolves against 10/15 pure resolves: five advisor-only improvements,
+  ten ties, and zero regressions. The provisional 10% threshold and 15% stretch
+  target are superseded by this substantially stronger observed result.
+- **Confidence:** **high.** Unit tests, falsified live evals, 36 successful
+  consultations, zero unrepresented omissions, and the complete 15-pair paid
+  gate agree on both fidelity and efficiency.
+
+### S66 — The newest complete tool interaction outranks the soft token target
+
+- **When:** the first live compaction eval showed that whole-message eviction
+  could summarize away one oversized latest test result while retaining only
+  the assistant's subsequent `ask_advisor` call.
+- **The choice:** Protect the newest tool call, its complete tool result, and
+  every following message from advisor-only eviction. The 32k target remains a
+  soft efficiency target; if that protected interaction is larger, send it and
+  expose the overage in telemetry. Continue compacting all older eligible work
+  into observations.
+- **The gap:** Normal actor compaction guarantees only a one-message recent tail.
+  That is provider-valid, but it is not enough for an advisor whose central job
+  is to review the executor's freshest evidence.
+- **The reach:** Final test output, diffs, and inspection results remain
+  wire-faithful even when unusually large. A pathological latest result can
+  exceed the target, so aggregate token efficiency must be measured rather than
+  inferred from the constant.
+- **Verdict:** **sound.** Quality evidence is the reason to consult an advisor;
+  dropping the freshest evidence to hit a soft budget would optimize the wrong
+  objective.
+- **Confidence:** **high** from a deterministic oversized-result regression and
+  a live eval that compacted older work while preserving the newest complete
+  call/result pair.
+
+### S67 — A memory-disabled advisor keeps raw history instead of silently dropping it
+
+- **When:** composing the soft context target with incognito and explicitly
+  memory-disabled runners.
+- **The choice:** Compact only when a durable memory session exists to receive
+  the normal observation drain. If memory is disabled or unavailable, retain
+  the raw transcript up to the advisor model's hard window and report any
+  hard-window omission through the existing truncation telemetry. The unbuilt
+  alternative would hit 32k by deleting old messages with no observation that
+  represents them.
+- **The gap:** The user required observation-based compaction but did not specify
+  what to do when the observation system is intentionally absent.
+- **The reach:** Incognito and memory-disabled product use can cost more advisor
+  tokens, but it does not pretend that deleted history was summarized. Benchmark
+  runs use the default durable memory path, so they exercise the efficient path.
+- **Verdict:** **sound.** Fidelity should degrade only at the real model limit
+  when the mechanism that makes soft compaction information-preserving is absent.
+- **Confidence:** **high** because silent lossy compaction would violate the
+  user's stated design more directly than a documented soft-target miss.
+
+### S68 — Advisor compaction drains observations on demand without moving the executor horizon
+
+- **When:** deciding how older work from one still-active executor turn becomes
+  visible as observations before an advisor call.
+- **The choice:** When the raw advisor request first crosses the 32k target, run
+  the existing default memory observer immediately, refresh the same frozen
+  memory pack normal compaction uses, and advance a separate advisor-only
+  horizon. Do not move the executor's horizon or add a second summarizer. At the
+  end of the turn, normal memory processing sees only the still-unobserved suffix,
+  although this can split one large observer pass into two smaller passes.
+- **The gap:** Reusing only the previously frozen pack would miss all older work
+  produced during the current active turn; applying normal `/compact` would also
+  change what the executor sees next.
+- **The reach:** Advisor calls can add observer latency before generation and can
+  alter when durable observations are written, but they use the default memory
+  model and their usage remains in the turn's normal per-model ledger. The 15-pair
+  efficiency gate must verify that advisor savings are not erased by extra
+  auxiliary work.
+- **Verdict:** **sound.** It is the only existing product path that makes current
+  older work observable without inventing a parallel summary format or changing
+  the executor's continuation context.
+- **Confidence:** **high.** The fresh paired campaign measured 36 successful
+  consultations, 55.6% fewer exact advisor tokens, and $8.54 combined
+  advisor-plus-observer spend versus $15.13 of old advisor spend alone, while
+  retaining 15/15 advisor resolves.
+
+### S69 — Advisor preview uses frozen observations but never creates new ones
+
+- **When:** keeping `duet route advisor-preview` aligned with the new runtime
+  context policy.
+- **The choice:** Load the normal durable memory pack and apply the same 32k
+  projection for a stored-session preview, but disable the on-demand observer
+  drain. A preview may show observations already written by completed turns; it
+  never calls a model or writes memory merely because someone inspected it. If
+  memory is unavailable, the preview stays raw.
+- **The gap:** Calling the exact runtime capture path would make a command labeled
+  read-only spend tokens and mutate memory, while leaving preview raw would make
+  its token and cost estimates disagree with real advisor calls.
+- **The reach:** Stored-session estimates track production whenever the frozen
+  pack covers the session, without surprising side effects. A transcript whose
+  newest long turn was never observed can still preview larger than production's
+  eventual on-demand projection.
+- **Verdict:** **sound.** Read-only inspection must not trigger paid generation or
+  durable writes; reusing the frozen pack is the closest side-effect-free view.
+- **Confidence:** **high** because the command's existing read-only contract rules
+  out the mutating alternative.
+
+### S70 — Optimize evidence representation before shrinking evidence
+
+- **When:** the 32k/16k candidate preserved all 15 known advisor resolves but
+  the user asked to optimize both quality and token efficiency before the
+  untouched campaign.
+- **The choice:** Keep the 32k threshold that decides when paying for an
+  observer is worthwhile, but reduce the post-observation ordinary raw tail to
+  8k. The newest complete tool interaction remains protected even when larger.
+  Serialize only the transcript fields another model can actually see: roles,
+  visible text/reasoning, tool calls, complete tool-result content and error
+  state. Remove local timestamps, provider/model identity, usage/cost objects,
+  diagnostics, tool-result UI details, and opaque provider replay signatures.
+  Test medium advisor effort as a separate optimization; the adversarial
+  narrow-fix live eval passed at both medium and high. Confirm the combined
+  candidate by rerunning only the 15 advised known cases and comparing them with
+  the immutable pure baseline. The paid run falsified a uniform reduction:
+  Fable at medium conditionally approved a hand-designed regex in one of five
+  Docusaurus 8927 trials, while the high-effort baseline drove the executor to
+  the authoritative upstream fix. Keep Kimi at medium, where all five known
+  trials remained resolved, and restore Fable to high.
+- **The gap:** Lowering the 32k trigger would cause more observer calls and can
+  spend more total tokens than it saves. The earlier serializer also called
+  runtime bookkeeping “wire-faithful” even though the executor provider never
+  exposes those fields to the model. The paid failure now supplies a measured
+  quality reason for Fable's high effort; it does not justify discarding the
+  independent serialization and raw-tail savings.
+- **The reach:** The advisor keeps all decision evidence and exact tool
+  definitions/results while paying for less irrelevant JSON, less redundant
+  recent history after observation, and less private deliberation. Benchmark
+  configs explicitly retain the same model-specific effort in each pure/advised
+  pair, so advisor availability remains the pair's only treatment difference.
+- **Verdict:** **partially falsified twice, lifecycle correction pending.** The
+  uniform-medium v2 run scored 14/15. Exact advisor tokens improved 18.7%
+  (731,889 to 595,251), but combined advisor-plus-observer tokens worsened 2.3%
+  (1,543,369 to 1,578,537). The model-specific v3 run restored Fable high and
+  improved combined tokens 15.3% to 1,306,951, but still scored 14/15 because
+  its final diff never received the re-review that the product guidance intended.
+  Reject both paid candidates. Freeze the 8k/model-visible policy only after the
+  lifecycle-corrected run restores 15/15 and re-measures the combined token total.
+- **Confidence:** **high** that uniform medium is unsafe for Fable; **medium**
+  until the lifecycle-corrected paid confirmation completes.
+
+### S71 — Re-arm completion review when real work follows an early checkpoint
+
+- **When:** the model-specific-effort v3 gate scored 14/15 even though Fable was
+  restored to high effort and the context projection beat the token baseline.
+- **The choice:** Treat a completion checkpoint as spent only for the evidence it
+  actually reviewed. The first candidate re-armed it after any later
+  non-advisor tool so a subsequent completion could review the resulting diff or
+  test evidence.
+- **The gap:** An executor completion is only a protocol stop, not proof that the
+  task is semantically finished. In the failed trace it happened after diagnosis,
+  before any edit. Fable rejected the proposed approximation and named the hidden
+  boundary risks, but the old one-shot flag prevented a review after the executor
+  implemented that same approximation. Prompt strength and context size cannot
+  recover evidence that is never sent.
+- **The reach:** This is product advisor scheduling, not a SWE-bench call-count
+  rule. Voluntary consultations remain executor-controlled, the ordinary cooldown
+  and in-flight reservation still apply, and new final reviews occur only after
+  observable tool work makes earlier advice stale. Because this may add calls,
+  the five high-risk 8927 repeats run before the full 15-case token gate.
+- **Verdict:** **partially falsified and narrowed.** The focused v4 run proved the
+  missing final review was real, but unrestricted re-arming produced 3–7 Fable
+  calls per recovered run and two cost-cap interruptions. Keep the second-review
+  capability only for the early-first-consultation shape described in S72.
+- **Confidence:** **high** in the trace diagnosis and local scheduling fix;
+  **high** that unrestricted re-arming is too broad.
+
+### S72 — Separate an early missed final review from recursive approval checking
+
+- **When:** the v4 focused correction restored access to the final diff but made
+  every advisor-requested verification command eligible to mandate another
+  completion review.
+- **The choice:** A completion checkpoint may automatically re-arm once only when
+  it was issued before any successful consultation. This preserves the failed v3
+  shape—diagnosis, first consultation, implementation, final review—while a turn
+  that already had orientation and completion reviews does not recursively
+  mandate more. Voluntary consultations and ordinary cooldown behavior remain
+  unchanged. At the same time, an advisor with sufficient evidence must approve
+  and stop instead of inventing the residual risk and check previously required
+  by its output format.
+- **The gap:** “Any new tool evidence makes advice stale” ignored review phase.
+  Verification requested by the completion advisor is not evidence that the
+  earlier orientation was stale; treating it that way created the five-review
+  trial and spent executor tokens chasing diminishing, sometimes optional checks.
+- **The reach:** Complex turns still receive normal early and final consultations.
+  A turn whose first consultation happened prematurely can still receive the
+  missing evidence-backed final review. Further re-review is model-controlled,
+  not benchmark-controlled or recursively mandatory.
+- **Verdict:** **sound, paid confirmation pending.** The outer runner regression
+  test proves the early first consultation re-arms exactly once, and a live eval
+  was red when a fully verified edit manufactured commit/stash work and green
+  when approval ended without further review.
+- **Confidence:** **high.** The fresh v5 focused gate officially resolved all
+  five Docusaurus 8927 trials with 2–3 advisor calls each. Advisor plus observer
+  usage was 402,590 tokens, 12.1% below the same five-case v3 subset, with no
+  cost-cap interruptions. The full 15-case gate remains the broader check.
+
+### S73 — Keep the 32k trigger after measuring the 64k alternative
+
+- **When:** the lifecycle-corrected v6 policy restored 15/15 official resolves
+  and exposed the exact split between advisor and observer usage.
+- **The choice:** Retain the 32k advisor soft input target and the 8k
+  recent-message target. Optimize observation work directly instead of sending
+  substantially larger raw transcripts to every later consultation.
+- **The gap:** Across the 15 v6 runs, advisor models consumed 494,436 tokens but
+  the observer consumed 841,440. Replay of all 31 consultation boundaries puts
+  their complete raw requests at roughly 64k or less. That made deferred
+  compaction plausible, but the aggregate alone could not establish whether
+  larger repeated advisor inputs would be cheaper than one observer pass.
+- **The reach:** V7's five paid repeats remained 5/5 officially resolved, but
+  used 622,697 combined tokens versus v6's 470,574. Observer usage fell from
+  291,206 to 196,094, while advisor usage rose from 179,368 to 426,603. The
+  larger raw payload therefore cost 152,123 net tokens, or 32.3%. The 88k live
+  fixture must continue to compact and recover both old observations and recent
+  raw evidence.
+- **Verdict:** **64k rejected; 32k restored.** The experiment preserved quality
+  but failed the efficiency gate.
+- **Confidence:** **high.** The decision is based on five official resolves and
+  exact per-model usage telemetry from both settings.
+
+### S74 — Each isolated rollout declares one normal memory session
+
+- **When:** tracing repeated observer work after the rejected 64k compaction
+  experiment.
+- **The choice:** Launch benchmark RPC with `--session swebench`. In ordinary
+  product use, a session id tells memory which observations belong to the
+  conversation currently in progress. The benchmark already gives every
+  rollout a brand-new HOME directory and database, so the same readable id is
+  isolated per rollout. The unbuilt alternative leaves the id absent; then an
+  observation is treated as cross-session background, and its message-range
+  marker cannot tell the next observer pass where the previous pass stopped.
+- **The gap:** The spec required default product memory but did not state that
+  the RPC caller must supply the session identity that the interactive product
+  normally owns.
+- **The reach:** Later advisor and end-of-turn observation passes process only
+  the new transcript suffix while retaining prior local observations as
+  context. V6 had 17 later passes restart at the first user message, consuming
+  459,712 observer tokens. This change uses the existing range-marker contract;
+  it adds no benchmark prompt, model override, cache, or skipped final pass.
+- **Verdict:** **sound.** The harness now supplies the normal caller-owned
+  identity instead of accidentally selecting global-memory semantics.
+- **Confidence:** **high.** The CLI already documents one RPC process as one
+  logical session, product tests cover session attribution and range progress,
+  and the rollout test was red without the flag and green with it.
+
+### S75 — Budget concurrency by active shards, not the whole pending population
+
+- **When:** admitting the final 120-arm campaign under the remaining global
+  model-spend envelope.
+- **The choice:** Hold the full per-arm ceiling only for shards currently doing
+  model work. A completed shard replaces that temporary reservation with its
+  measured artifact cost before another shard may start. The configured 16
+  workers remain an upper bound; available budget can admit fewer. Each active
+  reservation is persisted before its sandbox starts and removed only after
+  terminal artifacts are integrated, so controller loss stays conservative.
+- **The gap:** The old preflight multiplied every unfinished arm by its emergency
+  ceiling. That is safe but treats sequential future work as simultaneous
+  liability, preventing a campaign even when measured shard costs can fit.
+- **The reach:** Accounted spend plus active reservations never exceeds `$500`.
+  A worker failure stops further admission, while already-running workers
+  settle. If no next shard fits, it remains explicitly unstarted rather than
+  weakening the per-rollout cap or silently exceeding the global budget.
+- **Verdict:** **sound.** This changes scheduling, not models, prompts, tasks, or
+  scoring, and preserves the original hard-budget invariant.
+- **Confidence:** **high.** Unit tests prove exact-cost reconciliation admits
+  later cheap shards, budget exhaustion leaves work unstarted, partial shards
+  reserve only unfinished arms, and the first worker failure stops admission.
+
+### S76 — Validate the memory-session repair in the final population
+
+- **When:** deciding whether to buy another 15-case adaptive gate after adding
+  the benchmark's missing RPC session id.
+- **The choice:** Freeze the already accepted 32k advisor policy and proceed to
+  the fresh 30-task paired campaign. Do not spend the remaining hard-budget
+  headroom replaying the same adaptive cases first.
+- **The gap:** V6 proved the advisor policy at 15/15 before the session repair,
+  while the repair itself changes memory attribution: prior observations remain
+  available, but later observer passes process only the new transcript suffix.
+- **The reach:** The final population supplies a broader live test and preserves
+  the budget for the only rows eligible for the effect estimate. Product memory
+  tests and the benchmark RPC regression test cover the repaired range-marker
+  contract. Any pure-only final outcome remains visible in paired reporting.
+- **Verdict:** **sound under the hard budget.** A second adaptive run would not
+  contribute to the requested benchmark estimate and could prevent its
+  completion.
+- **Confidence:** **medium.** The semantic repair uses ordinary product session
+  behavior and has strong deterministic coverage, but its first post-repair
+  paid evidence will be the final population itself.
+
+### S77 — Retry E2B transport only outside the model command
+
+- **When:** the first final launch lost one worker during idle setup and lost a
+  second worker's archive after all four arms had completed.
+- **The choice:** Retry idempotent E2B requests at 2, 5, and 15 seconds: template
+  lookup, environment upload, resume upload/extraction, and result download.
+  Record whether the campaign command may have started. Never retry that command
+  itself. A failure proven to precede it releases its active budget reservation;
+  later or ambiguous failures retain the reservation.
+- **The gap:** Sandbox creation already retried safely, but every request after
+  creation was single-shot. The first v5 launch therefore lost Apache Druid
+  before model work and lost Carbon's completed patches during one archive-read
+  connection failure.
+- **The reach:** Transient controller outages no longer destroy completed model
+  evidence or consume a full shard reserve before generation. Non-idempotent
+  model work is still at-most-once, and uncertain work cannot be retried as if it
+  were free.
+- **Verdict:** **sound.** The retry boundary follows the external side effect
+  rather than the E2B API method name.
+- **Confidence:** **high.** The retry helper is covered for bounded delays and
+  no cleanup side effects; the first campaign supplied direct failure evidence
+  on both sides of the model-command boundary.
+
+### S78 — Reference evidence cannot expand the requested contract
+
+- **When:** the first officially scored pair in the final v5 campaign resolved
+  with pure GLM but failed with GLM plus Kimi on Caddy's cookie-log issue.
+- **The choice:** The advisor first identifies the user's narrow requested
+  behavior and the repository's existing passing contracts, then prefers the
+  smallest sufficient change. A newer or broader upstream implementation is
+  evidence about possible solutions, not a list of changes to copy. It must be
+  matched to the checkout's version and reduced to the relevant behavior. If an
+  executor changes an existing passing test expectation, the advisor treats
+  that as a likely regression unless separate task or history evidence proves
+  the old behavior must change. Compacted observations count as evidence that a
+  reference lookup happened, so normal context compaction does not force the
+  executor to repeat a lookup whose literal tool result aged out.
+- **The gap:** Earlier policy demanded authoritative reference evidence but did
+  not say that current upstream can contain later, unrelated behavior. In the
+  failing trace, that made a cookie-only issue grow from a 65-line historical
+  fix into a 625-line multi-filter refactor. The executor changed QueryFilter's
+  hash result and its test simply because current upstream did; Kimi approved,
+  while the official untouched test rejected exactly that change.
+- **The reach:** Orientation and final-review consultations keep their normal
+  timing, and reference research remains required for nontrivial work. The new
+  rule applies to every repository and version, not only SWE-bench: an advisor
+  can use newer code to learn, but cannot silently turn a local bug fix into a
+  compatibility change. The Mac diagnostic reserves an extra `$1` in its sunk
+  ledger for the live prompt-eval calls because provider billing is shared and
+  cannot attribute them more precisely.
+- **Verdict:** **sound.** It restores the ordinary meaning of task scope and
+  passing tests without weakening evidence gathering or special-casing the
+  benchmark.
+- **Confidence:** **high.** The exact old prompt reproduced the erroneous Kimi
+  approval in a live eval; the corrected prompt rejected it and preserved the
+  focused orientation path.
+
+### S79 — A coding benchmark must require a repository solution
+
+- **When:** the corrected-policy Caddy Mac rerun found the exact historical fix
+  but returned an upgrade recommendation and an empty patch.
+- **The choice:** Keep the canonical dataset problem statement byte-for-byte as
+  the user message, and make the shared system contract explicit about the
+  scored outcome: resolve the task in the repository and leave the working tree
+  with the complete solution. Keep unattended execution. Do not mention an
+  advisor, tool calls, test schedules, step counts, paths, or a prescribed
+  workflow. Apply this same prompt to every arm.
+- **The gap:** The previous sentence, “Complete the task unattended,” did not
+  distinguish completing an advice request from implementing its repository
+  fix. Caddy 4943 literally ends with “Please advise,” so a technically correct
+  prose answer satisfied that wording while producing nothing the patch scorer
+  could evaluate.
+- **The reach:** This defines the benchmark role rather than helping either
+  treatment. Because prompt bytes are a paired input, the old pure artifact and
+  the one-arm v1 diagnostic cannot be compared with new output. The v2 Mac gate
+  therefore reruns both GLM arms under a fresh id. Its sunk ledger includes the
+  v1 run's exact `$0.302353` cost.
+- **Verdict:** **sound and paid-confirmed.** The prompt regression test was red
+  on the ambiguous wording and green on the outcome contract while continuing
+  to reject advisor and workflow prescriptions. Both fresh arms produced
+  scoreable patches; the advisor arm resolved and the pure arm did not.
+- **Confidence:** **high.** The official scorer recorded one enabled-only pair
+  and zero pure-only outcomes under the fresh prompt hash.
+
+### S80 — Spend the remaining envelope on complete Mac blocks
+
+- **When:** the paid Caddy confirmation reconciled the conservative ledger to
+  `$467.938068`, leaving `$32.061932` under the user-set `$500` cap.
+- **The choice:** Run a fresh seed-20260722 two-language core sample—Laravel
+  53206 and Lombok 3697—with all four arms, one trial, serially on this Mac. Keep
+  the calibrated `$3.10` emergency ceiling. The eight worst-case reservations
+  total `$24.80`, so every assigned arm can finish without relying on average
+  cost. After exact costs return, admit another complete seeded block only if
+  four more full reservations still fit.
+- **The gap:** Reusing the old 30-task E2B artifacts would mix prompt hashes.
+  Scheduling all 30 fresh tasks would claim an estimate the remaining hard
+  budget cannot finish. Lowering the per-rollout ceiling would silently change
+  treatment quality after the user explicitly rejected the old small cap.
+- **The reach:** The core result is an n=2 signal-seeking estimate and must be
+  labeled accordingly. Historical 15-case diagnostics and Caddy remain
+  engineering evidence, not rows silently pooled into the core estimate.
+  Budget-only expansion may add disjoint fresh rows because its admission does
+  not depend on their outcomes.
+- **Verdict:** **sound under the hard budget; generation pending.** It maximizes
+  guaranteed complete paired blocks without changing models, prompt, policy,
+  limits, or scoring.
+- **Confidence:** **high** in the accounting and pairing guarantee; **low** in
+  the statistical precision of two tasks, which the report must state plainly.
+
 ## Compressed trivial discretion
 
-Six cosmetic or local choices were not expanded into separate entries: helper
+Eight cosmetic or local choices were not expanded into separate entries: helper
 names, test fixture names, where individual tests sit within existing files,
 the exact dummy credential strings, comment wording, and formatter-driven line
 wrapping. None changes a public contract or constrains later architecture.

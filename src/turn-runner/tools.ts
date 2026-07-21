@@ -572,13 +572,13 @@ export interface RecallMemoryToolStorage {
 
 /** Lazy runtime inputs and router actions used by the parent-only advisor tool. */
 export interface AskAdvisorToolStorage {
-  /** Captures the executor's resolved prompt, tools, and LLM-compatible messages at call time. */
-  getContext: () => Promise<AdvisorExecutorContext>;
+  /** Captures and policy-bounds executor context for the resolved advisor's hard window. */
+  getContext: (contextWindowTokens: number) => Promise<AdvisorExecutorContext>;
   /** Resolves the advisor identity and hard model window lazily at tool execution. */
   resolveModel: () => {
     /** Gateway-native `provider/model` identifier passed to the shared gateway. */
     modelName: string;
-    /** Advertised input-plus-output context window used as the only transcript ceiling. */
+    /** Advertised input-plus-output context window used as the final safety ceiling. */
     contextWindowTokens: number;
     /** Whether this concrete provider model accepts image request parts. */
     acceptsImages: boolean;
@@ -704,7 +704,7 @@ export function createAskAdvisorTool(
       }
       try {
         const advisorContext = buildAdvisorContext({
-          context: await storage.getContext(),
+          context: await storage.getContext(resolvedModel.contextWindowTokens),
           contextWindowTokens: resolvedModel.contextWindowTokens,
           reservedOutputTokens: ADVISOR_MAX_OUTPUT_TOKENS,
         });

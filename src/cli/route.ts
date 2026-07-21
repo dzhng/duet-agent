@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   buildAdvisorContext,
-  captureAdvisorExecutorContext,
   type AdvisorExecutorContext,
 } from "../model-routing/advisor-context.js";
 import { ADVISOR_MAX_OUTPUT_TOKENS } from "../model-routing/advisor.js";
@@ -17,7 +16,7 @@ import {
   resolveModelName,
   routingCatalogAdapter,
 } from "../model-resolution/resolver.js";
-import { DEFAULT_SESSION_STORAGE_DIR } from "../session/session-manager.js";
+import { DEFAULT_MEMORY_DB_PATH, DEFAULT_SESSION_STORAGE_DIR } from "../session/session-manager.js";
 import { listRecentSessions } from "../tui/recent-sessions.js";
 import { TurnRunner } from "../turn-runner/turn-runner.js";
 import type { TurnState } from "../types/protocol.js";
@@ -76,6 +75,8 @@ export interface RouteCommandOptions {
   now?: () => number;
   /** Session root override used by preview tests and alternate installations. */
   sessionsRoot?: string;
+  /** Memory database used to render stored observations; false keeps preview raw. */
+  memoryDbPath?: string | false;
 }
 
 function printRouteHelp(write: (text: string) => void): void {
@@ -267,7 +268,13 @@ async function runAdvisorPreview(
     selectedTier && loaded.table.tiers[selectedTier] ? selectedTier : loaded.table.defaultTier;
   const policy = loaded.table.tiers[tier]!.advisor;
   const model = resolveModelName(policy.target.modelName);
-  const executorContext = await rebuildExecutorContext(stored.state, sessionId, cwd);
+  const executorContext = await rebuildExecutorContext(
+    stored.state,
+    sessionId,
+    cwd,
+    model.contextWindow,
+    options.memoryDbPath ?? DEFAULT_MEMORY_DB_PATH,
+  );
   const transcript = buildAdvisorContext({
     context: executorContext,
     contextWindowTokens: model.contextWindow,
@@ -322,8 +329,8 @@ function renderAdvisorPreview(result: AdvisorPreviewResult): string {
 }
 
 class AdvisorPreviewTurnRunner extends TurnRunner {
-  async advisorContext(): Promise<AdvisorExecutorContext> {
-    return await captureAdvisorExecutorContext(this.requireParentAgent());
+  async advisorContext(contextWindowTokens: number): Promise<AdvisorExecutorContext> {
+    return await this.captureContextForAdvisor(contextWindowTokens, { drainObservations: false });
   }
 }
 
@@ -331,16 +338,18 @@ async function rebuildExecutorContext(
   state: TurnState,
   sessionId: string,
   cwd: string,
+  contextWindowTokens: number,
+  memoryDbPath: string | false,
 ): Promise<AdvisorExecutorContext> {
   const runner = new AdvisorPreviewTurnRunner({
     cwd,
     sessionId,
-    memoryDbPath: false,
+    memoryDbPath,
     skillDiscovery: { includeDefaults: true },
   });
   try {
     await runner.start({ type: "start", mode: state.mode, state });
-    return await runner.advisorContext();
+    return await runner.advisorContext(contextWindowTokens);
   } finally {
     await runner.dispose();
   }

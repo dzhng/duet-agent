@@ -36,7 +36,7 @@ const execFileAsync = promisify(execFile);
 const REPO_ROOT = resolve(import.meta.dir, "../../..");
 const BENCH_ROOT = resolve(import.meta.dir, "..");
 const REMOTE_REPO_ROOT = "/work/duet-agent";
-const DEFAULT_SPEC = "benchmarks/swebench/campaigns/multilingual-30-four-arm-e2b-v4.json";
+const DEFAULT_SPEC = "benchmarks/swebench/campaigns/multilingual-30-four-arm-e2b-v5.json";
 const REMOTE_ENVIRONMENT_LOCK = "/tmp/duet-swebench-environment.lock.json";
 const REMOTE_RESUME_ARCHIVE = "/tmp/duet-swebench-resume.tar";
 const REMOTE_RESULT_ARCHIVE = "/tmp/duet-swebench-result.tar";
@@ -65,9 +65,31 @@ interface WorkerRecord {
   sandboxId: string;
   startedAt: string;
   finishedAt: string;
+  /** True once the non-idempotent campaign command may have reached the sandbox. */
+  modelCommandStarted: boolean;
   commandSucceeded: boolean;
   metrics: SandboxMetrics[];
   error?: string;
+}
+
+interface BudgetReservationRecord {
+  schemaVersion: 1;
+  /** Worker shard whose possible model spend remains conservatively held. */
+  instanceId: string;
+  trial: number;
+  /** Worst-case spend held until the worker's artifacts are integrated. */
+  reservedUsd: number;
+  createdAt: string;
+}
+
+class E2BWorkerFailure extends Error {
+  readonly modelCommandStarted: boolean;
+
+  constructor(error: unknown, modelCommandStarted: boolean) {
+    super(errorMessage(error));
+    this.name = "E2BWorkerFailure";
+    this.modelCommandStarted = modelCommandStarted;
+  }
 }
 
 async function main(): Promise<void> {
@@ -97,26 +119,53 @@ async function main(): Promise<void> {
   if (repositorySha !== originMainSha) {
     throw new Error("E2B campaign execution requires HEAD to equal pushed origin/main.");
   }
-  await assertCampaignBudgetBound(e2bSpec, manifest, options.retryFailed);
+  const initialAttempts = await loadRolloutAttempts(join(BENCH_ROOT, "runs"), e2bSpec.id);
+  const cacheRoot = join(BENCH_ROOT, ".cache", e2bSpec.id, "e2b");
+  await mkdir(cacheRoot, { recursive: true });
+  const outstandingReservationUsd = await loadOutstandingReservationUsd(cacheRoot);
+  const initialBudget = calculateCampaignBudgetBound(
+    e2bSpec,
+    manifest,
+    initialAttempts,
+    options.retryFailed,
+  );
+  const initialAccountedUsd =
+    e2bSpec.budget.sunkUsd + initialBudget.priorUsd + outstandingReservationUsd;
+  if (initialAccountedUsd > e2bSpec.budget.totalUsd + Number.EPSILON) {
+    throw new Error(
+      `Global campaign spend is already $${initialAccountedUsd.toFixed(4)}, above $${e2bSpec.budget.totalUsd.toFixed(2)}.`,
+    );
+  }
 
   const templateName = e2bTemplateName(repositorySha);
-  const templateExists = await retryE2BRead(() => Template.exists(templateName));
+  const templateExists = await retryE2BNonModelRequest(() => Template.exists(templateName));
   if (!templateExists) {
     throw new Error(`E2B template ${templateName} is missing; run e2b/template.ts first.`);
   }
-  const cacheRoot = join(BENCH_ROOT, ".cache", e2bSpec.id, "e2b");
-  await mkdir(cacheRoot, { recursive: true });
   const environmentLock = await capacityProbe(e2bSpec, repositorySha, templateName, cacheRoot);
   if (options.capacityOnly) return;
 
-  const shards = selectE2BShards(e2bSpec, manifest, options.instanceIds);
-  console.log(
-    `Launching ${shards.length} instance-trial shard(s) with ${e2bSpec.execution.workerConcurrency} E2B worker(s).`,
+  const shards = selectE2BShards(e2bSpec, manifest, options.instanceIds).filter(
+    (shard) =>
+      calculateShardBudgetReservation(e2bSpec, initialAttempts, shard, options.retryFailed) > 0,
   );
-  const failures = await runPool(
-    shards,
-    e2bSpec.execution.workerConcurrency,
-    async ({ instanceId, trial }) => {
+  console.log(
+    `Scheduling ${shards.length} instance-trial shard(s) with up to ${e2bSpec.execution.workerConcurrency} E2B worker(s); $${initialAccountedUsd.toFixed(4)} is already accounted.`,
+  );
+  const pool = await runBudgetedPool(shards, {
+    concurrency: e2bSpec.execution.workerConcurrency,
+    accountedUsd: initialAccountedUsd,
+    totalUsd: e2bSpec.budget.totalUsd,
+    reserveUsd: (shard) =>
+      calculateShardBudgetReservation(e2bSpec, initialAttempts, shard, options.retryFailed),
+    run: async ({ instanceId, trial }) => {
+      const shard = { instanceId, trial };
+      const beforeUsd = attemptSpendForShard(initialAttempts, shard);
+      const reservationPath = await holdBudgetReservation(
+        cacheRoot,
+        shard,
+        calculateShardBudgetReservation(e2bSpec, initialAttempts, shard, options.retryFailed),
+      );
       try {
         await runInstanceTrial({
           spec: e2bSpec,
@@ -129,18 +178,47 @@ async function main(): Promise<void> {
           trial,
           retryFailed: options.retryFailed,
         });
-        return undefined;
       } catch (error) {
-        return `${instanceId}/t${trial}: ${errorMessage(error)}`;
+        const failure = `${instanceId}/t${trial}: ${errorMessage(error)}`;
+        if (error instanceof E2BWorkerFailure && !error.modelCommandStarted) {
+          await rm(reservationPath);
+          return { spentUsd: 0, failure };
+        }
+        throw new Error(failure);
       }
+      const currentAttempts = await loadRolloutAttempts(join(BENCH_ROOT, "runs"), e2bSpec.id);
+      const remainingReservation = calculateShardBudgetReservation(
+        e2bSpec,
+        currentAttempts,
+        shard,
+        options.retryFailed,
+      );
+      if (remainingReservation > 0) {
+        throw new Error(
+          `${instanceId}/t${trial}: worker returned with $${remainingReservation.toFixed(4)} of unfinished model work.`,
+        );
+      }
+      const spentUsd = attemptSpendForShard(currentAttempts, shard) - beforeUsd;
+      await rm(reservationPath);
+      return { spentUsd };
     },
-  );
-  if (failures.length > 0) {
+  });
+  if (pool.failures.length > 0 || pool.unstarted.length > 0) {
+    const details = [
+      ...pool.failures,
+      ...(pool.unstarted.length > 0
+        ? [
+            `${pool.unstarted.length} shard(s) were not started because the remaining model-spend envelope could not reserve them.`,
+          ]
+        : []),
+    ];
     throw new Error(
-      `E2B campaign left ${failures.length} failed block(s):\n${failures.join("\n")}`,
+      `E2B campaign stopped at a $${pool.maximumBoundUsd.toFixed(4)} maximum bound with ${pool.failures.length} failed and ${pool.unstarted.length} unstarted shard(s):\n${details.join("\n")}`,
     );
   }
-  console.log(`E2B campaign ${e2bSpec.id} finished all requested instance-trial shards.`);
+  console.log(
+    `E2B campaign ${e2bSpec.id} finished all requested instance-trial shards at $${pool.accountedUsd.toFixed(4)} accounted model spend (maximum bound $${pool.maximumBoundUsd.toFixed(4)}).`,
+  );
 }
 
 /** Resolve the committed campaign population, optionally narrowed to an explicit shard. */
@@ -182,15 +260,15 @@ export function selectE2BShards(
   );
 }
 
-/** Retry read-only E2B controller requests that cannot create billable model work. */
-export async function retryE2BRead<T>(
-  read: () => Promise<T>,
+/** Retry idempotent E2B controller requests that cannot create billable model work. */
+export async function retryE2BNonModelRequest<T>(
+  request: () => Promise<T>,
   retryDelaysMs: readonly number[] = E2B_READ_RETRY_DELAYS_MS,
   sleep: (milliseconds: number) => Promise<void> = (milliseconds) => Bun.sleep(milliseconds),
 ): Promise<T> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await read();
+      return await request();
     } catch (error) {
       const delay = retryDelaysMs[attempt];
       if (delay === undefined) throw error;
@@ -433,15 +511,20 @@ async function runInstanceTrial(input: {
     () => killOwnedSandboxes(metadata),
   );
   let commandSucceeded = false;
+  let modelCommandStarted = false;
   let failure: unknown;
   let metrics: SandboxMetrics[] = [];
   try {
-    await sandbox.files.write(REMOTE_ENVIRONMENT_LOCK, input.environmentLock);
+    await retryE2BNonModelRequest(() =>
+      sandbox.files.write(REMOTE_ENVIRONMENT_LOCK, input.environmentLock),
+    );
     const resume = await createResumeArchive(input.spec, input.instanceId, input.trial);
     if (resume) {
-      await sandbox.files.write(REMOTE_RESUME_ARCHIVE, resume);
-      await sandbox.commands.run(
-        `mkdir -p ${shellQuote(remoteCampaignRoot(input.spec.id))} && tar -xf ${shellQuote(REMOTE_RESUME_ARCHIVE)} -C ${shellQuote(remoteCampaignRoot(input.spec.id))}`,
+      await retryE2BNonModelRequest(() => sandbox.files.write(REMOTE_RESUME_ARCHIVE, resume));
+      await retryE2BNonModelRequest(() =>
+        sandbox.commands.run(
+          `mkdir -p ${shellQuote(remoteCampaignRoot(input.spec.id))} && tar -xf ${shellQuote(REMOTE_RESUME_ARCHIVE)} -C ${shellQuote(remoteCampaignRoot(input.spec.id))}`,
+        ),
       );
     }
 
@@ -462,6 +545,7 @@ async function runInstanceTrial(input: {
     ]
       .map(shellQuote)
       .join(" ");
+    modelCommandStarted = true;
     await sandbox.commands.run(command, {
       cwd: REMOTE_REPO_ROOT,
       user: "user",
@@ -474,7 +558,9 @@ async function runInstanceTrial(input: {
     failure = error;
   } finally {
     try {
-      await downloadInstanceArtifacts(sandbox, input.spec, input.instanceId, input.trial);
+      await retryE2BNonModelRequest(() =>
+        downloadInstanceArtifacts(sandbox, input.spec, input.instanceId, input.trial),
+      );
     } catch (error) {
       failure ??= error;
     }
@@ -485,6 +571,7 @@ async function runInstanceTrial(input: {
       sandboxId: sandbox.sandboxId,
       startedAt,
       finishedAt: new Date().toISOString(),
+      modelCommandStarted,
       commandSucceeded,
       metrics,
       ...(failure ? { error: errorMessage(failure) } : {}),
@@ -497,7 +584,7 @@ async function runInstanceTrial(input: {
     );
     await sandbox.kill().catch(() => false);
   }
-  if (failure) throw failure;
+  if (failure) throw new E2BWorkerFailure(failure, modelCommandStarted);
 }
 
 /** Retry controller-level sandbox creation before any model command can run. */
@@ -726,46 +813,111 @@ async function existingInstanceEntries(
   return existing;
 }
 
-async function runPool<T>(
-  values: readonly T[],
-  concurrency: number,
-  run: (value: T) => Promise<string | undefined>,
-): Promise<string[]> {
-  let next = 0;
-  const failures: string[] = [];
-  const worker = async (): Promise<void> => {
-    while (true) {
-      const index = next++;
-      const value = values[index];
-      if (value === undefined) return;
-      const failure = await run(value);
-      if (failure) failures.push(failure);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
-  return failures;
+export interface BudgetedPoolOptions<T> {
+  /** Maximum number of values that may perform model work simultaneously. */
+  concurrency: number;
+  /** Model spend already charged before this pool starts. */
+  accountedUsd: number;
+  /** Hard ceiling that accounted spend plus active reservations may never exceed. */
+  totalUsd: number;
+  /** Worst-case model spend that must be held while one value is running. */
+  reserveUsd: (value: T) => number;
+  /** Run one value and return the exact spend that replaces its reservation. */
+  run: (value: T) => Promise<{ spentUsd: number; failure?: string }>;
 }
 
-async function assertCampaignBudgetBound(
-  spec: E2BCampaignSpec,
-  manifest: InstanceManifest,
-  retryFailed: boolean,
-): Promise<void> {
-  const attempts = await loadRolloutAttempts(join(BENCH_ROOT, "runs"), spec.id);
-  const { pending, priorUsd, totalUsd } = calculateCampaignBudgetBound(
-    spec,
-    manifest,
-    attempts,
-    retryFailed,
-  );
-  if (totalUsd > spec.budget.totalUsd + Number.EPSILON) {
-    throw new Error(
-      `Global campaign budget bound is $${totalUsd.toFixed(4)}, above $${spec.budget.totalUsd.toFixed(2)}.`,
-    );
+export interface BudgetedPoolResult<T> {
+  /** Exact or conservatively held spend after every started value settles. */
+  accountedUsd: number;
+  /** Started values that failed; no new values are admitted after the first failure. */
+  failures: string[];
+  /** Highest accounted-plus-reserved bound reached by the pool. */
+  maximumBoundUsd: number;
+  /** Values withheld because work failed or the remaining hard budget could not reserve them. */
+  unstarted: T[];
+}
+
+/** Run model work concurrently while reconciling each reservation before admitting more. */
+export async function runBudgetedPool<T>(
+  values: readonly T[],
+  options: BudgetedPoolOptions<T>,
+): Promise<BudgetedPoolResult<T>> {
+  if (!Number.isInteger(options.concurrency) || options.concurrency <= 0) {
+    throw new Error("Budgeted pool concurrency must be a positive integer.");
   }
-  console.log(
-    `Global model-spend bound: $${spec.budget.sunkUsd.toFixed(2)} sunk + $${priorUsd.toFixed(4)} prior + ${pending} × $${spec.limits.costUsd.toFixed(2)} = $${totalUsd.toFixed(4)}.`,
-  );
+  const remaining = values.map((value) => {
+    const reservationUsd = options.reserveUsd(value);
+    if (!Number.isFinite(reservationUsd) || reservationUsd < 0) {
+      throw new Error("Budgeted pool reservations must be finite non-negative amounts.");
+    }
+    return { value, reservationUsd };
+  });
+  const running = new Map<
+    number,
+    Promise<{
+      id: number;
+      reservationUsd: number;
+      result: { spentUsd: number; failure?: string };
+    }>
+  >();
+  const failures: string[] = [];
+  let nextId = 0;
+  let accountedUsd = options.accountedUsd;
+  let reservedUsd = 0;
+  let maximumBoundUsd = accountedUsd;
+  let stopAdmission = false;
+
+  while (remaining.length > 0 || running.size > 0) {
+    while (!stopAdmission && running.size < options.concurrency) {
+      const nextIndex = remaining.findIndex(
+        ({ reservationUsd }) =>
+          accountedUsd + reservedUsd + reservationUsd <= options.totalUsd + Number.EPSILON,
+      );
+      if (nextIndex < 0) break;
+      const next = remaining.splice(nextIndex, 1)[0];
+      if (!next) break;
+      const { value, reservationUsd } = next;
+      const id = nextId++;
+      reservedUsd += reservationUsd;
+      maximumBoundUsd = Math.max(maximumBoundUsd, accountedUsd + reservedUsd);
+      const promise = options.run(value).then(
+        (result) => ({ id, reservationUsd, result }),
+        (error) => ({
+          id,
+          reservationUsd,
+          result: { spentUsd: reservationUsd, failure: errorMessage(error) },
+        }),
+      );
+      running.set(id, promise);
+    }
+
+    if (running.size === 0) break;
+    const settled = await Promise.race(running.values());
+    running.delete(settled.id);
+    reservedUsd -= settled.reservationUsd;
+    if (
+      !Number.isFinite(settled.result.spentUsd) ||
+      settled.result.spentUsd < 0 ||
+      settled.result.spentUsd > settled.reservationUsd + Number.EPSILON
+    ) {
+      throw new Error(
+        `Settled model spend $${settled.result.spentUsd} is outside its $${settled.reservationUsd} reservation.`,
+      );
+    }
+    accountedUsd += settled.result.spentUsd;
+    maximumBoundUsd = Math.max(maximumBoundUsd, accountedUsd + reservedUsd);
+    if (settled.result.failure) {
+      failures.push(settled.result.failure);
+      stopAdmission = true;
+    }
+  }
+
+  return {
+    accountedUsd,
+    failures,
+    maximumBoundUsd,
+    unstarted: remaining.map(({ value }) => value),
+  };
 }
 
 /** Worst-case campaign model spend across completed, crashed, and pending attempts. */
@@ -775,13 +927,7 @@ export function calculateCampaignBudgetBound(
   attempts: readonly RolloutAttempt[],
   retryFailed: boolean,
 ): { pending: number; priorUsd: number; totalUsd: number } {
-  const attemptsByArm = new Map<string, RolloutAttempt[]>();
-  for (const attempt of attempts) {
-    const key = armKey(attempt.spec.instanceId, attempt.spec.config, attempt.spec.trial);
-    const existing = attemptsByArm.get(key);
-    if (existing) existing.push(attempt);
-    else attemptsByArm.set(key, [attempt]);
-  }
+  const attemptsByArm = indexAttemptsByArm(attempts);
 
   let pending = 0;
   const selected = new Set(spec.instanceIds ?? manifest.entries.map((entry) => entry.instanceId));
@@ -790,33 +936,128 @@ export function calculateCampaignBudgetBound(
     for (let trial = 1; trial <= spec.trials; trial += 1) {
       for (const config of spec.configs) {
         const logicalAttempts = attemptsByArm.get(armKey(entry.instanceId, config, trial)) ?? [];
-        if (logicalAttempts.some((attempt) => attempt.status.phase === "completed")) continue;
-        const latest = [...logicalAttempts].sort(
-          (left, right) => right.status.attempt - left.status.attempt,
-        )[0];
-        if (
-          latest?.status.phase === "failed" &&
-          (latest.status.failureKind !== "infra" || !retryFailed)
-        ) {
-          continue;
-        }
-        pending += 1;
+        if (armNeedsWork(logicalAttempts, retryFailed)) pending += 1;
       }
     }
   }
 
-  const prior = attempts.reduce((total, attempt) => {
+  const prior = attemptSpend(attempts);
+  return {
+    pending,
+    priorUsd: prior,
+    totalUsd: spec.budget.sunkUsd + prior + pending * spec.limits.costUsd,
+  };
+}
+
+/** Worst-case reservation for the unfinished arms assigned to one E2B worker. */
+export function calculateShardBudgetReservation(
+  spec: CampaignSpec,
+  attempts: readonly RolloutAttempt[],
+  shard: { instanceId: string; trial: number },
+  retryFailed: boolean,
+): number {
+  const attemptsByArm = indexAttemptsByArm(attempts);
+  const pending = spec.configs.filter((config) =>
+    armNeedsWork(
+      attemptsByArm.get(armKey(shard.instanceId, config, shard.trial)) ?? [],
+      retryFailed,
+    ),
+  ).length;
+  return pending * spec.limits.costUsd;
+}
+
+function attemptSpendForShard(
+  attempts: readonly RolloutAttempt[],
+  shard: { instanceId: string; trial: number },
+): number {
+  return attemptSpend(
+    attempts.filter(
+      (attempt) =>
+        attempt.spec.instanceId === shard.instanceId && attempt.spec.trial === shard.trial,
+    ),
+  );
+}
+
+function attemptSpend(attempts: readonly RolloutAttempt[]): number {
+  return attempts.reduce((total, attempt) => {
     if (attempt.status.costUsd !== undefined) return total + attempt.status.costUsd;
     if (attempt.status.phase === "running" || attempt.status.failureKind === "infra") {
       return total + attempt.spec.limits.costUsd;
     }
     return total;
   }, 0);
-  return {
-    pending,
-    priorUsd: prior,
-    totalUsd: spec.budget.sunkUsd + prior + pending * spec.limits.costUsd,
+}
+
+function indexAttemptsByArm(attempts: readonly RolloutAttempt[]): Map<string, RolloutAttempt[]> {
+  const attemptsByArm = new Map<string, RolloutAttempt[]>();
+  for (const attempt of attempts) {
+    const key = armKey(attempt.spec.instanceId, attempt.spec.config, attempt.spec.trial);
+    const existing = attemptsByArm.get(key);
+    if (existing) existing.push(attempt);
+    else attemptsByArm.set(key, [attempt]);
+  }
+  return attemptsByArm;
+}
+
+function armNeedsWork(attempts: readonly RolloutAttempt[], retryFailed: boolean): boolean {
+  if (attempts.some((attempt) => attempt.status.phase === "completed")) return false;
+  const latest = [...attempts].sort((left, right) => right.status.attempt - left.status.attempt)[0];
+  return !(
+    latest?.status.phase === "failed" &&
+    (latest.status.failureKind !== "infra" || !retryFailed)
+  );
+}
+
+async function holdBudgetReservation(
+  cacheRoot: string,
+  shard: { instanceId: string; trial: number },
+  reservedUsd: number,
+): Promise<string> {
+  const reservationsRoot = join(cacheRoot, "reservations");
+  await mkdir(reservationsRoot, { recursive: true });
+  const id = randomUUID();
+  const destination = join(reservationsRoot, `${id}.json`);
+  const temporary = join(reservationsRoot, `.${id}.tmp`);
+  const record: BudgetReservationRecord = {
+    schemaVersion: 1,
+    instanceId: shard.instanceId,
+    trial: shard.trial,
+    reservedUsd,
+    createdAt: new Date().toISOString(),
   };
+  await writeFile(temporary, `${JSON.stringify(record, null, 2)}\n`, { flag: "wx" });
+  await rename(temporary, destination);
+  return destination;
+}
+
+async function loadOutstandingReservationUsd(cacheRoot: string): Promise<number> {
+  const reservationsRoot = join(cacheRoot, "reservations");
+  let names: string[];
+  try {
+    names = await readdir(reservationsRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
+  let total = 0;
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const record = JSON.parse(
+      await readFile(join(reservationsRoot, name), "utf8"),
+    ) as BudgetReservationRecord;
+    if (
+      record.schemaVersion !== 1 ||
+      !record.instanceId ||
+      !Number.isInteger(record.trial) ||
+      record.trial <= 0 ||
+      !Number.isFinite(record.reservedUsd) ||
+      record.reservedUsd < 0
+    ) {
+      throw new Error(`Invalid outstanding E2B budget reservation: ${name}.`);
+    }
+    total += record.reservedUsd;
+  }
+  return total;
 }
 
 function armKey(instanceId: string, config: string, trial: number): string {

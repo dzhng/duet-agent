@@ -11,11 +11,13 @@ campaign money.
 
 ## Contract
 
-- `prompt.ts`: `buildRolloutPrompt(entry) → string` — problem statement,
-  "work in /testbed", do not modify tests, and proceed unattended. Advisor
-  availability and scheduling belong entirely to the installed product; the
-  benchmark prompt does not mention them. The exact prompt hash is frozen
-  within each campaign id; changing it after a STOP requires a new id.
+- `prompt.ts`: `buildRolloutPrompt(entry) → string` — the canonical problem
+  statement remains the user message. A minimal shared system prompt requires
+  resolving the task in the repository, leaving the complete solution in the
+  working tree, and working unattended. It does not prescribe paths, test
+  policy, workflow, advisor availability, or consultation scheduling. The exact
+  prompt hash is frozen within each campaign id; changing it after a STOP
+  requires a new id.
 - `rollout.ts`: `runRollout(deps, spec) → artifact dir`: container up →
   install duet + arm's models.json (slice 05 recipe) → `runDuetTurn` →
   extract patch (`patch.ts`) → write artifacts → teardown in `finally`.

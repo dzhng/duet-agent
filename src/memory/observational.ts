@@ -443,6 +443,22 @@ export interface ObservationalContextTransformOptions {
   horizon: WireGuardHorizon;
 }
 
+/** Inputs for an explicit observational projection with a caller-owned wire horizon. */
+export interface CompactObservationalContextOptions {
+  /** Full durable executor transcript before observational messages are injected. */
+  messages: AgentMessage[];
+  /** Frozen global and local observations rendered exactly like a normal actor request. */
+  memory: MemoryContextCache;
+  /** Advisor-owned horizon so projection never changes the executor's next request. */
+  horizon: WireGuardHorizon;
+  /** Maximum raw recent-message tokens retained after compaction. */
+  targetMessageTokens: number;
+  /** Best-effort drain that covers the evicted prefix before the horizon advances. */
+  onCompaction?: (messages: AgentMessage[]) => Promise<void>;
+  /** Keeps the newest tool call and its complete result even when they exceed the soft target. */
+  protectRecentToolInteraction?: boolean;
+}
+
 export interface ObservationalMemoryUpdateOptions {
   /**
    * Memory session that owns the durable memory rows. The observer and
@@ -618,18 +634,70 @@ export function createObservationalContextTransform(options: ObservationalContex
     // events (see memory/context-pack.ts), so the rendered prefix stays
     // content-deterministic across turns and the provider's prompt
     // cache survives until the next compaction.
-    const pack = options.memory.getContextPack();
-    const rendered = renderContextPack(pack);
-    if (!rendered) {
-      return retainedMessages;
-    }
-
-    return [
-      buildObservationContextMessage(rendered),
-      buildContinuationMessage(),
-      ...retainedMessages,
-    ];
+    return renderObservationalContext(options.memory, retainedMessages);
   };
+}
+
+/**
+ * Build the same observation-plus-recent-tail shape as normal automatic
+ * compaction, but against a separate caller-owned horizon and explicit raw-tail
+ * target. This lets secondary model calls stay bounded without changing what
+ * the executor sees on its next pass.
+ */
+export async function compactObservationalContext(
+  options: CompactObservationalContextOptions,
+): Promise<AgentMessage[]> {
+  const observableMessages = stripObservationalContextMessages(options.messages);
+  let retainedMessages = applyEvictionHorizon(observableMessages, options.horizon.evictionHorizon);
+  const targetMessageTokens = Math.max(1, Math.floor(options.targetMessageTokens));
+  if (calculateWireTokens(retainedMessages) > targetMessageTokens) {
+    await options.onCompaction?.(observableMessages);
+    const protectedStart = options.protectRecentToolInteraction
+      ? findRecentToolInteractionStart(observableMessages)
+      : -1;
+    const protectedMessages = new Set(
+      protectedStart >= 0 ? observableMessages.slice(protectedStart) : [],
+    );
+    options.horizon.evictionHorizon = findEvictionHorizon(
+      observableMessages,
+      options.horizon.evictionHorizon,
+      (candidate) => calculateWireTokens(candidate) <= targetMessageTokens,
+      (message) => !protectedMessages.has(message),
+    );
+    retainedMessages = applyEvictionHorizon(observableMessages, options.horizon.evictionHorizon);
+  }
+  return renderObservationalContext(options.memory, retainedMessages);
+}
+
+function findRecentToolInteractionStart(messages: AgentMessage[]): number {
+  for (let resultIndex = messages.length - 1; resultIndex >= 0; resultIndex -= 1) {
+    const result = messages[resultIndex];
+    if (result?.role !== "toolResult" || !("toolCallId" in result)) continue;
+    for (let callIndex = resultIndex - 1; callIndex >= 0; callIndex -= 1) {
+      const candidate = messages[callIndex];
+      if (
+        candidate?.role === "assistant" &&
+        candidate.content.some((part) => part.type === "toolCall" && part.id === result.toolCallId)
+      ) {
+        return callIndex;
+      }
+    }
+    return resultIndex;
+  }
+  return -1;
+}
+
+function renderObservationalContext(
+  memory: MemoryContextCache,
+  retainedMessages: AgentMessage[],
+): AgentMessage[] {
+  const rendered = renderContextPack(memory.getContextPack());
+  if (!rendered) return retainedMessages;
+  return [
+    buildObservationContextMessage(rendered),
+    buildContinuationMessage(),
+    ...retainedMessages,
+  ];
 }
 
 /**

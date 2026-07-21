@@ -122,11 +122,15 @@ export async function runRollout(
     if (chmod.exitCode !== 0) throw new Error(`Could not make duet executable: ${chmod.stderr}`);
 
     const baseline = await capturePatchBaseline(container);
+    // A fresh HOME isolates every rollout, while a stable session id lets
+    // normal memory range markers prevent repeated observation of one transcript.
     const transport = container.execStream(
       [
         dependencies.artifact.installPath,
         "--rpc",
         "--model",
+        "swebench",
+        "--session",
         "swebench",
         "--workdir",
         "/testbed",

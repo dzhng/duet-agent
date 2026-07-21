@@ -11,11 +11,14 @@ import {
   agentMessageToRaw,
   agentMessagesToRaw,
   CHARS_PER_TOKEN,
+  compactObservationalContext,
   enforceObservationTokenBudget,
   getUnobservedMessageTail,
   trimMessagesToTranscriptBudget,
   stripObservationalContextMessages,
 } from "../src/memory/observational.js";
+import { MemoryContextCache } from "../src/memory/store.js";
+import { createInitialHorizon } from "../src/turn-runner/wire-shaping.js";
 import { buildObserverPrompt } from "../src/memory/observational-prompts.js";
 import {
   scaleContextWindowUsageToTotalTokens,
@@ -392,6 +395,84 @@ class MemoryEventTurnRunner extends TurnRunner {
 }
 
 describe("TurnRunner memory", () => {
+  test("advisor compaction renders frozen observations above a bounded recent raw tail", async () => {
+    const memory = new MemoryContextCache();
+    const now = Date.now();
+    memory.setContextPack({
+      global: [],
+      local: [
+        {
+          id: "mem_advisor_compaction",
+          createdAt: now,
+          lastUsedAt: now,
+          kind: "observation",
+          observedDate: "2026-07-21",
+          priority: "high",
+          source: { kind: "system" },
+          content: "OLDER WORK WAS SUMMARIZED HERE",
+          tags: ["test"],
+        },
+      ],
+    });
+    const old = { role: "user" as const, content: "OLD RAW HISTORY ".repeat(30), timestamp: 1 };
+    const recent = { role: "user" as const, content: "RECENT RAW TAIL", timestamp: 2 };
+    let drained = false;
+
+    const result = await compactObservationalContext({
+      messages: [old, recent],
+      memory,
+      horizon: createInitialHorizon(),
+      targetMessageTokens: 10,
+      onCompaction: async () => {
+        drained = true;
+      },
+    });
+
+    expect(drained).toBe(true);
+    expect(result).toContain(recent);
+    expect(result).not.toContain(old);
+    expect(JSON.stringify(result)).toContain("OLDER WORK WAS SUMMARIZED HERE");
+  });
+
+  test("advisor compaction keeps the latest complete tool interaction above its soft target", async () => {
+    const memory = new MemoryContextCache();
+    const toolCall = createAssistantMessage({
+      extraContent: [
+        {
+          type: "toolCall",
+          id: "latest-test",
+          name: "bash",
+          arguments: { command: "bun test" },
+        },
+      ],
+      timestamp: 2,
+    });
+    const toolResult: AgentMessage = {
+      role: "toolResult",
+      toolCallId: "latest-test",
+      toolName: "bash",
+      content: [{ type: "text", text: "LATEST COMPLETE TEST RESULT ".repeat(30) }],
+      details: { exitCode: 0 },
+      isError: false,
+      timestamp: 3,
+    };
+    const review = createAssistantMessage({ text: "Ask the advisor.", timestamp: 4 });
+    const old = { role: "user" as const, content: "OLD RAW HISTORY ".repeat(30), timestamp: 1 };
+
+    const result = await compactObservationalContext({
+      messages: [old, toolCall, toolResult, review],
+      memory,
+      horizon: createInitialHorizon(),
+      targetMessageTokens: 10,
+      protectRecentToolInteraction: true,
+    });
+
+    expect(result).not.toContain(old);
+    expect(result).toContain(toolCall);
+    expect(result).toContain(toolResult);
+    expect(result).toContain(review);
+  });
+
   test("observational transform does not persist raw messages below observation threshold", async () => {
     const runner = new MemoryTransformTurnRunner({
       model: "anthropic:claude-opus-4-7",

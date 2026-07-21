@@ -11,9 +11,11 @@ tasks; this harness uses different executors and advisors and a signal-seeking
 
 ## Next Agent Prompt
 
-**Status:** slices 01–07 are mechanically complete; slice 08 is running the
-broader advisor non-regression gate. Earlier gates exposed product lifecycle,
-E2B integration, binary-packaging, and advisor-review defects. The decisive
+**Status:** slices 01–07 are mechanically complete; slice 08 is using the
+15-case known-loss suite for one more advisor-efficiency pass before the broader
+non-regression gate.
+Earlier gates exposed product lifecycle, E2B integration, binary-packaging,
+and advisor-review defects. The decisive
 pure-only failure was Kimi resolving `facebook__docusaurus-8927` while Fable
 endorsed an advised narrow regex fix that official adjacent cases rejected.
 The shipped advisor now reviews independently, seeks authoritative evidence,
@@ -26,34 +28,173 @@ regression, with eight advisor-only improvements and seven both-resolved ties.
 GLM plus Kimi resolved 4/4 v2 trials versus 2/4 for pure GLM; Kimi plus Fable
 resolved 8/8 versus 3/8 for pure Kimi. Every successful consultation retained
 the complete available transcript with zero omitted messages. These adaptive
-repeats validate the fix but are not an unbiased lift estimate.
+repeats validate the quality baseline but also show that the current advisor
+request grows with raw executor history. They are not an unbiased lift estimate.
 
-Next, run the two frozen `advisor-nonregression-expansion-*-20260721-v1`
-campaigns. They cover Nushell 13605, Caddy 4943, Laravel 53206, Gson 2061, and
-Vue 11915—five repositories and languages selected deterministically from ids
-and labels without reading task contents or gold patches. The two comparisons
-use ten pair-local E2B workers concurrently. Both-resolved and advisor-only
-pass; neither-resolved is neutral; any pure-only result stops all remaining
-work for exact-trace diagnosis and a generic product fix. If all ten pairs are
-clean, freeze and launch one fresh 30×4 measurement namespace. Diagnostic
-retries remain historical engineering evidence only. The stopped v3 workers
+The first efficient-context baseline uses a 32k total-input trigger,
+roughly 16k recent raw-message tail, normal observational compaction for older
+work, and a quality override that keeps the latest complete tool interaction
+even when it exceeds the soft target. The executor's own horizon is unchanged.
+A live falsification carried 88,780 estimated raw tokens and zero compacted
+messages; the enabled path carried 8,759 estimated tokens, compacted two old
+messages, retained the first task plus the newest complete tool call/result, and
+recovered evidence from both observations and the raw tail. The product suite
+passes 1161/1161 and the benchmark suite passes 79/79.
+
+The immutable `4aa8791` E2B campaign then passed all 15 known pairs. Advisor
+arms resolved 15/15 versus 10/15 for pure arms: five advisor-only improvements,
+ten ties, and zero pure-only regressions. All 36 consultations succeeded.
+Estimated advisor input fell from 1,410,521 to 657,259 tokens (53.4%); exact
+provider-reported advisor tokens fell from 1,648,243 to 731,889 (55.6%); and
+advisor spend fell from $15.13 to $7.65 (49.5%). The normal memory observer added
+$0.89, so advisor plus observer still cost $8.54, 43.6% below the old advisor
+spend alone. The projection compacted 1,129 old messages with zero unrepresented
+omissions. This preserves the old 15/15 advisor quality baseline with two more
+consultations and roughly half the context, so the former provisional 10%/15%
+thresholds are superseded by measured evidence. Optimization is now reopened
+against that exact quality baseline. The next candidate keeps the 32k observer
+trigger and latest-complete-tool override, projects only model-visible message
+fields (not timestamps, provider ids, accounting, diagnostics, or opaque replay
+signatures), and reduces the ordinary recent raw tail to 8k. Its first paid run
+lowered both advisors from high to medium, but scored only 14/15: one Fable run
+conditionally approved a hand-designed Docusaurus regex instead of driving the
+executor to the authoritative upstream fix. Exact advisor tokens fell 18.7% to
+595,251, but advisor-plus-observer tokens rose 2.3% to 1,578,537. That candidate
+is rejected on both gates. The next candidate kept the representation savings,
+used medium effort for Kimi, and restored high effort for Fable. It reduced exact
+advisor-plus-observer tokens 15.3%, from 1,543,369 to 1,306,951, but again scored
+only 14/15. The failed trace exposed a lifecycle defect: a completion checkpoint
+fired after diagnosis but before editing, Fable correctly rejected the
+unimplemented hand-designed regex, and later tool work permanently consumed the
+one-shot checkpoint. Fable therefore never saw the final diff containing the
+exact boundary regressions it had warned about. The first focused correction
+re-armed a spent completion checkpoint after every later non-advisor tool. That
+restored final review, but four recovered runs used 3–7 Fable calls; two exceeded
+the cost cap, and a fifth interrupted archive was lost. The traces showed a
+recursive loop: an approving advisor was required to invent one residual risk,
+the executor ran that check, and the check mandated another review. The revised
+product policy allows one automatic re-arm only when the original completion
+checkpoint was issued before any successful consultation. An advisor that has
+enough evidence may now approve without manufacturing more work. Its fresh v5
+focused gate officially resolved all five Docusaurus 8927 trials. It used 11
+advisor calls total (2.2 per run), incurred no cost-cap interruptions, and
+consumed 402,590 advisor-plus-observer tokens—12.1% below the same five-case v3
+subset. The candidate now advances to the complete 15-case gate.
+
+The v6 expansion officially resolved all 15/15 known cases. Its 31 successful
+consultations used 494,436 advisor tokens. Luna used 841,440 tokens across both
+observation and GLM classification; exact event-boundary reconstruction assigns
+808,182 of those tokens to 32 observer calls, making exact advisor-plus-observer
+usage 1,302,618. That split shows the remaining inefficiency is concentrated in
+the observation pipeline.
+A v7 experiment deferred compaction from 32k to 64k. It preserved quality at
+5/5 official resolves, but consumed 622,697 advisor-plus-observer tokens versus
+v6's 470,574 on the same five trials, a 32.3% regression. The observer saved
+95,112 tokens while the advisor spent 247,235 more. The validated 32k trigger is
+therefore restored; further optimization must reduce observation work without
+inflating the advisor request.
+
+V6's traces exposed a harness wiring defect rather than another model-policy
+tuning knob: benchmark RPC omitted its caller-owned session id. Without a
+session, observations were stored as global background and their message-range
+markers could not advance progress on the next observer pass. Seventeen later
+passes restarted from the first user message and consumed 459,712 observer
+tokens. Each rollout already has a fresh HOME, so the harness now supplies the
+stable `swebench` session id and lets normal product memory observe only the new
+suffix. Keep the 32k trigger, 8k raw tail, complete-tool protection, and
+wire-faithful advisor context. Any pure-only
+result still stops immediately for exact-trace diagnosis. The stopped
+`advisor-nonregression-expansion-*-20260721-v1` namespaces predate the policy
+change, have no completed pairs, and must never be resumed or scored. The stopped v3 workers
 finalized 15/30 rollouts for `$12.6315597`; reserve up to `$21.9315597`
 including the three interrupted arms. Their remote artifacts were not
 recovered, so never resume or score that namespace. Last updated 2026-07-21.
 
+The stopped focused lifecycle gate is
+`advisor-token-efficiency-kimi-20260721-v4`. Four recovered runs cost
+`$10.2426636`; reserve `$3.28` for the interrupted archive and `$2.00` for the
+live prompt falsification/confirmation calls. The completed v5 focus gate cost
+`$5.871627`; reserve one additional `$3.10` cap for its archive-less initial E2B
+connection failure. The fresh v6 full gate started from a conservative
+`$439.2249` ledger. A later audit found that this carried a temporary 24-rollout
+launch reservation after all 24 known-gate v2 artifacts had returned exact
+costs. Replacing that stale `24 × $3.10` bound with `$28.9503838` of durable
+telemetry releases `$45.4496162`. After v7, the corrected cumulative worst case
+is `$422.8553023`, leaving `$77.1446977` under the hard `$500` model-spend
+envelope. The E2B controller now reserves only genuinely concurrent work and
+reconciles returned exact cost before admitting another shard. Its durable
+per-shard reservation survives controller loss, and exhausted headroom leaves
+the remaining shards unstarted. This preserves the hard cap without requiring
+all 120 emergency per-rollout ceilings to fit simultaneously.
+
+The superseded E2B generation namespace is
+`multilingual-30-four-arm-e2b-20260721-v5`. It retained the full `$3.10`
+per-rollout ceiling, all four paired configurations, 30 committed instances,
+and 16-worker E2B maximum, but its prompt hash predates S79. Its artifacts are
+diagnostic only and cannot contribute to the requested effect estimate.
+
+The first v5 launch returned four complete shards: 16 terminal artifacts costing
+`$15.6848066`. One worker failed while its sandbox stayed at idle-template CPU
+and memory levels, before any artifact existed. A second worker completed all
+four model arms but lost its archive to one E2B connection error. The controller
+now retries idempotent pre-model setup and post-model artifact recovery; it never
+retries the campaign model command. Worker records persist whether that
+non-idempotent boundary was reached, so a proven pre-command failure releases
+its reservation while an ambiguous or post-command failure remains held.
+
+Official scoring stopped after the first complete pair exposed a new pure-only
+regression on `caddyserver__caddy-4943`: pure GLM resolved with the repository's
+65-line historical cookie fix, while GLM plus Kimi failed after a 625-line port
+from current upstream changed unrelated QueryFilter semantics and edited its
+existing passing expectation. The first uncompacted consultation widened the
+task; a later consultation explicitly approved the changed expectation, so this
+is advisor scope policy rather than a hard-window omission. The product review
+prompt now treats references as version-matched evidence rather than change
+lists, prefers the smallest sufficient change, and treats changed passing
+expectations as suspected regressions. A live Kimi eval is red under the old
+prompt and green under the corrected prompt at both orientation and completion.
+The first corrected-policy Mac rerun completed for `$0.302353` but produced an
+empty patch. Its trace correctly isolated the historical fix, then interpreted
+the issue's closing “Please advise” as a request for an advisory answer because
+the shared benchmark system prompt required only unattended completion. That is
+a pair-neutral task-definition defect, not evidence about advisor quality. The
+shared prompt now requires resolving the repository task and leaving the
+working tree with the complete solution, without naming tools, schedules, or
+workflow. This prompt change invalidated both prior arms for comparison. The
+fresh two-arm Mac-only `advisor-scope-regression-glm-mac-20260721-v2` gate then
+reran both sides before broader generation.
+
+The v2 Mac pair is now officially scored: GLM plus Kimi resolved Caddy while
+pure GLM did not, an enabled-only result with zero pure-only regression. Both
+Kimi consultations succeeded; the first preceded mutation and the second
+reviewed the completed work. Their advisor requests represented all history
+with 206 old messages compacted and zero messages omitted. The pair cost
+`$3.2956061`, leaving `$32.061932` under the conservative `$500` ledger.
+
+Because the prompt changed, none of the old v5 final artifacts can contribute
+to the requested estimate. The fresh Mac core campaign is
+`multilingual-four-arm-mac-20260721-v6-core`: a seeded two-language sample of
+Laravel 53206 and Lombok 3697, all four arms, one trial, and the unchanged
+`$3.10` per-rollout ceiling. Its eight worst-case reservations total `$24.80`
+and therefore fit the remaining envelope. Run it serially on this Mac, score
+each completed instance block, and stop immediately on any pure-only result.
+Only after all eight exact costs return may another predeclared seeded block be
+admitted; never weaken the rollout ceiling to buy a larger nominal sample.
+
 Local constraints to prove rather than assume:
 
-- The Mac-local path remains the scorer and fallback execution path. Its Docker
-  VM admitted only one rollout worker. Final generation uses a commit-derived
-  E2B x86_64 template with Docker-in-sandbox, 8 vCPU and 16 GiB per worker. A
-  no-model probe must prove the exact commit, resources, Docker daemon, Python,
-  and pinned SWE-bench version before any rollout starts.
-- Every worker uses the byte-identical Duet binary compiled once into the
-  immutable E2B template. Workers never compile their own campaign artifact or
-  fetch the pinned dataset snapshot at launch.
-- Every successful call records its real model window, conservative safety
-  margin, estimated input, included and omitted messages, images, and
-  truncation. Text-only advisors remain usable for text transcripts; an
+- The Mac-local path is both generator and scorer for the remaining campaign.
+  Its Docker VM admitted one rollout worker, so all arms execute serially in
+  fresh official containers.
+- Every rollout uses the byte-identical Duet binary compiled once from the
+  clean campaign commit. Rollout containers never compile their own campaign
+  artifact or fetch a different dataset snapshot.
+- Every successful call records its real model window, policy input target,
+  conservative safety margin, estimated input, raw and compacted message
+  counts, images, and whether compaction occurred. The hard model window is a
+  safety ceiling, not an input target. The newest complete tool interaction may
+  exceed the soft target and must be reported honestly in telemetry. Text-only
+  advisors remain usable for text transcripts; an
   image-bearing consultation they cannot inspect is logged as failed without
   failing the executor tool. The deterministic fixture and live GLM/Kimi eval
   prove complete tool results survive the old projection boundary; focused
@@ -88,16 +229,18 @@ rationale.
 
 - **Dataset:** `SWE-bench/SWE-bench_Multilingual` (300 instances, 9
   languages). Official scorer only: `python -m swebench.harness.run_evaluation`.
-- **Infra:** the Mac runs official scoring and remains the one-worker fallback.
-  The final generation campaign uses sixteen independent E2B x86_64 sandboxes;
-  each sandbox processes one instance's four arms sequentially and each arm
-  remains a fresh nested official Docker container. Cleanup targets only
-  benchmark-owned sandboxes, images, and containers.
+- **Infra:** the remaining campaign runs and scores on this Mac with one local
+  rollout worker. Every arm uses a fresh official Docker container. Cleanup
+  targets only benchmark-owned images and containers. E2B remains historical
+  capacity evidence, not the active execution backend.
 - **Replication spike first:** mini-swe-agent proves images+scoring end-to-end
   before duet is wired in (slice 04).
-- **Measurement design:** four arms over one fixed 30-instance subset, 1 trial per
-  arm, reported as two paired comparisons: pure GLM-5.2 vs GLM-5.2 with Kimi K3
-  advisor, and pure Kimi K3 vs Kimi K3 with Fable advisor. “Pure” means the
+- **Measurement design:** four arms over one seeded subset, 1 trial per arm,
+  reported as two paired comparisons: pure GLM-5.2 vs GLM-5.2 with Kimi K3
+  advisor, and pure Kimi K3 vs Kimi K3 with Fable advisor. The original
+  30-instance population remains the sampling frame; after prerequisite spend,
+  only complete blocks whose full emergency reservations fit may enter the
+  fresh current-prompt estimate. “Pure” means the
   advisor tool is disabled; product-default memory still runs. Every complete
   render derives classifier, memory, and cadence policy from the
   built-in table. The campaign fixes the executor and advisor targets and uses

@@ -196,7 +196,7 @@ describe("SWE-bench routing renders", () => {
     });
     expect(renders["glm-pure"].tiers.swebench!.advisor.target).toEqual({
       modelName: "kimi-k3",
-      thinkingLevel: "high",
+      thinkingLevel: "medium",
     });
     expect(renders["kimi-pure"].tiers.swebench!.routes.general!.target).toEqual({
       modelName: "kimi-k3",

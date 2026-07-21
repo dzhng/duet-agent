@@ -103,6 +103,7 @@ describe("runRouteCommand", () => {
     const result = await runRouteCommand(["advisor-preview"], {
       cwd: process.cwd(),
       sessionsRoot,
+      memoryDbPath: false,
       write: (text) => {
         output += text;
       },

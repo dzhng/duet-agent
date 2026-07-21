@@ -16,7 +16,14 @@ describe("SWE-bench rollout prompt", () => {
     expect(`${SWEBENCH_SYSTEM_PROMPT}\n${prompt}`).not.toMatch(/cache|artifact|runtime file/i);
   });
 
-  test("does not prescribe workflow, duration, tool counts, or validation scheduling", () => {
-    expect(SWEBENCH_SYSTEM_PROMPT).toBe("Complete the task unattended.");
+  test("requires a completed repository solution without prescribing how to produce it", () => {
+    expect(SWEBENCH_SYSTEM_PROMPT).toMatch(/resolve the task/i);
+    expect(SWEBENCH_SYSTEM_PROMPT).toMatch(/repository/i);
+    expect(SWEBENCH_SYSTEM_PROMPT).toMatch(/working tree/i);
+    expect(SWEBENCH_SYSTEM_PROMPT).toMatch(/complete solution/i);
+
+    expect(SWEBENCH_SYSTEM_PROMPT).not.toMatch(/ask_advisor|advisor|consult/i);
+    expect(SWEBENCH_SYSTEM_PROMPT).not.toMatch(/tool calls?|step limit|validation schedule/i);
+    expect(SWEBENCH_SYSTEM_PROMPT).not.toMatch(/run tests? (?:before|after)|test first/i);
   });
 });

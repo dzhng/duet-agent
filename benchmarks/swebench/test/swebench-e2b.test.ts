@@ -9,9 +9,11 @@ import type { InstanceManifest } from "../src/manifest.js";
 import type { CampaignSpec } from "../src/orchestrator.js";
 import {
   calculateCampaignBudgetBound,
+  calculateShardBudgetReservation,
   integrateInstanceArtifacts,
-  retryE2BRead,
+  retryE2BNonModelRequest,
   retryE2BSandboxCreate,
+  runBudgetedPool,
   selectE2BInstanceIds,
   selectE2BShards,
 } from "../e2b/run.js";
@@ -116,6 +118,91 @@ describe("SWE-bench E2B execution", () => {
       priorUsd: 1,
     });
     expect(retried.totalUsd).toBeCloseTo(499.84, 8);
+  });
+
+  test("reserves only unfinished arms in one E2B shard", () => {
+    const { spec } = campaignFixture();
+    const completed = attemptFixture(spec);
+    completed.status.phase = "completed";
+
+    expect(
+      calculateShardBudgetReservation(
+        spec,
+        [completed],
+        { instanceId: "org__repo-1", trial: 1 },
+        false,
+      ),
+    ).toBeCloseTo(3 * spec.limits.costUsd, 8);
+  });
+
+  test("reconciles completed shard spend before admitting more model work", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const started: number[] = [];
+
+    const result = await runBudgetedPool([1, 2, 3, 4], {
+      concurrency: 3,
+      accountedUsd: 90,
+      totalUsd: 100,
+      reserveUsd: () => 4,
+      run: async (value) => {
+        started.push(value);
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        await Bun.sleep(value === 1 ? 1 : 5);
+        active -= 1;
+        return { spentUsd: 1 };
+      },
+    });
+
+    expect(started.toSorted()).toEqual([1, 2, 3, 4]);
+    expect(maximumActive).toBe(2);
+    expect(result).toEqual({
+      accountedUsd: 94,
+      failures: [],
+      maximumBoundUsd: 100,
+      unstarted: [],
+    });
+  });
+
+  test("leaves work unstarted when its reservation cannot fit the hard budget", async () => {
+    const result = await runBudgetedPool([1, 2], {
+      concurrency: 2,
+      accountedUsd: 95,
+      totalUsd: 100,
+      reserveUsd: () => 4,
+      run: async () => ({ spentUsd: 3 }),
+    });
+
+    expect(result).toEqual({
+      accountedUsd: 98,
+      failures: [],
+      maximumBoundUsd: 99,
+      unstarted: [2],
+    });
+  });
+
+  test("stops admitting shards after a worker failure", async () => {
+    const started: number[] = [];
+    const result = await runBudgetedPool([1, 2, 3], {
+      concurrency: 2,
+      accountedUsd: 90,
+      totalUsd: 100,
+      reserveUsd: () => 4,
+      run: async (value) => {
+        started.push(value);
+        if (value === 1) return { spentUsd: 4, failure: "worker failed" };
+        return { spentUsd: 1 };
+      },
+    });
+
+    expect(started).toEqual([1, 2]);
+    expect(result).toEqual({
+      accountedUsd: 95,
+      failures: ["worker failed"],
+      maximumBoundUsd: 98,
+      unstarted: [3],
+    });
   });
 
   test("defaults E2B workers to the campaign instance subset", () => {
@@ -255,11 +342,11 @@ describe("SWE-bench E2B execution", () => {
     expect(delays).toEqual([2, 5]);
   });
 
-  test("retries read-only controller requests without cleanup side effects", async () => {
+  test("retries idempotent no-model controller requests without cleanup side effects", async () => {
     let attempts = 0;
     const delays: number[] = [];
 
-    const result = await retryE2BRead(
+    const result = await retryE2BNonModelRequest(
       async () => {
         attempts += 1;
         if (attempts < 3) throw new Error("transient controller failure");

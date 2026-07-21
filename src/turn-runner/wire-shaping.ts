@@ -211,6 +211,8 @@ export function applyEvictionHorizon(messages: AgentMessage[], horizon: number):
 /**
  * Walk oldest-first, advance the horizon past each message in turn, and
  * stop when the caller-supplied predicate reports both budgets satisfied.
+ * `canEvict` may protect a recent semantic unit, such as the latest complete
+ * tool interaction; a protected unit wins over a caller's soft budget.
  * Will not trim below {@link MIN_HISTORY_TAIL} recent messages. Returns
  * a horizon at least as advanced as `current` (advance-only).
  *
@@ -224,11 +226,13 @@ export function findEvictionHorizon(
   messages: AgentMessage[],
   current: number,
   satisfiesBudget: (candidate: AgentMessage[]) => boolean,
+  canEvict: (message: AgentMessage) => boolean = () => true,
 ): number {
   if (messages.length <= MIN_HISTORY_TAIL) return current;
   const evictable = messages.slice(0, messages.length - MIN_HISTORY_TAIL);
   let horizon = current;
   for (const msg of evictable) {
+    if (!canEvict(msg)) break;
     horizon = Math.max(horizon, messageTimestamp(msg));
     if (satisfiesBudget(applyEvictionHorizon(messages, horizon))) break;
   }

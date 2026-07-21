@@ -2,7 +2,7 @@ import dedent from "dedent";
 
 /** Minimal unattended-run contract shared byte-for-byte by every arm. */
 export const SWEBENCH_SYSTEM_PROMPT = dedent`
-  Complete the task unattended.
+  Resolve the task in the repository and leave the working tree with the complete solution. Work unattended.
 `;
 
 /** Canonical issue input shared byte-for-byte by every arm for one instance. */

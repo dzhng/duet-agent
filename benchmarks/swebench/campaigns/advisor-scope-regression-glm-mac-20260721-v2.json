@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "advisor-scope-regression-glm-mac-20260721-v2",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-30.json",
+  "instanceIds": ["caddyserver__caddy-4943"],
+  "configs": ["glm-pure", "glm-kimi-advisor"],
+  "trials": 1,
+  "concurrency": 1,
+  "armOrderSeed": 20260809,
+  "limits": {
+    "costUsd": 3.1,
+    "wallClockMs": 1800000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 5242880
+  },
+  "budget": {
+    "totalUsd": 500,
+    "sunkUsd": 464.6424619
+  },
+  "execution": {
+    "backend": "local"
+  }
+}
