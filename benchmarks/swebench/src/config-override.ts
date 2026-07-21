@@ -11,7 +11,7 @@ export const SWEBENCH_TIER = "swebench";
 /** Model substitutions and advisor treatment for one explicit campaign arm. */
 export interface RenderModelsJsonOptions {
   /** Main coding model used for every benchmark prompt. */
-  executorModel: "glm-5.2" | "kimi-k3";
+  executorModel: "glm-5.2" | "kimi-k3" | "opus-4.8";
   /** Advisor retained in both pure and advised renders so OFF changes only availability. */
   advisorModel: "kimi-k3" | "fable-5";
   /** Model-specific advisor effort retained identically in the paired OFF and ON arms. */
@@ -45,6 +45,12 @@ export const CAMPAIGN_CONFIGS = {
     advisorThinkingLevel: "high",
     advisorEnabled: true,
   },
+  "opus-pure": {
+    executorModel: "opus-4.8",
+    advisorModel: "fable-5",
+    advisorThinkingLevel: "high",
+    advisorEnabled: false,
+  },
 } as const satisfies Record<string, RenderModelsJsonOptions>;
 
 export type CampaignConfigName = keyof typeof CAMPAIGN_CONFIGS;
@@ -72,7 +78,7 @@ export function renderModelsJson(options: RenderModelsJsonOptions): RoutingTable
             ...productRoute,
             target: { modelName: options.executorModel, thinkingLevel: "high" },
             // GLM is text-only. Keeping the same image-capable fallback in all
-            // four renders makes it policy, not another experimental variable.
+            // committed renders makes it policy, not another experimental variable.
             visionFallbackModelName: "kimi-k3",
           },
         },
@@ -98,7 +104,7 @@ export function renderModelsJson(options: RenderModelsJsonOptions): RoutingTable
   return table;
 }
 
-/** Materialize all four explicit routing files in deterministic name order. */
+/** Materialize every explicit routing file in deterministic name order. */
 export function renderCampaignConfigs(): Record<CampaignConfigName, RoutingTable> {
   return Object.fromEntries(
     CAMPAIGN_CONFIG_NAMES.map((name) => [name, renderModelsJson(CAMPAIGN_CONFIGS[name])]),

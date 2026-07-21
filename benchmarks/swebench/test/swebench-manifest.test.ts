@@ -152,6 +152,41 @@ describe("SWE-bench manifest", () => {
     ).toEqual(["fmtlib__fmt-1683", "fmtlib__fmt-2457", "fmtlib__fmt-3729"]);
   });
 
+  test("freezes a fresh fifty-task sample without reusing the prior manifest", async () => {
+    const manifest = JSON.parse(
+      await readFile(
+        join(import.meta.dir, "..", "manifests", "multilingual-50-fresh-20265471.json"),
+        "utf8",
+      ),
+    ) as ReturnType<typeof selectManifest>;
+    const priorManifest = JSON.parse(
+      await readFile(join(import.meta.dir, "..", "manifests", "multilingual-30.json"), "utf8"),
+    ) as ReturnType<typeof selectManifest>;
+    const priorInstanceIds = new Set(priorManifest.entries.map((entry) => entry.instanceId));
+
+    expect(manifest.seed).toBe(20_265_471);
+    expect(manifest.entries).toHaveLength(50);
+    expect(manifest.entries.filter((entry) => priorInstanceIds.has(entry.instanceId))).toEqual([]);
+    expect(
+      Object.fromEntries(
+        LANGUAGES.map((language) => [
+          language,
+          manifest.entries.filter((entry) => entry.language === language).length,
+        ]),
+      ),
+    ).toEqual({
+      C: 6,
+      "C++": 6,
+      Go: 6,
+      Java: 5,
+      JavaScript: 5,
+      TypeScript: 5,
+      PHP: 6,
+      Ruby: 5,
+      Rust: 6,
+    });
+  });
+
   test("commits a pilot subset that matches its recorded selection seed", async () => {
     const manifest = JSON.parse(
       await readFile(join(import.meta.dir, "..", "manifests", "multilingual-30.json"), "utf8"),
@@ -172,7 +207,7 @@ describe("SWE-bench manifest", () => {
 });
 
 describe("SWE-bench routing renders", () => {
-  test("materializes four valid custom-tier tables with explicit targets", () => {
+  test("materializes five valid custom-tier tables with explicit targets", () => {
     const renders = renderCampaignConfigs();
 
     expect(Object.keys(renders)).toEqual(Object.keys(CAMPAIGN_CONFIGS));
@@ -205,6 +240,14 @@ describe("SWE-bench routing renders", () => {
     expect(renders["kimi-pure"].tiers.swebench!.advisor.target).toEqual({
       modelName: "fable-5",
       thinkingLevel: "high",
+    });
+    expect(renders["opus-pure"].tiers.swebench!.routes.general!.target).toEqual({
+      modelName: "opus-4.8",
+      thinkingLevel: "high",
+    });
+    expect(renders["opus-pure"].tiers.swebench!.advisor).toMatchObject({
+      enabled: false,
+      target: { modelName: "fable-5", thinkingLevel: "high" },
     });
   });
 

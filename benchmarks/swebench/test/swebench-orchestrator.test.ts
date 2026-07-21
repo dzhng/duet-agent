@@ -24,15 +24,18 @@ import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "../src/prompt.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 describe("SWE-bench campaign resume planning", () => {
-  test("orders four arms deterministically inside each instance block", () => {
+  test("orders every configured arm deterministically inside each instance block", () => {
     const { campaign, runtime } = fixture();
     const first = planCampaign(campaign, runtime, [], false);
     const second = planCampaign(campaign, runtime, [], false);
+    const armCount = campaign.configs.length;
 
     expect(first).toEqual(second);
-    expect(first).toHaveLength(8);
-    expect(first.slice(0, 4).every((item) => item.entry.instanceId === "org__repo-1")).toBe(true);
-    expect(new Set(first.slice(0, 4).map((item) => item.config))).toEqual(
+    expect(first).toHaveLength(runtime.manifest.entries.length * armCount);
+    expect(first.slice(0, armCount).every((item) => item.entry.instanceId === "org__repo-1")).toBe(
+      true,
+    );
+    expect(new Set(first.slice(0, armCount).map((item) => item.config))).toEqual(
       new Set(Object.keys(CAMPAIGN_CONFIGS) as CampaignConfigName[]),
     );
   });
@@ -60,8 +63,9 @@ describe("SWE-bench campaign resume planning", () => {
     const { campaign, runtime } = fixture();
     const infra = fixtureAttempt(campaign, runtime, "org__repo-1", "glm-pure", "failed", 1);
     infra.status.failureKind = "infra";
-    expect(planCampaign(campaign, runtime, [infra], false)).toHaveLength(7);
-    expect(planCampaign(campaign, runtime, [infra], true)).toHaveLength(8);
+    const total = runtime.manifest.entries.length * campaign.configs.length;
+    expect(planCampaign(campaign, runtime, [infra], false)).toHaveLength(total - 1);
+    expect(planCampaign(campaign, runtime, [infra], true)).toHaveLength(total);
 
     runtime.configHashes["glm-pure"] = "changed";
     expect(() => planCampaign(campaign, runtime, [infra], true)).toThrow("specHash mismatch");
@@ -73,7 +77,7 @@ describe("SWE-bench campaign resume planning", () => {
 
     const selected = filterPlanForExecution(plan, ["org__repo-2"], runtime.manifest);
 
-    expect(selected).toHaveLength(4);
+    expect(selected).toHaveLength(campaign.configs.length);
     expect(selected.every((item) => item.entry.instanceId === "org__repo-2")).toBe(true);
     expect(() => filterPlanForExecution(plan, ["missing__repo-1"], runtime.manifest)).toThrow(
       "Execution selection is not in the manifest: missing__repo-1",
@@ -87,7 +91,7 @@ describe("SWE-bench campaign resume planning", () => {
 
     const selected = filterPlanForExecution(plan, ["org__repo-2"], runtime.manifest, [2]);
 
-    expect(selected).toHaveLength(4);
+    expect(selected).toHaveLength(campaign.configs.length);
     expect(selected.every((item) => item.entry.instanceId === "org__repo-2")).toBe(true);
     expect(selected.every((item) => item.trial === 2)).toBe(true);
   });

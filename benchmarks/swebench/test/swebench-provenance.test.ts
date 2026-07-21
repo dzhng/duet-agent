@@ -53,6 +53,7 @@ describe("SWE-bench campaign provenance", () => {
         "glm-kimi-advisor": configPath,
         "kimi-pure": configPath,
         "kimi-fable-advisor": configPath,
+        "opus-pure": configPath,
       },
       environmentLockPath: environmentPath,
       commands,

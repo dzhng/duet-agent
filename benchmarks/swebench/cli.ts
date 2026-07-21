@@ -63,17 +63,29 @@ async function buildDuetPackage(): Promise<void> {
   console.log(`Built ${artifact.localPath} (${artifact.sha256}).`);
 }
 
-async function writeManifest(): Promise<void> {
+async function writeManifest(args: string[]): Promise<void> {
+  const sizeValue = singleOptionValue(args, "--size");
+  const seedValue = singleOptionValue(args, "--seed");
+  const outputValue = singleOptionValue(args, "--output");
+  const size = sizeValue === undefined ? 30 : Number(sizeValue);
+  const seed = seedValue === undefined ? MANIFEST_SEED : Number(seedValue);
+  if (!Number.isSafeInteger(size) || size < LANGUAGES.length) {
+    throw new Error(`--size must be an integer of at least ${LANGUAGES.length}.`);
+  }
+  if (!Number.isSafeInteger(seed) || seed < 0 || seed > 0xffff_ffff) {
+    throw new Error("--seed must be an unsigned 32-bit integer.");
+  }
+  const outputPath = outputValue ? resolve(REPO_ROOT, outputValue) : MANIFEST_PATH;
   const snapshot = await fetchDataset({ expectedRevision: PINNED_DATASET_REVISION });
   const manifest = selectManifest(snapshot, {
-    seed: MANIFEST_SEED,
-    size: 30,
+    seed,
+    size,
     excludedInstanceIds: Object.keys(CAMPAIGN_GOLD_EXCLUSIONS),
   });
   await writeDatasetCache(CACHE_PATH, snapshot);
-  await mkdir(dirname(MANIFEST_PATH), { recursive: true });
-  await writeFile(MANIFEST_PATH, serializeManifest(manifest));
-  console.log(`Wrote ${manifest.entries.length} instances to ${MANIFEST_PATH}`);
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, serializeManifest(manifest));
+  console.log(`Wrote ${manifest.entries.length} instances to ${outputPath}`);
 }
 
 async function showManifest(): Promise<void> {
@@ -395,7 +407,7 @@ async function loadProviderEnv(): Promise<Record<string, string>> {
 }
 
 const [domain, action, ...rest] = process.argv.slice(2);
-if (domain === "manifest" && action === "update") await writeManifest();
+if (domain === "manifest" && action === "update") await writeManifest(rest);
 else if (domain === "manifest" && action === "show") await showManifest();
 else if (domain === "dataset" && action === "cache") await cacheDataset();
 else if (domain === "package" && action === "build") await buildDuetPackage();
@@ -409,7 +421,7 @@ else if (domain === "campaign" && action === "predictions") await writeCampaignP
 else if (domain === "campaign" && action === "report") await writeCampaignReport(rest);
 else {
   console.error(
-    "Usage: bun benchmarks/swebench/cli.ts <manifest update|manifest show|dataset cache|package build|config write|config show|rollout local --prompt TEXT|rollout smoke (--instance ID|--all-languages)|campaign run [--instance ID] [--trial N] [--environment-lock PATH]|status|predictions|report --spec PATH>",
+    "Usage: bun benchmarks/swebench/cli.ts <manifest update [--size N] [--seed N] [--output PATH]|manifest show|dataset cache|package build|config write|config show|rollout local --prompt TEXT|rollout smoke (--instance ID|--all-languages)|campaign run [--instance ID] [--trial N] [--environment-lock PATH]|status|predictions|report --spec PATH>",
   );
   process.exitCode = 1;
 }
