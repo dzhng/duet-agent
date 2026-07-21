@@ -2267,9 +2267,43 @@ the number of rollouts or the independently enforced model-spend bound.
   no cleanup side effects; the first campaign supplied direct failure evidence
   on both sides of the model-command boundary.
 
+### S78 — Reference evidence cannot expand the requested contract
+
+- **When:** the first officially scored pair in the final v5 campaign resolved
+  with pure GLM but failed with GLM plus Kimi on Caddy's cookie-log issue.
+- **The choice:** The advisor first identifies the user's narrow requested
+  behavior and the repository's existing passing contracts, then prefers the
+  smallest sufficient change. A newer or broader upstream implementation is
+  evidence about possible solutions, not a list of changes to copy. It must be
+  matched to the checkout's version and reduced to the relevant behavior. If an
+  executor changes an existing passing test expectation, the advisor treats
+  that as a likely regression unless separate task or history evidence proves
+  the old behavior must change. Compacted observations count as evidence that a
+  reference lookup happened, so normal context compaction does not force the
+  executor to repeat a lookup whose literal tool result aged out.
+- **The gap:** Earlier policy demanded authoritative reference evidence but did
+  not say that current upstream can contain later, unrelated behavior. In the
+  failing trace, that made a cookie-only issue grow from a 65-line historical
+  fix into a 625-line multi-filter refactor. The executor changed QueryFilter's
+  hash result and its test simply because current upstream did; Kimi approved,
+  while the official untouched test rejected exactly that change.
+- **The reach:** Orientation and final-review consultations keep their normal
+  timing, and reference research remains required for nontrivial work. The new
+  rule applies to every repository and version, not only SWE-bench: an advisor
+  can use newer code to learn, but cannot silently turn a local bug fix into a
+  compatibility change. The Mac diagnostic reserves an extra `$1` in its sunk
+  ledger for the live prompt-eval calls because provider billing is shared and
+  cannot attribute them more precisely.
+- **Verdict:** **sound.** It restores the ordinary meaning of task scope and
+  passing tests without weakening evidence gathering or special-casing the
+  benchmark.
+- **Confidence:** **high.** The exact old prompt reproduced the erroneous Kimi
+  approval in a live eval; the corrected prompt rejected it and preserved the
+  focused orientation path.
+
 ## Compressed trivial discretion
 
-Six cosmetic or local choices were not expanded into separate entries: helper
+Eight cosmetic or local choices were not expanded into separate entries: helper
 names, test fixture names, where individual tests sit within existing files,
 the exact dummy credential strings, comment wording, and formatter-driven line
 wrapping. None changes a public contract or constrains later architecture.

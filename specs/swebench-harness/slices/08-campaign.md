@@ -202,6 +202,21 @@ setup and recovery requests. Persist the model-command stage, release reserves
 only for proven pre-command failures, and never automatically replay ambiguous
 model work.
 
+Official scoring then found a pure-only result in its first pair and stopped:
+pure GLM resolved `caddyserver__caddy-4943`, while GLM plus Kimi did not. The
+enabled trace ported current upstream's broad array-filter refactor and changed
+an unrelated existing QueryFilter expectation; the scorer's untouched test
+caught that contract regression. The first consultation had no compaction and
+already widened the task, and the second explicitly approved the expectation
+change, so do not tune context or lifecycle for this failure. Correct general
+advisor scope policy instead: version-match reference evidence, isolate the
+requested behavior, prefer the smallest sufficient change, and presume an
+edited passing expectation is a regression until independent task evidence
+proves otherwise. The live Kimi review eval must be red with the old policy and
+green with the correction, then the advisor arm must resolve under the fresh
+Mac-only `advisor-scope-regression-glm-mac-20260721-v1` namespace before broader
+generation resumes.
+
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution
 change invalidates the current diagnostic namespace and requires a new id.

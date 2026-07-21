@@ -144,6 +144,21 @@ retries the campaign model command. Worker records persist whether that
 non-idempotent boundary was reached, so a proven pre-command failure releases
 its reservation while an ambiguous or post-command failure remains held.
 
+Official scoring stopped after the first complete pair exposed a new pure-only
+regression on `caddyserver__caddy-4943`: pure GLM resolved with the repository's
+65-line historical cookie fix, while GLM plus Kimi failed after a 625-line port
+from current upstream changed unrelated QueryFilter semantics and edited its
+existing passing expectation. The first uncompacted consultation widened the
+task; a later consultation explicitly approved the changed expectation, so this
+is advisor scope policy rather than a hard-window omission. The product review
+prompt now treats references as version-matched evidence rather than change
+lists, prefers the smallest sufficient change, and treats changed passing
+expectations as suspected regressions. A live Kimi eval is red under the old
+prompt and green under the corrected prompt at both orientation and completion.
+The next pickup is the committed Mac-only
+`advisor-scope-regression-glm-mac-20260721-v1` rerun, followed by official
+scoring. Do not resume broader generation until that exact arm resolves.
+
 Local constraints to prove rather than assume:
 
 - The Mac-local path remains the scorer and fallback execution path. Its Docker

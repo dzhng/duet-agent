@@ -226,6 +226,204 @@ class AdvisorReviewEvalRunner extends TurnRunner {
     );
   }
 
+  seedBroadReferenceRefactor(): void {
+    // This is the compact decision surface from the real Caddy regression: current upstream made
+    // a broad refactor look authoritative even though it changed a passing adjacent contract.
+    this.requireParentAgent().state.messages.push(
+      {
+        role: "user",
+        content: dedent`
+          Fix the Caddy cookie log filter so request>headers>Cookie can replace one named cookie
+          while leaving the other cookies visible.
+        `,
+        timestamp: 1,
+      },
+      assistant([
+        {
+          type: "thinking",
+          thinking:
+            "The cookie field is encoded as an array while CookieFilter reads Field.String. I should inspect the encoder and filter before choosing a fix.",
+        },
+        {
+          type: "toolCall",
+          id: "inspect-cookie",
+          name: "bash",
+          arguments: {
+            command:
+              "sed -n '1,180p' modules/logging/filterencoder.go && sed -n '430,510p' modules/logging/filters.go",
+          },
+        },
+      ]),
+      toolResult(
+        "inspect-cookie",
+        "bash",
+        dedent`
+          LoggableHTTPHeader emits each header with AddArray.
+          CookieFilter constructs a request from []string{in.String}, then writes in.String.
+          A zap array field stores its marshaler in Interface and leaves String empty.
+        `,
+        3,
+      ),
+      assistant([
+        {
+          type: "toolCall",
+          id: "advisor-orientation-caddy",
+          name: "ask_advisor",
+          arguments: {},
+        },
+      ]),
+      toolResult(
+        "advisor-orientation-caddy",
+        "ask_advisor",
+        dedent`
+          The diagnosis is correct. Check the authoritative upstream Caddy fix before committing
+          to a local array wrapper, then test the complete encode path and adjacent array filters.
+        `,
+        4,
+      ),
+      assistant([
+        {
+          type: "toolCall",
+          id: "upstream-caddy",
+          name: "bash",
+          arguments: {
+            command:
+              "git clone https://github.com/caddyserver/caddy /tmp/caddy-up && diff upstream filter implementations",
+          },
+        },
+      ]),
+      toolResult(
+        "upstream-caddy",
+        "bash",
+        dedent`
+          Current upstream moves LoggableHTTPHeader and LoggableStringArray into
+          internal/logmarshalers.go, aliases them from caddyhttp, and teaches HashFilter,
+          IPMaskFilter, QueryFilter, CookieFilter, and RegexpFilter to transform arrays.
+          Upstream QueryFilter also hashes each actual value rather than the configured empty
+          replacement value.
+        `,
+        5,
+      ),
+      assistant([
+        {
+          type: "toolCall",
+          id: "edit-caddy",
+          name: "edit",
+          arguments: {
+            path: "modules/logging/filters.go",
+            oldText: "scalar-only filters",
+            newText: "upstream array-aware implementations for five filters",
+          },
+        },
+      ]),
+      toolResult(
+        "edit-caddy",
+        "edit",
+        dedent`
+          Added internal/logmarshalers.go and changed four files: 332 insertions, 59 deletions.
+          Besides CookieFilter, HashFilter, IPMaskFilter, QueryFilter, and RegexpFilter now have
+          array behavior. modules/logging/filters_test.go gained 242 lines.
+
+          The current checkout's QueryFilter assertion was updated to the current upstream value:
+          - expect query hash e3b0c442
+          + expect query hash 1a06df82
+        `,
+        6,
+      ),
+      assistant([
+        {
+          type: "toolCall",
+          id: "verify-caddy",
+          name: "bash",
+          arguments: {
+            command:
+              "gofmt -w . && go test ./modules/logging ./modules/caddyhttp ./internal/... && go vet ./...",
+          },
+        },
+      ]),
+      toolResult(
+        "verify-caddy",
+        "bash",
+        dedent`
+          All affected tests pass, including the edited QueryFilter expectation and new tests for
+          request/response headers, multi-value cookies, non-string arrays, delete, hash, query,
+          regexp, and IP masks. go vet is clean. The changed filter functions match current
+          upstream apart from unrelated newer language-version features.
+        `,
+        7,
+      ),
+      assistant([
+        {
+          type: "text",
+          text: dedent`
+            The upstream-aligned implementation fixes the reported cookie case and every test is
+            green. I am ready to call the broader authoritative fix complete.
+          `,
+        },
+        { type: "toolCall", id: "advisor-complete-caddy", name: "ask_advisor", arguments: {} },
+      ]),
+    );
+  }
+
+  seedCookieFilterOrientation(): void {
+    // The original uncompacted orientation review widened a cookie-only bug to every array filter.
+    // Keep the ambiguity between a focused and generic fix so scope policy, not fixture wording,
+    // must make the reference lookup version-matched and task-shaped.
+    this.requireParentAgent().state.messages.push(
+      {
+        role: "user",
+        content: dedent`
+          Fix the Caddy cookie log filter so request>headers>Cookie can replace one named cookie
+          while leaving the other cookies visible.
+        `,
+        timestamp: 1,
+      },
+      assistant([
+        {
+          type: "thinking",
+          thinking:
+            "The cookie field is encoded as an array while CookieFilter reads Field.String. I should inspect the local implementation before choosing a fix.",
+        },
+        {
+          type: "toolCall",
+          id: "inspect-cookie-orientation",
+          name: "bash",
+          arguments: {
+            command:
+              "sed -n '1,180p' modules/logging/filterencoder.go && sed -n '430,510p' modules/logging/filters.go && git log --oneline -8 -- modules/logging/filters.go",
+          },
+        },
+      ]),
+      toolResult(
+        "inspect-cookie-orientation",
+        "bash",
+        dedent`
+          LoggableHTTPHeader emits each header with AddArray.
+          CookieFilter constructs a request from []string{in.String}, then writes in.String.
+          A zap array field stores its marshaler in Interface and leaves String empty.
+
+          Recent local history:
+          7f6a328b current checkout
+          4c20f77a unrelated logging cleanup
+          e6c64342 add cookie filter
+        `,
+        3,
+      ),
+      assistant([
+        {
+          type: "text",
+          text: "The diagnosis reproduces locally. I want strategic review before choosing between a focused cookie fix and a generic array-filter refactor.",
+        },
+        {
+          type: "toolCall",
+          id: "advisor-orientation-cookie-scope",
+          name: "ask_advisor",
+          arguments: {},
+        },
+      ]),
+    );
+  }
+
   advisorTool() {
     return this.requireParentAgent().state.tools.find((tool) => tool.name === "ask_advisor");
   }
@@ -236,27 +434,7 @@ describe("advisor completion review", () => {
     "challenges a locally green narrow fix with authoritative and adjacent-contract checks",
     async () => {
       const cwd = await mkdtemp(join(tmpdir(), "duet-advisor-review-eval-"));
-      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-      table.defaultTier = "advisor-review-eval";
-      table.tiers = {
-        "advisor-review-eval": {
-          routes: {
-            general: {
-              description: "Advisor completion-review evaluation.",
-              target: { modelName: model, thinkingLevel: "medium" },
-            },
-          },
-          advisor: {
-            enabled: true,
-            target: { modelName: model, thinkingLevel: advisorThinking },
-            minStepsBetween: 1,
-          },
-        },
-      };
-      await mkdir(join(cwd, ".duet"));
-      await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
-
-      const runner = new AdvisorReviewEvalRunner(cwd);
+      const runner = await createAdvisorReviewEvalRunner(cwd);
       const systemEvents: TurnEvent[] = [];
       runner.subscribe((event) => {
         if (event.type === "system") systemEvents.push(event);
@@ -304,27 +482,7 @@ describe("advisor completion review", () => {
     "ends review of a fully verified exact edit without manufacturing another check",
     async () => {
       const cwd = await mkdtemp(join(tmpdir(), "duet-advisor-approval-eval-"));
-      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-      table.defaultTier = "advisor-review-eval";
-      table.tiers = {
-        "advisor-review-eval": {
-          routes: {
-            general: {
-              description: "Advisor completion-review evaluation.",
-              target: { modelName: model, thinkingLevel: "medium" },
-            },
-          },
-          advisor: {
-            enabled: true,
-            target: { modelName: model, thinkingLevel: advisorThinking },
-            minStepsBetween: 1,
-          },
-        },
-      };
-      await mkdir(join(cwd, ".duet"));
-      await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
-
-      const runner = new AdvisorReviewEvalRunner(cwd);
+      const runner = await createAdvisorReviewEvalRunner(cwd);
       try {
         await runner.start({ type: "start", mode: "agent" });
         runner.seedVerifiedExactEdit();
@@ -348,7 +506,97 @@ describe("advisor completion review", () => {
     },
     120_000,
   );
+
+  testIfDocker(
+    "rejects a broad reference refactor that changes an unrelated existing contract",
+    async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "duet-advisor-scope-eval-"));
+      const runner = await createAdvisorReviewEvalRunner(cwd);
+      try {
+        await runner.start({ type: "start", mode: "agent" });
+        runner.seedBroadReferenceRefactor();
+        const advisor = runner.advisorTool();
+        if (!advisor) throw new Error("Expected ask_advisor tool");
+
+        const result = await advisor.execute("advisor-complete-caddy", {});
+        const advice = result.content
+          .filter((content) => content.type === "text")
+          .map((content) => content.text)
+          .join("\n");
+        console.log(
+          JSON.stringify({ model, advisorThinking, advice, details: result.details }, null, 2),
+        );
+
+        expect(advice).toMatch(/not ready|do not approve|not approve|too broad|out of scope/i);
+        expect(advice).toMatch(
+          /existing (?:test|expectation|contract)|unrelated (?:query|behavior|change)|e3b0c442|1a06df82/i,
+        );
+      } finally {
+        await runner.dispose();
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+    120_000,
+  );
+
+  testIfDocker(
+    "keeps reference research matched to the requested behavior and repository version",
+    async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "duet-advisor-orientation-scope-eval-"));
+      const runner = await createAdvisorReviewEvalRunner(cwd);
+      try {
+        await runner.start({ type: "start", mode: "agent" });
+        runner.seedCookieFilterOrientation();
+        const advisor = runner.advisorTool();
+        if (!advisor) throw new Error("Expected ask_advisor tool");
+
+        const result = await advisor.execute("advisor-orientation-cookie-scope", {});
+        const advice = result.content
+          .filter((content) => content.type === "text")
+          .map((content) => content.text)
+          .join("\n");
+        console.log(
+          JSON.stringify({ model, advisorThinking, advice, details: result.details }, null, 2),
+        );
+
+        expect(advice).toMatch(
+          /git history|repository history|matching version|exact version|(?:module|repo(?:sitory)?|checkout).{0,20}version|tag/i,
+        );
+        expect(advice).toMatch(/smallest|focused|minimal|cookiefilter|cookie filter/i);
+        expect(advice).toMatch(
+          /preserv|unrelated|scope creep|do not (?:port|change|expand)|avoid (?:porting|changing)/i,
+        );
+      } finally {
+        await runner.dispose();
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+    120_000,
+  );
 });
+
+async function createAdvisorReviewEvalRunner(cwd: string): Promise<AdvisorReviewEvalRunner> {
+  const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+  table.defaultTier = "advisor-review-eval";
+  table.tiers = {
+    "advisor-review-eval": {
+      routes: {
+        general: {
+          description: "Advisor review evaluation.",
+          target: { modelName: model, thinkingLevel: "medium" },
+        },
+      },
+      advisor: {
+        enabled: true,
+        target: { modelName: model, thinkingLevel: advisorThinking },
+        minStepsBetween: 1,
+      },
+    },
+  };
+  await mkdir(join(cwd, ".duet"));
+  await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+  return new AdvisorReviewEvalRunner(cwd);
+}
 
 function parseThinkingLevel(value: string): ThinkingLevel {
   if (["minimal", "low", "medium", "high", "xhigh"].includes(value)) {
