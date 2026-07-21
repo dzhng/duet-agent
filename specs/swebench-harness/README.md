@@ -181,6 +181,13 @@ each completed instance block, and stop immediately on any pure-only result.
 Only after all eight exact costs return may another predeclared seeded block be
 admitted; never weaken the rollout ceiling to buy a larger nominal sample.
 
+The core is now officially scored: all four arms resolved both Laravel and
+Lombok. It cost exactly `$13.3802222`, reconciling conservative campaign spend
+to `$481.3182902`. The remaining `$18.6817098` admits one final complete block,
+`multilingual-four-arm-mac-20260721-v8-expansion`, on the next predeclared
+seeded task, Prometheus 10633. No fourth task fits four unchanged `$3.10`
+reservations under the hard cap.
+
 Local constraints to prove rather than assume:
 
 - The Mac-local path is both generator and scorer for the remaining campaign.

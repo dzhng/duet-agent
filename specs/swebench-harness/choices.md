@@ -2347,11 +2347,19 @@ the number of rollouts or the independently enforced model-spend bound.
   engineering evidence, not rows silently pooled into the core estimate.
   Budget-only expansion may add disjoint fresh rows because its admission does
   not depend on their outcomes.
-- **Verdict:** **sound under the hard budget; generation pending.** It maximizes
-  guaranteed complete paired blocks without changing models, prompt, policy,
-  limits, or scoring.
+- **Verdict:** **sound under the hard budget; paid-confirmed and expanded.** All
+  eight core predictions officially resolved, so each comparison recorded two
+  both-resolve outcomes and zero pure-only outcomes. Exact core spend was
+  `$13.3802222`, reconciling the conservative ledger to `$481.3182902`. One
+  further four-arm block for the next predeclared seed row, Prometheus 10633,
+  retains the same models, prompt, limits, and scorer while reserving `$12.40`.
+  The first v7 launch was rejected before paid work because its manifest
+  incorrectly used the whole-prefix seed assertion; after correcting the
+  explicit disjoint row, immutable provenance required the fresh v8 id. A
+  fourth task cannot retain four full `$3.10` reservations under `$500`.
 - **Confidence:** **high** in the accounting and pairing guarantee; **low** in
-  the statistical precision of two tasks, which the report must state plainly.
+  the statistical precision of the small sample, which the report must state
+  plainly.
 
 ## Compressed trivial discretion
 
