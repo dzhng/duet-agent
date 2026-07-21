@@ -4,6 +4,7 @@ import {
   type RoutingTable,
 } from "../../../src/model-routing/table.js";
 import { routingCatalogAdapter } from "../../../src/model-resolution/resolver.js";
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
 
 export const SWEBENCH_TIER = "swebench";
 
@@ -13,6 +14,8 @@ export interface RenderModelsJsonOptions {
   executorModel: "glm-5.2" | "kimi-k3";
   /** Advisor retained in both pure and advised renders so OFF changes only availability. */
   advisorModel: "kimi-k3" | "fable-5";
+  /** Model-specific advisor effort retained identically in the paired OFF and ON arms. */
+  advisorThinkingLevel: ThinkingLevel;
   /** Exposes or removes the advisor tool without changing its target or policy. */
   advisorEnabled: boolean;
 }
@@ -21,21 +24,25 @@ export const CAMPAIGN_CONFIGS = {
   "glm-pure": {
     executorModel: "glm-5.2",
     advisorModel: "kimi-k3",
+    advisorThinkingLevel: "medium",
     advisorEnabled: false,
   },
   "glm-kimi-advisor": {
     executorModel: "glm-5.2",
     advisorModel: "kimi-k3",
+    advisorThinkingLevel: "medium",
     advisorEnabled: true,
   },
   "kimi-pure": {
     executorModel: "kimi-k3",
     advisorModel: "fable-5",
+    advisorThinkingLevel: "high",
     advisorEnabled: false,
   },
   "kimi-fable-advisor": {
     executorModel: "kimi-k3",
     advisorModel: "fable-5",
+    advisorThinkingLevel: "high",
     advisorEnabled: true,
   },
 } as const satisfies Record<string, RenderModelsJsonOptions>;
@@ -74,7 +81,7 @@ export function renderModelsJson(options: RenderModelsJsonOptions): RoutingTable
           enabled: options.advisorEnabled,
           target: {
             modelName: options.advisorModel,
-            thinkingLevel: productAdvisor.target.thinkingLevel,
+            thinkingLevel: options.advisorThinkingLevel,
           },
         },
       },

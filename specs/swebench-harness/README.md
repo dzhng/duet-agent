@@ -55,12 +55,16 @@ thresholds are superseded by measured evidence. Optimization is now reopened
 against that exact quality baseline. The next candidate keeps the 32k observer
 trigger and latest-complete-tool override, projects only model-visible message
 fields (not timestamps, provider ids, accounting, diagnostics, or opaque replay
-signatures), reduces the ordinary recent raw tail to 8k, and lowers advisor
-reasoning from high to medium after the live narrow-fix eval passed at medium.
-It is not frozen until all 15 advised cases resolve again and measured total
-advisor-plus-observer tokens improve.
+signatures), and reduces the ordinary recent raw tail to 8k. Its first paid run
+lowered both advisors from high to medium, but scored only 14/15: one Fable run
+conditionally approved a hand-designed Docusaurus regex instead of driving the
+executor to the authoritative upstream fix. Exact advisor tokens fell 18.7% to
+595,251, but advisor-plus-observer tokens rose 2.3% to 1,578,537. That candidate
+is rejected on both gates. The next candidate keeps the representation savings,
+uses medium effort for Kimi, and restores high effort for Fable. It is not frozen
+until all 15 advised cases resolve and total advisor-plus-observer tokens improve.
 
-Next, run fresh advisor-only known-case campaign ids for this candidate, then
+Next, run the fresh v3 advisor-only known-case campaign ids, then
 create fresh diversity campaign ids only if it preserves 15/15. Any pure-only
 result still stops immediately for exact-trace diagnosis. The stopped
 `advisor-nonregression-expansion-*-20260721-v1` namespaces predate the policy

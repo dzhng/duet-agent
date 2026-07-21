@@ -2066,26 +2066,33 @@ the number of rollouts or the independently enforced model-spend bound.
   visible text/reasoning, tool calls, complete tool-result content and error
   state. Remove local timestamps, provider/model identity, usage/cost objects,
   diagnostics, tool-result UI details, and opaque provider replay signatures.
-  Lower the built-in advisor effort from high to medium; the adversarial
-  narrow-fix live eval passed at both levels. Low also challenged the fix but
-  remains outside this conservative first candidate until broader evidence can
-  justify the additional reduction. Confirm the combined candidate by rerunning only the
-  15 advised known cases and comparing them with the immutable pure baseline.
+  Test medium advisor effort as a separate optimization; the adversarial
+  narrow-fix live eval passed at both medium and high. Confirm the combined
+  candidate by rerunning only the 15 advised known cases and comparing them with
+  the immutable pure baseline. The paid run falsified a uniform reduction:
+  Fable at medium conditionally approved a hand-designed regex in one of five
+  Docusaurus 8927 trials, while the high-effort baseline drove the executor to
+  the authoritative upstream fix. Keep Kimi at medium, where all five known
+  trials remained resolved, and restore Fable to high.
 - **The gap:** Lowering the 32k trigger would cause more observer calls and can
   spend more total tokens than it saves. The earlier serializer also called
   runtime bookkeeping “wire-faithful” even though the executor provider never
-  exposes those fields to the model. High reasoning was inherited without a
-  measured advisor-quality reason.
+  exposes those fields to the model. The paid failure now supplies a measured
+  quality reason for Fable's high effort; it does not justify discarding the
+  independent serialization and raw-tail savings.
 - **The reach:** The advisor keeps all decision evidence and exact tool
   definitions/results while paying for less irrelevant JSON, less redundant
   recent history after observation, and less private deliberation. Benchmark
-  configs still change only executor/advisor model identity and advisor
-  availability; effort continues to inherit the normal product definition.
-- **Verdict:** **provisional.** Deterministic fidelity tests and live marker
-  recovery pass, and medium effort catches the known narrow-fix trap. Freeze
-  only after official scoring preserves 15/15 advised resolves and telemetry
-  shows a total-token improvement over `4aa8791`.
-- **Confidence:** **medium** until the paid known-case confirmation completes.
+  configs explicitly retain the same model-specific effort in each pure/advised
+  pair, so advisor availability remains the pair's only treatment difference.
+- **Verdict:** **partially falsified, revised candidate pending.** The
+  uniform-medium v2 run scored 14/15. Exact advisor tokens improved 18.7%
+  (731,889 to 595,251), but combined advisor-plus-observer tokens worsened 2.3%
+  (1,543,369 to 1,578,537). Reject v2. Freeze the 8k/model-visible policy only
+  after the model-specific-effort v3 run restores 15/15 and beats the combined
+  token baseline.
+- **Confidence:** **high** that uniform medium is unsafe for Fable; **medium**
+  until the v3 paid known-case confirmation completes.
 
 ## Compressed trivial discretion
 

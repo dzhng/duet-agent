@@ -204,7 +204,7 @@ describe("SWE-bench routing renders", () => {
     });
     expect(renders["kimi-pure"].tiers.swebench!.advisor.target).toEqual({
       modelName: "fable-5",
-      thinkingLevel: "medium",
+      thinkingLevel: "high",
     });
   });
 

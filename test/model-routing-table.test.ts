@@ -76,7 +76,7 @@ describe("built-in model routing table", () => {
 
     expect(table.tiers.frontier.advisor).toEqual({
       enabled: true,
-      target: { modelName: "fable-5", thinkingLevel: "medium" },
+      target: { modelName: "fable-5", thinkingLevel: "high" },
       minStepsBetween: 5,
     });
     expect(table.tiers.balanced.advisor).toEqual(table.tiers.frontier.advisor);

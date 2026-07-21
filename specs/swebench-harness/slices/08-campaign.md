@@ -80,10 +80,14 @@ No full campaign starts until all of these are true:
    recent-result fidelity, and token accounting. The first 32k/16k baseline then
    preserved 15/15 advisor resolves across the paid known-case gate while
    cutting total exact advisor tokens by 55.6%. A second candidate retains the
-   32k observation trigger but removes runtime-only message metadata, keeps an
-   8k ordinary raw tail, and uses medium advisor reasoning. The latest complete
-   tool interaction still overrides the soft tail. Freeze it only if the same
-   15 advised cases all resolve and advisor-plus-observer tokens improve.
+   32k observation trigger but removes runtime-only message metadata and keeps
+   an 8k ordinary raw tail. The latest complete tool interaction still overrides
+   the soft tail. A uniform-medium paid candidate scored 14/15 and increased
+   advisor-plus-observer tokens by 2.3%, so it is rejected. The next candidate
+   keeps Kimi at medium but restores Fable to high after the failed trace showed
+   medium conditionally approving a hand-designed regex instead of the exact
+   upstream fix. Freeze only if the same 15 advised cases all resolve and
+   advisor-plus-observer tokens improve.
 2. **Product lifecycle (implemented):** the benchmark contains no advisor call
    schedule. The shipped product owns orientation and completion-review
    consultations for substantive work. Deterministic tests cover both phases,
@@ -125,9 +129,14 @@ No full campaign starts until all of these are true:
    from the earlier baseline. Normal observer work added $0.89; advisor plus
    observer still cost 43.6% less than the old advisor calls alone. The policy
    compacted 1,129 messages with zero unrepresented omissions. This is the
-   fallback baseline while the model-visible/8k/medium candidate runs under new
-   advisor-only diagnostic ids; frozen pure results remain the comparison and
-   are not paid for again.
+   fallback baseline. The model-visible/8k/uniform-medium v2 candidate reduced
+   exact advisor tokens from 731,889 to 595,251, but scored 14/15 and increased
+   combined advisor-plus-observer tokens from 1,543,369 to 1,578,537. Its single
+   unresolved Docusaurus 8927 trace hand-designed an incomplete regex despite
+   three successful consultations; the high-effort baseline found and applied
+   the authoritative upstream patch. Reject v2 and rerun all 15 advised cases
+   under fresh v3 ids with model-specific effort: Kimi medium, Fable high.
+   Frozen pure results remain the comparison and are not paid for again.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails
