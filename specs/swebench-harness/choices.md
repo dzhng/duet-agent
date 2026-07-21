@@ -2147,8 +2147,10 @@ the number of rollouts or the independently enforced model-spend bound.
   test proves the early first consultation re-arms exactly once, and a live eval
   was red when a fully verified edit manufactured commit/stash work and green
   when approval ended without further review.
-- **Confidence:** **high** in the isolated lifecycle and prompt behavior;
-  **medium** in SWE-bench quality/token balance until the fresh v5 repeats score.
+- **Confidence:** **high.** The fresh v5 focused gate officially resolved all
+  five Docusaurus 8927 trials with 2–3 advisor calls each. Advisor plus observer
+  usage was 402,590 tokens, 12.1% below the same five-case v3 subset, with no
+  cost-cap interruptions. The full 15-case gate remains the broader check.
 
 ## Compressed trivial discretion
 

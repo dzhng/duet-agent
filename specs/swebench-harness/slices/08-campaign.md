@@ -147,7 +147,11 @@ No full campaign starts until all of these are true:
    completion checkpoint was issued before any successful consultation, and allow complete
    evidence to receive an unconditional approval. Rerun the five 8927 cases
    under a fresh id and expand to all 15 only after 5/5. Frozen pure results
-   remain the comparison and are not paid for again.
+   remain the comparison and are not paid for again. The fresh v5 focus gate
+   passed 5/5 official resolves with 11 total advisor calls, no cost-cap
+   interruptions, and 402,590 combined advisor-plus-observer tokens—12.1%
+   below the same five-case v3 subset. Expand this exact policy to all 15 known
+   cases under the v6 namespaces before attempting another optimization.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails
@@ -161,6 +165,12 @@ No full campaign starts until all of these are true:
    reserve unknown interrupted attempts at their full cap, then recompute one
    uniform v5 rollout ceiling. The frozen worst-case projection must remain
    within $500 before launching any of v5's 120 rollouts.
+
+The v5 focus gate recorded `$5.871627` of accepted generation. Conservatively
+reserve another `$3.10` for its initial E2B connection failure because no remote
+archive survived to prove that generation had not started. Cumulative sunk is
+therefore `$439.2249`. The v6 GLM gate reserves five more `$3.10` arms and the
+v6 Kimi gate starts at `$454.7249`; all 15 v6 arms are bounded at `$485.7249`.
 
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution

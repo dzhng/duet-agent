@@ -74,13 +74,16 @@ the cost cap, and a fifth interrupted archive was lost. The traces showed a
 recursive loop: an approving advisor was required to invent one residual risk,
 the executor ran that check, and the check mandated another review. The revised
 product policy allows one automatic re-arm only when the original completion
-checkpoint was issued before any successful consultation. An advisor that has enough
-evidence may now approve without manufacturing more work. This candidate is not
-frozen until it restores 5/5, then 15/15, and beats the combined token baseline.
+checkpoint was issued before any successful consultation. An advisor that has
+enough evidence may now approve without manufacturing more work. Its fresh v5
+focused gate officially resolved all five Docusaurus 8927 trials. It used 11
+advisor calls total (2.2 per run), incurred no cost-cap interruptions, and
+consumed 402,590 advisor-plus-observer tokens—12.1% below the same five-case v3
+subset. The candidate now advances to the complete 15-case gate.
 
-Next, rerun the five Docusaurus 8927 cases under a fresh campaign id, expand to
-the full 15 known cases only if all five resolve, and create fresh diversity
-campaign ids only if the full gate preserves 15/15. Any pure-only
+Next, run all 15 known advisor cases under the fresh v6 GLM and Kimi campaign
+ids, and create fresh diversity campaign ids only if the full gate preserves
+15/15 while beating the 1,543,369-token combined baseline. Any pure-only
 result still stops immediately for exact-trace diagnosis. The stopped
 `advisor-nonregression-expansion-*-20260721-v1` namespaces predate the policy
 change, have no completed pairs, and must never be resumed or scored. The stopped v3 workers
@@ -91,10 +94,10 @@ recovered, so never resume or score that namespace. Last updated 2026-07-21.
 The stopped focused lifecycle gate is
 `advisor-token-efficiency-kimi-20260721-v4`. Four recovered runs cost
 `$10.2426636`; reserve `$3.28` for the interrupted archive and `$2.00` for the
-live prompt falsification/confirmation calls. The fresh v5 gate therefore starts
-from a conservative `$430.2533` sunk reserve. Five new `$3.10` rollouts bound it
-at `$445.7533`; a later full 15-case gate still fits at `$492.2533` before any
-additional retry reserve.
+live prompt falsification/confirmation calls. The completed v5 focus gate cost
+`$5.871627`; reserve one additional `$3.10` cap for its archive-less initial E2B
+connection failure. The fresh v6 full gate therefore starts from a conservative
+`$439.2249` sunk reserve and all 15 `$3.10` rollouts are bounded at `$485.7249`.
 
 Local constraints to prove rather than assume:
 
