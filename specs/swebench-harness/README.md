@@ -67,11 +67,16 @@ only 14/15. The failed trace exposed a lifecycle defect: a completion checkpoint
 fired after diagnosis but before editing, Fable correctly rejected the
 unimplemented hand-designed regex, and later tool work permanently consumed the
 one-shot checkpoint. Fable therefore never saw the final diff containing the
-exact boundary regressions it had warned about. The product lifecycle now
-re-arms a spent completion checkpoint only when a non-advisor tool produces new
-work or evidence. An ignored reminder without new work remains spent, preventing
-reminder loops. This revised candidate is not frozen until it restores 15/15 and
-re-measures the token cost of evidence-backed final reviews.
+exact boundary regressions it had warned about. The first focused correction
+re-armed a spent completion checkpoint after every later non-advisor tool. That
+restored final review, but four recovered runs used 3–7 Fable calls; two exceeded
+the cost cap, and a fifth interrupted archive was lost. The traces showed a
+recursive loop: an approving advisor was required to invent one residual risk,
+the executor ran that check, and the check mandated another review. The revised
+product policy allows one automatic re-arm only when the original completion
+checkpoint was issued before any successful consultation. An advisor that has enough
+evidence may now approve without manufacturing more work. This candidate is not
+frozen until it restores 5/5, then 15/15, and beats the combined token baseline.
 
 Next, rerun the five Docusaurus 8927 cases under a fresh campaign id, expand to
 the full 15 known cases only if all five resolve, and create fresh diversity
@@ -83,11 +88,13 @@ finalized 15/30 rollouts for `$12.6315597`; reserve up to `$21.9315597`
 including the three interrupted arms. Their remote artifacts were not
 recovered, so never resume or score that namespace. Last updated 2026-07-21.
 
-The focused lifecycle gate is
-`advisor-token-efficiency-kimi-20260721-v4`. Its conservative `$414.7306` sunk
-reserve includes the accepted v3 telemetry plus `$6.20` for two E2B attempts
-whose archives were lost after generation may have started. Five new `$3.10`
-rollouts bound the focused gate at `$430.2306`.
+The stopped focused lifecycle gate is
+`advisor-token-efficiency-kimi-20260721-v4`. Four recovered runs cost
+`$10.2426636`; reserve `$3.28` for the interrupted archive and `$2.00` for the
+live prompt falsification/confirmation calls. The fresh v5 gate therefore starts
+from a conservative `$430.2533` sunk reserve. Five new `$3.10` rollouts bound it
+at `$445.7533`; a later full 15-case gate still fits at `$492.2533` before any
+additional retry reserve.
 
 Local constraints to prove rather than assume:
 

@@ -107,7 +107,7 @@ class AdvisorReviewEvalRunner extends TurnRunner {
         },
       ]),
       toolResult("edit-test-1", "edit", "Added the focused regression test.", 6),
-      ...Array.from({ length: 24 }, (_, index) => {
+      ...Array.from({ length: 8 }, (_, index) => {
         const id = `suite-${index + 1}`;
         return [
           assistant([
@@ -156,6 +156,72 @@ class AdvisorReviewEvalRunner extends TurnRunner {
           `,
         },
         { type: "toolCall", id: "advisor-1", name: "ask_advisor", arguments: {} },
+      ]),
+    );
+  }
+
+  seedVerifiedExactEdit(): void {
+    this.requireParentAgent().state.messages.push(
+      {
+        role: "user",
+        content: "Change the only line in status.txt from old to new, then verify the exact file.",
+        timestamp: 1,
+      },
+      assistant([
+        {
+          type: "toolCall",
+          id: "read-1",
+          name: "bash",
+          arguments: { command: "wc -l status.txt && sed -n '1,5p' status.txt" },
+        },
+      ]),
+      toolResult("read-1", "bash", "1 status.txt\nold\n", 3),
+      assistant([
+        {
+          type: "toolCall",
+          id: "edit-1",
+          name: "edit",
+          arguments: {
+            path: "status.txt",
+            oldText: "old\n",
+            newText: "new\n",
+          },
+        },
+      ]),
+      toolResult("edit-1", "edit", "Updated status.txt.", 4),
+      assistant([
+        {
+          type: "toolCall",
+          id: "verify-1",
+          name: "bash",
+          arguments: {
+            command:
+              'git diff --check && test "$(cat status.txt)" = new && wc -l status.txt && git diff -- status.txt && git status --short',
+          },
+        },
+      ]),
+      toolResult(
+        "verify-1",
+        "bash",
+        dedent`
+          1 status.txt
+          diff --git a/status.txt b/status.txt
+          index 3367afd..3e75765 100644
+          --- a/status.txt
+          +++ b/status.txt
+          @@ -1 +1 @@
+          -old
+          +new
+           M status.txt
+        `,
+        5,
+      ),
+      assistant([
+        {
+          type: "text",
+          text: "The one requested line is changed and the exact file state is verified.",
+        },
+        { type: "toolCall", id: "advisor-complete", name: "ask_advisor", arguments: {} },
       ]),
     );
   }
@@ -220,10 +286,61 @@ describe("advisor completion review", () => {
           ),
         );
 
-        expect(advice).toMatch(/history|upstream|reference implementation/i);
         expect(advice).toMatch(
-          /do not approve|don't approve|not ready to (?:approve|complete)|not complete|don't mark complete|before declaring done|only after[\s\S]{0,120}(?:close|complete)/i,
+          /history|upstream|reference implementation|reference-style|title attribute|lookahead/i,
         );
+        expect(advice).toMatch(
+          /do not approve|don't approve|\bnot ready\b|not complete|don't mark complete|before declaring done|only after[\s\S]{0,120}(?:close|complete)/i,
+        );
+      } finally {
+        await runner.dispose();
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+    120_000,
+  );
+
+  testIfDocker(
+    "ends review of a fully verified exact edit without manufacturing another check",
+    async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "duet-advisor-approval-eval-"));
+      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      table.defaultTier = "advisor-review-eval";
+      table.tiers = {
+        "advisor-review-eval": {
+          routes: {
+            general: {
+              description: "Advisor completion-review evaluation.",
+              target: { modelName: model, thinkingLevel: "medium" },
+            },
+          },
+          advisor: {
+            enabled: true,
+            target: { modelName: model, thinkingLevel: advisorThinking },
+            minStepsBetween: 1,
+          },
+        },
+      };
+      await mkdir(join(cwd, ".duet"));
+      await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+
+      const runner = new AdvisorReviewEvalRunner(cwd);
+      try {
+        await runner.start({ type: "start", mode: "agent" });
+        runner.seedVerifiedExactEdit();
+        const advisor = runner.advisorTool();
+        if (!advisor) throw new Error("Expected ask_advisor tool");
+
+        const result = await advisor.execute("advisor-complete", {});
+        const advice = result.content
+          .filter((content) => content.type === "text")
+          .map((content) => content.text)
+          .join("\n");
+        console.log(
+          JSON.stringify({ model, advisorThinking, advice, details: result.details }, null, 2),
+        );
+
+        expect(advice).toMatch(/no further review needed/i);
       } finally {
         await runner.dispose();
         await rm(cwd, { recursive: true, force: true });

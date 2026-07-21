@@ -2101,10 +2101,9 @@ the number of rollouts or the independently enforced model-spend bound.
 - **When:** the model-specific-effort v3 gate scored 14/15 even though Fable was
   restored to high effort and the context projection beat the token baseline.
 - **The choice:** Treat a completion checkpoint as spent only for the evidence it
-  actually reviewed. If the executor runs any non-advisor tool afterward, re-arm
-  the checkpoint so the next completion can review the resulting diff or test
-  evidence. Do not re-arm for prose or for another advisor call. An ignored
-  reminder with no new tool work therefore exits normally instead of looping.
+  actually reviewed. The first candidate re-armed it after any later
+  non-advisor tool so a subsequent completion could review the resulting diff or
+  test evidence.
 - **The gap:** An executor completion is only a protocol stop, not proof that the
   task is semantically finished. In the failed trace it happened after diagnosis,
   before any edit. Fable rejected the proposed approximation and named the hidden
@@ -2116,11 +2115,40 @@ the number of rollouts or the independently enforced model-spend bound.
   and in-flight reservation still apply, and new final reviews occur only after
   observable tool work makes earlier advice stale. Because this may add calls,
   the five high-risk 8927 repeats run before the full 15-case token gate.
-- **Verdict:** **sound, paid confirmation pending.** A Docker regression test
-  reproduces an early completion review followed by implementation and proves a
-  second final review is offered.
+- **Verdict:** **partially falsified and narrowed.** The focused v4 run proved the
+  missing final review was real, but unrestricted re-arming produced 3–7 Fable
+  calls per recovered run and two cost-cap interruptions. Keep the second-review
+  capability only for the early-first-consultation shape described in S72.
 - **Confidence:** **high** in the trace diagnosis and local scheduling fix;
-  **medium** in the final quality/token balance until the paid repeats complete.
+  **high** that unrestricted re-arming is too broad.
+
+### S72 — Separate an early missed final review from recursive approval checking
+
+- **When:** the v4 focused correction restored access to the final diff but made
+  every advisor-requested verification command eligible to mandate another
+  completion review.
+- **The choice:** A completion checkpoint may automatically re-arm once only when
+  it was issued before any successful consultation. This preserves the failed v3
+  shape—diagnosis, first consultation, implementation, final review—while a turn
+  that already had orientation and completion reviews does not recursively
+  mandate more. Voluntary consultations and ordinary cooldown behavior remain
+  unchanged. At the same time, an advisor with sufficient evidence must approve
+  and stop instead of inventing the residual risk and check previously required
+  by its output format.
+- **The gap:** “Any new tool evidence makes advice stale” ignored review phase.
+  Verification requested by the completion advisor is not evidence that the
+  earlier orientation was stale; treating it that way created the five-review
+  trial and spent executor tokens chasing diminishing, sometimes optional checks.
+- **The reach:** Complex turns still receive normal early and final consultations.
+  A turn whose first consultation happened prematurely can still receive the
+  missing evidence-backed final review. Further re-review is model-controlled,
+  not benchmark-controlled or recursively mandatory.
+- **Verdict:** **sound, paid confirmation pending.** The outer runner regression
+  test proves the early first consultation re-arms exactly once, and a live eval
+  was red when a fully verified edit manufactured commit/stash work and green
+  when approval ended without further review.
+- **Confidence:** **high** in the isolated lifecycle and prompt behavior;
+  **medium** in SWE-bench quality/token balance until the fresh v5 repeats score.
 
 ## Compressed trivial discretion
 

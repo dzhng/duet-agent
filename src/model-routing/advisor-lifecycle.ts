@@ -13,6 +13,8 @@ const SUBSTANTIVE_AGENT_STEP_THRESHOLD = 3;
 export class AdvisorTurnLifecycle {
   private orientationCheckpointSent = false;
   private completionCheckpointSent = false;
+  private completionCheckpointCanRearm = false;
+  private completionCheckpointRearmed = false;
   private lastSuccessfulConsultStep?: number;
   private substantiveWorkSinceLastConsult = false;
 
@@ -28,12 +30,17 @@ export class AdvisorTurnLifecycle {
    * Non-advisor tool execution means reality changed or was checked after the last review. It
    * also re-arms a completion checkpoint that fired before the work was actually finished. An
    * executor may legitimately stop after diagnosis, consult, then continue implementing; the
-   * later diff must still receive a final review. A reminder that is merely ignored stays spent,
-   * so a model cannot loop on the same completion checkpoint without producing new evidence.
+   * later diff must still receive a final review. Only a checkpoint issued before any successful
+   * consultation can re-arm, and it can do so once: advisor-requested verification must not
+   * recursively create more mandatory reviews.
    */
   noteExecutedTools(toolNames: readonly string[]): void {
     if (toolNames.some((name) => name !== "ask_advisor")) {
-      if (this.completionCheckpointSent) this.completionCheckpointSent = false;
+      if (this.completionCheckpointSent && this.completionCheckpointCanRearm) {
+        this.completionCheckpointSent = false;
+        this.completionCheckpointCanRearm = false;
+        this.completionCheckpointRearmed = true;
+      }
       if (this.lastSuccessfulConsultStep === undefined) return;
       this.substantiveWorkSinceLastConsult = true;
     }
@@ -66,6 +73,8 @@ export class AdvisorTurnLifecycle {
       return false;
     }
     this.completionCheckpointSent = true;
+    this.completionCheckpointCanRearm =
+      !this.completionCheckpointRearmed && this.lastSuccessfulConsultStep === undefined;
     return true;
   }
 

@@ -913,10 +913,16 @@ describe("advisor executor guidance layer", () => {
     runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
     await waitFor(() => runner.advisorContextTexts.length === 2);
     await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({
+      tool: { name: "bash", arguments: { command: "verify-final-fix" } },
+      usageTokens: 5,
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
     runner.completeNext({ text: "The final diff is reviewed and complete.", usageTokens: 5 });
 
     const terminal = await turn;
     expect(terminal.type).toBe("complete");
+    expect(runner.advisorContextTexts).toHaveLength(2);
     expect(runner.advisorContextTexts[1]).toContain("The fix is implemented and verified.");
     await runner.dispose();
   });

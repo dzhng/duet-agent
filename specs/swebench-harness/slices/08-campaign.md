@@ -139,10 +139,15 @@ No full campaign starts until all of these are true:
    scored 14/15. In its failed 8927 trace, the completion checkpoint fired after
    diagnosis and before editing. Fable rejected the unimplemented regex and
    named the exact adjacent risks, but later tool work did not re-arm the
-   one-shot checkpoint, so Fable never reviewed the final bad diff. Fix that
-   generic product lifecycle, rerun the five 8927 cases first under a fresh id,
-   and expand to all 15 only after 5/5. Frozen pure results remain the comparison
-   and are not paid for again.
+   checkpoint, so Fable never reviewed the final bad diff. A first generic fix
+   re-armed after every later tool and over-corrected: four recovered focused
+   runs used 3–7 Fable calls, two hit the cost cap, and one archive was lost when
+   the campaign stopped. The exact traces showed recursive mandatory review of
+   advisor-requested verification. Re-arm automatically once only when the early
+   completion checkpoint was issued before any successful consultation, and allow complete
+   evidence to receive an unconditional approval. Rerun the five 8927 cases
+   under a fresh id and expand to all 15 only after 5/5. Frozen pure results
+   remain the comparison and are not paid for again.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails
