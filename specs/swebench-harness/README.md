@@ -121,10 +121,11 @@ launch reservation after all 24 known-gate v2 artifacts had returned exact
 costs. Replacing that stale `24 × $3.10` bound with `$28.9503838` of durable
 telemetry releases `$45.4496162`. After v7, the corrected cumulative worst case
 is `$422.8553023`, leaving `$77.1446977` under the hard `$500` model-spend
-envelope. The final controller must reserve only genuinely concurrent work and
-reconcile returned exact cost before admitting another shard; reserving all
-unfinished arms at once cannot launch a campaign whose observed cost is much
-lower than its emergency per-rollout ceiling.
+envelope. The E2B controller now reserves only genuinely concurrent work and
+reconciles returned exact cost before admitting another shard. Its durable
+per-shard reservation survives controller loss, and exhausted headroom leaves
+the remaining shards unstarted. This preserves the hard cap without requiring
+all 120 emergency per-rollout ceilings to fit simultaneously.
 
 Local constraints to prove rather than assume:
 

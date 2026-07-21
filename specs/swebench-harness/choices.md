@@ -2200,6 +2200,29 @@ the number of rollouts or the independently enforced model-spend bound.
   logical session, product tests cover session attribution and range progress,
   and the rollout test was red without the flag and green with it.
 
+### S75 — Budget concurrency by active shards, not the whole pending population
+
+- **When:** admitting the final 120-arm campaign under the remaining global
+  model-spend envelope.
+- **The choice:** Hold the full per-arm ceiling only for shards currently doing
+  model work. A completed shard replaces that temporary reservation with its
+  measured artifact cost before another shard may start. The configured 16
+  workers remain an upper bound; available budget can admit fewer. Each active
+  reservation is persisted before its sandbox starts and removed only after
+  terminal artifacts are integrated, so controller loss stays conservative.
+- **The gap:** The old preflight multiplied every unfinished arm by its emergency
+  ceiling. That is safe but treats sequential future work as simultaneous
+  liability, preventing a campaign even when measured shard costs can fit.
+- **The reach:** Accounted spend plus active reservations never exceeds `$500`.
+  A worker failure stops further admission, while already-running workers
+  settle. If no next shard fits, it remains explicitly unstarted rather than
+  weakening the per-rollout cap or silently exceeding the global budget.
+- **Verdict:** **sound.** This changes scheduling, not models, prompts, tasks, or
+  scoring, and preserves the original hard-budget invariant.
+- **Confidence:** **high.** Unit tests prove exact-cost reconciliation admits
+  later cheap shards, budget exhaustion leaves work unstarted, partial shards
+  reserve only unfinished arms, and the first worker failure stops admission.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

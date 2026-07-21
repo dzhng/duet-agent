@@ -182,9 +182,11 @@ archive survived to prove that generation had not started. Cumulative sunk was
 recorded as `$439.2249`. A later audit proved `$45.4496162` of that lineage was
 a temporary 24-arm overlap reservation whose completed attempts have exact
 telemetry. The corrected post-v7 cumulative worst case is `$422.8553023`,
-leaving `$77.1446977`. The final controller must reserve active concurrent
-shards and replace those reservations with returned exact costs; it may never
-spend past `$500`, and an exhausted envelope remains a denominator-visible stop.
+leaving `$77.1446977`. The E2B controller now reserves active concurrent shards,
+persists each reservation before model work, and replaces it with returned
+exact cost before admitting more. It may never spend past `$500`; a worker
+failure stops admission, and an exhausted envelope leaves the remaining shards
+unstarted as a denominator-visible stop.
 
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution
