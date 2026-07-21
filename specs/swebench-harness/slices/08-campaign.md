@@ -54,8 +54,8 @@ immutable historical evidence and none contributes outcomes to v5.
 - Pure and enabled arms within a pair still differ only in
   `advisor.enabled`. The user message is the canonical dataset problem
   statement with no benchmark workflow wrapper. The shared minimal system
-  prompt only says the task is unattended; shipped product policy decides how
-  to work and whether and when to consult.
+  prompt requires a complete repository solution and unattended work; shipped
+  product policy decides how to work and whether and when to consult.
 - Every rollout gets a fresh `HOME`, but the benchmark does not disable normal
   memory, compaction, or repository `AGENTS.md` discovery. The complete agent
   diff, including tests, goes to the official scorer.
@@ -212,10 +212,17 @@ change, so do not tune context or lifecycle for this failure. Correct general
 advisor scope policy instead: version-match reference evidence, isolate the
 requested behavior, prefer the smallest sufficient change, and presume an
 edited passing expectation is a regression until independent task evidence
-proves otherwise. The live Kimi review eval must be red with the old policy and
-green with the correction, then the advisor arm must resolve under the fresh
-Mac-only `advisor-scope-regression-glm-mac-20260721-v1` namespace before broader
-generation resumes.
+proves otherwise. The live Kimi review eval was red with the old policy and
+green with the correction. Its first Mac-only rerun under
+`advisor-scope-regression-glm-mac-20260721-v1` found the narrow historical fix
+but returned only upgrade advice and an empty patch: the issue itself ends in
+“Please advise,” while the old shared system prompt did not explicitly require
+a repository change. Treat that artifact as an invalid task-definition probe,
+not a scored advisor result. The minimal shared prompt now requires a complete
+working-tree solution without prescribing workflow or advisor behavior. Since
+that paired input changed, rerun both pure GLM and GLM plus Kimi under
+`advisor-scope-regression-glm-mac-20260721-v2` before broader generation
+resumes.
 
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution

@@ -155,9 +155,18 @@ prompt now treats references as version-matched evidence rather than change
 lists, prefers the smallest sufficient change, and treats changed passing
 expectations as suspected regressions. A live Kimi eval is red under the old
 prompt and green under the corrected prompt at both orientation and completion.
-The next pickup is the committed Mac-only
-`advisor-scope-regression-glm-mac-20260721-v1` rerun, followed by official
-scoring. Do not resume broader generation until that exact arm resolves.
+The first corrected-policy Mac rerun completed for `$0.302353` but produced an
+empty patch. Its trace correctly isolated the historical fix, then interpreted
+the issue's closing “Please advise” as a request for an advisory answer because
+the shared benchmark system prompt required only unattended completion. That is
+a pair-neutral task-definition defect, not evidence about advisor quality. The
+shared prompt now requires resolving the repository task and leaving the
+working tree with the complete solution, without naming tools, schedules, or
+workflow. This prompt change invalidates both prior arms for comparison. The
+next pickup is the committed two-arm Mac-only
+`advisor-scope-regression-glm-mac-20260721-v2` gate, followed by official
+scoring. Do not resume broader generation until that fresh pair has no
+pure-only outcome.
 
 Local constraints to prove rather than assume:
 

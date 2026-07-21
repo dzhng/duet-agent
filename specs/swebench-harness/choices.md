@@ -2301,6 +2301,32 @@ the number of rollouts or the independently enforced model-spend bound.
   approval in a live eval; the corrected prompt rejected it and preserved the
   focused orientation path.
 
+### S79 — A coding benchmark must require a repository solution
+
+- **When:** the corrected-policy Caddy Mac rerun found the exact historical fix
+  but returned an upgrade recommendation and an empty patch.
+- **The choice:** Keep the canonical dataset problem statement byte-for-byte as
+  the user message, and make the shared system contract explicit about the
+  scored outcome: resolve the task in the repository and leave the working tree
+  with the complete solution. Keep unattended execution. Do not mention an
+  advisor, tool calls, test schedules, step counts, paths, or a prescribed
+  workflow. Apply this same prompt to every arm.
+- **The gap:** The previous sentence, “Complete the task unattended,” did not
+  distinguish completing an advice request from implementing its repository
+  fix. Caddy 4943 literally ends with “Please advise,” so a technically correct
+  prose answer satisfied that wording while producing nothing the patch scorer
+  could evaluate.
+- **The reach:** This defines the benchmark role rather than helping either
+  treatment. Because prompt bytes are a paired input, the old pure artifact and
+  the one-arm v1 diagnostic cannot be compared with new output. The v2 Mac gate
+  therefore reruns both GLM arms under a fresh id. Its sunk ledger includes the
+  v1 run's exact `$0.302353` cost.
+- **Verdict:** **sound; paid paired confirmation pending.** The prompt regression
+  test was red on the ambiguous wording and green on the outcome contract while
+  continuing to reject advisor and workflow prescriptions.
+- **Confidence:** **high** that a patch benchmark must request a repository
+  solution; **medium** until both fresh Caddy arms produce scoreable patches.
+
 ## Compressed trivial discretion
 
 Eight cosmetic or local choices were not expanded into separate entries: helper
