@@ -234,6 +234,14 @@ each complete block and fail fast on a pure-only outcome. Expand only after
 returned exact costs prove another complete four-arm block can retain the same
 ceiling under `$500`.
 
+All eight core predictions officially resolved. GLM and GLM plus Kimi each
+resolved 2/2; Kimi and Kimi plus Fable each resolved 2/2. Exact core spend was
+`$13.3802222`, leaving `$18.6817098` in the conservative ledger. The next
+predeclared seed row, Prometheus 10633, therefore runs as
+`multilingual-four-arm-mac-20260721-v8-expansion` with the same four arms and
+limits. Its four full reservations require `$12.40`; no further complete block
+can be admitted afterward.
+
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution
 change invalidates the current diagnostic namespace and requires a new id.
