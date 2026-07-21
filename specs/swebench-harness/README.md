@@ -181,12 +181,15 @@ each completed instance block, and stop immediately on any pure-only result.
 Only after all eight exact costs return may another predeclared seeded block be
 admitted; never weaken the rollout ceiling to buy a larger nominal sample.
 
-The core is now officially scored: all four arms resolved both Laravel and
-Lombok. It cost exactly `$13.3802222`, reconciling conservative campaign spend
-to `$481.3182902`. The remaining `$18.6817098` admits one final complete block,
-`multilingual-four-arm-mac-20260721-v8-expansion`, on the next predeclared
-seeded task, Prometheus 10633. No fourth task fits four unchanged `$3.10`
-reservations under the hard cap.
+The core and first expansion are now officially scored. All four arms resolved
+Laravel and Lombok; on Prometheus, both advisor arms resolved while both pure
+arms did not. The three-task result is therefore 2/3 pure versus 3/3 advised in
+both comparisons, with one enabled-only row and zero pure-only rows apiece.
+Prometheus cost exactly `$2.2010546`, reconciling conservative campaign spend
+to `$483.5193448`. The remaining `$16.4806552` admits the fourth seeded row,
+Fastlane 20975, as `multilingual-four-arm-mac-20260721-v9-expansion` with four
+unchanged `$3.10` reservations. Further admission depends only on returned
+exact spend retaining another complete block.
 
 Local constraints to prove rather than assume:
 
