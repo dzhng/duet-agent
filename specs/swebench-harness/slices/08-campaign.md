@@ -236,11 +236,12 @@ ceiling under `$500`.
 
 All eight core predictions officially resolved. GLM and GLM plus Kimi each
 resolved 2/2; Kimi and Kimi plus Fable each resolved 2/2. Exact core spend was
-`$13.3802222`, leaving `$18.6817098` in the conservative ledger. The next
-predeclared seed row, Prometheus 10633, therefore runs as
-`multilingual-four-arm-mac-20260721-v8-expansion` with the same four arms and
-limits. Its four full reservations require `$12.40`; no further complete block
-can be admitted afterward.
+`$13.3802222`. The Prometheus expansion then produced an enabled-only result in
+both comparisons for `$2.2010546`, leaving `$16.4806552` in the conservative
+ledger. The next row added by the same seed-20260722 population is Fastlane
+20975, so it runs as `multilingual-four-arm-mac-20260721-v9-expansion` with the
+same four arms and limits. Its four full reservations require `$12.40`;
+subsequent blocks remain conditional only on returned exact spend.
 
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution

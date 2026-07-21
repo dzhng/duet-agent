@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "multilingual-four-arm-mac-20260721-v9-expansion",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-30.json",
+  "instanceIds": ["fastlane__fastlane-20975"],
+  "configs": ["glm-pure", "glm-kimi-advisor", "kimi-pure", "kimi-fable-advisor"],
+  "trials": 1,
+  "concurrency": 1,
+  "armOrderSeed": 20260809,
+  "limits": {
+    "costUsd": 3.1,
+    "wallClockMs": 1800000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 5242880
+  },
+  "budget": {
+    "totalUsd": 500,
+    "sunkUsd": 483.5193448
+  },
+  "execution": {
+    "backend": "local"
+  }
+}

@@ -2352,11 +2352,15 @@ the number of rollouts or the independently enforced model-spend bound.
   both-resolve outcomes and zero pure-only outcomes. Exact core spend was
   `$13.3802222`, reconciling the conservative ledger to `$481.3182902`. One
   further four-arm block for the next predeclared seed row, Prometheus 10633,
-  retains the same models, prompt, limits, and scorer while reserving `$12.40`.
+  retained the same models, prompt, limits, and scorer while reserving `$12.40`.
   The first v7 launch was rejected before paid work because its manifest
   incorrectly used the whole-prefix seed assertion; after correcting the
   explicit disjoint row, immutable provenance required the fresh v8 id. A
-  fourth task cannot retain four full `$3.10` reservations under `$500`.
+  Prometheus produced an enabled-only result in both comparisons and cost
+  `$2.2010546`, reconciling the ledger to `$483.5193448`. That returned spend
+  admits Fastlane 20975, the fourth row of the same seeded population, under a
+  fresh v9 id with four full `$3.10` reservations. Further rows remain
+  conditional only on exact returned spend, not observed outcomes.
 - **Confidence:** **high** in the accounting and pairing guarantee; **low** in
   the statistical precision of the small sample, which the report must state
   plainly.
