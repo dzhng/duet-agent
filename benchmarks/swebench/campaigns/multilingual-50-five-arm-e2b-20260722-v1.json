@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "multilingual-50-five-arm-e2b-20260722-v1",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-50-fresh-20265471.json",
+  "configs": ["glm-pure", "glm-kimi-advisor", "kimi-pure", "kimi-fable-advisor", "opus-pure"],
+  "trials": 1,
+  "concurrency": 1,
+  "armOrderSeed": 20260725,
+  "limits": {
+    "costUsd": 5,
+    "wallClockMs": 1800000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 5242880
+  },
+  "budget": {
+    "totalUsd": 500,
+    "sunkUsd": 8.910785
+  },
+  "execution": {
+    "backend": "e2b",
+    "workerConcurrency": 16,
+    "workerCpuCount": 8,
+    "workerMemoryMb": 16384,
+    "workerTimeoutMs": 10800000
+  }
+}
