@@ -82,9 +82,11 @@ consumed 402,590 advisor-plus-observer tokens—12.1% below the same five-case v
 subset. The candidate now advances to the complete 15-case gate.
 
 The v6 expansion officially resolved all 15/15 known cases. Its 31 successful
-consultations used 494,436 advisor tokens and 841,440 observer tokens, for
-1,335,876 combined—13.4% below the 1,543,369-token quality baseline. That split
-shows the remaining inefficiency is concentrated in the observation pipeline.
+consultations used 494,436 advisor tokens. Luna used 841,440 tokens across both
+observation and GLM classification; exact event-boundary reconstruction assigns
+808,182 of those tokens to 32 observer calls, making exact advisor-plus-observer
+usage 1,302,618. That split shows the remaining inefficiency is concentrated in
+the observation pipeline.
 A v7 experiment deferred compaction from 32k to 64k. It preserved quality at
 5/5 official resolves, but consumed 622,697 advisor-plus-observer tokens versus
 v6's 470,574 on the same five trials, a 32.3% regression. The observer saved
@@ -92,9 +94,15 @@ v6's 470,574 on the same five trials, a 32.3% regression. The observer saved
 therefore restored; further optimization must reduce observation work without
 inflating the advisor request.
 
-Next, inspect v7's call-level traces and optimize the observer while preserving
-the 32k trigger, 8k raw tail, complete-tool protection, and wire-faithful advisor
-context. Create fresh campaign ids for every paid candidate. Any pure-only
+V6's traces exposed a harness wiring defect rather than another model-policy
+tuning knob: benchmark RPC omitted its caller-owned session id. Without a
+session, observations were stored as global background and their message-range
+markers could not advance progress on the next observer pass. Seventeen later
+passes restarted from the first user message and consumed 459,712 observer
+tokens. Each rollout already has a fresh HOME, so the harness now supplies the
+stable `swebench` session id and lets normal product memory observe only the new
+suffix. Keep the 32k trigger, 8k raw tail, complete-tool protection, and
+wire-faithful advisor context. Any pure-only
 result still stops immediately for exact-trace diagnosis. The stopped
 `advisor-nonregression-expansion-*-20260721-v1` namespaces predate the policy
 change, have no completed pairs, and must never be resumed or scored. The stopped v3 workers
@@ -107,8 +115,16 @@ The stopped focused lifecycle gate is
 `$10.2426636`; reserve `$3.28` for the interrupted archive and `$2.00` for the
 live prompt falsification/confirmation calls. The completed v5 focus gate cost
 `$5.871627`; reserve one additional `$3.10` cap for its archive-less initial E2B
-connection failure. The fresh v6 full gate therefore starts from a conservative
-`$439.2249` sunk reserve and all 15 `$3.10` rollouts are bounded at `$485.7249`.
+connection failure. The fresh v6 full gate started from a conservative
+`$439.2249` ledger. A later audit found that this carried a temporary 24-rollout
+launch reservation after all 24 known-gate v2 artifacts had returned exact
+costs. Replacing that stale `24 × $3.10` bound with `$28.9503838` of durable
+telemetry releases `$45.4496162`. After v7, the corrected cumulative worst case
+is `$422.8553023`, leaving `$77.1446977` under the hard `$500` model-spend
+envelope. The final controller must reserve only genuinely concurrent work and
+reconcile returned exact cost before admitting another shard; reserving all
+unfinished arms at once cannot launch a campaign whose observed cost is much
+lower than its emergency per-rollout ceiling.
 
 Local constraints to prove rather than assume:
 

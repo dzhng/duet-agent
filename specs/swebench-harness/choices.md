@@ -2175,6 +2175,31 @@ the number of rollouts or the independently enforced model-spend bound.
 - **Confidence:** **high.** The decision is based on five official resolves and
   exact per-model usage telemetry from both settings.
 
+### S74 — Each isolated rollout declares one normal memory session
+
+- **When:** tracing repeated observer work after the rejected 64k compaction
+  experiment.
+- **The choice:** Launch benchmark RPC with `--session swebench`. In ordinary
+  product use, a session id tells memory which observations belong to the
+  conversation currently in progress. The benchmark already gives every
+  rollout a brand-new HOME directory and database, so the same readable id is
+  isolated per rollout. The unbuilt alternative leaves the id absent; then an
+  observation is treated as cross-session background, and its message-range
+  marker cannot tell the next observer pass where the previous pass stopped.
+- **The gap:** The spec required default product memory but did not state that
+  the RPC caller must supply the session identity that the interactive product
+  normally owns.
+- **The reach:** Later advisor and end-of-turn observation passes process only
+  the new transcript suffix while retaining prior local observations as
+  context. V6 had 17 later passes restart at the first user message, consuming
+  459,712 observer tokens. This change uses the existing range-marker contract;
+  it adds no benchmark prompt, model override, cache, or skipped final pass.
+- **Verdict:** **sound.** The harness now supplies the normal caller-owned
+  identity instead of accidentally selecting global-memory semantics.
+- **Confidence:** **high.** The CLI already documents one RPC process as one
+  logical session, product tests cover session attribution and range progress,
+  and the rollout test was red without the flag and green with it.
+
 ## Compressed trivial discretion
 
 Six cosmetic or local choices were not expanded into separate entries: helper

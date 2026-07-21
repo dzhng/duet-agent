@@ -73,6 +73,8 @@ describe("SWE-bench rollout pipeline", () => {
         "--rpc",
         "--model",
         "swebench",
+        "--session",
+        "swebench",
         "--workdir",
         "/testbed",
         "--system-prompt",

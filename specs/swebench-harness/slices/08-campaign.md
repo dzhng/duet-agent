@@ -153,11 +153,15 @@ No full campaign starts until all of these are true:
    below the same five-case v3 subset. Expand this exact policy to all 15 known
    cases under the v6 namespaces before attempting another optimization.
    V6 then restored 15/15 official resolves. Its advisor models used 494,436
-   tokens while the on-demand observer used 841,440, for 1,335,876 combined
-   tokens (13.4% below the quality baseline). V7 tested a 64k soft compaction
+   tokens; event-boundary reconstruction assigns 808,182 Luna tokens to the
+   observer and 33,258 to GLM classification. V7 tested a 64k soft compaction
    trigger on the five 8927 repeats. It remained 5/5 resolved but used 622,697
    advisor-plus-observer tokens versus v6's 470,574, a 32.3% regression. Restore
    32k and optimize observation work itself; do not expand the rejected setting.
+   The next trace audit found benchmark RPC omitted `--session`, so every later
+   observation restarted at the first user message. Supply the stable benchmark
+   session inside each fresh HOME and let normal range markers process only the
+   new suffix.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails
@@ -174,9 +178,13 @@ No full campaign starts until all of these are true:
 
 The v5 focus gate recorded `$5.871627` of accepted generation. Conservatively
 reserve another `$3.10` for its initial E2B connection failure because no remote
-archive survived to prove that generation had not started. Cumulative sunk is
-therefore `$439.2249`. The v6 GLM gate reserves five more `$3.10` arms and the
-v6 Kimi gate starts at `$454.7249`; all 15 v6 arms are bounded at `$485.7249`.
+archive survived to prove that generation had not started. Cumulative sunk was
+recorded as `$439.2249`. A later audit proved `$45.4496162` of that lineage was
+a temporary 24-arm overlap reservation whose completed attempts have exact
+telemetry. The corrected post-v7 cumulative worst case is `$422.8553023`,
+leaving `$77.1446977`. The final controller must reserve active concurrent
+shards and replace those reservations with returned exact costs; it may never
+spend past `$500`, and an exhausted envelope remains a denominator-visible stop.
 
 These repeat-until-clean diagnostics are adaptively selected engineering
 evidence, not an effect estimate. Any product, prompt, context, or attribution
