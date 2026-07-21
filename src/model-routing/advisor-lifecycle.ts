@@ -8,7 +8,7 @@ const SUBSTANTIVE_AGENT_STEP_THRESHOLD = 3;
 /**
  * Turn-local owner for the product's orientation and completion-review advisor checkpoints.
  * The runner reports completed parent steps, successful consultations, and executed tools; this
- * policy decides whether a one-shot checkpoint is due without changing the public protocol.
+ * policy decides whether a checkpoint is due without changing the public protocol.
  */
 export class AdvisorTurnLifecycle {
   private orientationCheckpointSent = false;
@@ -24,12 +24,17 @@ export class AdvisorTurnLifecycle {
     this.substantiveWorkSinceLastConsult = false;
   }
 
-  /** Non-advisor tool execution means reality changed or was checked after the last review. */
+  /**
+   * Non-advisor tool execution means reality changed or was checked after the last review. It
+   * also re-arms a completion checkpoint that fired before the work was actually finished. An
+   * executor may legitimately stop after diagnosis, consult, then continue implementing; the
+   * later diff must still receive a final review. A reminder that is merely ignored stays spent,
+   * so a model cannot loop on the same completion checkpoint without producing new evidence.
+   */
   noteExecutedTools(toolNames: readonly string[]): void {
-    if (
-      this.lastSuccessfulConsultStep !== undefined &&
-      toolNames.some((name) => name !== "ask_advisor")
-    ) {
+    if (toolNames.some((name) => name !== "ask_advisor")) {
+      if (this.completionCheckpointSent) this.completionCheckpointSent = false;
+      if (this.lastSuccessfulConsultStep === undefined) return;
       this.substantiveWorkSinceLastConsult = true;
     }
   }
@@ -48,9 +53,9 @@ export class AdvisorTurnLifecycle {
   }
 
   /**
-   * Take the one-shot completion checkpoint unless the last successful consultation already saw
-   * all final evidence. Assistant prose after that call does not make the evidence stale; another
-   * real tool execution does.
+   * Take the completion checkpoint unless the last successful consultation already saw all final
+   * evidence. Assistant prose after that call does not make the evidence stale; another real tool
+   * execution does.
    */
   takeCompletionCheckpoint(assistantStep: number): boolean {
     if (

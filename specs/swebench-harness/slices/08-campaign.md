@@ -134,9 +134,15 @@ No full campaign starts until all of these are true:
    combined advisor-plus-observer tokens from 1,543,369 to 1,578,537. Its single
    unresolved Docusaurus 8927 trace hand-designed an incomplete regex despite
    three successful consultations; the high-effort baseline found and applied
-   the authoritative upstream patch. Reject v2 and rerun all 15 advised cases
-   under fresh v3 ids with model-specific effort: Kimi medium, Fable high.
-   Frozen pure results remain the comparison and are not paid for again.
+   the authoritative upstream patch. The model-specific-effort v3 rerun then
+   reduced advisor-plus-observer tokens 15.3% (1,543,369 to 1,306,951) but also
+   scored 14/15. In its failed 8927 trace, the completion checkpoint fired after
+   diagnosis and before editing. Fable rejected the unimplemented regex and
+   named the exact adjacent risks, but later tool work did not re-arm the
+   one-shot checkpoint, so Fable never reviewed the final bad diff. Fix that
+   generic product lifecycle, rerun the five 8927 cases first under a fresh id,
+   and expand to all 15 only after 5/5. Frozen pure results remain the comparison
+   and are not paid for again.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails

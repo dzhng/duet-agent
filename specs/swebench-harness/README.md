@@ -60,18 +60,34 @@ lowered both advisors from high to medium, but scored only 14/15: one Fable run
 conditionally approved a hand-designed Docusaurus regex instead of driving the
 executor to the authoritative upstream fix. Exact advisor tokens fell 18.7% to
 595,251, but advisor-plus-observer tokens rose 2.3% to 1,578,537. That candidate
-is rejected on both gates. The next candidate keeps the representation savings,
-uses medium effort for Kimi, and restores high effort for Fable. It is not frozen
-until all 15 advised cases resolve and total advisor-plus-observer tokens improve.
+is rejected on both gates. The next candidate kept the representation savings,
+used medium effort for Kimi, and restored high effort for Fable. It reduced exact
+advisor-plus-observer tokens 15.3%, from 1,543,369 to 1,306,951, but again scored
+only 14/15. The failed trace exposed a lifecycle defect: a completion checkpoint
+fired after diagnosis but before editing, Fable correctly rejected the
+unimplemented hand-designed regex, and later tool work permanently consumed the
+one-shot checkpoint. Fable therefore never saw the final diff containing the
+exact boundary regressions it had warned about. The product lifecycle now
+re-arms a spent completion checkpoint only when a non-advisor tool produces new
+work or evidence. An ignored reminder without new work remains spent, preventing
+reminder loops. This revised candidate is not frozen until it restores 15/15 and
+re-measures the token cost of evidence-backed final reviews.
 
-Next, run the fresh v3 advisor-only known-case campaign ids, then
-create fresh diversity campaign ids only if it preserves 15/15. Any pure-only
+Next, rerun the five Docusaurus 8927 cases under a fresh campaign id, expand to
+the full 15 known cases only if all five resolve, and create fresh diversity
+campaign ids only if the full gate preserves 15/15. Any pure-only
 result still stops immediately for exact-trace diagnosis. The stopped
 `advisor-nonregression-expansion-*-20260721-v1` namespaces predate the policy
 change, have no completed pairs, and must never be resumed or scored. The stopped v3 workers
 finalized 15/30 rollouts for `$12.6315597`; reserve up to `$21.9315597`
 including the three interrupted arms. Their remote artifacts were not
 recovered, so never resume or score that namespace. Last updated 2026-07-21.
+
+The focused lifecycle gate is
+`advisor-token-efficiency-kimi-20260721-v4`. Its conservative `$414.7306` sunk
+reserve includes the accepted v3 telemetry plus `$6.20` for two E2B attempts
+whose archives were lost after generation may have started. Five new `$3.10`
+rollouts bound the focused gate at `$430.2306`.
 
 Local constraints to prove rather than assume:
 

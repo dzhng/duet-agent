@@ -2085,14 +2085,42 @@ the number of rollouts or the independently enforced model-spend bound.
   recent history after observation, and less private deliberation. Benchmark
   configs explicitly retain the same model-specific effort in each pure/advised
   pair, so advisor availability remains the pair's only treatment difference.
-- **Verdict:** **partially falsified, revised candidate pending.** The
+- **Verdict:** **partially falsified twice, lifecycle correction pending.** The
   uniform-medium v2 run scored 14/15. Exact advisor tokens improved 18.7%
   (731,889 to 595,251), but combined advisor-plus-observer tokens worsened 2.3%
-  (1,543,369 to 1,578,537). Reject v2. Freeze the 8k/model-visible policy only
-  after the model-specific-effort v3 run restores 15/15 and beats the combined
-  token baseline.
+  (1,543,369 to 1,578,537). The model-specific v3 run restored Fable high and
+  improved combined tokens 15.3% to 1,306,951, but still scored 14/15 because
+  its final diff never received the re-review that the product guidance intended.
+  Reject both paid candidates. Freeze the 8k/model-visible policy only after the
+  lifecycle-corrected run restores 15/15 and re-measures the combined token total.
 - **Confidence:** **high** that uniform medium is unsafe for Fable; **medium**
-  until the v3 paid known-case confirmation completes.
+  until the lifecycle-corrected paid confirmation completes.
+
+### S71 — Re-arm completion review when real work follows an early checkpoint
+
+- **When:** the model-specific-effort v3 gate scored 14/15 even though Fable was
+  restored to high effort and the context projection beat the token baseline.
+- **The choice:** Treat a completion checkpoint as spent only for the evidence it
+  actually reviewed. If the executor runs any non-advisor tool afterward, re-arm
+  the checkpoint so the next completion can review the resulting diff or test
+  evidence. Do not re-arm for prose or for another advisor call. An ignored
+  reminder with no new tool work therefore exits normally instead of looping.
+- **The gap:** An executor completion is only a protocol stop, not proof that the
+  task is semantically finished. In the failed trace it happened after diagnosis,
+  before any edit. Fable rejected the proposed approximation and named the hidden
+  boundary risks, but the old one-shot flag prevented a review after the executor
+  implemented that same approximation. Prompt strength and context size cannot
+  recover evidence that is never sent.
+- **The reach:** This is product advisor scheduling, not a SWE-bench call-count
+  rule. Voluntary consultations remain executor-controlled, the ordinary cooldown
+  and in-flight reservation still apply, and new final reviews occur only after
+  observable tool work makes earlier advice stale. Because this may add calls,
+  the five high-risk 8927 repeats run before the full 15-case token gate.
+- **Verdict:** **sound, paid confirmation pending.** A Docker regression test
+  reproduces an early completion review followed by implementation and proves a
+  second final review is offered.
+- **Confidence:** **high** in the trace diagnosis and local scheduling fix;
+  **medium** in the final quality/token balance until the paid repeats complete.
 
 ## Compressed trivial discretion
 

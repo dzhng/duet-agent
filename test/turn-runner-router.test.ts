@@ -868,6 +868,59 @@ describe("advisor executor guidance layer", () => {
     await runner.dispose();
   });
 
+  test("tool work after an early completion review receives a final review", async () => {
+    const runner = new RouterTurnRunner({
+      everySteps: 99,
+      stubAdvisor: true,
+      classify: async () => ({ route: "general", rationale: "Keep the executor stable." }),
+    });
+    await startRunner(runner, []);
+
+    const turn = runner.turn({
+      type: "prompt",
+      message: "Diagnose the bug, implement the fix, and verify it.",
+      behavior: "follow_up",
+    });
+    for (let step = 0; step < 3; step++) {
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({
+        tool: { name: "bash", arguments: { command: "true" } },
+        usageTokens: 5,
+      });
+    }
+
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(JSON.stringify(runner.requestMessages.at(-1))).toContain("orientation checkpoint");
+    runner.completeNext({
+      text: "The root cause is clear; review it before I edit.",
+      usageTokens: 5,
+    });
+
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(JSON.stringify(runner.requestMessages.at(-1))).toContain("completion-review checkpoint");
+    runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+    await waitFor(() => runner.advisorContextTexts.length === 1);
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({
+      tool: { name: "bash", arguments: { command: "apply-fix" } },
+      usageTokens: 5,
+    });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "The fix is implemented and verified.", usageTokens: 5 });
+
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(JSON.stringify(runner.requestMessages.at(-1))).toContain("completion-review checkpoint");
+    runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+    await waitFor(() => runner.advisorContextTexts.length === 2);
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext({ text: "The final diff is reviewed and complete.", usageTokens: 5 });
+
+    const terminal = await turn;
+    expect(terminal.type).toBe("complete");
+    expect(runner.advisorContextTexts[1]).toContain("The fix is implemented and verified.");
+    await runner.dispose();
+  });
+
   test("a third-step final response consumes the orientation steer before the pass stops", async () => {
     const runner = new RouterTurnRunner({
       everySteps: 99,
