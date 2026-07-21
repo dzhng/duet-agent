@@ -154,10 +154,10 @@ No full campaign starts until all of these are true:
    cases under the v6 namespaces before attempting another optimization.
    V6 then restored 15/15 official resolves. Its advisor models used 494,436
    tokens while the on-demand observer used 841,440, for 1,335,876 combined
-   tokens (13.4% below the quality baseline). Exact-boundary replay shows the
-   known raw consultations fit near 64k, so the v7 candidate raises the soft
-   compaction trigger to 64k while leaving the 8k compacted tail and every
-   fidelity guarantee unchanged. Repeat 8927 five times before expanding.
+   tokens (13.4% below the quality baseline). V7 tested a 64k soft compaction
+   trigger on the five 8927 repeats. It remained 5/5 resolved but used 622,697
+   advisor-plus-observer tokens versus v6's 470,574, a 32.3% regression. Restore
+   32k and optimize observation work itself; do not expand the rejected setting.
 4. **Fail-fast admission:** score pairs as they complete. Both-resolved and
    enabled-only pairs pass the non-regression gate. Neither-resolved is neutral
    for the advisor comparison. Any pure-resolved/enabled-unresolved pair fails

@@ -84,16 +84,17 @@ subset. The candidate now advances to the complete 15-case gate.
 The v6 expansion officially resolved all 15/15 known cases. Its 31 successful
 consultations used 494,436 advisor tokens and 841,440 observer tokens, for
 1,335,876 combined—13.4% below the 1,543,369-token quality baseline. That split
-shows the remaining inefficiency is premature observation, not an oversized
-post-compaction tail. Replay of the exact consultation boundaries found every
-complete raw request near or below 64k. The next candidate raises only the soft
-compaction trigger to 64k; the 8k raw tail after compaction, observation format,
-tool protection, lifecycle, prompts, model effort, and hard-window behavior stay
-unchanged. Rerun the five high-risk 8927 cases before expanding to 15.
+shows the remaining inefficiency is concentrated in the observation pipeline.
+A v7 experiment deferred compaction from 32k to 64k. It preserved quality at
+5/5 official resolves, but consumed 622,697 advisor-plus-observer tokens versus
+v6's 470,574 on the same five trials, a 32.3% regression. The observer saved
+95,112 tokens while the advisor spent 247,235 more. The validated 32k trigger is
+therefore restored; further optimization must reduce observation work without
+inflating the advisor request.
 
-Next, run the five 8927 cases under the fresh v7 campaign id, expand to all 15
-only if they remain 5/5 and beat v6's same-case token total, and create fresh
-diversity campaign ids only if the full gate preserves 15/15. Any pure-only
+Next, inspect v7's call-level traces and optimize the observer while preserving
+the 32k trigger, 8k raw tail, complete-tool protection, and wire-faithful advisor
+context. Create fresh campaign ids for every paid candidate. Any pure-only
 result still stops immediately for exact-trace diagnosis. The stopped
 `advisor-nonregression-expansion-*-20260721-v1` namespaces predate the policy
 change, have no completed pairs, and must never be resumed or scored. The stopped v3 workers

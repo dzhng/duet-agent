@@ -8,11 +8,12 @@ const CONTEXT_OPEN = "<executor_context>";
 const CONTEXT_CLOSE = "</executor_context>";
 
 /**
- * Soft total-input target above which observational compaction becomes cheaper
- * than forwarding the complete transcript to a typical two-review advisor
- * turn. The hard model window remains the final safety ceiling.
+ * Soft total-input target above which the consultation pipeline compacts older
+ * work into observations. Paid repeated-run telemetry showed that forwarding
+ * larger raw transcripts costs the advisor more than it saves the observer.
+ * The hard model window remains the final safety ceiling.
  */
-export const ADVISOR_INPUT_TARGET_TOKENS = 64_000;
+export const ADVISOR_INPUT_TARGET_TOKENS = 32_000;
 
 /**
  * Recent raw executor-message allowance kept beside compacted observations.

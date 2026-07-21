@@ -2152,32 +2152,28 @@ the number of rollouts or the independently enforced model-spend bound.
   usage was 402,590 tokens, 12.1% below the same five-case v3 subset, with no
   cost-cap interruptions. The full 15-case gate remains the broader check.
 
-### S73 — Compact at the measured break-even region, not at 32k by habit
+### S73 — Keep the 32k trigger after measuring the 64k alternative
 
 - **When:** the lifecycle-corrected v6 policy restored 15/15 official resolves
   and exposed the exact split between advisor and observer usage.
-- **The choice:** Raise the advisor soft input target from 32k to 64k while
-  retaining the 8k recent-message target once compaction is actually needed.
-  Below 64k, forward the complete wire-faithful transcript and do not invoke the
-  observer merely to make the advisor request smaller. Above 64k, keep using
-  normal observations for older work, the latest-complete-tool protection, and
-  the advisor model's hard window as the final ceiling.
+- **The choice:** Retain the 32k advisor soft input target and the 8k
+  recent-message target. Optimize observation work directly instead of sending
+  substantially larger raw transcripts to every later consultation.
 - **The gap:** Across the 15 v6 runs, advisor models consumed 494,436 tokens but
   the observer consumed 841,440. Replay of all 31 consultation boundaries puts
-  their complete raw requests at roughly 64k or less. At 32k the product paid
-  an observer to replace context the advisor could cheaply inspect directly;
-  that reduces the advisor line item while increasing the whole consultation
-  pipeline.
-- **The reach:** Typical two-review coding turns keep more exact evidence and
-  avoid observer latency. Truly long turns still compact well below the
-  executor's 200k horizon and far below Fable's hard window. The 88k live
-  compaction fixture remains above the trigger and must still recover both old
-  observations and recent raw evidence.
-- **Verdict:** **promising, paid confirmation pending.** Run the five high-risk
-  Docusaurus 8927 trials first; expand only if all five resolve and combined
-  advisor-plus-observer tokens improve over v6's same-case subset.
-- **Confidence:** **high** in the token diagnosis; **medium** until the paid
-  quality gate confirms that stochastic behavior remains non-regressive.
+  their complete raw requests at roughly 64k or less. That made deferred
+  compaction plausible, but the aggregate alone could not establish whether
+  larger repeated advisor inputs would be cheaper than one observer pass.
+- **The reach:** V7's five paid repeats remained 5/5 officially resolved, but
+  used 622,697 combined tokens versus v6's 470,574. Observer usage fell from
+  291,206 to 196,094, while advisor usage rose from 179,368 to 426,603. The
+  larger raw payload therefore cost 152,123 net tokens, or 32.3%. The 88k live
+  fixture must continue to compact and recover both old observations and recent
+  raw evidence.
+- **Verdict:** **64k rejected; 32k restored.** The experiment preserved quality
+  but failed the efficiency gate.
+- **Confidence:** **high.** The decision is based on five official resolves and
+  exact per-model usage telemetry from both settings.
 
 ## Compressed trivial discretion
 

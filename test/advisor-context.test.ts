@@ -51,9 +51,9 @@ function payload(text: string) {
 describe("buildAdvisorContext", () => {
   test("reserves the documented compact advisor output allowance", () => {
     expect(ADVISOR_MAX_OUTPUT_TOKENS).toBe(2_048);
-    expect(ADVISOR_INPUT_TARGET_TOKENS).toBe(64_000);
+    expect(ADVISOR_INPUT_TARGET_TOKENS).toBe(32_000);
     expect(ADVISOR_RECENT_MESSAGE_TARGET_TOKENS).toBe(8_000);
-    expect(build([]).metadata.inputTargetTokens).toBe(64_000);
+    expect(build([]).metadata.inputTargetTokens).toBe(32_000);
   });
 
   test("captures a partial assistant message once for runtime and preview callers", async () => {
