@@ -29,6 +29,7 @@ import { runSendFeedbackCommand } from "./cli/send-feedback.js";
 import { runSkillsCommand } from "./cli/skills.js";
 import { runTrainCommand } from "./cli/train.js";
 import { runUpgradeCommand } from "./cli/upgrade.js";
+import { loadConnectedTransportSnapshot } from "./cli/shared.js";
 
 // ---- public re-exports ----------------------------------------------------
 // External tests and callers historically import these helpers from
@@ -62,6 +63,8 @@ export {
   fileExists,
   formatEnvEntries,
   loadCliEnvFiles,
+  connectedTransportSnapshot,
+  loadConnectedTransportSnapshot,
   parseResumeHistoryMessages,
   resolveUserPath,
   shellQuote,
@@ -82,6 +85,7 @@ export async function runCli(): Promise<void> {
   const subcommand = args[0];
 
   try {
+    await loadConnectedTransportSnapshot();
     if (subcommand === "upgrade") {
       await runUpgradeCommand(args.slice(1), PACKAGE_METADATA.name);
       return;

@@ -1,4 +1,9 @@
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai";
+import { isConnectedProviderId } from "../connected-providers/store.js";
+import {
+  connectedProviderApiKey,
+  refreshConnectedTokenInBackground,
+} from "../connected-providers/tokens.js";
 
 const DEFAULT_DUET_GATEWAY_BASE_URL = "https://gateway.duet.so";
 const OPENAI_MODEL_PREFIX = "openai/";
@@ -331,6 +336,11 @@ function stripTrailingSlash(url: string): string {
 export function resolveProviderApiKey(provider: string): string | undefined {
   if (provider === "duet-gateway") {
     return process.env[DUET_GATEWAY_API_KEY_ENV];
+  }
+  if (isConnectedProviderId(provider)) {
+    const token = connectedProviderApiKey(provider);
+    if (!token) refreshConnectedTokenInBackground(provider);
+    return token;
   }
   return getEnvApiKey(provider as Parameters<typeof getEnvApiKey>[0]);
 }

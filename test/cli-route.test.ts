@@ -25,6 +25,13 @@ describe("parseRouteArgs", () => {
     expect(() => parseRouteArgs(["--model"])).toThrow("Missing value for --model");
   });
 
+  test("parses transport explanation output without changing the default report", () => {
+    expect(parseRouteArgs(["--explain", "route this"])).toMatchObject({
+      explain: true,
+      prompt: "route this",
+    });
+  });
+
   test("parses advisor-preview with an optional stored session id", () => {
     expect(parseRouteArgs(["advisor-preview", "--session", "session_fixture"])).toEqual({
       images: false,
@@ -82,6 +89,24 @@ describe("runRouteCommand", () => {
     });
     expect(result).toEqual(JSON.parse(output));
     expect(classifierDelta).toBe("implement the parser");
+  });
+
+  test("explains the concrete transport without changing the default output shape", async () => {
+    let output = "";
+    await runRouteCommand(["--explain", "implement the parser"], {
+      cwd: process.cwd(),
+      write: (text) => {
+        output += text;
+      },
+      classify: async () => ({
+        route: "implement",
+        rationale: "The request asks for implementation.",
+      }),
+    });
+
+    expect(output).toContain(
+      "Transport: duet-gateway modelId=openai/gpt-5.6-sol reason=router_order planCovered=false",
+    );
   });
 
   test("surfaces an unknown tier before calling the classifier", async () => {

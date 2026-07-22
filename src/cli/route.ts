@@ -1,4 +1,5 @@
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
+import { ensureFreshConnectedTokens } from "../connected-providers/tokens.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -10,6 +11,8 @@ import { classifyRoute, type ClassifierDecision } from "../model-routing/classif
 import { loadRoutingTable, type LoadedRoutingTable } from "../model-routing/loader.js";
 import { resolveRoute } from "../model-routing/resolve.js";
 import type { TurnFacts } from "../model-routing/step-triggers.js";
+import { isConnectedProviderId } from "../connected-providers/store.js";
+import { isProviderPinnedModelName } from "../model-resolution/catalog.js";
 import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
 import {
   pinnedModelReference,
@@ -30,6 +33,8 @@ export interface RouteArgs {
   images: boolean;
   /** Emits one machine-readable decision instead of the human report. */
   json: boolean;
+  /** Includes the concrete transport decision and plan-coverage provenance. */
+  explain?: boolean;
   /** Prints command-specific help without making a classifier call. */
   help: boolean;
   /** Work description classified by the live routing model. */
@@ -58,6 +63,14 @@ export interface RouteCommandResult {
   tableSource: string;
   /** Wall-clock classifier plus resolution latency. */
   latencyMs: number;
+  /** Concrete backend selected for the call when `--explain` is requested. */
+  transport?: string;
+  /** Provider-specific model id sent on the explained transport. */
+  transportModelId?: string;
+  /** Whether a connected subscription covers the explained call. */
+  planCovered?: boolean;
+  /** Selection rule that produced the explained transport. */
+  transportReason?: "connected" | "router_order" | "explicit_pin";
 }
 
 /** Narrow test/embedding seam around process-owned route command effects. */
@@ -81,7 +94,7 @@ export interface RouteCommandOptions {
 
 function printRouteHelp(write: (text: string) => void): void {
   write(
-    `duet route — Probe model routing and advisor context\n\nUSAGE\n  duet route [--model <tier>] [--images] [--json] "<prompt>"\n  duet route advisor-preview [--session <id>]\n`,
+    `duet route — Probe model routing and advisor context\n\nUSAGE\n  duet route [--model <tier>] [--images] [--json] [--explain] "<prompt>"\n  duet route advisor-preview [--session <id>]\n`,
   );
 }
 
@@ -115,6 +128,8 @@ export function parseRouteArgs(args: string[]): RouteArgs {
       parsed.images = true;
     } else if (arg === "--json") {
       parsed.json = true;
+    } else if (arg === "--explain") {
+      parsed.explain = true;
     } else if (arg === "--help" || arg === "-h") {
       parsed.help = true;
     } else if (arg.startsWith("-")) {
@@ -174,6 +189,11 @@ function renderHuman(result: RouteCommandResult): string {
     `Rationale: ${result.rationale}`,
     `Resolution chain: ${result.resolutionChain.join(" -> ")}`,
     `Table source: ${result.tableSource}`,
+    ...(result.transport
+      ? [
+          `Transport: ${result.transport} modelId=${result.transportModelId} reason=${result.transportReason} planCovered=${result.planCovered}`,
+        ]
+      : []),
     `Latency: ${result.latencyMs} ms`,
   ].join("\n");
 }
@@ -225,6 +245,13 @@ export async function runRouteCommand(
     facts,
     routingCatalogAdapter,
   );
+  if (parsed.explain) {
+    // A turn awaits this refresh before resolving; --explain must match what
+    // the turn would actually select, not the stale pre-refresh cache.
+    await ensureFreshConnectedTokens();
+  }
+  const explainedModel = parsed.explain ? resolveModelName(resolved.modelName) : undefined;
+  const planCovered = explainedModel ? isConnectedProviderId(explainedModel.provider) : undefined;
   const result: RouteCommandResult = {
     tier: tierName,
     route: decision.route,
@@ -233,6 +260,18 @@ export async function runRouteCommand(
     rationale: decision.rationale,
     resolutionChain: resolved.chain,
     tableSource: tableSource(loaded),
+    ...(explainedModel
+      ? {
+          transport: explainedModel.provider,
+          transportModelId: explainedModel.id,
+          planCovered,
+          transportReason: isProviderPinnedModelName(resolved.modelName)
+            ? "explicit_pin"
+            : planCovered
+              ? "connected"
+              : "router_order",
+        }
+      : {}),
     latencyMs: Math.max(0, now() - startedAt),
   };
   write(`${parsed.json ? JSON.stringify(result) : renderHuman(result)}\n`);

@@ -10,6 +10,17 @@ export type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 export type ConnectedProviderId = "openai-codex" | "github-copilot";
 export type ConnectionEligibility = "unknown" | "eligible" | "plan_ineligible";
 
+/** Stable precedence for persisted records and connected transport selection. */
+export const CONNECTED_PROVIDER_ORDER: readonly ConnectedProviderId[] = [
+  "openai-codex",
+  "github-copilot",
+];
+
+/** Narrow an arbitrary pi-ai provider id to one owned by the connected store. */
+export function isConnectedProviderId(provider: string): provider is ConnectedProviderId {
+  return CONNECTED_PROVIDER_ORDER.some((candidate) => candidate === provider);
+}
+
 export interface ConnectionRecord {
   /** Transport whose subscription these credentials authorize. */
   provider: ConnectedProviderId;
@@ -44,7 +55,6 @@ export interface ConnectedProviderStore {
 export const CONNECTED_PROVIDERS_FILE = "connected-providers.json";
 
 const STORE_VERSION = 1;
-const PROVIDER_ORDER: readonly ConnectedProviderId[] = ["openai-codex", "github-copilot"];
 const LOCK_RETRY_MS = 20;
 
 interface StoreDocument {
@@ -77,7 +87,7 @@ export function createConnectedProviderStore(
         return emptyDocument();
       }
       const connections: StoreDocument["connections"] = {};
-      for (const provider of PROVIDER_ORDER) {
+      for (const provider of CONNECTED_PROVIDER_ORDER) {
         const candidate = value.connections[provider];
         if (candidate === undefined) continue;
         if (isConnectionRecord(candidate, provider)) connections[provider] = candidate;
@@ -139,7 +149,7 @@ export function createConnectedProviderStore(
   return {
     async read() {
       const document = await readDocument();
-      return PROVIDER_ORDER.flatMap((provider) => {
+      return CONNECTED_PROVIDER_ORDER.flatMap((provider) => {
         const connection = document.connections[provider];
         return connection ? [connection] : [];
       });

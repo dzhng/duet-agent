@@ -2,6 +2,8 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import dotenv from "dotenv";
+import type { TransportSnapshot } from "../connected-providers/transport-preference.js";
+import { loadConnectedTokensSnapshot } from "../connected-providers/tokens.js";
 
 /** Default location of the shared duet env file shown in CLI help text. */
 export const DEFAULT_DUET_ENV_FILE = "~/.duet/.env";
@@ -99,6 +101,30 @@ export function loadCliEnvFiles(workDir: string, envFilePath?: string): Set<stri
     }
   }
   return dotenvKeys;
+}
+
+let transportSnapshot: TransportSnapshot = Object.freeze({ connections: Object.freeze([]) });
+let transportSnapshotLoad: Promise<void> | undefined;
+
+/**
+ * Read connected-provider routing state once for this CLI process and seed the
+ * synchronous token cache from the same records. Later store changes become
+ * visible on the next CLI invocation, keeping model resolution free of I/O.
+ */
+export function loadConnectedTransportSnapshot(): Promise<void> {
+  transportSnapshotLoad ??= loadConnectedTokensSnapshot().then((connections) => {
+    transportSnapshot = Object.freeze({
+      connections: Object.freeze(
+        connections.map(({ provider, eligibility }) => ({ provider, eligibility })),
+      ),
+    });
+  });
+  return transportSnapshotLoad;
+}
+
+/** Immutable connected-provider routing state captured at CLI boot. */
+export function connectedTransportSnapshot(): TransportSnapshot {
+  return transportSnapshot;
 }
 
 /** Reject negative or non-numeric values for `--resume-history-messages`. */

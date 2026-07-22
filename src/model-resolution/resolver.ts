@@ -26,6 +26,14 @@ import {
   type RouterProviderName,
   resolveProviderShorthand,
 } from "./catalog.js";
+import { connectedTransportSnapshot } from "../cli/shared.js";
+import { chooseTransport } from "../connected-providers/transport-preference.js";
+import {
+  applyConnectedModelHook,
+  connectedProviderApiKey,
+  refreshConnectedTokenInBackground,
+} from "../connected-providers/tokens.js";
+import { isConnectedProviderId } from "../connected-providers/store.js";
 
 export { DEFAULT_CLI_MEMORY_MODEL, DEFAULT_CLI_MODEL } from "./catalog.js";
 
@@ -219,6 +227,27 @@ function getMemoryModelCandidates(): ProviderModelCandidate[] {
 
 function resolveModelReference(modelName: string): string {
   if (isProviderPinnedModelName(modelName)) return modelName;
+
+  const transport = chooseTransport(modelName, connectedTransportSnapshot());
+  if (transport.planCovered && isConnectedProviderId(transport.transport)) {
+    const provider = transport.transport;
+    if (connectedProviderApiKey(provider)) {
+      // The account hook can filter models the plan cannot serve (Copilot
+      // availableModelIds); a filtered model falls through to router order.
+      const spec = getModel(
+        provider as Parameters<typeof getModel>[0],
+        transport.modelId as Parameters<typeof getModel>[1],
+      );
+      if (!spec || applyConnectedModelHook(provider, spec)) {
+        return `${provider}:${transport.modelId}`;
+      }
+    } else {
+      // Resolution must remain synchronous. A cache miss cannot wait here, so
+      // this call keeps the existing router path while a later resolution can
+      // use the coalesced refresh started in the background.
+      refreshConnectedTokenInBackground(provider);
+    }
+  }
 
   const inferred = findInferredProviderEntry(getModelCandidates(modelName));
   if (inferred) return inferred.entry.modelName;

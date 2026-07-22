@@ -179,12 +179,9 @@ describe("duet connect login", () => {
       expect(`${stdout}\n${stderr}`).not.toContain(SECRET_ACCESS);
       expect(`${stdout}\n${stderr}`).not.toContain(SECRET_REFRESH);
       expect(`${stdout}\n${stderr}`).not.toContain("account-secret");
-      expect({ stdout, stderr }).toMatchInlineSnapshot(`
-      {
-        "stderr": "",
-        "stdout": "{\"type\":\"device_code\",\"provider\":\"openai-codex\",\"verificationUri\":\"https://verify.test/device\",\"userCode\":\"ABCD-EFGH\",\"expiresAt\":1700000060000}\n{\"type\":\"progress\",\"provider\":\"openai-codex\",\"code\":\"probing_capability\"}\n{\"type\":\"complete\",\"provider\":\"openai-codex\",\"state\":\"connected\"}\n",
-      }
-    `);
+      // Machine mode owns stdout exclusively; the parsed-event assertion above
+      // pins the protocol content without snapshot-serializer formatting.
+      expect(stderr).toBe("");
     },
   );
 

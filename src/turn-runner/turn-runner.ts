@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { isContextOverflow, type ImageContent, type Usage } from "@earendil-works/pi-ai";
 import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
+import { ensureFreshConnectedTokens } from "../connected-providers/tokens.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
@@ -718,6 +719,7 @@ export class TurnRunner {
    * sees available skills before typing the first prompt.
    */
   async start(command: TurnStartCommand): Promise<TurnState> {
+    await ensureFreshConnectedTokens();
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
     await this.ensureMcpServersConnected(command.mcpServers);
@@ -791,6 +793,7 @@ export class TurnRunner {
    */
   async turn(command: TurnCommand, onAccepted?: () => void): Promise<TurnTerminalEvent> {
     this.requireStarted();
+    await ensureFreshConnectedTokens();
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
     // Serialize behind an in-flight compact. Compact advances the wire
