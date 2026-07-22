@@ -42,14 +42,18 @@ import {
 const ROOT = import.meta.dir;
 const REPO_ROOT = resolve(ROOT, "..", "..");
 const MANIFEST_PATH = join(ROOT, "manifests", "multilingual-30.json");
-const CACHE_PATH = join(ROOT, ".cache", "multilingual-test.json");
+const DATASET_SNAPSHOT_PATH = join(
+  ROOT,
+  "dataset",
+  `multilingual-test-${PINNED_DATASET_REVISION}.json`,
+);
 const CONFIG_DIR = join(ROOT, "configs");
 const RUNTIME_BUILD_DIR = join(ROOT, "runtime", "build");
 const MANIFEST_SEED = 20_260_720;
 
 async function cacheDataset(): Promise<void> {
   const snapshot = await fetchDataset({ expectedRevision: PINNED_DATASET_REVISION });
-  await writeDatasetCache(CACHE_PATH, snapshot);
+  await writeDatasetCache(DATASET_SNAPSHOT_PATH, snapshot);
   console.log(
     `Cached ${snapshot.rows.length} rows at dataset revision ${snapshot.datasetRevision}.`,
   );
@@ -82,7 +86,7 @@ async function writeManifest(args: string[]): Promise<void> {
     size,
     excludedInstanceIds: Object.keys(CAMPAIGN_GOLD_EXCLUSIONS),
   });
-  await writeDatasetCache(CACHE_PATH, snapshot);
+  await writeDatasetCache(DATASET_SNAPSHOT_PATH, snapshot);
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, serializeManifest(manifest));
   console.log(`Wrote ${manifest.entries.length} instances to ${outputPath}`);
@@ -161,7 +165,7 @@ async function runLiveSmoke(args: string[]): Promise<void> {
 
   const [manifest, snapshot, artifact, providerEnv] = await Promise.all([
     readFile(MANIFEST_PATH, "utf8").then((value) => JSON.parse(value) as InstanceManifest),
-    readFile(CACHE_PATH, "utf8").then(
+    readFile(DATASET_SNAPSHOT_PATH, "utf8").then(
       (value) => JSON.parse(value) as Awaited<ReturnType<typeof fetchDataset>>,
     ),
     prepareDuetArtifact({ repoRoot: REPO_ROOT, outputDir: join(ROOT, "runtime", "build") }),
@@ -231,13 +235,13 @@ async function buildCampaignRuntime(spec: CampaignSpec): Promise<CampaignRuntime
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as InstanceManifest;
   let snapshot;
   try {
-    snapshot = JSON.parse(await readFile(CACHE_PATH, "utf8")) as Awaited<
+    snapshot = JSON.parse(await readFile(DATASET_SNAPSHOT_PATH, "utf8")) as Awaited<
       ReturnType<typeof fetchDataset>
     >;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     snapshot = await fetchDataset({ expectedRevision: manifest.datasetRevision });
-    await writeDatasetCache(CACHE_PATH, snapshot);
+    await writeDatasetCache(DATASET_SNAPSHOT_PATH, snapshot);
   }
   if (snapshot.datasetRevision !== manifest.datasetRevision) {
     throw new Error(

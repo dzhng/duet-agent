@@ -53,9 +53,7 @@ export async function buildSwebenchTemplate(): Promise<{
       `sudo mkdir -p /work && sudo chown user:user /work && git clone ${repo} ${worktree} && git -C ${worktree} checkout ${sha}`,
     )
     .runCmd(`cd ${worktree} && bun install --frozen-lockfile`)
-    .runCmd(
-      `cd ${worktree} && bun benchmarks/swebench/cli.ts package build && bun benchmarks/swebench/cli.ts dataset cache`,
-    )
+    .runCmd(`cd ${worktree} && bun benchmarks/swebench/cli.ts package build`)
     .runCmd(
       `python3 -m venv ${worktree}/benchmarks/swebench/.venv && ${worktree}/benchmarks/swebench/.venv/bin/pip install --no-cache-dir swebench==4.1.0 mini-swe-agent==2.4.5`,
     )

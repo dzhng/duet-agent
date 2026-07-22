@@ -7,6 +7,7 @@ import {
   renderCampaignConfigs,
   serializeModelsJson,
 } from "../src/config-override.js";
+import { PINNED_DATASET_REVISION } from "../src/fetch-dataset.js";
 import {
   CAMPAIGN_GOLD_EXCLUSIONS,
   LANGUAGES,
@@ -16,6 +17,7 @@ import {
   serializeManifest,
   type DatasetRow,
   type DatasetSnapshot,
+  type InstanceManifest,
 } from "../src/manifest.js";
 import { BUILT_IN_ROUTING_TABLE, validateRoutingTable } from "../../../src/model-routing/table.js";
 import { routingCatalogAdapter } from "../../../src/model-resolution/resolver.js";
@@ -48,6 +50,30 @@ function changedPaths(left: unknown, right: unknown, path = ""): string[] {
 }
 
 describe("SWE-bench manifest", () => {
+  test("ships the exact pinned dataset snapshot used by the fresh fifty-task manifest", async () => {
+    const manifest = JSON.parse(
+      await readFile(
+        join(import.meta.dir, "..", "manifests", "multilingual-50-fresh-20265471.json"),
+        "utf8",
+      ),
+    ) as InstanceManifest;
+    const snapshot = JSON.parse(
+      await readFile(
+        join(import.meta.dir, "..", "dataset", `multilingual-test-${PINNED_DATASET_REVISION}.json`),
+        "utf8",
+      ),
+    ) as DatasetSnapshot;
+
+    expect(snapshot.datasetRevision).toBe(manifest.datasetRevision);
+    expect(snapshot.rows).toHaveLength(300);
+    for (const entry of manifest.entries) {
+      expect(snapshot.rows.find((row) => row.instanceId === entry.instanceId)).toMatchObject({
+        repo: entry.repo,
+        baseCommit: entry.baseCommit,
+      });
+    }
+  });
+
   test("selects a byte-identical, revision-pinned nine-language sample", () => {
     const snapshot = fixtureSnapshot();
     const first = selectManifest(snapshot, { seed: 12345, size: 30 });
