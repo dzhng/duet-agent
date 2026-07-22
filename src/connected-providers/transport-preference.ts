@@ -1,6 +1,7 @@
 import {
   PROVIDER_ORDER,
   transportModelId,
+  type RouterProviderName,
   type TransportName,
 } from "../model-resolution/catalog.js";
 import { CONNECTED_PROVIDER_ORDER, isConnectedProviderId, type ConnectionRecord } from "./store.js";
@@ -8,6 +9,13 @@ import { CONNECTED_PROVIDER_ORDER, isConnectedProviderId, type ConnectionRecord 
 export interface TransportSnapshot {
   /** Connections present when the CLI process booted; later store edits apply on the next invocation. */
   connections: readonly Pick<ConnectionRecord, "provider" | "eligibility">[];
+  /**
+   * Router providers with a configured credential. When present, router-order
+   * selection skips unconfigured routers so a fallback never lands on a
+   * backend that cannot authenticate. Absent means "assume all configured"
+   * (explicit pins bypass this check either way).
+   */
+  configuredRouters?: readonly RouterProviderName[];
 }
 
 export interface TransportChoice {
@@ -43,7 +51,10 @@ export function chooseTransport(shorthand: string, snapshot: TransportSnapshot):
     }
   }
 
+  const routerConfigured = (provider: RouterProviderName): boolean =>
+    snapshot.configuredRouters === undefined || snapshot.configuredRouters.includes(provider);
   for (const { provider } of PROVIDER_ORDER) {
+    if (!routerConfigured(provider)) continue;
     const modelId = transportModelId(provider, shorthand);
     if (modelId) {
       return { transport: provider, modelId, planCovered: false, reason: "router_order" };

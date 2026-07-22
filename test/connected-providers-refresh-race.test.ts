@@ -58,6 +58,35 @@ describe("connected provider token refresh", () => {
     },
   );
 
+  testIfDocker(
+    "failed auth refresh persists reconnect eligibility without deleting credentials",
+    async () => {
+      tempHome = await mkdtemp(join(tmpdir(), "duet-connected-refresh-"));
+      const store = createConnectedProviderStore({ homeDir: tempHome });
+      const expired: ConnectionRecord = {
+        provider: "openai-codex",
+        credentials: { access: "old-access", refresh: "old-refresh", expires: 900 },
+        connectedAt: 100,
+        eligibility: "eligible",
+      };
+      await store.withLock("openai-codex", async () => ({ next: expired, result: undefined }));
+      const manager = createConnectedTokenManager({
+        store,
+        now: () => 1_000,
+        refreshCredentials: async () => {
+          throw new Error("401 refresh rejected");
+        },
+      });
+
+      await expect(manager.ensureFreshToken("openai-codex")).rejects.toThrow(
+        "401 refresh rejected",
+      );
+      const persisted = await store.get("openai-codex");
+      expect(persisted?.eligibility).toBe("unknown");
+      expect(persisted?.credentials).toEqual(expired.credentials);
+    },
+  );
+
   test("OpenAI Codex refresh sends the required scope and keeps the rotated token", async () => {
     const payload = Buffer.from(
       JSON.stringify({

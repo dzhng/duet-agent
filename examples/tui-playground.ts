@@ -415,7 +415,13 @@ export class FakePlaygroundRunner implements SessionTurnRunner {
       const usage = { input, output, cacheRead, cacheWrite, totalTokens: total, cost };
       this.emitUsage({
         turnUsage: usage,
-        usageByModel: [{ model: "playground-model", usage }],
+        usageByModel: [
+          {
+            model: "playground-model",
+            transport: { provider: "duet-gateway", billing: "metered" },
+            usage,
+          },
+        ],
         lastMessageUsage: usage,
         effectiveContextWindow: cap,
         contextWindowUsage: { systemPrompt, messages, localMemory, globalMemory },

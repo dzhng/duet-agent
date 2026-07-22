@@ -1,3 +1,4 @@
+import { configuredRouterProviders } from "../model-resolution/resolver.js";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -117,6 +118,7 @@ export function loadConnectedTransportSnapshot(): Promise<void> {
       connections: Object.freeze(
         connections.map(({ provider, eligibility }) => ({ provider, eligibility })),
       ),
+      configuredRouters: Object.freeze(configuredRouterProviders()),
     });
   });
   return transportSnapshotLoad;
@@ -125,6 +127,22 @@ export function loadConnectedTransportSnapshot(): Promise<void> {
 /** Immutable connected-provider routing state captured at CLI boot. */
 export function connectedTransportSnapshot(): TransportSnapshot {
   return transportSnapshot;
+}
+
+/** Demote one connection for the lifetime of this CLI session without touching disk. */
+export function demoteConnectedTransport(
+  provider: TransportSnapshot["connections"][number]["provider"],
+): void {
+  transportSnapshot = Object.freeze({
+    ...transportSnapshot,
+    connections: Object.freeze(
+      transportSnapshot.connections.map((connection) =>
+        connection.provider === provider
+          ? { ...connection, eligibility: "plan_ineligible" as const }
+          : connection,
+      ),
+    ),
+  });
 }
 
 /** Reject negative or non-numeric values for `--resume-history-messages`. */

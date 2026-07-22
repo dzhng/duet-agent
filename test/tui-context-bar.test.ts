@@ -33,7 +33,9 @@ describe("sidebar context bar", () => {
     };
     await harness.pushUsage({
       turnUsage: usage,
-      usageByModel: [{ model: "test-model", usage }],
+      usageByModel: [
+        { model: "test-model", transport: { provider: "duet-gateway", billing: "metered" }, usage },
+      ],
       lastMessageUsage: usage,
       effectiveContextWindow: 200_000,
       contextWindowUsage: {
@@ -80,7 +82,13 @@ describe("sidebar context bar", () => {
     };
     await harness.pushUsage({
       turnUsage: zero,
-      usageByModel: [{ model: "test-model", usage: zero }],
+      usageByModel: [
+        {
+          model: "test-model",
+          transport: { provider: "duet-gateway", billing: "metered" },
+          usage: zero,
+        },
+      ],
       lastMessageUsage: zero,
       effectiveContextWindow: 200_000,
       contextWindowUsage: {
@@ -96,6 +104,32 @@ describe("sidebar context bar", () => {
     const match = frame.match(/\[([\u2588\u2591]+)\]/);
     expect(match).toBeDefined();
     expect(match![1]).toBe("\u2591".repeat(25));
+  });
+
+  testIfDocker("marks a zero-cost connected-provider row as plan-covered", async () => {
+    const usage = tokenUsage(150, 0);
+    await harness.pushUsage({
+      turnUsage: usage,
+      usageByModel: [
+        {
+          model: "gpt-5.6-sol",
+          transport: { provider: "openai-codex", billing: "plan-covered" },
+          usage,
+        },
+      ],
+      lastMessageUsage: usage,
+      effectiveContextWindow: 200_000,
+      contextWindowUsage: {
+        systemPrompt: 50,
+        messages: 100,
+        localMemory: 0,
+        globalMemory: 0,
+      },
+    });
+    await harness.flush();
+
+    const frame = await harness.captureCharFrame();
+    expect(frame).toContain("ChatGPT plan · $0");
   });
 
   testIfDocker(
@@ -121,7 +155,13 @@ describe("sidebar context bar", () => {
       const parentUsage = tokenUsage(10_000, 0.1);
       await harness.pushUsage({
         turnUsage: parentUsage,
-        usageByModel: [{ model: "parent", usage: parentUsage }],
+        usageByModel: [
+          {
+            model: "parent",
+            transport: { provider: "duet-gateway", billing: "metered" },
+            usage: parentUsage,
+          },
+        ],
         lastMessageUsage: parentUsage,
         effectiveContextWindow: 200_000,
         contextWindowUsage: {
@@ -137,8 +177,16 @@ describe("sidebar context bar", () => {
         origin: { taskId: "t4" },
         turnUsage: aggregate,
         usageByModel: [
-          { model: "parent", usage: parentUsage },
-          { model: "child", usage: tokenUsage(68_000, 0.68) },
+          {
+            model: "parent",
+            transport: { provider: "duet-gateway", billing: "metered" },
+            usage: parentUsage,
+          },
+          {
+            model: "child",
+            transport: { provider: "duet-gateway", billing: "metered" },
+            usage: tokenUsage(68_000, 0.68),
+          },
         ],
         lastMessageUsage: latestParentUsage,
         effectiveContextWindow: 200_000,

@@ -200,7 +200,9 @@ function buildUsageEvent(costTotal: number): TurnUsageEvent {
   return {
     type: "usage",
     turnUsage: usage,
-    usageByModel: [{ model: "test-model", usage }],
+    usageByModel: [
+      { model: "test-model", transport: { provider: "duet-gateway", billing: "metered" }, usage },
+    ],
     lastMessageUsage: usage,
     effectiveContextWindow: 200_000,
     contextWindowUsage: { systemPrompt: 10, messages: 90, localMemory: 20, globalMemory: 30 },
@@ -658,7 +660,13 @@ describe("Session", () => {
     };
     const persistedUsage = {
       turnUsage: persistedUsageTokens,
-      usageByModel: [{ model: "test-model", usage: persistedUsageTokens }],
+      usageByModel: [
+        {
+          model: "test-model",
+          transport: { provider: "duet-gateway" as const, billing: "metered" as const },
+          usage: persistedUsageTokens,
+        },
+      ],
       lastMessageUsage: persistedUsageTokens,
       effectiveContextWindow: 200_000,
       contextWindowUsage: {

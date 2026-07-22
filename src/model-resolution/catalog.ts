@@ -360,6 +360,15 @@ export function transportModelId(transport: TransportName, shorthand: string): s
   return findModelDefinition(shorthand)?.modelsByProvider[transport];
 }
 
+/** Recover the curated shorthand represented by a transport-specific model id. */
+export function shorthandForTransportModel(
+  transport: TransportName,
+  modelId: string,
+): string | undefined {
+  return MODEL_DEFINITIONS.find((definition) => definition.modelsByProvider[transport] === modelId)
+    ?.shorthand;
+}
+
 /**
  * Normalize a `provider:modelId` model id against catalog aliases so users can
  * pass familiar variants like `claude-opus-4-7` even when the underlying

@@ -1,12 +1,16 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import type { LanguageModelUsage } from "ai";
+import { usageForTransport } from "../connected-providers/billing.js";
+import { isConnectedProviderId } from "../connected-providers/store.js";
+import type { TransportName } from "../model-resolution/catalog.js";
 import type { ModelUsageEntry, TurnTokenUsage } from "../types/protocol.js";
 
 /** Convert AI SDK token fields into the priced usage shape owned by pi-ai. */
 export function usageFromAiSdk<TApi extends Api>(
   usage: LanguageModelUsage,
   model: Model<TApi>,
+  options: { planCovered?: boolean } = {},
 ): Usage {
   const cacheRead = usage.inputTokenDetails.cacheReadTokens ?? 0;
   const cacheWrite = usage.inputTokenDetails.cacheWriteTokens ?? 0;
@@ -22,7 +26,7 @@ export function usageFromAiSdk<TApi extends Api>(
     totalTokens: usage.totalTokens ?? input + output + cacheRead + cacheWrite,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
   };
-  calculateCost(model, normalized);
+  if (!options.planCovered) calculateCost(model, normalized);
   return normalized;
 }
 
@@ -68,18 +72,30 @@ export function addUsage(
 export function addUsageByModel(
   list: readonly ModelUsageEntry[] | undefined,
   model: string,
+  provider: TransportName,
   usage: TurnTokenUsage | undefined,
 ): ModelUsageEntry[] {
   const next: ModelUsageEntry[] = (list ?? []).map((entry) => ({
     model: entry.model,
+    transport: { ...entry.transport },
     usage: cloneUsage(entry.usage),
   }));
   if (!usage) return next;
-  const existing = next.find((entry) => entry.model === model);
+  const accountedUsage = usageForTransport(usage, provider);
+  const existing = next.find(
+    (entry) => entry.model === model && entry.transport.provider === provider,
+  );
   if (existing) {
-    existing.usage = addUsage(existing.usage, usage)!;
+    existing.usage = addUsage(existing.usage, accountedUsage)!;
   } else {
-    next.push({ model, usage: cloneUsage(usage) });
+    next.push({
+      model,
+      transport: {
+        provider,
+        billing: isConnectedProviderId(provider) ? "plan-covered" : "metered",
+      },
+      usage: cloneUsage(accountedUsage),
+    });
   }
   return next;
 }

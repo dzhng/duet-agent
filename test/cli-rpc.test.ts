@@ -578,6 +578,51 @@ describe("parseRpcCommandLine", () => {
 });
 
 describe("RpcEventWriter", () => {
+  test("writes the hard-cut model transport usage shape unchanged", async () => {
+    const lines: string[] = [];
+    const writer = new RpcEventWriter({
+      write(chunk) {
+        lines.push(chunk);
+        return true;
+      },
+      once() {
+        return this;
+      },
+    });
+    const usage = {
+      input: 5,
+      output: 1,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 6,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+    writer.emit({
+      type: "usage",
+      turnUsage: usage,
+      usageByModel: [
+        {
+          model: "gpt-5.6-sol",
+          transport: { provider: "openai-codex", billing: "plan-covered" },
+          usage,
+        },
+      ],
+      lastMessageUsage: usage,
+      effectiveContextWindow: 200_000,
+      contextWindowUsage: { systemPrompt: 1, messages: 4, localMemory: 0, globalMemory: 0 },
+    });
+    await writer.flush();
+
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      usageByModel: [
+        {
+          model: "gpt-5.6-sol",
+          transport: { provider: "openai-codex", billing: "plan-covered" },
+        },
+      ],
+    });
+  });
+
   test("keeps task and terminal events ordered while dropping queued heartbeats under backpressure", async () => {
     const clock = new ManualRuntimeClock(1_000);
     const stream = new BackpressuredWritable();

@@ -33,7 +33,7 @@ import {
   connectedProviderApiKey,
   refreshConnectedTokenInBackground,
 } from "../connected-providers/tokens.js";
-import { isConnectedProviderId } from "../connected-providers/store.js";
+import { isConnectedProviderId, type ConnectedProviderId } from "../connected-providers/store.js";
 
 export { DEFAULT_CLI_MEMORY_MODEL, DEFAULT_CLI_MODEL } from "./catalog.js";
 
@@ -98,6 +98,11 @@ export function resolveModelName(model: string): Model<any> {
   return clampModelOutputTokens(resolved);
 }
 
+/** Resolve an auxiliary actor through configured metered router order only. */
+export function resolveMeteredModelName(modelName: string): Model<any> {
+  return resolveModelName(resolveRouterModelReference(modelName));
+}
+
 /** Shared concrete-catalog boundary used by every model-routing composition site. */
 export const routingCatalogAdapter: RoutingCatalogAdapter = {
   isCatalogName: isKnownShorthand,
@@ -115,6 +120,13 @@ export function pinnedModelReference(name: string): string {
 
 function isKnownProvider(provider: string): provider is RouterProviderName {
   return PROVIDER_ORDER.some((entry) => entry.provider === provider);
+}
+
+/** Router providers whose credential env var is configured in this process. */
+export function configuredRouterProviders(): RouterProviderName[] {
+  return PROVIDER_ORDER.filter((entry) => lookupProviderEnvVar(entry) !== undefined).map(
+    (entry) => entry.provider,
+  );
 }
 
 function lookupProviderEnvVar(entry: {
@@ -225,30 +237,53 @@ function getMemoryModelCandidates(): ProviderModelCandidate[] {
   }));
 }
 
-function resolveModelReference(modelName: string): string {
+interface ConnectedModelResolutionDependencies {
+  snapshot(): ReturnType<typeof connectedTransportSnapshot>;
+  apiKey(provider: ConnectedProviderId): string | undefined;
+  applyHook<T extends { id: string }>(provider: ConnectedProviderId, model: T): T | undefined;
+  refresh(provider: ConnectedProviderId): void;
+}
+
+const connectedModelResolutionDependencies: ConnectedModelResolutionDependencies = {
+  snapshot: connectedTransportSnapshot,
+  apiKey: connectedProviderApiKey,
+  applyHook: applyConnectedModelHook,
+  refresh: refreshConnectedTokenInBackground,
+};
+
+/** Resolve an unpinned catalog name through connected plans, then router order. */
+export function resolveModelReference(
+  modelName: string,
+  deps: ConnectedModelResolutionDependencies = connectedModelResolutionDependencies,
+): string {
   if (isProviderPinnedModelName(modelName)) return modelName;
 
-  const transport = chooseTransport(modelName, connectedTransportSnapshot());
+  const transport = chooseTransport(modelName, deps.snapshot());
   if (transport.planCovered && isConnectedProviderId(transport.transport)) {
     const provider = transport.transport;
-    if (connectedProviderApiKey(provider)) {
+    if (deps.apiKey(provider)) {
       // The account hook can filter models the plan cannot serve (Copilot
       // availableModelIds); a filtered model falls through to router order.
       const spec = getModel(
         provider as Parameters<typeof getModel>[0],
         transport.modelId as Parameters<typeof getModel>[1],
       );
-      if (!spec || applyConnectedModelHook(provider, spec)) {
+      if (!spec || deps.applyHook(provider, spec)) {
         return `${provider}:${transport.modelId}`;
       }
     } else {
       // Resolution must remain synchronous. A cache miss cannot wait here, so
       // this call keeps the existing router path while a later resolution can
       // use the coalesced refresh started in the background.
-      refreshConnectedTokenInBackground(provider);
+      deps.refresh(provider);
     }
   }
 
+  return resolveRouterModelReference(modelName);
+}
+
+function resolveRouterModelReference(modelName: string): string {
+  if (isProviderPinnedModelName(modelName)) return modelName;
   const inferred = findInferredProviderEntry(getModelCandidates(modelName));
   if (inferred) return inferred.entry.modelName;
 

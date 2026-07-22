@@ -37,6 +37,8 @@ interface ConnectedTokenManagerOptions {
   ) => Promise<OAuthCredentials>;
 }
 
+type RefreshOutcome = { credentials: OAuthCredentials } | { error: unknown } | undefined;
+
 /** Build an isolated token cache around a connected-provider store. */
 export function createConnectedTokenManager(
   options: ConnectedTokenManagerOptions,
@@ -57,20 +59,35 @@ export function createConnectedTokenManager(
     if (active) return active;
 
     const pending = options.store
-      .withLock(provider, async (current) => {
+      .withLock<RefreshOutcome>(provider, async (current) => {
         if (!current) return { result: undefined };
         if (isFresh(current.credentials)) {
-          return { next: current, result: current.credentials };
+          return { next: current, result: { credentials: current.credentials } };
         }
-        const credentials = await refreshCredentials(provider, current.credentials);
+        let credentials: OAuthCredentials;
+        try {
+          credentials = await refreshCredentials(provider, current.credentials);
+        } catch (error) {
+          if (!isRefreshAuthFailure(error)) throw error;
+          return {
+            next: {
+              ...current,
+              eligibility: "unknown",
+              eligibilityCheckedAt: now(),
+            },
+            result: { error },
+          };
+        }
         const next: ConnectionRecord = { ...current, credentials, lastRefreshAt: now() };
-        return { next, result: credentials };
+        return { next, result: { credentials } };
       })
-      .then((credentials) => {
-        if (!credentials) {
+      .then((outcome) => {
+        if (!outcome) {
           cache.delete(provider);
           return undefined;
         }
+        if ("error" in outcome) throw outcome.error;
+        const credentials = outcome.credentials;
         cache.set(provider, credentials);
         return credentials.access;
       })
@@ -115,7 +132,13 @@ export function createConnectedTokenManager(
   };
 }
 
-const connectedTokens = createConnectedTokenManager({ store: createConnectedProviderStore() });
+function isRefreshAuthFailure(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b401\b|\b403\b|unauthori[sz]ed|invalid.*(?:token|grant)|authentication/i.test(message);
+}
+
+const connectedStore = createConnectedProviderStore();
+const connectedTokens = createConnectedTokenManager({ store: connectedStore });
 
 /**
  * Run the provider's OAuth model hook against a resolved spec. Copilot
@@ -151,4 +174,22 @@ export function connectedProviderApiKey(provider: ConnectedProviderId): string |
 
 export function refreshConnectedTokenInBackground(provider: ConnectedProviderId): void {
   connectedTokens.refreshInBackground(provider);
+}
+
+/** Persist reconnect-needed eligibility without deleting or rewriting credentials. */
+export async function markConnectedProviderReconnectNeeded(
+  provider: ConnectedProviderId,
+): Promise<void> {
+  await connectedStore.withLock(provider, async (current) => ({
+    ...(current
+      ? {
+          next: {
+            ...current,
+            eligibility: "unknown" as const,
+            eligibilityCheckedAt: Date.now(),
+          },
+        }
+      : {}),
+    result: undefined,
+  }));
 }

@@ -6,7 +6,12 @@ import {
   type TextChunk,
   TextRenderable,
 } from "@opentui/core";
-import type { TurnContextWindowUsage, TurnUsageEvent, TurnTodo } from "../types/protocol.js";
+import type {
+  ModelUsageEntry,
+  TurnContextWindowUsage,
+  TurnUsageEvent,
+  TurnTodo,
+} from "../types/protocol.js";
 import type { StateMachineSession } from "../types/state-machine.js";
 import type { RouterStatus } from "../model-routing/router.js";
 import { COLORS } from "./theme.js";
@@ -89,6 +94,8 @@ const RELAYS_EMPTY_HINT =
   "No relay running. Long-running prompts (outreach, dev lifecycle, triage) open one and run across sessions.";
 
 export function createSidebar(renderer: CliRenderer): Sidebar {
+  let routeVisible = false;
+  let usageRowCount = 0;
   // Fixed width keeps the sidebar legible on narrow terminals without
   // squashing the transcript. The three panels stack vertically inside.
   const view = new BoxRenderable(renderer, {
@@ -118,6 +125,9 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
     height: 5,
     flexShrink: 0,
   });
+  const syncContextPanelHeight = () => {
+    contextPanel.height = 5 + (routeVisible ? 1 : 0) + usageRowCount;
+  };
   // Title row: "context" label on the left, tokens + cost right-aligned
   // so the bar/legend rows below get the full inner width.
   const titleRow = new BoxRenderable(renderer, {
@@ -157,6 +167,15 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
   });
   routeLabel.visible = false;
   contextPanel.add(routeLabel);
+
+  const modelUsageLabel = new TextRenderable(renderer, {
+    content: "",
+    fg: COLORS.hint,
+    height: 0,
+    flexShrink: 0,
+  });
+  modelUsageLabel.visible = false;
+  contextPanel.add(modelUsageLabel);
 
   // The whole bar is a single TextRenderable with a StyledText payload so
   // an empty segment contributes zero cells. Splitting the bar across
@@ -241,7 +260,8 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
       routeLabel.content = routed
         ? `${status.tier} → ${status.modelName} (${status.thinkingLevel})`
         : "";
-      contextPanel.height = routed ? 6 : 5;
+      routeVisible = Boolean(routed);
+      syncContextPanelHeight();
     },
     setUsage(usage) {
       if (!usage) {
@@ -253,6 +273,11 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
           trailingFg: COLORS.hint,
         });
         tokensLabel.content = "";
+        modelUsageLabel.content = "";
+        modelUsageLabel.visible = false;
+        modelUsageLabel.height = 0;
+        usageRowCount = 0;
+        syncContextPanelHeight();
         return;
       }
       const cap = usage.effectiveContextWindow;
@@ -282,6 +307,12 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
       });
       tokensLabel.content = `${formatTokenCount(usedTokens)} / ${formatTokenCount(cap)}`;
       tokensLabel.fg = overflow ? COLORS.error : COLORS.agent;
+      const rows = usage.usageByModel.map(formatModelUsageRow);
+      usageRowCount = rows.length;
+      modelUsageLabel.content = rows.join("\n");
+      modelUsageLabel.height = rows.length;
+      modelUsageLabel.visible = rows.length > 0;
+      syncContextPanelHeight();
     },
     setSessionCost(cost) {
       // Prefix with a space so cost sits visibly apart from the tokens
@@ -289,6 +320,22 @@ export function createSidebar(renderer: CliRenderer): Sidebar {
       costLabel.content = cost > 0 ? ` $${cost.toFixed(4)}` : "";
     },
   };
+}
+
+function formatModelUsageRow(entry: ModelUsageEntry): string {
+  const cost =
+    entry.transport.billing === "plan-covered" ? "$0" : `$${entry.usage.cost.total.toFixed(4)}`;
+  const transport =
+    entry.transport.billing === "plan-covered"
+      ? `${connectedPlanLabel(entry.transport.provider)} plan`
+      : entry.transport.provider;
+  return `${entry.model} · ${transport} · ${cost}`;
+}
+
+function connectedPlanLabel(provider: ModelUsageEntry["transport"]["provider"]): string {
+  if (provider === "openai-codex") return "ChatGPT";
+  if (provider === "github-copilot") return "Copilot";
+  return provider;
 }
 
 function createPanel(

@@ -99,3 +99,16 @@ describe("connected provider transport preference", () => {
     }
   });
 });
+
+test("router order skips routers without configured credentials", () => {
+  const choice = chooseTransport("sol", {
+    connections: [],
+    configuredRouters: ["openrouter"],
+  });
+  expect(choice).toEqual({
+    transport: "openrouter",
+    modelId: "openai/gpt-5.6-sol",
+    planCovered: false,
+    reason: "router_order",
+  });
+});

@@ -8,6 +8,7 @@ import {
 import type { TurnRunnerControlResult } from "../../src/turn-runner/tools.js";
 import type { SubagentResult, SubagentRun } from "../../src/turn-runner/subagent.js";
 import type { TurnRunnerConfig } from "../../src/types/config.js";
+import type { TransportName } from "../../src/model-resolution/catalog.js";
 import type {
   TurnEvent,
   TurnEventOrigin,
@@ -120,7 +121,8 @@ export class TestTurnRunner extends TurnRunner {
         const result = this.worker
           ? await this.worker(workerInput, () => this.runDefaultWorker(workerInput))
           : await this.runDefaultWorker(workerInput);
-        this.recordUsage(result.parentUsage);
+        const model = this.requireParentAgent().state.model;
+        this.recordUsage(result.parentUsage, model.id, model.provider as TransportName);
         const settle = (value: SubagentResult): SubagentResult => {
           terminal = value;
           return value;
