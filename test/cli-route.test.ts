@@ -73,7 +73,7 @@ describe("runRouteCommand", () => {
     expect(JSON.parse(output)).toEqual({
       tier: "frontier",
       route: "implement",
-      model: "gpt-5.6-sol",
+      model: "sol",
       effort: "high",
       rationale: "The request asks for implementation.",
       resolutionChain: ["frontier"],
@@ -114,9 +114,9 @@ describe("runRouteCommand", () => {
     expect(result.tier).toBe("frontier");
     expect(typeof result.tokens).toBe("number");
     expect(result.estimates.map(({ tier, model, enabled }) => ({ tier, model, enabled }))).toEqual([
-      { tier: "frontier", model: "fable-5", enabled: true },
-      { tier: "balanced", model: "fable-5", enabled: true },
-      { tier: "economy", model: "gpt-5.6-terra", enabled: false },
+      { tier: "frontier", model: "fable", enabled: true },
+      { tier: "balanced", model: "fable", enabled: true },
+      { tier: "economy", model: "terra", enabled: false },
     ]);
     expect(result.estimates.every((estimate) => typeof estimate.inputUsd === "number")).toBe(true);
     expect(result.transcript).toContain("Design the model router before implementing it.");
@@ -124,8 +124,8 @@ describe("runRouteCommand", () => {
     expect(result.transcript).toContain('"tools"');
     expect(output).toContain("Session: session_fixture");
     expect(output).toContain(`Transcript tokens: ${result.tokens}`);
-    expect(output).toContain("frontier: fable-5");
-    expect(output).toContain("economy: gpt-5.6-terra (disabled)");
+    expect(output).toContain("frontier: fable");
+    expect(output).toContain("economy: terra (disabled)");
     expect(output).toContain(result.transcript);
   });
 });

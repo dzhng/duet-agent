@@ -67,7 +67,7 @@ describe("duet-gateway model routing", () => {
   test("appends /v1 to the dedicated base for OpenAI transport models", () => {
     process.env.DUET_GATEWAY_BASE_URL = "https://gateway.example.com/base";
 
-    const model = resolveDuetGatewayModel("openai/gpt-5.5");
+    const model = resolveDuetGatewayModel("openai/gpt-5.6-sol");
 
     expect(model.baseUrl).toBe("https://gateway.example.com/base/v1");
   });
@@ -84,7 +84,9 @@ describe("duet model gateway routing", () => {
           typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url,
         authorization: new Headers(init?.headers).get("authorization") ?? undefined,
       });
-      return new Response(JSON.stringify({ data: [{ id: "openai/gpt-5.5", type: "language" }] }));
+      return new Response(
+        JSON.stringify({ data: [{ id: "openai/gpt-5.6-sol", type: "language" }] }),
+      );
     }) as typeof fetch;
 
     const catalog = await fetchModelCatalog();
@@ -95,7 +97,7 @@ describe("duet model gateway routing", () => {
         authorization: "Bearer duet_gt_test",
       },
     ]);
-    expect(catalog.get("openai/gpt-5.5")).toBe("language");
+    expect(catalog.get("openai/gpt-5.6-sol")).toBe("language");
   });
 
   test("builds the AI SDK gateway on the dedicated base /v4/ai path", async () => {

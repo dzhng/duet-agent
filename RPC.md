@@ -178,7 +178,7 @@ still emits exactly one terminal event.
   prompts ignore them.
 
 The model must be vision-capable. The default routing (`sonnet-4.6`,
-`opus-4.7`, `gpt-5.5`, etc.) supports images; `haiku-4.5` does not — if you
+`opus-4.7`, `gpt-5.6-sol`, etc.) supports images; `haiku-4.5` does not — if you
 override the model, pick one that does.
 
 ## State, memory, AGENTS.md, and skills

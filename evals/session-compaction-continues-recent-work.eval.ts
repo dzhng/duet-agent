@@ -53,7 +53,7 @@ const SESSION_ID = "session_VO5yjfS1vV6_";
 // the model phrases its continuation.
 const RECENT_WORK = dedent`
   The user asked about missing OpenAI "thinking traces" from
-  \`gpt-5.5\`. Investigation showed \`resolveModelName("gpt-5.5")\`
+  \`sol\`. Investigation showed \`resolveModelName("sol")\`
   was routing Duet/OpenAI models through \`vercel-ai-gateway\` with
   \`api: "anthropic-messages"\`, which would drop OpenAI reasoning
   events. A red eval was added at

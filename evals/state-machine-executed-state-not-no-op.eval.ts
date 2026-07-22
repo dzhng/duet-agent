@@ -17,7 +17,7 @@ import type {
 } from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "gpt-5.5";
+const model = process.env.EVAL_MODEL ?? "sol";
 
 /**
  * Regression eval for "executed state misread as a no-op".

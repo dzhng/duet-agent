@@ -4,7 +4,7 @@ import { ModelRouter, type RouteClassifier } from "../src/model-routing/router.j
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 
 const catalog = {
-  modelAcceptsImages: (name: string) => name !== "glm-5.2",
+  modelAcceptsImages: (name: string) => name !== "glm" && name !== "glm-5.2",
 };
 
 function scriptedClassifier(
@@ -151,7 +151,7 @@ describe("ModelRouter", () => {
     expect(router.status()).toEqual({
       tier: "frontier",
       route: "plan",
-      modelName: "fable-5",
+      modelName: "fable",
       thinkingLevel: "high",
       lastRationale: plan.rationale,
       assistantSteps: 1,
@@ -232,7 +232,7 @@ describe("ModelRouter", () => {
     router.initialTarget({ hasImages: false });
     router.noteTurnStart({ promptHasImages: false });
     await router.prepareTurn({});
-    expect(router.status().modelName).toBe("glm-5.2");
+    expect(router.status().modelName).toBe("glm");
 
     router.noteAssistantStep({ blockTypes: ["toolCall", "image"], text: "opened shot.png" });
     const switched = await router.prepareTurn({});
@@ -240,8 +240,8 @@ describe("ModelRouter", () => {
     expect(switched).toMatchObject({
       trigger: "step_trigger",
       route: "implement",
-      fromModel: "glm-5.2",
-      toModel: "gpt-5.6-luna",
+      fromModel: "glm",
+      toModel: "luna",
       visionFallback: true,
     });
     expect(inputs.at(-1)?.hasImages).toBe(true);

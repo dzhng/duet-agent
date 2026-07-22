@@ -215,12 +215,12 @@ const MISSING_MODEL_CLONES: Record<
       overrides: KIMI_K3_CAPABILITIES,
     },
     {
-      from: "openai/gpt-5.5",
+      from: "openai/gpt-5.4",
       to: "openai/gpt-5.6-sol",
       overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-sol"],
     },
     {
-      from: "openai/gpt-5.5",
+      from: "openai/gpt-5.4",
       to: "openai/gpt-5.6-terra",
       overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-terra"],
     },

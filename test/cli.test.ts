@@ -111,7 +111,7 @@ describe("CLI model inference", () => {
       await writeFile(join(tempRoot, ".duet", "models.json"), JSON.stringify(table));
 
       const bare = await buildProjectCliTurnConfig(
-        { workDir: tempRoot, memoryModelName: "openrouter:gpt-5.4-mini" },
+        { workDir: tempRoot, memoryModelName: "openrouter:anthropic/claude-haiku-4.5" },
         EMPTY_DOTENV_KEYS,
       );
       expect(bare.modelResolution).toEqual({
@@ -126,7 +126,7 @@ describe("CLI model inference", () => {
         {
           workDir: tempRoot,
           modelName: "custom",
-          memoryModelName: "openrouter:gpt-5.4-mini",
+          memoryModelName: "openrouter:anthropic/claude-haiku-4.5",
         },
         EMPTY_DOTENV_KEYS,
       );
@@ -140,7 +140,7 @@ describe("CLI model inference", () => {
           {
             workDir: tempRoot,
             modelName: "frontier",
-            memoryModelName: "openrouter:gpt-5.4-mini",
+            memoryModelName: "openrouter:anthropic/claude-haiku-4.5",
           },
           EMPTY_DOTENV_KEYS,
         ),
@@ -294,9 +294,9 @@ describe("CLI model inference", () => {
       routed: true,
     });
     // gpt-5.6-luna has no OpenRouter route, so OpenRouter-only users fall back
-    // to gpt-5.4-mini for memory (see MEMORY_MODEL_BY_PROVIDER).
+    // to haiku-4.5 for memory (see MEMORY_MODEL_BY_PROVIDER).
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.4-mini",
+      modelName: "haiku-4.5",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
@@ -372,20 +372,20 @@ describe("CLI model inference", () => {
     expect(resolveProviderShorthand("bogus")).toBeUndefined();
 
     expect(pinnedDefaultModel("openrouter")).toBe("openrouter:anthropic/claude-opus-4.8");
-    expect(pinnedMemoryModel("openrouter")).toBe("openrouter:openai/gpt-5.4-mini");
+    expect(pinnedMemoryModel("openrouter")).toBe("openrouter:anthropic/claude-haiku-4.5");
     expect(pinnedDefaultModel("duet-gateway")).toBe("duet-gateway:anthropic/claude-opus-4.8");
   });
 
   test("keeps an explicitly provided model", () => {
     clearModelEnv();
 
-    expect(resolveCliModel("openai:gpt-5.5", EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "openai:gpt-5.5",
+    expect(resolveCliModel("openai:gpt-5.6-sol", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "openai:gpt-5.6-sol",
       source: "explicit",
     });
   });
 
-  test("keeps explicitly provided model shorthands as app-facing names", () => {
+  test("keeps versioned shorthands and canonicalizes families to their latest versions", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "duet_gt_test";
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
@@ -394,8 +394,8 @@ describe("CLI model inference", () => {
       modelName: "opus-4.7",
       source: "explicit",
     });
-    expect(resolveCliModel("gpt-5.5", EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.5",
+    expect(resolveCliModel("sol", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "gpt-5.6-sol",
       source: "explicit",
     });
   });
@@ -406,17 +406,17 @@ describe("CLI model inference", () => {
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
 
     expect(resolveModelName("opus-4.7").id).toBe("anthropic/claude-opus-4.7");
-    expect(resolveModelName("gpt-5.5").id).toBe("openai/gpt-5.5");
+    expect(resolveModelName("sol").id).toBe("openai/gpt-5.6-sol");
   });
 
   test("routes Duet OpenAI models through an OpenAI-compatible API", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "test-duet";
 
-    const model = resolveModelName("gpt-5.5");
+    const model = resolveModelName("sol");
 
     expect(model.provider).toBe("duet-gateway");
-    expect(model.id).toBe("openai/gpt-5.5");
+    expect(model.id).toBe("openai/gpt-5.6-sol");
     expect(model.api).toBe("openai-responses");
     expect(model.baseUrl).toBe("https://gateway.duet.so/v1");
     expect(model.reasoning).toBe(true);
@@ -540,8 +540,8 @@ describe("CLI model inference", () => {
     expect(() => resolveModelName("opus-4.7")).toThrow(
       "Model shorthand requires credentials for a supported provider: opus-4.7",
     );
-    expect(() => resolveModelName("gpt-5.5")).toThrow(
-      "Model shorthand requires credentials for a supported provider: gpt-5.5",
+    expect(() => resolveModelName("sol")).toThrow(
+      "Model shorthand requires credentials for a supported provider: sol",
     );
   });
 
@@ -565,7 +565,7 @@ describe("CLI model inference", () => {
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
 
     expect(resolveModelName("anthropic:claude-opus-4-7").id).toBe("claude-opus-4-7");
-    expect(resolveModelName("openai:gpt-5.5").id).toBe("gpt-5.5");
+    expect(resolveModelName("openai:gpt-5.2").id).toBe("gpt-5.2");
   });
 
   test("duet provider shorthand resolves through the duet gateway", () => {
@@ -602,7 +602,7 @@ describe("CLI model inference", () => {
     expect(resolveModelName("duet:anthropic/claude-opus-4.7").id).toBe("anthropic/claude-opus-4.7");
   });
 
-  test("keeps explicitly provided memory model shorthands as app-facing names", () => {
+  test("keeps versioned memory shorthands and canonicalizes memory families", () => {
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
 
@@ -610,8 +610,8 @@ describe("CLI model inference", () => {
       modelName: "haiku-4.5",
       source: "explicit",
     });
-    expect(resolveCliMemoryModel("gpt-5.4-mini", EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.4-mini",
+    expect(resolveCliMemoryModel("haiku", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "haiku-4.5",
       source: "explicit",
     });
   });
@@ -666,7 +666,7 @@ describe("CLI model inference", () => {
 
     expect(config).toEqual({
       model: "frontier",
-      memoryModel: "gpt-5.4-mini",
+      memoryModel: "haiku-4.5",
       memoryDbPath: false,
       memoryStores: false,
       cwd: "/repo",
@@ -679,7 +679,7 @@ describe("CLI model inference", () => {
       routed: true,
     });
     expect(memoryModelResolution).toEqual({
-      modelName: "gpt-5.4-mini",
+      modelName: "haiku-4.5",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,

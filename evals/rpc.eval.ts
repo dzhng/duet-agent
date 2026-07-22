@@ -92,7 +92,13 @@ describe("RPC CLI mode", () => {
         await writeFile(join(workDir, ".duet", "models.json"), JSON.stringify(table));
 
         const session = await runRpcSession(
-          ["--workdir", workDir, "--incognito", "--memory-model", "openrouter:gpt-5.4-mini"],
+          [
+            "--workdir",
+            workDir,
+            "--incognito",
+            "--memory-model",
+            "openrouter:anthropic/claude-haiku-4.5",
+          ],
           [{ type: "start", mode: "agent" }],
           { DUET_API_KEY: "duet_gt_rpc_project_eval" },
         );
