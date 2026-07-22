@@ -5,29 +5,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
 from typing import Any
 
-from swebench.harness.run_evaluation import load_swebench_dataset
-from swebench.harness.test_spec.test_spec import make_test_spec
-
-
-DATASET_NAME = "SWE-bench/SWE-bench_Multilingual"
-DATASET_SPLIT = "test"
 IMAGE_NAMESPACE = "swebench"
 IMAGE_ARCH = "x86_64"
 DOCKER_PLATFORM = "linux/amd64"
+INSTANCE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+__[A-Za-z0-9_.-]+$")
 
 
 def resolve_image(instance_id: str) -> str:
-    rows = load_swebench_dataset(DATASET_NAME, DATASET_SPLIT, [instance_id])
-    matches = [row for row in rows if row["instance_id"] == instance_id]
-    if len(matches) != 1:
-        raise ValueError(f"expected one dataset row for {instance_id!r}, found {len(matches)}")
-    spec = make_test_spec(matches[0], namespace=IMAGE_NAMESPACE, arch=IMAGE_ARCH)
-    return spec.instance_image_key
+    if INSTANCE_ID_PATTERN.fullmatch(instance_id) is None:
+        raise ValueError(f"invalid SWE-bench instance id: {instance_id!r}")
+    # SWE-bench 4.1.0's TestSpec derives remote instance images solely from
+    # these values. Deriving the same key locally avoids a mutable Hub lookup.
+    key = f"sweb.eval.{IMAGE_ARCH}.{instance_id.lower()}:latest"
+    return f"{IMAGE_NAMESPACE}/{key}".replace("__", "_1776_")
 
 
 def pull_image(image: str) -> dict[str, Any]:

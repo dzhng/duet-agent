@@ -7,7 +7,7 @@
           "description": "Backend, systems, data, CLI, and other implementation or debugging work, including tests and code changes.",
           "target": {
             "modelName": "opus-4.8",
-            "thinkingLevel": "high"
+            "thinkingLevel": "xhigh"
           },
           "visionFallbackModelName": "kimi-k3"
         }

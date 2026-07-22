@@ -6,7 +6,11 @@ import {
   type RoutingCatalogAdapter,
   type RoutingTable,
 } from "../model-routing/table.js";
-import { resolveDuetGatewayModel, resolveMissingModel } from "./duet-gateway.js";
+import {
+  applyVercelGatewayModelOverrides,
+  resolveDuetGatewayModel,
+  resolveMissingModel,
+} from "./duet-gateway.js";
 import {
   canonicalizeModelName,
   canonicalizeProviderModelId,
@@ -74,11 +78,15 @@ export function resolveModelName(model: string): Model<any> {
   // getModel returns undefined for models the upstream catalog has not shipped
   // yet; fall back to a synthesized clone (e.g. Fable 5) before forwarding.
   // clampModelOutputTokens forwards a missing model untouched at runtime.
-  const resolved =
+  const catalogModel =
     getModel(
       provider as Parameters<typeof getModel>[0],
       modelId as Parameters<typeof getModel>[1],
     ) ?? (resolveMissingModel(provider, modelId) as Model<any>);
+  const resolved =
+    provider === "vercel-ai-gateway" && catalogModel
+      ? applyVercelGatewayModelOverrides(modelId, catalogModel)
+      : catalogModel;
   return clampModelOutputTokens(resolved);
 }
 

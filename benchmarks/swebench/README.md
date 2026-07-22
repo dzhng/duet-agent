@@ -21,8 +21,9 @@ tests remain under the repository's root `test/` directory and run with
 
 The final campaign's E2B template and driver live under `e2b/`. Both require a
 clean pushed commit so the worker template, provenance lock, and source tree
-cannot drift. The template compiles Duet and caches the pinned dataset once;
-workers reuse those immutable bytes instead of rebuilding or refetching them.
+cannot drift. The template compiles Duet and uses the source-controlled dataset
+snapshot under `dataset/`; datasets-server only serves its moving current
+revision, so workers must never refetch campaign inputs during a build.
 
 ```sh
 bun benchmarks/swebench/e2b/template.ts
