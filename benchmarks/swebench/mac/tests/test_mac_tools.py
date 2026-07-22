@@ -29,23 +29,15 @@ score_predictions = load("score_predictions", "score_predictions.py")
 
 
 class OfficialImageTest(unittest.TestCase):
-    def test_image_key_comes_from_pinned_harness_spec(self) -> None:
-        row = {"instance_id": "org__repo-1"}
-        harness_spec = type("HarnessSpec", (), {"instance_image_key": "official/key:tag"})()
-        with (
-            patch.object(official_image, "load_swebench_dataset", return_value=[row]) as load_dataset,
-            patch.object(official_image, "make_test_spec", return_value=harness_spec) as make_spec,
-        ):
-            self.assertEqual(official_image.resolve_image("org__repo-1"), "official/key:tag")
-        load_dataset.assert_called_once_with(
-            "SWE-bench/SWE-bench_Multilingual", "test", ["org__repo-1"]
+    def test_image_key_is_derived_without_loading_the_live_dataset(self) -> None:
+        self.assertEqual(
+            official_image.resolve_image("Org__Repo-1"),
+            "swebench/sweb.eval.x86_64.org_1776_repo-1:latest",
         )
-        make_spec.assert_called_once_with(row, namespace="swebench", arch="x86_64")
 
-    def test_unknown_instance_is_rejected(self) -> None:
-        with patch.object(official_image, "load_swebench_dataset", return_value=[]):
-            with self.assertRaisesRegex(ValueError, "expected one dataset row"):
-                official_image.resolve_image("missing")
+    def test_unsafe_instance_id_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "invalid SWE-bench instance id"):
+            official_image.resolve_image("../other/image")
 
 
 class MetricsTest(unittest.TestCase):

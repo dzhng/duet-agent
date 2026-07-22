@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "multilingual-50-opus-max-e2b-20260723-v2",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-50-fresh-20265471.json",
+  "configs": ["opus-pure"],
+  "trials": 1,
+  "concurrency": 1,
+  "armOrderSeed": 20260726,
+  "limits": {
+    "costUsd": 10,
+    "wallClockMs": 3600000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 33554432
+  },
+  "budget": {
+    "totalUsd": 200,
+    "sunkUsd": 42.904037
+  },
+  "execution": {
+    "backend": "e2b",
+    "workerConcurrency": 8,
+    "workerCpuCount": 8,
+    "workerMemoryMb": 16384,
+    "workerTimeoutMs": 10800000
+  }
+}
