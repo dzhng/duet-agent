@@ -388,16 +388,16 @@ All three share one **canonical memory JSON object** (`--json`), so a consumer p
 
 - Timestamps are ISO 8601 strings (e.g. `2026-07-06T00:00:00.000Z`); date-only fields (`observedDate`, `referencedDate`) stay `YYYY-MM-DD`.
 - `source` is a flat string — one of `user | agent | system | api | import` (`system` is the training-origin value).
-- `sessionId` is the session that authored the row: writable on `add` via `--session <id>`, filterable on `memory`/`recall` via `--session`, and echoed on output (absent on legacy rows).
-- Two ranking scores are always named explicitly, never a generic `score`: `packScore` (recency × priority × kind bias, present everywhere) and `relevanceScore` (query-relevance, RRF-fused — present only in `memory recall` results).
+- `sessionId` is the session that authored an observational row: writable on DB-backed `add`, filterable on `memory`/`recall`, and echoed on DB output (absent on legacy rows and file memories).
+- Observational JSON names both ranking axes explicitly: `packScore` (recency × priority × kind bias) and `relevanceScore` (query relevance, present only in `memory recall`). File-store JSON reports its slug and store path instead because those records are inherited context, not ranked recall rows.
 
 Command-specific notes:
 
 - **`duet memory` (query):** `--json` emits a bare array ordered by pack score; `--source` and `--session` narrow the set alongside `--type`, `--priority`, `--from`, and `--to`.
 - **`duet memory recall`:** query text comes from `--query <q>` or positional args. `--scope session|global` requires `--session <id>` to compare against; `all` (default) ignores it. `--json` emits a bare array ordered best-first, each row carrying both `packScore` and `relevanceScore`.
-- **`duet memory add`:** added rows are always `note` kind. `--source` defaults to `user`; `--session <id>` stamps the row (omit to leave it global). Content comes from positional args or stdin, and empty input is a usage error. `--json` emits one canonical object (`packScore` and `lastUsedAt` present, `relevanceScore` absent).
+- **`duet memory add`:** added memories are always `note` kind. Flagless writes go to the nearest ancestor `.agents/memories`; pass `--db` to retain observational-row ranking, embedding, and session attribution. Content comes from positional args or stdin, and empty input is a usage error.
 
-Every memory command accepts `--db <absolute-path>` (default `~/.duet/memory.db`) and `--wait <seconds>` (lock-wait budget, default 30; `0` fails immediately). Exit codes are stable for scripting: `0` success, `64` usage or validation error (unknown flag, bad value, empty input), `75` memory-DB lock-wait budget exhausted, and `1` for anything else.
+DB-backed memory commands accept `--db <absolute-path>` and `--wait <seconds>`. `memory add` also accepts a single `--store`; `memory recall` deliberately rejects stores because file memories are already loaded into agent context. Exit codes are stable for scripting: `0` success, `64` usage or validation error, `75` memory-DB lock-wait budget exhausted, and `1` for anything else.
 
 </details>
 
@@ -406,17 +406,17 @@ Every memory command accepts `--db <absolute-path>` (default `~/.duet/memory.db`
 
 `duet train <folder>` launches a sub-agent inside the folder, lets it read whatever is there with its native tools (markdown, CSVs, PDFs, spreadsheets, screenshots, source — anything the agent can open), and produces two artifacts:
 
-- **One high-priority manual (user-curated) row** in `~/.duet/memory.db`, tagged `train` and `train:<slug>`. Fresh `duet` sessions load it into their initial memory pack with a ranking boost (via `manualBias`), and writing it as a `manual` row means `duet memory reflect` never compacts it away.
-- **`~/.duet/train/<memory-id>/`** — a hidden archive: a copy of every source file plus a `manifest.json`. Provenance only; the DB row is the source of truth. Deleting the memory via `duet memory` removes the archive too.
+- **One inherited markdown memory** in the nearest ancestor `.agents/memories` store. Explicit `--store` selects a different file store; explicit `--db` retains the legacy high-priority manual-row behavior.
+- **`~/.duet/train/<memory-id>/`** — a hidden archive containing source copies and private provenance. Shareable memory frontmatter references the archive id but never embeds the absolute source folder.
 
 ```bash
-duet train ./snowflake-notes              # writes to ~/.duet/memory.db
+duet train ./snowflake-notes              # writes to the nearest .agents/memories
 duet train ./snowflake-notes --slug snow  # custom slug (default: folder basename)
 duet train ./snowflake-notes --model opus-4.8
 duet train ./snowflake-notes --db /tmp/scratch.db  # write to a throwaway DB instead
 ```
 
-Re-running `train` on the same slug **replaces** the prior row and its archive — there is at most one `train:<slug>` observation at a time.
+Re-running `train` on the same slug **replaces** the prior entry and its archive in the selected backend.
 
 Three things to know:
 

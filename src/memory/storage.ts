@@ -9,11 +9,11 @@ import {
   EmbeddingBackfillWorker,
 } from "./embedding-worker.js";
 import { rebuildMemoryContextPack } from "./context-pack.js";
+import { createMemoryId } from "./id.js";
 import { runMigrations } from "./migrations.js";
 import { estimateTokens } from "./observational.js";
 import { MemorySession } from "./session.js";
 import type { MemoryContextCache } from "./store.js";
-import { nanoid } from "nanoid";
 
 /**
  * Handle returned by `loadStoredMemory`. Callers pass `session` into the
@@ -400,10 +400,6 @@ async function upsertObservation(
 
 function resolveMemoryPath(path: string, cwd: string): string {
   return path.startsWith("/") ? path : join(cwd, path);
-}
-
-function createMemoryId(): string {
-  return `mem_${nanoid(12)}`;
 }
 
 interface ObservationRow {

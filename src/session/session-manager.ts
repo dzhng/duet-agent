@@ -1,15 +1,17 @@
 import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 import type { TurnRunnerConfig } from "../types/config.js";
 import type { McpHttpServerConfig, TurnEvent, TurnMode, TurnOptions } from "../types/protocol.js";
+import { DEFAULT_MEMORY_DB_PATH, DEFAULT_SESSION_STORAGE_DIR } from "../memory/paths.js";
 import { Session, type SessionTurnRunner } from "./session.js";
 
-export const DEFAULT_DUET_DIR = ".duet";
-export const DEFAULT_DUET_HOME = join(homedir(), DEFAULT_DUET_DIR);
-export const DEFAULT_SESSION_STORAGE_DIR = join(DEFAULT_DUET_HOME, "sessions");
-export const DEFAULT_MEMORY_DB_PATH = join(DEFAULT_DUET_HOME, "memory.db");
+export {
+  DEFAULT_DUET_DIR,
+  DEFAULT_DUET_HOME,
+  DEFAULT_MEMORY_DB_PATH,
+  DEFAULT_SESSION_STORAGE_DIR,
+} from "../memory/paths.js";
 
 export interface SessionManagerCreateInput {
   /** Optional fixed id; the manager generates one when omitted. */

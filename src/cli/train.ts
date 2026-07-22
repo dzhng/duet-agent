@@ -4,13 +4,34 @@ import path from "node:path";
 import dedent from "dedent";
 
 import { createEmbeddingClient } from "../memory/embedding.js";
+import { createMemoryId } from "../memory/id.js";
 import { runMigrations } from "../memory/migrations.js";
 import { MemoryLockTimeoutError } from "../memory/pglite.js";
 import { MemorySession } from "../memory/session.js";
+import {
+  deleteEntry,
+  listStore,
+  updateEntry,
+  writeEntry,
+  type StoredMemory,
+} from "../memory/store/store.js";
+import {
+  mergeListings,
+  resolveSources,
+  type MemorySourceFlags,
+  type MemorySources,
+  type SourceListing,
+} from "../memory/store/sources.js";
 import { appendObservation } from "../memory/storage.js";
 import { resolveCliModel } from "../model-resolution/resolver.js";
 import { DEFAULT_MEMORY_DB_PATH, SessionManager } from "../session/session-manager.js";
-import { collectArchiveFiles, removeArchive, writeArchive } from "../train/archive.js";
+import {
+  archivedFilePath,
+  collectArchiveFiles,
+  readArchiveManifest,
+  removeArchive,
+  writeArchive,
+} from "../train/archive.js";
 import { TRAIN_TAG, trainSlugTag } from "../train/tags.js";
 import type {
   SynthesisResult,
@@ -21,6 +42,11 @@ import type {
 import type { TurnRunnerConfig } from "../types/config.js";
 import { printTrainHelp } from "./help.js";
 import { withMemoryDb } from "./memory-db.js";
+import {
+  lexMemorySourceFlags,
+  requireSingleExplicitWriteTarget,
+  requireWriteTarget,
+} from "./memory-sources.js";
 import { fail, loadCliEnvFiles, resolveUserPath, usageError } from "./shared.js";
 import { installShutdownHandlers } from "./shutdown.js";
 
@@ -29,6 +55,9 @@ export interface TrainCommandOptions {
   slug: string;
   /** Undefined means "resolve at run time via resolveCliModel". */
   model: string | undefined;
+  /** Explicit backend flags; empty means skills-style discovery at execution time. */
+  sourceFlags: MemorySourceFlags;
+  /** Compatibility projection for callers that inspect a single selected DB. */
   dbPath: string;
   waitBudgetMs?: number;
 }
@@ -36,6 +65,10 @@ export interface TrainCommandOptions {
 interface TrainCommandIO {
   stdout: NodeJS.WritableStream;
   stderr: NodeJS.WritableStream;
+  /** Working directory used for relative paths and flagless source discovery. */
+  cwd?: string;
+  /** Deterministic synthesis seam for CLI integration tests. */
+  synthesize?: typeof runAgentSynthesis;
 }
 
 /**
@@ -47,36 +80,41 @@ function sanitizeSlug(name: string): string {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
 
-export function parseTrainArgs(args: string[]): TrainCommandOptions | undefined {
+export function parseTrainArgs(
+  args: string[],
+  cwd: string = process.cwd(),
+): TrainCommandOptions | undefined {
+  const sourceArgs = lexMemorySourceFlags(args, cwd);
+  requireSingleExplicitWriteTarget(sourceArgs.flags);
   let folder: string | undefined;
   let slugOverride: string | undefined;
   // Default model is resolved at run time via `resolveCliModel`, mirroring
   // `duet run`'s actor model selection. Env var `DUET_MODEL` is honored by
   // the resolver itself; we keep `--model` as the user's explicit override.
   let model: string | undefined;
-  let dbPath = DEFAULT_MEMORY_DB_PATH;
   let waitBudgetMs: number | undefined;
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+  for (let i = 0; i < sourceArgs.args.length; i++) {
+    const arg = sourceArgs.args[i]!;
     switch (arg) {
       case "--slug":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
-        slugOverride = args[++i]!;
+        if (!sourceArgs.args[i + 1] || sourceArgs.args[i + 1]?.startsWith("-")) {
+          usageError(`Missing value for ${arg}`);
+        }
+        slugOverride = sourceArgs.args[++i]!;
         break;
       case "--model":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
-        model = args[++i]!;
-        break;
-      case "--db":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
-        dbPath = resolveUserPath(args[++i]!);
+        if (!sourceArgs.args[i + 1] || sourceArgs.args[i + 1]?.startsWith("-")) {
+          usageError(`Missing value for ${arg}`);
+        }
+        model = sourceArgs.args[++i]!;
         break;
       case "--wait": {
-        const raw = args[++i];
+        const raw = sourceArgs.args[++i];
         const seconds = Number(raw);
         if (!Number.isFinite(seconds) || seconds < 0) {
           usageError(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
@@ -96,7 +134,7 @@ export function parseTrainArgs(args: string[]): TrainCommandOptions | undefined 
   }
 
   if (!folder) usageError("duet train requires a <folder> argument");
-  const resolved = path.resolve(folder);
+  const resolved = path.resolve(cwd, folder);
   const slug = sanitizeSlug(slugOverride ?? path.basename(resolved));
   if (slug.length === 0) {
     usageError(`Could not derive a slug from "${folder}"; pass --slug <name>`);
@@ -105,7 +143,8 @@ export function parseTrainArgs(args: string[]): TrainCommandOptions | undefined 
     folder: resolved,
     slug,
     model,
-    dbPath,
+    sourceFlags: sourceArgs.flags,
+    dbPath: sourceArgs.flags.dbs[0] ?? DEFAULT_MEMORY_DB_PATH,
     ...(waitBudgetMs !== undefined ? { waitBudgetMs } : {}),
   };
 }
@@ -251,16 +290,15 @@ async function runAgentSynthesis(
 }
 
 /**
- * Run `duet train <folder>` — launch a sub-agent that reads the corpus
- * and writes a structured handoff file (.duet-train.json), persist the
- * synthesized observation into durable memory (replacing any prior
- * `train:<slug>` row), archive the corpus under `~/.duet/train/<memoryId>/`,
- * and verify both side effects landed.
+ * Run `duet train <folder>` — synthesize one corpus, persist it to the single
+ * selected file store or legacy DB, replace the target's prior slug, and keep
+ * the unchanged private corpus archive under `~/.duet/train/<memoryId>/`.
  */
 export async function runTrainCommand(
   args: string[],
   io: TrainCommandIO = { stdout: process.stdout, stderr: process.stderr },
 ): Promise<void> {
+  const cwd = io.cwd ?? process.cwd();
   // The management subcommands are read/edit/delete siblings of the synthesis
   // command. They route before the synthesis arg parser, which would otherwise
   // treat the subcommand word as a corpus folder. Everything else falls
@@ -276,8 +314,10 @@ export async function runTrainCommand(
       return runTrainDeleteCommand(args.slice(1), io);
   }
 
-  const options = parseTrainArgs(args);
+  const options = parseTrainArgs(args, cwd);
   if (!options) return;
+  const sources = await resolveSources(options.sourceFlags, cwd);
+  const writeTarget = requireWriteTarget(sources);
 
   // Post-parse failures throw instead of calling `fail()`: the CLI entry
   // (`runCli`) prints them identically, while in-process callers (the
@@ -294,8 +334,15 @@ export async function runTrainCommand(
   const modelResolution = resolveCliModel(options.model, dotenvKeys);
   const resolvedModel = modelResolution.modelName;
 
+  if (writeTarget.kind === "store") {
+    await runStoreTrain(options, writeTarget.path, resolvedModel, io);
+    return;
+  }
+
+  const dbPath = writeTarget.path;
+
   const session = new MemorySession({
-    path: options.dbPath,
+    path: dbPath,
     openOptions: {
       init: async (db) => {
         await runMigrations(db);
@@ -310,7 +357,7 @@ export async function runTrainCommand(
     await session.withDb(async () => {});
 
     io.stderr.write(`[synthesize] model=${resolvedModel}\n`);
-    const synthesis = await runAgentSynthesis(
+    const synthesis = await (io.synthesize ?? runAgentSynthesis)(
       { folder: options.folder, slug: options.slug, model: resolvedModel },
       io,
     );
@@ -341,7 +388,7 @@ export async function runTrainCommand(
       { embed: createEmbeddingClient() },
     );
     if (!observation) {
-      throw new Error(`Could not write training memory to ${options.dbPath} (lock contention).`);
+      throw new Error(`Could not write training memory to ${dbPath} (lock contention).`);
     }
 
     // SELECT + DELETE share one `withDb` so the replace step is atomic
@@ -370,7 +417,7 @@ export async function runTrainCommand(
     });
     if (priorIds === undefined) {
       throw new Error(
-        `Could not remove prior training rows from ${options.dbPath} (lock contention); ` +
+        `Could not remove prior training rows from ${dbPath} (lock contention); ` +
           `the new row ${observation.id} was written. Re-run train to clean up the duplicate.`,
       );
     }
@@ -408,7 +455,7 @@ export async function runTrainCommand(
       ]),
     );
     if (verifyRows === undefined) {
-      throw new Error(`Could not verify training memory at ${options.dbPath} (lock contention).`);
+      throw new Error(`Could not verify training memory at ${dbPath} (lock contention).`);
     }
     if (verifyRows.rows[0]?.content !== synthesis.observationContent) {
       throw new Error(
@@ -435,6 +482,65 @@ export async function runTrainCommand(
     removeShutdownHandlers();
     await session.dispose();
   }
+}
+
+async function runStoreTrain(
+  options: TrainCommandOptions,
+  storeDir: string,
+  resolvedModel: string,
+  io: TrainCommandIO,
+): Promise<void> {
+  const prior = (await listStore(storeDir)).find((entry) => entry.slug === options.slug);
+  io.stderr.write(`[synthesize] model=${resolvedModel}\n`);
+  const synthesis = await (io.synthesize ?? runAgentSynthesis)(
+    { folder: options.folder, slug: options.slug, model: resolvedModel },
+    io,
+  );
+
+  const memoryId = createMemoryId();
+  const createdAt = Date.now();
+  const archivedFiles = await collectArchiveFiles(options.folder);
+  const manifest: TrainManifest = {
+    memoryId,
+    slug: options.slug,
+    createdAt,
+    sourceFolder: options.folder,
+    model: resolvedModel,
+    headline: synthesis.headline,
+    files: archivedFiles.map((file) => ({
+      relPath: file.relPath,
+      bytes: file.bytes,
+      sha256: file.sha256,
+    })),
+  };
+  const archivePath = await writeArchive({ memoryId, files: archivedFiles, manifest });
+  try {
+    await writeEntry(storeDir, {
+      slug: options.slug,
+      version: 1,
+      id: memoryId,
+      kind: "train",
+      createdAt,
+      headline: synthesis.headline,
+      model: resolvedModel,
+      fileCount: archivedFiles.length,
+      archiveId: memoryId,
+      content: synthesis.observationContent,
+    });
+  } catch (error) {
+    await removeArchive(memoryId);
+    throw error;
+  }
+
+  if (prior?.archiveId && prior.archiveId !== memoryId) await removeArchive(prior.archiveId);
+  const replacedSuffix = prior ? " (replaced prior entry)" : "";
+  io.stderr.write(`[persist] memory id=${memoryId}${replacedSuffix}\n`);
+  io.stdout.write(`Trained "${synthesis.headline}"\n`);
+  io.stdout.write(`  memory id  : ${memoryId}\n`);
+  io.stdout.write(`  archive    : ${archivePath}\n`);
+  io.stdout.write(`  files      : ${archivedFiles.length} file(s)\n`);
+  io.stdout.write(`  model      : ${resolvedModel}\n`);
+  io.stdout.write(`\n${synthesis.observationContent}\n`);
 }
 
 function truncate(value: string, max: number): string {
@@ -519,7 +625,8 @@ function formatTrainRecord(record: TrainRecord): string {
 interface TrainSubOptions {
   /** Positional slug argument; required by show/update/delete, unused by list. */
   slug?: string;
-  dbPath: string;
+  /** Explicit backend flags; empty means inherited stores plus the default DB. */
+  sourceFlags: MemorySourceFlags;
   json: boolean;
   /** Path to the new observation text, for `update`. */
   contentFile?: string;
@@ -531,28 +638,26 @@ interface TrainSubOptions {
  * which fields it actually requires (e.g. `show` needs a slug, `update` also
  * needs `--content-file`); this only does the lexing.
  */
-function parseTrainSubArgs(args: string[]): TrainSubOptions | undefined {
+function parseTrainSubArgs(args: string[], cwd: string): TrainSubOptions | undefined {
+  const sourceArgs = lexMemorySourceFlags(args, cwd);
   let slug: string | undefined;
-  let dbPath = DEFAULT_MEMORY_DB_PATH;
   let json = false;
   let contentFile: string | undefined;
   let waitBudgetMs: number | undefined;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+  for (let i = 0; i < sourceArgs.args.length; i++) {
+    const arg = sourceArgs.args[i]!;
     switch (arg) {
-      case "--db":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
-        dbPath = resolveUserPath(args[++i]!);
-        break;
       case "--content-file":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
-        contentFile = resolveUserPath(args[++i]!);
+        if (!sourceArgs.args[i + 1] || sourceArgs.args[i + 1]?.startsWith("-")) {
+          usageError(`Missing value for ${arg}`);
+        }
+        contentFile = resolveUserPath(sourceArgs.args[++i]!, cwd);
         break;
       case "--json":
         json = true;
         break;
       case "--wait": {
-        const raw = args[++i];
+        const raw = sourceArgs.args[++i];
         const seconds = Number(raw);
         if (!Number.isFinite(seconds) || seconds < 0) {
           usageError(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
@@ -570,16 +675,16 @@ function parseTrainSubArgs(args: string[]): TrainSubOptions | undefined {
         slug = arg;
     }
   }
-  return { slug, dbPath, json, contentFile, waitBudgetMs };
+  return { slug, sourceFlags: sourceArgs.flags, json, contentFile, waitBudgetMs };
 }
 
 export async function runTrainListCommand(args: string[], io: TrainCommandIO): Promise<void> {
-  const options = parseTrainSubArgs(args);
+  const cwd = io.cwd ?? process.cwd();
+  const options = parseTrainSubArgs(args, cwd);
   if (!options) return;
   if (options.slug !== undefined) usageError(`Unexpected argument for train list: ${options.slug}`);
-  const entries = await withMemoryDb(options.dbPath, (db) => db.listTrainings(), {
-    waitBudgetMs: options.waitBudgetMs,
-  });
+  const sources = await resolveSources(options.sourceFlags, cwd);
+  const entries = await listTrainSources(sources, options.waitBudgetMs);
   io.stdout.write(
     options.json
       ? `${JSON.stringify(entries.map(toTrainListEntryJson), null, 2)}\n`
@@ -588,13 +693,13 @@ export async function runTrainListCommand(args: string[], io: TrainCommandIO): P
 }
 
 export async function runTrainShowCommand(args: string[], io: TrainCommandIO): Promise<void> {
-  const options = parseTrainSubArgs(args);
+  const cwd = io.cwd ?? process.cwd();
+  const options = parseTrainSubArgs(args, cwd);
   if (!options) return;
   if (!options.slug) usageError("duet train show requires a <slug> argument");
   const slug = options.slug;
-  const record = await withMemoryDb(options.dbPath, (db) => db.findTrainingBySlug(slug), {
-    waitBudgetMs: options.waitBudgetMs,
-  });
+  const sources = await resolveSources(options.sourceFlags, cwd);
+  const record = await findTrainRecord(sources, slug, options.waitBudgetMs);
   if (!record) fail(`No training found for slug "${slug}".`);
   io.stdout.write(
     options.json
@@ -604,7 +709,8 @@ export async function runTrainShowCommand(args: string[], io: TrainCommandIO): P
 }
 
 export async function runTrainUpdateCommand(args: string[], io: TrainCommandIO): Promise<void> {
-  const options = parseTrainSubArgs(args);
+  const cwd = io.cwd ?? process.cwd();
+  const options = parseTrainSubArgs(args, cwd);
   if (!options) return;
   if (!options.slug) usageError("duet train update requires a <slug> argument");
   if (!options.contentFile) usageError("duet train update requires --content-file <path>");
@@ -613,16 +719,9 @@ export async function runTrainUpdateCommand(args: string[], io: TrainCommandIO):
   if (content.trim().length === 0) {
     fail(`Refusing to write empty content from ${options.contentFile}.`);
   }
-  const updated = await withMemoryDb(
-    options.dbPath,
-    async (db): Promise<TrainRecord> => {
-      const record = await db.findTrainingBySlug(slug);
-      if (!record) fail(`No training found for slug "${slug}".`);
-      await db.updateContent(record.memoryId, content);
-      return { ...record, content };
-    },
-    { waitBudgetMs: options.waitBudgetMs },
-  );
+  const sources = await resolveSources(options.sourceFlags, cwd);
+  const updated = await updateTrainRecord(sources, slug, content, options.waitBudgetMs);
+  if (!updated) fail(`No training found for slug "${slug}".`);
   if (options.json) {
     io.stdout.write(`${JSON.stringify(toTrainRecordJson(updated), null, 2)}\n`);
     return;
@@ -631,20 +730,14 @@ export async function runTrainUpdateCommand(args: string[], io: TrainCommandIO):
 }
 
 export async function runTrainDeleteCommand(args: string[], io: TrainCommandIO): Promise<void> {
-  const options = parseTrainSubArgs(args);
+  const cwd = io.cwd ?? process.cwd();
+  const options = parseTrainSubArgs(args, cwd);
   if (!options) return;
   if (!options.slug) usageError("duet train delete requires a <slug> argument");
   const slug = options.slug;
-  const deleted = await withMemoryDb(
-    options.dbPath,
-    async (db): Promise<TrainRecord> => {
-      const record = await db.findTrainingBySlug(slug);
-      if (!record) fail(`No training found for slug "${slug}".`);
-      await db.delete(record.memoryId);
-      return record;
-    },
-    { waitBudgetMs: options.waitBudgetMs },
-  );
+  const sources = await resolveSources(options.sourceFlags, cwd);
+  const deleted = await deleteTrainRecord(sources, slug, options.waitBudgetMs);
+  if (!deleted) fail(`No training found for slug "${slug}".`);
   if (options.json) {
     io.stdout.write(
       `${JSON.stringify({ deleted: true, slug: deleted.slug, memoryId: deleted.memoryId }, null, 2)}\n`,
@@ -652,4 +745,118 @@ export async function runTrainDeleteCommand(args: string[], io: TrainCommandIO):
     return;
   }
   io.stdout.write(`Deleted "${deleted.slug}" (memory id ${deleted.memoryId}) and its archive.\n`);
+}
+
+async function listTrainSources(
+  sources: MemorySources,
+  waitBudgetMs: number | undefined,
+): Promise<TrainListEntry[]> {
+  const storeListings: Array<SourceListing<TrainListEntry>> = [];
+  for (const store of sources.stores) {
+    const entries = await Promise.all((await listStore(store)).map(toStoreTrainRecord));
+    storeListings.push({ source: store, entries });
+  }
+  const dbListings: Array<SourceListing<TrainListEntry>> = [];
+  for (const dbPath of sources.dbs) {
+    const entries = await withMemoryDb(dbPath, (db) => db.listTrainings(), { waitBudgetMs });
+    dbListings.push({ source: dbPath, entries });
+  }
+  return mergeListings(storeListings, dbListings);
+}
+
+async function findTrainRecord(
+  sources: MemorySources,
+  slug: string,
+  waitBudgetMs: number | undefined,
+): Promise<TrainRecord | undefined> {
+  for (const store of sources.stores) {
+    const entry = (await listStore(store)).find((candidate) => candidate.slug === slug);
+    if (entry) return toStoreTrainRecord(entry);
+  }
+  for (const dbPath of sources.dbs) {
+    const record = await withMemoryDb(dbPath, (db) => db.findTrainingBySlug(slug), {
+      waitBudgetMs,
+    });
+    if (record) return record;
+  }
+  return undefined;
+}
+
+async function updateTrainRecord(
+  sources: MemorySources,
+  slug: string,
+  content: string,
+  waitBudgetMs: number | undefined,
+): Promise<TrainRecord | undefined> {
+  for (const store of sources.stores) {
+    const existing = (await listStore(store)).find((candidate) => candidate.slug === slug);
+    if (!existing) continue;
+    return toStoreTrainRecord(await updateEntry(store, slug, content));
+  }
+  for (const dbPath of sources.dbs) {
+    const updated = await withMemoryDb(
+      dbPath,
+      async (db): Promise<TrainRecord | undefined> => {
+        const record = await db.findTrainingBySlug(slug);
+        if (!record) return undefined;
+        await db.updateContent(record.memoryId, content);
+        return { ...record, content };
+      },
+      { waitBudgetMs },
+    );
+    if (updated) return updated;
+  }
+  return undefined;
+}
+
+async function deleteTrainRecord(
+  sources: MemorySources,
+  slug: string,
+  waitBudgetMs: number | undefined,
+): Promise<TrainRecord | undefined> {
+  for (const store of sources.stores) {
+    const existing = (await listStore(store)).find((candidate) => candidate.slug === slug);
+    if (!existing) continue;
+    const record = await toStoreTrainRecord(existing);
+    const deleted = await deleteEntry(store, slug);
+    if (deleted.archiveId) await removeArchive(deleted.archiveId);
+    return record;
+  }
+  for (const dbPath of sources.dbs) {
+    const deleted = await withMemoryDb(
+      dbPath,
+      async (db): Promise<TrainRecord | undefined> => {
+        const record = await db.findTrainingBySlug(slug);
+        if (!record) return undefined;
+        await db.delete(record.memoryId);
+        return record;
+      },
+      { waitBudgetMs },
+    );
+    if (deleted) return deleted;
+  }
+  return undefined;
+}
+
+async function toStoreTrainRecord(entry: StoredMemory): Promise<TrainRecord> {
+  const archiveId = entry.archiveId;
+  const manifest = archiveId ? await readArchiveManifest(archiveId) : undefined;
+  return {
+    slug: entry.slug,
+    memoryId: entry.id,
+    createdAt: entry.createdAt,
+    observedDate: new Date(entry.createdAt).toISOString().slice(0, 10),
+    ...(entry.headline === undefined ? {} : { headline: entry.headline }),
+    ...(entry.model === undefined ? {} : { model: entry.model }),
+    ...(manifest?.sourceFolder === undefined ? {} : { sourceFolder: manifest.sourceFolder }),
+    ...(entry.fileCount === undefined ? {} : { fileCount: entry.fileCount }),
+    hasArchive: manifest !== undefined,
+    store: entry.storeDir,
+    content: entry.content,
+    ...(archiveId && manifest
+      ? {
+          files: manifest.files.map((file) => archivedFilePath(archiveId, file.relPath)),
+        }
+      : {}),
+  };
 }

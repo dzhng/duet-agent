@@ -62,6 +62,7 @@ export async function runTrainEval(opts: RunTrainEvalOptions): Promise<TrainEval
     await runTrainCommand([corpusDir, "--slug", opts.slug, "--db", tmpDb, "--model", opts.model], {
       stdout: stdout.stream,
       stderr: stderr.stream,
+      cwd: corpusDir,
     });
 
     const handoff = path.join(corpusDir, ".duet-train.json");

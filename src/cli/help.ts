@@ -240,14 +240,14 @@ export function printMemoryAddHelp(): void {
 duet memory add — Write a single user-added note memory
 
 USAGE
-  duet memory add [options] <content>
-  echo "<content>" | duet memory add [options]
+  duet memory add [options] [--store <folder> | --db <file>] <content>
+  echo "<content>" | duet memory add [options] [--store <folder> | --db <file>]
 
 DESCRIPTION
-  Stores a note memory into the same ~/.duet/memory.db the runner reads, so
-  it surfaces in the next session. Notes get a small ranking bump above
-  reflections (far below a 'duet train' corpus) and stay eligible for
-  'duet memory reflect' compaction, folding like any observation once aged.
+  Stores a note in exactly one backend. With no backend flag, the note is
+  written to the nearest ancestor .agents/memories directory (created on
+  demand). --store writes a markdown memory file; --db retains the legacy
+  observational-row behavior. Passing more than one backend is a usage error.
 
   Content comes from the positional arguments, or from stdin when none are
   given so longer memories can be piped in.
@@ -258,9 +258,11 @@ OPTIONS
   --session <id>           Stamp the row's authoring session; omit to leave it
                            global/unattributed
   --tag <tag>              Attach a label; repeat to add several
-  --db <path>              Memory database path (default: ~/.duet/memory.db)
-  --json                   Emit the stored memory as one canonical JSON object
-                           (with packScore) instead of the confirmation line
+  --store <folder>         Memory-file directory to write
+  --db <file>              PGlite file to write instead of a memory store
+  --json                   Emit the stored memory as JSON instead of the
+                           confirmation line (DB rows include packScore;
+                           file rows include slug + store provenance)
   --wait <seconds>         Seconds to wait for the cross-process open-lock
                            (default: 30; 0 fails immediately)
   -h, --help               Show this help
@@ -303,6 +305,8 @@ OPTIONS
   --json                   Emit a bare JSON array of canonical memory objects
                            (best-first) with packScore + relevanceScore
   --db <path>              Memory database path (default: ~/.duet/memory.db)
+                           This command is DB-only; --store is rejected because
+                           store memories are already loaded into agent context
   --wait <seconds>         Seconds to wait for the cross-process open-lock
                            (default: 30; 0 fails immediately)
   -h, --help               Show this help
@@ -395,11 +399,13 @@ export function printTrainHelp(): void {
 duet train — Ingest a project corpus into one durable memory observation
 
 USAGE
-  duet train <folder> [--slug <name>] [--model <name>] [--db <path>] [--wait <seconds>]
-  duet train list [--db <path>] [--json] [--wait <seconds>]
-  duet train show <slug> [--db <path>] [--json] [--wait <seconds>]
-  duet train update <slug> --content-file <path> [--db <path>] [--json] [--wait <seconds>]
-  duet train delete <slug> [--db <path>] [--json] [--wait <seconds>]
+  duet train <folder> [--slug <name>] [--model <name>]
+             [--store <folder> | --db <file>] [--wait <seconds>]
+  duet train list [--store <folder>]... [--db <file>]... [--json] [--wait <seconds>]
+  duet train show <slug> [--store <folder>]... [--db <file>]... [--json] [--wait <seconds>]
+  duet train update <slug> --content-file <path>
+             [--store <folder>]... [--db <file>]... [--json] [--wait <seconds>]
+  duet train delete <slug> [--store <folder>]... [--db <file>]... [--json] [--wait <seconds>]
 
 DESCRIPTION
   Launches a duet agent with the corpus folder as its working directory.
@@ -410,15 +416,23 @@ DESCRIPTION
 
     .duet-train.json  — structured handoff with headline + observation.
 
-  'train' then persists the synthesis into ~/.duet/memory.db as a manual
-  (user-curated) row (tagged 'train' and 'train:<slug>'), archives the
-  corpus under ~/.duet/train/<memory-id>/, removes the handoff file, and
-  prints the observation content to stdout so what you see is what landed
-  in memory.
+  'train' then persists the synthesis into exactly one backend and archives
+  the corpus under ~/.duet/train/<memory-id>/. With no backend flag it writes
+  a markdown file under the nearest ancestor .agents/memories directory,
+  creating that directory when needed. --db retains the legacy manual-row
+  behavior. Passing more than one backend to create is a usage error.
+
+  Reads accept repeatable --store and --db flags. Any explicit backend flags
+  replace discovery; stores are consulted in flag order before DBs. Without
+  flags, reads union inherited stores from cwd toward the filesystem root,
+  then ~/.duet/memory.db. Duplicate slugs resolve to the first source, while
+  surviving entries are listed newest-first. show/update/delete use that same
+  first-source precedence.
 
   The management subcommands all key on the user-facing <slug> (resolved
   to the underlying row internally):
-    list    — every training (one row per slug), joined to its archive
+    list    — every visible store entry or DB training (one row per slug),
+              joined to its archive
               manifest to show slug, headline, model, file count, date,
               and memory id.
     show    — the same metadata plus the full synthesized observation text
@@ -430,17 +444,17 @@ DESCRIPTION
     delete  — permanently remove the row and its corpus archive.
   Pass --json to any of them for machine-readable output.
 
-  Subsequent runs against the same slug replace the prior row in place,
-  so the memory pool does not bloat. Writing the row as a manual row
-  earns it a ranking boost in the memory pack (via manualBias) and exempts
-  it from 'duet memory reflect' compaction; deleting it via 'duet memory'
-  also removes its archive. Note: train loads the corpus folder's .env (for provider
-  credentials), so check folders you did not author before training.
+  Subsequent runs against the same slug replace the prior target entry, so
+  the memory pool does not bloat. On --db, the legacy manual row keeps its
+  ranking boost and reflection exemption. Note: train loads the corpus
+  folder's .env (for provider credentials), so check folders you did not
+  author before training.
 
 OPTIONS
   --slug <name>            Override the corpus slug (default: sanitized folder basename)
   --model <name>           Model used by the synthesis sub-agent (default: same resolution as 'duet run')
-  --db <path>              Memory database path (default: ~/.duet/memory.db)
+  --store <folder>         Memory-file directory; repeat on read/manage commands
+  --db <file>              PGlite path; repeat on read/manage commands
   --wait <seconds>         Seconds to wait for the cross-process open-lock
                            (default: 30; 0 fails immediately)
   -h, --help               Show this help

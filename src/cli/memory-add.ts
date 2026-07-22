@@ -1,4 +1,9 @@
+import { randomBytes } from "node:crypto";
+
 import { createEmbeddingClient, type EmbedFn } from "../memory/embedding.js";
+import { createMemoryId } from "../memory/id.js";
+import { listStore, writeEntry } from "../memory/store/store.js";
+import { resolveSources, type MemorySourceFlags } from "../memory/store/sources.js";
 import { appendObservation } from "../memory/storage.js";
 import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
 import type { ObservationPriority, ObservationSource } from "../types/memory.js";
@@ -6,11 +11,19 @@ import { printMemoryAddHelp } from "./help.js";
 import { toMemoryJson } from "./memory-json.js";
 import { scoreObservation, withMemorySession } from "./memory-db.js";
 import { PRIORITIES, parseEnum, SOURCES } from "./memory-query.js";
-import { fail, resolveUserPath, usageError } from "./shared.js";
+import {
+  lexMemorySourceFlags,
+  requireSingleExplicitWriteTarget,
+  requireWriteTarget,
+} from "./memory-sources.js";
+import { fail, usageError } from "./shared.js";
 
 type SourceKind = ObservationSource["kind"];
 
 interface AddCommandOptions {
+  /** Explicit backend flags; empty means flagless store discovery. */
+  sourceFlags: MemorySourceFlags;
+  /** Compatibility projection for callers that inspect a single selected DB. */
   dbPath: string;
   /** Positional content joined with spaces; empty when the caller pipes via stdin instead. */
   content: string;
@@ -20,7 +33,7 @@ interface AddCommandOptions {
   tags: string[];
   /** Session that authored the row; omitted leaves the row global/unattributed. */
   sessionId?: string;
-  /** Emit one canonical memory JSON object instead of the human line. */
+  /** Emit the selected backend's JSON record instead of the human line. */
   json: boolean;
   waitBudgetMs?: number;
 }
@@ -28,6 +41,8 @@ interface AddCommandOptions {
 interface AddCommandIO {
   stdout: NodeJS.WritableStream;
   stdin: NodeJS.ReadableStream & { isTTY?: boolean };
+  /** Working directory used for relative paths and flagless source discovery. */
+  cwd?: string;
   /**
    * Embedding client for the synchronous insert-time embed. Defaults to
    * the Duet endpoint client; tests inject a stub (or a throwing one) to
@@ -37,34 +52,41 @@ interface AddCommandIO {
 }
 
 /**
- * Run `duet memory add` — write a single user-added note row into the same
- * `~/.duet/memory.db` the runner reads from, so it surfaces in the next
- * session. Stored as `kind: "note"` with no `sessionId`, so it lands in the
- * cross-session global pack with a small `noteBias` bump (above reflections,
- * far below a `duet train` corpus) and stays eligible for `duet memory
- * reflect` compaction, folding like any other observation once aged.
+ * Run `duet memory add` — write one curated note to a memory-file store or
+ * the legacy observational DB. Flagless writes create the nearest agent's
+ * `.agents/memories` directory. DB notes retain their ranking, reflection,
+ * session-attribution, and synchronous-embedding behavior; file notes retain
+ * priority/source/tags in frontmatter and are loaded through store context.
  *
  * Content comes from the positional arguments, or from stdin when none are
  * given so callers can pipe longer text (`echo "…" | duet memory add`).
  *
- * The embedding is written synchronously alongside the row (no backfill
- * worker runs in this one-shot process), so `duet memory recall` and the
- * next session's `recall_memory` reach it semantically right away. When
- * embeddings are unavailable the add still succeeds and the next runner's
- * backfill pass embeds the row.
+ * For DB targets, the embedding is written synchronously alongside the row
+ * (no backfill worker runs in this one-shot process), so `duet memory recall`
+ * and the next session's `recall_memory` reach it semantically right away.
+ * When embeddings are unavailable the add still succeeds and the next
+ * runner's backfill pass embeds the row.
  */
 export async function runMemoryAddCommand(
   args: string[],
   io: AddCommandIO = { stdout: process.stdout, stdin: process.stdin },
 ): Promise<void> {
-  const options = parseMemoryAddArgs(args);
+  const cwd = io.cwd ?? process.cwd();
+  const options = parseMemoryAddArgs(args, cwd);
   if (!options) return;
 
   const content = await resolveContent(options.content, io);
+  const sources = await resolveSources(options.sourceFlags, cwd);
+  const writeTarget = requireWriteTarget(sources);
+  if (writeTarget.kind === "store") {
+    if (options.sessionId) usageError("--session is only supported with --db <file>.");
+    await writeStoreNote(writeTarget.path, content, options, io);
+    return;
+  }
   const embed = io.embed ?? createEmbeddingClient();
 
   const observation = await withMemorySession(
-    options.dbPath,
+    writeTarget.path,
     (session) =>
       appendObservation(
         session,
@@ -82,7 +104,7 @@ export async function runMemoryAddCommand(
     { waitBudgetMs: options.waitBudgetMs },
   );
   if (!observation) {
-    fail(`Could not write memory to ${options.dbPath} (lock contention).`);
+    fail(`Could not write memory to ${writeTarget.path} (lock contention).`);
   }
 
   if (options.json) {
@@ -105,8 +127,12 @@ export async function runMemoryAddCommand(
  * when `--help` was handled. Pure (no I/O) so it can be unit-tested; stdin
  * fallback for empty content happens later in {@link resolveContent}.
  */
-export function parseMemoryAddArgs(args: string[]): AddCommandOptions | undefined {
-  let dbPath = DEFAULT_MEMORY_DB_PATH;
+export function parseMemoryAddArgs(
+  args: string[],
+  cwd: string = process.cwd(),
+): AddCommandOptions | undefined {
+  const sourceArgs = lexMemorySourceFlags(args, cwd);
+  requireSingleExplicitWriteTarget(sourceArgs.flags);
   let priority: ObservationPriority = "medium";
   let source: SourceKind = "user";
   let sessionId: string | undefined;
@@ -115,32 +141,32 @@ export function parseMemoryAddArgs(args: string[]): AddCommandOptions | undefine
   let waitBudgetMs: number | undefined;
   const contentParts: string[] = [];
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]!;
+  for (let i = 0; i < sourceArgs.args.length; i++) {
+    const arg = sourceArgs.args[i]!;
     switch (arg) {
-      case "--db":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
-        dbPath = resolveUserPath(args[++i]!);
-        break;
       case "--priority":
-        priority = parseEnum(args[++i], PRIORITIES, arg);
+        priority = parseEnum(sourceArgs.args[++i], PRIORITIES, arg);
         break;
       case "--source":
-        source = parseEnum(args[++i], SOURCES, arg);
+        source = parseEnum(sourceArgs.args[++i], SOURCES, arg);
         break;
       case "--session":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
-        sessionId = args[++i]!;
+        if (!sourceArgs.args[i + 1] || sourceArgs.args[i + 1]?.startsWith("-")) {
+          usageError(`Missing value for ${arg}`);
+        }
+        sessionId = sourceArgs.args[++i]!;
         break;
       case "--json":
         json = true;
         break;
       case "--tag":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
-        tags.push(args[++i]!);
+        if (!sourceArgs.args[i + 1] || sourceArgs.args[i + 1]?.startsWith("-")) {
+          usageError(`Missing value for ${arg}`);
+        }
+        tags.push(sourceArgs.args[++i]!);
         break;
       case "--wait": {
-        const raw = args[++i];
+        const raw = sourceArgs.args[++i];
         const seconds = Number(raw);
         if (!raw || !Number.isFinite(seconds) || seconds < 0) {
           usageError(`Invalid --wait value: ${raw} (expected non-negative number of seconds)`);
@@ -159,7 +185,8 @@ export function parseMemoryAddArgs(args: string[]): AddCommandOptions | undefine
   }
 
   return {
-    dbPath,
+    sourceFlags: sourceArgs.flags,
+    dbPath: sourceArgs.flags.dbs[0] ?? DEFAULT_MEMORY_DB_PATH,
     content: contentParts.join(" ").trim(),
     priority,
     source,
@@ -193,4 +220,68 @@ async function readStream(stream: NodeJS.ReadableStream): Promise<string> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+async function writeStoreNote(
+  storeDir: string,
+  content: string,
+  options: AddCommandOptions,
+  io: AddCommandIO,
+): Promise<void> {
+  const slug = await createNoteSlug(storeDir, content);
+  const id = createMemoryId();
+  const createdAt = Date.now();
+  const stored = await writeEntry(storeDir, {
+    slug,
+    version: 1,
+    id,
+    kind: "note",
+    createdAt,
+    priority: options.priority,
+    source: options.source,
+    tags: options.tags,
+    content,
+  });
+
+  if (options.json) {
+    io.stdout.write(
+      `${JSON.stringify(
+        {
+          slug: stored.slug,
+          id: stored.id,
+          kind: stored.kind,
+          createdAt: new Date(stored.createdAt).toISOString(),
+          content: stored.content,
+          priority: options.priority,
+          source: options.source,
+          tags: options.tags,
+          store: stored.storeDir,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return;
+  }
+
+  const tagSuffix = options.tags.length > 0 ? ` [${options.tags.join(", ")}]` : "";
+  io.stdout.write(
+    `Added ${options.priority}-priority memory ${stored.id} as ${stored.slug} (${new Date(createdAt)
+      .toISOString()
+      .slice(0, 10)})${tagSuffix}\n`,
+  );
+}
+
+async function createNoteSlug(storeDir: string, content: string): Promise<string> {
+  const words =
+    content
+      .toLowerCase()
+      .match(/[a-z0-9]+/g)
+      ?.slice(0, 5) ?? [];
+  const stem = (words.join("-") || "note").slice(0, 48).replace(/-+$/g, "") || "note";
+  const existing = new Set((await listStore(storeDir)).map((entry) => entry.slug));
+  while (true) {
+    const slug = `${stem}-${randomBytes(3).toString("hex")}`;
+    if (!existing.has(slug)) return slug;
+  }
 }

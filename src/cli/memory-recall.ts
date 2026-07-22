@@ -121,6 +121,11 @@ export function parseMemoryRecallArgs(args: string[]): RecallCommandOptions | un
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     switch (arg) {
+      case "--store":
+        usageError(
+          "duet memory recall does not support --store; use --db <file>. " +
+            "Store memories are loaded into context automatically.",
+        );
       case "--db":
         if (!args[i + 1] || args[i + 1]?.startsWith("-")) usageError(`Missing value for ${arg}`);
         dbPath = resolveUserPath(args[++i]!);

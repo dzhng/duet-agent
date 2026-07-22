@@ -17,17 +17,16 @@ export interface SynthesisResult {
 }
 
 /**
- * One training as surfaced by `duet train list` / `show`. The DB row is the
- * source of truth for which trainings are live (replace-by-slug keeps one row
- * per slug); the archive manifest enriches it with headline/model/provenance
- * and may be absent if the archive was removed out of band.
+ * One curated memory as surfaced by `duet train list` / `show`. File stores
+ * and legacy DBs project into this common shape; the archive manifest enriches
+ * trained entries with private corpus provenance and may be absent.
  */
 export interface TrainListEntry {
-  /** Slug parsed from the `train:<slug>` tag; the stable training identity. */
+  /** Filename stem or `train:<slug>` tag; the stable source-local identity. */
   slug: string;
-  /** Observation row id; also the archive folder name under ~/.duet/train/. */
+  /** Stable memory id; also the archive folder name for trained entries. */
   memoryId: string;
-  /** Unix ms the row was written; lists are sorted newest-first by this. */
+  /** Unix ms the memory was written; merged lists sort newest-first by this. */
   createdAt: number;
   /** YYYY-MM-DD the training was recorded. */
   observedDate: string;
@@ -41,6 +40,8 @@ export interface TrainListEntry {
   fileCount?: number;
   /** False when the manifest could not be read (archive deleted/moved). */
   hasArchive: boolean;
+  /** Absolute file-store directory that supplied this entry; absent for legacy DB rows. */
+  store?: string;
 }
 
 /** A {@link TrainListEntry} plus the full synthesized observation text and

@@ -1,6 +1,5 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Model, TextContent, Usage } from "@earendil-works/pi-ai";
-import { nanoid } from "nanoid";
 import { Type } from "typebox";
 import { generateStructuredOutput } from "../core/structured-output.js";
 import { stripSystemReminders } from "../lib/system-reminder.js";
@@ -15,6 +14,7 @@ import {
 } from "../turn-runner/wire-shaping.js";
 import type { WireGuardHorizon } from "../types/protocol.js";
 import type { MemoryContextCache } from "./store.js";
+import { createMemoryId } from "./id.js";
 import type { MemorySession } from "./session.js";
 import {
   appendObservation,
@@ -266,10 +266,6 @@ export interface ObserverResult {
   suggestedContinuation?: string;
   /** Optional short title when the observer is asked to name the session/thread. */
   threadTitle?: string;
-}
-
-function createMemoryId(): string {
-  return `mem_${nanoid(12)}`;
 }
 
 export interface ReflectorReflection {
