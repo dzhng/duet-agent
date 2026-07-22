@@ -947,15 +947,12 @@ export async function runBudgetedPool<T>(
     const settled = await Promise.race(running.values());
     running.delete(settled.id);
     reservedUsd -= settled.reservationUsd;
-    if (
-      !Number.isFinite(settled.result.spentUsd) ||
-      settled.result.spentUsd < 0 ||
-      settled.result.spentUsd > settled.reservationUsd + Number.EPSILON
-    ) {
-      throw new Error(
-        `Settled model spend $${settled.result.spentUsd} is outside its $${settled.reservationUsd} reservation.`,
-      );
+    if (!Number.isFinite(settled.result.spentUsd) || settled.result.spentUsd < 0) {
+      throw new Error("Settled model spend must be finite and non-negative.");
     }
+    // A task cap can interrupt only between provider events, so the final
+    // request may overshoot its reservation. Charge reality before admitting
+    // another shard instead of turning valid completed work into infra failure.
     accountedUsd += settled.result.spentUsd;
     maximumBoundUsd = Math.max(maximumBoundUsd, accountedUsd + reservedUsd);
     if (settled.result.failure) {

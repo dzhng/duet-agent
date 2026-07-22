@@ -165,6 +165,23 @@ describe("SWE-bench E2B execution", () => {
     });
   });
 
+  test("charges unavoidable request overshoot before deciding whether to admit more work", async () => {
+    const result = await runBudgetedPool([1, 2], {
+      concurrency: 1,
+      accountedUsd: 94,
+      totalUsd: 100,
+      reserveUsd: () => 5,
+      run: async () => ({ spentUsd: 5.1 }),
+    });
+
+    expect(result).toEqual({
+      accountedUsd: 99.1,
+      failures: [],
+      maximumBoundUsd: 99.1,
+      unstarted: [2],
+    });
+  });
+
   test("leaves work unstarted when its reservation cannot fit the admission budget", async () => {
     const result = await runBudgetedPool([1, 2], {
       concurrency: 2,
