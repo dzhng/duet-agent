@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { parseArgs, requestTypeForCapability, usesLanguageImagePath } from "../src/cli/model.js";
+import {
+  parseArgs,
+  requestTypeForCapability,
+  runModelCommand,
+  usesLanguageImagePath,
+} from "../src/cli/model.js";
 
 // Bad flags route through `fail()`, which calls process.exit(1). Patch it to
 // throw so the pure parser tests can assert on the error path without exiting.
@@ -108,5 +113,28 @@ describe("usesLanguageImagePath", () => {
 
   test("dedicated image models use the generateImage path", () => {
     expect(usesLanguageImagePath("image")).toBe(false);
+  });
+});
+
+describe("model resolution debug output", () => {
+  test("prints the connected transport model spec without making a request", async () => {
+    const writes: string[] = [];
+    const writeSpy = spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+
+    try {
+      await runModelCommand(["--resolve", "sol", "--transport", "openai-codex"]);
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    expect(JSON.parse(writes.join(""))).toEqual({
+      model: "openai-codex:gpt-5.6-sol",
+      api: "openai-codex-responses",
+      baseUrl: "https://chatgpt.com/backend-api",
+      cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+    });
   });
 });

@@ -1,6 +1,11 @@
 import { DUET_GATEWAY_API_KEY_ENV } from "./duet-gateway.js";
+import type { ConnectedProviderId } from "../connected-providers/store.js";
 
-export type ProviderName = "duet-gateway" | "vercel-ai-gateway" | "openrouter";
+/** Metered providers considered by the router when resolving an unpinned model. */
+export type RouterProviderName = "duet-gateway" | "vercel-ai-gateway" | "openrouter";
+
+/** Any backend capable of carrying a curated catalog model. */
+export type TransportName = RouterProviderName | ConnectedProviderId;
 
 /** Versionless model families accepted anywhere a curated shorthand is accepted. */
 export type FamilyName =
@@ -18,14 +23,14 @@ export type FamilyName =
 
 export interface ProviderPreference {
   /** Provider identifier accepted by pi-ai or handled locally by model resolution. */
-  provider: ProviderName;
+  provider: RouterProviderName;
   /** Env var override for providers whose credential is not discoverable through pi-ai. */
   customEnvVar?: () => string | null;
 }
 
 export interface ProviderModelCandidate {
   /** Provider that supports the candidate model. */
-  provider: ProviderName;
+  provider: RouterProviderName;
   /** Fully resolved provider:modelId string passed to the runtime model loader. */
   modelName: string;
 }
@@ -35,7 +40,8 @@ interface ModelDefinition {
   family: FamilyName;
   shorthand: string;
   aliases: readonly string[];
-  modelsByProvider: Partial<Record<ProviderName, string>>;
+  /** Provider-specific id used to carry this curated model on each supported transport. */
+  modelsByProvider: Partial<Record<TransportName, string>>;
   /**
    * Hard cap on output tokens, applied when it is lower than the `maxTokens`
    * the upstream pi-ai catalog reports. Some gateway models advertise a larger
@@ -62,13 +68,13 @@ export const PROVIDER_ORDER: readonly ProviderPreference[] = [
   { provider: "openrouter" },
 ];
 
-const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderName, string> = {
+const DEFAULT_MODEL_BY_PROVIDER: Record<RouterProviderName, string> = {
   "duet-gateway": DEFAULT_CLI_MODEL,
   "vercel-ai-gateway": DEFAULT_CLI_MODEL,
   openrouter: DEFAULT_CLI_MODEL,
 };
 
-const MEMORY_MODEL_BY_PROVIDER: Record<ProviderName, string> = {
+const MEMORY_MODEL_BY_PROVIDER: Record<RouterProviderName, string> = {
   "duet-gateway": DEFAULT_CLI_MEMORY_MODEL,
   "vercel-ai-gateway": DEFAULT_CLI_MEMORY_MODEL,
   // gpt-5.6-luna has no OpenRouter route: pi-ai's catalog does not ship it, so
@@ -93,6 +99,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "anthropic/claude-opus-4.8",
       "vercel-ai-gateway": "anthropic/claude-opus-4.8",
       openrouter: "anthropic/claude-opus-4.8",
+      "github-copilot": "claude-opus-4.8",
     },
   },
   {
@@ -108,6 +115,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "anthropic/claude-opus-4.7",
       "vercel-ai-gateway": "anthropic/claude-opus-4.7",
       openrouter: "anthropic/claude-opus-4.7",
+      "github-copilot": "claude-opus-4.7",
     },
   },
   {
@@ -141,6 +149,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "anthropic/claude-sonnet-4.6",
       "vercel-ai-gateway": "anthropic/claude-sonnet-4.6",
       openrouter: "anthropic/claude-sonnet-4.6",
+      "github-copilot": "claude-sonnet-4.6",
     },
   },
   {
@@ -156,6 +165,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "anthropic/claude-haiku-4.5",
       "vercel-ai-gateway": "anthropic/claude-haiku-4.5",
       openrouter: "anthropic/claude-haiku-4.5",
+      "github-copilot": "claude-haiku-4.5",
     },
   },
   {
@@ -174,6 +184,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     modelsByProvider: {
       "duet-gateway": "openai/gpt-5.6-luna",
       "vercel-ai-gateway": "openai/gpt-5.6-luna",
+      "openai-codex": "gpt-5.6-luna",
     },
   },
   {
@@ -184,6 +195,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "openai/gpt-5.6-sol",
       "vercel-ai-gateway": "openai/gpt-5.6-sol",
       openrouter: "openai/gpt-5.6-sol",
+      "openai-codex": "gpt-5.6-sol",
     },
     maxOutputTokens: 128000,
   },
@@ -195,6 +207,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "openai/gpt-5.6-terra",
       "vercel-ai-gateway": "openai/gpt-5.6-terra",
       openrouter: "openai/gpt-5.6-terra",
+      "openai-codex": "gpt-5.6-terra",
     },
     maxOutputTokens: 128000,
   },
@@ -252,6 +265,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "anthropic/claude-fable-5",
       "vercel-ai-gateway": "anthropic/claude-fable-5",
       openrouter: "anthropic/claude-fable-5",
+      "github-copilot": "claude-fable-5",
     },
   },
   {
@@ -315,11 +329,11 @@ export function clampModelOutputTokens<T extends { id: string; maxTokens: number
   return { ...model, maxTokens: cap };
 }
 
-export function getProviderDefaultModel(provider: ProviderName): string {
+export function getProviderDefaultModel(provider: RouterProviderName): string {
   return DEFAULT_MODEL_BY_PROVIDER[provider];
 }
 
-export function getProviderMemoryModel(provider: ProviderName): string {
+export function getProviderMemoryModel(provider: RouterProviderName): string {
   return MEMORY_MODEL_BY_PROVIDER[provider];
 }
 
@@ -341,13 +355,18 @@ export function canonicalizeModelName(modelName: string): string {
   return findModelDefinition(modelName)?.shorthand ?? modelName;
 }
 
+/** Resolve a curated shorthand or alias to the id served by a specific transport. */
+export function transportModelId(transport: TransportName, shorthand: string): string | undefined {
+  return findModelDefinition(shorthand)?.modelsByProvider[transport];
+}
+
 /**
  * Normalize a `provider:modelId` model id against catalog aliases so users can
  * pass familiar variants like `claude-opus-4-7` even when the underlying
  * provider catalog spells it `claude-opus-4.7`. Falls back to the input id
  * when no alias matches so unknown ids reach the provider lookup unchanged.
  */
-export function canonicalizeProviderModelId(provider: ProviderName, modelId: string): string {
+export function canonicalizeProviderModelId(provider: RouterProviderName, modelId: string): string {
   const definition = findModelDefinition(modelId);
   if (!definition) return modelId;
   return definition.modelsByProvider[provider] ?? modelId;
@@ -365,10 +384,10 @@ function findModelDefinition(modelName: string): ModelDefinition | undefined {
 
 /**
  * Map user-friendly provider names (and common aliases) onto the canonical
- * `ProviderName`. Returns `undefined` for unknown values so callers can
+ * `RouterProviderName`. Returns `undefined` for unknown values so callers can
  * surface a list of accepted names.
  */
-export function resolveProviderShorthand(name: string): ProviderName | undefined {
+export function resolveProviderShorthand(name: string): RouterProviderName | undefined {
   switch (name.trim().toLowerCase()) {
     case "duet":
     case "duet-gateway":
@@ -389,16 +408,16 @@ export function resolveProviderShorthand(name: string): ProviderName | undefined
 export const PROVIDER_SHORTHANDS: readonly string[] = ["duet", "vercel", "openrouter"];
 
 /** Build a `provider:modelId` reference for a provider's default chat model. */
-export function pinnedDefaultModel(provider: ProviderName): string {
+export function pinnedDefaultModel(provider: RouterProviderName): string {
   return pinnedShorthand(provider, getProviderDefaultModel(provider));
 }
 
 /** Build a `provider:modelId` reference for a provider's memory model. */
-export function pinnedMemoryModel(provider: ProviderName): string {
+export function pinnedMemoryModel(provider: RouterProviderName): string {
   return pinnedShorthand(provider, getProviderMemoryModel(provider));
 }
 
-function pinnedShorthand(provider: ProviderName, shorthand: string): string {
+function pinnedShorthand(provider: RouterProviderName, shorthand: string): string {
   const candidate = getModelCandidates(shorthand).find((entry) => entry.provider === provider);
   if (!candidate) {
     throw new Error(`Provider ${provider} has no model mapping for ${shorthand}`);

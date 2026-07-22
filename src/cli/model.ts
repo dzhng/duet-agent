@@ -13,6 +13,8 @@ import {
   fetchModelCatalog,
   type ModelType,
 } from "../model-resolution/model-gateway.js";
+import { transportModelId, type TransportName } from "../model-resolution/catalog.js";
+import { resolveModelName } from "../model-resolution/resolver.js";
 import { printModelHelp } from "./help.js";
 import { fail, loadCliEnvFiles, resolveUserPath } from "./shared.js";
 
@@ -26,6 +28,10 @@ type RequestType = "text" | "image" | "video";
 /** Parsed `duet model` flags. Prompt is positional or read from stdin. */
 interface ModelArgs {
   model?: string;
+  /** Curated shorthand to inspect without issuing a model request. */
+  resolve?: string;
+  /** Transport whose catalog mapping and resolved pi-ai spec should be inspected. */
+  transport?: TransportName;
   type?: RequestType;
   imagePath?: string;
   out?: string;
@@ -90,6 +96,11 @@ export async function runModelCommand(args: string[]): Promise<void> {
     return;
   }
   loadCliEnvFiles(process.cwd(), parsed.envFile);
+
+  if (parsed.resolve || parsed.transport) {
+    printResolvedTransportModel(parsed.resolve, parsed.transport);
+    return;
+  }
 
   if (!parsed.model) fail("Missing required --model/-m");
   const model = parsed.model;
@@ -344,6 +355,12 @@ export function parseArgs(args: string[]): ModelArgs {
       return value;
     };
     switch (arg) {
+      case "--resolve":
+        out.resolve = next();
+        break;
+      case "--transport":
+        out.transport = parseTransport(next());
+        break;
       case "--model":
       case "-m":
         out.model = next();
@@ -395,6 +412,44 @@ export function parseArgs(args: string[]): ModelArgs {
     }
   }
   return out;
+}
+
+function parseTransport(value: string): TransportName {
+  switch (value) {
+    case "duet-gateway":
+    case "vercel-ai-gateway":
+    case "openrouter":
+    case "openai-codex":
+    case "github-copilot":
+      return value;
+    default:
+      fail(`Invalid --transport: ${value}`);
+  }
+}
+
+function printResolvedTransportModel(
+  shorthand: string | undefined,
+  transport: TransportName | undefined,
+): void {
+  if (!shorthand) fail("--transport requires --resolve <shorthand>");
+  if (!transport) fail("--resolve requires --transport <name>");
+  const modelId = transportModelId(transport, shorthand);
+  if (!modelId) fail(`Transport ${transport} does not serve ${shorthand}`);
+  const reference = `${transport}:${modelId}`;
+  const model = resolveModelName(reference);
+  if (!model) fail(`No model spec resolves for ${reference}`);
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        model: reference,
+        api: model.api,
+        baseUrl: model.baseUrl,
+        cost: model.cost,
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }
 
 function parseType(value: string): RequestType {

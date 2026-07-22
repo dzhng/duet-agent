@@ -6,13 +6,13 @@ import {
   isKnownShorthand,
   resolveFamilyShorthand,
   type FamilyName,
-  type ProviderName,
+  type RouterProviderName,
 } from "../src/model-resolution/catalog.js";
 
 interface FamilyCase {
   family: FamilyName;
   latest: string;
-  modelsByProvider: Partial<Record<ProviderName, string>>;
+  modelsByProvider: Partial<Record<RouterProviderName, string>>;
 }
 
 const familyCases: readonly FamilyCase[] = [
@@ -115,7 +115,11 @@ const familyCases: readonly FamilyCase[] = [
   },
 ];
 
-const providers: readonly ProviderName[] = ["duet-gateway", "vercel-ai-gateway", "openrouter"];
+const providers: readonly RouterProviderName[] = [
+  "duet-gateway",
+  "vercel-ai-gateway",
+  "openrouter",
+];
 
 describe("catalog family shorthands", () => {
   test("resolves every family to one latest shorthand and its provider models", () => {

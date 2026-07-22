@@ -192,6 +192,26 @@ const MISSING_MODEL_CLONES: Record<
     overrides?: ModelCloneOverrides;
   }>
 > = {
+  "openai-codex": [
+    {
+      // Drop once pi-ai ships openai-codex:gpt-5.6-sol.
+      from: "gpt-5.5",
+      to: "gpt-5.6-sol",
+      overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-sol"],
+    },
+    {
+      // Drop once pi-ai ships openai-codex:gpt-5.6-terra.
+      from: "gpt-5.5",
+      to: "gpt-5.6-terra",
+      overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-terra"],
+    },
+    {
+      // Drop once pi-ai ships openai-codex:gpt-5.6-luna.
+      from: "gpt-5.5",
+      to: "gpt-5.6-luna",
+      overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-luna"],
+    },
+  ],
   "vercel-ai-gateway": [
     { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-fable-5", overrides: FABLE_5_COST },
     {

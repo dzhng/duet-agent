@@ -7,6 +7,7 @@ import {
   getDuetGatewayBaseUrl,
   resolveDuetGatewayModel,
 } from "../src/model-resolution/duet-gateway.js";
+import { resolveModelName } from "../src/model-resolution/resolver.js";
 
 const ENV_KEYS = ["DUET_GATEWAY_BASE_URL", "DUET_API_KEY"] as const;
 
@@ -70,6 +71,37 @@ describe("duet-gateway model routing", () => {
     const model = resolveDuetGatewayModel("openai/gpt-5.6-sol");
 
     expect(model.baseUrl).toBe("https://gateway.example.com/base/v1");
+  });
+});
+
+describe("connected-provider model synthesis", () => {
+  test("resolves codex 5.6 clones with their native transport and published costs", () => {
+    const cases = [
+      {
+        id: "gpt-5.6-sol",
+        cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+      },
+      {
+        id: "gpt-5.6-terra",
+        cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 },
+      },
+      {
+        id: "gpt-5.6-luna",
+        cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
+      },
+    ];
+
+    for (const expected of cases) {
+      const model = resolveModelName(`openai-codex:${expected.id}`);
+
+      expect(model).toMatchObject({
+        id: expected.id,
+        provider: "openai-codex",
+        api: "openai-codex-responses",
+        baseUrl: "https://chatgpt.com/backend-api",
+        cost: expected.cost,
+      });
+    }
   });
 });
 

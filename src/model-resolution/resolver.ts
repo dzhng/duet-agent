@@ -23,7 +23,7 @@ import {
   isProviderPinnedModelName,
   PROVIDER_ORDER,
   type ProviderModelCandidate,
-  type ProviderName,
+  type RouterProviderName,
   resolveProviderShorthand,
 } from "./catalog.js";
 
@@ -105,12 +105,12 @@ export function pinnedModelReference(name: string): string {
   return `${model.provider}:${model.id}`;
 }
 
-function isKnownProvider(provider: string): provider is ProviderName {
+function isKnownProvider(provider: string): provider is RouterProviderName {
   return PROVIDER_ORDER.some((entry) => entry.provider === provider);
 }
 
 function lookupProviderEnvVar(entry: {
-  provider: ProviderName;
+  provider: RouterProviderName;
   customEnvVar?: () => string | null;
 }): string | undefined {
   if (entry.customEnvVar) {
