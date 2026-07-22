@@ -388,11 +388,27 @@ export async function runTui(input: RunTuiInput): Promise<TurnTerminalEvent | un
 
   // Ctrl+Enter: behavior:"steer" so the runner calls agent.steer() at
   // the next inference boundary instead of queueing behind the full turn.
+  // Empty-composer Ctrl+Enter promotes the oldest queued follow-up.
   function handleSteer(): void {
     const message = ui.inputField.plainText.trim();
-    if (message.length === 0) return;
+    if (message.length === 0) {
+      promoteQueuedFollowUpToSteer();
+      return;
+    }
     ui.inputField.clear();
     void dispatchTurn(message, "steer").catch(reportError);
+  }
+
+  // Dequeue before steering so the runner does not also deliver this entry
+  // when the original follow-up queue drains.
+  function promoteQueuedFollowUpToSteer(): void {
+    const [next, ...rest] = input.session.getState()?.followUpQueue ?? [];
+    if (!next) return;
+    input.session.editFollowUpQueue({ prompts: rest });
+    void input.session
+      .prompt({ message: next.message, behavior: "steer", images: next.images })
+      .catch(reportError);
+    if (!statusController.isRunning()) statusController.markRunning();
   }
 
   // Plain Enter: slash-style local commands → shared dispatch (which
