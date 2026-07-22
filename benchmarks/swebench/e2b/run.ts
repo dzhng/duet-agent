@@ -53,6 +53,7 @@ interface DriverOptions {
   instanceIds: string[];
   capacityOnly: boolean;
   retryFailed: boolean;
+  workerRepositorySha?: string;
 }
 
 interface E2BCampaignSpec extends CampaignSpec {
@@ -109,16 +110,21 @@ async function main(): Promise<void> {
     throw new Error("E2B worker timeout must leave at least one minute for artifact collection.");
   }
 
-  const [repositorySha, originMainSha, status, manifest] = await Promise.all([
+  const [controllerSha, originMainSha, status, manifest] = await Promise.all([
     gitOutput(["rev-parse", "HEAD"]),
     gitOutput(["rev-parse", "origin/main"]),
     gitOutput(["status", "--porcelain"]),
     readManifest(e2bSpec),
   ]);
   if (status) throw new Error("E2B campaign execution requires a clean committed worktree.");
-  if (repositorySha !== originMainSha) {
+  if (controllerSha !== originMainSha) {
     throw new Error("E2B campaign execution requires HEAD to equal pushed origin/main.");
   }
+  const repositorySha = await resolveWorkerRepositorySha(
+    e2bSpec,
+    controllerSha,
+    options.workerRepositorySha,
+  );
   const initialAttempts = await loadRolloutAttempts(join(BENCH_ROOT, "runs"), e2bSpec.id);
   const cacheRoot = join(BENCH_ROOT, ".cache", e2bSpec.id, "e2b");
   await mkdir(cacheRoot, { recursive: true });
@@ -1128,7 +1134,7 @@ async function loadRepositoryEnvironment(): Promise<void> {
 }
 
 function parseOptions(args: readonly string[]): DriverOptions {
-  const valueFlags = new Set(["--spec", "--instance"]);
+  const valueFlags = new Set(["--spec", "--instance", "--worker-repository-sha"]);
   const booleanFlags = new Set(["--capacity-only", "--retry-failed"]);
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -1144,7 +1150,34 @@ function parseOptions(args: readonly string[]): DriverOptions {
     instanceIds: repeatedOptionValues(args, "--instance"),
     capacityOnly: args.includes("--capacity-only"),
     retryFailed: args.includes("--retry-failed"),
+    workerRepositorySha: optionValue(args, "--worker-repository-sha"),
   };
+}
+
+async function resolveWorkerRepositorySha(
+  spec: E2BCampaignSpec,
+  controllerSha: string,
+  requestedSha: string | undefined,
+): Promise<string> {
+  if (!requestedSha || requestedSha === controllerSha) return controllerSha;
+  if (!/^[0-9a-f]{40}$/.test(requestedSha)) {
+    throw new Error("--worker-repository-sha must be a full lowercase git SHA.");
+  }
+  const provenancePath = join(hostCampaignRoot(spec.id), "campaign.json");
+  type FrozenWorkerProvenance = { frozen?: { duetGitSha?: unknown } };
+  let provenance: FrozenWorkerProvenance;
+  try {
+    provenance = JSON.parse(await readFile(provenancePath, "utf8")) as FrozenWorkerProvenance;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error("A worker SHA override is allowed only when resuming an existing campaign.");
+    }
+    throw error;
+  }
+  if (provenance.frozen?.duetGitSha !== requestedSha) {
+    throw new Error(`Worker SHA ${requestedSha} does not match the campaign's frozen Duet SHA.`);
+  }
+  return requestedSha;
 }
 
 function optionValue(args: readonly string[], flag: string): string | undefined {
