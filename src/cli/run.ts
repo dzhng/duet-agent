@@ -36,6 +36,7 @@ import {
 export interface CliTurnConfigInput {
   modelName?: string;
   memoryModelName?: string;
+  /** Disable both observational database memory and curated file-memory loading. */
   incognito?: boolean;
   /**
    * Explicit memory database file path. When omitted, the config falls back
@@ -99,6 +100,7 @@ export function buildCliTurnConfig(
       model: modelResolution.modelName,
       memoryModel: memoryModelResolution.modelName,
       memoryDbPath: input.incognito ? false : (input.dbPath ?? DEFAULT_MEMORY_DB_PATH),
+      ...(input.incognito ? { memoryStores: false } : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       cwd: input.workDir,
       ...(input.systemInstructions ? { systemInstructions: input.systemInstructions } : {}),

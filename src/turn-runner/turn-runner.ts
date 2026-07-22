@@ -52,7 +52,7 @@ import {
   stripObservationalContextMessages,
   updateObservationalMemory,
 } from "../memory/observational.js";
-import { rebuildMemoryContextPack } from "../memory/context-pack.js";
+import { rebuildMemoryContextPack, rebuildPinnedStoreContextPack } from "../memory/context-pack.js";
 import { createEmbeddingClient } from "../memory/embedding.js";
 import {
   loadStoredMemory,
@@ -60,6 +60,7 @@ import {
   type MemoryPersistenceHandle,
 } from "../memory/storage.js";
 import { MemoryContextCache } from "../memory/store.js";
+import { discoverMemoryStores } from "../memory/store/discovery.js";
 import {
   DEFAULT_CLI_MEMORY_MODEL,
   DEFAULT_CLI_MODEL,
@@ -2921,13 +2922,14 @@ export class TurnRunner {
   }
 
   /**
-   * Re-discover installed skills from disk. Surfaces newly added skills
-   * (e.g. installed in this session) without restarting the runner.
+   * Re-discover installed skills and curated memory stores from disk. Surfaces
+   * newly added skills or edited memory files without restarting the runner.
    * Callers typically pair this with `getSkills()` to refresh their
    * autocomplete catalog.
    */
   async reloadSkills(): Promise<readonly Skill[]> {
     await this.skillContext.reload();
+    await this.refreshPinnedStoreContextPack();
     return this.skillContext.getSkills();
   }
 
@@ -2971,10 +2973,11 @@ export class TurnRunner {
     // call so a `duet login` mid-session lights up retrieval without
     // a runner restart.
     //
-    // Initial context pack build runs synchronously inside
-    // loadStoredMemory so the very first dispatched turn already sees
-    // a frozen memory prefix. Subsequent compaction triggers (reflector
-    // completion, wire-shaping eviction) refresh it.
+    // The file-backed pack loads alongside the database-backed pack so the
+    // first dispatched turn sees both frozen layers. Later database compaction
+    // triggers refresh only observations; explicit skills reload refreshes the
+    // file-backed layer.
+    const pinnedStoreLoad = this.refreshPinnedStoreContextPack();
     this.memoryPersistence = await loadStoredMemory(
       this.config.memoryDbPath,
       this.config.cwd ?? process.cwd(),
@@ -3010,6 +3013,23 @@ export class TurnRunner {
         },
       },
     );
+    await pinnedStoreLoad;
+  }
+
+  /** Reload the frozen file-backed layer without touching database memory. */
+  private async refreshPinnedStoreContextPack(): Promise<void> {
+    if (this.config.memoryStores === false) {
+      this.memory.setStoredContextPack([]);
+      return;
+    }
+    try {
+      const stores =
+        this.config.memoryStores ?? (await discoverMemoryStores(this.config.cwd ?? process.cwd()));
+      await rebuildPinnedStoreContextPack({ stores, cache: this.memory });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[duet-agent] failed to load pinned memory stores: ${reason}`);
+    }
   }
 
   protected createBaseSystemPromptWithAppendedLayers(input?: {
@@ -3217,7 +3237,10 @@ export class TurnRunner {
       systemPrompt: estimateTokens(agent.state.systemPrompt),
       messages: messageWireTokens,
       localMemory: pack.local.reduce((total, row) => total + estimateTokens(row.content), 0),
-      globalMemory: pack.global.reduce((total, row) => total + estimateTokens(row.content), 0),
+      globalMemory: [...pack.stored, ...pack.global].reduce(
+        (total, row) => total + estimateTokens(row.content),
+        0,
+      ),
     };
   }
 

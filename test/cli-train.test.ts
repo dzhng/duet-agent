@@ -1,6 +1,6 @@
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { parseTrainArgs } from "../src/cli/train.js";
+import { buildTrainSynthesisConfig, parseTrainArgs } from "../src/cli/train.js";
 import { DEFAULT_MEMORY_DB_PATH } from "../src/session/session-manager.js";
 
 // `parseTrainArgs` calls `fail()` on bad input, which calls `process.exit(1)`.
@@ -28,6 +28,12 @@ afterEach(() => {
 });
 
 describe("parseTrainArgs", () => {
+  test("disables both durable memory sources for the synthesis sub-runner", () => {
+    const config = buildTrainSynthesisConfig({ folder: "/tmp/corpus", model: "test:model" });
+    expect(config.memoryDbPath).toBe(false);
+    expect(config.memoryStores).toBe(false);
+  });
+
   test("rejects an empty arg list", () => {
     expect(() => parseTrainArgs([])).toThrow(ExitCalled);
   });

@@ -42,19 +42,47 @@ export interface MemoryEntryInput extends MemoryFileRecord {
 
 /** List valid markdown records in lexical slug order. */
 export async function listStore(dir: string): Promise<StoredMemory[]> {
+  return listStoreWithInvalidPolicy(dir);
+}
+
+/**
+ * List valid records while isolating malformed files. Runtime prompt loading
+ * uses this best-effort form so one hand-edited file cannot block startup;
+ * management commands retain {@link listStore}'s strict failure behavior.
+ */
+export async function listStoreTolerant(
+  dir: string,
+  onInvalidEntry: (path: string, error: unknown) => void,
+): Promise<StoredMemory[]> {
+  return listStoreWithInvalidPolicy(dir, onInvalidEntry);
+}
+
+async function listStoreWithInvalidPolicy(
+  dir: string,
+  onInvalidEntry?: (path: string, error: unknown) => void,
+): Promise<StoredMemory[]> {
   const storeDir = await requireStoreDirectory(dir, false);
   if (!storeDir) return [];
   const directoryEntries = await fileSystem.readdir(storeDir, { withFileTypes: true });
-  const memoryFilenames = directoryEntries
+  const memoryEntries = directoryEntries
     .filter((entry) => entry.name.endsWith(".md"))
-    .map((entry) => {
-      if (entry.isSymbolicLink()) throw new Error(`Memory files cannot be symlinks: ${entry.name}`);
-      if (!entry.isFile()) throw new Error(`Memory entry is not a regular file: ${entry.name}`);
-      slugFromFilename(entry.name);
-      return entry.name;
-    })
-    .sort();
-  return Promise.all(memoryFilenames.map((name) => readEntry(storeDir, slugFromFilename(name))));
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const loaded = await Promise.all(
+    memoryEntries.map(async (entry) => {
+      const path = join(storeDir, entry.name);
+      try {
+        if (entry.isSymbolicLink())
+          throw new Error(`Memory files cannot be symlinks: ${entry.name}`);
+        if (!entry.isFile()) throw new Error(`Memory entry is not a regular file: ${entry.name}`);
+        return await readEntry(storeDir, slugFromFilename(entry.name));
+      } catch (error) {
+        if (!onInvalidEntry) throw error;
+        onInvalidEntry(path, error);
+        return undefined;
+      }
+    }),
+  );
+  return loaded.filter((entry): entry is StoredMemory => entry !== undefined);
 }
 
 /** Read one record by its safe filename stem. */

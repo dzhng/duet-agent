@@ -664,6 +664,7 @@ describe("CLI model inference", () => {
       model: "frontier",
       memoryModel: "gpt-5.4-mini",
       memoryDbPath: false,
+      memoryStores: false,
       cwd: "/repo",
       systemInstructions: "Prefer concise answers.",
       systemPromptFiles: [],
@@ -913,6 +914,7 @@ describe("CLI memory db resolution", () => {
       EMPTY_DOTENV_KEYS,
     );
     expect(config.memoryDbPath).toBe(false);
+    expect(config.memoryStores).toBe(false);
   });
 });
 

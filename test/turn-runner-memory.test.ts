@@ -1,4 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { startTurn } from "./helpers/turn-runner-protocol.js";
 import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
 import {
@@ -30,6 +33,8 @@ import type { TurnEvent, TurnOptions } from "../src/types/protocol.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 import { withheldAskReminder, parkNudge } from "../src/turn-runner/prompts.js";
 import { settlementNotice } from "../src/turn-runner/task-tools.js";
+import { updateEntry, writeEntry } from "../src/memory/store/store.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 
 class MemoryTransformTurnRunner extends TurnRunner {
   createMemoryTransformForTest() {
@@ -207,7 +212,7 @@ class UsageTrackingTurnRunner extends TurnRunner {
  * drives a fake assistant `done` event through the runner, which then
  * triggers `emitParentAgentEvent → emit usage`. Memory is left
  * unconfigured; the breakdown still runs since the cache always returns
- * `{ global: [], local: [] }` when no pack has been frozen.
+ * `{ stored: [], global: [], local: [] }` when no pack has been frozen.
  */
 class UsageEventTurnRunner extends TurnRunner {
   /** Messages pushed onto `agent.state.messages` at creation time. */
@@ -242,6 +247,19 @@ class UsageEventTurnRunner extends TurnRunner {
   }) {
     this.memory.setContextPack(pack);
     return pack;
+  }
+
+  seedFrozenStoredForTest(content: string): void {
+    this.memory.setStoredContextPack([
+      {
+        slug: "usage",
+        storeDir: "/tmp/.agents/memories",
+        id: "mem_usage",
+        kind: "train",
+        createdAt: 1,
+        content,
+      },
+    ]);
   }
 
   protected override async updateMemoryAfterAgentRun(): Promise<void> {
@@ -395,6 +413,156 @@ class MemoryEventTurnRunner extends TurnRunner {
 }
 
 describe("TurnRunner memory", () => {
+  testIfDocker("loads discovered file memory when database memory is disabled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "duet-runner-stored-memory-"));
+    const cwd = join(root, "agent", "work");
+    const store = join(root, "agent", ".agents", "memories");
+    const runner = new MemoryTransformTurnRunner({
+      cwd,
+      memoryDbPath: false,
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await writeEntry(store, {
+        slug: "project-facts",
+        version: 1,
+        id: "mem_project_facts",
+        kind: "train",
+        createdAt: 1,
+        content: "FILE MEMORY WITHOUT A DATABASE",
+      });
+      await writeFile(join(store, "malformed.md"), "invalid memory file", "utf8");
+
+      await runner.start({ type: "start", mode: "agent" });
+
+      expect(runner.getFrozenContextPackForTest().stored.map((entry) => entry.content)).toEqual([
+        "FILE MEMORY WITHOUT A DATABASE",
+      ]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain("malformed.md");
+    } finally {
+      warn.mockRestore();
+      await runner.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  testIfDocker(
+    "reloadSkills refreshes file memory once while ordinary writes leave it frozen",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "duet-runner-refresh-stored-memory-"));
+      const cwd = join(root, "agent", "work");
+      const store = join(root, "agent", ".agents", "memories");
+      const runner = new MemoryTransformTurnRunner({
+        cwd,
+        memoryDbPath: false,
+        model: "anthropic:claude-opus-4-7",
+        skillDiscovery: { includeDefaults: false },
+      });
+      try {
+        await writeEntry(store, {
+          slug: "refreshable",
+          version: 1,
+          id: "mem_refreshable",
+          kind: "train",
+          createdAt: 1,
+          content: "BEFORE RELOAD",
+        });
+        await runner.start({ type: "start", mode: "agent" });
+        const transform = runner.createMemoryTransformForTest();
+        const messages: AgentMessage[] = [{ role: "user", content: "request", timestamp: 2 }];
+        const prefix = async () => {
+          const first = (await transform(messages))[0];
+          return first && "content" in first ? JSON.stringify(first.content) : "";
+        };
+
+        const initial = await prefix();
+        await updateEntry(store, "refreshable", "AFTER RELOAD");
+        expect(await prefix()).toBe(initial);
+
+        await runner.reloadSkills();
+        const refreshed = await prefix();
+        expect(refreshed).not.toBe(initial);
+        expect(refreshed).toContain("AFTER RELOAD");
+        expect(await prefix()).toBe(refreshed);
+      } finally {
+        await runner.dispose();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  testIfDocker("memoryStores false disables discovered file memory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "duet-runner-no-stored-memory-"));
+    const cwd = join(root, "agent", "work");
+    const store = join(root, "agent", ".agents", "memories");
+    const runner = new MemoryTransformTurnRunner({
+      cwd,
+      memoryDbPath: false,
+      memoryStores: false,
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    try {
+      await writeEntry(store, {
+        slug: "must-not-load",
+        version: 1,
+        id: "mem_must_not_load",
+        kind: "train",
+        createdAt: 1,
+        content: "MUST NOT ENTER CONTEXT",
+      });
+
+      await runner.start({ type: "start", mode: "agent" });
+
+      expect(runner.getFrozenContextPackForTest().stored).toEqual([]);
+    } finally {
+      await runner.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("renders stored, global, and local memory in that order inside one observations block", async () => {
+    const memory = new MemoryContextCache();
+    memory.setStoredContextPack([
+      {
+        slug: "trained-product",
+        storeDir: "/project/.agents/memories",
+        id: "mem_trained_product",
+        kind: "train",
+        createdAt: 3,
+        headline: "Product facts",
+        content: "PINNED STORE CONTENT",
+      },
+    ]);
+    memory.setContextPack({
+      global: [synthObservation({ id: "global", content: "GLOBAL OBSERVATION CONTENT" })],
+      local: [synthObservation({ id: "local", content: "LOCAL OBSERVATION CONTENT" })],
+    });
+
+    const result = await compactObservationalContext({
+      messages: [{ role: "user", content: "latest request", timestamp: 4 }],
+      memory,
+      horizon: createInitialHorizon(),
+      targetMessageTokens: 1_000,
+    });
+
+    const rendered = JSON.stringify(result[0]);
+    expect(rendered).toContain("<observations>");
+    expect(rendered).toContain("<stored_observations>");
+    expect(rendered).toContain("<global_observations>");
+    expect(rendered).toContain("<local_observations>");
+    expect(rendered.indexOf("<stored_observations>")).toBeLessThan(
+      rendered.indexOf("<global_observations>"),
+    );
+    expect(rendered.indexOf("<global_observations>")).toBeLessThan(
+      rendered.indexOf("<local_observations>"),
+    );
+    expect(rendered).toContain("PINNED STORE CONTENT");
+  });
+
   test("advisor compaction renders frozen observations above a bounded recent raw tail", async () => {
     const memory = new MemoryContextCache();
     const now = Date.now();
@@ -492,7 +660,7 @@ describe("TurnRunner memory", () => {
     // Pack stays empty because the transform never refreshes it on
     // its own — only compaction events do, and none fire below
     // threshold.
-    expect(runner.getFrozenContextPackForTest()).toEqual({ global: [], local: [] });
+    expect(runner.getFrozenContextPackForTest()).toEqual({ stored: [], global: [], local: [] });
   });
 
   test("observational transform only shapes context at compaction threshold", async () => {
@@ -1093,6 +1261,29 @@ describe("TurnRunner memory", () => {
         (event) => event.type === "system" && event.message.startsWith("Context overflow"),
       ),
     ).toHaveLength(0);
+  });
+
+  test("attributes pinned store tokens to the existing globalMemory segment", async () => {
+    const runner = new UsageEventTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      memoryDbPath: false,
+      memoryStores: false,
+      skillDiscovery: { includeDefaults: false },
+    });
+    await runner.start({ type: "start", mode: "agent" });
+    try {
+      const before = runner.estimateContextWindowUsageForTest();
+      const content = "pinned usage telemetry";
+      runner.seedFrozenStoredForTest(content);
+      const after = runner.estimateContextWindowUsageForTest();
+
+      expect(after.globalMemory - before.globalMemory).toBe(
+        Math.ceil(content.length / CHARS_PER_TOKEN),
+      );
+      expect(after.localMemory).toBe(before.localMemory);
+    } finally {
+      await runner.dispose();
+    }
   });
 
   test("usage event carries a contextWindowUsage breakdown that scales with inputs", async () => {

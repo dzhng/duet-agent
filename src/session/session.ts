@@ -383,8 +383,8 @@ export class Session {
   }
 
   /**
-   * Re-discover skills from disk so newly installed ones show up in the
-   * autocomplete catalog without restarting the session.
+   * Re-discover skills and refresh the runner's curated file memory so disk
+   * changes reach the next turn without restarting the session.
    */
   reloadSkills(): Promise<readonly Skill[]> {
     return this.runner.reloadSkills();

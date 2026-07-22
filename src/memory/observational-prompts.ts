@@ -43,8 +43,12 @@ export const OBSERVATION_CONTINUATION_HINT = dedent`
 `;
 
 export const OBSERVATION_CONTEXT_PROMPT = dedent`
-  The following observations block contains your memory of past conversations with this user. It may contain two kinds of section, each wrapped in its own tag and prefaced with its own usage hint: <global_observations> for cross-session background and <local_observations> for the compacted history of the current conversation. Read the hint inside each section before deciding how to use it. When in doubt, the latest user message decides the topic.
+  The following observations block contains durable context for this conversation. It may contain three kinds of section, each wrapped in its own tag and prefaced with its own usage hint: <stored_observations> for curated knowledge loaded from memory files, <global_observations> for cross-session background, and <local_observations> for the compacted history of the current conversation. Read the hint inside each section before deciding how to use it. When in doubt, the latest user message decides the topic.
 `;
+
+export const STORED_OBSERVATIONS_HEADING = "### Trained memory (pinned)";
+export const STORED_OBSERVATIONS_HINT =
+  "These are curated knowledge files supplied by this project and its ancestors. Treat them as durable reference material when they are relevant to the latest request.";
 
 export const GLOBAL_OBSERVATIONS_HEADING = "### Long-term memory (cross-session)";
 export const GLOBAL_OBSERVATIONS_HINT =
@@ -55,7 +59,7 @@ export const LOCAL_OBSERVATIONS_HINT =
   "This is a compacted summary of earlier turns in the current conversation. Treat it as authoritative recent history of what you and the user have already done together, and rely on it to stay continuous with the work in progress.";
 
 export const OBSERVATION_CONTEXT_INSTRUCTIONS = dedent`
-  IMPORTANT: Personalize the reply using specifics from the observations when they are actually relevant to the latest user message. Prefer local (this-session) observations for continuity with the work in progress; pull from global (cross-session) observations only when the user's request connects to that prior context. Do not force references to global observations into an unrelated reply.
+  IMPORTANT: Use specifics from stored knowledge and observations when they are actually relevant to the latest user message. Prefer local (this-session) observations for continuity with the work in progress; use stored knowledge as durable project reference; pull from global (cross-session) observations only when the user's request connects to that prior context. Do not force unrelated memory into the reply.
 
   KNOWLEDGE UPDATES: When asked about current state (e.g., "where do I currently...", "what is my current..."), always prefer the MOST RECENT information. Observations include dates - if you see conflicting information, the newer observation supersedes the older one. Look for phrases like "will start", "is switching", "changed to", "moved to" as indicators that previous information has been updated.
 

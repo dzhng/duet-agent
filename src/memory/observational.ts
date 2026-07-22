@@ -46,6 +46,8 @@ import {
   OBSERVATION_CONTEXT_INSTRUCTIONS,
   OBSERVATION_CONTEXT_PROMPT,
   OBSERVATION_CONTINUATION_HINT,
+  STORED_OBSERVATIONS_HEADING,
+  STORED_OBSERVATIONS_HINT,
   buildObserverPrompt,
   buildObserverSystemPrompt,
   buildReflectorPrompt,
@@ -443,7 +445,7 @@ export interface ObservationalContextTransformOptions {
 export interface CompactObservationalContextOptions {
   /** Full durable executor transcript before observational messages are injected. */
   messages: AgentMessage[];
-  /** Frozen global and local observations rendered exactly like a normal actor request. */
+  /** Frozen stored, global, and local memory rendered exactly like a normal actor request. */
   memory: MemoryContextCache;
   /** Advisor-owned horizon so projection never changes the executor's next request. */
   horizon: WireGuardHorizon;
@@ -625,11 +627,10 @@ export function createObservationalContextTransform(options: ObservationalContex
       retainedMessages = applyEvictionHorizon(observableMessages, options.horizon.evictionHorizon);
     }
 
-    // Render the frozen context pack rather than every observation
-    // currently in the store. The pack is rebuilt only at compaction
-    // events (see memory/context-pack.ts), so the rendered prefix stays
-    // content-deterministic across turns and the provider's prompt
-    // cache survives until the next compaction.
+    // Render the frozen context pack rather than rereading either durable
+    // source. Database layers rebuild at compaction events; curated files
+    // rebuild at startup or explicit skills reload. Between those boundaries
+    // the prefix stays content-deterministic for the provider prompt cache.
     return renderObservationalContext(options.memory, retainedMessages);
   };
 }
@@ -697,14 +698,25 @@ function renderObservationalContext(
 }
 
 /**
- * Compose the two-layer memory section. Global rows render first
- * (most stable cross-session signal), local rows render second
+ * Compose the three-layer memory section. Curated file memories render first,
+ * global rows second (stable cross-session signal), and local rows last
  * (chronological compaction summary of the current session). The
  * fixed render order matches the prompt assembly: system prompt →
  * memory section → message history.
  */
-function renderContextPack(pack: { global: Observation[]; local: Observation[] }): string {
+function renderContextPack(pack: ReturnType<MemoryContextCache["getContextPack"]>): string {
   const sections: string[] = [];
+  if (pack.stored.length > 0) {
+    sections.push(
+      [
+        "<stored_observations>",
+        STORED_OBSERVATIONS_HEADING,
+        STORED_OBSERVATIONS_HINT,
+        pack.stored.map((entry) => entry.content).join("\n\n"),
+        "</stored_observations>",
+      ].join("\n\n"),
+    );
+  }
   if (pack.global.length > 0) {
     sections.push(
       [

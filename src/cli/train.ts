@@ -213,20 +213,7 @@ async function runAgentSynthesis(
   const handoffPath = path.join(options.folder, ".duet-train.json");
   await rm(handoffPath, { force: true });
 
-  const config: TurnRunnerConfig = {
-    cwd: options.folder,
-    model: options.model,
-    // Don't write to the durable memory DB during synthesis; the train
-    // command owns the single observation row that lands at the end.
-    memoryDbPath: false,
-    // Synthesis must not be steered by the corpus's own AGENTS.md (if
-    // present) — the agent reads files as data, not as instructions.
-    systemPromptFiles: [],
-    // Avoid local user-skill drift influencing what the sub-agent does.
-    skillDiscovery: { includeDefaults: false },
-    systemInstructions: TRAIN_SYSTEM_PROMPT,
-    mode: "agent",
-  };
+  const config = buildTrainSynthesisConfig(options);
 
   const manager = new SessionManager(config);
 
@@ -286,6 +273,31 @@ async function runAgentSynthesis(
   return {
     headline: headline.trim(),
     observationContent: observationContent.trim(),
+  };
+}
+
+/** Build the isolated runner configuration used only for corpus synthesis. */
+export function buildTrainSynthesisConfig(options: {
+  folder: string;
+  model: string;
+}): TurnRunnerConfig {
+  return {
+    cwd: options.folder,
+    model: options.model,
+    // Don't write to the durable memory DB during synthesis; the train
+    // command owns the single observation row that lands at the end.
+    memoryDbPath: false,
+    // The corpus may sit below an agent root with trained memories. Keep the
+    // synthesis input limited to corpus files so prior training cannot steer
+    // or recursively contaminate the new record.
+    memoryStores: false,
+    // Synthesis must not be steered by the corpus's own AGENTS.md (if
+    // present) — the agent reads files as data, not as instructions.
+    systemPromptFiles: [],
+    // Avoid local user-skill drift influencing what the sub-agent does.
+    skillDiscovery: { includeDefaults: false },
+    systemInstructions: TRAIN_SYSTEM_PROMPT,
+    mode: "agent",
   };
 }
 

@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rebuildMemoryContextPack } from "../src/memory/context-pack.js";
+import {
+  rebuildMemoryContextPack,
+  rebuildPinnedStoreContextPack,
+} from "../src/memory/context-pack.js";
 import { runMigrations } from "../src/memory/migrations.js";
 import {
   DEFAULT_EFFECTIVE_CONTEXT,
@@ -12,6 +15,9 @@ import { MemorySession } from "../src/memory/session.js";
 import { MemoryContextCache } from "../src/memory/store.js";
 import { appendObservation } from "../src/memory/storage.js";
 import type { Observation } from "../src/types/memory.js";
+import type { StoredMemory } from "../src/memory/store/store.js";
+import { writeEntry } from "../src/memory/store/store.js";
+import { estimateTokens } from "../src/memory/observational.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 /**
@@ -23,10 +29,10 @@ import { testIfDocker } from "./helpers/docker-only.js";
 describe("Memory context pack", () => {
   test("getContextPack returns empty arrays before any refresh", () => {
     const cache = new MemoryContextCache();
-    expect(cache.getContextPack()).toEqual({ global: [], local: [] });
+    expect(cache.getContextPack()).toEqual({ stored: [], global: [], local: [] });
   });
 
-  test("setContextPack is the only way to change what the transform renders", () => {
+  test("database and stored layers refresh independently", () => {
     const cache = new MemoryContextCache();
     const next: { global: Observation[]; local: Observation[] } = {
       global: [
@@ -44,8 +50,14 @@ describe("Memory context pack", () => {
       ],
       local: [],
     };
+    const stored = [storedMemory("pinned", "Pinned file memory.")];
+    cache.setStoredContextPack(stored);
     cache.setContextPack(next);
-    expect(cache.getContextPack()).toBe(next);
+    expect(cache.getContextPack()).toEqual({ stored, ...next });
+
+    const replacement = [storedMemory("replacement", "Refreshed file memory.")];
+    cache.setStoredContextPack(replacement);
+    expect(cache.getContextPack()).toEqual({ stored: replacement, ...next });
   });
 
   testIfDocker(
@@ -67,7 +79,7 @@ describe("Memory context pack", () => {
 
         // The append flowed to disk but the rendered prefix did not
         // change — only a compaction trigger does that.
-        expect(cache.getContextPack()).toEqual({ global: [], local: [] });
+        expect(cache.getContextPack()).toEqual({ stored: [], global: [], local: [] });
       });
     },
   );
@@ -109,7 +121,62 @@ describe("Memory context pack", () => {
       expect(pack.global.length).toBeGreaterThan(0);
     });
   });
+
+  testIfDocker("stored and global packs keep independent 15k and 8k budgets", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "duet-context-budget-"));
+    const store = join(tempDir, ".agents", "memories");
+    const session = new MemorySession({
+      path: join(tempDir, "memory.db"),
+      openOptions: { init: async (db) => void (await runMigrations(db)) },
+      idleCloseMs: 60_000,
+    });
+    try {
+      await writeEntry(store, {
+        slug: "full-pinned-budget",
+        version: 1,
+        id: "mem_full_pinned_budget",
+        kind: "train",
+        createdAt: 2,
+        content: "s".repeat(48_000),
+      });
+      await appendObservation(session, {
+        sessionId: "other",
+        kind: "observation",
+        observedDate: "2026-07-23",
+        priority: "high",
+        source: { kind: "system" },
+        content: "g".repeat(25_600),
+        tags: [],
+      });
+      const cache = new MemoryContextCache();
+
+      await rebuildPinnedStoreContextPack({ stores: [store], cache });
+      await rebuildMemoryContextPack({
+        session,
+        cache,
+        settings: resolveObservationalMemorySettings(DEFAULT_EFFECTIVE_CONTEXT),
+      });
+
+      const pack = cache.getContextPack();
+      expect(pack.stored.reduce((sum, row) => sum + estimateTokens(row.content), 0)).toBe(15_000);
+      expect(pack.global.reduce((sum, row) => sum + estimateTokens(row.content), 0)).toBe(8_000);
+    } finally {
+      await session.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
+
+function storedMemory(slug: string, content: string): StoredMemory {
+  return {
+    slug,
+    storeDir: "/tmp/.agents/memories",
+    id: `mem_${slug}`,
+    kind: "train",
+    createdAt: 1,
+    content,
+  };
+}
 
 async function withSeededDb(fn: (session: MemorySession) => Promise<void>): Promise<void> {
   const tempDir = await mkdtemp(join(tmpdir(), "duet-context-pack-"));

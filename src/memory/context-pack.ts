@@ -1,7 +1,17 @@
 import type { ObservationalMemorySettings } from "../types/memory.js";
 import { loadGlobalPack, loadLocalPack } from "./loader.js";
+import { loadPinnedStorePack } from "./store/pack.js";
 import type { MemorySession } from "./session.js";
 import type { MemoryContextCache } from "./store.js";
+
+/** Refresh only curated file memory, independently of database availability. */
+export async function rebuildPinnedStoreContextPack(options: {
+  stores: readonly string[];
+  cache: MemoryContextCache;
+}): Promise<void> {
+  const pack = await loadPinnedStorePack({ stores: options.stores });
+  options.cache.setStoredContextPack(pack.entries);
+}
 
 /**
  * Compaction trigger: rebuild the frozen memory pack rendered above

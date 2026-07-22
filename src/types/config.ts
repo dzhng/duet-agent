@@ -51,6 +51,13 @@ export interface TurnRunnerConfig extends TurnOptions {
    * `~/.duet/memory.db`; pass `false` to keep memories in process only.
    */
   memoryDbPath?: string | false;
+  /**
+   * Curated memory-store directories pinned into the observation prefix.
+   * Omit to discover stores from `cwd` toward the filesystem root, nearest
+   * first; provide an ordered list to replace discovery, or `false` to keep
+   * file-backed memory out of this runner entirely.
+   */
+  memoryStores?: string[] | false;
   cwd?: string;
   /** Default mode for TurnRunner.turn. "auto" lets the runner classify each prompt. */
   mode?: TurnMode;

@@ -209,8 +209,9 @@ export interface RpcRunner {
  *
  * Unlike the TUI path, RPC mode bypasses {@link SessionManager} entirely:
  * no `state.json`, no resume hints. Persistence policy lives with the caller.
- * Memory still works regardless of session: `--incognito` keeps it in-process,
- * otherwise it persists to the configured memory db.
+ * Memory still works regardless of session: `--incognito` disables durable
+ * database and file sources, while normal mode persists observations to the
+ * configured memory db and loads discovered curated files.
  *
  * Session attribution is opt-in via the `--session <id>` spawn flag. One RPC
  * process is one logical session (a second `start` is rejected), so the id is

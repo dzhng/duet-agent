@@ -1,12 +1,12 @@
 import type { Observation } from "../types/memory.js";
+import type { StoredMemory } from "./store/store.js";
 
 /**
- * Frozen view of memory rendered into the prompt prefix. Captured at
- * compaction events (initial load, reflector completion, wire-shaping
- * eviction) and held immutable between events so the rendered prefix
- * stays content-deterministic across turns. The provider's prompt
- * cache survives unchanged until the next compaction event, at which
- * point exactly one cache invalidation is paid — not one per turn.
+ * Frozen view of memory rendered into the prompt prefix. Database layers are
+ * captured at compaction events; curated file memory is captured at initial
+ * load and explicit skills reload. Every layer stays immutable between its
+ * refresh events so the rendered prefix remains content-deterministic across
+ * turns and preserves the provider's prompt cache.
  *
  * Observations the observer writes mid-session still flow to PGlite in
  * real time; they just do not enter `contextPack` until the next
@@ -14,6 +14,8 @@ import type { Observation } from "../types/memory.js";
  * asks.
  */
 export interface ContextPack {
+  /** Curated file memories pinned ahead of every database-backed layer. */
+  stored: StoredMemory[];
   /** Cross-session ranked memory; rendered above the local section. */
   global: Observation[];
   /** Current session's chronological compaction summary; rendered below global. */
@@ -23,25 +25,29 @@ export interface ContextPack {
 /**
  * Holds the frozen context pack rendered above the message tail.
  *
- * This is the only piece of memory state the runner keeps in process —
- * everything else (observation rows, ranking, recall) lives in PGlite
- * and is read on demand. Holding the pack here, rather than
- * recomputing inside the transform on every dispatch, is what lets
- * the rendered prefix stay byte-identical between compaction events
- * so the provider's prompt cache survives.
+ * This is the only memory state the runner keeps in process. Observation
+ * rows, ranking, and recall live in PGlite; curated sources live as project
+ * files. Holding their rendered view here instead of rereading either source
+ * on every dispatch keeps the prefix byte-identical between refresh events so
+ * the provider's prompt cache survives.
  */
 export class MemoryContextCache {
-  private contextPack: ContextPack = { global: [], local: [] };
+  private contextPack: ContextPack = { stored: [], global: [], local: [] };
 
   /**
-   * Replace the frozen view used by the runner's context transform.
+   * Replace the database-backed view used by the runner's context transform.
    * Called by `rebuildMemoryContextPack()` at every compaction trigger
    * (initial load, reflector completion, wire-shaping eviction
-   * horizon advance) and never anywhere else — that constraint is
-   * what makes the rendered prefix cache-stable.
+   * horizon advance) and never for ordinary observation writes. The stored
+   * layer is preserved across these database-only refreshes.
    */
-  setContextPack(pack: ContextPack): void {
-    this.contextPack = pack;
+  setContextPack(pack: Pick<ContextPack, "global" | "local">): void {
+    this.contextPack = { ...this.contextPack, ...pack };
+  }
+
+  /** Replace only the file-backed layer without disturbing database memory. */
+  setStoredContextPack(stored: StoredMemory[]): void {
+    this.contextPack = { ...this.contextPack, stored };
   }
 
   /** Current frozen pack. Returns empty arrays when memory is disabled or pre-compaction. */

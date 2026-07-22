@@ -14,6 +14,7 @@ import {
 import { buildCliTurnConfig } from "../src/cli/run.js";
 import { MemoryDb } from "../src/cli/memory-db.js";
 import { appendObservation, loadStoredMemory } from "../src/memory/storage.js";
+import { writeEntry } from "../src/memory/store/store.js";
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 import type {
@@ -343,6 +344,83 @@ describe("RPC --session attribution", () => {
 });
 
 describe("RPC project routing", () => {
+  testIfDocker(
+    "gateway argv loads nearest and inherited store content into a real turn",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "duet-rpc-stored-context-"));
+      const workDir = join(root, "agents", "researcher", "work");
+      const nearestStore = join(root, "agents", "researcher", ".agents", "memories");
+      const rootStore = join(root, ".agents", "memories");
+      const dbPath = join(root, "memory.db");
+      const requests: unknown[] = [];
+      const server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          requests.push(await request.json());
+          return anthropicFixtureResponse(requests.length === 1 ? "actor" : "observer");
+        },
+      });
+      try {
+        await mkdir(workDir, { recursive: true });
+        await writeEntry(rootStore, rpcStoreEntry("root", 1, "ROOT INHERITED MEMORY"));
+        await writeEntry(rootStore, rpcStoreEntry("shared", 4, "SHADOWED ROOT MEMORY"));
+        await writeEntry(nearestStore, rpcStoreEntry("nearest", 2, "NEAREST AGENT MEMORY"));
+        await writeEntry(nearestStore, rpcStoreEntry("shared", 3, "NEAREST COLLISION WINNER"));
+
+        const proc = Bun.spawn(
+          [
+            "bun",
+            "src/cli.ts",
+            "--rpc",
+            "--session",
+            "sess_store_gateway",
+            "--db",
+            dbPath,
+            "--workdir",
+            workDir,
+            "--model",
+            "duet:anthropic/claude-haiku-4-5",
+            "--memory-model",
+            "duet:anthropic/claude-haiku-4-5",
+            "--no-system-prompt-files",
+          ],
+          {
+            cwd: process.cwd(),
+            env: {
+              ...process.env,
+              DUET_API_KEY: "duet_gt_test",
+              DUET_GATEWAY_BASE_URL: server.url.origin,
+            },
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        );
+        proc.stdin.write(`${JSON.stringify({ type: "start" })}\n`);
+        proc.stdin.write(
+          `${JSON.stringify({ type: "prompt", requestId: "req_store", message: "Use the context.", behavior: "follow_up" })}\n`,
+        );
+        proc.stdin.end();
+
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        expect(exitCode, `${stderr}\n${stdout}`).toBe(0);
+        const actorRequest = JSON.stringify(requests[0]);
+        expect(actorRequest).toContain("ROOT INHERITED MEMORY");
+        expect(actorRequest).toContain("NEAREST AGENT MEMORY");
+        expect(actorRequest).toContain("NEAREST COLLISION WINNER");
+        expect(actorRequest).not.toContain("SHADOWED ROOT MEMORY");
+      } finally {
+        server.stop(true);
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   testIfDocker("boots from the project routing table's default tier", async () => {
     const workDir = await mkdtemp(join(tmpdir(), "duet-rpc-routing-"));
     try {
@@ -391,6 +469,72 @@ describe("RPC project routing", () => {
     }
   });
 });
+
+function rpcStoreEntry(slug: string, createdAt: number, content: string) {
+  return {
+    slug,
+    version: 1 as const,
+    id: `mem_${slug}_${createdAt}`,
+    kind: "train" as const,
+    createdAt,
+    content,
+  };
+}
+
+function anthropicFixtureResponse(kind: "actor" | "observer"): Response {
+  const contentBlock =
+    kind === "actor"
+      ? {
+          start: { type: "text", text: "" },
+          delta: { type: "text_delta", text: "done" },
+          stopReason: "end_turn",
+        }
+      : {
+          start: { type: "tool_use", id: "tool_observer", name: "recordObservations", input: {} },
+          delta: {
+            type: "input_json_delta",
+            partial_json: JSON.stringify({ hasMemory: false, observations: "" }),
+          },
+          stopReason: "tool_use",
+        };
+  const events = [
+    [
+      "message_start",
+      {
+        type: "message_start",
+        message: {
+          id: `msg_${kind}`,
+          type: "message",
+          role: "assistant",
+          model: "anthropic/claude-haiku-4-5",
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 0 },
+        },
+      },
+    ],
+    [
+      "content_block_start",
+      { type: "content_block_start", index: 0, content_block: contentBlock.start },
+    ],
+    ["content_block_delta", { type: "content_block_delta", index: 0, delta: contentBlock.delta }],
+    ["content_block_stop", { type: "content_block_stop", index: 0 }],
+    [
+      "message_delta",
+      {
+        type: "message_delta",
+        delta: { stop_reason: contentBlock.stopReason, stop_sequence: null },
+        usage: { output_tokens: 1 },
+      },
+    ],
+    ["message_stop", { type: "message_stop" }],
+  ] as const;
+  const body = events
+    .map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    .join("");
+  return new Response(body, { headers: { "content-type": "text/event-stream" } });
+}
 
 describe("parseRpcCommandLine", () => {
   test("returns a skip result for blank/whitespace lines so the iterator can skip them", () => {
