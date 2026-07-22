@@ -673,11 +673,15 @@ export class Session {
     try {
       const content = await readFile(this.sessionFilePath(), "utf-8");
       const stored = JSON.parse(content) as StoredSessionFile;
-      // Old session files predate `lastMessageUsage`; skip the snapshot
-      // when that required field is missing so the sidebar doesn't read
-      // off an undefined. The bar repopulates on the first turn after
-      // resume; no migration here.
-      const lastUsage = stored.lastUsage?.lastMessageUsage ? stored.lastUsage : undefined;
+      // Old session files predate `lastMessageUsage` or the per-entry
+      // `transport` attribution; skip the snapshot when either is missing so
+      // the sidebar doesn't read off an undefined. The bar repopulates on the
+      // first turn after resume; no migration here.
+      const lastUsage =
+        stored.lastUsage?.lastMessageUsage &&
+        (stored.lastUsage.usageByModel ?? []).every((entry) => entry?.transport)
+          ? stored.lastUsage
+          : undefined;
       return {
         ...(stored.state ? { state: stored.state } : {}),
         lastUsage,

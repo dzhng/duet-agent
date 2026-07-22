@@ -52,5 +52,5 @@ export function nextTransportAfterConnectedFailure(
           : connection,
       )
     : [...snapshot.connections, { provider, eligibility: "plan_ineligible" as const }];
-  return chooseTransport(shorthand, { connections });
+  return chooseTransport(shorthand, { ...snapshot, connections });
 }

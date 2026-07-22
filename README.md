@@ -261,6 +261,16 @@ duet login
 duet "prospect the VP Eng at Acme, send a first-touch email about our conf talk, wait up to 14 days for a reply, and book a meeting on Calendly if they're interested"
 ```
 
+**Bring your own subscription.** `duet connect chatgpt` (or `copilot`) links a
+ChatGPT or GitHub Copilot plan by OAuth device code. Connected subscriptions
+are transports, not extra models: the catalog stays the same, and any model
+your plan covers automatically runs on it at `$0 · plan` instead of metered
+credits, falling back to the gateways with a session notice when the plan is
+exhausted. `duet connect --status` and `--disconnect <provider>` manage the
+link; tokens live only in `~/.duet/connected-providers.json` (0600).
+Design rationale and invariants: the duet repo's
+`specs/connected-providers/`.
+
 <details>
 <summary><b>Providers, models, and CLI flags</b></summary>
 
