@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "patch-recovery-opus-fmt-3750-e2b-20260722-v1",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-50-fresh-20265471.json",
+  "instanceIds": ["fmtlib__fmt-3750"],
+  "configs": ["opus-pure"],
+  "trials": 1,
+  "concurrency": 1,
+  "armOrderSeed": 20260725,
+  "limits": {
+    "costUsd": 5,
+    "wallClockMs": 1800000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 33554432
+  },
+  "budget": {
+    "totalUsd": 5,
+    "sunkUsd": 0
+  },
+  "execution": {
+    "backend": "e2b",
+    "workerConcurrency": 1,
+    "workerCpuCount": 8,
+    "workerMemoryMb": 16384,
+    "workerTimeoutMs": 10800000
+  }
+}
