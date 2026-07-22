@@ -261,6 +261,16 @@ duet login
 duet "prospect the VP Eng at Acme, send a first-touch email about our conf talk, wait up to 14 days for a reply, and book a meeting on Calendly if they're interested"
 ```
 
+**Bring your own subscription.** `duet connect chatgpt` (or `copilot`) links a
+ChatGPT or GitHub Copilot plan by OAuth device code. Connected subscriptions
+are transports, not extra models: the catalog stays the same, and any model
+your plan covers automatically runs on it at `$0 · plan` instead of metered
+credits, falling back to the gateways with a session notice when the plan is
+exhausted. `duet connect --status` and `--disconnect <provider>` manage the
+link; tokens live only in `~/.duet/connected-providers.json` (0600).
+Design rationale and invariants: the duet repo's
+`specs/connected-providers/`.
+
 <details>
 <summary><b>Providers, models, and CLI flags</b></summary>
 
@@ -304,7 +314,7 @@ export AI_GATEWAY_API_KEY=...
 duet -m opus-4.8 "review this repo"
 ```
 
-Model names can be a virtual tier (`frontier`, `balanced`, `economy` — routed per prompt), full `provider:modelId` syntax, or concrete shorthand names such as `opus-4.8`, `sonnet-4.6`, `haiku-4.5`, and `gpt-5.5`. Concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
+Model names can be a virtual tier (`frontier`, `balanced`, `economy` — routed per prompt), a versionless family (`opus`, `sonnet`, `haiku`, `sol`, and others), full `provider:modelId` syntax, or a versioned shorthand such as `opus-4.8` or `gpt-5.6-sol`. Family names resolve to the latest curated version, while concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
 
 </details>
 
@@ -335,7 +345,7 @@ Tool calls render with custom per-tool headers (e.g. `$ <command>`, `read <path>
 
 Type `/` in the composer to open the command picker, or send any of these as a message:
 
-- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts virtual tiers and the same shorthands and `provider:modelId` forms as the `--model` flag (e.g. `/model frontier`, `/model sonnet-4.6`, `/model duet:openai/gpt-5.5`). A concrete name pins the model and suspends routing; a tier resumes it. Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with. **`/route`** inspects the live routing state.
+- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts virtual tiers and the same family, versioned shorthand, and `provider:modelId` forms as the `--model` flag (e.g. `/model frontier`, `/model sonnet`, `/model duet:openai/gpt-5.6-sol`). A concrete name pins the model and suspends routing; a tier resumes it. Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with. **`/route`** inspects the live routing state.
 - **`/thinking <level>`** — switch the thinking level for the **next** turn. One of `minimal`, `low`, `medium`, `high`, `xhigh`. The runner clamps to the active model's supported range at use-time. The in-flight turn (if any) keeps its level.
 - **`/feedback <message>`** — send free-form feedback to the Duet team.
 - **`/clear`** — dispose the current session and start a fresh one.
@@ -343,9 +353,9 @@ Type `/` in the composer to open the command picker, or send any of these as a m
 - **`/paste`**, **`/image <path>`**, **`/clear-images`** — image-attachment helpers, covered in the next section.
 - **`/diag`** — toggle key and selection event logging when triaging terminal-specific issues.
 
-`/model`, `/thinking`, `/clear`, `/paste`, `/clear-images`, and `/diag` also work **anywhere inside a longer prompt**. `hey can you review this /model gpt-5.5` swaps the model for the very turn that delivers the message; the slash form is stripped from what the agent sees, so the model receives `hey can you review this`. When the whole prompt is just slash commands, no agent turn runs at all. Commands that take rest-of-line arguments (`/feedback`, `/copy`, `/image`) only fire when they own the whole message.
+`/model`, `/thinking`, `/clear`, `/paste`, `/clear-images`, and `/diag` also work **anywhere inside a longer prompt**. `hey can you review this /model sol` swaps the model for the very turn that delivers the message; the slash form is stripped from what the agent sees, so the model receives `hey can you review this`. When the whole prompt is just slash commands, no agent turn runs at all. Commands that take rest-of-line arguments (`/feedback`, `/copy`, `/image`) only fire when they own the whole message.
 
-The inline form also works for the non-TUI one-shot CLI: `duet "hey can you review this /model gpt-5.5"` swaps the model and dispatches the stripped prompt to the agent; `duet "/model gpt-5.5"` applies the swap and exits without dispatching a turn.
+The inline form also works for the non-TUI one-shot CLI: `duet "hey can you review this /model sol"` swaps the model and dispatches the stripped prompt to the agent; `duet "/model sol"` applies the swap and exits without dispatching a turn.
 
 Slash commands are intercepted locally; they never reach the model unless the picker inserts a `/skill-name` skill reference, in which case the runner expands it into the matching skill's full SKILL.md inline for that turn.
 

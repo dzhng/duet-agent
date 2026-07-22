@@ -80,3 +80,15 @@ export function agentMessageText(message: AgentMessage): string {
     )
     .join("\n");
 }
+
+/** Whether an agent event has crossed the transport-fallback replay boundary. */
+export function isExternallyVisibleAgentEvent(event: AgentEvent): boolean {
+  if (event.type === "tool_execution_start" || event.type === "tool_execution_end") return true;
+  if (event.type !== "message_update") return false;
+  const update = event.assistantMessageEvent;
+  return (
+    ((update.type === "text_delta" || update.type === "thinking_delta") &&
+      update.delta.length > 0) ||
+    ((update.type === "text_end" || update.type === "thinking_end") && update.content.length > 0)
+  );
+}

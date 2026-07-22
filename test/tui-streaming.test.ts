@@ -50,6 +50,19 @@ describe("TUI streaming surface", () => {
     expect(frame).toContain("thinking about prerequisites");
   });
 
+  testIfDocker("fallback system events render through the existing system line", async () => {
+    harness.runner.emitEvent({
+      type: "system",
+      level: "info",
+      message: "ChatGPT plan limit hit — continuing on Duet credits.",
+    });
+    await harness.flush();
+
+    const frame = await harness.captureCharFrame();
+    expect(frame).toContain("[system]");
+    expect(frame).toContain("continuing on Duet credits");
+  });
+
   testIfDocker("tool_call then tool_result transitions from spinner to check glyph", async () => {
     harness.runner.emitEvent({
       type: "step",

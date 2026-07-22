@@ -1,5 +1,6 @@
 import type { ImageContent, TextContent, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { RouterSwitch } from "../model-routing/router.js";
+import type { TransportName } from "../model-resolution/catalog.js";
 import type { TaskDescriptor, TaskId, TaskSettlement } from "../tasks/types.js";
 
 export type { TaskDescriptor, TaskId, TaskSettlement, TaskSnapshot } from "../tasks/types.js";
@@ -809,12 +810,19 @@ export interface TurnUsageFields {
 }
 
 /**
- * One model's slice of a turn's usage: the model `id` (pi-ai `Model.id`,
- * e.g. the duet-gateway slug `anthropic/claude-opus-4.8`) and the summed
- * `TurnTokenUsage` attributed to it this turn.
+ * One model-and-transport slice of a turn's usage. A fallback can use the
+ * same logical model on two providers, so consumers must not merge rows by
+ * model id alone.
  */
 export interface ModelUsageEntry {
+  /** Provider-specific model id reported by the model runtime. */
   model: string;
+  /** Backend that carried the call and whether its cost is subscription-covered. */
+  transport: {
+    provider: TransportName;
+    billing: "plan-covered" | "metered";
+  };
+  /** Tokens and cost accumulated for this exact model/provider pair. */
   usage: TurnTokenUsage;
 }
 

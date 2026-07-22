@@ -15,6 +15,7 @@ duet — An opinionated full-stack agent runner
 USAGE
   duet [options] [prompt]
   duet login --workspace <slug> [--no-browser]
+  duet connect [--status [--json] | --disconnect <provider>]
   duet env [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
   duet memory [--db <path>] [--json] [filters]
@@ -25,6 +26,7 @@ USAGE
 
 COMMANDS
   login                    Sign in via device flow; saves a workspace-scoped DUET_API_KEY (recommended)
+  connect                  Show or remove connected ChatGPT and GitHub Copilot subscriptions
   env                      Manually create or update the shared duet env file with provider API keys
   skills                   List installed skills + collisions as JSON
   memory                   Browse memories in a TUI, or query them with --json/filters (alias: memories)
@@ -70,7 +72,7 @@ INTERACTIVE
 MODELS
   The default is the routed frontier tier. Use frontier, balanced, or economy
   to select a routing policy, or a concrete shorthand to bypass routing and pin.
-  Concrete names include opus-4.8, sonnet-4.6, haiku-4.5, and gpt-5.5.
+  Concrete names include opus, sonnet, haiku, and sol (versionless families), or versioned forms like opus-4.8.
   They map to the first configured router that supports that model.
   Full provider:modelId syntax is also supported, e.g. duet:anthropic/claude-opus-4.8.
   --provider pins that provider's concrete default; the memory model remains concrete.
@@ -82,7 +84,7 @@ MODELS
 
 EXAMPLES
   duet "build a REST API with Express and TypeScript"
-  duet -m gpt-5.5 "analyze the performance of our test suite"
+  duet -m sol "analyze the performance of our test suite"
   duet --memory-model sonnet-4.6 "summarize this repo"
   duet --provider openrouter "explain this codebase"
   duet --provider duet "refactor the auth module"
@@ -95,7 +97,7 @@ EXAMPLES
   duet login --workspace acme
   duet env
   duet memory
-  duet model -m openai/gpt-5.5 "write a haiku about gateways"
+  duet model -m openai/gpt-5.6-sol "write a haiku about gateways"
   duet model -m black-forest-labs/flux-1.1-pro -o art.png "a fox in snow"
   duet train ./docs/my-project
   duet send-feedback "the TUI flickers when..."
@@ -123,6 +125,25 @@ OPTIONS
 OVERRIDES
   Set DUET_API_BASE_URL (e.g. https://api-staging.duet.so) to re-point device
   login. Model traffic uses DUET_GATEWAY_BASE_URL.
+`);
+}
+
+export function printConnectHelp(): void {
+  console.log(`
+duet connect — Manage connected model-provider subscriptions
+
+USAGE
+  duet connect <chatgpt|copilot> [--device-code] [--no-browser] [--json]
+  duet connect --status [--json]
+  duet connect --disconnect <chatgpt|copilot> [--json]
+
+OPTIONS
+  --device-code            Force device-code login (the only VM-valid mode)
+  --no-browser             Do not open the verification URI automatically
+  --status                 List connected providers
+  --json                   Stream login/disconnect events as NDJSON; status stays an envelope
+  --disconnect <provider>  Remove stored credentials for chatgpt or copilot
+  -h, --help               Show this help
 `);
 }
 
@@ -370,7 +391,7 @@ DESCRIPTION
   generations write files and print each path. Auth uses DUET_API_KEY.
 
 OPTIONS
-  -m, --model <name>       Gateway model id, e.g. openai/gpt-5.5 (required)
+  -m, --model <name>       Gateway model id, e.g. openai/gpt-5.6-sol (required)
   --type text|image|video  Override the catalog-inferred request type
   --image <path>           Input image: vision context (text), edit source
                            (image), or still to animate (video)
@@ -387,7 +408,7 @@ OPTIONS
   -h, --help               Show this help
 
 EXAMPLES
-  duet model -m openai/gpt-5.5 "write a haiku about gateways"
+  duet model -m openai/gpt-5.6-sol "write a haiku about gateways"
   duet model -m bfl/flux-pro-1.1 -o art.png "a fox in snow"
   duet model -m google/gemini-2.5-flash-image --type image --image src.png "add a hat"
   duet model -m bytedance/seedance-2.0 --type video -o clip.mp4 "slow pan over dunes"

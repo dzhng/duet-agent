@@ -16,7 +16,10 @@ import {
 import type { RoutingTable } from "../model-routing/table.js";
 import type { TurnEventOrigin, TurnOptions, TurnState, TurnTokenUsage } from "../types/protocol.js";
 import type { StateMachineDefinition } from "../types/state-machine.js";
+import type { TransportName } from "../model-resolution/catalog.js";
 import { createForkContextReminder, createStateAgentSystemPromptLayer } from "./prompts.js";
+import { isExternallyVisibleAgentEvent } from "./agent-events.js";
+import { isPostOutputConnectedFailure } from "../connected-providers/fallback.js";
 import type { TurnRunnerControlResult } from "./tools.js";
 import { usageFromMessages } from "./usage-accounting.js";
 
@@ -135,10 +138,16 @@ export interface SubagentExecutorDeps {
   createTools(cwd: string | undefined, ctx: SubagentExecutionContext): { tools: AgentTool[] };
   /** Retries the existing transient provider failures without changing child semantics. */
   retryTransientServerErrors(agent: Agent): Promise<void>;
+  /** Cross transports only when this child has not emitted visible output or invoked a tool. */
+  retryConnectedTransportFallback(agent: Agent, visibleOutput: () => boolean): Promise<void>;
   /** Streams pi events through the turn protocol with the child origin attached. */
   emitAgentEvent(event: AgentEvent, origin: TurnEventOrigin): void;
   /** Adds one child completion's usage to the turn aggregate. */
-  recordUsage(usage: TurnTokenUsage | Usage | undefined, modelId: string | undefined): void;
+  recordUsage(
+    usage: TurnTokenUsage | Usage | undefined,
+    modelId: string | undefined,
+    provider: TransportName | undefined,
+  ): void;
   /** Emits the aggregate usage snapshot after a child completion. */
   emitTurnUsage(origin: TurnEventOrigin): void;
 }
@@ -243,16 +252,31 @@ export function createSubagentExecutor(deps: SubagentExecutorDeps) {
     let recordedMessageUsage = false;
     return {
       prompt: async () => {
+        let visibleOutput = false;
         unsubscribe = agent.subscribe((event) => {
+          if (isExternallyVisibleAgentEvent(event)) visibleOutput = true;
           deps.emitAgentEvent(event, ctx.origin);
           if (event.type !== "message_end" || event.message.role !== "assistant") return;
-          deps.recordUsage(event.message.usage, event.message.model);
+          deps.recordUsage(
+            event.message.usage,
+            event.message.model,
+            event.message.provider as TransportName,
+          );
           recordedMessageUsage = true;
           if (event.message.usage.totalTokens > 0) deps.emitTurnUsage(ctx.origin);
         });
         try {
           await agent.prompt(tailPrompt);
-          await deps.retryTransientServerErrors(agent);
+          await deps.retryConnectedTransportFallback(agent, () => visibleOutput);
+          if (
+            !isPostOutputConnectedFailure(
+              agent.state.model.provider,
+              agent.state.messages.at(-1),
+              visibleOutput,
+            )
+          ) {
+            await deps.retryTransientServerErrors(agent);
+          }
           return interruptedReason ? { type: "interrupted" } : finish();
         } catch (error) {
           if (interruptedReason) return { type: "interrupted" };
@@ -263,6 +287,7 @@ export function createSubagentExecutor(deps: SubagentExecutorDeps) {
             deps.recordUsage(
               usageFromMessages(agent.state.messages.slice(seedMessageCount)),
               agent.state.model.id,
+              agent.state.model.provider as TransportName,
             );
             deps.emitTurnUsage(ctx.origin);
           }

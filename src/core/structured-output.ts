@@ -12,6 +12,7 @@ import {
 import type { Static, TSchema } from "typebox";
 import { resolveModelName } from "../model-resolution/resolver.js";
 import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
+import { usageForTransport } from "../connected-providers/billing.js";
 
 export type StructuredOutputPrompt = string | Array<TextContent | ImageContent>;
 
@@ -56,7 +57,12 @@ export async function generateStructuredOutput<TSchemaValue extends TSchema>(
       },
     },
   );
-  options.onUsage?.(response.usage);
+  options.onUsage?.(
+    usageForTransport(
+      response.usage,
+      model.provider as import("../model-resolution/catalog.js").TransportName,
+    ),
+  );
 
   const toolCall = response.content.find((block) => isNamedToolCall(block, options.tool.name));
   if (!toolCall) {

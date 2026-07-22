@@ -319,7 +319,7 @@ class StateMachineUsageTurnRunner extends TurnRunner {
           if (error instanceof Error) return { type: "failed", error: error.message };
           return { type: "failed", error: String(error) };
         } finally {
-          this.recordUsage(stubbedUsage);
+          this.recordUsage(stubbedUsage, "test-state-model", "duet-gateway");
           this.emitTurnUsage();
         }
       },
@@ -421,7 +421,7 @@ class StateMachineOriginTurnRunner extends TurnRunner {
           );
           return { type: "complete", result: "State agent finished." };
         } finally {
-          this.recordUsage(stubbedUsage);
+          this.recordUsage(stubbedUsage, "test-state-model", "duet-gateway");
           this.emitTurnUsage(origin);
         }
       },

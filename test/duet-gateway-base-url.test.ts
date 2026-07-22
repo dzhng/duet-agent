@@ -7,6 +7,7 @@ import {
   getDuetGatewayBaseUrl,
   resolveDuetGatewayModel,
 } from "../src/model-resolution/duet-gateway.js";
+import { resolveModelName } from "../src/model-resolution/resolver.js";
 
 const ENV_KEYS = ["DUET_GATEWAY_BASE_URL", "DUET_API_KEY"] as const;
 
@@ -67,9 +68,40 @@ describe("duet-gateway model routing", () => {
   test("appends /v1 to the dedicated base for OpenAI transport models", () => {
     process.env.DUET_GATEWAY_BASE_URL = "https://gateway.example.com/base";
 
-    const model = resolveDuetGatewayModel("openai/gpt-5.5");
+    const model = resolveDuetGatewayModel("openai/gpt-5.6-sol");
 
     expect(model.baseUrl).toBe("https://gateway.example.com/base/v1");
+  });
+});
+
+describe("connected-provider model synthesis", () => {
+  test("resolves codex 5.6 clones with their native transport and published costs", () => {
+    const cases = [
+      {
+        id: "gpt-5.6-sol",
+        cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+      },
+      {
+        id: "gpt-5.6-terra",
+        cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 },
+      },
+      {
+        id: "gpt-5.6-luna",
+        cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
+      },
+    ];
+
+    for (const expected of cases) {
+      const model = resolveModelName(`openai-codex:${expected.id}`);
+
+      expect(model).toMatchObject({
+        id: expected.id,
+        provider: "openai-codex",
+        api: "openai-codex-responses",
+        baseUrl: "https://chatgpt.com/backend-api",
+        cost: expected.cost,
+      });
+    }
   });
 });
 
@@ -84,7 +116,9 @@ describe("duet model gateway routing", () => {
           typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url,
         authorization: new Headers(init?.headers).get("authorization") ?? undefined,
       });
-      return new Response(JSON.stringify({ data: [{ id: "openai/gpt-5.5", type: "language" }] }));
+      return new Response(
+        JSON.stringify({ data: [{ id: "openai/gpt-5.6-sol", type: "language" }] }),
+      );
     }) as typeof fetch;
 
     const catalog = await fetchModelCatalog();
@@ -95,7 +129,7 @@ describe("duet model gateway routing", () => {
         authorization: "Bearer duet_gt_test",
       },
     ]);
-    expect(catalog.get("openai/gpt-5.5")).toBe("language");
+    expect(catalog.get("openai/gpt-5.6-sol")).toBe("language");
   });
 
   test("builds the AI SDK gateway on the dedicated base /v4/ai path", async () => {

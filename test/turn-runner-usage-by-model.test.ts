@@ -225,7 +225,57 @@ class ClassifierUsageRunner extends TurnRunner {
   }
 }
 
+class MixedBillingRunner extends TurnRunner {
+  constructor() {
+    super({ model: "openai-codex:gpt-5.6-sol", skillDiscovery: { includeDefaults: false } });
+  }
+
+  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    this.recordUsage(PARENT_USAGE, "gpt-5.6-sol", "openai-codex");
+    this.recordUsage(CLASSIFIER_USAGE, "openai/gpt-5.6-luna", "duet-gateway");
+    return {
+      control: { type: "none" },
+      outcome: {
+        type: "complete",
+        status: "completed",
+        result: "mixed billing",
+        state: { ...input.state, status: "completed" },
+      },
+    };
+  }
+}
+
 describe("TurnRunner per-model cost breakdown", () => {
+  test("keeps a plan-covered parent and metered classifier as separate rows that sum to turn cost", async () => {
+    const runner = new MixedBillingRunner();
+    await runner.start({ type: "start", mode: "agent" });
+    const terminal = await runner.turn({
+      type: "prompt",
+      message: "account for both",
+      behavior: "follow_up",
+    });
+
+    expect(terminal.usageByModel).toEqual([
+      {
+        model: "gpt-5.6-sol",
+        transport: { provider: "openai-codex", billing: "plan-covered" },
+        usage: {
+          ...PARENT_USAGE,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+      },
+      {
+        model: "openai/gpt-5.6-luna",
+        transport: { provider: "duet-gateway", billing: "metered" },
+        usage: CLASSIFIER_USAGE,
+      },
+    ]);
+    const rowCost = terminal.usageByModel!.reduce((sum, entry) => sum + entry.usage.cost.total, 0);
+    expect(rowCost).toBe(terminal.turnUsage!.cost.total);
+    expect(rowCost).toBe(CLASSIFIER_USAGE.cost.total);
+    await runner.dispose();
+  });
+
   test("holds classifier usage for the flat terminal when no parent snapshot exists", async () => {
     const priorKey = process.env.DUET_API_KEY;
     process.env.DUET_API_KEY = "duet_gt_classifier_usage";
@@ -255,6 +305,7 @@ describe("TurnRunner per-model cost breakdown", () => {
       expect(terminal.usageByModel).toEqual([
         {
           model: resolveModelName(BUILT_IN_ROUTING_TABLE.classifier.target.modelName).id,
+          transport: { provider: "duet-gateway", billing: "metered" },
           usage: CLASSIFIER_USAGE,
         },
       ]);

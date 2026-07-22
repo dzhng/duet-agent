@@ -13,7 +13,7 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
 // observer. The eval proves all three surface in `usageByModel`, mirroring
 // the user's case ("run with glm, sub-agent uses sonnet, plus the memory
 // model"). Keep the parent and state models distinct so the attribution is
-// unambiguous; the memory model defaults to the gpt-5.4-mini observer.
+// unambiguous; the memory model defaults to the luna observer.
 const parentModel = process.env.EVAL_MODEL ?? "glm-4.7";
 const stateModel = parentModel === "sonnet-4.6" ? "haiku-4.5" : "sonnet-4.6";
 const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;

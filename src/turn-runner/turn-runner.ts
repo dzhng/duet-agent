@@ -7,6 +7,20 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { isContextOverflow, type ImageContent, type Usage } from "@earendil-works/pi-ai";
 import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
+import type { TransportName } from "../model-resolution/catalog.js";
+import {
+  ensureFreshConnectedTokens,
+  markConnectedProviderReconnectNeeded,
+} from "../connected-providers/tokens.js";
+import { isConnectedProviderId } from "../connected-providers/store.js";
+import {
+  connectedFallbackCause,
+  isPostOutputConnectedFailure,
+  nextTransportAfterConnectedFailure,
+} from "../connected-providers/fallback.js";
+import { transportFallbackNotice } from "../connected-providers/fallback-notice.js";
+import { usageForTransport } from "../connected-providers/billing.js";
+import { connectedTransportSnapshot, demoteConnectedTransport } from "../cli/shared.js";
 import type { Skill } from "@earendil-works/pi-coding-agent";
 import type { SkillCollision } from "./skills.js";
 import dedent from "dedent";
@@ -65,6 +79,7 @@ import { discoverMemoryStores } from "../memory/store/discovery.js";
 import {
   DEFAULT_CLI_MEMORY_MODEL,
   DEFAULT_CLI_MODEL,
+  resolveMeteredModelName,
   resolveModelName,
   routingCatalogAdapter,
 } from "../model-resolution/resolver.js";
@@ -98,7 +113,11 @@ import type {
   TurnTodo,
 } from "../types/protocol.js";
 import type { StateMachineAgentState } from "../types/state-machine.js";
-import { createAgentEventTranslator, agentMessageText } from "./agent-events.js";
+import {
+  createAgentEventTranslator,
+  agentMessageText,
+  isExternallyVisibleAgentEvent,
+} from "./agent-events.js";
 import {
   createRecallMemorySystemPromptLayer,
   createSourceOfTruthSystemPromptLayer,
@@ -548,8 +567,10 @@ export class TurnRunner {
             : undefined,
         ),
       retryTransientServerErrors: (agent) => this.retryTransientServerErrors(agent),
+      retryConnectedTransportFallback: (agent, visibleOutput) =>
+        this.retryConnectedTransportFallback(agent, visibleOutput),
       emitAgentEvent: (event, origin) => this.emitAgentEvent(event, origin),
-      recordUsage: (usage, modelId) => this.recordUsage(usage, modelId),
+      recordUsage: (usage, modelId, provider) => this.recordUsage(usage, modelId, provider),
       emitTurnUsage: (origin) => this.emitTurnUsage(origin),
     });
   }
@@ -718,6 +739,7 @@ export class TurnRunner {
    * sees available skills before typing the first prompt.
    */
   async start(command: TurnStartCommand): Promise<TurnState> {
+    await ensureFreshConnectedTokens();
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
     await this.ensureMcpServersConnected(command.mcpServers);
@@ -791,6 +813,7 @@ export class TurnRunner {
    */
   async turn(command: TurnCommand, onAccepted?: () => void): Promise<TurnTerminalEvent> {
     this.requireStarted();
+    await ensureFreshConnectedTokens();
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
     // Serialize behind an in-flight compact. Compact advances the wire
@@ -2369,7 +2392,7 @@ export class TurnRunner {
     router: ModelRouter,
     policy: AdvisorPolicy,
   ): AskAdvisorToolStorage {
-    const resolveAdvisorModel = () => resolveModelName(policy.target.modelName);
+    const resolveAdvisorModel = () => resolveMeteredModelName(policy.target.modelName);
     return {
       getContext: async (contextWindowTokens) =>
         await this.captureContextForAdvisor(contextWindowTokens),
@@ -2391,7 +2414,11 @@ export class TurnRunner {
       },
       recordUsage: (usage) => {
         const model = resolveAdvisorModel();
-        this.recordAndEmitUsage(usageFromAiSdk(usage, model), model.id);
+        this.recordAndEmitUsage(
+          usageFromAiSdk(usage, model),
+          model.id,
+          model.provider as TransportName,
+        );
       },
       onUsageError: (error) => {
         const reason = error instanceof Error ? error.message : String(error);
@@ -2495,7 +2522,11 @@ export class TurnRunner {
     this.parentControlResults.length = 0;
     this.setParentAgentRunning(true);
 
-    const unsubscribe = agent.subscribe((event) => this.emitParentAgentEvent(event));
+    let visibleOutput = false;
+    const unsubscribe = agent.subscribe((event) => {
+      if (isExternallyVisibleAgentEvent(event)) visibleOutput = true;
+      this.emitParentAgentEvent(event);
+    });
     this.parentAgentInterrupted = false;
     try {
       if (!input.continuation) {
@@ -2507,6 +2538,7 @@ export class TurnRunner {
       });
       if (switched) await this.applyRouterSwitch(agent, switched);
       await agent.prompt(input.prompt, input.images);
+      await this.retryConnectedTransportFallback(agent, () => visibleOutput);
       // Single-shot recovery: if the provider rejected the first attempt
       // with a context-overflow error, advance the sticky wire-shaping
       // horizon so the next send carries roughly the newer half of
@@ -2518,7 +2550,15 @@ export class TurnRunner {
       if (await this.tryRecoverFromContextOverflow(agent)) {
         await agent.continue();
       }
-      await this.retryTransientServerErrors(agent);
+      if (
+        !isPostOutputConnectedFailure(
+          agent.state.model.provider,
+          agent.state.messages.at(-1),
+          visibleOutput,
+        )
+      ) {
+        await this.retryTransientServerErrors(agent);
+      }
     } catch (error) {
       if (!this.parentAgentInterrupted) {
         throw error;
@@ -2708,6 +2748,42 @@ export class TurnRunner {
     }
   }
 
+  /** Retry a connected-provider refusal on the next transport before any visible effect. */
+  protected async retryConnectedTransportFallback(
+    agent: Agent,
+    visibleOutput: () => boolean,
+  ): Promise<void> {
+    while (agent.state.errorMessage) {
+      const provider = agent.state.model.provider;
+      if (!isConnectedProviderId(provider)) return;
+      const cause = connectedFallbackCause(agent.state.messages.at(-1));
+      if (!cause || visibleOutput()) return;
+      const fallback = nextTransportAfterConnectedFailure(
+        provider,
+        agent.state.model.id,
+        connectedTransportSnapshot(),
+      );
+      if (!fallback || fallback.transport === provider) return;
+
+      const failedModelName = agent.state.model.id;
+      demoteConnectedTransport(provider);
+      if (cause === "auth_failed") await markConnectedProviderReconnectNeeded(provider);
+      agent.state.messages.pop();
+      agent.state.model = resolveModelName(`${fallback.transport}:${fallback.modelId}`);
+      this.emit({
+        type: "system",
+        level: "info",
+        message: transportFallbackNotice({
+          provider,
+          modelName: failedModelName,
+          fallbackTransport: fallback.transport,
+          cause,
+        }),
+      });
+      await agent.continue();
+    }
+  }
+
   protected async updateMemoryAfterAgentRun(
     messages: AgentMessage[],
     options: TurnOptions | undefined,
@@ -2724,13 +2800,14 @@ export class TurnRunner {
     // state-agent entries in `usageByModel` (e.g. `openai/gpt-5.4-mini`) rather
     // than mixing a shorthand in among resolved ids.
     const memoryModel = this.resolveMemoryActorModel(options);
-    const memoryModelId = resolveModelName(memoryModel).id;
+    const resolvedMemoryModel = resolveMeteredModelName(memoryModel);
+    const memoryModelId = resolvedMemoryModel.id;
     const result = await updateObservationalMemory({
       session,
       memory: this.memory,
       sessionId,
       effectiveContext: this.resolveEffectiveContext(this.parentAgent?.state.model.contextWindow),
-      actorModel: memoryModel,
+      actorModel: `${resolvedMemoryModel.provider}:${resolvedMemoryModel.id}`,
       settings: this.config.memory,
       messages,
       cwd: this.config.cwd ?? process.cwd(),
@@ -2740,7 +2817,7 @@ export class TurnRunner {
       // the terminal aggregate even though memory runs after the parent's
       // final `message_end`.
       onUsage: (usage) => {
-        this.recordUsage(usage, memoryModelId);
+        this.recordUsage(usage, memoryModelId, resolvedMemoryModel.provider as TransportName);
         this.emitTurnUsage();
       },
       onActivity: (event) => this.emit({ type: "memory", ...event }),
@@ -3061,16 +3138,34 @@ export class TurnRunner {
     };
   }
 
-  protected recordUsage(usage?: TurnTokenUsage | Usage, modelId?: string): void {
-    this.turnUsage = addUsage(this.turnUsage, usage);
-    if (usage && modelId) {
-      this.turnUsageByModel = addUsageByModel(this.turnUsageByModel, modelId, usage);
+  protected recordUsage(
+    usage?: TurnTokenUsage | Usage,
+    modelId?: string,
+    provider?: TransportName,
+  ): void {
+    const transport =
+      provider ?? (this.parentAgent?.state.model.provider as TransportName | undefined);
+    if (usage && (!modelId || !transport)) {
+      throw new Error("Usage accounting requires both model id and transport provider.");
+    }
+    const accounted = usage && transport ? usageForTransport(usage, transport) : usage;
+    this.turnUsage = addUsage(this.turnUsage, accounted);
+    if (accounted && modelId && transport) {
+      this.turnUsageByModel = addUsageByModel(this.turnUsageByModel, modelId, transport, accounted);
+      this.turnUsage!.cost.total = this.turnUsageByModel.reduce(
+        (total, entry) => total + entry.usage.cost.total,
+        0,
+      );
     }
   }
 
   /** Attribute a non-parent model call and publish it once a flat context snapshot exists. */
-  private recordAndEmitUsage(usage: TurnTokenUsage | Usage, modelId: string): void {
-    this.recordUsage(usage, modelId);
+  private recordAndEmitUsage(
+    usage: TurnTokenUsage | Usage,
+    modelId: string,
+    provider: TransportName,
+  ): void {
+    this.recordUsage(usage, modelId, provider);
     this.emitTurnUsage();
   }
 
@@ -3112,7 +3207,11 @@ export class TurnRunner {
     // consumed tokens, so a rejected attempt (e.g. a provider context-overflow
     // error the turn then recovers from) carries no usage and would otherwise
     // emit a degenerate all-zero bar.
-    this.recordUsage(event.message.usage, event.message.model);
+    this.recordUsage(
+      event.message.usage,
+      event.message.model,
+      event.message.provider as TransportName,
+    );
     if (event.message.usage.totalTokens > 0) this.emitTurnUsage();
   }
 
@@ -3306,11 +3405,11 @@ export class TurnRunner {
 
   /** One metered classifier contract shared by parent routing and spawned children. */
   private classifierOptions(table: RoutingTable): ClassifyRouteOptions {
-    const model = resolveModelName(table.classifier.target.modelName);
+    const model = resolveMeteredModelName(table.classifier.target.modelName);
     return {
       model: `${model.provider}:${model.id}`,
       thinkingLevel: table.classifier.target.thinkingLevel,
-      onUsage: (usage) => this.recordAndEmitUsage(usage, model.id),
+      onUsage: (usage) => this.recordAndEmitUsage(usage, model.id, model.provider as TransportName),
     };
   }
 

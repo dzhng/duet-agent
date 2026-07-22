@@ -1,0 +1,80 @@
+{
+  "fable": {
+    "fable-5": {
+      "openai-codex": null,
+      "github-copilot": "claude-fable-5"
+    }
+  },
+  "opus": {
+    "opus-4.8": {
+      "openai-codex": null,
+      "github-copilot": "claude-opus-4.8"
+    },
+    "opus-4.7": {
+      "openai-codex": null,
+      "github-copilot": "claude-opus-4.7"
+    }
+  },
+  "sonnet": {
+    "sonnet-5": {
+      "openai-codex": null,
+      "github-copilot": null
+    },
+    "sonnet-4.6": {
+      "openai-codex": null,
+      "github-copilot": "claude-sonnet-4.6"
+    }
+  },
+  "haiku": {
+    "haiku-4.5": {
+      "openai-codex": null,
+      "github-copilot": "claude-haiku-4.5"
+    }
+  },
+  "sol": {
+    "gpt-5.6-sol": {
+      "openai-codex": "gpt-5.6-sol",
+      "github-copilot": null
+    }
+  },
+  "terra": {
+    "gpt-5.6-terra": {
+      "openai-codex": "gpt-5.6-terra",
+      "github-copilot": null
+    }
+  },
+  "luna": {
+    "gpt-5.6-luna": {
+      "openai-codex": "gpt-5.6-luna",
+      "github-copilot": null
+    }
+  },
+  "kimi": {
+    "kimi-k3": {
+      "openai-codex": null,
+      "github-copilot": null
+    }
+  },
+  "grok": {
+    "grok-4.3": {
+      "openai-codex": null,
+      "github-copilot": null
+    }
+  },
+  "deepseek": {
+    "deepseek-v4-pro": {
+      "openai-codex": null,
+      "github-copilot": null
+    }
+  },
+  "glm": {
+    "glm-5.2": {
+      "openai-codex": null,
+      "github-copilot": null
+    },
+    "glm-4.7": {
+      "openai-codex": null,
+      "github-copilot": null
+    }
+  }
+}

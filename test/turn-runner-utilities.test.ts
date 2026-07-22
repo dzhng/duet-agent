@@ -152,6 +152,35 @@ describe("turn-runner usage accounting", () => {
     expect(usage.cost.total).toBeCloseTo(0.000349, 12);
   });
 
+  test("keeps plan-covered AI SDK usage at zero cost", () => {
+    const model = {
+      id: "gpt-5.6-sol",
+      name: "gpt-5.6-sol",
+      api: "openai-codex-responses",
+      provider: "openai-codex",
+      baseUrl: "https://example.test",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 10, output: 20, cacheRead: 1, cacheWrite: 2 },
+      contextWindow: 200_000,
+      maxTokens: 10_000,
+    } satisfies Model<"openai-codex-responses">;
+
+    const usage = usageFromAiSdk(
+      {
+        inputTokens: 120,
+        inputTokenDetails: { noCacheTokens: 100, cacheReadTokens: 20, cacheWriteTokens: 0 },
+        outputTokens: 30,
+        outputTokenDetails: { textTokens: 30, reasoningTokens: 0 },
+        totalTokens: 150,
+      },
+      model,
+      { planCovered: true },
+    );
+
+    expect(usage.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 });
+  });
+
   test("adds protocol and provider usage values", () => {
     const total = addUsage(
       {
@@ -209,8 +238,8 @@ describe("turn-runner usage accounting", () => {
       cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
     };
 
-    const afterFirst = addUsageByModel(undefined, "anthropic/opus", opus);
-    const breakdown = addUsageByModel(afterFirst, "anthropic/haiku", haiku);
+    const afterFirst = addUsageByModel(undefined, "anthropic/opus", "duet-gateway", opus);
+    const breakdown = addUsageByModel(afterFirst, "anthropic/haiku", "duet-gateway", haiku);
 
     expect(breakdown).toHaveLength(2);
     expect(breakdown.find((e) => e.model === "anthropic/opus")?.usage).toEqual(opus);
@@ -242,23 +271,45 @@ describe("turn-runner usage accounting", () => {
     };
 
     const breakdown = addUsageByModel(
-      addUsageByModel(undefined, "anthropic/opus", first),
+      addUsageByModel(undefined, "anthropic/opus", "duet-gateway", first),
       "anthropic/opus",
+      "duet-gateway",
       second,
     );
 
     expect(breakdown).toHaveLength(1);
     expect(breakdown[0]).toEqual({
       model: "anthropic/opus",
+      transport: { provider: "duet-gateway", billing: "metered" },
       usage: addUsage(first, second)!,
     });
     expect(breakdown[0]!.usage.cost.total).toBeCloseTo(0.07, 10);
+  });
+
+  test("keeps the same model id separate across transport providers", () => {
+    const usage: TurnTokenUsage = {
+      input: 10,
+      output: 2,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 12,
+      cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.02 },
+    };
+    const rows = addUsageByModel(
+      addUsageByModel(undefined, "shared-model", "openai-codex", usage),
+      "shared-model",
+      "duet-gateway",
+      usage,
+    );
+
+    expect(rows.map((entry) => entry.transport.provider)).toEqual(["openai-codex", "duet-gateway"]);
   });
 
   test("never mutates the input list and clones it unchanged for falsy usage", () => {
     const original: ModelUsageEntry[] = [
       {
         model: "anthropic/opus",
+        transport: { provider: "duet-gateway", billing: "metered" },
         usage: {
           input: 1,
           output: 1,
@@ -271,12 +322,12 @@ describe("turn-runner usage accounting", () => {
     ];
     const snapshot = JSON.parse(JSON.stringify(original));
 
-    const unchanged = addUsageByModel(original, "anthropic/opus", undefined);
+    const unchanged = addUsageByModel(original, "anthropic/opus", "duet-gateway", undefined);
     expect(unchanged).toEqual(original);
     expect(unchanged).not.toBe(original);
 
     // Folding new usage must not write back into the source list.
-    addUsageByModel(original, "anthropic/opus", {
+    addUsageByModel(original, "anthropic/opus", "duet-gateway", {
       input: 9,
       output: 9,
       cacheRead: 0,

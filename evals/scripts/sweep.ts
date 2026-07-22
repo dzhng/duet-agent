@@ -19,7 +19,7 @@ import { runTrainEval } from "../helpers/train.js";
 
 const judgeModel = process.env.JUDGE_MODEL ?? "opus-4.7";
 const models = process.argv.slice(2);
-const candidates = models.length ? models : ["opus-4.8", "sonnet-4.6", "gpt-5.4-mini"];
+const candidates = models.length ? models : ["opus", "sonnet", "haiku"];
 
 // model -> slug -> coverage (0..1), or null on failure
 const table: Record<string, Record<string, number | null>> = {};

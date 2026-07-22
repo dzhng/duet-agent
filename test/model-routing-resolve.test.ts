@@ -3,7 +3,7 @@ import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { resolveRoute, resolveTierDefault } from "../src/model-routing/resolve.js";
 
 const catalog = {
-  modelAcceptsImages: (name: string) => name !== "glm-5.2",
+  modelAcceptsImages: (name: string) => name !== "glm",
 };
 
 describe("model route resolution", () => {
@@ -13,7 +13,7 @@ describe("model route resolution", () => {
     ).toEqual({
       tier: "economy",
       route: "general",
-      modelName: "gpt-5.6-luna",
+      modelName: "luna",
       thinkingLevel: "low",
       visionFallback: false,
       chain: ["economy"],
@@ -26,7 +26,7 @@ describe("model route resolution", () => {
     ).toEqual({
       tier: "economy",
       route: "implement",
-      modelName: "gpt-5.6-luna",
+      modelName: "luna",
       thinkingLevel: "medium",
       visionFallback: true,
       chain: ["economy"],
@@ -40,7 +40,7 @@ describe("model route resolution", () => {
     expect(resolveRoute(table, "economy", "implement", { hasImages: true }, catalog)).toEqual({
       tier: "economy",
       route: "implement",
-      modelName: "glm-5.2",
+      modelName: "glm",
       thinkingLevel: "medium",
       visionFallback: false,
       chain: ["economy"],
@@ -54,7 +54,7 @@ describe("model route resolution", () => {
     expect(resolveRoute(table, "economy", "implement", { hasImages: true }, catalog)).toEqual({
       tier: "frontier",
       route: "implement",
-      modelName: "gpt-5.6-sol",
+      modelName: "sol",
       thinkingLevel: "medium",
       visionFallback: true,
       chain: ["economy", "frontier"],
@@ -69,7 +69,7 @@ describe("model route resolution", () => {
     expect(resolveRoute(table, "frontier", "implement", { hasImages: false }, catalog)).toEqual({
       tier: "economy",
       route: "implement",
-      modelName: "glm-5.2",
+      modelName: "glm",
       thinkingLevel: "medium",
       visionFallback: false,
       chain: ["frontier", "balanced", "economy"],
@@ -92,7 +92,7 @@ describe("model route resolution", () => {
     ).toEqual({
       tier: "balanced",
       route: "general",
-      modelName: "gpt-5.6-terra",
+      modelName: "terra",
       thinkingLevel: "medium",
       visionFallback: false,
       chain: ["balanced"],

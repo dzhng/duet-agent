@@ -166,14 +166,18 @@ class ModelRoutingTurnRunner extends TurnRunner {
 class UsageTrackingTurnRunner extends TurnRunner {
   protected override createMemoryTransform() {
     return async (messages: AgentMessage[]) => {
-      this.recordUsage({
-        input: 5,
-        output: 7,
-        cacheRead: 2,
-        cacheWrite: 0,
-        totalTokens: 12,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.03 },
-      });
+      this.recordUsage(
+        {
+          input: 5,
+          output: 7,
+          cacheRead: 2,
+          cacheWrite: 0,
+          totalTokens: 12,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+        },
+        "memory-test",
+        "duet-gateway",
+      );
       return messages;
     };
   }

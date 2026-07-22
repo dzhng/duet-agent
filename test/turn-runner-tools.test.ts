@@ -519,6 +519,7 @@ describe("TurnRunner tools", () => {
         {
           model: resolveModelName(BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName)
             .id,
+          transport: { provider: "duet-gateway", billing: "metered" },
           usage: expect.objectContaining({ totalTokens: 15 }),
         },
       ]);
@@ -560,11 +561,13 @@ describe("TurnRunner tools", () => {
       expect(cumulative?.usageByModel).toEqual([
         {
           model: resolveModelName(BUILT_IN_ROUTING_TABLE.classifier.target.modelName).id,
+          transport: { provider: "duet-gateway", billing: "metered" },
           usage: CLASSIFIER_USAGE,
         },
         {
           model: resolveModelName(BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName)
             .id,
+          transport: { provider: "duet-gateway", billing: "metered" },
           usage: expect.objectContaining({ totalTokens: 15 }),
         },
       ]);

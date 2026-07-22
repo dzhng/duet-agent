@@ -1,4 +1,9 @@
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai";
+import { isConnectedProviderId } from "../connected-providers/store.js";
+import {
+  connectedProviderApiKey,
+  refreshConnectedTokenInBackground,
+} from "../connected-providers/tokens.js";
 
 const DEFAULT_DUET_GATEWAY_BASE_URL = "https://gateway.duet.so";
 const OPENAI_MODEL_PREFIX = "openai/";
@@ -192,6 +197,26 @@ const MISSING_MODEL_CLONES: Record<
     overrides?: ModelCloneOverrides;
   }>
 > = {
+  "openai-codex": [
+    {
+      // Drop once pi-ai ships openai-codex:gpt-5.6-sol.
+      from: "gpt-5.5",
+      to: "gpt-5.6-sol",
+      overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-sol"],
+    },
+    {
+      // Drop once pi-ai ships openai-codex:gpt-5.6-terra.
+      from: "gpt-5.5",
+      to: "gpt-5.6-terra",
+      overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-terra"],
+    },
+    {
+      // Drop once pi-ai ships openai-codex:gpt-5.6-luna.
+      from: "gpt-5.5",
+      to: "gpt-5.6-luna",
+      overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-luna"],
+    },
+  ],
   "vercel-ai-gateway": [
     { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-fable-5", overrides: FABLE_5_COST },
     {
@@ -215,12 +240,12 @@ const MISSING_MODEL_CLONES: Record<
       overrides: KIMI_K3_CAPABILITIES,
     },
     {
-      from: "openai/gpt-5.5",
+      from: "openai/gpt-5.4",
       to: "openai/gpt-5.6-sol",
       overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-sol"],
     },
     {
-      from: "openai/gpt-5.5",
+      from: "openai/gpt-5.4",
       to: "openai/gpt-5.6-terra",
       overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-terra"],
     },
@@ -311,6 +336,11 @@ function stripTrailingSlash(url: string): string {
 export function resolveProviderApiKey(provider: string): string | undefined {
   if (provider === "duet-gateway") {
     return process.env[DUET_GATEWAY_API_KEY_ENV];
+  }
+  if (isConnectedProviderId(provider)) {
+    const token = connectedProviderApiKey(provider);
+    if (!token) refreshConnectedTokenInBackground(provider);
+    return token;
   }
   return getEnvApiKey(provider as Parameters<typeof getEnvApiKey>[0]);
 }

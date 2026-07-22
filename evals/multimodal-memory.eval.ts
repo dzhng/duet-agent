@@ -61,9 +61,8 @@ describe("multimodal memory", () => {
 });
 
 // 200x200 solid pure-red PNG. The previous 64x64 fixture was rejected by
-// OpenAI's vision API as "not a valid image" once `DEFAULT_CLI_MEMORY_MODEL`
-// moved to `gpt-5.4-mini`. 200x200 is well above OpenAI's minimum-dimension
-// preprocessing threshold and reliably round-trips through the gateway.
+// the memory model as "not a valid image". 200x200 clears common provider
+// preprocessing thresholds and reliably round-trips through the gateway.
 const redSquareImage: ImageContent = {
   type: "image",
   mimeType: "image/png",

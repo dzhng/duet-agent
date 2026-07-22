@@ -370,7 +370,7 @@ describe("TurnRunner virtual-model adapter", () => {
       thinkingLevel: "high",
     });
     expect(runner.createdAgentOptions.at(-1)).toEqual({
-      model: "gpt-5.6-luna",
+      model: "luna",
       thinkingLevel: "low",
     });
 
@@ -438,8 +438,8 @@ describe("TurnRunner virtual-model adapter", () => {
       type: "router_switch",
       tier: "frontier",
       route: "implement",
-      fromModel: "fable-5",
-      toModel: "gpt-5.6-sol",
+      fromModel: "fable",
+      toModel: "sol",
       thinkingLevel: "high",
       trigger: "cadence",
       rationale: "The plan is ready to implement.",
@@ -520,8 +520,8 @@ describe("TurnRunner virtual-model adapter", () => {
     expect(events.filter((event) => event.type === "router_switch")).toEqual([
       expect.objectContaining({
         trigger: "compaction",
-        fromModel: "gpt-5.6-sol",
-        toModel: "fable-5",
+        fromModel: "sol",
+        toModel: "fable",
       }),
     ]);
     expect(
@@ -636,8 +636,8 @@ describe("TurnRunner virtual-model adapter", () => {
       expect(events.filter((event) => event.type === "router_switch").at(-1)).toMatchObject({
         trigger: "step_trigger",
         route: "implement",
-        fromModel: "glm-5.2",
-        toModel: "gpt-5.6-luna",
+        fromModel: "glm",
+        toModel: "luna",
         visionFallback: true,
       });
       await runner.dispose();
@@ -764,7 +764,7 @@ describe("TurnRunner virtual-model adapter", () => {
     const terminal = await turn;
 
     expect(terminal.type).toBe("interrupted");
-    expect(runner.routeStatus()?.modelName).toBe("fable-5");
+    expect(runner.routeStatus()?.modelName).toBe("fable");
     expect(runner.parentAgentForTest().state.model.id).toBe(runner.requestModels[0]!.id);
     expect(events.filter((event) => event.type === "router_switch")).toHaveLength(1);
   });

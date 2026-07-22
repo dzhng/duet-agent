@@ -5,17 +5,15 @@ import {
   mkdirSync,
   openSync,
   readdirSync,
-  readFileSync,
   readSync,
   rmSync,
   statSync,
-  unlinkSync,
-  writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { peekOpenLockHolderPid } from "../memory/pglite.js";
 import { DEFAULT_MEMORY_DB_PATH } from "../session/session-manager.js";
+import { acquireFileLock, DEFAULT_STALE_LOCK_MS, releaseFileLock } from "../file-lock.js";
 import {
   detectPackageManagerFromContext,
   globalUpgradeCommand,
@@ -49,7 +47,7 @@ import { compareSemverVersions, fetchLatestPackageVersion } from "./version-chec
 export const NO_AUTO_UPGRADE_ENV = "DUET_NO_AUTO_UPGRADE";
 
 /** A lock held longer than this is treated as abandoned and replaced. */
-const STALE_LOCK_MS = 10 * 60 * 1000;
+const STALE_LOCK_MS = DEFAULT_STALE_LOCK_MS;
 
 /** How long to wait on the registry. The TUI is already up and showing a
  *  "checking…" placeholder, so we can wait longer than the legacy inline
@@ -209,7 +207,9 @@ export async function runAutoUpgrade(input: RunAutoUpgradeInput): Promise<Upgrad
   }
 
   const now = input.now ?? (() => Date.now());
-  const handle = acquireLock(now());
+  const { duetDir, lockPath } = upgradePaths();
+  ensureDir(duetDir);
+  const handle = acquireFileLock(lockPath, { now: now(), staleAfterMs: STALE_LOCK_MS });
   if (handle === null) {
     appendLog(`skip locked package=${input.packageName} current=${input.currentVersion}`);
     return emit({ kind: "locked" });
@@ -270,7 +270,7 @@ export async function runAutoUpgrade(input: RunAutoUpgradeInput): Promise<Upgrad
     );
     return emit({ kind: "failed", from: input.currentVersion, to: latest, manager, error });
   } finally {
-    releaseLock(handle);
+    releaseFileLock(handle);
   }
 }
 
@@ -325,11 +325,6 @@ export function describeUpgradeStatus(
   }
 }
 
-interface LockPayload {
-  pid: number;
-  startedAt: number;
-}
-
 /** Resolved lazily so tests can swap $HOME per case. */
 function upgradePaths(): { duetDir: string; lockPath: string; logPath: string } {
   const duetDir = join(homedir(), ".duet");
@@ -338,51 +333,6 @@ function upgradePaths(): { duetDir: string; lockPath: string; logPath: string } 
     lockPath: join(duetDir, "upgrade.lock"),
     logPath: join(duetDir, "logs", "upgrade.log"),
   };
-}
-
-function acquireLock(now: number): { fd: number; lockPath: string } | null {
-  const { duetDir, lockPath } = upgradePaths();
-  ensureDir(duetDir);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = openSync(lockPath, "wx");
-      writeSync(fd, JSON.stringify({ pid: process.pid, startedAt: now } satisfies LockPayload));
-      return { fd, lockPath };
-    } catch (error: any) {
-      if (error?.code !== "EEXIST") return null;
-      if (!isStaleLock(lockPath, now)) return null;
-      try {
-        unlinkSync(lockPath);
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
-}
-
-function isStaleLock(lockPath: string, now: number): boolean {
-  try {
-    const raw = readFileSync(lockPath, "utf8");
-    const payload = JSON.parse(raw) as Partial<LockPayload>;
-    if (typeof payload.startedAt !== "number") return true;
-    return now - payload.startedAt > STALE_LOCK_MS;
-  } catch {
-    return true;
-  }
-}
-
-function releaseLock(handle: { fd: number; lockPath: string }): void {
-  try {
-    closeSync(handle.fd);
-  } catch {
-    // ignore
-  }
-  try {
-    unlinkSync(handle.lockPath);
-  } catch {
-    // ignore
-  }
 }
 
 function ensureDir(path: string): void {
