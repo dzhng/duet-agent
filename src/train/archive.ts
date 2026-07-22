@@ -11,6 +11,11 @@ import type { ArchivedFile, TrainManifest } from "./types.js";
  * up together when the user prunes the memory.
  */
 function archiveRootForMemoryId(memoryId: string): string {
+  // Defense in depth behind the codec's frontmatter validation: this path is
+  // fed to a recursive delete, so a traversal id must never leave the root.
+  if (!/^[A-Za-z0-9_-]+$/.test(memoryId)) {
+    throw new Error(`Archive memory id must be a safe path segment: ${memoryId}`);
+  }
   return join(homedir(), ".duet", "train", memoryId);
 }
 

@@ -524,6 +524,38 @@ describe("TurnRunner memory", () => {
     }
   });
 
+  testIfDocker("relative explicit memoryStores resolve against the configured cwd", async () => {
+    const root = await mkdtemp(join(tmpdir(), "duet-runner-relative-store-"));
+    const cwd = join(root, "agent", "work");
+    const store = join(root, "agent", "work", "knowledge", "memories");
+    const runner = new MemoryTransformTurnRunner({
+      cwd,
+      memoryDbPath: false,
+      // Relative on purpose: must resolve against `cwd`, not process.cwd().
+      memoryStores: [join("knowledge", "memories")],
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    try {
+      await writeEntry(store, {
+        slug: "relative-load",
+        version: 1,
+        id: "mem_relative_load",
+        kind: "note",
+        createdAt: 1,
+        content: "RELATIVE STORE CONTENT",
+      });
+
+      await runner.start({ type: "start", mode: "agent" });
+
+      const stored = runner.getFrozenContextPackForTest().stored;
+      expect(stored.map((entry) => entry.slug)).toEqual(["relative-load"]);
+    } finally {
+      await runner.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("renders stored, global, and local memory in that order inside one observations block", async () => {
     const memory = new MemoryContextCache();
     memory.setStoredContextPack([

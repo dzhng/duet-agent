@@ -92,3 +92,38 @@ describe("memory file codec", () => {
     expect(() => slugFromFilename("Upper_Case.md")).toThrow("Unsafe memory slug");
   });
 });
+
+describe("memory identifier containment", () => {
+  const base = {
+    version: 1 as const,
+    kind: "note" as const,
+    createdAt: 1_700_000_000_000,
+    content: "safe body\n",
+  };
+
+  test("rejects parsed ids that are not safe path segments", () => {
+    const file = (id: string, archiveId?: string) =>
+      [
+        "---",
+        `version: 1`,
+        `id: ${JSON.stringify(id)}`,
+        `kind: "note"`,
+        `createdAt: 1700000000000`,
+        ...(archiveId === undefined ? [] : [`archiveId: ${JSON.stringify(archiveId)}`]),
+        "---",
+        "body",
+        "",
+      ].join("\n");
+    expect(() => parseMemoryFile(file("../escape"))).toThrow("safe path segment");
+    expect(() => parseMemoryFile(file("mem_ok", "../../important"))).toThrow("safe path segment");
+    expect(() => parseMemoryFile(file("mem_ok", "a/b"))).toThrow("safe path segment");
+    expect(() => parseMemoryFile(file("mem_ok", ".."))).toThrow("safe path segment");
+  });
+
+  test("rejects serializing ids that are not safe path segments", () => {
+    expect(() => serializeMemoryFile({ ...base, id: "../escape" })).toThrow("safe path segment");
+    expect(() => serializeMemoryFile({ ...base, id: "mem_ok", archiveId: "nested/id" })).toThrow(
+      "safe path segment",
+    );
+  });
+});

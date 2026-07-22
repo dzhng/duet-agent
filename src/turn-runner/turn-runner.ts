@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import {
   Agent,
   type AgentEvent,
@@ -3023,8 +3024,12 @@ export class TurnRunner {
       return;
     }
     try {
-      const stores =
-        this.config.memoryStores ?? (await discoverMemoryStores(this.config.cwd ?? process.cwd()));
+      const base = this.config.cwd ?? process.cwd();
+      // Explicit entries may be relative; resolve them against the configured
+      // cwd like relative db and system-prompt paths, not the process cwd.
+      const stores = this.config.memoryStores
+        ? this.config.memoryStores.map((store) => resolve(base, store))
+        : await discoverMemoryStores(base);
       await rebuildPinnedStoreContextPack({ stores, cache: this.memory });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

@@ -122,3 +122,14 @@ describe("MemoryDb.delete", () => {
     }
   });
 });
+
+describe("archive id containment", () => {
+  testIfDocker("refuses to remove archives outside the archive root", async () => {
+    const outside = join(fakeHome, "important");
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, "keep.txt"), "keep");
+    await expect(removeArchive("../../important")).rejects.toThrow("safe path segment");
+    await expect(removeArchive("..")).rejects.toThrow("safe path segment");
+    expect((await stat(join(outside, "keep.txt"))).isFile()).toBe(true);
+  });
+});

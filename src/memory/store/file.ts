@@ -44,6 +44,10 @@ export interface MemoryFileRecord {
 }
 
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// Identifiers become path segments under the private archive root, so they
+// must never be able to traverse (`..`, separators) out of it. nanoid's
+// alphabet plus the `mem_` prefix always satisfies this.
+const ID_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
 const KEY_PATTERN = /^[A-Za-z][A-Za-z0-9]*$/;
 const NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const KNOWN_KEYS = [
@@ -130,13 +134,13 @@ export function parseMemoryFile(text: string): MemoryFileRecord {
 
   const record: MemoryFileRecord = {
     version: 1,
-    id: requireNonBlankString(values, "id"),
+    id: requireIdSegment(values, "id"),
     kind,
     createdAt,
     ...optionalStringProperty(values, "headline"),
     ...optionalStringProperty(values, "model"),
     ...(fileCount === undefined ? {} : { fileCount }),
-    ...optionalStringProperty(values, "archiveId"),
+    ...optionalIdSegmentProperty(values, "archiveId"),
     ...optionalStringProperty(values, "priority"),
     ...optionalStringProperty(values, "source"),
     ...optionalStringArrayProperty(values, "tags"),
@@ -248,9 +252,29 @@ function requireNonBlankString(values: Map<string, MemoryFrontmatterValue>, key:
   return value;
 }
 
-function optionalStringProperty<
-  K extends "headline" | "model" | "archiveId" | "priority" | "source",
->(values: Map<string, MemoryFrontmatterValue>, key: K): Partial<Pick<MemoryFileRecord, K>> {
+function requireIdSegment(values: Map<string, MemoryFrontmatterValue>, key: string): string {
+  return assertIdSegment(key, requireNonBlankString(values, key));
+}
+
+function optionalIdSegmentProperty(
+  values: Map<string, MemoryFrontmatterValue>,
+  key: "archiveId",
+): Partial<Pick<MemoryFileRecord, "archiveId">> {
+  if (!values.has(key)) return {};
+  return { [key]: requireIdSegment(values, key) };
+}
+
+function assertIdSegment(key: string, value: string): string {
+  if (!ID_SEGMENT_PATTERN.test(value)) {
+    throw new Error(`Frontmatter ${key} must be a safe path segment: ${value}`);
+  }
+  return value;
+}
+
+function optionalStringProperty<K extends "headline" | "model" | "priority" | "source">(
+  values: Map<string, MemoryFrontmatterValue>,
+  key: K,
+): Partial<Pick<MemoryFileRecord, K>> {
   if (!values.has(key)) return {};
   return { [key]: requireNonBlankString(values, key) } as Pick<MemoryFileRecord, K>;
 }
@@ -285,6 +309,8 @@ function appendOptional(
 function validateRecord(record: MemoryFileRecord): void {
   if (record.version !== 1) throw new Error(`Unsupported memory file version: ${record.version}`);
   if (record.id.trim().length === 0) throw new Error("Frontmatter id cannot be blank");
+  assertIdSegment("id", record.id);
+  if (record.archiveId !== undefined) assertIdSegment("archiveId", record.archiveId);
   if (record.kind !== "train" && record.kind !== "note") {
     throw new Error(`Invalid memory kind: ${String(record.kind)}`);
   }
