@@ -19,7 +19,7 @@ export interface TrainEvalResult {
   headline: string;
 }
 
-function bufferStream(): { stream: Writable; read: () => string } {
+export function bufferStream(): { stream: Writable; read: () => string } {
   const chunks: Buffer[] = [];
   const stream = new Writable({
     write(chunk, _enc, cb) {
