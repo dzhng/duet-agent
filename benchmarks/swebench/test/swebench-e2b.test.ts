@@ -281,6 +281,35 @@ describe("SWE-bench E2B execution", () => {
     }
   });
 
+  testIfDocker("integrates completed retry attempts returned by a resumed worker", async () => {
+    const root = await mkdtemp(join(tmpdir(), "swebench-e2b-retry-artifacts-"));
+    const staged = join(root, "staged");
+    const destination = join(root, "campaign");
+    const retry = join(staged, "glm-pure", "org__repo-1-t1-a2");
+    const { spec } = campaignFixture();
+
+    try {
+      await mkdir(retry, { recursive: true });
+      await Promise.all([
+        writeFile(
+          join(staged, "campaign.json"),
+          '{"schemaVersion":1,"inputHash":"same","frozen":{"spec":"frozen"}}\n',
+        ),
+        writeFile(join(retry, "status.json"), '{"phase":"completed","attempt":2}\n'),
+      ]);
+
+      await integrateInstanceArtifacts(staged, destination, spec, "org__repo-1", 1);
+
+      expect(
+        JSON.parse(
+          await readFile(join(destination, "glm-pure", "org__repo-1-t1-a2", "status.json"), "utf8"),
+        ),
+      ).toEqual({ phase: "completed", attempt: 2 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   testIfDocker("rejects worker artifacts from conflicting campaign provenance", async () => {
     const root = await mkdtemp(join(tmpdir(), "swebench-e2b-provenance-"));
     const destination = join(root, "campaign");

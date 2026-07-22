@@ -644,8 +644,11 @@ async function downloadInstanceArtifacts(
   trial: number,
 ): Promise<void> {
   const campaignRoot = remoteCampaignRoot(spec.id);
-  const candidates = campaignArtifactRoots(spec, instanceId, trial);
-  const quotedCandidates = candidates.map(shellQuote).join(" ");
+  const attemptPatterns = instanceArtifactPrefixes(spec, instanceId, trial).flatMap((prefix) => [
+    shellQuote(prefix),
+    `${shellQuote(prefix)}-a*`,
+  ]);
+  const quotedCandidates = [shellQuote("campaign.json"), ...attemptPatterns].join(" ");
   await sandbox.commands.run(
     `set -eu; set --; cd ${shellQuote(campaignRoot)}; for item in ${quotedCandidates}; do if [ -e "$item" ]; then set -- "$@" "$item"; fi; done; [ "$#" -gt 0 ]; tar -cf ${shellQuote(REMOTE_RESULT_ARCHIVE)} "$@"`,
   );
@@ -686,14 +689,13 @@ export async function integrateInstanceArtifacts(
     join(destinationRoot, "campaign.json"),
   );
 
-  for (const candidate of instanceArtifactRoots(spec, instanceId, trial)) {
+  for (const candidate of await discoverInstanceArtifactRoots(
+    extractedRoot,
+    spec,
+    instanceId,
+    trial,
+  )) {
     const source = join(extractedRoot, candidate);
-    try {
-      await access(source);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw error;
-    }
     await copyArtifactTree(source, join(destinationRoot, candidate));
   }
 }
@@ -766,15 +768,51 @@ async function copyArtifactTree(source: string, destination: string): Promise<vo
   }
 }
 
-function campaignArtifactRoots(spec: CampaignSpec, instanceId: string, trial?: number): string[] {
-  return ["campaign.json", ...instanceArtifactRoots(spec, instanceId, trial)];
-}
-
-function instanceArtifactRoots(spec: CampaignSpec, instanceId: string, trial?: number): string[] {
+function instanceArtifactPrefixes(
+  spec: CampaignSpec,
+  instanceId: string,
+  trial?: number,
+): string[] {
   const trials = trial ? [trial] : Array.from({ length: spec.trials }, (_, index) => index + 1);
   return spec.configs.flatMap((config) =>
     trials.map((trialNumber) => `${config}/${instanceId}-t${trialNumber}`),
   );
+}
+
+async function discoverInstanceArtifactRoots(
+  root: string,
+  spec: CampaignSpec,
+  instanceId: string,
+  trial?: number,
+): Promise<string[]> {
+  const roots: string[] = [];
+  for (const prefix of instanceArtifactPrefixes(spec, instanceId, trial)) {
+    const separator = prefix.indexOf("/");
+    const config = prefix.slice(0, separator);
+    const attemptPrefix = prefix.slice(separator + 1);
+    for (const name of await safeDirectoryNames(join(root, config))) {
+      if (name === attemptPrefix || isRetryAttemptName(name, attemptPrefix)) {
+        roots.push(`${config}/${name}`);
+      }
+    }
+  }
+  return roots.sort();
+}
+
+async function safeDirectoryNames(path: string): Promise<string[]> {
+  try {
+    return (await readdir(path, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+function isRetryAttemptName(name: string, prefix: string): boolean {
+  if (!name.startsWith(`${prefix}-a`)) return false;
+  return /^(?:[2-9]|[1-9]\d+)$/.test(name.slice(prefix.length + 2));
 }
 
 function validateArchiveEntries(
@@ -783,12 +821,23 @@ function validateArchiveEntries(
   instanceId: string,
   trial: number,
 ): void {
-  const allowed = campaignArtifactRoots(spec, instanceId, trial);
+  const prefixes = instanceArtifactPrefixes(spec, instanceId, trial);
   for (const entry of entries) {
     if (entry.startsWith("/") || entry.split("/").includes("..")) {
       throw new Error(`Unsafe E2B artifact path: ${entry}.`);
     }
-    if (!allowed.some((root) => entry === root || entry.startsWith(`${root}/`))) {
+    if (entry === "campaign.json") continue;
+    const [config, attemptName] = entry.split("/");
+    const root = `${config}/${attemptName}`;
+    const allowed = prefixes.some((prefix) => {
+      if (root === prefix) return true;
+      const separator = prefix.indexOf("/");
+      return (
+        config === prefix.slice(0, separator) &&
+        isRetryAttemptName(attemptName ?? "", prefix.slice(separator + 1))
+      );
+    });
+    if (!config || !attemptName || !allowed) {
       throw new Error(`Unexpected E2B artifact path: ${entry}.`);
     }
   }
@@ -800,17 +849,14 @@ async function existingInstanceEntries(
   instanceId: string,
   trial: number,
 ): Promise<string[]> {
-  const candidates = campaignArtifactRoots(spec, instanceId, trial);
-  const existing: string[] = [];
-  for (const candidate of candidates) {
-    try {
-      await access(join(campaignRoot, candidate));
-      existing.push(candidate);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+  const existing = await discoverInstanceArtifactRoots(campaignRoot, spec, instanceId, trial);
+  try {
+    await access(join(campaignRoot, "campaign.json"));
+    return ["campaign.json", ...existing];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return existing;
+    throw error;
   }
-  return existing;
 }
 
 export interface BudgetedPoolOptions<T> {
