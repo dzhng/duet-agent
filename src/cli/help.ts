@@ -133,12 +133,15 @@ export function printConnectHelp(): void {
 duet connect — Manage connected model-provider subscriptions
 
 USAGE
+  duet connect <chatgpt|copilot> [--device-code] [--no-browser] [--json]
   duet connect --status [--json]
-  duet connect --disconnect <chatgpt|copilot>
+  duet connect --disconnect <chatgpt|copilot> [--json]
 
 OPTIONS
+  --device-code            Force device-code login (the only VM-valid mode)
+  --no-browser             Do not open the verification URI automatically
   --status                 List connected providers
-  --json                   Print status as a JSON connections envelope
+  --json                   Stream login/disconnect events as NDJSON; status stays an envelope
   --disconnect <provider>  Remove stored credentials for chatgpt or copilot
   -h, --help               Show this help
 `);
