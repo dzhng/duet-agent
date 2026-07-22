@@ -16,6 +16,14 @@ import { routingCatalogAdapter } from "../src/model-resolution/resolver.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 const catalogNames = new Set([
+  "kimi",
+  "fable",
+  "sol",
+  "opus",
+  "terra",
+  "sonnet",
+  "luna",
+  "glm",
   "kimi-k3",
   "fable-5",
   "gpt-5.6-sol",
@@ -54,39 +62,39 @@ describe("built-in model routing table", () => {
 
     expect(table.defaultTier).toBe("frontier");
     expect(targets("frontier")).toEqual({
-      visual: { modelName: "kimi-k3", thinkingLevel: "high" },
-      plan: { modelName: "fable-5", thinkingLevel: "high" },
-      implement: { modelName: "gpt-5.6-sol", thinkingLevel: "high" },
-      writing: { modelName: "opus-4.8", thinkingLevel: "medium" },
-      general: { modelName: "gpt-5.6-sol", thinkingLevel: "medium" },
+      visual: { modelName: "kimi", thinkingLevel: "high" },
+      plan: { modelName: "fable", thinkingLevel: "high" },
+      implement: { modelName: "sol", thinkingLevel: "high" },
+      writing: { modelName: "opus", thinkingLevel: "medium" },
+      general: { modelName: "sol", thinkingLevel: "medium" },
     });
     expect(targets("balanced")).toEqual({
-      visual: { modelName: "kimi-k3", thinkingLevel: "high" },
-      plan: { modelName: "gpt-5.6-sol", thinkingLevel: "high" },
-      implement: { modelName: "gpt-5.6-terra", thinkingLevel: "high" },
-      writing: { modelName: "sonnet-5", thinkingLevel: "medium" },
-      general: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },
+      visual: { modelName: "kimi", thinkingLevel: "high" },
+      plan: { modelName: "sol", thinkingLevel: "high" },
+      implement: { modelName: "terra", thinkingLevel: "high" },
+      writing: { modelName: "sonnet", thinkingLevel: "medium" },
+      general: { modelName: "terra", thinkingLevel: "medium" },
     });
     expect(targets("economy")).toEqual({
-      plan: { modelName: "gpt-5.6-luna", thinkingLevel: "medium" },
-      implement: { modelName: "glm-5.2", thinkingLevel: "medium" },
-      general: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
+      plan: { modelName: "luna", thinkingLevel: "medium" },
+      implement: { modelName: "glm", thinkingLevel: "medium" },
+      general: { modelName: "luna", thinkingLevel: "low" },
     });
-    expect(table.tiers.economy.routes.implement.visionFallbackModelName).toBe("gpt-5.6-luna");
+    expect(table.tiers.economy.routes.implement.visionFallbackModelName).toBe("luna");
 
     expect(table.tiers.frontier.advisor).toEqual({
       enabled: true,
-      target: { modelName: "fable-5", thinkingLevel: "high" },
+      target: { modelName: "fable", thinkingLevel: "high" },
       minStepsBetween: 5,
     });
     expect(table.tiers.balanced.advisor).toEqual(table.tiers.frontier.advisor);
     expect(table.tiers.economy.advisor).toEqual({
       enabled: false,
-      target: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },
+      target: { modelName: "terra", thinkingLevel: "medium" },
       minStepsBetween: 5,
     });
     expect(table.classifier).toEqual({
-      target: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
+      target: { modelName: "luna", thinkingLevel: "low" },
       everySteps: 5,
       guidance:
         "Prefer continuity when the task has not materially changed, but switch routes when the work changes domains.",
@@ -116,6 +124,14 @@ describe("built-in model routing table", () => {
     expect(isVirtualModel("frontier", BUILT_IN_ROUTING_TABLE)).toBe(true);
     expect(isVirtualModel("opus-4.8", BUILT_IN_ROUTING_TABLE)).toBe(false);
     expect(validateRoutingTable(BUILT_IN_ROUTING_TABLE, catalog)).toEqual([]);
+  });
+
+  test("keeps built-in tier names distinct from every catalog family name", () => {
+    const collisions = validateRoutingTable(BUILT_IN_ROUTING_TABLE, routingCatalogAdapter).filter(
+      (issue) => issue.code === "catalog_collision",
+    );
+
+    expect(collisions).toEqual([]);
   });
 
   test("only glm needs a built-in per-route vision fallback", () => {

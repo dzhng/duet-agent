@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { streamSimple, type AssistantMessageEvent, type Model } from "@earendil-works/pi-ai";
 import { resolveModelName } from "../src/model-resolution/resolver.js";
 
-const openAiModel = process.env.EVAL_MODEL ?? "gpt-5.5";
+const openAiModel = process.env.EVAL_MODEL ?? "sol";
 
 describe("OpenAI thinking trace routing", () => {
-  test("gpt-5.5 shorthand resolves to an OpenAI-compatible provider that can emit reasoning events", async () => {
+  test("sol family resolves to an OpenAI-compatible provider that can emit reasoning events", async () => {
     const model = resolveModelName(openAiModel);
 
     expect(model.reasoning).toBe(true);

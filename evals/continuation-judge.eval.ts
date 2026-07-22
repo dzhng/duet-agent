@@ -15,8 +15,8 @@ import { judgeContinuesRecentWork } from "./helpers/continuation-judge.js";
  */
 
 const RECENT_WORK = `
-The user asked about missing OpenAI "thinking traces" from \`gpt-5.5\`.
-Investigation showed \`resolveModelName("gpt-5.5")\` was routing
+The user asked about missing OpenAI "thinking traces" from \`sol\`.
+Investigation showed \`resolveModelName("sol")\` was routing
 Duet/OpenAI models through \`vercel-ai-gateway\` with
 \`api: "anthropic-messages"\`, which would drop OpenAI reasoning
 events. A red eval was added at \`evals/openai-thinking-traces.eval.ts\`
@@ -44,7 +44,7 @@ The grep through \`apiProviderRegistry\` in
 \`node_modules/@earendil-works/pi-ai\` confirmed that the
 \`openai-responses\` API path is the one that surfaces reasoning
 deltas, so the override in \`src/model-resolution/duet-gateway.ts\`
-should resolve the missing-thinking-traces symptom for \`gpt-5.5\`.
+should resolve the missing-thinking-traces symptom for \`sol\`.
 Next step: re-run \`evals/openai-thinking-traces.eval.ts\` against
 the duet-gateway provider and assert \`hasReasoningRequest(payload)\`
 is true. Want me to also add a regression in \`test/cli.test.ts\`

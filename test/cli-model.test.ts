@@ -25,10 +25,10 @@ describe("parseArgs", () => {
     errorSpy?.mockRestore();
   });
 
-  test("parses model, type, image and numeric flags", () => {
+  test("parses a family model, type, image and numeric flags", () => {
     const parsed = parseArgs([
       "-m",
-      "openai/gpt-5.5",
+      "sol",
       "--type",
       "image",
       "--image",
@@ -50,7 +50,7 @@ describe("parseArgs", () => {
       "a fox",
       "in snow",
     ]);
-    expect(parsed.model).toBe("openai/gpt-5.5");
+    expect(parsed.model).toBe("sol");
     expect(parsed.type).toBe("image");
     expect(parsed.imagePath).toBe("src.png");
     expect(parsed.out).toBe("art.png");

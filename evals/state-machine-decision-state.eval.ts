@@ -5,12 +5,12 @@ import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { createAssistantMessage } from "../test/helpers/messages.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "gpt-5.5";
+const model = process.env.EVAL_MODEL ?? "sol";
 
 /**
  * Regression eval for `select_state_machine_state` guessing loops.
  *
- * Originally observed in a real Duet session (gpt-5.5, chat-app channel,
+ * Originally observed in a real Duet session (OpenAI model, chat-app channel,
  * 2026-05-20): the model invoked `select_state_machine_state` over and
  * over with malformed `decision.kind` strings ("Select", "Continue",
  * "Transition", ...) and never recovered. That bug class was resolved by
@@ -24,7 +24,7 @@ const model = process.env.EVAL_MODEL ?? "gpt-5.5";
  * Valid states: ...` and the next call must pick from that list. This
  * eval guards that recovery path: priming the assistant transcript with
  * three failed select calls that name fabricated states, then steering
- * gpt-5.5 to retry, must produce a call whose `state` is in the active
+ * the model to retry, must produce a call whose `state` is in the active
  * definition.
  */
 
@@ -211,7 +211,7 @@ describe("select_state_machine_state decision.state shape", () => {
         if (bad.length > 0) badPerTrial.push({ trial, bad });
       }
 
-      // Sanity check that the priming still gets gpt-5.5 to attempt a
+      // Sanity check that the priming still gets the model to attempt a
       // select. If this fails the steering prompt has drifted.
       expect(sawSelect).toBe(true);
 

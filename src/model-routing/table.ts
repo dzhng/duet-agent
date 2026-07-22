@@ -226,28 +226,28 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
       routes: {
         visual: {
           description: VISUAL_DESCRIPTION,
-          target: { modelName: "kimi-k3", thinkingLevel: "high" },
+          target: { modelName: "kimi", thinkingLevel: "high" },
         },
         plan: {
           description: FRONTIER_PLAN_DESCRIPTION,
-          target: { modelName: "fable-5", thinkingLevel: "high" },
+          target: { modelName: "fable", thinkingLevel: "high" },
         },
         implement: {
           description: IMPLEMENT_DESCRIPTION,
-          target: { modelName: "gpt-5.6-sol", thinkingLevel: "high" },
+          target: { modelName: "sol", thinkingLevel: "high" },
         },
         writing: {
           description: WRITING_DESCRIPTION,
-          target: { modelName: "opus-4.8", thinkingLevel: "medium" },
+          target: { modelName: "opus", thinkingLevel: "medium" },
         },
         general: {
           description: GENERAL_DESCRIPTION,
-          target: { modelName: "gpt-5.6-sol", thinkingLevel: "medium" },
+          target: { modelName: "sol", thinkingLevel: "medium" },
         },
       },
       advisor: {
         enabled: true,
-        target: { modelName: "fable-5", thinkingLevel: "high" },
+        target: { modelName: "fable", thinkingLevel: "high" },
         minStepsBetween: 5,
       },
     },
@@ -255,28 +255,28 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
       routes: {
         visual: {
           description: VISUAL_DESCRIPTION,
-          target: { modelName: "kimi-k3", thinkingLevel: "high" },
+          target: { modelName: "kimi", thinkingLevel: "high" },
         },
         plan: {
           description: FRONTIER_PLAN_DESCRIPTION,
-          target: { modelName: "gpt-5.6-sol", thinkingLevel: "high" },
+          target: { modelName: "sol", thinkingLevel: "high" },
         },
         implement: {
           description: IMPLEMENT_DESCRIPTION,
-          target: { modelName: "gpt-5.6-terra", thinkingLevel: "high" },
+          target: { modelName: "terra", thinkingLevel: "high" },
         },
         writing: {
           description: WRITING_DESCRIPTION,
-          target: { modelName: "sonnet-5", thinkingLevel: "medium" },
+          target: { modelName: "sonnet", thinkingLevel: "medium" },
         },
         general: {
           description: GENERAL_DESCRIPTION,
-          target: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },
+          target: { modelName: "terra", thinkingLevel: "medium" },
         },
       },
       advisor: {
         enabled: true,
-        target: { modelName: "fable-5", thinkingLevel: "high" },
+        target: { modelName: "fable", thinkingLevel: "high" },
         minStepsBetween: 5,
       },
     },
@@ -285,31 +285,31 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         plan: {
           description:
             "Architecture, investigation, research, and planning where the primary work is reasoning about what to build or do, not implementing it.",
-          target: { modelName: "gpt-5.6-luna", thinkingLevel: "medium" },
+          target: { modelName: "luna", thinkingLevel: "medium" },
         },
         implement: {
           description:
             "Backend, systems, data, CLI, and other implementation or debugging work, including tests and code changes.",
-          target: { modelName: "glm-5.2", thinkingLevel: "medium" },
+          target: { modelName: "glm", thinkingLevel: "medium" },
           // Recorded product rationale: image-bearing implementation stays on the work-kind route;
           // capability correction belongs to router policy, not classifier taxonomy.
-          visionFallbackModelName: "gpt-5.6-luna",
+          visionFallbackModelName: "luna",
         },
         general: {
           description:
             "General questions, explanations, summaries, and creative writing without a more specific route.",
-          target: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
+          target: { modelName: "luna", thinkingLevel: "low" },
         },
       },
       advisor: {
         enabled: false,
-        target: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },
+        target: { modelName: "terra", thinkingLevel: "medium" },
         minStepsBetween: 5,
       },
     },
   },
   classifier: {
-    target: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
+    target: { modelName: "luna", thinkingLevel: "low" },
     everySteps: 5,
     guidance:
       "Prefer continuity when the task has not materially changed, but switch routes when the work changes domains.",

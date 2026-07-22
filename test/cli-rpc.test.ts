@@ -224,7 +224,7 @@ describe("parseRpcArgs", () => {
 
     const exitSpy = stubProcessExit();
     try {
-      expect(() => parseRpcArgs(["--provider", "openrouter", "--model", "gpt-5.5"])).toThrow();
+      expect(() => parseRpcArgs(["--provider", "openrouter", "--model", "sol"])).toThrow();
     } finally {
       exitSpy.mockRestore();
     }
@@ -439,7 +439,7 @@ describe("RPC project routing", () => {
           "--workdir",
           workDir,
           "--memory-model",
-          "openrouter:gpt-5.4-mini",
+          "openrouter:anthropic/claude-haiku-4.5",
         ],
         {
           cwd: process.cwd(),

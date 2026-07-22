@@ -201,7 +201,7 @@ describe("Session model-switch persistence", () => {
   // Inline contract: when /model appears inside a longer prompt, the swap
   // must take effect *before* the remainder dispatches as a prompt, so the
   // turn that delivers the remainder uses the newly-selected model. This
-  // is the "hey can you review this /model gpt-5.5" flow.
+  // is the "hey can you review this /model sol" flow.
   testIfDocker(
     "inline /model mutates config.model before the remainder is dispatched",
     async () => {
