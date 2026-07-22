@@ -15,6 +15,7 @@ duet — An opinionated full-stack agent runner
 USAGE
   duet [options] [prompt]
   duet login --workspace <slug> [--no-browser]
+  duet connect [--status [--json] | --disconnect <provider>]
   duet env [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
   duet memory [--db <path>] [--json] [filters]
@@ -25,6 +26,7 @@ USAGE
 
 COMMANDS
   login                    Sign in via device flow; saves a workspace-scoped DUET_API_KEY (recommended)
+  connect                  Show or remove connected ChatGPT and GitHub Copilot subscriptions
   env                      Manually create or update the shared duet env file with provider API keys
   skills                   List installed skills + collisions as JSON
   memory                   Browse memories in a TUI, or query them with --json/filters (alias: memories)
@@ -123,6 +125,22 @@ OPTIONS
 OVERRIDES
   Set DUET_API_BASE_URL (e.g. https://api-staging.duet.so) to re-point device
   login. Model traffic uses DUET_GATEWAY_BASE_URL.
+`);
+}
+
+export function printConnectHelp(): void {
+  console.log(`
+duet connect — Manage connected model-provider subscriptions
+
+USAGE
+  duet connect --status [--json]
+  duet connect --disconnect <chatgpt|copilot>
+
+OPTIONS
+  --status                 List connected providers
+  --json                   Print status as a JSON connections envelope
+  --disconnect <provider>  Remove stored credentials for chatgpt or copilot
+  -h, --help               Show this help
 `);
 }
 

@@ -17,6 +17,7 @@ import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { runConfigCommand } from "./cli/config.js";
+import { runConnectCommand } from "./cli/connect.js";
 import { runEnvCommand } from "./cli/env.js";
 import { runLoginCommand } from "./cli/login.js";
 import { runMemoryCommand } from "./cli/memory.js";
@@ -46,6 +47,8 @@ export { runMemoryCommand } from "./cli/memory.js";
 export { runModelCommand } from "./cli/model.js";
 export { runRouteCommand } from "./cli/route.js";
 export { runConfigCommand } from "./cli/config.js";
+export { runConnectCommand } from "./cli/connect.js";
+export type { ConnectCommandIO } from "./cli/connect.js";
 export { runMemoryAddCommand } from "./cli/memory-add.js";
 export { runMemoryRecallCommand } from "./cli/memory-recall.js";
 export { runMemoryReflectCommand } from "./cli/memory-reflect.js";
@@ -93,6 +96,10 @@ export async function runCli(): Promise<void> {
     }
     if (subcommand === "login") {
       await runLoginCommand(args.slice(1));
+      return;
+    }
+    if (subcommand === "connect") {
+      await runConnectCommand(args.slice(1));
       return;
     }
     if (subcommand === "memory" || subcommand === "memories") {
