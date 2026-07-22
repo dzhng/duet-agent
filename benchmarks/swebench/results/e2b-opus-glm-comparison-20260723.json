@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "dataset": "SWE-bench/SWE-bench_Multilingual",
+  "datasetRevision": "2b7aced941b4873e9cad3e76abbae93f481d1beb",
+  "executionBackend": "e2b",
+  "selection": {
+    "manifestPath": "benchmarks/swebench/manifests/multilingual-50-fresh-20265471.json",
+    "manifestSha256": "6ee840d86d59fd6c6fd17fde7802992fb1d6a9b23e17e07d85d6491a7afabb76",
+    "tasks": 50,
+    "trialsPerTask": 1
+  },
+  "models": {
+    "opus": {
+      "model": "anthropic/claude-opus-4.8",
+      "thinkingLevel": "xhigh",
+      "resolved": 42,
+      "unresolved": 8,
+      "resolveRate": 0.84,
+      "cleanRolloutCostUsd": 78.43437325,
+      "averageCostPerTaskUsd": 1.568687465,
+      "totalCostPerResolvedOutcomeUsd": 1.8674850773809526,
+      "averageResolvedRolloutCostUsd": 1.4577684166666665,
+      "averageNonresolvedRolloutCostUsd": 2.15101246875
+    },
+    "glm": {
+      "model": "zai/glm-5.2",
+      "thinkingLevel": "xhigh",
+      "providerEffort": "max",
+      "resolved": 40,
+      "unresolved": 10,
+      "resolveRate": 0.8,
+      "cleanRolloutCostUsd": 48.9290746,
+      "averageCostPerTaskUsd": 0.978581492,
+      "totalCostPerResolvedOutcomeUsd": 1.223226865,
+      "averageResolvedRolloutCostUsd": 0.8825760275,
+      "averageNonresolvedRolloutCostUsd": 1.36260335
+    }
+  },
+  "pairedOutcomes": {
+    "bothResolve": 38,
+    "opusOnly": [
+      "astral-sh__ruff-15356",
+      "briannesbitt__carbon-2813",
+      "fmtlib__fmt-3750",
+      "google__gson-2479"
+    ],
+    "glmOnly": ["facebook__docusaurus-9183", "php-cs-fixer__php-cs-fixer-7663"],
+    "neitherResolves": [
+      "astral-sh__ruff-15394",
+      "caddyserver__caddy-5404",
+      "fluent__fluentd-3640",
+      "fmtlib__fmt-3863",
+      "redis__redis-11279",
+      "vuejs__core-11899"
+    ]
+  },
+  "cost": {
+    "cleanComparisonUsd": 127.36344785,
+    "recordedCompletedRolloutsIncludingDiscardedAttemptsUsd": 135.3368754,
+    "conservativeAccountedUsd": 240.7168767,
+    "authorizedBudgetUsd": 300,
+    "remainingAgainstConservativeAccountUsd": 59.2831233,
+    "maximumConcurrentReservationBoundUsd": 299.6415
+  },
+  "campaigns": [
+    {
+      "id": "multilingual-50-opus-max-e2b-20260723-v2",
+      "role": "all 50 Opus predictions",
+      "duetGitSha": "95074c61d27c1f0854ca329484f5d6735dde7fe6",
+      "inputHash": "802c80df2df4dbd331034d5c35fa9c032df7f7ec409bb025e14cd01616fbaf75",
+      "scoreSummarySha256": "95d5e7371c115535c77bd3bf08fe163483d7815d77ca01e73a3015c1231eabaf"
+    },
+    {
+      "id": "multilingual-50-glm-max-e2b-20260723-v2",
+      "role": "35 GLM predictions; the interrupted Hugo prediction is replaced by v3",
+      "duetGitSha": "95074c61d27c1f0854ca329484f5d6735dde7fe6",
+      "inputHash": "e122609bdae215cf0266058cd3bb917f38030599ae508378a1266d5364101c18",
+      "scoreSummarySha256": "43e01961859f6bf9d340680fa851962fdd978e7592cd91fcf3c2d62b6ef9fb1c"
+    },
+    {
+      "id": "multilingual-50-glm-max-e2b-20260723-v3",
+      "role": "15 final GLM predictions, including the clean Hugo replacement",
+      "duetGitSha": "4bd3d10f24f9218863e9190fe96873215547b97d",
+      "inputHash": "dd55b6e6de0b107cb84fdbb72ce2f64576c7906a3dd46b75a9ce258f1ccb883c",
+      "scoreSummarySha256": "1ac6c37a9b9d788a8e4eae2cbc523c59689fde9c297f5cab84634140df56637d"
+    }
+  ],
+  "interpretation": {
+    "resolveRateDifferencePercentagePoints": 4,
+    "ordering": "opus_above_glm",
+    "limitation": "This is one trial on a fixed 50-task sample. Anthropic's published SWE-bench Multilingual score averages five trials across all 300 tasks, so the rates are context rather than directly equivalent estimates."
+  }
+}
