@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "patch-recovery-opus-hugo-12448-e2b-20260722-v1",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-50-fresh-20265471.json",
+  "instanceIds": ["gohugoio__hugo-12448"],
+  "configs": ["opus-pure"],
+  "trials": 1,
+  "concurrency": 1,
+  "armOrderSeed": 20260725,
+  "limits": {
+    "costUsd": 15,
+    "wallClockMs": 3600000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 33554432
+  },
+  "budget": {
+    "totalUsd": 15,
+    "sunkUsd": 0
+  },
+  "execution": {
+    "backend": "e2b",
+    "workerConcurrency": 1,
+    "workerCpuCount": 8,
+    "workerMemoryMb": 16384,
+    "workerTimeoutMs": 10800000
+  }
+}
