@@ -445,8 +445,12 @@ describe("CLI model inference", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "test-duet";
 
-    expect(resolveModelName("glm-5.2").id).toBe("zai/glm-5.2");
+    expect(resolveModelName("glm-5.2")).toMatchObject({
+      id: "zai/glm-5.2",
+      thinkingLevelMap: { xhigh: "max" },
+    });
     expect(resolveModelName("duet:zai/glm-5.2").id).toBe("zai/glm-5.2");
+    expect(resolveModelName("vercel:zai/glm-5.2").thinkingLevelMap?.xhigh).toBe("max");
   });
 
   test("synthesizes a pass-through model for gateway ids absent from the catalog", () => {

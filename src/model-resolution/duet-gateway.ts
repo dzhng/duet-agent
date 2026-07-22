@@ -35,6 +35,16 @@ const OPENAI_GATEWAY_MODEL_OVERRIDES: Record<string, ModelCloneOverrides> = {
   },
 };
 
+// Vercel exposes GLM 5.2's maximum reasoning mode, but the pinned pi-ai
+// catalog does not yet describe it. Keep the product-level `xhigh` setting
+// wire-faithful until that metadata ships upstream.
+const VERCEL_GATEWAY_MODEL_OVERRIDES: Record<string, ModelCloneOverrides> = {
+  "zai/glm-5.2": {
+    thinkingLevelMap: { xhigh: "max" },
+    compat: { forceAdaptiveThinking: true },
+  },
+};
+
 const KIMI_K3_CAPABILITIES = {
   input: ["text", "image"],
   contextWindow: 1_000_000,
@@ -118,11 +128,26 @@ function resolveDuetGatewayUpstream(modelId: string): Model<any> {
   if (modelId.startsWith(OPENAI_MODEL_PREFIX)) {
     return resolveOpenAIResponsesModel(modelId);
   }
-  return (
+  const upstream =
     (getModel("vercel-ai-gateway" as any, modelId as any) as Model<any> | undefined) ??
     resolveMissingModel("vercel-ai-gateway", modelId) ??
-    synthesizePassthroughModel(modelId, "anthropic-messages")
-  );
+    synthesizePassthroughModel(modelId, "anthropic-messages");
+  return applyVercelGatewayModelOverrides(modelId, upstream);
+}
+
+/** Apply gateway capabilities that are newer than the pinned model catalog. */
+export function applyVercelGatewayModelOverrides(modelId: string, model: Model<any>): Model<any> {
+  const overrides = VERCEL_GATEWAY_MODEL_OVERRIDES[modelId];
+  if (!overrides) return model;
+  return {
+    ...model,
+    ...overrides,
+    thinkingLevelMap: {
+      ...model.thinkingLevelMap,
+      ...overrides.thinkingLevelMap,
+    },
+    compat: { ...model.compat, ...overrides.compat },
+  };
 }
 
 /**

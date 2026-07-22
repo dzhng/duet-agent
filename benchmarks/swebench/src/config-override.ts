@@ -12,6 +12,8 @@ export const SWEBENCH_TIER = "swebench";
 export interface RenderModelsJsonOptions {
   /** Main coding model used for every benchmark prompt. */
   executorModel: "glm-5.2" | "kimi-k3" | "opus-4.8";
+  /** Reasoning effort sent to the executor for every turn in this campaign arm. */
+  executorThinkingLevel: ThinkingLevel;
   /** Advisor retained in both pure and advised renders so OFF changes only availability. */
   advisorModel: "kimi-k3" | "fable-5";
   /** Model-specific advisor effort retained identically in the paired OFF and ON arms. */
@@ -23,30 +25,35 @@ export interface RenderModelsJsonOptions {
 export const CAMPAIGN_CONFIGS = {
   "glm-pure": {
     executorModel: "glm-5.2",
+    executorThinkingLevel: "xhigh",
     advisorModel: "kimi-k3",
     advisorThinkingLevel: "medium",
     advisorEnabled: false,
   },
   "glm-kimi-advisor": {
     executorModel: "glm-5.2",
+    executorThinkingLevel: "xhigh",
     advisorModel: "kimi-k3",
     advisorThinkingLevel: "medium",
     advisorEnabled: true,
   },
   "kimi-pure": {
     executorModel: "kimi-k3",
+    executorThinkingLevel: "high",
     advisorModel: "fable-5",
     advisorThinkingLevel: "high",
     advisorEnabled: false,
   },
   "kimi-fable-advisor": {
     executorModel: "kimi-k3",
+    executorThinkingLevel: "high",
     advisorModel: "fable-5",
     advisorThinkingLevel: "high",
     advisorEnabled: true,
   },
   "opus-pure": {
     executorModel: "opus-4.8",
+    executorThinkingLevel: "xhigh",
     advisorModel: "fable-5",
     advisorThinkingLevel: "high",
     advisorEnabled: false,
@@ -76,7 +83,10 @@ export function renderModelsJson(options: RenderModelsJsonOptions): RoutingTable
         routes: {
           general: {
             ...productRoute,
-            target: { modelName: options.executorModel, thinkingLevel: "high" },
+            target: {
+              modelName: options.executorModel,
+              thinkingLevel: options.executorThinkingLevel,
+            },
             // GLM is text-only. Keeping the same image-capable fallback in all
             // committed renders makes it policy, not another experimental variable.
             visionFallbackModelName: "kimi-k3",

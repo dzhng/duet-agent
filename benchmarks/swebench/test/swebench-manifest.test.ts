@@ -227,7 +227,7 @@ describe("SWE-bench routing renders", () => {
 
     expect(renders["glm-pure"].tiers.swebench!.routes.general!.target).toEqual({
       modelName: "glm-5.2",
-      thinkingLevel: "high",
+      thinkingLevel: "xhigh",
     });
     expect(renders["glm-pure"].tiers.swebench!.advisor.target).toEqual({
       modelName: "kimi-k3",
@@ -243,7 +243,7 @@ describe("SWE-bench routing renders", () => {
     });
     expect(renders["opus-pure"].tiers.swebench!.routes.general!.target).toEqual({
       modelName: "opus-4.8",
-      thinkingLevel: "high",
+      thinkingLevel: "xhigh",
     });
     expect(renders["opus-pure"].tiers.swebench!.advisor).toMatchObject({
       enabled: false,

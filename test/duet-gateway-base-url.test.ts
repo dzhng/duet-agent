@@ -49,6 +49,13 @@ describe("getDuetGatewayBaseUrl", () => {
 });
 
 describe("duet-gateway model routing", () => {
+  test("maps GLM xhigh to the gateway's maximum reasoning effort", () => {
+    const model = resolveDuetGatewayModel("zai/glm-5.2");
+
+    expect(model.compat).toMatchObject({ forceAdaptiveThinking: true });
+    expect(model.thinkingLevelMap?.xhigh).toBe("max");
+  });
+
   test("uses the dedicated base directly for anthropic transport models", () => {
     process.env.DUET_GATEWAY_BASE_URL = "https://gateway.example.com/base";
 
