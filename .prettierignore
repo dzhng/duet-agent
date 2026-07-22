@@ -1,3 +1,6 @@
 # Agent skills are vendored from the canonical library (dzhng/skills); keep the
 # whole tree byte-identical to source (incl. scripts/assets) — don't reformat.
 .agents/skills/
+
+# These are byte-format golden files, including one intentional CRLF sample.
+test/fixtures/memory-store/
