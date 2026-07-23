@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { loginWithDeviceFlow } from "../src/lib/login.js";
 import { runLoginCommand } from "../src/cli/login.js";
 import { testIfDocker } from "./helpers/docker-only.js";
@@ -11,25 +11,20 @@ interface RecordedRequest {
   body: unknown;
 }
 
-const LEGACY_WORKSPACE_ENV = ["DUET", "WORKSPACE"].join("_");
-const LEGACY_WORKSPACE_OPTION = ["--", "workspace"].join("");
 const EXPECTED_LOGIN_BODY = {
   capabilities: ["files:read", "files:write", "memory", "sessions", "services", "integrations"],
 };
 
 let originalApiBaseUrl: string | undefined;
-let originalLegacyWorkspace: string | undefined;
 let originalApiKey: string | undefined;
 let originalFetch: typeof fetch;
 let tempRoot: string | undefined;
 
 beforeEach(() => {
   originalApiBaseUrl = process.env.DUET_API_BASE_URL;
-  originalLegacyWorkspace = process.env[LEGACY_WORKSPACE_ENV];
   originalApiKey = process.env.DUET_API_KEY;
   originalFetch = globalThis.fetch;
   delete process.env.DUET_API_BASE_URL;
-  delete process.env[LEGACY_WORKSPACE_ENV];
   delete process.env.DUET_API_KEY;
 });
 
@@ -37,8 +32,6 @@ afterEach(async () => {
   globalThis.fetch = originalFetch;
   if (originalApiBaseUrl === undefined) delete process.env.DUET_API_BASE_URL;
   else process.env.DUET_API_BASE_URL = originalApiBaseUrl;
-  if (originalLegacyWorkspace === undefined) delete process.env[LEGACY_WORKSPACE_ENV];
-  else process.env[LEGACY_WORKSPACE_ENV] = originalLegacyWorkspace;
   if (originalApiKey === undefined) delete process.env.DUET_API_KEY;
   else process.env.DUET_API_KEY = originalApiKey;
   if (tempRoot) {
@@ -140,28 +133,6 @@ describe("loginWithDeviceFlow", () => {
 });
 
 describe("duet login device flow command", () => {
-  test("rejects the removed workspace flag as an unknown option", async () => {
-    const exit = process.exit;
-    let exitCode: number | undefined;
-    const stderr: string[] = [];
-    const consoleErrorSpy = spyOn(console, "error").mockImplementation((message?: unknown) => {
-      stderr.push(String(message ?? ""));
-    });
-    process.exit = ((code?: number) => {
-      exitCode = code ?? 0;
-      throw new Error("__exit__");
-    }) as never;
-
-    try {
-      await expect(runLoginCommand([LEGACY_WORKSPACE_OPTION])).rejects.toThrow("__exit__");
-      expect(exitCode).toBe(1);
-      expect(stderr.join("\n")).toContain(`Unknown login option: ${LEGACY_WORKSPACE_OPTION}`);
-    } finally {
-      process.exit = exit;
-      consoleErrorSpy.mockRestore();
-    }
-  });
-
   testIfDocker("persists the approved DUET_API_KEY for the server-selected workspace", async () => {
     const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-device-login-")));
     const envFile = join(root, ".env");
@@ -186,29 +157,6 @@ describe("duet login device flow command", () => {
       "https://api.test/v1/device/code",
       "https://api.test/v1/device/token",
     ]);
-  });
-
-  testIfDocker("ignores the legacy workspace environment input", async () => {
-    const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-device-login-")));
-    const envFile = join(root, ".env");
-    process.env.DUET_API_BASE_URL = "https://api.test";
-    process.env[LEGACY_WORKSPACE_ENV] = "env-ws";
-    const requests: RecordedRequest[] = [];
-    globalThis.fetch = makeDeviceFetch(requests, [
-      codeResponse(),
-      tokenResponse({
-        status: "approved",
-        access_token: "duet_gt_env",
-        workspace: { slug: "server-ws", name: "Server Workspace" },
-      }),
-    ]);
-
-    await runLoginCommand(["--no-browser"], {
-      envFilePath: envFile,
-    });
-
-    expect(requests[0]!.body).toEqual(EXPECTED_LOGIN_BODY);
-    expect(await readFile(envFile, "utf8")).toBe("DUET_API_KEY=duet_gt_env\n");
   });
 
   testIfDocker("does not persist an approved token without a workspace", async () => {
