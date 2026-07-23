@@ -13,6 +13,7 @@ import {
   integrateInstanceArtifacts,
   retryE2BNonModelRequest,
   retryE2BSandboxCreate,
+  resolveControllerBudgetTotalUsd,
   runBudgetedPool,
   selectE2BInstanceIds,
   selectE2BShards,
@@ -21,6 +22,17 @@ import { buildE2BEnvironmentLock, e2bTemplateName, providerEnvironment } from ".
 import { testIfDocker } from "./helpers/docker-only.js";
 
 describe("SWE-bench E2B execution", () => {
+  test("allows a controller budget top-up without lowering the frozen campaign ceiling", () => {
+    expect(resolveControllerBudgetTotalUsd(200)).toBe(200);
+    expect(resolveControllerBudgetTotalUsd(200, 300)).toBe(300);
+    expect(() => resolveControllerBudgetTotalUsd(200, 199)).toThrow(
+      "may not lower the frozen campaign budget",
+    );
+    expect(() => resolveControllerBudgetTotalUsd(200, Number.POSITIVE_INFINITY)).toThrow(
+      "positive finite number",
+    );
+  });
+
   test("derives an immutable path-safe template name from the full git SHA", () => {
     expect(e2bTemplateName("ABCDEF0123456789abcdef0123456789abcdef01")).toBe(
       "duet-swebench-abcdef012345",

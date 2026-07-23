@@ -53,6 +53,8 @@ interface DriverOptions {
   instanceIds: string[];
   capacityOnly: boolean;
   retryFailed: boolean;
+  /** Controller-only admission ceiling; it may raise, but never lower, the frozen campaign budget. */
+  budgetTotalUsd?: number;
   workerRepositorySha?: string;
 }
 
@@ -103,6 +105,10 @@ async function main(): Promise<void> {
     throw new Error(`Campaign ${spec.id} does not declare the E2B execution backend.`);
   }
   const e2bSpec = spec as E2BCampaignSpec;
+  const controllerBudgetTotalUsd = resolveControllerBudgetTotalUsd(
+    e2bSpec.budget.totalUsd,
+    options.budgetTotalUsd,
+  );
   if (e2bSpec.concurrency !== 1) {
     throw new Error("Each E2B worker must retain campaign concurrency 1 inside its sandbox.");
   }
@@ -137,9 +143,9 @@ async function main(): Promise<void> {
   );
   const initialAccountedUsd =
     e2bSpec.budget.sunkUsd + initialBudget.priorUsd + outstandingReservationUsd;
-  if (initialAccountedUsd > e2bSpec.budget.totalUsd + Number.EPSILON) {
+  if (initialAccountedUsd > controllerBudgetTotalUsd + Number.EPSILON) {
     throw new Error(
-      `Global campaign spend is already $${initialAccountedUsd.toFixed(4)}, above $${e2bSpec.budget.totalUsd.toFixed(2)}.`,
+      `Global campaign spend is already $${initialAccountedUsd.toFixed(4)}, above $${controllerBudgetTotalUsd.toFixed(2)}.`,
     );
   }
 
@@ -161,7 +167,7 @@ async function main(): Promise<void> {
   const pool = await runBudgetedPool(shards, {
     concurrency: e2bSpec.execution.workerConcurrency,
     accountedUsd: initialAccountedUsd,
-    totalUsd: e2bSpec.budget.totalUsd,
+    totalUsd: controllerBudgetTotalUsd,
     reserveUsd: (shard) =>
       calculateShardBudgetReservation(e2bSpec, initialAttempts, shard, options.retryFailed),
     run: async ({ instanceId, trial }) => {
@@ -1131,7 +1137,12 @@ async function loadRepositoryEnvironment(): Promise<void> {
 }
 
 function parseOptions(args: readonly string[]): DriverOptions {
-  const valueFlags = new Set(["--spec", "--instance", "--worker-repository-sha"]);
+  const valueFlags = new Set([
+    "--spec",
+    "--instance",
+    "--budget-total-usd",
+    "--worker-repository-sha",
+  ]);
   const booleanFlags = new Set(["--capacity-only", "--retry-failed"]);
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!;
@@ -1147,8 +1158,37 @@ function parseOptions(args: readonly string[]): DriverOptions {
     instanceIds: repeatedOptionValues(args, "--instance"),
     capacityOnly: args.includes("--capacity-only"),
     retryFailed: args.includes("--retry-failed"),
+    budgetTotalUsd: optionalFiniteNumber(args, "--budget-total-usd"),
     workerRepositorySha: optionValue(args, "--worker-repository-sha"),
   };
+}
+
+/**
+ * Resolve a controller-side budget top-up without changing the frozen worker inputs.
+ *
+ * A top-up only admits more already-declared shards concurrently. The remote campaign
+ * still enforces its committed per-arm limits and writes the original provenance.
+ */
+export function resolveControllerBudgetTotalUsd(
+  frozenTotalUsd: number,
+  requestedTotalUsd?: number,
+): number {
+  if (requestedTotalUsd === undefined) return frozenTotalUsd;
+  if (!Number.isFinite(requestedTotalUsd) || requestedTotalUsd <= 0) {
+    throw new Error("--budget-total-usd must be a positive finite number.");
+  }
+  if (requestedTotalUsd < frozenTotalUsd) {
+    throw new Error("--budget-total-usd may not lower the frozen campaign budget.");
+  }
+  return requestedTotalUsd;
+}
+
+function optionalFiniteNumber(args: readonly string[], flag: string): number | undefined {
+  const value = optionValue(args, flag);
+  if (value === undefined) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) throw new Error(`${flag} must be a finite number.`);
+  return parsed;
 }
 
 async function resolveWorkerRepositorySha(
