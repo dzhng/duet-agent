@@ -8,7 +8,9 @@ The [closed advisor-harness rationale](../../specs/done/swebench-harness/README.
 records the benchmark invariants and tradeoffs. The final Mac comparison is
 preserved in the [compact result record](results/mac-advisor-comparison-20260721.json).
 The corrected 50-task Opus/GLM E2B comparison is preserved separately in its
-[model result record](results/e2b-opus-glm-comparison-20260723.json).
+[model result record](results/e2b-opus-glm-comparison-20260723.json). The
+fixed-panel model and advisor cost comparison lives in the
+[eight-arm E2B result record](results/e2b-eight-arm-cost-panels-20260723.json).
 
 Run its Dockerized TypeScript suite independently:
 
