@@ -9,8 +9,9 @@ records the benchmark invariants and tradeoffs. The final Mac comparison is
 preserved in the [compact result record](results/mac-advisor-comparison-20260721.json).
 The corrected 50-task Opus/GLM E2B comparison is preserved separately in its
 [model result record](results/e2b-opus-glm-comparison-20260723.json). The
-fixed-panel model and advisor cost comparison lives in the
-[eight-arm E2B result record](results/e2b-eight-arm-cost-panels-20260723.json).
+expanded 50-task model and advisor cost comparison lives in the
+[eight-arm E2B result record](results/e2b-eight-arm-cost-50-20260723.json);
+the preceding 27-task checkpoint remains preserved separately.
 
 Run its Dockerized TypeScript suite independently:
 

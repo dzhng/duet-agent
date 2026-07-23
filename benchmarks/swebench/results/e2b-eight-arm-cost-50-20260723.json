@@ -1,0 +1,297 @@
+{
+  "schemaVersion": 1,
+  "dataset": "SWE-bench/SWE-bench_Multilingual",
+  "datasetRevision": "2b7aced941b4873e9cad3e76abbae93f481d1beb",
+  "executionBackend": "e2b",
+  "selection": {
+    "baseManifestPath": "benchmarks/swebench/manifests/multilingual-27-cost-panels-20260723.json",
+    "baseManifestSha256": "f0279153f421295ce43da47cb1537c2e7c2f04acb5c6f0ea87c0d87ab51dbd7e",
+    "extensionManifestPath": "benchmarks/swebench/manifests/multilingual-23-cost-extension-20260723.json",
+    "extensionManifestSha256": "7e19b9c6a3c01eba7532f88ad055a60140958500886e9a66edc2a5e744d78bbb",
+    "tasks": 50,
+    "trialsPerTask": 1,
+    "languageCounts": {
+      "C": 6,
+      "C++": 6,
+      "Go": 6,
+      "Java": 5,
+      "JavaScript": 5,
+      "PHP": 6,
+      "Ruby": 5,
+      "Rust": 6,
+      "TypeScript": 5
+    },
+    "construction": "The frozen 23-task extension is disjoint from the original 27 tasks and brings every language bucket to five or six tasks."
+  },
+  "sharedRouting": {
+    "classifier": {
+      "model": "openai/gpt-5.6-luna",
+      "thinkingLevel": "low"
+    },
+    "visionFallback": "moonshotai/kimi-k3"
+  },
+  "campaignAssertions": {
+    "contextFidelityPassed": true,
+    "pureArmsMadeZeroAdvisorCalls": true,
+    "allCompletedPatchesAdmitted": true
+  },
+  "arms": {
+    "glm-pure": {
+      "executor": "zai/glm-5.2",
+      "executorThinkingLevel": "xhigh",
+      "advisor": null,
+      "advisorCalls": 0,
+      "resolved": 36,
+      "unresolved": 14,
+      "resolveRate": 0.72,
+      "costUsd": 52.18756040000002,
+      "costPerTaskUsd": 1.0437512080000004,
+      "costPerResolvedUsd": 1.449654455555556,
+      "averageResolvedCostUsd": 1.1107935833333336,
+      "averageUnresolvedCostUsd": 0.8713565285714283
+    },
+    "glm-kimi-advisor": {
+      "executor": "zai/glm-5.2",
+      "executorThinkingLevel": "xhigh",
+      "advisor": "moonshotai/kimi-k3",
+      "advisorThinkingLevel": "medium",
+      "advisorCalls": 112,
+      "resolved": 45,
+      "unresolved": 5,
+      "resolveRate": 0.9,
+      "costUsd": 50.566508700000014,
+      "costPerTaskUsd": 1.0113301740000002,
+      "costPerResolvedUsd": 1.1237001933333337,
+      "averageResolvedCostUsd": 0.9484128355555561,
+      "averageUnresolvedCostUsd": 1.5775862200000002
+    },
+    "kimi-pure": {
+      "executor": "moonshotai/kimi-k3",
+      "executorThinkingLevel": "high",
+      "advisor": null,
+      "advisorCalls": 0,
+      "resolved": 43,
+      "unresolved": 7,
+      "resolveRate": 0.86,
+      "costUsd": 29.554849000000008,
+      "costPerTaskUsd": 0.5910969800000001,
+      "costPerResolvedUsd": 0.687322069767442,
+      "averageResolvedCostUsd": 0.5372244139534884,
+      "averageUnresolvedCostUsd": 0.9220284571428573
+    },
+    "kimi-fable-advisor": {
+      "executor": "moonshotai/kimi-k3",
+      "executorThinkingLevel": "high",
+      "advisor": "anthropic/claude-fable-5",
+      "advisorThinkingLevel": "high",
+      "advisorCalls": 102,
+      "resolved": 47,
+      "unresolved": 3,
+      "resolveRate": 0.94,
+      "costUsd": 62.67295660000002,
+      "costPerTaskUsd": 1.2534591320000004,
+      "costPerResolvedUsd": 1.333467161702128,
+      "averageResolvedCostUsd": 1.2283861446808513,
+      "averageUnresolvedCostUsd": 1.6462692666666665
+    },
+    "opus-pure": {
+      "executor": "anthropic/claude-opus-4.8",
+      "executorThinkingLevel": "xhigh",
+      "advisor": null,
+      "advisorCalls": 0,
+      "resolved": 38,
+      "unresolved": 12,
+      "resolveRate": 0.76,
+      "costUsd": 57.91852320000001,
+      "costPerTaskUsd": 1.158370464,
+      "costPerResolvedUsd": 1.524171663157895,
+      "averageResolvedCostUsd": 1.122078260526316,
+      "averageUnresolvedCostUsd": 1.2732957750000002
+    },
+    "sol-fable-advisor": {
+      "executor": "openai/gpt-5.6-sol",
+      "executorThinkingLevel": "xhigh",
+      "advisor": "anthropic/claude-fable-5",
+      "advisorThinkingLevel": "high",
+      "advisorCalls": 154,
+      "resolved": 47,
+      "unresolved": 3,
+      "resolveRate": 0.94,
+      "costUsd": 102.7478995,
+      "costPerTaskUsd": 2.05495799,
+      "costPerResolvedUsd": 2.1861255212765958,
+      "averageResolvedCostUsd": 2.0541005957446807,
+      "averageUnresolvedCostUsd": 2.0683905
+    },
+    "opus-fable-advisor": {
+      "executor": "anthropic/claude-opus-4.8",
+      "executorThinkingLevel": "xhigh",
+      "advisor": "anthropic/claude-fable-5",
+      "advisorThinkingLevel": "high",
+      "advisorCalls": 106,
+      "resolved": 40,
+      "unresolved": 10,
+      "resolveRate": 0.8,
+      "costUsd": 114.50128324999999,
+      "costPerTaskUsd": 2.290025665,
+      "costPerResolvedUsd": 2.8625320812499995,
+      "averageResolvedCostUsd": 2.0095992624999997,
+      "averageUnresolvedCostUsd": 3.4117312749999997
+    },
+    "fable-pure": {
+      "executor": "anthropic/claude-fable-5",
+      "executorThinkingLevel": "high",
+      "advisor": null,
+      "advisorCalls": 0,
+      "resolved": 42,
+      "unresolved": 8,
+      "resolveRate": 0.84,
+      "costUsd": 55.396368,
+      "costPerTaskUsd": 1.1079273600000001,
+      "costPerResolvedUsd": 1.3189611428571428,
+      "averageResolvedCostUsd": 1.0709713095238098,
+      "averageUnresolvedCostUsd": 1.301946625
+    }
+  },
+  "extensionOnly": {
+    "tasks": 23,
+    "arms": {
+      "glm-pure": { "resolved": 16, "costUsd": 22.3622812 },
+      "glm-kimi-advisor": { "resolved": 21, "costUsd": 19.2313368 },
+      "kimi-pure": { "resolved": 21, "costUsd": 11.8491766 },
+      "kimi-fable-advisor": { "resolved": 21, "costUsd": 27.110667999999997 },
+      "opus-pure": { "resolved": 20, "costUsd": 24.2870667 },
+      "sol-fable-advisor": { "resolved": 21, "costUsd": 43.483624500000005 },
+      "opus-fable-advisor": { "resolved": 18, "costUsd": 47.089221249999994 },
+      "fable-pure": { "resolved": 18, "costUsd": 21.416300999999997 }
+    }
+  },
+  "pairedAdvisorOutcomes": {
+    "glm": {
+      "bothResolve": 34,
+      "advisorOnly": [
+        "apache__lucene-12196",
+        "apache__lucene-13301",
+        "astral-sh__ruff-15356",
+        "astral-sh__ruff-15394",
+        "babel__babel-15649",
+        "caddyserver__caddy-5404",
+        "facebook__docusaurus-8927",
+        "fastlane__fastlane-20642",
+        "fluent__fluentd-3640",
+        "php-cs-fixer__php-cs-fixer-7998",
+        "phpoffice__phpspreadsheet-4313"
+      ],
+      "pureOnly": ["caddyserver__caddy-4774", "nushell__nushell-12901"],
+      "neitherResolves": [
+        "facebook__docusaurus-9183",
+        "fastlane__fastlane-19207",
+        "prometheus__prometheus-9248"
+      ]
+    },
+    "kimi": {
+      "bothResolve": 41,
+      "advisorOnly": [
+        "apache__lucene-13301",
+        "astral-sh__ruff-15356",
+        "facebook__docusaurus-9183",
+        "fastlane__fastlane-20642",
+        "php-cs-fixer__php-cs-fixer-7998",
+        "projectlombok__lombok-3594"
+      ],
+      "pureOnly": ["apache__lucene-12196", "fluent__fluentd-3640"],
+      "neitherResolves": ["fastlane__fastlane-19207"]
+    },
+    "opus": {
+      "bothResolve": 35,
+      "advisorOnly": [
+        "caddyserver__caddy-4774",
+        "fastlane__fastlane-20642",
+        "fmtlib__fmt-3729",
+        "phpoffice__phpspreadsheet-4313",
+        "prometheus__prometheus-14861"
+      ],
+      "pureOnly": ["astral-sh__ruff-15356", "facebook__docusaurus-9183", "fluent__fluentd-3640"],
+      "neitherResolves": [
+        "astral-sh__ruff-15394",
+        "caddyserver__caddy-5404",
+        "facebook__docusaurus-8927",
+        "fastlane__fastlane-19207",
+        "jekyll__jekyll-9141",
+        "php-cs-fixer__php-cs-fixer-7998",
+        "prometheus__prometheus-9248"
+      ]
+    }
+  },
+  "advisorRegressionDiagnostics": {
+    "newExtensionPureOnly": {
+      "glm-kimi-advisor/caddyserver__caddy-4774": "The patch applied, but the official fail-to-pass TestCaddyfileAdaptToJSON still failed.",
+      "kimi-fable-advisor/apache__lucene-12196": "The target test passed, but the patch regressed the official pass-to-pass testStaticMethod1.",
+      "kimi-fable-advisor/fluent__fluentd-3640": "The target test passed, but five official pass-to-pass retry tests failed.",
+      "opus-fable-advisor/astral-sh__ruff-15356": "The patch applied, but the official snapshot fail-to-pass test still failed.",
+      "opus-fable-advisor/facebook__docusaurus-9183": "The patch applied, but the official accepts-valid-theme-config fail-to-pass test still failed.",
+      "opus-fable-advisor/fluent__fluentd-3640": "The target test passed, but five official pass-to-pass retry tests failed."
+    },
+    "classification": "All six are scoreable model-output failures. They are not empty patches, patch-application failures, scorer errors, or E2B infrastructure failures."
+  },
+  "cost": {
+    "cleanComparisonUsd": 525.54594865,
+    "cleanRollouts": 400,
+    "authorizedBudgetUsd": 700,
+    "knownDuplicateSpendUsd": 0.3471,
+    "minimumAllInSpendUsd": 525.89304865,
+    "conservativeControllerAccountUsd": 682.26257605,
+    "remainingConservativeBudgetUsd": 17.73742395,
+    "accountingLimitation": "The original 27-task account retains reservations for two terminated duplicate workers. Three E2B control-plane disconnects during the extension left three stale $25 reservations and three stale running-attempt allowances conservatively charged at $5 each. Clean arm metrics use only the latest completed attempt for every configuration and task."
+  },
+  "campaigns": [
+    {
+      "id": "multilingual-27-five-arm-cost-e2b-20260723-v1",
+      "role": "original 27 tasks, five arms",
+      "duetGitSha": "dbfa2344be39ce466a57649ddca9ec33d075c68c",
+      "duetArtifactSha256": "8e33ac5ef2165d24aa8e1c5742d11e44cfa3dcc07ce863e36849c1d074846aa7",
+      "inputHash": "8ccdcd08eb6ff0103bc0caa28a1493bec38a4b4e3a162b83a80196ecd5dace1a",
+      "scoreSummarySha256": "3ea515ec9cb09edc83a4d62bf73e2a60803ced972c6e849e4b9c9a83f394ccbb",
+      "reportSha256": "d4d9994b00bb24478b4c3b50ac11353c0fde6ca4387f2ce8c818c61d30ddbb26"
+    },
+    {
+      "id": "multilingual-27-three-arm-addendum-e2b-20260723-v1",
+      "role": "original 27 tasks, three added arms",
+      "duetGitSha": "9858b61730883effc15ec7f095719dc394d01b49",
+      "duetArtifactSha256": "363e289c589f6e16732ace5a9c8582e01d145dbca45e8bafca262d5156ec5fee",
+      "inputHash": "11af4f611a6b1c77bebf87ff956dea86c697f7c59fd2c2957fa53fdbf1cb1121",
+      "scoreSummarySha256": "f7cbfe3c8fa56208b410bbed522d792d0b51e814ba312cdd0042b00e7f7c73a7",
+      "reportSha256": "ec5644a3516e9845d8e31a7fed1d56cebaa099ef4be593226933b5b5a8299d20"
+    },
+    {
+      "id": "multilingual-23-five-arm-cost-extension-e2b-20260723-v1",
+      "role": "23-task extension, five arms",
+      "duetGitSha": "a6f7036c07ec5878d13cfba58d43421e62001509",
+      "duetArtifactSha256": "ff847ed2c6bf3f2bfdfcd402a709e9643166053bf5f051a612686e6477da4647",
+      "inputHash": "05875f9f2f220a175c9f8037f4a020996eac02fb13fea746390a56cfbf55e5ba",
+      "scoreSummarySha256": "5fe6053fa6f123affa72f1bb2eab6fb8073d3ab54214e4176d825e21f2b31e5d",
+      "reportSha256": "bb702fdb2927855e2ead57de01fb165738f2692f06c18efc39da3c84fad85857"
+    },
+    {
+      "id": "multilingual-23-three-arm-cost-extension-e2b-20260723-v1",
+      "role": "23-task extension, three arms",
+      "duetGitSha": "a6f7036c07ec5878d13cfba58d43421e62001509",
+      "duetArtifactSha256": "ff847ed2c6bf3f2bfdfcd402a709e9643166053bf5f051a612686e6477da4647",
+      "inputHash": "692566b305ae644577d1b37b9dae6795f4060987eaa549785906ab0aba84e103",
+      "scoreSummarySha256": "a09abab0f32e3f04404b2533ff30263f15e74d26ae7f7d7907aaac92e105b5f7",
+      "reportSha256": "e7979e7767d6addb0520c9e8c606a9fb5c33b9327c2a34ba4f2c4b22a58032ff"
+    }
+  ],
+  "interpretation": {
+    "highestResolveRate": ["kimi-fable-advisor", "sol-fable-advisor"],
+    "highestResolved": 47,
+    "bestCostPerResolvedAmongHighestRateUsd": 1.333467161702128,
+    "advisorEffects": {
+      "glm": { "pureResolved": 36, "advisedResolved": 45, "absoluteLift": 9 },
+      "kimi": { "pureResolved": 43, "advisedResolved": 47, "absoluteLift": 4 },
+      "opus": { "pureResolved": 38, "advisedResolved": 40, "absoluteLift": 2 }
+    },
+    "nonRegressionResult": "Advisor arms improved aggregate resolve count for all three paired executors, but the one-trial paired sample contains pure-only regressions: two for GLM, two for Kimi, and three for Opus.",
+    "limitation": "This is one trial on a fixed signal-seeking 50-task sample. Resolve-rate differences of one or two tasks remain within substantial sampling and model stochasticity; this is not a leaderboard estimate."
+  }
+}
