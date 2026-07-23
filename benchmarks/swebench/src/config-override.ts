@@ -11,7 +11,7 @@ export const SWEBENCH_TIER = "swebench";
 /** Model substitutions and advisor treatment for one explicit campaign arm. */
 export interface RenderModelsJsonOptions {
   /** Main coding model used for every benchmark prompt. */
-  executorModel: "glm-5.2" | "kimi-k3" | "opus-4.8";
+  executorModel: "fable-5" | "glm-5.2" | "gpt-5.6-sol" | "kimi-k3" | "opus-4.8";
   /** Reasoning effort sent to the executor for every turn in this campaign arm. */
   executorThinkingLevel: ThinkingLevel;
   /** Advisor retained in both pure and advised renders so OFF changes only availability. */
@@ -54,6 +54,27 @@ export const CAMPAIGN_CONFIGS = {
   "opus-pure": {
     executorModel: "opus-4.8",
     executorThinkingLevel: "xhigh",
+    advisorModel: "fable-5",
+    advisorThinkingLevel: "high",
+    advisorEnabled: false,
+  },
+  "sol-fable-advisor": {
+    executorModel: "gpt-5.6-sol",
+    executorThinkingLevel: "xhigh",
+    advisorModel: "fable-5",
+    advisorThinkingLevel: "high",
+    advisorEnabled: true,
+  },
+  "opus-fable-advisor": {
+    executorModel: "opus-4.8",
+    executorThinkingLevel: "xhigh",
+    advisorModel: "fable-5",
+    advisorThinkingLevel: "high",
+    advisorEnabled: true,
+  },
+  "fable-pure": {
+    executorModel: "fable-5",
+    executorThinkingLevel: "high",
     advisorModel: "fable-5",
     advisorThinkingLevel: "high",
     advisorEnabled: false,

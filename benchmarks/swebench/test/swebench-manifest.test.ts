@@ -289,7 +289,7 @@ describe("SWE-bench manifest", () => {
 });
 
 describe("SWE-bench routing renders", () => {
-  test("materializes five valid custom-tier tables with explicit targets", () => {
+  test("materializes eight valid custom-tier tables with explicit targets", () => {
     const renders = renderCampaignConfigs();
 
     expect(Object.keys(renders)).toEqual(Object.keys(CAMPAIGN_CONFIGS));
@@ -328,6 +328,30 @@ describe("SWE-bench routing renders", () => {
       thinkingLevel: "xhigh",
     });
     expect(renders["opus-pure"].tiers.swebench!.advisor).toMatchObject({
+      enabled: false,
+      target: { modelName: "fable-5", thinkingLevel: "high" },
+    });
+    expect(renders["sol-fable-advisor"].tiers.swebench!.routes.general!.target).toEqual({
+      modelName: "gpt-5.6-sol",
+      thinkingLevel: "xhigh",
+    });
+    expect(renders["sol-fable-advisor"].tiers.swebench!.advisor).toMatchObject({
+      enabled: true,
+      target: { modelName: "fable-5", thinkingLevel: "high" },
+    });
+    expect(renders["opus-fable-advisor"].tiers.swebench!.routes.general!.target).toEqual({
+      modelName: "opus-4.8",
+      thinkingLevel: "xhigh",
+    });
+    expect(renders["opus-fable-advisor"].tiers.swebench!.advisor).toMatchObject({
+      enabled: true,
+      target: { modelName: "fable-5", thinkingLevel: "high" },
+    });
+    expect(renders["fable-pure"].tiers.swebench!.routes.general!.target).toEqual({
+      modelName: "fable-5",
+      thinkingLevel: "high",
+    });
+    expect(renders["fable-pure"].tiers.swebench!.advisor).toMatchObject({
       enabled: false,
       target: { modelName: "fable-5", thinkingLevel: "high" },
     });
