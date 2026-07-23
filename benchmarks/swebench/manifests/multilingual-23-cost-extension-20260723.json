@@ -1,0 +1,146 @@
+{
+  "datasetRevision": "2b7aced941b4873e9cad3e76abbae93f481d1beb",
+  "seed": 20265471,
+  "algorithmVersion": "language-balanced-extension-v1",
+  "excludedInstanceIds": ["fmtlib__fmt-2310"],
+  "entries": [
+    {
+      "instanceId": "apache__lucene-12196",
+      "language": "Java",
+      "repo": "apache/lucene",
+      "baseCommit": "0651d25713dde144df6541663b18accbc93cdc64"
+    },
+    {
+      "instanceId": "astral-sh__ruff-15356",
+      "language": "Rust",
+      "repo": "astral-sh/ruff",
+      "baseCommit": "ee9a912f47e64de13cad0b525a714b46c5e29293"
+    },
+    {
+      "instanceId": "astral-sh__ruff-15394",
+      "language": "Rust",
+      "repo": "astral-sh/ruff",
+      "baseCommit": "73d424ee5e6963d577e196d71c3b19c82e84e612"
+    },
+    {
+      "instanceId": "astral-sh__ruff-15443",
+      "language": "Rust",
+      "repo": "astral-sh/ruff",
+      "baseCommit": "d1666fbbeec27fe534f261f388fbd5891546ffcf"
+    },
+    {
+      "instanceId": "axios__axios-4738",
+      "language": "JavaScript",
+      "repo": "axios/axios",
+      "baseCommit": "9bb016f95e6de871a44f3276fd06562704a0abb0"
+    },
+    {
+      "instanceId": "babel__babel-15649",
+      "language": "TypeScript",
+      "repo": "babel/babel",
+      "baseCommit": "35116224d21e16fb863293f9011d1d6c97ed0bf4"
+    },
+    {
+      "instanceId": "briannesbitt__carbon-2762",
+      "language": "PHP",
+      "repo": "briannesbitt/carbon",
+      "baseCommit": "077657bce453df6992607e5aaa538d957068ae40"
+    },
+    {
+      "instanceId": "briannesbitt__carbon-2813",
+      "language": "PHP",
+      "repo": "briannesbitt/carbon",
+      "baseCommit": "8c019924327fe0251294adb61543981e3d27652c"
+    },
+    {
+      "instanceId": "caddyserver__caddy-4774",
+      "language": "Go",
+      "repo": "caddyserver/caddy",
+      "baseCommit": "f7be0ee10131f25620a2f64af7e3ded43eae2049"
+    },
+    {
+      "instanceId": "caddyserver__caddy-5404",
+      "language": "Go",
+      "repo": "caddyserver/caddy",
+      "baseCommit": "960150bb034dc9a549ee7289b1a4eb4abafeb30a"
+    },
+    {
+      "instanceId": "facebook__docusaurus-9183",
+      "language": "TypeScript",
+      "repo": "facebook/docusaurus",
+      "baseCommit": "b96004e77ebfb23e7349fa495d2177008186bd42"
+    },
+    {
+      "instanceId": "fastlane__fastlane-19765",
+      "language": "Ruby",
+      "repo": "fastlane/fastlane",
+      "baseCommit": "eaf77b0c319da3f18fc256aa79698aa239e58ef3"
+    },
+    {
+      "instanceId": "fluent__fluentd-3640",
+      "language": "Ruby",
+      "repo": "fluent/fluentd",
+      "baseCommit": "8ced42ce86edf5a5c73e009cfd093e6c3fcc7e2d"
+    },
+    {
+      "instanceId": "fmtlib__fmt-2317",
+      "language": "C++",
+      "repo": "fmtlib/fmt",
+      "baseCommit": "ece4b4b33a96db77beccca3957505e689cbc4279"
+    },
+    {
+      "instanceId": "fmtlib__fmt-3248",
+      "language": "C++",
+      "repo": "fmtlib/fmt",
+      "baseCommit": "840ec8569ddb304345f082bb82d733742f431504"
+    },
+    {
+      "instanceId": "fmtlib__fmt-3272",
+      "language": "C++",
+      "repo": "fmtlib/fmt",
+      "baseCommit": "0f42c17d85f26bbbd6a30d71ce8306d371426bfc"
+    },
+    {
+      "instanceId": "gin-gonic__gin-1805",
+      "language": "Go",
+      "repo": "gin-gonic/gin",
+      "baseCommit": "70a0aba3e423246be37462cfdaedd510c26c566e"
+    },
+    {
+      "instanceId": "google__gson-2134",
+      "language": "Java",
+      "repo": "google/gson",
+      "baseCommit": "96ab171eb48dcea94fd9b8f425f65c531e6c3aad"
+    },
+    {
+      "instanceId": "jqlang__jq-2598",
+      "language": "C",
+      "repo": "jqlang/jq",
+      "baseCommit": "4dc2a2fb9df94ec45d107b798173c7db9c695a7f"
+    },
+    {
+      "instanceId": "jqlang__jq-2839",
+      "language": "C",
+      "repo": "jqlang/jq",
+      "baseCommit": "f86566b2631b777c0d0c9a4572eb21146a14829b"
+    },
+    {
+      "instanceId": "laravel__framework-48636",
+      "language": "PHP",
+      "repo": "laravel/framework",
+      "baseCommit": "4a9ae49f3969c4648b5ee000e6692a449e34c2a8"
+    },
+    {
+      "instanceId": "preactjs__preact-3689",
+      "language": "JavaScript",
+      "repo": "preactjs/preact",
+      "baseCommit": "9457b221fdacd1052ffdb385918e1bab4b10e833"
+    },
+    {
+      "instanceId": "redis__redis-10068",
+      "language": "C",
+      "repo": "redis/redis",
+      "baseCommit": "e88f6acb94c77c9a5b81f0b2a8bd132b2a5c3d3c"
+    }
+  ]
+}

@@ -269,6 +269,78 @@ describe("SWE-bench manifest", () => {
     });
   });
 
+  test("extends the cost panel to fifty disjoint language-balanced tasks", async () => {
+    const panel = JSON.parse(
+      await readFile(
+        join(import.meta.dir, "..", "manifests", "multilingual-27-cost-panels-20260723.json"),
+        "utf8",
+      ),
+    ) as InstanceManifest;
+    const extension = JSON.parse(
+      await readFile(
+        join(import.meta.dir, "..", "manifests", "multilingual-23-cost-extension-20260723.json"),
+        "utf8",
+      ),
+    ) as InstanceManifest;
+    const freshFifty = JSON.parse(
+      await readFile(
+        join(import.meta.dir, "..", "manifests", "multilingual-50-fresh-20265471.json"),
+        "utf8",
+      ),
+    ) as InstanceManifest;
+    const panelIds = new Set(panel.entries.map((entry) => entry.instanceId));
+    const combined = [...panel.entries, ...extension.entries];
+    const extensionIds = extension.entries.map((entry) => entry.instanceId);
+
+    expect(extensionIds).toEqual([
+      "apache__lucene-12196",
+      "astral-sh__ruff-15356",
+      "astral-sh__ruff-15394",
+      "astral-sh__ruff-15443",
+      "axios__axios-4738",
+      "babel__babel-15649",
+      "briannesbitt__carbon-2762",
+      "briannesbitt__carbon-2813",
+      "caddyserver__caddy-4774",
+      "caddyserver__caddy-5404",
+      "facebook__docusaurus-9183",
+      "fastlane__fastlane-19765",
+      "fluent__fluentd-3640",
+      "fmtlib__fmt-2317",
+      "fmtlib__fmt-3248",
+      "fmtlib__fmt-3272",
+      "gin-gonic__gin-1805",
+      "google__gson-2134",
+      "jqlang__jq-2598",
+      "jqlang__jq-2839",
+      "laravel__framework-48636",
+      "preactjs__preact-3689",
+      "redis__redis-10068",
+    ]);
+    expect(extension.entries).toEqual(
+      freshFifty.entries.filter((entry) => extensionIds.includes(entry.instanceId)),
+    );
+    expect(extension.entries.filter((entry) => panelIds.has(entry.instanceId))).toEqual([]);
+    expect(
+      Object.fromEntries(
+        LANGUAGES.map((language) => [
+          language,
+          combined.filter((entry) => entry.language === language).length,
+        ]),
+      ),
+    ).toEqual({
+      C: 6,
+      "C++": 6,
+      Go: 6,
+      Java: 5,
+      JavaScript: 5,
+      TypeScript: 5,
+      PHP: 6,
+      Ruby: 5,
+      Rust: 6,
+    });
+  });
+
   test("commits a pilot subset that matches its recorded selection seed", async () => {
     const manifest = JSON.parse(
       await readFile(join(import.meta.dir, "..", "manifests", "multilingual-30.json"), "utf8"),
