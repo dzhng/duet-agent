@@ -1,9 +1,10 @@
 import { afterEach, describe, expect } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { loadPrebuiltDuetArtifact } from "../src/packaging.js";
+import type { CommandRunner } from "../src/container.js";
+import { loadPrebuiltDuetArtifact, prepareDuetArtifact } from "../src/packaging.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let root: string | undefined;
@@ -14,6 +15,71 @@ afterEach(async () => {
 });
 
 describe("SWE-bench Duet packaging", () => {
+  testIfDocker("carries declared dependency patches into the isolated Linux build", async () => {
+    root = await mkdtemp(join(tmpdir(), "duet-swebench-package-"));
+    const repoRoot = join(root, "repo");
+    const outputDir = join(root, "output");
+    const patchName = "@earendil-works%2Fpi-ai@0.79.10.patch";
+    await mkdir(repoRoot);
+    await Promise.all([
+      writeFile(
+        join(repoRoot, "package.json"),
+        `${JSON.stringify({
+          patchedDependencies: {
+            "@earendil-works/pi-ai@0.79.10": `patches/${patchName}`,
+          },
+        })}\n`,
+      ),
+      writeFile(join(repoRoot, "bun.lock"), ""),
+      writeFile(join(repoRoot, "tsconfig.json"), "{}\n"),
+      mkdir(join(repoRoot, "src"), { recursive: true }),
+      mkdir(join(repoRoot, "patches"), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(join(repoRoot, "src", "cli-entry.ts"), ""),
+      writeFile(join(repoRoot, "patches", patchName), "dependency patch"),
+    ]);
+
+    const commands: CommandRunner = {
+      async run(argv, options) {
+        const cwd = options?.cwd;
+        if (!cwd) throw new Error("Packaging command must have a working directory.");
+        if (argv[1] === "install") {
+          try {
+            await access(join(cwd, "patches", patchName));
+          } catch {
+            return { stdout: "", stderr: "declared patch is missing", exitCode: 1 };
+          }
+          const pgliteDir = join(cwd, "node_modules", "@electric-sql", "pglite", "dist");
+          await mkdir(pgliteDir, { recursive: true });
+          await Promise.all(
+            ["pglite.data", "pglite.wasm", "initdb.wasm", "vector.tar.gz"].map((name) =>
+              writeFile(join(pgliteDir, name), name),
+            ),
+          );
+        } else if (argv[1] === "build") {
+          const outputIndex = argv.indexOf("--outfile");
+          const output = argv[outputIndex + 1];
+          if (!output) throw new Error("Packaging build must declare its output.");
+          await writeFile(output, "compiled duet");
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+      stream() {
+        throw new Error("Packaging does not stream commands.");
+      },
+    };
+
+    const artifact = await prepareDuetArtifact({ repoRoot, outputDir, commands });
+    expect(artifact.localPath).toBe(join(outputDir, "duet-linux-x64"));
+    expect(artifact.runtimeAssets.map((asset) => asset.name)).toEqual([
+      "pglite.data",
+      "pglite.wasm",
+      "initdb.wasm",
+      "vector.tar.gz",
+    ]);
+  });
+
   testIfDocker("loads the exact prebuilt worker artifact without rebuilding it", async () => {
     root = await mkdtemp(join(tmpdir(), "duet-swebench-package-"));
     const path = join(root, "duet-linux-x64");

@@ -28,7 +28,7 @@ export interface DuetArtifact {
 }
 
 export interface PrepareDuetArtifactOptions {
-  /** Repository root containing package.json, bun.lock, and src/. */
+  /** Repository root containing package.json, bun.lock, patches/, and src/. */
   repoRoot: string;
   /** Durable host directory for the resulting binary. */
   outputDir: string;
@@ -72,6 +72,7 @@ export async function prepareDuetArtifact(
       cp(join(options.repoRoot, "package.json"), join(buildRoot, "package.json")),
       cp(join(options.repoRoot, "bun.lock"), join(buildRoot, "bun.lock")),
       cp(join(options.repoRoot, "tsconfig.json"), join(buildRoot, "tsconfig.json")),
+      cp(join(options.repoRoot, "patches"), join(buildRoot, "patches"), { recursive: true }),
       cp(join(options.repoRoot, "src"), join(buildRoot, "src"), { recursive: true }),
     ]);
     await mkdir(outputDir, { recursive: true });
