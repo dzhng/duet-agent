@@ -463,11 +463,14 @@ describe("TurnRunner tools", () => {
       runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
       const advisor = runner.advisorTool();
       if (!advisor) throw new Error("ask_advisor tool missing");
-      const result = await advisor.execute("advisor-unavailable", {});
-      expect(result.details).toEqual({ type: "ask_advisor", unavailable: true });
-      expect(result.content[0]).toEqual(
-        expect.objectContaining({ text: expect.stringContaining("unavailable") }),
-      );
+      const result = await advisor.execute("advisor-luna", {});
+      expect(result.details).toEqual({
+        type: "ask_advisor",
+        model: "openai/gpt-5.6-luna",
+        context: expect.objectContaining({ truncated: false }),
+      });
+      expect(result.content).toEqual([{ type: "text", text: "Proceed with the new tier." }]);
+      expect(runner.lastAdvisorInput?.modelName).toBe("openai/gpt-5.6-luna");
       await runner.dispose();
     } finally {
       await rm(cwd, { recursive: true, force: true });
