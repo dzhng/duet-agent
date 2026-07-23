@@ -77,12 +77,10 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<RouterProviderName, string> = {
 const MEMORY_MODEL_BY_PROVIDER: Record<RouterProviderName, string> = {
   "duet-gateway": DEFAULT_CLI_MEMORY_MODEL,
   "vercel-ai-gateway": DEFAULT_CLI_MEMORY_MODEL,
-  // gpt-5.6-luna has no OpenRouter route: pi-ai's catalog does not ship it, so
-  // `openrouter:openai/gpt-5.6-luna` resolves to undefined (unlike the
-  // duet/vercel gateway routes, which synthesize an openai-responses
-  // passthrough). Keep OPENROUTER_API_KEY-only users on haiku-4.5, which pi-ai
-  // ships directly, until pi-ai adds luna.
-  openrouter: "haiku-4.5",
+  // Memory stays on luna for every router. OpenRouter serves luna even
+  // though pi-ai's catalog lags — resolution clones a shipped OpenRouter
+  // sibling (MISSING_MODEL_CLONES in duet-gateway.ts).
+  openrouter: DEFAULT_CLI_MEMORY_MODEL,
 };
 
 const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
@@ -173,17 +171,18 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     // through the duet and vercel gateways under `openai/gpt-5.6-luna`, both of
     // which synthesize an openai-responses passthrough for it (the duet path via
     // `resolveDuetGatewayUpstream`, the vercel path via `resolveMissingModel` in
-    // duet-gateway.ts) so its low reasoning effort survives to the wire. pi-ai's
-    // catalog does not ship luna, so the `openrouter:openai/gpt-5.6-luna` route
-    // would resolve to an undefined model; it is intentionally omitted until
-    // pi-ai adds it, and OPENROUTER-only users stay on haiku-4.5 (see
-    // MEMORY_MODEL_BY_PROVIDER).
+    // duet-gateway.ts) so its low reasoning effort survives to the wire. The
+    // OpenRouter route is served live but absent from pi-ai's catalog, so it
+    // resolves through the openrouter MISSING_MODEL_CLONES entry.
     family: "luna",
     shorthand: "gpt-5.6-luna",
     aliases: ["openai/gpt-5.6-luna", "openai/gpt-5-6-luna"],
     modelsByProvider: {
       "duet-gateway": "openai/gpt-5.6-luna",
       "vercel-ai-gateway": "openai/gpt-5.6-luna",
+      // OpenRouter serves luna; pi-ai's catalog lags, so resolution clones a
+      // shipped OpenRouter sibling (MISSING_MODEL_CLONES in duet-gateway.ts).
+      openrouter: "openai/gpt-5.6-luna",
       "openai-codex": "gpt-5.6-luna",
     },
   },

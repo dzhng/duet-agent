@@ -7,7 +7,10 @@ import {
   resolveFamilyShorthand,
   type FamilyName,
   type RouterProviderName,
+  getProviderMemoryModel,
+  DEFAULT_CLI_MEMORY_MODEL,
 } from "../src/model-resolution/catalog.js";
+import { resolveModelName } from "../src/model-resolution/resolver.js";
 
 interface FamilyCase {
   family: FamilyName;
@@ -75,6 +78,7 @@ const familyCases: readonly FamilyCase[] = [
     modelsByProvider: {
       "duet-gateway": "openai/gpt-5.6-luna",
       "vercel-ai-gateway": "openai/gpt-5.6-luna",
+      openrouter: "openai/gpt-5.6-luna",
     },
   },
   {
@@ -178,4 +182,12 @@ describe("catalog family shorthands", () => {
       expect(getModelCandidates(deletedName), deletedName).toEqual([]);
     }
   });
+});
+
+test("openrouter memory model resolves to a defined luna spec with real cost", () => {
+  const resolution = resolveModelName("openrouter:openai/gpt-5.6-luna");
+  expect(resolution.id).toBe("openai/gpt-5.6-luna");
+  expect(resolution.provider).toBe("openrouter");
+  expect(resolution.cost.input).toBeGreaterThan(0);
+  expect(getProviderMemoryModel("openrouter")).toBe(DEFAULT_CLI_MEMORY_MODEL);
 });

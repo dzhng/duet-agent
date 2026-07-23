@@ -293,10 +293,8 @@ describe("CLI model inference", () => {
       source: "default",
       routed: true,
     });
-    // gpt-5.6-luna has no OpenRouter route, so OpenRouter-only users fall back
-    // to haiku-4.5 for memory (see MEMORY_MODEL_BY_PROVIDER).
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "haiku-4.5",
+      modelName: "gpt-5.6-luna",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
@@ -372,7 +370,7 @@ describe("CLI model inference", () => {
     expect(resolveProviderShorthand("bogus")).toBeUndefined();
 
     expect(pinnedDefaultModel("openrouter")).toBe("openrouter:anthropic/claude-opus-4.8");
-    expect(pinnedMemoryModel("openrouter")).toBe("openrouter:anthropic/claude-haiku-4.5");
+    expect(pinnedMemoryModel("openrouter")).toBe("openrouter:openai/gpt-5.6-luna");
     expect(pinnedDefaultModel("duet-gateway")).toBe("duet-gateway:anthropic/claude-opus-4.8");
   });
 
@@ -666,7 +664,7 @@ describe("CLI model inference", () => {
 
     expect(config).toEqual({
       model: "frontier",
-      memoryModel: "haiku-4.5",
+      memoryModel: "gpt-5.6-luna",
       memoryDbPath: false,
       memoryStores: false,
       cwd: "/repo",
@@ -679,7 +677,7 @@ describe("CLI model inference", () => {
       routed: true,
     });
     expect(memoryModelResolution).toEqual({
-      modelName: "haiku-4.5",
+      modelName: "gpt-5.6-luna",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,

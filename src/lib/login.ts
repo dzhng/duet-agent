@@ -1,11 +1,21 @@
 import { spawn } from "node:child_process";
 import { resolveDuetApiBaseUrl } from "./duet-api-url.js";
 
+// Deliberately duplicated from LOGIN_CAPABILITIES in duet's @repo/contract.
+const LOGIN_CAPABILITIES = [
+  "files:read",
+  "files:write",
+  "memory",
+  "sessions",
+  "services",
+  "integrations",
+] as const;
+
 /**
  * Device-code login bootstrap for the duet CLI.
  *
- * 1. Request a device code from `POST <api>/v1/device/code` with the selected
- *    workspace-scoped AI capability.
+ * 1. Request a device code from `POST <api>/v1/device/code` with the CLI
+ *    capability set.
  * 2. Print the server-supplied user code and verification URI, opening the URI
  *    in a browser unless `--no-browser` was set.
  * 3. Poll `POST <api>/v1/device/token` at the server interval until the user
@@ -20,12 +30,6 @@ export interface LoginResult {
 }
 
 export interface LoginOptions {
-  /**
-   * Workspace slug used to request a one-workspace token. The CLI requires it
-   * before starting login because every generated `DUET_API_KEY` is scoped to
-   * exactly one workspace.
-   */
-  workspaceSlug: string;
   /** Override the Duet API base URL; defaults to `DUET_API_BASE_URL` or production. */
   apiBaseUrl?: string;
   /** Print the verification URL instead of opening a browser. */
@@ -53,8 +57,6 @@ interface DeviceTokenResponse {
   access_token?: string;
   interval?: number;
   workspace?: { slug?: string; name?: string };
-  workspace_slug?: string;
-  workspace_name?: string;
 }
 
 export async function loginWithDeviceFlow(options: LoginOptions): Promise<LoginResult> {
@@ -65,7 +67,7 @@ export async function loginWithDeviceFlow(options: LoginOptions): Promise<LoginR
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
 
   const code = await postJson<DeviceCodeResponse>(fetchFn, `${apiBaseUrl}/v1/device/code`, {
-    scopes: [`ws:${options.workspaceSlug}:ai`],
+    capabilities: LOGIN_CAPABILITIES,
   });
 
   log(`User code: ${code.user_code}`);
@@ -88,15 +90,20 @@ export async function loginWithDeviceFlow(options: LoginOptions): Promise<LoginR
     });
 
     if (token.status === "approved") {
-      if (typeof token.access_token !== "string" || !token.access_token) {
+      if (
+        typeof token.access_token !== "string" ||
+        !token.access_token ||
+        typeof token.workspace?.slug !== "string" ||
+        !token.workspace.slug ||
+        typeof token.workspace.name !== "string" ||
+        !token.workspace.name
+      ) {
         throw new Error("Device token response was malformed.");
       }
-      const workspaceSlug = token.workspace?.slug ?? token.workspace_slug ?? options.workspaceSlug;
-      const workspaceName = token.workspace?.name ?? token.workspace_name ?? workspaceSlug;
       return {
         apiKey: token.access_token,
-        workspaceSlug,
-        workspaceName,
+        workspaceSlug: token.workspace.slug,
+        workspaceName: token.workspace.name,
       };
     }
 

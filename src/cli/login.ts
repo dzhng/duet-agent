@@ -1,12 +1,6 @@
 import { loginWithDeviceFlow } from "../lib/login.js";
 import { printLoginHelp } from "./help.js";
-import {
-  defaultDuetEnvFilePath,
-  fail,
-  mergeEnvEntries,
-  resolveUserPath,
-  usageError,
-} from "./shared.js";
+import { defaultDuetEnvFilePath, fail, mergeEnvEntries, resolveUserPath } from "./shared.js";
 
 export interface LoginCommandIO {
   cwd?: string;
@@ -16,14 +10,13 @@ export interface LoginCommandIO {
 /**
  * Run `duet login`.
  *
- * Starts the Duet device flow for a workspace-scoped API key and persists the
- * returned `DUET_API_KEY` to the shared env file.
+ * Starts the Duet device flow and persists the returned `DUET_API_KEY` to the
+ * shared env file.
  */
 export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): Promise<void> {
   const cwd = io.cwd ?? process.cwd();
   let envFilePathOverride: string | undefined = io.envFilePath;
   let noBrowser = false;
-  let workspaceSlug: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -37,10 +30,6 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
       case "--skip-skill-sync":
         // Deprecated no-op; tolerated so scripts that pass it do not break.
         break;
-      case "--workspace":
-        if (!args[i + 1] || args[i + 1]?.startsWith("-")) fail(`Missing value for ${args[i]}`);
-        workspaceSlug = args[++i]!;
-        break;
       case "--help":
       case "-h":
         printLoginHelp();
@@ -50,18 +39,11 @@ export async function runLoginCommand(args: string[], io: LoginCommandIO = {}): 
     }
   }
 
-  workspaceSlug = workspaceSlug?.trim() || process.env.DUET_WORKSPACE?.trim();
-  if (!workspaceSlug) {
-    usageError(
-      "Missing required workspace. Pass `duet login --workspace <slug>` or set DUET_WORKSPACE; login creates one DUET_API_KEY scoped to one workspace.",
-    );
-  }
-
   const targetEnvFile = envFilePathOverride
     ? resolveUserPath(envFilePathOverride, cwd)
     : defaultDuetEnvFilePath();
 
-  const result = await loginWithDeviceFlow({ noBrowser, workspaceSlug });
+  const result = await loginWithDeviceFlow({ noBrowser });
 
   await mergeEnvEntries(targetEnvFile, new Map([["DUET_API_KEY", result.apiKey]]));
   console.error(

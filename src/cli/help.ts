@@ -14,7 +14,7 @@ duet — An opinionated full-stack agent runner
 
 USAGE
   duet [options] [prompt]
-  duet login --workspace <slug> [--no-browser]
+  duet login [--no-browser]
   duet connect [--status [--json] | --disconnect <provider>]
   duet env [--env-file <path>] [--import [path]|--keys]
   duet skills [--workdir <path>]
@@ -25,7 +25,7 @@ USAGE
   echo "prompt" | duet
 
 COMMANDS
-  login                    Sign in via device flow; saves a workspace-scoped DUET_API_KEY (recommended)
+  login                    Sign in via device flow; saves a DUET_API_KEY (recommended)
   connect                  Show or remove connected ChatGPT and GitHub Copilot subscriptions
   env                      Manually create or update the shared duet env file with provider API keys
   skills                   List installed skills + collisions as JSON
@@ -94,7 +94,7 @@ EXAMPLES
   duet --env-file ~/.config/duet/env "review this repo"
   duet --workdir ./my-project "refactor the auth module"
   duet --resume session_abc123 --workdir ./my-project
-  duet login --workspace acme
+  duet login
   duet env
   duet memory
   duet model -m openai/gpt-5.6-sol "write a haiku about gateways"
@@ -110,14 +110,13 @@ export function printLoginHelp(): void {
 duet login — Sign in via device flow
 
 USAGE
-  duet login --workspace <slug> [--env-file <path>] [--no-browser]
+  duet login [--env-file <path>] [--no-browser]
 
-Requests a workspace-scoped device code, prints the user code and verification
-URL, waits for approval, then writes the workspace's DUET_API_KEY to the shared
-env file.
+Requests a device code, prints the user code and verification URL, waits for
+approval, then writes the selected workspace's DUET_API_KEY to the shared env
+file. You choose the workspace in the browser during approval.
 
 OPTIONS
-  --workspace <slug>       Workspace slug for the one-workspace API key (or DUET_WORKSPACE)
   --env-file <path>        Env file to write the API key to (default: ${DEFAULT_DUET_ENV_FILE})
   --no-browser             Print the verification URL instead of opening a browser
   -h, --help               Show this help

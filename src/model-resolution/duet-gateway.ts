@@ -235,6 +235,13 @@ const MISSING_MODEL_CLONES: Record<
   ],
   openrouter: [
     {
+      // OpenRouter serves gpt-5.6-luna; pi-ai's catalog just hasn't shipped
+      // the route (David, 2026-07-24). Drop once it does.
+      from: "openai/gpt-5.5",
+      to: "openai/gpt-5.6-luna",
+      overrides: OPENAI_GATEWAY_MODEL_OVERRIDES["openai/gpt-5.6-luna"],
+    },
+    {
       from: "moonshotai/kimi-k2.6",
       to: "moonshotai/kimi-k3",
       overrides: KIMI_K3_CAPABILITIES,

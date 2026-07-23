@@ -441,7 +441,9 @@ The CLI also prints the observation content to stdout, so it's pipeable: `duet t
 <details>
 <summary><b>CLI Login</b></summary>
 
-`duet login` is the recommended setup path. It opens a browser to sign in and writes `DUET_API_KEY` for the selected org to `~/.duet/.env`.
+`duet login` is the recommended setup path. It opens a browser, where you choose
+the workspace during approval, then writes that workspace's `DUET_API_KEY` to
+`~/.duet/.env`.
 
 That single `DUET_API_KEY` is your access token to the Duet AI Gateway: frontier language models (Claude, GPT, Gemini), image generation (GPT Image 2), video generation (Seedance), and the Firecrawl-powered web scraping and search skills, all behind one key.
 
