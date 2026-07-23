@@ -66,14 +66,14 @@ export function createSystemPromptWithAppendedLayers(input: {
  * (agent-state) system prompt.
  *
  * A state agent is created in `agent` mode and inherits the host's full
- * `systemInstructions` persona — which, in production, is the Duet
- * chat-assistant identity ("respond to the user's latest message in this
- * thread; if there is no new message, don't invent work"). Nothing else in
- * the base prompt tells the sub-agent it is *not* a live chat assistant, so
- * when its task involves empty threads, missing messages, or repro fixtures
- * about absent user input, the sub-agent can stop treating that material as
- * its *subject* and start treating it as its *own* situation. It then flips
- * into chat-agent mode, hunts for a "missing" user message, and gives up with
+ * `systemInstructions` layer — in production, the Duet gateway's developer
+ * base prompt (passed via `--system-prompt`), which frames the agent as a
+ * conversational assistant inside the Duet product. Nothing else in the base
+ * prompt tells the sub-agent it is *not* a live chat assistant, so when its
+ * task involves empty threads, missing messages, or repro fixtures about
+ * absent user input, the sub-agent can stop treating that material as its
+ * *subject* and start treating it as its *own* situation. It then flips into
+ * chat-agent mode, hunts for a "missing" user message, and gives up with
  * "I don't see a new message to act on" instead of finishing its task — and a
  * parent that believes that report can cancel the whole relay.
  *
@@ -81,7 +81,7 @@ export function createSystemPromptWithAppendedLayers(input: {
  * the prompt it was handed, there is no live thread to service, and any
  * empty-/missing-message material it sees is data to operate on, never a
  * reason to stand down. It is placed *before* `systemInstructions` so the
- * worker identity is the sub-agent's primary role and the inherited chat
+ * worker identity is the sub-agent's primary role and the inherited product
  * persona reads as secondary context, not the top-level instruction.
  */
 export function createStateAgentSystemPromptLayer(context?: {
