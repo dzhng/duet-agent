@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { Agent } from "@earendil-works/pi-agent-core";
 import {
   createAssistantMessageEventStream,
@@ -9,6 +9,7 @@ import {
 import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { waitFor } from "./helpers/async.js";
+import { setConnectedTransportSnapshotForTest } from "../src/cli/shared.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 
 const previousDuetKey = process.env.DUET_API_KEY;
@@ -106,6 +107,17 @@ class FallbackRunner extends TurnRunner {
 }
 
 describe("connected-provider runtime fallback", () => {
+  beforeEach(() => {
+    // Pin the process-global snapshot: all routers configured, so the
+    // fallback deterministically selects duet-gateway regardless of which
+    // test file loaded the real snapshot first or what env keys exist.
+    setConnectedTransportSnapshotForTest({
+      connections: [],
+      configuredRouters: ["duet-gateway", "vercel-ai-gateway", "openrouter"],
+    });
+  });
+  afterEach(() => setConnectedTransportSnapshotForTest());
+
   test("emits exactly one system event, reuses the user message, and completes on fallback", async () => {
     const runner = new FallbackRunner();
     const events: TurnEvent[] = [];
