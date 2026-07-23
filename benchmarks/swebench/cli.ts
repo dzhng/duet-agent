@@ -80,16 +80,28 @@ async function writeManifest(args: string[]): Promise<void> {
     throw new Error("--seed must be an unsigned 32-bit integer.");
   }
   const outputPath = outputValue ? resolve(REPO_ROOT, outputValue) : MANIFEST_PATH;
-  const snapshot = await fetchDataset({ expectedRevision: PINNED_DATASET_REVISION });
+  const snapshot = await readPinnedDatasetSnapshot();
   const manifest = selectManifest(snapshot, {
     seed,
     size,
     excludedInstanceIds: Object.keys(CAMPAIGN_GOLD_EXCLUSIONS),
   });
-  await writeDatasetCache(DATASET_SNAPSHOT_PATH, snapshot);
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, serializeManifest(manifest));
   console.log(`Wrote ${manifest.entries.length} instances to ${outputPath}`);
+}
+
+/** Load the immutable dataset input used by manifest generation and paid campaigns. */
+async function readPinnedDatasetSnapshot(): Promise<Awaited<ReturnType<typeof fetchDataset>>> {
+  const snapshot = JSON.parse(await readFile(DATASET_SNAPSHOT_PATH, "utf8")) as Awaited<
+    ReturnType<typeof fetchDataset>
+  >;
+  if (snapshot.datasetRevision !== PINNED_DATASET_REVISION) {
+    throw new Error(
+      `Dataset snapshot revision ${snapshot.datasetRevision} does not match ${PINNED_DATASET_REVISION}.`,
+    );
+  }
+  return snapshot;
 }
 
 async function showManifest(): Promise<void> {

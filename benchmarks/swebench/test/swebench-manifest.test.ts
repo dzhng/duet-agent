@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 import {
   CAMPAIGN_CONFIGS,
   renderCampaignConfigs,
   serializeModelsJson,
 } from "../src/config-override.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 import { PINNED_DATASET_REVISION } from "../src/fetch-dataset.js";
 import {
   CAMPAIGN_GOLD_EXCLUSIONS,
@@ -50,6 +52,60 @@ function changedPaths(left: unknown, right: unknown, path = ""): string[] {
 }
 
 describe("SWE-bench manifest", () => {
+  testIfDocker(
+    "materializes a manifest from the frozen snapshot without a live dataset",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "duet-swebench-manifest-"));
+      const outputPath = join(root, "manifest.json");
+      const repoRoot = resolve(import.meta.dir, "..", "..", "..");
+      try {
+        const child = Bun.spawn(
+          [
+            process.execPath,
+            "benchmarks/swebench/cli.ts",
+            "manifest",
+            "update",
+            "--size",
+            "9",
+            "--seed",
+            "123",
+            "--output",
+            outputPath,
+          ],
+          {
+            cwd: repoRoot,
+            env: { ...process.env, HTTPS_PROXY: "http://127.0.0.1:1" },
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        );
+        const [exitCode, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stderr).text(),
+        ]);
+
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        const manifest = JSON.parse(await readFile(outputPath, "utf8")) as InstanceManifest;
+        expect(manifest.datasetRevision).toBe(PINNED_DATASET_REVISION);
+        expect(manifest.entries.map((entry) => entry.instanceId)).toEqual([
+          "babel__babel-15649",
+          "fluent__fluentd-4598",
+          "fmtlib__fmt-3863",
+          "laravel__framework-53949",
+          "preactjs__preact-3763",
+          "projectlombok__lombok-3312",
+          "prometheus__prometheus-13845",
+          "redis__redis-12472",
+          "sharkdp__bat-2835",
+        ]);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   test("ships the exact pinned dataset snapshot used by the fresh fifty-task manifest", async () => {
     const manifest = JSON.parse(
       await readFile(
