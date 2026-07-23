@@ -24,7 +24,7 @@
   },
   "classifier": {
     "target": {
-      "modelName": "gpt-5.6-luna",
+      "modelName": "luna",
       "thinkingLevel": "low"
     },
     "everySteps": 5,

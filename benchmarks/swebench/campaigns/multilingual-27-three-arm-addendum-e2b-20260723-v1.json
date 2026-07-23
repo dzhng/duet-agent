@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "multilingual-27-three-arm-addendum-e2b-20260723-v1",
+  "manifestPath": "benchmarks/swebench/manifests/multilingual-27-cost-panels-20260723.json",
+  "configs": ["sol-fable-advisor", "opus-fable-advisor", "fable-pure"],
+  "trials": 1,
+  "concurrency": 1,
+  "armOrderSeed": 20260729,
+  "limits": {
+    "costUsd": 5,
+    "wallClockMs": 3600000,
+    "interruptGraceMs": 90000,
+    "patchBytes": 33554432
+  },
+  "budget": {
+    "totalUsd": 300,
+    "sunkUsd": 0
+  },
+  "execution": {
+    "backend": "e2b",
+    "workerConcurrency": 16,
+    "workerCpuCount": 8,
+    "workerMemoryMb": 16384,
+    "workerTimeoutMs": 21600000
+  }
+}

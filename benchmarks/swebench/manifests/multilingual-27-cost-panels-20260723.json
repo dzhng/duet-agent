@@ -1,0 +1,170 @@
+{
+  "datasetRevision": "2b7aced941b4873e9cad3e76abbae93f481d1beb",
+  "seed": 20261102,
+  "algorithmVersion": "language-stratified-v2",
+  "excludedInstanceIds": ["fmtlib__fmt-2310"],
+  "entries": [
+    {
+      "instanceId": "apache__lucene-13301",
+      "language": "Java",
+      "repo": "apache/lucene",
+      "baseCommit": "0345fcabb3ceb71fb39c1aa77502bae220f259ca"
+    },
+    {
+      "instanceId": "axios__axios-5085",
+      "language": "JavaScript",
+      "repo": "axios/axios",
+      "baseCommit": "85740c3e7a1fa48346dfcbd4497f463ccb1c1b05"
+    },
+    {
+      "instanceId": "burntsushi__ripgrep-2576",
+      "language": "Rust",
+      "repo": "burntsushi/ripgrep",
+      "baseCommit": "fed4fea217abbc502f2e823465de903c8f2b623d"
+    },
+    {
+      "instanceId": "facebook__docusaurus-10309",
+      "language": "TypeScript",
+      "repo": "facebook/docusaurus",
+      "baseCommit": "5e9e1d051b2217b95498ecbc10f7e33f64e7a4d3"
+    },
+    {
+      "instanceId": "facebook__docusaurus-8927",
+      "language": "TypeScript",
+      "repo": "facebook/docusaurus",
+      "baseCommit": "41f1c1e3c26ad1e24acd3306077e2534dd8fa0db"
+    },
+    {
+      "instanceId": "fastlane__fastlane-19207",
+      "language": "Ruby",
+      "repo": "fastlane/fastlane",
+      "baseCommit": "eadd030370cc62807c22fbb1af3663e98e293f8c"
+    },
+    {
+      "instanceId": "fastlane__fastlane-20642",
+      "language": "Ruby",
+      "repo": "fastlane/fastlane",
+      "baseCommit": "950bb820237d52e15690408083e328f739ac0ef3"
+    },
+    {
+      "instanceId": "fmtlib__fmt-2457",
+      "language": "C++",
+      "repo": "fmtlib/fmt",
+      "baseCommit": "4b8bda25c05d9f959ffed9a0580f0ded623177e5"
+    },
+    {
+      "instanceId": "fmtlib__fmt-3729",
+      "language": "C++",
+      "repo": "fmtlib/fmt",
+      "baseCommit": "5cfd28d476c6859617878f951931b8ce7d36b9df"
+    },
+    {
+      "instanceId": "hashicorp__terraform-34814",
+      "language": "Go",
+      "repo": "hashicorp/terraform",
+      "baseCommit": "310331bdc6b747b68b2e2dd6be257dfc78677973"
+    },
+    {
+      "instanceId": "jekyll__jekyll-9141",
+      "language": "Ruby",
+      "repo": "jekyll/jekyll",
+      "baseCommit": "bb851e235dfbe1f197388aea3e7f0eeb1b50c4e3"
+    },
+    {
+      "instanceId": "nlohmann__json-4237",
+      "language": "C++",
+      "repo": "nlohmann/json",
+      "baseCommit": "3780b41dd070436f3f55327b0a88f27a52e2dfa8"
+    },
+    {
+      "instanceId": "nushell__nushell-12901",
+      "language": "Rust",
+      "repo": "nushell/nushell",
+      "baseCommit": "cc9f41e553333b1ad0aa4185a912f7a52355a238"
+    },
+    {
+      "instanceId": "php-cs-fixer__php-cs-fixer-7998",
+      "language": "PHP",
+      "repo": "php-cs-fixer/php-cs-fixer",
+      "baseCommit": "efe7a396a3e5434123011a808cf8d57681713530"
+    },
+    {
+      "instanceId": "phpoffice__phpspreadsheet-4186",
+      "language": "PHP",
+      "repo": "phpoffice/phpspreadsheet",
+      "baseCommit": "27d7920c015700654bd24807520346eada5f6f38"
+    },
+    {
+      "instanceId": "phpoffice__phpspreadsheet-4313",
+      "language": "PHP",
+      "repo": "phpoffice/phpspreadsheet",
+      "baseCommit": "eacaa25dca01b79b9b468184c452b97ad0b30dd7"
+    },
+    {
+      "instanceId": "preactjs__preact-3062",
+      "language": "JavaScript",
+      "repo": "preactjs/preact",
+      "baseCommit": "7556b61bd0d9f72bbd906c3abaebf2b1c9aeacbf"
+    },
+    {
+      "instanceId": "preactjs__preact-4245",
+      "language": "JavaScript",
+      "repo": "preactjs/preact",
+      "baseCommit": "13b0afb7a28adb3149d7125fb2b9c16edbcf8e94"
+    },
+    {
+      "instanceId": "projectlombok__lombok-3042",
+      "language": "Java",
+      "repo": "projectlombok/lombok",
+      "baseCommit": "5155060ddf48b683a902b9d354d0fd07df7a79a1"
+    },
+    {
+      "instanceId": "projectlombok__lombok-3594",
+      "language": "Java",
+      "repo": "projectlombok/lombok",
+      "baseCommit": "2773ed5943f3ca3055c915dda325b0503944e9b0"
+    },
+    {
+      "instanceId": "prometheus__prometheus-14861",
+      "language": "Go",
+      "repo": "prometheus/prometheus",
+      "baseCommit": "9f57f14d6c5e3c10ed212010cb34522458f43d64"
+    },
+    {
+      "instanceId": "prometheus__prometheus-9248",
+      "language": "Go",
+      "repo": "prometheus/prometheus",
+      "baseCommit": "1fb3c1b5980d2ae3f844b6b9ae2ad38117710aa0"
+    },
+    {
+      "instanceId": "redis__redis-11510",
+      "language": "C",
+      "repo": "redis/redis",
+      "baseCommit": "a4bcdbcfd3a055eb6320f31e5c710931708a9501"
+    },
+    {
+      "instanceId": "redis__redis-12272",
+      "language": "C",
+      "repo": "redis/redis",
+      "baseCommit": "7f0a7f0a69318788edeca5a55ce05e278fdaa90b"
+    },
+    {
+      "instanceId": "redis__redis-9733",
+      "language": "C",
+      "repo": "redis/redis",
+      "baseCommit": "77d3c6bff30331fb94a8570adc29872368e15ca2"
+    },
+    {
+      "instanceId": "tokio-rs__tokio-7139",
+      "language": "Rust",
+      "repo": "tokio-rs/tokio",
+      "baseCommit": "b8ac94ed70df22f885bad7ea3c0ff51c536bad4a"
+    },
+    {
+      "instanceId": "vuejs__core-11915",
+      "language": "TypeScript",
+      "repo": "vuejs/core",
+      "baseCommit": "d0b513eb463f580e29378e43d112ff6859aa366e"
+    }
+  ]
+}
