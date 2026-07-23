@@ -42,6 +42,7 @@ Both Claude Code and Codex are excellent at the _one-turn_ job: edit this file, 
 | **Memory of images**                   | Images stay in the active transcript only                                                                                       | Images stay in the active transcript only                                  | **Vision-capable models observe screenshots and UI captures into text observations the agent can recall on later turns**                                                |
 | **Resume across a fresh process**      | `claude --resume <id>` / `--bg` background sessions — replays a saved transcript                                                | `codex resume <id>` — replays a saved transcript from `~/.codex/sessions/` | **`TurnState` snapshot on disk; any fresh process — new sandbox, serverless invocation, different machine — resumes with `runner.start({ state })`**                    |
 | **Long-running, multi-step workflows** | Background sessions; no native poll/wait/state-machine primitives                                                               | Transcript-driven; no native poll/wait/state-machine primitives            | **Relays: agent-routed state machines with five state kinds — `agent`, `script`, `poll`, `timer`, `terminal`. Wait days for a reply between turns.**                    |
+| **Model routing**                      | Manual — `/model` picks the model                                                                                               | Manual — `-m`/config picks the model                                       | **Routed — a classifier picks model + effort per turn and reroutes mid-turn; an `ask_advisor` tool escalates the hardest decisions to a stronger model**                |
 | **Models you can use**                 | Anthropic                                                                                                                       | OpenAI (Sign in with ChatGPT or API key)                                   | **Anthropic, OpenAI, OpenRouter, Vercel AI Gateway, Duet Gateway**                                                                                                      |
 | **License**                            | Proprietary (closed-source CLI)                                                                                                 | Apache-2.0                                                                 | **Apache-2.0**                                                                                                                                                          |
 
@@ -53,6 +54,14 @@ Two things that don't get a section of their own below, but that follow from the
 - **Open source.** No black box. If we made a wrong call about how memory ranks or how relays route, you can read the code and tell us we're wrong.
 
 ## What we do differently
+
+### The model router + advisor
+
+You don't pick a model; you pick a tier. Bare `duet` runs the `frontier` **virtual model**: a cheap classifier reads each prompt and picks the concrete model + effort for that kind of work — visual, planning, implementation, writing — and keeps re-checking as the turn progresses, so a session that starts by reading screenshots on a vision model can finish the backend work on a coding one. Cache economics are part of the decision, not a hysteresis hack: the classifier is told that switching discards the provider prompt cache and to prefer the current model while the kind of work stays the same, and compaction and rerouting are mutual milestones — reroute checks run when the cache is already broken, and a model switch hands the new model a compact prefix. Step outputs feed back in too: reading an image on a text-only route can reroute mid-turn to a vision-capable model.
+
+The advisor is the escalation valve. Tiers that enable it inject a no-parameter `ask_advisor` tool that ships a curated slice of the transcript — the executor's system prompt, the first user message, live memory observations as the elided middle — to a stronger model. Consulting is mandatory for consequential architecture calls, conflicting constraints, and important unknowns, and forbidden for routine local work; routing changes nudge the advisor, and advisor consults trigger reclassification.
+
+All of the judgment lives in prose, not code: route descriptions, the cache-switching preference, and advisor timing are editable text in the routing table, so tuning the router is an edit to `.duet/models.json`, not a rebuild. `duet route "<prompt>"` shows exactly what the classifier would decide; a concrete `--model` name pins that model and bypasses routing entirely. Design rationale and invariants: `specs/done/model-router/`.
 
 ### Memory, woven in
 
@@ -276,14 +285,12 @@ Design rationale and invariants: the duet repo's
 
 Duet routes every model through one of three gateways — the Duet gateway (`DUET_API_KEY`), the Vercel AI Gateway (`AI_GATEWAY_API_KEY`), or OpenRouter (`OPENROUTER_API_KEY`). If you would rather manage keys yourself, use `duet env` (see [CLI Env Setup](#cli-env-setup) below) or set one of those keys in the environment, `<workdir>/.env`, or `~/.duet/.env`. Gateway inference (preferring those credentials in that order) decides which gateway serves each concrete model.
 
-When `--model` is omitted, duet runs the routed `frontier` **virtual model**: a cheap classifier reads each prompt and picks the concrete model + effort per kind of work (visual work, planning, implementation, writing, general questions), re-checking as a turn progresses. `--model frontier|balanced|economy` selects a routing tier explicitly; any concrete model name pins that model and bypasses routing.
+When `--model` is omitted, duet runs the routed `frontier` **virtual model** — see [The model router + advisor](#the-model-router--advisor) for how routing and the advisor work. The flags and config:
 
-- **Tune it:** `duet route "<prompt>"` shows what the classifier would decide; `duet config export` writes the routing table to `.duet/models.json` (routes, efforts, advisor policy, `stepTriggers` keywords); `/route` inspects a live session.
-- **Override discovery mirrors skills:** the nearest `.duet/models.json` walking up from the working directory wins, with `~/.duet/models.json` as the global fallback. Each file is a complete replacement, never a merge.
-- **It stays out of the way:** tiers whose routes all resolve to one identical model+effort never call the classifier, and concrete pins bypass routing entirely.
-- **Mid-turn awareness:** step outputs can reroute — reading an image on a text-only route applies that route's optional `visionFallbackModelName` (absent a fallback, the route runs normally and the model reports it cannot see the image). Compaction and rerouting are mutual milestones: compaction triggers a routing check, and a model switch starts the new model from a compact wire prefix — both because the provider cache is already broken at that moment.
-
-Design rationale and invariants: `specs/done/model-router/`.
+- `--model frontier|balanced|economy` selects a routing tier explicitly; any concrete model name pins that model and bypasses routing.
+- `duet config export` writes the routing table to `.duet/models.json` (routes, efforts, advisor policy, `stepTriggers` keywords, per-route `visionFallbackModelName`); `/route` inspects a live session.
+- Override discovery mirrors skills: the nearest `.duet/models.json` walking up from the working directory wins, with `~/.duet/models.json` as the global fallback. Each file is a complete replacement, never a merge.
+- It stays out of the way: tiers whose routes all resolve to one identical model+effort never call the classifier.
 
 Use `--provider <name>` to pin a gateway without picking a model:
 
