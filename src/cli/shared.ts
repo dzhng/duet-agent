@@ -93,6 +93,12 @@ export function cliEnvFilePaths(workDir: string, envFilePath?: string): string[]
  * model resolution distinguish keys we loaded from keys the user already
  * exported in their shell.
  */
+/**
+ * Identify Duet honestly on the codex transport (proven accepted live,
+ * 2026-07-23). Reverts to pi-ai's default via DUET_CODEX_ORIGINATOR=pi.
+ */
+process.env.DUET_CODEX_ORIGINATOR ??= "duet";
+
 export function loadCliEnvFiles(workDir: string, envFilePath?: string): Set<string> {
   const dotenvKeys = new Set<string>();
   for (const path of cliEnvFilePaths(workDir, envFilePath)) {
