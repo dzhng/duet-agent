@@ -11,19 +11,25 @@ interface RecordedRequest {
   body: unknown;
 }
 
+const LEGACY_WORKSPACE_ENV = ["DUET", "WORKSPACE"].join("_");
+const LEGACY_WORKSPACE_OPTION = ["--", "workspace"].join("");
+const EXPECTED_LOGIN_BODY = {
+  capabilities: ["files:read", "files:write", "memory", "sessions", "services", "integrations"],
+};
+
 let originalApiBaseUrl: string | undefined;
-let originalWorkspace: string | undefined;
+let originalLegacyWorkspace: string | undefined;
 let originalApiKey: string | undefined;
 let originalFetch: typeof fetch;
 let tempRoot: string | undefined;
 
 beforeEach(() => {
   originalApiBaseUrl = process.env.DUET_API_BASE_URL;
-  originalWorkspace = process.env.DUET_WORKSPACE;
+  originalLegacyWorkspace = process.env[LEGACY_WORKSPACE_ENV];
   originalApiKey = process.env.DUET_API_KEY;
   originalFetch = globalThis.fetch;
   delete process.env.DUET_API_BASE_URL;
-  delete process.env.DUET_WORKSPACE;
+  delete process.env[LEGACY_WORKSPACE_ENV];
   delete process.env.DUET_API_KEY;
 });
 
@@ -31,8 +37,8 @@ afterEach(async () => {
   globalThis.fetch = originalFetch;
   if (originalApiBaseUrl === undefined) delete process.env.DUET_API_BASE_URL;
   else process.env.DUET_API_BASE_URL = originalApiBaseUrl;
-  if (originalWorkspace === undefined) delete process.env.DUET_WORKSPACE;
-  else process.env.DUET_WORKSPACE = originalWorkspace;
+  if (originalLegacyWorkspace === undefined) delete process.env[LEGACY_WORKSPACE_ENV];
+  else process.env[LEGACY_WORKSPACE_ENV] = originalLegacyWorkspace;
   if (originalApiKey === undefined) delete process.env.DUET_API_KEY;
   else process.env.DUET_API_KEY = originalApiKey;
   if (tempRoot) {
@@ -42,7 +48,7 @@ afterEach(async () => {
 });
 
 describe("loginWithDeviceFlow", () => {
-  test("requests a workspace scope and polls pending to approved", async () => {
+  test("requests login capabilities and polls pending to approved", async () => {
     const requests: RecordedRequest[] = [];
     const logs: string[] = [];
     const fetchFn = makeDeviceFetch(requests, [
@@ -57,7 +63,6 @@ describe("loginWithDeviceFlow", () => {
 
     const result = await loginWithDeviceFlow({
       apiBaseUrl: "https://api.test",
-      workspaceSlug: "acme",
       noBrowser: true,
       fetchFn,
       sleep: async () => {},
@@ -74,7 +79,7 @@ describe("loginWithDeviceFlow", () => {
       "https://api.test/v1/device/token",
       "https://api.test/v1/device/token",
     ]);
-    expect(requests[0]!.body).toEqual({ scopes: ["ws:acme:ai"] });
+    expect(requests[0]!.body).toEqual(EXPECTED_LOGIN_BODY);
     expect(requests[1]!.body).toEqual({ device_code: "device-123" });
     expect(logs).toContain("User code: ABCD-EFGH");
     expect(logs).toContain("Verification URL: https://duet.so/device");
@@ -84,12 +89,18 @@ describe("loginWithDeviceFlow", () => {
     const opened: string[] = [];
     const fetchFn = makeDeviceFetch(
       [],
-      [codeResponse(), tokenResponse({ status: "approved", access_token: "duet_gt_approved" })],
+      [
+        codeResponse(),
+        tokenResponse({
+          status: "approved",
+          access_token: "duet_gt_approved",
+          workspace: { slug: "acme", name: "Acme Inc" },
+        }),
+      ],
     );
 
     await loginWithDeviceFlow({
       apiBaseUrl: "https://api.test",
-      workspaceSlug: "acme",
       fetchFn,
       sleep: async () => {},
       openUrl: (url) => opened.push(url),
@@ -105,7 +116,6 @@ describe("loginWithDeviceFlow", () => {
     await expect(
       loginWithDeviceFlow({
         apiBaseUrl: "https://api.test",
-        workspaceSlug: "acme",
         noBrowser: true,
         fetchFn,
         sleep: async () => {},
@@ -120,7 +130,6 @@ describe("loginWithDeviceFlow", () => {
     await expect(
       loginWithDeviceFlow({
         apiBaseUrl: "https://api.test",
-        workspaceSlug: "acme",
         noBrowser: true,
         fetchFn,
         sleep: async () => {},
@@ -131,7 +140,29 @@ describe("loginWithDeviceFlow", () => {
 });
 
 describe("duet login device flow command", () => {
-  testIfDocker("uses --workspace and persists the approved DUET_API_KEY", async () => {
+  test("rejects the removed workspace flag as an unknown option", async () => {
+    const exit = process.exit;
+    let exitCode: number | undefined;
+    const stderr: string[] = [];
+    const consoleErrorSpy = spyOn(console, "error").mockImplementation((message?: unknown) => {
+      stderr.push(String(message ?? ""));
+    });
+    process.exit = ((code?: number) => {
+      exitCode = code ?? 0;
+      throw new Error("__exit__");
+    }) as never;
+
+    try {
+      await expect(runLoginCommand([LEGACY_WORKSPACE_OPTION])).rejects.toThrow("__exit__");
+      expect(exitCode).toBe(1);
+      expect(stderr.join("\n")).toContain(`Unknown login option: ${LEGACY_WORKSPACE_OPTION}`);
+    } finally {
+      process.exit = exit;
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  testIfDocker("persists the approved DUET_API_KEY for the server-selected workspace", async () => {
     const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-device-login-")));
     const envFile = join(root, ".env");
     process.env.DUET_API_BASE_URL = "https://api.test";
@@ -145,54 +176,82 @@ describe("duet login device flow command", () => {
       }),
     ]);
 
-    await runLoginCommand(["--workspace", "acme", "--no-browser"], {
+    await runLoginCommand(["--no-browser"], {
       envFilePath: envFile,
     });
 
     expect(await readFile(envFile, "utf8")).toBe("DUET_API_KEY=duet_gt_cli\n");
-    expect(requests[0]!.body).toEqual({ scopes: ["ws:acme:ai"] });
+    expect(requests[0]!.body).toEqual(EXPECTED_LOGIN_BODY);
     expect(requests.map((request) => request.url)).toEqual([
       "https://api.test/v1/device/code",
       "https://api.test/v1/device/token",
     ]);
   });
 
-  testIfDocker("uses DUET_WORKSPACE when --workspace is omitted", async () => {
+  testIfDocker("ignores the legacy workspace environment input", async () => {
     const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-device-login-")));
+    const envFile = join(root, ".env");
     process.env.DUET_API_BASE_URL = "https://api.test";
-    process.env.DUET_WORKSPACE = "env-ws";
+    process.env[LEGACY_WORKSPACE_ENV] = "env-ws";
     const requests: RecordedRequest[] = [];
     globalThis.fetch = makeDeviceFetch(requests, [
       codeResponse(),
-      tokenResponse({ status: "approved", access_token: "duet_gt_env" }),
+      tokenResponse({
+        status: "approved",
+        access_token: "duet_gt_env",
+        workspace: { slug: "server-ws", name: "Server Workspace" },
+      }),
     ]);
 
     await runLoginCommand(["--no-browser"], {
-      envFilePath: join(root, ".env"),
+      envFilePath: envFile,
     });
 
-    expect(requests[0]!.body).toEqual({ scopes: ["ws:env-ws:ai"] });
+    expect(requests[0]!.body).toEqual(EXPECTED_LOGIN_BODY);
+    expect(await readFile(envFile, "utf8")).toBe("DUET_API_KEY=duet_gt_env\n");
   });
 
-  testIfDocker("fails with usage error when no workspace is provided", async () => {
-    const exit = process.exit;
-    let exitCode: number | undefined;
-    const stderr: string[] = [];
-    const consoleErrorSpy = spyOn(console, "error").mockImplementation((message?: unknown) => {
-      stderr.push(String(message ?? ""));
-    });
-    process.exit = ((code?: number) => {
-      exitCode = code ?? 0;
-      throw new Error("__exit__");
-    }) as never;
+  testIfDocker("does not persist an approved token without a workspace", async () => {
+    const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-device-login-")));
+    const envFile = join(root, ".env");
+    process.env.DUET_API_BASE_URL = "https://api.test";
+    globalThis.fetch = makeDeviceFetch(
+      [],
+      [codeResponse(), tokenResponse({ status: "approved", access_token: "duet_gt_malformed" })],
+    );
 
-    try {
-      await expect(runLoginCommand(["--no-browser"])).rejects.toThrow("__exit__");
-      expect(exitCode).toBe(64);
-      expect(stderr.join("\n")).toContain("Missing required workspace");
-    } finally {
-      process.exit = exit;
-      consoleErrorSpy.mockRestore();
+    await expect(
+      runLoginCommand(["--no-browser"], {
+        envFilePath: envFile,
+      }),
+    ).rejects.toThrow("Device token response was malformed.");
+    await expect(readFile(envFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  testIfDocker("does not persist an approved token with a partial workspace", async () => {
+    const root = (tempRoot = await mkdtemp(join(tmpdir(), "duet-device-login-")));
+    process.env.DUET_API_BASE_URL = "https://api.test";
+
+    for (const [index, workspace] of [{ slug: "acme" }, { name: "Acme Inc" }].entries()) {
+      const envFile = join(root, `.env-${index}`);
+      globalThis.fetch = makeDeviceFetch(
+        [],
+        [
+          codeResponse(),
+          tokenResponse({
+            status: "approved",
+            access_token: "duet_gt_partial",
+            workspace,
+          }),
+        ],
+      );
+
+      await expect(
+        runLoginCommand(["--no-browser"], {
+          envFilePath: envFile,
+        }),
+      ).rejects.toThrow("Device token response was malformed.");
+      await expect(readFile(envFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     }
   });
 });
