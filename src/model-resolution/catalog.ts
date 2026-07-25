@@ -40,7 +40,18 @@ interface ModelDefinition {
   family: FamilyName;
   shorthand: string;
   aliases: readonly string[];
-  /** Provider-specific id used to carry this curated model on each supported transport. */
+  /**
+   * Provider-specific id used to carry this curated model on each supported
+   * transport. List a transport only when it actually serves the model: an
+   * unlisted transport falls through to the next candidate, while a listed one
+   * pi-ai's catalog has not shipped resolves to an undefined model unless it
+   * also has a `MISSING_MODEL_CLONES` entry (duet-gateway.ts).
+   *
+   * Ids follow the transport's own namespace, which tracks the `TransportName`
+   * union: `RouterProviderName` gateways aggregate many vendors and need the
+   * `vendor/model` prefix to disambiguate, while a `ConnectedProviderId`
+   * subscription is already scoped to one vendor and serves bare model names.
+   */
   modelsByProvider: Partial<Record<TransportName, string>>;
   /**
    * Hard cap on output tokens, applied when it is lower than the `maxTokens`
@@ -51,7 +62,7 @@ interface ModelDefinition {
   maxOutputTokens?: number;
 }
 
-export const DEFAULT_CLI_MODEL = "opus-4.8";
+export const DEFAULT_CLI_MODEL = "opus-5";
 export const DEFAULT_CLI_MEMORY_MODEL = "gpt-5.6-luna";
 
 /**
@@ -77,13 +88,27 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<RouterProviderName, string> = {
 const MEMORY_MODEL_BY_PROVIDER: Record<RouterProviderName, string> = {
   "duet-gateway": DEFAULT_CLI_MEMORY_MODEL,
   "vercel-ai-gateway": DEFAULT_CLI_MEMORY_MODEL,
-  // Memory stays on luna for every router. OpenRouter serves luna even
-  // though pi-ai's catalog lags — resolution clones a shipped OpenRouter
-  // sibling (MISSING_MODEL_CLONES in duet-gateway.ts).
   openrouter: DEFAULT_CLI_MEMORY_MODEL,
 };
 
 const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
+  {
+    // The github-copilot and openrouter ids follow the 5-series naming Fable 5
+    // already uses, ahead of confirmation that either serves Opus 5. Both fail
+    // soft: an unserved copilot model errors before any output, so
+    // `nextTransportAfterConnectedFailure` demotes the connection and retries on
+    // a gateway. Keeping copilot listed is what preserves plan coverage for the
+    // `opus` alias — dropping it silently moves subscribers onto metered billing.
+    family: "opus",
+    shorthand: "opus-5",
+    aliases: ["claude-opus-5", "anthropic/claude-opus-5"],
+    modelsByProvider: {
+      "duet-gateway": "anthropic/claude-opus-5",
+      "vercel-ai-gateway": "anthropic/claude-opus-5",
+      openrouter: "anthropic/claude-opus-5",
+      "github-copilot": "claude-opus-5",
+    },
+  },
   {
     family: "opus",
     shorthand: "opus-4.8",
@@ -117,15 +142,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     },
   },
   {
-    // Anthropic's Claude Sonnet 5 is routed through the duet/vercel gateways
-    // under the `anthropic/claude-sonnet-5` model id. pi-ai's catalog does not
-    // ship it yet — not on the gateway, anthropic-direct, or OpenRouter — so
-    // resolution clones the Opus 4.8 gateway entry (identical anthropic-messages
-    // transport, 1M context, 128k output cap) until it does; see
-    // `resolveMissingModel` in duet-gateway.ts. Only the gateway routes are
-    // listed because the clone backs `vercel-ai-gateway` (which `duet-gateway`
-    // resolves through); add the anthropic/openrouter routes once pi-ai ships
-    // them so a pinned resolve does not fall through to an undefined model.
+    // Gateway-only until anthropic-direct and openrouter serve Sonnet 5.
     family: "sonnet",
     shorthand: "sonnet-5",
     aliases: ["claude-sonnet-5", "anthropic/claude-sonnet-5"],
@@ -167,21 +184,17 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     },
   },
   {
-    // OpenAI's gpt-5.6-luna is the default observational-memory model. It routes
-    // through the duet and vercel gateways under `openai/gpt-5.6-luna`, both of
-    // which synthesize an openai-responses passthrough for it (the duet path via
-    // `resolveDuetGatewayUpstream`, the vercel path via `resolveMissingModel` in
-    // duet-gateway.ts) so its low reasoning effort survives to the wire. The
-    // OpenRouter route is served live but absent from pi-ai's catalog, so it
-    // resolves through the openrouter MISSING_MODEL_CLONES entry.
+    // The default observational-memory model. Both gateways synthesize an
+    // openai-responses passthrough for it (the duet path via
+    // `resolveDuetGatewayUpstream`, the vercel path via `resolveMissingModel`)
+    // rather than serving it over anthropic-messages, which would silently drop
+    // the low reasoning effort the observer and reflectors request.
     family: "luna",
     shorthand: "gpt-5.6-luna",
     aliases: ["openai/gpt-5.6-luna", "openai/gpt-5-6-luna"],
     modelsByProvider: {
       "duet-gateway": "openai/gpt-5.6-luna",
       "vercel-ai-gateway": "openai/gpt-5.6-luna",
-      // OpenRouter serves luna; pi-ai's catalog lags, so resolution clones a
-      // shipped OpenRouter sibling (MISSING_MODEL_CLONES in duet-gateway.ts).
       openrouter: "openai/gpt-5.6-luna",
       "openai-codex": "gpt-5.6-luna",
     },
@@ -296,9 +309,20 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
 ];
 
 const familyLatest: Partial<Record<FamilyName, string>> = {};
+const shorthandsByFamily: Partial<Record<FamilyName, string[]>> = {};
 for (const definition of MODEL_DEFINITIONS) {
   familyLatest[definition.family] ??= definition.shorthand;
+  (shorthandsByFamily[definition.family] ??= []).push(definition.shorthand);
 }
+
+/**
+ * Every curated shorthand, grouped by family in catalog order. Exported so
+ * coverage checks enumerate the catalog itself rather than a hand-maintained
+ * roster a newly added model would silently escape.
+ */
+export const SHORTHANDS_BY_FAMILY = Object.freeze(
+  shorthandsByFamily as Record<FamilyName, readonly string[]>,
+);
 
 /** Latest shorthand for each family, derived from the first matching catalog entry. */
 export const FAMILY_LATEST = Object.freeze(familyLatest as Record<FamilyName, string>);

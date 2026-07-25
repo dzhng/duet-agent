@@ -6,6 +6,10 @@
     }
   },
   "opus": {
+    "opus-5": {
+      "openai-codex": null,
+      "github-copilot": "claude-opus-5"
+    },
     "opus-4.8": {
       "openai-codex": null,
       "github-copilot": "claude-opus-4.8"

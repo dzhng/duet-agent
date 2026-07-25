@@ -20,6 +20,7 @@ import {
   trimMessagesToTranscriptBudget,
   stripObservationalContextMessages,
 } from "../src/memory/observational.js";
+import { DEFAULT_CLI_MODEL } from "../src/model-resolution/catalog.js";
 import { MemoryContextCache } from "../src/memory/store.js";
 import { createInitialHorizon } from "../src/turn-runner/wire-shaping.js";
 import { buildObserverPrompt } from "../src/memory/observational-prompts.js";
@@ -986,8 +987,10 @@ describe("TurnRunner memory", () => {
     ).toMatchObject({ model: "anthropic:claude-opus-4-7", thinkingLevel: "low" });
 
     const unconfigured = new TurnRunner({ skillDiscovery: { includeDefaults: false } });
+    // The chain is what's under test; the default's identity belongs to the
+    // catalog, so a model bump should not touch this assertion.
     expect(unconfigured.resolveTurnOptions()).toMatchObject({
-      model: "opus-4.8",
+      model: DEFAULT_CLI_MODEL,
       thinkingLevel: undefined,
     });
   });

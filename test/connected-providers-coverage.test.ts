@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   FAMILY_LATEST,
+  SHORTHANDS_BY_FAMILY,
   transportModelId,
   type FamilyName,
   type TransportName,
@@ -18,13 +19,15 @@ type Coverage = Record<
 >;
 
 describe("connected-provider catalog coverage", () => {
-  test("matches the checked-in golden matrix for all 11 model families", () => {
+  test("matches the checked-in golden matrix for every catalog model", () => {
     const fixture = coverageFixture as Coverage;
+    // Enumerate the catalog, not the fixture: keying off the fixture's own
+    // shorthands lets a newly added model pass with zero coverage.
     const actual = Object.fromEntries(
-      Object.entries(fixture).map(([family, models]) => [
+      Object.entries(SHORTHANDS_BY_FAMILY).map(([family, shorthands]) => [
         family,
         Object.fromEntries(
-          Object.keys(models).map((shorthand) => [
+          shorthands.map((shorthand) => [
             shorthand,
             Object.fromEntries(
               CONNECTED_TRANSPORTS.map((transport) => [

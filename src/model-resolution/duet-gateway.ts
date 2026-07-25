@@ -218,6 +218,8 @@ const MISSING_MODEL_CLONES: Record<
     },
   ],
   "vercel-ai-gateway": [
+    // Opus 5 keeps Opus 4.8's published contract and pricing, so no overrides.
+    { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-opus-5" },
     { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-fable-5", overrides: FABLE_5_COST },
     {
       from: "anthropic/claude-opus-4.8",
@@ -234,6 +236,9 @@ const MISSING_MODEL_CLONES: Record<
     },
   ],
   openrouter: [
+    // Without this, `openrouter:anthropic/claude-opus-5` resolves to undefined
+    // and OPENROUTER-only users cannot run the default model at all.
+    { from: "anthropic/claude-opus-4.8", to: "anthropic/claude-opus-5" },
     {
       // OpenRouter serves gpt-5.6-luna; pi-ai's catalog just hasn't shipped
       // the route (David, 2026-07-24). Drop once it does.

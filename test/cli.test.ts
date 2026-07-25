@@ -369,9 +369,9 @@ describe("CLI model inference", () => {
     expect(resolveProviderShorthand("openai")).toBeUndefined();
     expect(resolveProviderShorthand("bogus")).toBeUndefined();
 
-    expect(pinnedDefaultModel("openrouter")).toBe("openrouter:anthropic/claude-opus-4.8");
+    expect(pinnedDefaultModel("openrouter")).toBe("openrouter:anthropic/claude-opus-5");
     expect(pinnedMemoryModel("openrouter")).toBe("openrouter:openai/gpt-5.6-luna");
-    expect(pinnedDefaultModel("duet-gateway")).toBe("duet-gateway:anthropic/claude-opus-4.8");
+    expect(pinnedDefaultModel("duet-gateway")).toBe("duet-gateway:anthropic/claude-opus-5");
   });
 
   test("keeps an explicitly provided model", () => {

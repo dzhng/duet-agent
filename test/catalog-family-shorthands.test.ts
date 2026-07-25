@@ -30,11 +30,11 @@ const familyCases: readonly FamilyCase[] = [
   },
   {
     family: "opus",
-    latest: "opus-4.8",
+    latest: "opus-5",
     modelsByProvider: {
-      "duet-gateway": "anthropic/claude-opus-4.8",
-      "vercel-ai-gateway": "anthropic/claude-opus-4.8",
-      openrouter: "anthropic/claude-opus-4.8",
+      "duet-gateway": "anthropic/claude-opus-5",
+      "vercel-ai-gateway": "anthropic/claude-opus-5",
+      openrouter: "anthropic/claude-opus-5",
     },
   },
   {
@@ -147,6 +147,7 @@ describe("catalog family shorthands", () => {
   test("keeps every surviving versioned shorthand resolvable", () => {
     const survivingShorthands = [
       "fable-5",
+      "opus-5",
       "opus-4.8",
       "opus-4.7",
       "sonnet-5",
