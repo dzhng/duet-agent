@@ -9,7 +9,7 @@ import {
   serializeModelsJson,
   type CampaignConfigName,
 } from "./src/config-override.js";
-import { runDuetTurn, spawnLocalDuetRpc } from "./src/duet-client.js";
+import { runDuetTurn, spawnLocalDuetRpc } from "../shared/duet-rpc-client.js";
 import { PINNED_DATASET_REVISION, fetchDataset, writeDatasetCache } from "./src/fetch-dataset.js";
 import {
   CAMPAIGN_GOLD_EXCLUSIONS,
@@ -20,7 +20,7 @@ import {
 } from "./src/manifest.js";
 import { loadRolloutAttempts } from "./src/artifacts.js";
 import { runCampaign, type CampaignRuntime, type CampaignSpec } from "./src/orchestrator.js";
-import { loadPrebuiltDuetArtifact, prepareDuetArtifact } from "./src/packaging.js";
+import { loadPrebuiltDuetArtifact, prepareDuetArtifact } from "../shared/duet-packaging.js";
 import { buildPredictions, serializePredictions } from "./src/predictions.js";
 import { ensureCampaignProvenance } from "./src/provenance.js";
 import {
@@ -32,7 +32,7 @@ import {
 } from "./src/report.js";
 import { hashConfigFile } from "./src/rollout.js";
 import { runContainerSmoke } from "./src/smoke.js";
-import { deriveTelemetry } from "./src/telemetry.js";
+import { deriveTelemetry } from "../shared/rollout-telemetry.js";
 import {
   ContainerHandle,
   removeOfficialImage,

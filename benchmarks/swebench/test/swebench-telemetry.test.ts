@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { deriveTelemetry, normalizePersistedTelemetry } from "../src/telemetry.js";
+import { deriveTelemetry, normalizePersistedTelemetry } from "../../shared/rollout-telemetry.js";
 import type { TurnEvent } from "../../../src/types/protocol.js";
 
 const FIXTURES = join(import.meta.dir, "../fixtures");

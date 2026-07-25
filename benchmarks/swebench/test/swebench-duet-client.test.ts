@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runDuetTurn, type ExecTransport } from "../src/duet-client.js";
+import { runDuetTurn, type ExecTransport } from "../../shared/duet-rpc-client.js";
 import type { RpcRunnerCommand, TurnEvent } from "../../../src/types/protocol.js";
 import { ManualRuntimeClock } from "./helpers/manual-runtime-clock.js";
 
@@ -111,7 +111,7 @@ describe("SWE-bench duet RPC client", () => {
       { type: "start", mode: "agent" },
       {
         type: "prompt",
-        requestId: "swebench-rollout-prompt",
+        requestId: "benchmark-rollout-prompt",
         message: "Fix the issue.",
         behavior: "follow_up",
       },

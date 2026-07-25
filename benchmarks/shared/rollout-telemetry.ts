@@ -3,7 +3,7 @@ import type {
   TurnEvent,
   TurnTerminalEvent,
   TurnTokenUsage,
-} from "../../../src/types/protocol.js";
+} from "../../src/types/protocol.js";
 
 export type AdvisorCallOutcome = "success" | "rate_limited" | "unavailable" | "failed";
 

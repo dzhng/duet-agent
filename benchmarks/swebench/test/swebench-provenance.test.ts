@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { PGLITE_RUNTIME_ASSET_NAMES } from "../../../src/memory/pglite.js";
-import type { CommandResult, CommandRunner } from "../src/container.js";
-import type { ExecTransport } from "../src/duet-client.js";
+import type { CommandResult, CommandRunner } from "../../shared/command-runner.js";
+import type { ExecTransport } from "../../shared/duet-rpc-client.js";
 import type { CampaignSpec } from "../src/orchestrator.js";
 import { ensureCampaignProvenance } from "../src/provenance.js";
 import { testIfDocker } from "./helpers/docker-only.js";

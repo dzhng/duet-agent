@@ -3,8 +3,8 @@ import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import type { CommandRunner } from "../src/container.js";
-import { loadPrebuiltDuetArtifact, prepareDuetArtifact } from "../src/packaging.js";
+import type { CommandRunner } from "../../shared/command-runner.js";
+import { loadPrebuiltDuetArtifact, prepareDuetArtifact } from "../../shared/duet-packaging.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 let root: string | undefined;
@@ -16,7 +16,7 @@ afterEach(async () => {
 
 describe("SWE-bench Duet packaging", () => {
   testIfDocker("carries declared dependency patches into the isolated Linux build", async () => {
-    root = await mkdtemp(join(tmpdir(), "duet-swebench-package-"));
+    root = await mkdtemp(join(tmpdir(), "duet-benchmark-package-"));
     const repoRoot = join(root, "repo");
     const outputDir = join(root, "output");
     const patchName = "@earendil-works%2Fpi-ai@0.79.10.patch";
@@ -81,7 +81,7 @@ describe("SWE-bench Duet packaging", () => {
   });
 
   testIfDocker("loads the exact prebuilt worker artifact without rebuilding it", async () => {
-    root = await mkdtemp(join(tmpdir(), "duet-swebench-package-"));
+    root = await mkdtemp(join(tmpdir(), "duet-benchmark-package-"));
     const path = join(root, "duet-linux-x64");
     await Promise.all([
       writeFile(path, "prebuilt-duet"),

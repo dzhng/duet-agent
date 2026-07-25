@@ -7,9 +7,9 @@ import { tmpdir } from "node:os";
 import {
   PGLITE_RUNTIME_ASSET_NAMES,
   type PGliteRuntimeAssetName,
-} from "../../../src/memory/pglite.js";
+} from "../../src/memory/pglite.js";
 
-import { LocalCommandRunner, type CommandRunner } from "./container.js";
+import { LocalCommandRunner, type CommandRunner } from "./command-runner.js";
 
 /** Linux artifact installed into every official instance image. */
 export interface DuetArtifact {
@@ -63,7 +63,7 @@ export async function prepareDuetArtifact(
   options: PrepareDuetArtifactOptions,
 ): Promise<DuetArtifact> {
   const commands = options.commands ?? new LocalCommandRunner();
-  const buildRoot = await mkdtemp(join(tmpdir(), "duet-swebench-package-"));
+  const buildRoot = await mkdtemp(join(tmpdir(), "duet-benchmark-package-"));
   const outputDir = resolve(options.outputDir);
   const localPath = join(outputDir, "duet-linux-x64");
 

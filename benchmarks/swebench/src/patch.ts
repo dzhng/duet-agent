@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { CommandResult } from "./container.js";
+import type { CommandResult } from "../../shared/command-runner.js";
 /** Minimal container operations required by staged-index patch handling. */
 export interface PatchContainer {
   exec(
