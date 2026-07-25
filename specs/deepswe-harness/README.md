@@ -22,8 +22,10 @@ pure-resolved/advised-unresolved is a regression that remains in the result.
 
 ## Next Agent Prompt
 
-Status: six-arm tranche implementation is reviewed and green; the paid
-five-task E2B run is next, last updated 2026-07-25.
+Status: the first paid campaign was stopped after its complete five-task GLM
+pair exposed one pure-only regression. The exact trace led to a product-level
+advisor review fix that is green 5/5 on the frozen regression eval; rebuild and
+rerun the five-task campaign from a new clean commit, last updated 2026-07-25.
 
 Implement the next unchecked slice in order. Keep Pier as the sole owner of
 task containers and scoring. Preserve raw Duet RPC events before deriving
@@ -37,6 +39,20 @@ The user authorized a $1,000 campaign budget. At the chosen $10 per-rollout
 soft stop, five tasks across six arms require $900 of admission headroom.
 Decisions made while implementing the tranche are recorded in the
 [choices ledger](choices.md).
+
+The stopped campaign completed all five GLM pairs before interruption:
+
+- GLM pure: 2/5 resolved, $4.87/task, $12.18/resolved.
+- GLM + Kimi advisor: 2/5 resolved, $4.65/task, $11.63/resolved.
+- Paired outcomes: one advisor-only lift, one pure-only regression, one
+  both-resolved tie, and two neither-resolved ties.
+
+The regression was `testem-per-launcher-reports`: pure resolved, advised
+missed one of 65 new tests because it emitted bare TAP summary lines instead
+of `# `-prefixed comments. The advisor made three successful consultations but
+approved executor-written tests that encoded the same wire-format defect.
+`evals/advisor-validates-wire-format.eval.ts` reproduced the miss in 3/5 runs
+and now passes 5/5 after the generic protocol-review prompt correction.
 
 ## Ownership
 
@@ -86,6 +102,9 @@ the seed and algorithm explain how they were chosen.
   directories. Compact final result records may be committed separately.
 - Infrastructure failures may be resumed. Model or verifier failures are
   outcomes, not silently retried until they pass.
+- A pure-only advisor regression stops expansion. Preserve its traces, fix the
+  general product behavior that caused it, and start a fresh comparable
+  campaign rather than retrying the failed outcome until it passes.
 
 ## Review map
 

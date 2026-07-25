@@ -208,8 +208,8 @@ async function runTask(input: {
       cwd: REMOTE_ROOT,
       user: "user",
       timeoutMs: DEEPSWE_WORKER_COMMAND_TIMEOUT_MS,
-      onStdout: (line) => console.log(`[${input.taskId}] ${line.line}`),
-      onStderr: (line) => console.error(`[${input.taskId}] ${line.line}`),
+      onStdout: (line) => console.log(`[${input.taskId}] ${line}`),
+      onStderr: (line) => console.error(`[${input.taskId}] ${line}`),
     });
     if (!(await remoteTaskHasAllOutcomes(sandbox, name, input.taskId))) {
       throw new Error(

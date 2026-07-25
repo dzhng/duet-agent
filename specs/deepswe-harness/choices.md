@@ -22,6 +22,37 @@
 
 ## Sound
 
+### Stop the first campaign at the pure-only regression
+
+- **When:** The five GLM pairs finished during `pilot-5-six-arm-v1`.
+- **The choice:** Stop all remaining paid arms after `testem` resolved with
+  GLM pure but not with GLM + Kimi advisor, then preserve the partial campaign
+  for diagnosis. The alternative was spending through Kimi, Opus, and Fable
+  despite evidence that the advisor treatment could regress a solved task.
+- **The gap:** None; the user explicitly defined zero pure-only regressions as
+  the harness acceptance criterion.
+- **The reach:** The stopped campaign remains diagnostic evidence but cannot
+  become a six-arm headline.
+- **Verdict:** Sound and user-directed.
+- **Confidence:** High.
+
+### Fix advisor review at the product prompt
+
+- **When:** Trace analysis of the `testem` regression.
+- **The choice:** Add one generic advisor instruction to inspect literal
+  protocol syntax and name required per-line markers instead of adding a
+  benchmark-specific rule, forcing more advisor context, or retrying the
+  failed model outcome. The alternative prompt reproduced the actionable miss
+  in three of five compacted-context runs; the shorter correction found the
+  exact TAP `# ` prefix in five of five.
+- **The gap:** The existing advisor contract challenged executor-written tests
+  in general but did not reliably inspect line-oriented wire markers.
+- **The reach:** Every product advisor review becomes slightly stricter on
+  serialized output, while the benchmark remains unaware of TAP or this task.
+- **Verdict:** Sound; it fixes the general failure mode at its owner and adds a
+  live falsified regression eval.
+- **Confidence:** High.
+
 ### Use the first five frozen tasks
 
 - **When:** Six-arm five-task tranche.

@@ -33,6 +33,10 @@ flight when interruption starts.
 - A missing arm or infrastructure failure blocks a headline paired comparison.
 - Synthetic results cover both-resolved, advisor-only, pure-only, and neither.
 - The first paid tranche runs the first five frozen tasks across six arms.
+- A pure-only regression stops the tranche before unrelated model-family spend;
+  the preserved trace must drive a general product fix and a fresh campaign.
+- DeepSWE passes `/app` as its repository root when deriving mutation-relative
+  advisor timing; SWE-bench retains its `/testbed` root.
 
 ## Delegated choices
 

@@ -51,6 +51,49 @@ describe("DeepSWE wire accounting", () => {
     expect(events).toEqual([{ type: "future_protocol_event", payload: { stable: true } }]);
   });
 
+  test("locates advisor calls relative to explicit mutations under DeepSWE's /app root", () => {
+    const terminal = {
+      type: "complete",
+      status: "completed",
+      turnUsage: usage(1, 0),
+      usageByModel: [],
+    } as unknown as TurnTerminalEvent;
+    const summary = summarizeDeepSweRun({
+      terminal,
+      events: [
+        {
+          type: "step",
+          step: {
+            type: "tool_call",
+            toolName: "edit",
+            toolCallId: "edit-1",
+            input: { path: "/app/src/index.js" },
+            isError: false,
+          },
+        },
+        {
+          type: "step",
+          step: {
+            type: "tool_call",
+            toolName: "ask_advisor",
+            toolCallId: "advisor-1",
+            input: {},
+            isError: false,
+            details: { type: "ask_advisor", model: "moonshotai/kimi-k3" },
+          },
+        },
+        terminal,
+      ] as TurnEvent[],
+      timedOut: false,
+      wallClockMs: 123,
+    });
+
+    expect(summary.telemetry.advisorCalls.firstExplicitRepositoryMutationStep).toBe(1);
+    expect(
+      summary.telemetry.advisorCalls.attempts[0]?.relativeToFirstExplicitRepositoryMutation,
+    ).toBe("after");
+  });
+
   test("classifies a pre-terminal process exit as infrastructure", () => {
     const processExit = {
       terminal: "killed",

@@ -17,7 +17,7 @@ export interface DeepSweRunSummary {
  * remains the source of truth and is retained independently.
  */
 export function summarizeDeepSweRun(outcome: RolloutOutcome): DeepSweRunSummary {
-  const telemetry = deriveTelemetry(outcome.events);
+  const telemetry = deriveTelemetry(outcome.events, { repositoryRoot: "/app" });
   return {
     schemaVersion: 1,
     terminal: outcome.terminal === "killed" ? "killed" : telemetry.terminalStatus,
