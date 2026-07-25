@@ -14,10 +14,18 @@ import type { MemorySession } from "./session.js";
  * background, after which the row becomes hybrid-retrievable.
  *
  * Drain shape:
- *   1. Acquire the memory session via one `withDb`. Inside that open,
- *      drain unembedded rows in `BATCH_SIZE` chunks until a select
- *      returns zero rows, then exit `withDb` so the cross-process lock
- *      releases shortly after via the session's idle-close timer.
+ *   1. Drain unembedded rows in `BATCH_SIZE` chunks, each chunk in its
+ *      own `withDb`, until a select returns zero rows. Between batches
+ *      the worker `relinquish()`es the memory session — closing the
+ *      handle and releasing the cross-process `.duet-open.lock` now
+ *      rather than after the idle-close timer — then pauses briefly so a
+ *      peer duet process waiting to open the same memory.db can take the
+ *      lock before this worker re-acquires it for the next batch. This
+ *      keeps the worker from starving a foreground session's turn-init
+ *      for the whole (potentially many-batch) drain. The trade is one
+ *      WASM reopen per batch while a backlog is actively draining; that
+ *      is transient background work, unlike the perpetual idle tick
+ *      guarded against below.
  *   2. If the drain came back empty and no `kick()` arrived meanwhile,
  *      the loop exits. A perpetual idle tick is deliberately avoided:
  *      each tick re-opens WASM Postgres once the session idle-closes,
@@ -36,6 +44,19 @@ import type { MemorySession } from "./session.js";
 const BATCH_SIZE = 50;
 const DEFAULT_RETRY_SLEEP_MS = 10_000;
 const DEFAULT_ERROR_SLEEP_MS = 60_000;
+// Pause between drain batches after the worker relinquishes the
+// cross-process lock, giving a peer duet process that is polling for the
+// same memory.db a window to acquire it before this worker re-opens for
+// the next batch. Small relative to a real embedding batch (a network
+// round-trip) so it barely affects drain throughput, yet wide enough to
+// overlap a fresh peer's early poll backoff (pollAcquireOpenLock starts
+// at 50/100/200/400ms) — the case that matters in production, where the
+// contending peer is a just-launched session's turn-init. It does not
+// guarantee a hit for a peer already deep in the ~1000ms backoff ceiling
+// (that backoff never resets), but each batch reopens the window, so no
+// peer is starved for the whole drain. Tests that need a hard per-cycle
+// guarantee widen this past 1000ms via `interBatchYieldMs`.
+const DEFAULT_INTER_BATCH_YIELD_MS = 250;
 // Cap how often a single observation may be re-embedded. The production
 // memory store can churn rows (the reflector deletes and re-inserts a
 // session's observations, which cascade-deletes their embeddings). If
@@ -77,6 +98,13 @@ export interface EmbeddingBackfillWorkerOptions {
    */
   attemptCooldownMs?: number;
   /**
+   * Pause between drain batches, in milliseconds, after the worker
+   * relinquishes the cross-process lock so a waiting peer duet process
+   * can acquire it before the next batch re-opens. Defaults to 250ms.
+   * Tests override this to keep the suite fast.
+   */
+  interBatchYieldMs?: number;
+  /**
    * Maximum size of the live log file in bytes before it is rotated
    * to `<logPath>.1` (replacing any prior rotation). Defaults to 1 MB.
    * Each call to `log` checks the current size first and rotates
@@ -93,6 +121,7 @@ export class EmbeddingBackfillWorker {
   private readonly retrySleepMs: number;
   private readonly errorSleepMs: number;
   private readonly attemptCooldownMs: number;
+  private readonly interBatchYieldMs: number;
   private readonly logMaxBytes: number;
   // Per-id record of the last attempt timestamp. selectBatch filters
   // out ids attempted within the cooldown, breaking the hot loop when
@@ -118,6 +147,7 @@ export class EmbeddingBackfillWorker {
     this.retrySleepMs = options.retrySleepMs ?? DEFAULT_RETRY_SLEEP_MS;
     this.errorSleepMs = options.errorSleepMs ?? DEFAULT_ERROR_SLEEP_MS;
     this.attemptCooldownMs = options.attemptCooldownMs ?? DEFAULT_ATTEMPT_COOLDOWN_MS;
+    this.interBatchYieldMs = options.interBatchYieldMs ?? DEFAULT_INTER_BATCH_YIELD_MS;
     this.logMaxBytes = options.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES;
   }
 
@@ -171,20 +201,16 @@ export class EmbeddingBackfillWorker {
     while (!signal.aborted) {
       this.pendingKick = false;
       try {
-        // One withDb per drain: embed everything that's currently
-        // outstanding while we hold the lock, then exit so the
-        // session can idle-close and another duet CLI can take a
-        // turn. A returned `undefined` means the lock could not be
-        // acquired in time — retry after a short sleep.
-        const outcome = await this.options.session.withDb((db) => this.drain(db, signal));
+        const outcome = await this.drainInBatches(signal);
         if (signal.aborted) return;
         if (outcome === "drained") {
           if (!this.pendingKick) return;
           continue;
         }
-        // "cooling": the only unembedded rows were attempted recently.
-        // Retry once the cooldown can have expired rather than exiting,
-        // so a churned row is not stranded until the next write kick.
+        // "cooling": the only unembedded rows were attempted recently —
+        // retry once the cooldown can have expired. "lock-busy": the
+        // cross-process lock could not be acquired within the budget —
+        // retry after a short sleep so the peer holding it can finish.
         await this.sleep(
           outcome === "cooling" ? this.attemptCooldownMs : this.retrySleepMs,
           signal,
@@ -197,23 +223,71 @@ export class EmbeddingBackfillWorker {
     }
   }
 
-  private async drain(db: PGlite, signal: AbortSignal): Promise<"drained" | "cooling"> {
+  /**
+   * Drain the backlog one `BATCH_SIZE` chunk at a time, each chunk in its
+   * own `withDb`. Between batches the worker relinquishes the memory
+   * session and pauses so a peer duet process is not starved for the
+   * whole drain (see the class doc). Returns "drained" when the backlog
+   * is empty, "cooling" when the only remaining rows are inside the
+   * attempt cooldown, or "lock-busy" when the cross-process lock could
+   * not be acquired for a batch.
+   */
+  private async drainInBatches(signal: AbortSignal): Promise<"drained" | "cooling" | "lock-busy"> {
+    let first = true;
     while (!signal.aborted) {
+      if (!first) {
+        // Release the cross-process lock now (rather than waiting out the
+        // idle-close timer) and pause so a polling peer can take it
+        // before this worker re-opens for the next batch.
+        await this.options.session.relinquish();
+        await this.sleep(this.interBatchYieldMs, signal);
+        if (signal.aborted) return "drained";
+      }
+      first = false;
+      const outcome = await this.options.session.withDb((db) => this.drainBatch(db));
+      if (signal.aborted) return "drained";
+      // `undefined` means the lock could not be acquired within the
+      // budget; surface it so the caller backs off and retries.
+      if (outcome === undefined) return "lock-busy";
+      if (outcome === "more") continue;
+      return outcome;
+    }
+    return "drained";
+  }
+
+  /**
+   * Embed on an already-open handle until either a *full* batch was
+   * written — meaning more backlog is likely, so we return "more" and let
+   * the caller relinquish the lock before re-opening for the next batch —
+   * or the backlog is exhausted, returning the terminal status
+   * ("drained"/"cooling").
+   *
+   * A *partial* batch (fewer than `BATCH_SIZE` rows) means no more
+   * non-excluded rows remain, so the terminal check runs in this same
+   * open rather than re-opening for a near-certainly-empty select. This
+   * keeps a single-batch drain atomic (it resolves without ever yielding
+   * the event loop), so an un-kicked write that lands right after the
+   * drain is not swept in by a follow-on select — only full multi-batch
+   * drains yield the cross-process lock between batches.
+   */
+  private async drainBatch(db: PGlite): Promise<"more" | "drained" | "cooling"> {
+    while (true) {
       const batch = await this.selectBatch(db);
       if (batch.length === 0) {
         return (await this.hasCooledBacklog(db)) ? "cooling" : "drained";
       }
-      // Stamp the attempt before we await the embedding so a
-      // failure mid-call still counts as an attempt and the same
-      // ids do not get retried in a tight loop on the next drain.
+      // Stamp the attempt before we await the embedding so a failure
+      // mid-call still counts as an attempt and the same ids do not get
+      // retried in a tight loop on the next drain.
       const attemptAt = Date.now();
       for (const row of batch) this.recentAttempts.set(row.id, attemptAt);
       await embedAndPersistObservations(db, batch, this.options.embed);
       this.log(`Embedded ${batch.length} observations`);
+      // Full batch: yield the lock before draining the next one.
+      if (batch.length >= BATCH_SIZE) return "more";
+      // Partial batch: fall through to resolve the terminal state in the
+      // same open.
     }
-    // Aborted mid-drain; the caller returns on the aborted signal
-    // before reading this, so the value only needs to typecheck.
-    return "cooling";
   }
 
   /**

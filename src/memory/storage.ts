@@ -16,6 +16,18 @@ import { MemorySession } from "./session.js";
 import type { MemoryContextCache } from "./store.js";
 
 /**
+ * Lock-wait budget for the synchronous startup steps in
+ * `loadStoredMemory` (the eager open-probe and the reused-open backfill /
+ * context-pack builds). Deliberately much shorter than the session's
+ * default 30s open-lock budget: when a peer duet process holds the
+ * cross-process lock, startup must degrade to the async path in a few
+ * seconds instead of blocking the first turn while several init steps
+ * each wait a full budget. The steady-state write path keeps the full
+ * default so a legitimate mid-turn burst still waits its turn.
+ */
+const INIT_LOCK_WAIT_BUDGET_MS = 5_000;
+
+/**
  * Handle returned by `loadStoredMemory`. Callers pass `session` into the
  * storage helpers, which each open the underlying PGlite handle just long
  * enough to run their queries and then hand it back to the idle-close
@@ -106,7 +118,22 @@ export async function loadStoredMemory(
   // before any turn dispatches) without changing the steady-state
   // lazy-open behavior. The handle idle-closes within 2s afterwards
   // unless the contextPack rebuild below grabs it first.
-  await session.withDb(async () => {});
+  //
+  // Use a short lock-wait budget here rather than the session default
+  // (30s): if a peer duet process holds the cross-process open-lock,
+  // this probe — and the backfill/context-pack steps that reuse its
+  // open — must degrade in a few seconds instead of chaining several
+  // full 30s waits and hanging the first turn for minutes. On a busy
+  // peer the probe returns undefined; we then skip the follow-on init
+  // steps (the backfill catch-up and initial context-pack build, which
+  // would only re-block on the same lock) and defer them to the async
+  // worker + later compaction. (This is a distinct path from quarantine
+  // recovery, where the probe SUCCEEDS against the fresh dataDir and the
+  // follow-on steps run as normal — here they are skipped.) The
+  // steady-state write path keeps the full budget.
+  const probed = await session.withDb(async () => true, {
+    lockWaitBudgetMs: INIT_LOCK_WAIT_BUDGET_MS,
+  });
 
   // Bounded synchronous catch-up before the worker starts (and before
   // the first turn can dispatch): embed the newest rows still missing
@@ -115,8 +142,10 @@ export async function loadStoredMemory(
   // recallable in the very first turn rather than whenever the async
   // drain lands. Capped at one embedding HTTP request; the worker owns
   // any deeper backlog. Best-effort: on failure (no API key, endpoint
-  // down) the worker's retry loop takes over.
-  if (options.embed) {
+  // down) the worker's retry loop takes over. Skipped when the probe
+  // could not acquire the lock — the worker picks up the backlog once
+  // the peer releases.
+  if (probed && options.embed) {
     try {
       await backfillNewestEmbeddings(session, options.embed, EMBEDDING_BATCH_LIMIT);
     } catch {
@@ -125,7 +154,7 @@ export async function loadStoredMemory(
   }
   worker?.start();
 
-  if (options.contextPack) {
+  if (probed && options.contextPack) {
     // Initial compaction trigger: freeze the rendered memory pack
     // before the first turn dispatches so the prefix is stable from
     // turn 1, not turn 2. Migrations ran during the probe above; the

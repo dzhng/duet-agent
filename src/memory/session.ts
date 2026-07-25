@@ -89,7 +89,10 @@ export class MemorySession {
    * returns whatever `fn` returns. Errors thrown inside `fn`
    * propagate.
    */
-  async withDb<T>(fn: (db: PGlite) => Promise<T>): Promise<T | undefined> {
+  async withDb<T>(
+    fn: (db: PGlite) => Promise<T>,
+    opts?: { lockWaitBudgetMs?: number },
+  ): Promise<T | undefined> {
     if (this.disposed) return undefined;
     this.cancelIdleClose();
     // Increment refs before awaiting the open so a concurrent
@@ -99,7 +102,7 @@ export class MemorySession {
     // a closed db.
     this.refs++;
     try {
-      const db = await this.ensureOpen();
+      const db = await this.ensureOpen(opts?.lockWaitBudgetMs);
       if (!db) return undefined;
       // Once the handle is open, run fn even if dispose was called
       // while we were waiting on `ensureOpen`. dispose's drain loop
@@ -161,10 +164,25 @@ export class MemorySession {
     await this.closeNow();
   }
 
-  private async ensureOpen(): Promise<PGlite | undefined> {
+  /**
+   * Immediately close the handle and release the cross-process lock when
+   * no `withDb` is in flight, instead of waiting out the idle-close
+   * timer. The embedding backfill worker calls this at each batch
+   * boundary so a peer duet process draining the same memory.db is not
+   * starved for the whole (multi-batch) drain. A no-op while any op is
+   * in flight (`refs > 0`) — that op still owns the open — or while the
+   * session is disposed/opening.
+   */
+  async relinquish(): Promise<void> {
+    if (this.disposed || this.refs > 0 || this.opening) return;
+    this.cancelIdleClose();
+    await this.closeNow();
+  }
+
+  private async ensureOpen(lockWaitBudgetMs?: number): Promise<PGlite | undefined> {
     if (this.db) return this.db;
     if (this.opening) return this.opening;
-    this.opening = this.openWithPolling()
+    this.opening = this.openWithPolling(lockWaitBudgetMs)
       .then((db) => {
         this.db = db;
         return db;
@@ -182,8 +200,13 @@ export class MemorySession {
     return this.opening;
   }
 
-  private async openWithPolling(): Promise<PGlite> {
-    const lockPath = await pollAcquireOpenLock(this.path, this.lockWaitBudgetMs);
+  private async openWithPolling(lockWaitBudgetMs?: number): Promise<PGlite> {
+    // A per-call budget (passed by `withDb`) overrides the session
+    // default for the open this call initiates. Concurrent callers that
+    // join an in-flight open (`this.opening`) inherit that open's budget;
+    // the per-call budget only applies when this call starts the open.
+    const budget = lockWaitBudgetMs ?? this.lockWaitBudgetMs;
+    const lockPath = await pollAcquireOpenLock(this.path, budget);
     const opened = await openPGliteHoldingLock(this.path, this.openOptions, lockPath);
     this.lockPath = opened.lockPath;
     return opened.db;
