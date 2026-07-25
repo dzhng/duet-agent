@@ -11,6 +11,15 @@ const execFileAsync = promisify(execFile);
 const REPO_ROOT = resolve(import.meta.dir, "../../..");
 const REPOSITORY_URL = "https://github.com/dzhng/duet-agent.git";
 const REQUEST_TIMEOUT_MS = 180_000;
+export const DEEPSWE_TEMPLATE_APT_PACKAGES = [
+  "ca-certificates",
+  "curl",
+  "git",
+  "python3",
+  "python3-pip",
+  "python3-venv",
+  "unzip",
+] as const;
 
 /** Build one immutable Docker-in-Docker worker image for the DeepSWE pilot. */
 export async function buildDeepSweTemplate(): Promise<{
@@ -32,7 +41,7 @@ export async function buildDeepSweTemplate(): Promise<{
   const worktree = "/work/duet-agent";
   const template = Template()
     .fromUbuntuImage("24.04")
-    .aptInstall(["ca-certificates", "curl", "git", "python3", "python3-pip", "python3-venv"])
+    .aptInstall([...DEEPSWE_TEMPLATE_APT_PACKAGES])
     .runCmd("curl -fsSL https://get.docker.com | sh")
     .runCmd("sudo systemctl disable --now docker.service docker.socket")
     .runCmd(
