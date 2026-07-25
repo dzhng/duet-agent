@@ -13,13 +13,14 @@ import {
 
 describe("DeepSWE paid-run admission", () => {
   test("reserves one bounded request beyond every soft rollout stop", () => {
-    expect(deepSweMinimumBudgetUsd(10, 10)).toBe(1_200);
+    expect(deepSweMinimumBudgetUsd(5, 10)).toBe(900);
   });
 
   test("covers the maximum catalog-priced request in every pilot model", () => {
     for (const modelId of [
       "zai/glm-5.2",
       "moonshotai/kimi-k3",
+      "anthropic/claude-opus-5",
       "anthropic/claude-fable-5",
       "openai/gpt-5.6-luna",
     ]) {
@@ -35,9 +36,9 @@ describe("DeepSWE paid-run admission", () => {
     }
   });
 
-  test("allows all four agent and verifier ceilings plus setup and transfer headroom", () => {
+  test("allows all six agent and verifier ceilings plus setup and transfer headroom", () => {
     const bareTrialCeilingsMs =
-      4 *
+      6 *
       (DEEPSWE_AGENT_TIMEOUT_SEC +
         DEEPSWE_VERIFIER_TIMEOUT_SEC +
         DEEPSWE_ENVIRONMENT_BUILD_TIMEOUT_SEC +

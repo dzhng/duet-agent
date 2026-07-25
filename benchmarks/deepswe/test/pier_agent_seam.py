@@ -80,6 +80,12 @@ async def main() -> None:
             cost_limit_usd=1,
             model_name="seam",
         )
+        if set(agent.network_allowlist().domains) != {
+            "ai-gateway.vercel.sh",
+            "gateway.duet.so",
+            "openrouter.ai",
+        }:
+            raise AssertionError("Pier egress does not cover every supported gateway")
         environment = FakeEnvironment()
         await agent.setup(environment)
         await agent.run("test", environment, AgentContext())

@@ -11,7 +11,7 @@ export const DEEPSWE_ENVIRONMENT_BUILD_TIMEOUT_SEC = 1_800;
 export const DEEPSWE_VERIFIER_ENVIRONMENT_BUILD_TIMEOUT_SEC = 1_800;
 /** Agent setup, artifact collection, and commit allowance per trial. */
 const DEEPSWE_TRIAL_OVERHEAD_MS = 15 * 60_000;
-/** Four arms run sequentially within one task sandbox. */
+/** All configured arms run sequentially within one task sandbox. */
 export const DEEPSWE_WORKER_COMMAND_TIMEOUT_MS =
   Object.keys(DEEPSWE_ARMS).length *
   ((DEEPSWE_AGENT_TIMEOUT_SEC +

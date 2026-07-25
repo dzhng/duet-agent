@@ -1,7 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DeepSweArmName } from "./config.js";
+import { DEEPSWE_ARM_NAMES, type DeepSweArmName } from "./config.js";
 
 export interface DeepSweResultRow {
   arm: DeepSweArmName;
@@ -30,6 +30,63 @@ export interface DeepSwePairReport {
   neitherResolved: number;
   /** Tasks that cannot enter the paired denominator until both arms finish. */
   missingArms: Array<{ taskId: string; missing: DeepSweArmName[] }>;
+}
+
+export interface DeepSweMissingArms {
+  taskId: string;
+  missing: DeepSweArmName[];
+}
+
+/** Enumerate every absent configured arm before publishing campaign headlines. */
+export function findMissingDeepSweArms(
+  rows: readonly DeepSweResultRow[],
+  expectedTaskIds: readonly string[],
+): DeepSweMissingArms[] {
+  return [...new Set(expectedTaskIds)].flatMap((taskId) => {
+    const completedArms = new Set(
+      rows.filter((row) => row.taskId === taskId).map((row) => row.arm),
+    );
+    const missing = DEEPSWE_ARM_NAMES.filter((arm) => !completedArms.has(arm));
+    return missing.length === 0 ? [] : [{ taskId, missing }];
+  });
+}
+
+/** A task is complete only after every configured arm has one durable outcome. */
+export function hasEveryDeepSweArm(rows: readonly DeepSweResultRow[], taskId: string): boolean {
+  return findMissingDeepSweArms(rows, [taskId]).length === 0;
+}
+
+/** Use the campaign's frozen subset instead of inventing missing rows for the full manifest. */
+export async function loadDeepSweCampaignTaskIds(
+  campaignRoot: string,
+  manifestTaskIds: readonly string[],
+): Promise<string[]> {
+  const path = join(campaignRoot, "campaign.json");
+  const campaign = await readFile(path, "utf8")
+    .then((value) => JSON.parse(value) as { taskIds?: unknown })
+    .catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+  if (!campaign) return [...manifestTaskIds];
+  if (
+    !Array.isArray(campaign.taskIds) ||
+    campaign.taskIds.length === 0 ||
+    !campaign.taskIds.every((taskId): taskId is string => typeof taskId === "string")
+  ) {
+    throw new Error(`Invalid DeepSWE campaign taskIds in ${path}.`);
+  }
+  const taskIds = [...new Set(campaign.taskIds)];
+  if (taskIds.length !== campaign.taskIds.length) {
+    throw new Error(`Duplicate DeepSWE campaign taskId in ${path}.`);
+  }
+  const manifestSet = new Set(manifestTaskIds);
+  for (const taskId of taskIds) {
+    if (!manifestSet.has(taskId)) {
+      throw new Error(`DeepSWE campaign task is not in the frozen manifest: ${taskId}.`);
+    }
+  }
+  return taskIds;
 }
 
 /** Load Pier's official trial records without reproducing its scoring logic. */
@@ -74,7 +131,7 @@ export function isRetryableInfrastructureException(exception: string | undefined
 /** Aggregate resolve rate and cost efficiency from official Pier trial rows. */
 export function buildDeepSweReport(rows: readonly DeepSweResultRow[]): DeepSweArmReport[] {
   assertCompleteCostAccounting(rows);
-  const arms = [...new Set(rows.map((row) => row.arm))];
+  const arms = DEEPSWE_ARM_NAMES.filter((arm) => rows.some((row) => row.arm === arm));
   return arms.map((arm) => {
     const armRows = rows.filter((row) => row.arm === arm);
     const resolved = armRows.filter((row) => row.resolved).length;
@@ -186,10 +243,5 @@ async function walk(root: string): Promise<string[]> {
 }
 
 function isArmName(value: string | undefined): value is DeepSweArmName {
-  return (
-    value === "glm-pure" ||
-    value === "glm-kimi-advisor" ||
-    value === "kimi-pure" ||
-    value === "kimi-fable-advisor"
-  );
+  return value !== undefined && DEEPSWE_ARM_NAMES.some((arm) => arm === value);
 }

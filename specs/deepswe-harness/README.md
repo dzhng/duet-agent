@@ -6,10 +6,14 @@ Measure whether Duet's normal advisor architecture improves long-horizon
 repository work on DeepSWE v1.1, while preserving DeepSWE's official task
 containers, pristine verifier containers, and reward files.
 
-The pilot is a paired experiment over ten frozen tasks:
+The frozen population contains ten tasks. Its first paid tranche runs the first
+five selected tasks across two advisor pairs:
 
 - GLM 5.2 pure versus GLM 5.2 with Kimi K3 advisor.
 - Kimi K3 pure versus Kimi K3 with Fable 5 advisor.
+
+Opus 5 pure and Fable 5 pure run on those same tasks as standalone model-family
+cost and resolve-rate baselines. They do not create artificial advisor pairs.
 
 Both arms in a pair use the same task, Duet commit, prompt, executor effort,
 classifier, memory behavior, vision fallback, limits, and official verifier.
@@ -18,8 +22,8 @@ pure-resolved/advised-unresolved is a regression that remains in the result.
 
 ## Next Agent Prompt
 
-Status: setup complete; the paid one-task acceptance gate is next, last updated
-2026-07-25.
+Status: six-arm tranche implementation is reviewed and green; the paid
+five-task E2B run is next, last updated 2026-07-25.
 
 Implement the next unchecked slice in order. Keep Pier as the sole owner of
 task containers and scoring. Preserve raw Duet RPC events before deriving
@@ -29,10 +33,10 @@ telemetry. Before ending a pass, update this section and the checklist.
 - [x] [02 — Bridge Duet into Pier](slices/02-pier-duet-adapter.md)
 - [ ] [03 — Execute and report the pilot](slices/03-execute-and-report.md)
 
-The pinned checkout, generated configs, compiled artifact, benchmark-local
-tests, inherited SWE-bench tests, Pier adapter seam, and official no-model
-separate-verifier smoke all pass. The paid run needs an explicit total budget;
-setup and no-model checks do not.
+The user authorized a $1,000 campaign budget. At the chosen $10 per-rollout
+soft stop, five tasks across six arms require $900 of admission headroom.
+Decisions made while implementing the tranche are recorded in the
+[choices ledger](choices.md).
 
 ## Ownership
 
@@ -85,8 +89,8 @@ the seed and algorithm explain how they were chosen.
 
 ## Review map
 
-The first useful checkpoint is a no-model Pier smoke proving that the pinned
-task and separate verifier environment work. The second is one paid task across
-all four arms. Only then should all ten task shards launch.
+The no-model Pier smoke proved that the pinned task and separate verifier
+environment work. The next checkpoint is the first five frozen tasks across all
+six arms. The remaining five tasks stay available as an expansion tranche.
 
 There is no visual surface or screenshot gate for this benchmark.

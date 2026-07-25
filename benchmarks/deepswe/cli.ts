@@ -3,15 +3,22 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseDotenv } from "dotenv";
 
+import { providerEnvironment, PROVIDER_ENV_NAMES } from "../shared/provider-environment.js";
 import { deepSweMinimumBudgetUsd, DEEPSWE_SINGLE_REQUEST_CUSHION_USD } from "./src/budget.js";
-import { DEEPSWE_ARMS, renderDeepSweConfigs, serializeDeepSweConfig } from "./src/config.js";
+import { DEEPSWE_ARM_NAMES, renderDeepSweConfigs, serializeDeepSweConfig } from "./src/config.js";
 import {
   loadDeepSweManifest,
   verifyDeepSweCheckout,
   verifyDeepSweSelection,
 } from "./src/manifest.js";
 import { prepareDeepSweArtifacts, verifyDeepSweArtifacts } from "./src/prepare.js";
-import { buildDeepSwePairedReport, buildDeepSweReport, loadDeepSweResults } from "./src/report.js";
+import {
+  buildDeepSwePairedReport,
+  buildDeepSweReport,
+  findMissingDeepSweArms,
+  loadDeepSweCampaignTaskIds,
+  loadDeepSweResults,
+} from "./src/report.js";
 import { DEEPSWE_AGENT_TIMEOUT_SEC, DEEPSWE_AGENT_WALL_CLOCK_MS } from "./src/timing.js";
 
 const ROOT = import.meta.dir;
@@ -61,7 +68,7 @@ async function writeConfigs(): Promise<void> {
   for (const [name, config] of Object.entries(renderDeepSweConfigs())) {
     await writeFile(join(CONFIG_ROOT, `${name}.models.json`), serializeDeepSweConfig(config));
   }
-  console.log(`Wrote ${Object.keys(DEEPSWE_ARMS).length} DeepSWE model configurations.`);
+  console.log(`Wrote ${DEEPSWE_ARM_NAMES.length} DeepSWE model configurations.`);
 }
 
 async function setup(): Promise<void> {
@@ -170,6 +177,9 @@ async function writeJob(args: string[]): Promise<void> {
       throw new Error(`Task is not in the pilot manifest: ${taskId}.`);
     }
   }
+  const agentEnv = Object.fromEntries(
+    Object.keys(providerEnvironment(process.env)).map((name) => [name, `\${${name}}`]),
+  );
   const job = {
     job_name: jobName,
     jobs_dir: JOBS_ROOT,
@@ -179,7 +189,7 @@ async function writeJob(args: string[]): Promise<void> {
     // Keeping in-process retries off avoids spending twice after a late crash.
     retry: { max_retries: 0 },
     environment: { type: "docker", delete: true },
-    agents: Object.keys(DEEPSWE_ARMS).map((arm) => ({
+    agents: DEEPSWE_ARM_NAMES.map((arm) => ({
       import_path: "benchmarks.deepswe.pier_agent:DuetAgent",
       model_name: arm,
       override_timeout_sec: DEEPSWE_AGENT_TIMEOUT_SEC,
@@ -189,7 +199,7 @@ async function writeJob(args: string[]): Promise<void> {
         cost_limit_usd: costLimitUsd,
         wall_clock_ms: DEEPSWE_AGENT_WALL_CLOCK_MS,
       },
-      env: { DUET_API_KEY: "${DUET_API_KEY}" },
+      env: agentEnv,
     })),
     datasets: [{ path: join(DEEPSWE_CHECKOUT, "tasks"), task_names: taskIds }],
   };
@@ -233,9 +243,7 @@ async function run(args: string[]): Promise<void> {
   const budgetUsd = positiveOption(args, "--budget-usd");
   const costLimitUsd = positiveOption(args, "--cost-limit-usd");
   await loadProviderEnvironment();
-  if (!process.env.DUET_API_KEY) {
-    throw new Error("DUET_API_KEY is required in the environment or repository .env.");
-  }
+  providerEnvironment(process.env);
   await verify();
   await requirePushedCleanCommit();
   const task = option(args, "--task");
@@ -301,7 +309,10 @@ async function requirePushedCleanCommit(): Promise<void> {
 
 async function loadProviderEnvironment(): Promise<void> {
   const values = parseDotenv(await readFile(join(REPO_ROOT, ".env"), "utf8").catch(() => ""));
-  for (const [key, value] of Object.entries(values)) process.env[key] ??= value;
+  for (const name of PROVIDER_ENV_NAMES) {
+    const value = values[name];
+    if (!process.env[name] && value) process.env[name] = value;
+  }
 }
 
 async function report(args: string[]): Promise<void> {
@@ -315,10 +326,11 @@ async function report(args: string[]): Promise<void> {
   const rows = await loadDeepSweResults(jobsRoot);
   const reportRows = buildDeepSweReport(rows);
   const manifest = await loadDeepSweManifest(MANIFEST_PATH);
-  const pairs = buildDeepSwePairedReport(
-    rows,
-    manifest.tasks.map((task) => task.taskId),
-  );
+  const manifestTaskIds = manifest.tasks.map((task) => task.taskId);
+  const expectedTaskIds = campaign
+    ? await loadDeepSweCampaignTaskIds(jobsRoot, manifestTaskIds)
+    : manifestTaskIds;
+  const pairs = buildDeepSwePairedReport(rows, expectedTaskIds);
   console.table(
     reportRows.map((row) => ({
       arm: row.arm,
@@ -347,11 +359,11 @@ async function report(args: string[]): Promise<void> {
       `${JSON.stringify({ schemaVersion: 1, rows, arms: reportRows, pairs }, null, 2)}\n`,
     );
   }
-  const missing = pairs.flatMap((pair) =>
-    pair.missingArms.map((entry) => `${pair.pair}/${entry.taskId}: ${entry.missing.join(", ")}`),
+  const missing = findMissingDeepSweArms(rows, expectedTaskIds).map(
+    (entry) => `${entry.taskId}: ${entry.missing.join(", ")}`,
   );
   if (missing.length > 0) {
-    throw new Error(`Paired headline is incomplete:\n${missing.join("\n")}`);
+    throw new Error(`DeepSWE headline is incomplete:\n${missing.join("\n")}`);
   }
 }
 

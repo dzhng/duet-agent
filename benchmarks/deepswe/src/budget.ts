@@ -2,7 +2,7 @@ import { DEEPSWE_ARMS } from "./config.js";
 
 /**
  * Cushion for one request that finishes after a rollout crosses its soft stop.
- * This covers the most expensive possible request among the four pinned
+ * This covers the most expensive possible request among the pinned
  * configurations: Fable 5 at its 1M context and 128k output ceilings. It is
  * admission headroom, not a provider-side hard cap: normal Duet subagents can
  * have more than one request in flight.

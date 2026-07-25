@@ -2,16 +2,15 @@
 
 ## Contract
 
-One command can run the four frozen arms over the ten frozen tasks through
+One command can run every configured arm over any frozen task subset through
 official Pier scoring, resume infrastructure failures, and report paired
 resolution plus cost/task and cost/resolved.
 
 ## Seam
 
-The campaign expands into one outer shard per task. On E2B, up to ten workers
-run concurrently; each worker runs its task's four arms sequentially so
-DeepSWE's 8 GiB agent/verifier requirements do not compete inside a 16 GiB
-worker.
+The campaign expands into one outer shard per task. On E2B, the workers run
+concurrently; each worker runs its task's arms sequentially so DeepSWE's 8 GiB
+agent/verifier requirements do not compete inside a 16 GiB worker.
 
 The in-container driver derives usage from Duet's retained raw RPC ledger and
 Pier embeds that accounting in each trial `result.json`. The reporter consumes
@@ -29,10 +28,11 @@ flight when interruption starts.
 
 - Pair validation rejects changed classifier, memory, fallback, effort, prompt,
   task image, or Duet artifact within a pair.
-- Sharding produces ten task shards and forty arm outcomes.
+- Sharding produces one task shard per selected task and one outcome per
+  configured arm.
 - A missing arm or infrastructure failure blocks a headline paired comparison.
 - Synthetic results cover both-resolved, advisor-only, pure-only, and neither.
-- A one-task four-arm live gate passes before the full pilot launches.
+- The first paid tranche runs the first five frozen tasks across six arms.
 
 ## Delegated choices
 

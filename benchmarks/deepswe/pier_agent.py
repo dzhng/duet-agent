@@ -70,7 +70,13 @@ class DuetAgent(BaseInstalledAgent):
         )
 
     def network_allowlist(self) -> NetworkAllowlist:
-        return NetworkAllowlist(domains=["gateway.duet.so"])
+        return NetworkAllowlist(
+            domains=[
+                "gateway.duet.so",
+                "ai-gateway.vercel.sh",
+                "openrouter.ai",
+            ]
+        )
 
     async def setup(self, environment: BaseEnvironment) -> None:
         directory_result = await environment.exec(

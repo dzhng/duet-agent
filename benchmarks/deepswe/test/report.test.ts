@@ -7,12 +7,40 @@ import { testIfDocker } from "../../../test/helpers/docker-only.js";
 import {
   buildDeepSwePairedReport,
   buildDeepSweReport,
+  findMissingDeepSweArms,
   isRetryableInfrastructureException,
+  loadDeepSweCampaignTaskIds,
   loadDeepSweResults,
   type DeepSweResultRow,
 } from "../src/report.js";
 
 describe("DeepSWE reporting", () => {
+  test("rejects a headline when standalone pure baselines are missing", () => {
+    const rows: DeepSweResultRow[] = [
+      { arm: "glm-pure", taskId: "task", resolved: true, costUsd: 1 },
+      { arm: "glm-kimi-advisor", taskId: "task", resolved: true, costUsd: 1 },
+      { arm: "kimi-pure", taskId: "task", resolved: true, costUsd: 1 },
+      { arm: "kimi-fable-advisor", taskId: "task", resolved: true, costUsd: 1 },
+    ];
+
+    expect(findMissingDeepSweArms(rows, ["task"])).toEqual([
+      { taskId: "task", missing: ["opus-pure", "fable-pure"] },
+    ]);
+  });
+
+  testIfDocker("uses the frozen campaign subset as the paired denominator", async () => {
+    const root = await mkdtemp(join(tmpdir(), "deepswe-campaign-"));
+    await writeFile(
+      join(root, "campaign.json"),
+      JSON.stringify({ taskIds: ["task-one", "task-two"] }),
+    );
+
+    expect(await loadDeepSweCampaignTaskIds(root, ["task-one", "task-two", "task-three"])).toEqual([
+      "task-one",
+      "task-two",
+    ]);
+  });
+
   test("retries infrastructure without retrying model or verifier outcomes", () => {
     expect(isRetryableInfrastructureException("EnvironmentStartTimeoutError")).toBe(true);
     expect(isRetryableInfrastructureException("RuntimeError")).toBe(true);
@@ -78,8 +106,12 @@ describe("DeepSWE reporting", () => {
   testIfDocker("ignores Pier's job-level result and loads only trial records", async () => {
     const root = await mkdtemp(join(tmpdir(), "deepswe-report-"));
     const trialRoot = join(root, "job", "trial");
+    const opusRoot = join(root, "job", "opus");
+    const fableRoot = join(root, "job", "fable");
     const infrastructureRoot = join(root, "job", "infrastructure");
     await mkdir(trialRoot, { recursive: true });
+    await mkdir(opusRoot, { recursive: true });
+    await mkdir(fableRoot, { recursive: true });
     await mkdir(infrastructureRoot, { recursive: true });
     await writeFile(join(root, "job", "result.json"), JSON.stringify({ n_trials: 1 }));
     await writeFile(
@@ -99,13 +131,47 @@ describe("DeepSWE reporting", () => {
         exception_info: { exception_type: "EnvironmentStartTimeoutError" },
       }),
     );
-    expect(await loadDeepSweResults(root)).toEqual([
-      {
-        arm: "glm-pure",
-        taskId: "example-task",
-        resolved: true,
-        costUsd: 1.25,
-      },
-    ]);
+    await writeFile(
+      join(opusRoot, "result.json"),
+      JSON.stringify({
+        task_name: "datacurve/example-task",
+        agent_info: { model_info: { name: "opus-pure" } },
+        agent_result: { cost_usd: 3.5 },
+        verifier_result: { rewards: { reward: 1 } },
+      }),
+    );
+    await writeFile(
+      join(fableRoot, "result.json"),
+      JSON.stringify({
+        task_name: "datacurve/example-task",
+        agent_info: { model_info: { name: "fable-pure" } },
+        agent_result: { cost_usd: 2.5 },
+        verifier_result: { rewards: { reward: 0 } },
+      }),
+    );
+    const rows = await loadDeepSweResults(root);
+    expect(rows).toHaveLength(3);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        {
+          arm: "glm-pure",
+          taskId: "example-task",
+          resolved: true,
+          costUsd: 1.25,
+        },
+        {
+          arm: "fable-pure",
+          taskId: "example-task",
+          resolved: false,
+          costUsd: 2.5,
+        },
+        {
+          arm: "opus-pure",
+          taskId: "example-task",
+          resolved: true,
+          costUsd: 3.5,
+        },
+      ]),
+    );
   });
 });

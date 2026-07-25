@@ -8,9 +8,15 @@ import { promisify } from "node:util";
 import { parse as parseDotenv } from "dotenv";
 import { Sandbox, Template } from "e2b";
 
+import { providerEnvironment, PROVIDER_ENV_NAMES } from "../../shared/provider-environment.js";
 import { deepSweMinimumBudgetUsd, DEEPSWE_SINGLE_REQUEST_CUSHION_USD } from "../src/budget.js";
+import { DEEPSWE_ARM_NAMES } from "../src/config.js";
 import { loadDeepSweManifest } from "../src/manifest.js";
-import { isRetryableInfrastructureException, loadDeepSweResults } from "../src/report.js";
+import {
+  hasEveryDeepSweArm,
+  isRetryableInfrastructureException,
+  loadDeepSweResults,
+} from "../src/report.js";
 import { DEEPSWE_WORKER_COMMAND_TIMEOUT_MS, DEEPSWE_WORKER_TIMEOUT_MS } from "../src/timing.js";
 import { deepSweTemplateName, shellQuote } from "./support.js";
 
@@ -33,11 +39,8 @@ interface Options {
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   await loadRepositoryEnv();
-  const duetApiKey = process.env.DUET_API_KEY;
-  const e2bApiKey = process.env.E2B_API_KEY;
-  if (!duetApiKey || !e2bApiKey) {
-    throw new Error("DUET_API_KEY and E2B_API_KEY are required.");
-  }
+  if (!process.env.E2B_API_KEY) throw new Error("E2B_API_KEY is required.");
+  const providerEnv = providerEnvironment(process.env);
   const [repositorySha, upstreamSha, status] = await Promise.all([
     git(["rev-parse", "HEAD"]),
     git(["rev-parse", "@{upstream}"]),
@@ -90,7 +93,7 @@ async function main(): Promise<void> {
       outputRoot,
       templateName,
       repositorySha,
-      duetApiKey,
+      providerEnv,
       costLimitUsd: options.costLimitUsd,
     });
   });
@@ -150,7 +153,7 @@ async function runTask(input: {
   outputRoot: string;
   templateName: string;
   repositorySha: string;
-  duetApiKey: string;
+  providerEnv: Record<string, string>;
   costLimitUsd: number;
 }): Promise<void> {
   const taskOutput = join(input.outputRoot, input.taskId);
@@ -159,13 +162,13 @@ async function runTask(input: {
     console.log(`[${input.taskId}] removed ${pruned} resumable infrastructure result(s).`);
   }
   if (await taskHasAllOutcomes(taskOutput, input.taskId)) {
-    console.log(`[${input.taskId}] already has all four arm outcomes; skipping.`);
+    console.log(`[${input.taskId}] already has every arm outcome; skipping.`);
     return;
   }
   const sandbox = await Sandbox.create(input.templateName, {
     timeoutMs: DEEPSWE_WORKER_TIMEOUT_MS,
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
-    envs: { DUET_API_KEY: input.duetApiKey },
+    envs: input.providerEnv,
     metadata: {
       purpose: "duet-deepswe-pilot",
       campaign: input.campaign,
@@ -209,7 +212,9 @@ async function runTask(input: {
       onStderr: (line) => console.error(`[${input.taskId}] ${line.line}`),
     });
     if (!(await remoteTaskHasAllOutcomes(sandbox, name, input.taskId))) {
-      throw new Error("Pier ended without four durable model/verifier outcomes.");
+      throw new Error(
+        `Pier ended without all ${DEEPSWE_ARM_NAMES.length} durable model/verifier outcomes.`,
+      );
     }
   } catch (error) {
     failure = error;
@@ -234,11 +239,11 @@ async function remoteTaskHasAllOutcomes(
       "bun",
       "-e",
       [
-        `import { loadDeepSweResults } from "./benchmarks/deepswe/src/report.ts";`,
+        `import { hasEveryDeepSweArm, loadDeepSweResults } from "./benchmarks/deepswe/src/report.ts";`,
         `const rows = await loadDeepSweResults(${JSON.stringify(
           `${REMOTE_ROOT}/benchmarks/deepswe/outputs/jobs/${name}`,
         )});`,
-        `process.exit(rows.filter((row) => row.taskId === ${JSON.stringify(taskId)}).length === 4 ? 0 : 1);`,
+        `process.exit(hasEveryDeepSweArm(rows, ${JSON.stringify(taskId)}) ? 0 : 1);`,
       ].join(" "),
     ]
       .map(shellQuote)
@@ -275,9 +280,9 @@ async function createTaskArchive(root: string): Promise<Uint8Array | undefined> 
   }
 }
 
-async function taskHasAllOutcomes(root: string, taskId: string): Promise<boolean> {
+export async function taskHasAllOutcomes(root: string, taskId: string): Promise<boolean> {
   const rows = await loadDeepSweResults(join(root, "jobs"));
-  return rows.filter((row) => row.taskId === taskId).length === 4;
+  return hasEveryDeepSweArm(rows, taskId);
 }
 
 /** Remove only Pier exceptions that its pinned retry policy treats as resumable. */
@@ -384,7 +389,7 @@ function parseOptions(args: string[]): Options {
     costLimitUsd: positive("--cost-limit-usd"),
     concurrency,
     taskIds,
-    campaign: validateCampaign(value("--campaign") ?? "pilot-10"),
+    campaign: validateCampaign(value("--campaign") ?? "pilot-10-six-arm"),
   };
 }
 
@@ -398,7 +403,10 @@ function validateCampaign(value: string): string {
 async function loadRepositoryEnv(): Promise<void> {
   const path = join(REPO_ROOT, ".env");
   const parsed = parseDotenv(await readFile(path, "utf8").catch(() => ""));
-  for (const [key, value] of Object.entries(parsed)) process.env[key] ??= value;
+  for (const name of ["E2B_API_KEY", ...PROVIDER_ENV_NAMES]) {
+    const value = parsed[name];
+    if (!process.env[name] && value) process.env[name] = value;
+  }
 }
 
 async function git(args: string[]): Promise<string> {

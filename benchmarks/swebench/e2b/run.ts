@@ -21,13 +21,13 @@ import { Sandbox, Template, type SandboxMetrics } from "e2b";
 import { parse as parseDotenv } from "dotenv";
 
 import { PGLITE_RUNTIME_ASSET_NAMES } from "../../../src/memory/pglite.js";
+import { providerEnvironment } from "../../shared/provider-environment.js";
 import { loadRolloutAttempts, type RolloutAttempt } from "../src/artifacts.js";
 import type { InstanceManifest } from "../src/manifest.js";
 import type { CampaignSpec } from "../src/orchestrator.js";
 import {
   buildE2BEnvironmentLock,
   e2bTemplateName,
-  providerEnvironment,
   shellQuote,
   type E2BEnvironmentProbe,
 } from "./support.js";

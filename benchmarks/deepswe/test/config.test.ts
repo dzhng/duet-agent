@@ -4,6 +4,27 @@ import { BUILT_IN_ROUTING_TABLE } from "../../../src/model-routing/table.js";
 import { DEEPSWE_TIER, renderDeepSweConfigs, type DeepSweArmName } from "../src/config.js";
 
 describe("DeepSWE model arms", () => {
+  test("materializes the six requested executor treatments", () => {
+    const configs = renderDeepSweConfigs();
+
+    expect(Object.keys(configs)).toEqual([
+      "glm-pure",
+      "glm-kimi-advisor",
+      "kimi-pure",
+      "kimi-fable-advisor",
+      "opus-pure",
+      "fable-pure",
+    ]);
+    expect(configs["opus-pure"].tiers[DEEPSWE_TIER]?.routes.general?.target).toEqual({
+      modelName: "opus-5",
+      thinkingLevel: "xhigh",
+    });
+    expect(configs["fable-pure"].tiers[DEEPSWE_TIER]?.routes.general?.target).toEqual({
+      modelName: "fable-5",
+      thinkingLevel: "high",
+    });
+  });
+
   test("pure and advised pairs differ only in advisor availability", () => {
     const configs = renderDeepSweConfigs();
     expect(normalize(configs["glm-pure"])).toEqual(normalize(configs["glm-kimi-advisor"]));

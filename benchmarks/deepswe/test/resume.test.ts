@@ -4,9 +4,45 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { testIfDocker } from "../../../test/helpers/docker-only.js";
-import { pruneInfrastructureTrials } from "../e2b/run.js";
+import { DEEPSWE_ARM_NAMES } from "../src/config.js";
+import { pruneInfrastructureTrials, taskHasAllOutcomes } from "../e2b/run.js";
 
 describe("DeepSWE infrastructure resume", () => {
+  testIfDocker("requires one durable outcome from every configured arm", async () => {
+    const root = await mkdtemp(join(tmpdir(), "deepswe-completion-"));
+    const jobsRoot = join(root, "jobs");
+    for (const arm of DEEPSWE_ARM_NAMES.slice(0, -1)) {
+      const trial = join(jobsRoot, arm);
+      await mkdir(trial, { recursive: true });
+      await writeFile(
+        join(trial, "result.json"),
+        JSON.stringify({
+          task_name: "datacurve/task",
+          agent_info: { model_info: { name: arm } },
+          agent_result: { cost_usd: 1 },
+          verifier_result: { rewards: { reward: 0 } },
+        }),
+      );
+    }
+
+    expect(await taskHasAllOutcomes(root, "task")).toBe(false);
+
+    const finalArm = DEEPSWE_ARM_NAMES.at(-1)!;
+    const finalTrial = join(jobsRoot, finalArm);
+    await mkdir(finalTrial, { recursive: true });
+    await writeFile(
+      join(finalTrial, "result.json"),
+      JSON.stringify({
+        task_name: "datacurve/task",
+        agent_info: { model_info: { name: finalArm } },
+        agent_result: { cost_usd: 1 },
+        verifier_result: { rewards: { reward: 1 } },
+      }),
+    );
+
+    expect(await taskHasAllOutcomes(root, "task")).toBe(true);
+  });
+
   testIfDocker("removes resumable Pier trials without deleting model outcomes", async () => {
     const root = await mkdtemp(join(tmpdir(), "deepswe-resume-"));
     const infrastructure = join(root, "job", "infrastructure");

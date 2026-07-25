@@ -38,13 +38,29 @@ export const DEEPSWE_ARMS = {
     advisorThinkingLevel: "high",
     advisorEnabled: true,
   },
+  "opus-pure": {
+    executorModel: "opus-5",
+    executorThinkingLevel: "xhigh",
+    advisorModel: "fable-5",
+    advisorThinkingLevel: "high",
+    advisorEnabled: false,
+  },
+  "fable-pure": {
+    executorModel: "fable-5",
+    executorThinkingLevel: "high",
+    advisorModel: "fable-5",
+    advisorThinkingLevel: "high",
+    advisorEnabled: false,
+  },
 } as const satisfies Record<string, DeepSweArm>;
 
 export type DeepSweArmName = keyof typeof DEEPSWE_ARMS;
+/** Canonical arm order shared by job generation, completion checks, and reports. */
+export const DEEPSWE_ARM_NAMES = Object.keys(DEEPSWE_ARMS) as DeepSweArmName[];
 
 export interface DeepSweArm {
   /** Main coding model used for the complete repository task. */
-  executorModel: "glm-5.2" | "kimi-k3";
+  executorModel: "fable-5" | "glm-5.2" | "kimi-k3" | "opus-5";
   /** Reasoning effort sent to the executor on every turn. */
   executorThinkingLevel: ThinkingLevel;
   /** Advisor target retained unchanged in both members of a pair. */
@@ -101,10 +117,10 @@ export function renderDeepSweConfig(arm: DeepSweArm): RoutingTable {
   return table;
 }
 
-/** Materialize all four arms in their stable experiment order. */
+/** Materialize all six arms in their stable experiment order. */
 export function renderDeepSweConfigs(): Record<DeepSweArmName, RoutingTable> {
   return Object.fromEntries(
-    Object.entries(DEEPSWE_ARMS).map(([name, arm]) => [name, renderDeepSweConfig(arm)]),
+    DEEPSWE_ARM_NAMES.map((name) => [name, renderDeepSweConfig(DEEPSWE_ARMS[name])]),
   ) as Record<DeepSweArmName, RoutingTable>;
 }
 
