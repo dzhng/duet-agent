@@ -1,5 +1,6 @@
 import type { ImageContent, TextContent, ThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { RouterSwitch } from "../model-routing/router.js";
+import type { DuetModelTier } from "../model-routing/active-tier.js";
 import type { TransportName } from "../model-resolution/catalog.js";
 import type { TaskDescriptor, TaskId, TaskSettlement } from "../tasks/types.js";
 
@@ -587,8 +588,20 @@ export type TurnRunnerCommand =
   | TurnEditFollowUpQueueCommand
   | TurnCompactCommand;
 
-/** RPC transport envelope for commands whose delivery must be correlated. */
-export type RpcTurnCommand = TurnCommand & { requestId: string };
+/** RPC prompt envelope whose tier, when present, is applied before prompt dispatch. */
+export type RpcPromptCommand = TurnPromptCommand & {
+  requestId: string;
+  /**
+   * Virtual tier selected atomically before this prompt reaches the runner.
+   * Optional so the new agent remains wire-compatible with pre-tier gateways.
+   */
+  tier?: DuetModelTier;
+};
+
+/** RPC transport envelope for correlated answer and wake commands. */
+export type RpcTurnCommand =
+  | RpcPromptCommand
+  | ((TurnAnswerCommand | TurnWakeCommand) & { requestId: string });
 
 /** Commands accepted by the newline-delimited RPC transport. */
 export type RpcRunnerCommand =

@@ -778,7 +778,10 @@ describe("TurnRunner virtual-model adapter", () => {
       // haiku-4.5's real 200k window is the smallest in the catalog — luna
       // previously served this role only because its synthesized spec
       // under-reported 256k; its true window is 1.05M.
-      planTarget: { modelName: "haiku-4.5", thinkingLevel: "low" },
+      planTarget: {
+        modelName: "vercel-ai-gateway:anthropic/claude-haiku-4.5",
+        thinkingLevel: "low",
+      },
       effectiveContext: 2_000_000,
     });
     await startRunner(runner, []);

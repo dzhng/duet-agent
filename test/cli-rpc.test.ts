@@ -69,6 +69,7 @@ interface RecordedRunner extends RpcRunner {
   interrupts: TurnInterruptCommand[];
   editQueues: TurnEditFollowUpQueueCommand[];
   compacts: TurnCompactCommand[];
+  actions: string[];
   acceptNextTurn: () => void;
   resolveTurn: (terminal: TurnTerminalEvent) => void;
 }
@@ -109,6 +110,7 @@ function buildRunner(): RecordedRunner {
     interrupts: [],
     editQueues: [],
     compacts: [],
+    actions: [],
     acceptNextTurn() {
       pendingAcceptances.shift()?.();
     },
@@ -117,6 +119,7 @@ function buildRunner(): RecordedRunner {
       runner.starts.push(command);
     },
     async turn(command, onAccepted) {
+      runner.actions.push(`turn:${command.type}`);
       runner.turns.push(command);
       if (onAccepted) pendingAcceptances.push(onAccepted);
       return turnPromise;
@@ -129,6 +132,10 @@ function buildRunner(): RecordedRunner {
     },
     compact(command) {
       runner.compacts.push(command);
+    },
+    setModel(modelName) {
+      runner.actions.push(`tier:${modelName}`);
+      return { routed: true };
     },
   };
   return runner;
@@ -575,6 +582,17 @@ describe("parseRpcCommandLine", () => {
       expect(result.message).toMatch(/requestId/);
     }
   });
+
+  test("rejects prompt tiers outside the product tier contract", () => {
+    const result = parseRpcCommandLine(
+      '{"type":"prompt","requestId":"req","tier":"premium","message":"hello","behavior":"steer"}',
+    );
+
+    expect(result).toEqual({
+      kind: "error",
+      message: 'RPC command "prompt" tier must be one of "frontier", "balanced", or "economy".',
+    });
+  });
 });
 
 describe("RpcEventWriter", () => {
@@ -786,6 +804,36 @@ describe("driveRpcLoop", () => {
     await loop;
     expect(runner.starts).toEqual([{ type: "start" }]);
     expect(runner.turns).toEqual([{ type: "prompt", message: "hi", behavior: "follow_up" }]);
+  });
+
+  test("applies an optional prompt tier atomically before handing the prompt to the runner", async () => {
+    const runner = buildRunner();
+    const terminal: TurnTerminalEvent = {
+      type: "complete",
+      status: "completed",
+      state: {} as never,
+    };
+    const loop = driveRpcLoop(
+      runner,
+      commandStream([
+        { type: "start" },
+        {
+          type: "prompt",
+          requestId: "request-tier",
+          tier: "balanced",
+          message: "use the new tier",
+          behavior: "follow_up",
+        },
+      ]),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    runner.resolveTurn(terminal);
+    await loop;
+
+    expect(runner.actions).toEqual(["tier:balanced", "turn:prompt"]);
+    expect(runner.turns).toEqual([
+      { type: "prompt", message: "use the new tier", behavior: "follow_up" },
+    ]);
   });
 
   test("emits a soft error and keeps waiting when the first command is not start", async () => {

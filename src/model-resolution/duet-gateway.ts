@@ -1,9 +1,14 @@
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai";
 import { isConnectedProviderId } from "../connected-providers/store.js";
+import { activeDuetTier } from "../model-routing/active-tier.js";
+import { BUILT_IN_DUET_GATEWAY_TIER_CLOSURES } from "../routing-manifest.js";
+import { DUET_GATEWAY_API_KEY_ENV, DUET_GATEWAY_BASE_URL_ENV } from "./duet-gateway-config.js";
 import {
   connectedProviderApiKey,
   refreshConnectedTokenInBackground,
 } from "../connected-providers/tokens.js";
+
+export { DUET_GATEWAY_API_KEY_ENV, DUET_GATEWAY_BASE_URL_ENV } from "./duet-gateway-config.js";
 
 const DEFAULT_DUET_GATEWAY_BASE_URL = "https://gateway.duet.so";
 const OPENAI_MODEL_PREFIX = "openai/";
@@ -84,9 +89,6 @@ const SONNET_5_COST = {
  * startup so users only need to set the duet token.
  */
 
-export const DUET_GATEWAY_API_KEY_ENV = "DUET_API_KEY";
-export const DUET_GATEWAY_BASE_URL_ENV = "DUET_GATEWAY_BASE_URL";
-
 export function getDuetGatewayBaseUrl(): string {
   const override = process.env[DUET_GATEWAY_BASE_URL_ENV]?.trim();
   if (override) return stripTrailingSlash(override);
@@ -109,6 +111,12 @@ export function getDuetGatewayBaseUrl(): string {
  * set for explicit `vercel-ai-gateway:*` pins.
  */
 export function resolveDuetGatewayModel(modelId: string): Model<any> {
+  const tier = activeDuetTier();
+  if (tier && !BUILT_IN_DUET_GATEWAY_TIER_CLOSURES[tier].includes(modelId)) {
+    throw new Error(
+      `Duet gateway model "${modelId}" is outside the built-in "${tier}" tier closure.`,
+    );
+  }
   const upstream = resolveDuetGatewayUpstream(modelId);
 
   return {
@@ -116,6 +124,7 @@ export function resolveDuetGatewayModel(modelId: string): Model<any> {
     provider: "duet-gateway",
     id: modelId,
     baseUrl: getDuetGatewayBaseUrlForModel(upstream),
+    ...(tier ? { headers: { ...upstream.headers, "x-duet-tier": tier } } : {}),
   };
 }
 

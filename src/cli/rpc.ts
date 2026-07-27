@@ -5,12 +5,13 @@ import {
   PROVIDER_SHORTHANDS,
   resolveProviderShorthand,
 } from "../model-resolution/catalog.js";
-import { TurnRunner } from "../turn-runner/turn-runner.js";
+import { isDuetModelTier } from "../model-routing/active-tier.js";
 import {
   SystemRuntimeClock,
   type CancelScheduled,
   type RuntimeClock,
 } from "../turn-runner/runtime-clock.js";
+import { TurnRunner } from "../turn-runner/turn-runner.js";
 import type {
   RpcCommandAcceptedEvent,
   RpcEvent,
@@ -185,6 +186,8 @@ export interface RpcRunner {
   interrupt(command: TurnInterruptCommand): void;
   editFollowUpQueue(command: TurnEditFollowUpQueueCommand): void;
   compact(command: TurnCompactCommand): void | Promise<void>;
+  /** Retarget subsequent work before an RPC prompt carrying `tier` is dispatched. */
+  setModel(modelName: string): { routed: boolean };
 }
 
 /**
@@ -534,7 +537,15 @@ export async function driveRpcLoop(
         // join it via the runner's own queueing. turn() returns the same
         // activeTurnPromise for the whole chain, so we only track the
         // first promise and let the runner serialize everything else.
-        const { requestId, ...runnerCommand } = command;
+        const { requestId, ...correlatedCommand } = command;
+        let runnerCommand: Extract<TurnRunnerCommand, { type: "prompt" | "answer" | "wake" }>;
+        if (correlatedCommand.type === "prompt") {
+          const { tier, ...promptCommand } = correlatedCommand;
+          if (tier) runner.setModel(tier);
+          runnerCommand = promptCommand;
+        } else {
+          runnerCommand = correlatedCommand;
+        }
         const promise = runner.turn(runnerCommand, () => {
           emit({ type: "command_accepted", requestId, commandType: command.type });
         });
@@ -639,6 +650,17 @@ export function parseRpcCommandLine(rawLine: string): ParseRpcCommandLineResult 
     return {
       kind: "error",
       message: `RPC command "${commandType}" requires a non-empty string "requestId".`,
+    };
+  }
+  if (
+    commandType === "prompt" &&
+    (parsed as { tier?: unknown }).tier !== undefined &&
+    (typeof (parsed as { tier?: unknown }).tier !== "string" ||
+      !isDuetModelTier((parsed as { tier: string }).tier))
+  ) {
+    return {
+      kind: "error",
+      message: 'RPC command "prompt" tier must be one of "frontier", "balanced", or "economy".',
     };
   }
   return { kind: "command", command: parsed as RpcRunnerCommand };

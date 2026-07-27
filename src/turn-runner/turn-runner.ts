@@ -27,6 +27,7 @@ import dedent from "dedent";
 import { stripSystemReminders, systemReminder } from "../lib/system-reminder.js";
 
 import { assistantText } from "../core/serializer.js";
+import { setActiveDuetTierFromModelSelection } from "../model-routing/active-tier.js";
 import { classifyRoute } from "../model-routing/classifier.js";
 import type { ClassifyRouteOptions } from "../model-routing/classifier.js";
 import { loadRoutingTable } from "../model-routing/loader.js";
@@ -585,6 +586,7 @@ export class TurnRunner {
     this.memoryPersistence = undefined;
     await this.mcpRuntime?.dispose();
     this.mcpRuntime = undefined;
+    setActiveDuetTierFromModelSelection(undefined);
   }
 
   subscribe(handler: TurnEventHandler): () => void {
@@ -739,6 +741,9 @@ export class TurnRunner {
    * sees available skills before typing the first prompt.
    */
   async start(command: TurnStartCommand): Promise<TurnState> {
+    setActiveDuetTierFromModelSelection(
+      command.options?.model ?? command.state?.options?.model ?? this.config.model,
+    );
     await ensureFreshConnectedTokens();
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
@@ -3442,6 +3447,7 @@ export class TurnRunner {
     const selection = this.pendingModelSelection;
     if (!selection) return;
     this.pendingModelSelection = undefined;
+    setActiveDuetTierFromModelSelection(selection);
     if (!this.isVirtualModelSelection(selection)) {
       this.modelRouter?.pin();
       this.advisorPolicy = undefined;

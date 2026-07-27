@@ -1,4 +1,4 @@
-import { DUET_GATEWAY_API_KEY_ENV } from "./duet-gateway.js";
+import { DUET_GATEWAY_API_KEY_ENV } from "./duet-gateway-config.js";
 import type { ConnectedProviderId } from "../connected-providers/store.js";
 
 /** Metered providers considered by the router when resolving an unpinned model. */

@@ -1,4 +1,8 @@
+import { activeDuetTier } from "../model-routing/active-tier.js";
 import { getDuetGatewayBaseUrl } from "../model-resolution/duet-gateway.js";
+import { DEFAULT_DUET_EMBEDDING_MODEL } from "../model-resolution/internal-models.js";
+
+export { DEFAULT_DUET_EMBEDDING_MODEL } from "../model-resolution/internal-models.js";
 
 /**
  * Client for Duet gateway embeddings.
@@ -29,8 +33,6 @@ import { getDuetGatewayBaseUrl } from "../model-resolution/duet-gateway.js";
 export const EMBEDDING_DIMENSIONS = 3072;
 /** Maximum input strings sent in a single embedding request. */
 export const EMBEDDING_BATCH_LIMIT = 100;
-/** Current Duet embedding default; matches the 3072-dim pgvector table. */
-export const DEFAULT_DUET_EMBEDDING_MODEL = "google/gemini-embedding-2";
 export const DUET_EMBEDDING_MODEL_ENV = "DUET_EMBEDDING_MODEL";
 
 const ENDPOINT_PATH = "/v1/embeddings";
@@ -144,11 +146,13 @@ async function postBatch(options: PostBatchOptions): Promise<EmbedResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
+      const tier = activeDuetTier();
       const response = await options.fetchImpl(options.url, {
         method: "POST",
         headers: {
           authorization: `Bearer ${options.apiKey}`,
           "content-type": "application/json",
+          ...(tier ? { "x-duet-tier": tier } : {}),
         },
         body: JSON.stringify({ model: options.model, input: options.inputs }),
       });
