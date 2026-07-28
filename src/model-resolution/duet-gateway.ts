@@ -1,9 +1,13 @@
 import { getEnvApiKey, getModel, type Model } from "@earendil-works/pi-ai";
 import { isConnectedProviderId } from "../connected-providers/store.js";
+import { activeDuetTier } from "../model-routing/active-tier.js";
 import {
   connectedProviderApiKey,
   refreshConnectedTokenInBackground,
 } from "../connected-providers/tokens.js";
+
+/** Request header the product reads to attribute a gateway call to a tier. */
+export const DUET_TIER_HEADER = "x-duet-tier";
 
 const DEFAULT_DUET_GATEWAY_BASE_URL = "https://gateway.duet.so";
 const OPENAI_MODEL_PREFIX = "openai/";
@@ -110,12 +114,18 @@ export function getDuetGatewayBaseUrl(): string {
  */
 export function resolveDuetGatewayModel(modelId: string): Model<any> {
   const upstream = resolveDuetGatewayUpstream(modelId);
+  // Every duet-gateway model is built here — parent step, classifier, advisor,
+  // vision fallback, subagents and memory alike — so stamping the routing tier
+  // once at this seam attributes all of them without per-call-site plumbing.
+  // Absent for concrete pins, and never added to other transports.
+  const tier = activeDuetTier();
 
   return {
     ...upstream,
     provider: "duet-gateway",
     id: modelId,
     baseUrl: getDuetGatewayBaseUrlForModel(upstream),
+    ...(tier === undefined ? {} : { headers: { ...upstream.headers, [DUET_TIER_HEADER]: tier } }),
   };
 }
 
