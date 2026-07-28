@@ -741,9 +741,6 @@ export class TurnRunner {
    * sees available skills before typing the first prompt.
    */
   async start(command: TurnStartCommand): Promise<TurnState> {
-    this.syncActiveDuetTier(
-      command.options?.model ?? command.state?.options?.model ?? this.config.model,
-    );
     await ensureFreshConnectedTokens();
     await this.ensureMemoryLoaded();
     await this.ensureSkillsLoaded();
@@ -3388,6 +3385,10 @@ export class TurnRunner {
       catalogAdapter: routingCatalogAdapter,
     });
     this.routingTable = loaded.table;
+    // Publish the tier against the freshly loaded table: an operator-defined
+    // tier exists only there, so a check against any earlier snapshot clears
+    // it and the session's gateway traffic goes out unattributed.
+    this.syncActiveDuetTier(modelName);
     if (!modelName || !isVirtualModel(modelName, loaded.table)) return;
     this.advisorPolicy = loaded.table.tiers[modelName]!.advisor;
     this.modelRouter = this.createBoundModelRouter(modelName, loaded.table, routingCatalogAdapter);
