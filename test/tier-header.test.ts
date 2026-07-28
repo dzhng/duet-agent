@@ -1,0 +1,160 @@
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { activeDuetTier, setActiveDuetTier } from "../src/model-routing/active-tier.js";
+import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
+import { DUET_TIER_HEADER, resolveDuetGatewayModel } from "../src/model-resolution/duet-gateway.js";
+import { resolveModelName } from "../src/model-resolution/resolver.js";
+import { TurnRunner } from "../src/turn-runner/turn-runner.js";
+
+afterEach(() => setActiveDuetTier(undefined));
+
+// Metered sessions always run with a gateway key; without it, catalog aliases
+// fall back to BYOK transports and never reach the duet gateway at all.
+const previousDuetApiKey = process.env.DUET_API_KEY;
+
+beforeAll(() => {
+  process.env.DUET_API_KEY = "tier-header-test-key";
+});
+
+afterAll(() => {
+  if (previousDuetApiKey === undefined) delete process.env.DUET_API_KEY;
+  else process.env.DUET_API_KEY = previousDuetApiKey;
+});
+
+/** Exposes the parent agent's resolved model — the spec outbound requests use. */
+class TierProbeRunner extends TurnRunner {
+  parentModelForTest() {
+    return this.requireParentAgent().state.model;
+  }
+}
+
+/**
+ * Start a runner inside a temp cwd whose `.duet/models.json` defines a single
+ * operator tier named `custom`. Writing a project table also shields the test
+ * from any real `~/.duet/models.json` on the host (nearest file wins).
+ */
+async function withOperatorTableRunner(
+  model: string,
+  run: (runner: TierProbeRunner) => Promise<void> | void,
+): Promise<void> {
+  const cwd = await mkdtemp(join(tmpdir(), "duet-tier-header-"));
+  try {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.defaultTier = "custom";
+    table.tiers = { custom: table.tiers.frontier! };
+    await mkdir(join(cwd, ".duet"));
+    await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+    const runner = new TierProbeRunner({
+      model,
+      mode: "agent",
+      cwd,
+      memoryDbPath: false,
+      skillDiscovery: { includeDefaults: false },
+    });
+    try {
+      await runner.start({ type: "start", mode: "agent" });
+      await run(runner);
+    } finally {
+      await runner.dispose();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+}
+
+describe("duet gateway tier attribution", () => {
+  test("stamps the active tier on every duet-gateway model", () => {
+    setActiveDuetTier("balanced");
+
+    // One assertion per routing role the product bills: the parent step, the
+    // classifier, the advisor and the vision fallback all resolve through this
+    // seam, so a per-role regression shows up here rather than in production.
+    for (const modelId of [
+      "anthropic/claude-fable-5",
+      "openai/gpt-5.6-luna",
+      "moonshotai/kimi-k3",
+      "zai/glm-5.2",
+    ]) {
+      expect(resolveDuetGatewayModel(modelId).headers?.[DUET_TIER_HEADER]).toBe("balanced");
+    }
+  });
+
+  test("omits the header entirely when a concrete model is pinned", () => {
+    setActiveDuetTier(undefined);
+
+    const model = resolveDuetGatewayModel("anthropic/claude-fable-5");
+
+    expect(model.headers?.[DUET_TIER_HEADER]).toBeUndefined();
+  });
+
+  test("carries whatever tier name the routing table defines", () => {
+    // Tier names come from a config-driven table, so the agent must attribute
+    // a name it has never heard of rather than validating against a fixed set.
+    setActiveDuetTier("some-operator-defined-tier");
+
+    expect(resolveDuetGatewayModel("openai/gpt-5.6-sol").headers?.[DUET_TIER_HEADER]).toBe(
+      "some-operator-defined-tier",
+    );
+  });
+
+  test("stamping is additive — the tiered model differs only by the header", () => {
+    setActiveDuetTier(undefined);
+    const bare = resolveDuetGatewayModel("anthropic/claude-fable-5");
+
+    setActiveDuetTier("frontier");
+    const { headers, ...rest } = resolveDuetGatewayModel("anthropic/claude-fable-5");
+
+    expect(headers).toEqual({ [DUET_TIER_HEADER]: "frontier" });
+    expect(rest).toEqual(bare);
+  });
+
+  test("leaves non-gateway transports unattributed", () => {
+    setActiveDuetTier("frontier");
+
+    // A vercel/openrouter pin is not Duet-metered traffic, so it must not claim
+    // a Duet tier even while a routed session is active.
+    expect(resolveModelName("vercel-ai-gateway:zai/glm-5.2").headers?.[DUET_TIER_HEADER]).toBe(
+      undefined,
+    );
+  });
+
+  test("start() attributes an operator-defined tier loaded from .duet/models.json", async () => {
+    // The tier must be published against the *loaded* table, not the built-in
+    // one — `custom` only exists in the project file, so a sync that runs
+    // before the table loads clears the tier and this session's gateway
+    // traffic goes out unattributed.
+    await withOperatorTableRunner("custom", (runner) => {
+      expect(runner.parentModelForTest().headers?.[DUET_TIER_HEADER]).toBe("custom");
+      expect(activeDuetTier()).toBe("custom");
+    });
+  });
+
+  test("start() leaves a concrete pin unattributed even with a project table present", async () => {
+    await withOperatorTableRunner("gpt-5.6-sol", (runner) => {
+      expect(runner.parentModelForTest().headers?.[DUET_TIER_HEADER]).toBeUndefined();
+      expect(activeDuetTier()).toBeUndefined();
+    });
+  });
+
+  test("a mid-session /model switch retargets attribution both ways", async () => {
+    await withOperatorTableRunner("gpt-5.6-sol", (runner) => {
+      expect(runner.setModel("custom")).toEqual({ routed: true });
+      expect(runner.parentModelForTest().headers?.[DUET_TIER_HEADER]).toBe("custom");
+
+      expect(runner.setModel("gpt-5.6-sol")).toEqual({ routed: false });
+      expect(runner.parentModelForTest().headers?.[DUET_TIER_HEADER]).toBeUndefined();
+      expect(activeDuetTier()).toBeUndefined();
+    });
+  });
+
+  test("reports the active tier back to callers", () => {
+    setActiveDuetTier("economy");
+    expect(activeDuetTier()).toBe("economy");
+
+    setActiveDuetTier(undefined);
+    expect(activeDuetTier()).toBeUndefined();
+  });
+});

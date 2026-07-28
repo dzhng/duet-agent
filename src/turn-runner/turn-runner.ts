@@ -27,6 +27,7 @@ import dedent from "dedent";
 import { stripSystemReminders, systemReminder } from "../lib/system-reminder.js";
 
 import { assistantText } from "../core/serializer.js";
+import { setActiveDuetTier } from "../model-routing/active-tier.js";
 import { classifyRoute } from "../model-routing/classifier.js";
 import type { ClassifyRouteOptions } from "../model-routing/classifier.js";
 import { loadRoutingTable } from "../model-routing/loader.js";
@@ -585,6 +586,7 @@ export class TurnRunner {
     this.memoryPersistence = undefined;
     await this.mcpRuntime?.dispose();
     this.mcpRuntime = undefined;
+    setActiveDuetTier(undefined);
   }
 
   subscribe(handler: TurnEventHandler): () => void {
@@ -3383,6 +3385,10 @@ export class TurnRunner {
       catalogAdapter: routingCatalogAdapter,
     });
     this.routingTable = loaded.table;
+    // Publish the tier against the freshly loaded table: an operator-defined
+    // tier exists only there, so a check against any earlier snapshot clears
+    // it and the session's gateway traffic goes out unattributed.
+    this.syncActiveDuetTier(modelName);
     if (!modelName || !isVirtualModel(modelName, loaded.table)) return;
     this.advisorPolicy = loaded.table.tiers[modelName]!.advisor;
     this.modelRouter = this.createBoundModelRouter(modelName, loaded.table, routingCatalogAdapter);
@@ -3418,6 +3424,18 @@ export class TurnRunner {
     return isVirtualModel(modelName, this.routingTable ?? BUILT_IN_ROUTING_TABLE);
   }
 
+  /**
+   * Publish the tier that duet-gateway calls are attributed to.
+   *
+   * Keyed off the *active* table, so a name counts as a tier only when the
+   * loaded routing table says so, and a concrete pin clears it.
+   */
+  private syncActiveDuetTier(modelName: string | undefined): void {
+    setActiveDuetTier(
+      modelName !== undefined && this.isVirtualModelSelection(modelName) ? modelName : undefined,
+    );
+  }
+
   /** Read-only routing snapshot for session-owned UI surfaces. */
   routeStatus(): RouterStatus | undefined {
     return this.modelRouter?.status();
@@ -3442,6 +3460,7 @@ export class TurnRunner {
     const selection = this.pendingModelSelection;
     if (!selection) return;
     this.pendingModelSelection = undefined;
+    this.syncActiveDuetTier(selection);
     if (!this.isVirtualModelSelection(selection)) {
       this.modelRouter?.pin();
       this.advisorPolicy = undefined;
