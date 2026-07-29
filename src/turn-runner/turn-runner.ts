@@ -203,6 +203,18 @@ interface TurnRunnerDependencies {
   minimumScheduledDelayMs?: number;
 }
 
+/** Startup diagnostics stay silent on healthy launches and explain timeout-scale stalls. */
+const SLOW_STARTUP_WARNING_MS = 2_000;
+const STARTUP_PHASES = [
+  "connected_tokens",
+  "memory",
+  "skills",
+  "mcp",
+  "model_router",
+  "hydration",
+] as const;
+type StartupPhase = (typeof STARTUP_PHASES)[number];
+
 interface ChildToolContext {
   /** Scope that owns tasks created by this child. */
   ownerScopeId: ScopeId;
@@ -741,10 +753,13 @@ export class TurnRunner {
    * sees available skills before typing the first prompt.
    */
   async start(command: TurnStartCommand): Promise<TurnState> {
-    await ensureFreshConnectedTokens();
-    await this.ensureMemoryLoaded();
-    await this.ensureSkillsLoaded();
-    await this.ensureMcpServersConnected(command.mcpServers);
+    const startupStartedAt = performance.now();
+    const phaseTimings: Partial<Record<StartupPhase, number>> = {};
+    const measure = async (name: StartupPhase, work: () => Promise<void>): Promise<void> => {
+      const startedAt = performance.now();
+      await work();
+      phaseTimings[name] = performance.now() - startedAt;
+    };
     const mode = command.mode ?? this.config.mode ?? "auto";
     const startOptions = command.options;
     const state = command.state
@@ -753,7 +768,23 @@ export class TurnRunner {
           options: this.resolveTurnOptions(startOptions, command.state.options),
         }
       : createInitialTurnState(mode, this.resolveTurnOptions(startOptions));
-    await this.initializeModelRouter(state.options?.model);
+    // These phases populate disjoint runner/global state: connected-provider
+    // credentials, memory persistence/cache, MCP runtime, routing table, and
+    // skill context. Parent-agent construction below is their first consumer.
+    // Start skills last because its filesystem discovery is synchronous; the
+    // async token, memory, MCP, and routing work can make progress meanwhile.
+    const startupResults = await Promise.allSettled([
+      measure("connected_tokens", () => ensureFreshConnectedTokens()),
+      measure("memory", () => this.ensureMemoryLoaded()),
+      measure("mcp", () => this.ensureMcpServersConnected(command.mcpServers)),
+      measure("model_router", () => this.initializeModelRouter(state.options?.model)),
+      measure("skills", () => this.ensureSkillsLoaded()),
+    ]);
+    const startupFailure = startupResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (startupFailure) throw startupFailure.reason;
+    const hydrationStartedAt = performance.now();
     this.stateMachine = state.stateMachine;
     const recovery = this.taskManager.recover(
       state.tasks ?? [],
@@ -803,6 +834,8 @@ export class TurnRunner {
     this.initializeParentAgent();
     this.started = true;
     const hydratedState = this.requireRunnerState();
+    phaseTimings.hydration = performance.now() - hydrationStartedAt;
+    warnSlowStartup(phaseTimings, performance.now() - startupStartedAt);
     this.emit({ type: "turn_started", state: hydratedState });
     return hydratedState;
   }
@@ -3518,6 +3551,14 @@ export class TurnRunner {
 }
 
 const ROUTER_STEP_TEXT_LIMIT = 2_000;
+
+function warnSlowStartup(timings: Partial<Record<StartupPhase, number>>, totalMs: number): void {
+  if (totalMs < SLOW_STARTUP_WARNING_MS) return;
+  const phases = STARTUP_PHASES.map(
+    (phase) => `${phase}=${(timings[phase] ?? 0).toFixed(1)}ms`,
+  ).join(" ");
+  console.warn(`[duet-agent] slow startup: ${phases} total=${totalMs.toFixed(1)}ms`);
+}
 
 function routerStepObservation(
   message: Extract<AgentMessage, { role: "assistant" }>,
