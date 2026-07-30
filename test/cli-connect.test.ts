@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { runCli } from "../src/cli.js";
 import { runConnectCommand } from "../src/cli/connect.js";
+import { setConnectedTransportSnapshotForTest } from "../src/cli/shared.js";
 import type { ConnectedProviderStore, ConnectionRecord } from "../src/connected-providers/store.js";
 
 const SECRET_ACCESS = "access-must-never-appear";
@@ -200,11 +201,16 @@ describe("duet connect", () => {
     beforeEach(() => {
       process.argv = [originalArgv[0]!, originalArgv[1]!, "connect", "--help"];
       logSpy = spyOn(console, "log").mockImplementation(() => {});
+      // runCli boots the process-global transport snapshot from the real
+      // on-disk store; pinning it empty keeps the developer's ~/.duet
+      // connections out of this process and out of every later test file.
+      setConnectedTransportSnapshotForTest({ connections: [] });
     });
 
     afterEach(() => {
       process.argv = originalArgv;
       logSpy?.mockRestore();
+      setConnectedTransportSnapshotForTest();
     });
 
     test("dispatches connect alongside the existing named subcommands", async () => {
