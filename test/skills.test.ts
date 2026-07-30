@@ -102,6 +102,38 @@ describe("TurnRunner skills", () => {
     expect(skill?.description).toBe("Use when description expansion.");
   });
 
+  testIfDocker("expands independent skill descriptions concurrently", async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
+    tempDir = baseDir;
+    const skills = ["first", "second"].map((name) => ({
+      name,
+      description: `Use when !\`sleep 0.4; printf '${name} ready'\`.`,
+      filePath: join(baseDir, `${name}.md`),
+      baseDir,
+      sourceInfo: {} as Skill["sourceInfo"],
+      disableModelInvocation: false,
+    }));
+
+    const startedAt = performance.now();
+    const runner = new TurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      cwd: process.cwd(),
+      skillDiscovery: { includeDefaults: false },
+      skills,
+    });
+    const loaded = await runner.getSkills();
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(loaded.slice(0, 2).map((skill) => skill.description)).toEqual([
+      "Use when first ready.",
+      "Use when second ready.",
+    ]);
+    // Each command sleeps for 400ms, so serial expansion cannot finish under
+    // 800ms. Sit just below that floor: a regression to serial still fails,
+    // but spawn overhead on a loaded CI box cannot fake one.
+    expect(elapsedMs).toBeLessThan(780);
+  });
+
   testIfDocker(
     "injects skill metadata only (not full instructions) into the system prompt",
     async () => {

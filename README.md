@@ -512,13 +512,13 @@ const terminal = await turnRunner.turn({
 <details>
 <summary><b>TurnRunner lifecycle</b> — full flowchart and event model</summary>
 
-`start()` prepares a session, but it does not run agent work. It hydrates durable memory, loads skills and agent files, connects MCP servers, creates or resumes `TurnState`, initializes the parent pi agent, and emits `turn_started`. After that, every `turn()` call accepts one command: `prompt`, `answer`, or `wake`.
+`start()` prepares a session, but it does not run agent work. It prepares the initial `TurnState` and initializes independent resources concurrently, then initializes the parent pi agent and emits `turn_started` only when the first prompt can use the fully hydrated memory, skills, routing, and MCP tool set. After that, every `turn()` call accepts one command: `prompt`, `answer`, or `wake`.
 
 ```mermaid
 flowchart TD
-  Start["start(command)"] --> Setup["hydrate memory\nload skills + agent files\nconnect MCP servers"]
-  Setup --> State["create or resume TurnState"]
-  State --> Parent["initialize parent pi agent"]
+  Start["start(command)"] --> State["create or resume TurnState"]
+  State --> Setup["hydrate concurrently:\nconnected tokens · durable memory\nskills + agent files · MCP servers\nrouting table"]
+  Setup --> Parent["initialize parent pi agent"]
   Parent --> Started["emit turn_started"]
 
   Started --> Command["turn(prompt | answer | wake)"]

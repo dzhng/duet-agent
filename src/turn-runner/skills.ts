@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -67,54 +67,113 @@ function uniquePaths(paths: string[]): string[] {
 }
 
 const SKILL_SHELL_EXPANSION_TIMEOUT_MS = 30_000;
+/** Overlap hung metadata commands without stampeding a resource-constrained runner host. */
+const SKILL_METADATA_EXPANSION_CONCURRENCY = 4;
+const SKILL_SHELL_EXPANSION_OPTIONS = {
+  encoding: "utf-8",
+  maxBuffer: 1024 * 1024,
+  timeout: SKILL_SHELL_EXPANSION_TIMEOUT_MS,
+} as const;
 
-function expandSkillShellCommands(content: string, cwd: string): string {
+function expandSkillShellCommandsSync(content: string, cwd: string): string {
   return content.replace(SKILL_SHELL_EXPANSION_PATTERN, (match, command: string) => {
     try {
       const output = execFileSync("bash", ["-lc", command], {
         cwd,
-        encoding: "utf-8",
-        maxBuffer: 1024 * 1024,
-        timeout: SKILL_SHELL_EXPANSION_TIMEOUT_MS,
+        ...SKILL_SHELL_EXPANSION_OPTIONS,
       });
       return output.trimEnd();
     } catch (error) {
-      // On timeout or non-zero exit, fall back to the literal token plus a
-      // brief note so the model sees what was attempted instead of failing
-      // the entire prompt. Node sets `signal` to "SIGTERM" when the
-      // timeout fires; everything else is treated as a generic failure.
-      const signal = (error as { signal?: string } | null)?.signal;
-      const note =
-        signal === "SIGTERM"
-          ? `timed out after ${SKILL_SHELL_EXPANSION_TIMEOUT_MS / 1000}s`
-          : `failed: ${(error as Error).message}`;
-      return `${match} (${note})`;
+      return failedSkillShellExpansion(match, error);
     }
   });
 }
 
-function expandSkillMetadata(skill: Skill): Skill {
+async function expandSkillShellCommands(content: string, cwd: string): Promise<string> {
+  const matches = [...content.matchAll(SKILL_SHELL_EXPANSION_PATTERN)];
+  if (matches.length === 0) return content;
+
+  // Expansions within one description retain their historical left-to-right
+  // ordering because later commands may consume side effects from earlier ones.
+  // Concurrency belongs between independent skills, not within one skill.
+  const expansions: string[] = [];
+  for (const match of matches) {
+    expansions.push(await runSkillShellCommand(match[0], match[1]!, cwd));
+  }
+
+  // `replace` re-walks the same matches in the same order, so splicing the
+  // results back in stays the sync path's mechanism rather than a second
+  // hand-rolled one. A function replacement is inserted literally, so `$&`
+  // in command output cannot be reinterpreted.
+  let next = 0;
+  return content.replace(SKILL_SHELL_EXPANSION_PATTERN, () => expansions[next++]!);
+}
+
+function runSkillShellCommand(match: string, command: string, cwd: string): Promise<string> {
+  return new Promise((resolve) => {
+    execFile(
+      "bash",
+      ["-lc", command],
+      {
+        cwd,
+        ...SKILL_SHELL_EXPANSION_OPTIONS,
+      },
+      (error, stdout) => {
+        resolve(error ? failedSkillShellExpansion(match, error) : stdout.trimEnd());
+      },
+    );
+  });
+}
+
+function failedSkillShellExpansion(match: string, error: unknown): string {
+  // Keep the literal token visible on failure so the model can see what was
+  // attempted. Node reports timeout termination through the child signal.
+  const signal = (error as { signal?: string } | null)?.signal;
+  const note =
+    signal === "SIGTERM"
+      ? `timed out after ${SKILL_SHELL_EXPANSION_TIMEOUT_MS / 1000}s`
+      : `failed: ${error instanceof Error ? error.message : String(error)}`;
+  return `${match} (${note})`;
+}
+
+async function expandSkillMetadata(skill: Skill): Promise<Skill> {
   return {
     ...skill,
-    description: expandSkillShellCommands(skill.description, skill.baseDir),
+    description: await expandSkillShellCommands(skill.description, skill.baseDir),
   };
 }
 
-export function prepareExplicitSkills(skills: readonly Skill[]): Skill[] {
-  return skills.map(expandSkillMetadata);
+export function prepareExplicitSkills(skills: readonly Skill[]): Promise<Skill[]> {
+  return expandSkillMetadataConcurrently(skills);
 }
 
-export function loadDiscoveredSkills(
+export async function loadDiscoveredSkills(
   discoveryOptions: SkillDiscoveryOptions | undefined,
   cwd: string,
-): DiscoveredSkillsResult {
+): Promise<DiscoveredSkillsResult> {
   const { skills, diagnostics } = loadSkills(buildSkillDiscoveryOptions(discoveryOptions, cwd));
   // User/project skills win on name collisions, so built-ins are merged
   // last and silently dropped when shadowed.
   return {
-    skills: mergeSkillsByName(skills.map(expandSkillMetadata), listBuiltInSkills()),
+    skills: mergeSkillsByName(await expandSkillMetadataConcurrently(skills), listBuiltInSkills()),
     collisions: extractSkillCollisions(diagnostics),
   };
+}
+
+async function expandSkillMetadataConcurrently(skills: readonly Skill[]): Promise<Skill[]> {
+  const expanded: Skill[] = [];
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(SKILL_METADATA_EXPANSION_CONCURRENCY, skills.length) },
+    async () => {
+      while (nextIndex < skills.length) {
+        const index = nextIndex++;
+        expanded[index] = await expandSkillMetadata(skills[index]!);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return expanded;
 }
 
 /**
@@ -164,7 +223,7 @@ export function readSkillInstructions(skill: Skill): string {
   const builtIn = getBuiltInSkillInstructions(skill.filePath);
   if (builtIn !== undefined) return builtIn;
   const content = readFileSync(skill.filePath, "utf-8");
-  return expandSkillShellCommands(content, skill.baseDir);
+  return expandSkillShellCommandsSync(content, skill.baseDir);
 }
 
 /**

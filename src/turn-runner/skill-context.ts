@@ -17,21 +17,22 @@ export class SkillContext {
   private skills: Skill[];
   private collisions: SkillCollision[] = [];
   private loaded = false;
+  /** Shared async discovery so concurrent callers never observe the unexpanded baseline. */
+  private loading?: Promise<void>;
 
   constructor(private readonly config: TurnRunnerConfig) {
-    this.skills = config.skills ? prepareExplicitSkills(config.skills) : [];
+    this.skills = config.skills ? [...config.skills] : [];
   }
 
   async ensureLoaded(): Promise<void> {
     if (this.loaded) return;
-    this.loaded = true;
-
-    const discovered = loadDiscoveredSkills(
-      this.config.skillDiscovery,
-      this.config.cwd ?? process.cwd(),
-    );
-    this.skills = mergeSkillsByName(this.skills, discovered.skills);
-    this.collisions = discovered.collisions;
+    const loading = this.loading ?? this.load();
+    this.loading = loading;
+    try {
+      await loading;
+    } finally {
+      if (this.loading === loading) this.loading = undefined;
+    }
   }
 
   /**
@@ -40,11 +41,27 @@ export class SkillContext {
    * `config.skills` is preserved; on-disk discovery is re-read.
    */
   async reload(): Promise<void> {
-    const baseline = this.config.skills ? prepareExplicitSkills(this.config.skills) : [];
-    const discovered = loadDiscoveredSkills(
-      this.config.skillDiscovery,
-      this.config.cwd ?? process.cwd(),
-    );
+    const prior = this.loading;
+    const loading = (async () => {
+      // Queue reloads so an older discovery snapshot cannot finish last and
+      // overwrite a newer one. A failed prior load must not prevent retry.
+      await prior?.catch(() => undefined);
+      this.loaded = false;
+      await this.load();
+    })();
+    this.loading = loading;
+    try {
+      await loading;
+    } finally {
+      if (this.loading === loading) this.loading = undefined;
+    }
+  }
+
+  private async load(): Promise<void> {
+    const [baseline, discovered] = await Promise.all([
+      prepareExplicitSkills(this.config.skills ?? []),
+      loadDiscoveredSkills(this.config.skillDiscovery, this.config.cwd ?? process.cwd()),
+    ]);
     this.skills = mergeSkillsByName(baseline, discovered.skills);
     this.collisions = discovered.collisions;
     this.loaded = true;
