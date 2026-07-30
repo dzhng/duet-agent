@@ -516,9 +516,9 @@ const terminal = await turnRunner.turn({
 
 ```mermaid
 flowchart TD
-  Start["start(command)"] --> Setup["hydrate memory\nload skills + agent files\nconnect MCP servers"]
-  Setup --> State["create or resume TurnState"]
-  State --> Parent["initialize parent pi agent"]
+  Start["start(command)"] --> State["create or resume TurnState"]
+  State --> Setup["hydrate concurrently:\nconnected tokens · durable memory\nskills + agent files · MCP servers\nrouting table"]
+  Setup --> Parent["initialize parent pi agent"]
   Parent --> Started["emit turn_started"]
 
   Started --> Command["turn(prompt | answer | wake)"]

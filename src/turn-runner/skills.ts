@@ -91,21 +91,22 @@ function expandSkillShellCommandsSync(content: string, cwd: string): string {
 
 async function expandSkillShellCommands(content: string, cwd: string): Promise<string> {
   const matches = [...content.matchAll(SKILL_SHELL_EXPANSION_PATTERN)];
-  const expansions: string[] = [];
+  if (matches.length === 0) return content;
+
   // Expansions within one description retain their historical left-to-right
   // ordering because later commands may consume side effects from earlier ones.
   // Concurrency belongs between independent skills, not within one skill.
+  const expansions: string[] = [];
   for (const match of matches) {
     expansions.push(await runSkillShellCommand(match[0], match[1]!, cwd));
   }
 
-  let expanded = "";
-  let offset = 0;
-  for (const [index, match] of matches.entries()) {
-    expanded += content.slice(offset, match.index) + expansions[index]!;
-    offset = match.index! + match[0].length;
-  }
-  return expanded + content.slice(offset);
+  // `replace` re-walks the same matches in the same order, so splicing the
+  // results back in stays the sync path's mechanism rather than a second
+  // hand-rolled one. A function replacement is inserted literally, so `$&`
+  // in command output cannot be reinterpreted.
+  let next = 0;
+  return content.replace(SKILL_SHELL_EXPANSION_PATTERN, () => expansions[next++]!);
 }
 
 function runSkillShellCommand(match: string, command: string, cwd: string): Promise<string> {

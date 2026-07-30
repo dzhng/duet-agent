@@ -128,9 +128,10 @@ describe("TurnRunner skills", () => {
       "Use when first ready.",
       "Use when second ready.",
     ]);
-    // Each command sleeps for 400ms. Serial expansion takes at least 800ms;
-    // leave 300ms of process-spawn headroom while still distinguishing overlap.
-    expect(elapsedMs).toBeLessThan(700);
+    // Each command sleeps for 400ms, so serial expansion cannot finish under
+    // 800ms. Sit just below that floor: a regression to serial still fails,
+    // but spawn overhead on a loaded CI box cannot fake one.
+    expect(elapsedMs).toBeLessThan(780);
   });
 
   testIfDocker(

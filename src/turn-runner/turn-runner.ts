@@ -745,12 +745,16 @@ export class TurnRunner {
   }
 
   /**
-   * Set up a session before any turn runs. Loads memory and skills, then
-   * emits `turn_started` with the initial state (a fresh state, or the
-   * resumed state when `command.state` is provided). No agent work runs.
+   * Set up a session before any turn runs. Resolves the initial state (a fresh
+   * state, or the resumed state when `command.state` is provided), hydrates
+   * every independent resource concurrently, builds the parent agent, then
+   * emits `turn_started`. No agent work runs.
    *
-   * Callers (CLI/TUI/session managers) call this once on launch so the user
-   * sees available skills before typing the first prompt.
+   * `turn_started` is the readiness contract: it fires only once connected
+   * tokens, durable memory, skills, MCP tools, and the routing table are all
+   * live, so the first prompt never races a half-built runtime. Callers
+   * (CLI/TUI/session managers) call this once on launch so the user sees
+   * available skills before typing the first prompt.
    */
   async start(command: TurnStartCommand): Promise<TurnState> {
     const startupStartedAt = performance.now();
