@@ -149,10 +149,11 @@ export class Session {
   /** Most recent terminal event, returned immediately when callers wait after a turn has settled. */
   private lastTerminal?: TurnTerminalEvent;
   /**
-   * Polling interval that fires the wake when the injected wall clock reaches `wakeAt`. Cleared
-   * when user input or an interrupt arrives. We poll instead of using one long timer so a laptop
-   * that sleeps through the deadline still fires shortly after wake: Node/Bun timers are driven
-   * by a monotonic clock that pauses on macOS sleep, while the wall-clock comparison does not.
+   * Polling interval that fires the wake when the injected wall clock reaches `wakeAt`. User
+   * input leaves the deadline armed so it can wake an active turn; interrupts and non-sleep
+   * terminals retire it. We poll instead of using one long timer so a laptop that sleeps through
+   * the deadline still fires shortly after wake: Node/Bun timers are driven by a monotonic clock
+   * that pauses on macOS sleep, while the wall-clock comparison does not.
    */
   private wakeTimer?: CancelScheduled;
   /** Optional fast-path timer used when the deadline is closer than the poll interval. */
@@ -260,7 +261,6 @@ export class Session {
   async prompt(input: SessionPromptInput): Promise<void> {
     await this.ensureStarted();
     await this.requireState();
-    this.cancelWake();
     const command: TurnCommand = {
       type: "prompt",
       message: input.message,
@@ -273,7 +273,6 @@ export class Session {
   async answer(input: SessionAnswerInput): Promise<void> {
     await this.ensureStarted();
     await this.requireState();
-    this.cancelWake();
     const command: TurnAnswerCommand = {
       type: "answer",
       questions: input.questions,
@@ -531,6 +530,8 @@ export class Session {
       await this.writeStoredEnvelope(event.state);
       if (event.type === "sleep") {
         this.scheduleWake(event);
+      } else {
+        this.cancelWake();
       }
       for (const resolve of this.terminalWaiters.splice(0)) {
         resolve(event);
@@ -610,9 +611,9 @@ export class Session {
     this.cancelWake();
     const fire = (): void => {
       if (this.clock.now() < terminal.wakeAt) return;
-      this.cancelWake();
       const state = this.runner.getState();
       if (!state || state.status !== "sleeping") return;
+      this.cancelWake();
       this.dispatchTurn({ type: "wake" });
     };
     // Poll every 30s so a sleeping laptop still wakes the turn shortly after the lid reopens.
