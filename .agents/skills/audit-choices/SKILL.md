@@ -82,6 +82,15 @@ Two ways in, same audit:
    skippable. Only trivial discretion (internal naming, cosmetic calls)
    compresses to a one-line count.
 
+   **Reach for pseudocode when the choice is about control flow, ordering, or
+   timing.** Prose describing when-something-fires reads as plausible and hides
+   the gap; five lines of pseudocode make the gate visible and let the reader
+   see the case you missed. Write it at the level of the decision, not the
+   implementation — the conditions and their order, not real function
+   signatures. The tell that you needed it: your prose contains "only when",
+   "before", "unless", or "as soon as" and the reader still cannot say what
+   happens on the second call.
+
    **Write every entry ELI5 — by default, not on request.** The reader
    didn't live the session: walk a concrete scenario end to end — the
    triggering event, what the work does today, what the unbuilt alternative
@@ -122,6 +131,21 @@ Rules of the ledger:
 - The ledger is a plan-quality signal. Entries clustering around one slice or
   area mean the plan is foggy there — reslice or send that part back through
   the spec rather than triaging the same class of choice forever.
+- **ELI5 survives every rewrite.** The entry format above — headline plus the
+  walked scenario with terms defined in place — is the *storage* format, not
+  presentation polish. When entries are consolidated, merged, re-audited at
+  close, or copied into a final ledger, each surviving entry keeps (or
+  regains) its full scenario. The known failure mode is exactly this
+  compression: a closeout rewrite that shrinks banked entries to their
+  headlines produces a ledger the reader must interrogate — "The checkpoint
+  loads rows in mailbox order and rejects the list when a later reference
+  has an earlier createdAt" reads as settled, but only the walked version
+  (two sessions, per-session sequence numbers that can't be compared, the
+  shared insert-timestamp clock) lets a reader actually judge the choice. A
+  consolidation that drops scenarios has failed even if every fact survives —
+  and so has one that keeps the scenario but leans on labels the build
+  invented ("the retry envelope", "the evidence seam") without defining them
+  where they're used.
 
 ## Rules
 

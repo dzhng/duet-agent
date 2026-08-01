@@ -31,6 +31,50 @@ module into the several owners it was hiding.
 
 ## Rules
 
+- **Every line is debt — the best mechanism is the one you don't write.**
+  Before building any guard, validator, convergence protocol, or cleanup
+  path, two checks gate it:
+  1. **Does the platform already do this?** Read the component/framework you
+     are working around before coding around it — its crons, retries,
+     defaults, and lifecycles. A hand-built janitor beside a component that
+     already vacuums itself is pure debt, and it will be debugged by someone
+     who doesn't know the component made it unnecessary.
+  2. **Does the failure it guards change any real outcome?** Trace the
+     guarded condition to its consumer. If the consumer is indifferent — an
+     ordering check feeding a consumer that doesn't care about order, a
+     validation on data only our own code produces — the guard tests nothing
+     and must not be written. A common shape: an invariant re-checked at read
+     time that the single write path already establishes, so the branch can
+     only fire on hand-corrupted rows. Ask which caller could produce the bad
+     state; if the honest answer is "none, short of someone editing the
+     database", delete the branch. "It could be inconsistent" is not a reason;
+     "the consumer would then do the wrong thing" is.
+  The bar is not "is this correct?" — defensive code is usually correct.
+  The bar is "what breaks, for whom, if this line doesn't exist?" No
+  concrete answer → no line.
+- **Measure the change, and treat a bad size-to-behaviour ratio as a shape
+  defect.** Before accepting a change, count what it actually cost — production
+  code apart from tests and docs, and comments apart from logic, because a
+  diff dominated by explanation is not the same as one dominated by machinery:
+
+  ```
+  git diff --numstat <base> -- ':!specs' ':!*.test.*' ':!**/test-harness'
+  ```
+
+  Then read the added lines, not just the total. **A small behavioural change
+  that costs a large number of lines is a red flag** — it is the most reliable
+  signal that the fix is fighting the existing shape rather than fitting it:
+  a special case layered where the general case belongs, a second owner
+  introduced beside the real one, or a wrapper bridging two things that should
+  have been merged. The correct response is to rework it from the shape the
+  code would want, **not** to commit it with a paragraph explaining why it had
+  to be big; that explanation is the smell, not the mitigation.
+
+  Two honesty rules, or the number means nothing: formatter churn in files the
+  change did not otherwise touch is not part of the change and must stay out of
+  the commit; and a net count near zero can still hide real weight — a new
+  cron, table column, index, endpoint, dependency, or config flag is a surface
+  someone now owns and maintains, so name those separately from the count.
 - **Do not over-weigh the sunk cost of the existing architecture.** "It already
   exists and works" is not an argument for keeping a shape — coding agents make
   large architecture switches cheap, so size a refactor by the quality of the end
@@ -65,6 +109,19 @@ module into the several owners it was hiding.
   the other already settled (orientation, units, edge cases, ordering).
 - Do not preserve dev-only compatibility by default. Unshipped scaffolding should
   move to the clean contract immediately.
+- **Prefer the idempotent contract over the refusal.** When an operation can be
+  asked for twice — a retry after a lost response, a user clicking the same
+  button again, a replayed webhook — reaching the requested end state should
+  succeed, not error. "Install X" where X is already installed at the place it
+  belongs is a success: return the thing. Refusal is correct only when the
+  second request means something genuinely different from the first — a
+  DIFFERENT thing already occupies the name, so honoring the request would
+  destroy or shadow it. The tell that you have it backwards: a caller has to
+  special-case your error code to recover normal behavior, or a retry path
+  needs a pre-flight "does it already exist?" read that races. Applies beyond
+  writes: deletes of absent things, unsubscribes, and "mark complete" toggles
+  are all idempotent by nature, and making them 404 or 409 pushes bookkeeping
+  onto every caller.
 - **Constrain the model to what production actually writes.** A schema that
   permits more than any writer produces — a list where every flow stores one
   element, a state nothing reaches — taxes every consumer with the general

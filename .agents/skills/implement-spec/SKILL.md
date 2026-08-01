@@ -54,6 +54,10 @@ depends on prior work.
    deleted. A file you can't name the durable purpose of does not ship.
    Delegated agents leak these; the integrating reviewer re-checks the merged
    tree with the same eye.
+
+   Sizing the pass — measuring what it cost and reworking it when the line count
+   is out of proportion to the behaviour it delivers — belongs to the shape pass
+   in step 6, under [refactor-clean](../refactor-clean/SKILL.md).
 6. Run [review](../review/SKILL.md) at the end of every pass, before committing.
    It sequences the three closeout lenses — refactor-clean on the shape,
    code-review on the settled diff, write-docs on what the change touched — and
@@ -196,6 +200,28 @@ everything decided without them. Hand over the **consolidated** ledger from
 step 11 (final state, verified against shipped code, choices only), never the
 raw per-pass append — a ledger still carrying "will be done in a later slice"
 verdicts tells the user you never went back to confirm it was.
+
+**Close the handback with the size of what you added — always last, after the
+ledger.** The ledger says what was decided; this says what it cost. A short
+table over the whole run:
+
+| | added | deleted | net |
+| --- | --- | --- | --- |
+| Production code (excl. comments) | | | |
+| Comments | | | |
+| Tests / harness | | | |
+| Specs & docs | | | |
+
+Then one paragraph naming the **structural** surfaces the run added — a new
+cron, table column, index, endpoint, config flag, dependency — because those
+are what the user now owns and maintains, and a line count alone hides them.
+Exclude formatter churn from files the run did not otherwise touch, and say so
+if you excluded any.
+
+State the count plainly whatever it is. A large net addition for a small
+behavioural change is a finding to report, not a number to bury — and if you
+notice it here rather than at the pass that caused it, say which pass it was.
+
 
 **Slices are not the only unit of scope.** A spec also records *decisions* —
 ledger rows, decision-table entries, invariants — and a decision can be agreed
