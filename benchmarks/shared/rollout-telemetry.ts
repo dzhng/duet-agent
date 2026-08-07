@@ -3,7 +3,7 @@ import type {
   TurnEvent,
   TurnTerminalEvent,
   TurnTokenUsage,
-} from "../../../src/types/protocol.js";
+} from "../../src/types/protocol.js";
 
 export type AdvisorCallOutcome = "success" | "rate_limited" | "unavailable" | "failed";
 
@@ -98,8 +98,16 @@ export interface RolloutTelemetry {
     | "missing";
 }
 
+export interface DeriveTelemetryOptions {
+  /** Absolute repository root used to recognize explicit `edit` and `write` mutations. */
+  repositoryRoot?: string;
+}
+
 /** Derive all campaign telemetry from a raw, append-only RPC event ledger. */
-export function deriveTelemetry(events: readonly TurnEvent[]): RolloutTelemetry {
+export function deriveTelemetry(
+  events: readonly TurnEvent[],
+  options: DeriveTelemetryOptions = {},
+): RolloutTelemetry {
   let latestUsage: Pick<TurnTokenUsageHolder, "turnUsage" | "usageByModel"> | undefined;
   let terminal: TurnTerminalEvent | undefined;
   let steps = 0;
@@ -140,7 +148,11 @@ export function deriveTelemetry(events: readonly TurnEvent[]): RolloutTelemetry 
       advisorCalls.firstExplicitRepositoryMutationStep === null &&
       event.step.type === "tool_call" &&
       !event.step.isError &&
-      isExplicitRepositoryMutation(event.step.toolName, event.step.input)
+      isExplicitRepositoryMutation(
+        event.step.toolName,
+        event.step.input,
+        options.repositoryRoot ?? "/testbed",
+      )
     ) {
       advisorCalls.firstExplicitRepositoryMutationStep = steps;
     }
@@ -323,11 +335,12 @@ function positiveInteger(value: unknown): number | undefined {
 function isExplicitRepositoryMutation(
   toolName: string,
   input: Record<string, unknown> | undefined,
+  repositoryRoot: string,
 ): boolean {
   if (toolName !== "edit" && toolName !== "write") return false;
   const path = input?.path;
   if (typeof path !== "string") return false;
-  return !path.startsWith("/") || path === "/testbed" || path.startsWith("/testbed/");
+  return !path.startsWith("/") || path === repositoryRoot || path.startsWith(`${repositoryRoot}/`);
 }
 
 function isTerminal(event: TurnEvent): event is TurnTerminalEvent {

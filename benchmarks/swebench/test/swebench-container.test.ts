@@ -4,10 +4,9 @@ import {
   ContainerHandle,
   removeOfficialImage,
   resolveAndPullOfficialImage,
-  type CommandResult,
-  type CommandRunner,
 } from "../src/container.js";
-import type { ExecTransport } from "../src/duet-client.js";
+import type { ExecTransport } from "../../shared/duet-rpc-client.js";
+import type { CommandResult, CommandRunner } from "../../shared/command-runner.js";
 
 class FakeCommands implements CommandRunner {
   readonly runs: { argv: readonly string[]; stdin?: string }[] = [];

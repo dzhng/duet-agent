@@ -30,6 +30,8 @@ coverage
 .next/
 next-env.d.ts
 out/
+outputs/
+__pycache__/
 build
 dist
 ts-traces
