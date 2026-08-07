@@ -456,7 +456,7 @@ export class TurnRunner {
   >();
   /** Coalesces same-tick settlements into one FIFO drain and one B3 notice. */
   private settlementDeliveryQueued = false;
-  /** One end-of-turn park nudge per turn; see {@link queueParkNudgeIfDue}. */
+  /** End-of-turn park nudge already spent; refreshed whenever a state runs. */
   private parkNudged = false;
   /** Monotonic root-scope suffix; each public turn owns one root scope. */
   private nextRootScope = 1;
@@ -1528,10 +1528,7 @@ export class TurnRunner {
    * scheduled wake that will resume the machine on its own — means the turn is
    * not ending on a stalled park, so there is nothing to remind anyone about.
    */
-  private queueParkNudgeIfDue(
-    status: "completed" | "failed" | "cancelled" | "error",
-    pending: PendingWork,
-  ): boolean {
+  private queueParkNudgeIfDue(status: "completed" | "failed", pending: PendingWork): boolean {
     if (
       status !== "completed" ||
       this.parkNudged ||
