@@ -136,6 +136,23 @@ export function withheldAskReminder(questions: readonly TurnQuestion[]): string 
   `);
 }
 
+/**
+ * Gentle last-chance reminder spent on one extra parent pass when a turn is
+ * about to end completed while the machine is still parked. A park that ends
+ * the turn is legitimate when the parent is genuinely waiting on the user, but
+ * it is also what "I forgot to select the next state" looks like — and the
+ * parent is the only one who can tell the two apart. The pass is delivered
+ * alongside the standard {@link parkNudge}, which names the parked state, so
+ * this text only has to supply the "your turn is ending" framing.
+ */
+export const PARK_END_OF_TURN_NUDGE = systemReminder(dedent`
+  <system-reminder>
+  Your turn is about to end with the state machine still parked. If you were
+  waiting on the user, that is correct — just reply and end the turn. If you
+  meant to keep going and have not selected the next state yet, select it now.
+  </system-reminder>
+`);
+
 /** Binding reminder attached wherever a parent turn enters or remains in a park. */
 export function parkNudge(stateName: string): string {
   return systemReminder(dedent`

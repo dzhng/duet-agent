@@ -69,17 +69,19 @@ Memory and compaction are the same primitive: observational memory _is_ how cont
 
 ### Relays: keep the agent working until the job is done
 
-A relay is how duet-agent stays on task across hours, days, or months. Under the hood it's a state machine — but the runner agent, not a config file, picks the next transition every turn. Enough structure to route long work; not so much that the agent is locked into a path. Each state is one of five kinds:
+A relay is how duet-agent stays on task across hours, days, or months. Under the hood it's a state machine — but the runner agent, not a config file, picks the next transition every turn. Enough structure to route long work; not so much that the agent is locked into a path. Each state is one of six kinds:
 
 - **agent** — a sub-agent with a prompt, optional system prompt, and optional skill allowlist.
 - **script** — shell out to `bash`, `curl`, a CLI. Anything with an API is a script state.
 - **poll** — recurring check on an external signal (inbox, build status, webhook).
 - **timer** — a pure delay until a wall-clock time, no script attached.
+- **park** — the machine runs nothing while the main agent owns the next move: a human gate, or work it does itself. A park schedules no wake, so the runner spends one reminder pass before a turn would end parked — waiting for a human is legitimate, forgetting to transition is not.
 - **terminal** — record a business outcome: `completed`, `cancelled`, `failed`.
 
 ```mermaid
 flowchart LR
   A([agent]) --> S([script]) --> P([poll]) --> Tm([timer]) --> T([terminal])
+  A --> Pk([park]) --> A
 ```
 
 That's the whole vocabulary. Email, GitHub, Calendly, CRM — none of them need first-class engine concepts; they're shell scripts. Relays can start in the middle ("I already emailed them, just wait for a reply") because the runner agent reads context, not a workflow ID.
@@ -605,6 +607,8 @@ As a final safety net for on-disk state, `TurnRunner` also caps the size of ever
 ## Skills
 
 Skills are loaded from `<cwd>/.duet/skills`, `<cwd>/.agents/skills`, `~/.duet/skills`, and `~/.agents/skills` by default, using `@earendil-works/pi-coding-agent`'s skill loader. The turn runner injects every loaded skill's description and instructions into the agent system prompt.
+
+A few skills ship with the package (`/relay`, `/goal`; `duet skills` lists them alongside your own). They are merged into discovery like any on-disk skill, and a same-named skill in any discovery root shadows them — a built-in is a starting point you can replace, not fixed behavior.
 
 After `start`, the runner exposes what it discovered:
 

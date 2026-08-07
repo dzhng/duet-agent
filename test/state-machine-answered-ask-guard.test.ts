@@ -72,6 +72,9 @@ describe("parent-owned park gate", () => {
     ];
     runner.controlResults.push(
       { type: "select_state_machine_state", decision: { state: "await_approval" } },
+      // The end-of-turn park nudge spends one more pass before the first
+      // turn ends; this parent is genuinely waiting, so it stays parked.
+      { type: "none" },
       { type: "ask_user_question", questions },
       { type: "select_state_machine_state", decision: { state: "done" } },
     );

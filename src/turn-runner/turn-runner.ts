@@ -124,6 +124,7 @@ import {
   createSourceOfTruthSystemPromptLayer,
   createStateMachineSystemPromptLayer,
   withheldAskReminder,
+  PARK_END_OF_TURN_NUDGE,
   parkNudge,
 } from "./prompts.js";
 import {
@@ -290,7 +291,10 @@ export type ParentLoopInput =
   | { type: "wake"; queued?: boolean };
 
 /** Runner-owned continuation that never crosses the public command or event protocol. */
-type PendingParentLoopInput = ParentLoopInput | { type: "advisor_completion_review" };
+type PendingParentLoopInput =
+  | ParentLoopInput
+  | { type: "advisor_completion_review" }
+  | { type: "park_nudge" };
 
 type StateTaskMetadata =
   | { kind: "agent"; stateName: string; run?: SubagentRun }
@@ -451,6 +455,8 @@ export class TurnRunner {
   >();
   /** Coalesces same-tick settlements into one FIFO drain and one B3 notice. */
   private settlementDeliveryQueued = false;
+  /** One end-of-turn park nudge per turn; see {@link queueParkNudgeIfDue}. */
+  private parkNudged = false;
   /** Monotonic root-scope suffix; each public turn owns one root scope. */
   private nextRootScope = 1;
   /** Scope currently accepting state tasks. */
@@ -890,6 +896,7 @@ export class TurnRunner {
     this.interruptReason = undefined;
     this.interruptCleanup = undefined;
     this.terminalEmitted = false;
+    this.parkNudged = false;
     this.activeRootScopeId = `turn-${this.nextRootScope++}` as const;
     const routeStatus = this.modelRouter?.status();
     this.advisorTurnLifecycle =
@@ -981,6 +988,7 @@ export class TurnRunner {
         }
         if (result?.type === "terminal") {
           if (this.queueAdvisorCompletionReviewIfDue(result.status)) continue;
+          if (this.queueParkNudgeIfDue(result.status)) continue;
           completion = {
             status: result.status === "error" ? "failed" : "completed",
             ...(result.result !== undefined ? { result: result.result } : {}),
@@ -1338,6 +1346,8 @@ export class TurnRunner {
         return this.runTerminalAcknowledgmentPass();
       case "advisor_completion_review":
         return this.runAdvisorCompletionReviewPass();
+      case "park_nudge":
+        return this.runParkNudgePass();
       case "wake":
         return this.runWakeInput();
     }
@@ -1459,6 +1469,69 @@ export class TurnRunner {
     return this.stateMachineResultFromWorker(worker, worker.outcome.state);
   }
 
+  /**
+   * Fold a finished continuation pass into a loop outcome: an interrupt, an ask,
+   * whatever control action the parent emitted, or the turn's completion. Every
+   * runner-owned continuation settles the same way, so they share this instead
+   * of each re-deriving the precedence between those four.
+   */
+  private async settleContinuationPass(
+    worker: AgentWorkerResult,
+  ): Promise<SettledDecision["outcome"]> {
+    if (worker.outcome.type === "interrupted") return { type: "interrupted" };
+    if (worker.control.type === "ask_user_question") {
+      return { type: "ask", questions: worker.control.questions };
+    }
+    if (this.requireRunnerState().mode !== "agent") {
+      const controlled = await this.stateMachineResultFromWorker(worker, worker.outcome.state);
+      if (controlled) return controlled;
+    }
+    return worker.outcome.status === "failed"
+      ? { type: "terminal", status: "error", error: worker.outcome.error }
+      : { type: "terminal", status: "completed", result: worker.outcome.result };
+  }
+
+  /**
+   * Spend one extra parent pass before a completed turn ends while the machine
+   * is still parked. `runParentPass` appends {@link parkNudge} on its own, so
+   * this only supplies the "your turn is ending" framing. Ending the turn again
+   * is a legitimate outcome — the pass is a nudge, not an obligation — so
+   * whatever the parent does next settles the turn normally.
+   */
+  private async runParkNudgePass() {
+    const worker = await this.runParentPass({
+      state: this.snapshotState({ ...this.requireRunnerState(), status: "running" }),
+      prompt: PARK_END_OF_TURN_NUDGE,
+      continuation: true,
+    });
+    this.setState(worker.outcome.state);
+    return this.settleContinuationPass(worker);
+  }
+
+  /**
+   * Queue that nudge pass at most once per turn, and only when a turn that
+   * succeeded is about to end with the machine parked. A park holds without
+   * scheduling any wake, so nothing else would ever resume the machine: if the
+   * parent parked and then simply forgot to transition, this is the last moment
+   * anyone can catch it. Spending the nudge once per executed state keeps a
+   * parent that legitimately waits for the user from being nagged into
+   * transitioning, while a loop that parks between real work rounds still gets
+   * a nudge each round (see {@link executePlannedWork}).
+   */
+  private queueParkNudgeIfDue(status: "completed" | "failed" | "cancelled" | "error"): boolean {
+    if (
+      status !== "completed" ||
+      this.parkNudged ||
+      !currentParkState(this.stateMachine) ||
+      this.taskManager.pendingWork().kind === "open"
+    ) {
+      return false;
+    }
+    this.parkNudged = true;
+    this.parentInputs.unshift({ type: "park_nudge" });
+    return true;
+  }
+
   private async runAdvisorCompletionReviewPass() {
     const worker = await this.runParentPass({
       state: this.snapshotState({ ...this.requireRunnerState(), status: "running" }),
@@ -1466,13 +1539,9 @@ export class TurnRunner {
       continuation: true,
     });
     this.setState(worker.outcome.state);
-    if (worker.outcome.type === "interrupted") return { type: "interrupted" } as const;
-    if (worker.control.type === "ask_user_question") {
-      return { type: "ask", questions: worker.control.questions } as const;
-    }
-    return worker.outcome.status === "failed"
-      ? ({ type: "terminal", status: "error", error: worker.outcome.error } as const)
-      : ({ type: "terminal", status: "completed", result: worker.outcome.result } as const);
+    // Only ever queued in agent mode, so the shared settle's state-machine
+    // branch is unreachable here.
+    return this.settleContinuationPass(worker);
   }
 
   /**
@@ -1551,6 +1620,10 @@ export class TurnRunner {
       return settled.outcome;
     }
     if ("park" in work) return undefined;
+    // Running a state is progress, so the end-of-turn park nudge is spendable
+    // again on the next park. A parent that only re-parks runs nothing, never
+    // reaches this line, and so is nudged at most once.
+    this.parkNudged = false;
     if ("subagent" in work.run) {
       this.startSubagentTask(work.run.subagent, work.run.stateName);
     } else {
@@ -1706,17 +1779,7 @@ export class TurnRunner {
       continuation: true,
     });
     this.setState(worker.outcome.state);
-    if (worker.outcome.type === "interrupted") return { type: "interrupted" };
-    if (worker.control.type === "ask_user_question") {
-      return { type: "ask", questions: worker.control.questions };
-    }
-    if (this.requireRunnerState().mode !== "agent") {
-      const controlled = await this.stateMachineResultFromWorker(worker, worker.outcome.state);
-      if (controlled) return controlled;
-    }
-    return worker.outcome.status === "failed"
-      ? { type: "terminal", status: "error", error: worker.outcome.error }
-      : { type: "terminal", status: "completed", result: worker.outcome.result };
+    return this.settleContinuationPass(worker);
   }
 
   private stateResultFromSettlement(settlement: TaskSettlement): SubagentResult | ShellSettlement {

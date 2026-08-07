@@ -1376,13 +1376,13 @@ describe("TurnRunner memory", () => {
       breakdown.systemPrompt + breakdown.messages + breakdown.localMemory + breakdown.globalMemory;
     expect(total).toBe(usageEvent.lastMessageUsage.totalTokens);
 
-    // The two global rows together should contribute more tokens than
-    // the single local row, since their combined content is longer.
-    expect(breakdown.globalMemory).toBeGreaterThan(breakdown.localMemory);
-
-    // Raw estimates (before scaling) should still reflect pack sizes:
-    // global content is longer than local, so the scaled global segment
-    // should still exceed the scaled local segment by a healthy margin.
+    // Pack sizes drive the segments: the two global rows carry more content
+    // than the single local row, so the global segment estimates higher. This
+    // is asserted on the raw estimate rather than the scaled event, because
+    // rescaling a tiny provider total floors every non-empty slice at one
+    // token — an ordering that survives only while the system prompt stays
+    // small enough to leave a remainder, which is not what this test is about.
+    const raw = runner.estimateContextWindowUsageForTest();
     const expectedGlobalRaw = seeded.global.reduce(
       (sum, row) => sum + Math.ceil(row.content.length / CHARS_PER_TOKEN),
       0,
@@ -1391,7 +1391,9 @@ describe("TurnRunner memory", () => {
       (sum, row) => sum + Math.ceil(row.content.length / CHARS_PER_TOKEN),
       0,
     );
-    expect(expectedGlobalRaw).toBeGreaterThan(expectedLocalRaw);
+    expect(raw.globalMemory).toBe(expectedGlobalRaw);
+    expect(raw.localMemory).toBe(expectedLocalRaw);
+    expect(raw.globalMemory).toBeGreaterThan(raw.localMemory);
   });
 
   test("usage event from a recovered overflow turn reflects the post-eviction message tail end-to-end", async () => {

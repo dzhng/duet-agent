@@ -43,6 +43,30 @@ describe("built-in skills surface through discovery", () => {
     expect(resolved).not.toContain("<system-reminder>");
   });
 
+  test("discoverInstalledSkills includes /goal with builtin scope", () => {
+    const { skills } = discoverInstalledSkills(tempDir);
+    const goal = skills.find((s) => s.name === "goal");
+    expect(goal).toBeDefined();
+    expect(resolveSkillScope(goal!, tempDir)).toBe("builtin");
+  });
+
+  test("SkillContext appends the goal skill block when /goal is in the prompt", async () => {
+    const ctx = new SkillContext({
+      skillDiscovery: { includeDefaults: false, cwd: tempDir },
+    });
+    await ctx.ensureLoaded();
+
+    const resolved = ctx.resolveSlashSkillPrompt("/goal get the flaky test green");
+
+    expect(resolved).toContain("/goal get the flaky test green");
+    expect(resolved).toMatch(/<skill name="goal" path="[^"]+">/);
+    // The pattern the skill teaches: a work state judged by a separate
+    // evaluator sub-agent, not a prebuilt machine.
+    expect(resolved).toContain("create_state_machine_definition");
+    expect(resolved).toContain("VERDICT: incomplete");
+    expect(resolved).toContain("</skill>");
+  });
+
   test("a user-installed skill named 'relay' shadows the built-in", async () => {
     const ctx = new SkillContext({
       skills: [

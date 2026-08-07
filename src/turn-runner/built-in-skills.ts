@@ -104,6 +104,115 @@ const RELAY_INSTRUCTIONS = dedent`
 const RELAY_DESCRIPTION =
   "Run durable, multi-step, or recurring work as a state machine of sub-agent, script, poll, and timer states so the work survives session boundaries and progress stays visible to the user.";
 
+/**
+ * Body of the built-in `/goal` skill. A reference pattern, not a prebuilt
+ * machine: it teaches the agent to build its own work/evaluate loop so
+ * the definition, criteria, and state names fit the goal at hand.
+ */
+const GOAL_INSTRUCTIONS = dedent`
+  The user gave you a goal to drive to completion, not a task to perform
+  once. Build a state machine whose loop is: you do the work, an
+  independent sub-agent judges whether the goal is actually met, and the
+  machine terminates only when that judge says yes.
+
+  This is a pattern to instantiate with
+  \`create_state_machine_definition\`, not a fixed machine to invoke.
+  Name the states, write the criteria, and size the loop to this goal.
+
+  ## The two states (plus a terminal)
+
+  1. **work** — a \`park\` state. Park runs nothing itself; it records that
+     you, the main agent, own the next move, so the work happens in your own
+     turn with your own tools and full context. Take a complete pass at the
+     goal, then select \`evaluate\`. (If the work is better delegated —
+     heavy, isolated, or parallelizable — make this an \`agent\` state
+     instead; the loop is identical.)
+  2. **evaluate** — an \`agent\` state. A sub-agent that judges, and only
+     judges. It never does the work, and it never fixes what it finds.
+  3. **goal_met** — a \`terminal\` with status \`"completed"\`, selected
+     only on a verified pass.
+
+  \`\`\`json
+  {
+    "name": "<goal in a few words>",
+    "prompt": "Drive <the goal> to completion: work, then evaluate, until the evaluator passes.",
+    "states": [
+      { "name": "work", "kind": "park",
+        "when": "Start here, and return here after every incomplete verdict, to do or fix the work." },
+      { "name": "evaluate", "kind": "agent",
+        "when": "After each work pass, to judge the goal against its criteria.",
+        "prompt": "<the goal verbatim + criteria + verdict format>" },
+      { "name": "goal_met", "kind": "terminal", "status": "completed" }
+    ]
+  }
+  \`\`\`
+
+  ## Criteria come first
+
+  Before creating the definition, decide what "done" means, as checks
+  someone else could run: the command that must exit 0, the file that must
+  contain X, the behavior the user must be able to observe. Subjective
+  goals ("make it feel faster", "clean this up") still need observable
+  proxies — pick them now, because an unfalsifiable criterion makes the
+  loop unterminable. If you cannot state a check for a criterion that
+  matters, ask the user before you start.
+
+  ## Writing the evaluator
+
+  - **Fresh context, not forked.** Leave \`forkContext\` off. The judge
+    must grade the artifact that exists, not your account of it — your
+    narration of your own work is exactly the thing most likely to be
+    wrong.
+  - **Carry criteria, not history.** Its prompt restates the goal verbatim
+    and lists the criteria. It gets no summary of what you tried; that
+    only teaches it to accept your framing.
+  - **Make it verify.** Instruct it to read the files, run the
+    build/tests/command, and reproduce the user's scenario. A verdict
+    reached by reading a diff is a guess.
+  - **Fix the verdict shape** so the loop can branch on it:
+    - \`VERDICT: complete\` — nothing left against the criteria.
+    - \`VERDICT: incomplete\` — followed by a numbered list of gaps, each
+      naming what is wrong, where, and what would satisfy it. "Needs
+      polish" is not a gap; "src/cli/run.ts:88 still ignores --json" is.
+  - **Bias it toward finding gaps.** Tell it to look for what a skeptical
+    reviewer would reject, and to report a gap when unsure rather than
+    passing on the benefit of the doubt.
+
+  ## The loop
+
+  Create the definition with \`firstState: "work"\`, then do a full work
+  pass in that same turn and select \`evaluate\` when the pass is done —
+  parking is not a reason to stop. From there:
+
+  - **incomplete** → select \`work\` again, fix every gap in your own pass,
+    then select \`evaluate\`. You already hold the gaps in your context, so
+    nothing needs threading through state input.
+  - **complete** → check one or two criteria yourself before you
+    terminate. A pass verdict is a claim like any other sub-agent output;
+    a judge can hallucinate a pass the same way a worker hallucinates a
+    finish. Then select \`goal_met\`.
+  - **blocked on the user** → this is what \`work\` is for. Select it, ask
+    your question, and end the turn; the machine holds at \`work\` and the
+    user's reply resumes the loop.
+
+  ## Don't let the loop spin
+
+  - Keep the criteria fixed across rounds. Re-scoping mid-loop is how a
+    loop "passes" without the goal being met; change criteria only with
+    the user.
+  - If the same gap survives two rounds, your approach is the problem, not
+    the effort. Change approach rather than retrying harder.
+  - After a few rounds with no pass, or if the verdicts flip-flop, park at
+    \`work\` and ask the user with \`ask_user_question\` — the criteria are
+    wrong, the goal is underspecified, or the work is blocked.
+  - A goal that turns out to be unachievable ends at a \`failed\` terminal
+    with the reason recorded. That is a real outcome; an endless loop is
+    not.
+`;
+
+const GOAL_DESCRIPTION =
+  "Drive a goal to completion with a state machine that loops your own work against an independent sub-agent evaluator, terminating only when the evaluator verifies the goal's success criteria are met.";
+
 function buildBuiltIn(name: string, description: string, instructions: string): BuiltInSkill {
   const baseDir = `${BUILTIN_PATH_PREFIX}/${name}`;
   const filePath = `${baseDir}/SKILL.md`;
@@ -132,6 +241,7 @@ function buildBuiltIn(name: string, description: string, instructions: string): 
  */
 export const BUILT_IN_SKILLS: readonly BuiltInSkill[] = [
   buildBuiltIn("relay", RELAY_DESCRIPTION, RELAY_INSTRUCTIONS),
+  buildBuiltIn("goal", GOAL_DESCRIPTION, GOAL_INSTRUCTIONS),
 ];
 
 const BUILT_IN_BY_PATH = new Map(
