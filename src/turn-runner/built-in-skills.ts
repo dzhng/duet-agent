@@ -37,6 +37,24 @@ const RELAY_INSTRUCTIONS = dedent`
   - Only fall back to a plain answer when the request is genuinely a
     one-shot question that cannot be expressed as a state.
 
+  ## When the request is a goal, not a process
+
+  Some requests have no process to model — just an outcome that must hold
+  ("get the suite green", "make this page load under a second"). Those want
+  a loop, not a pipeline: a \`park\` state where you do the work yourself,
+  an \`agent\` state holding an evaluator sub-agent that judges the result
+  against written criteria and answers \`VERDICT: complete\` or
+  \`VERDICT: incomplete\` plus the specific gaps, and a terminal you select
+  only after a pass you spot-checked. Incomplete sends the machine back to
+  the park for another round. Give the evaluator fresh context and the
+  criteria — never a summary of what you did, which only teaches it to
+  accept your account.
+
+  The built-in \`/goal\` skill is the full write-up of that loop: how to fix
+  criteria before you start, how to prompt the judge, and how to stop a loop
+  that will not converge. Suggest \`/goal\` when the user's request is
+  shaped that way.
+
   ## Running multiple scheduled tasks (cron-style) in ONE state machine
 
   Only one state machine can be active per session, so when the user wants
@@ -123,10 +141,12 @@ const GOAL_INSTRUCTIONS = dedent`
 
   1. **work** — a \`park\` state. Park runs nothing itself; it records that
      you, the main agent, own the next move, so the work happens in your own
-     turn with your own tools and full context. Take a complete pass at the
-     goal, then select \`evaluate\`. (If the work is better delegated —
-     heavy, isolated, or parallelizable — make this an \`agent\` state
-     instead; the loop is identical.)
+     turn with your own tools and full context. Start here, take a complete
+     pass at the goal, then select \`evaluate\`. This is also where the
+     machine sits whenever a turn ends mid-goal — out of rounds, or waiting
+     on the user — so the next turn resumes into the work phase. (If the
+     work is better delegated — heavy, isolated, or parallelizable — make
+     this an \`agent\` state instead; the loop is identical.)
   2. **evaluate** — an \`agent\` state. A sub-agent that judges, and only
      judges. It never does the work, and it never fixes what it finds.
   3. **goal_met** — a \`terminal\` with status \`"completed"\`, selected
@@ -184,9 +204,11 @@ const GOAL_INSTRUCTIONS = dedent`
   pass in that same turn and select \`evaluate\` when the pass is done —
   parking is not a reason to stop. From there:
 
-  - **incomplete** → select \`work\` again, fix every gap in your own pass,
-    then select \`evaluate\`. You already hold the gaps in your context, so
-    nothing needs threading through state input.
+  - **incomplete** → fix every gap, then select \`evaluate\` again. A state
+    that completes hands you a pass that must end in a transition, so do the
+    fixing in that pass rather than parking first for it — you already hold
+    the gaps in your context, and nothing needs threading through state
+    input.
   - **complete** → check one or two criteria yourself before you
     terminate. A pass verdict is a claim like any other sub-agent output;
     a judge can hallucinate a pass the same way a worker hallucinates a
@@ -213,7 +235,18 @@ const GOAL_INSTRUCTIONS = dedent`
 const GOAL_DESCRIPTION =
   "Drive a goal to completion with a state machine that loops your own work against an independent sub-agent evaluator, terminating only when the evaluator verifies the goal's success criteria are met.";
 
-function buildBuiltIn(name: string, description: string, instructions: string): BuiltInSkill {
+function buildBuiltIn(
+  name: string,
+  description: string,
+  instructions: string,
+  /**
+   * Hides the skill from the advertised skill list, so it activates only when
+   * the user types `/name` or a state prompt names it. Use it for a skill whose
+   * pattern is already reachable through another skill's body: advertising both
+   * makes the model choose between two overlapping menu entries every turn.
+   */
+  disableModelInvocation = false,
+): BuiltInSkill {
   const baseDir = `${BUILTIN_PATH_PREFIX}/${name}`;
   const filePath = `${baseDir}/SKILL.md`;
   return {
@@ -228,7 +261,7 @@ function buildBuiltIn(name: string, description: string, instructions: string): 
         origin: "top-level",
         baseDir,
       }),
-      disableModelInvocation: false,
+      disableModelInvocation,
     },
     instructions,
   };
@@ -241,7 +274,10 @@ function buildBuiltIn(name: string, description: string, instructions: string): 
  */
 export const BUILT_IN_SKILLS: readonly BuiltInSkill[] = [
   buildBuiltIn("relay", RELAY_DESCRIPTION, RELAY_INSTRUCTIONS),
-  buildBuiltIn("goal", GOAL_DESCRIPTION, GOAL_INSTRUCTIONS),
+  // User-invoked only: `/relay` carries the goal loop's shape, so the model
+  // reaches this pattern through relay rather than picking between two
+  // state-machine skills on its own.
+  buildBuiltIn("goal", GOAL_DESCRIPTION, GOAL_INSTRUCTIONS, true),
 ];
 
 const BUILT_IN_BY_PATH = new Map(

@@ -304,14 +304,19 @@ export function createSourceOfTruthSystemPromptLayer(): string {
 }
 
 function createSkillsSystemPrompt(skills: readonly Skill[]): string | undefined {
-  if (skills.length === 0) {
+  // `disableModelInvocation` means "the model may not reach for this on its
+  // own", so such a skill is never advertised here. It stays fully usable
+  // through the paths that name it explicitly — the user typing `/name`, or a
+  // state prompt containing it — because those are invocations, not choices.
+  const advertised = skills.filter((skill) => !skill.disableModelInvocation);
+  if (advertised.length === 0) {
     return undefined;
   }
 
   return dedent`
     Available skills (metadata only — \`read\` the SKILL.md at the listed \`path\` to load full instructions when a skill's description matches the task at hand, or to edit the skill itself):
     ${toXML({
-      skills: skills.map((skill) => ({
+      skills: advertised.map((skill) => ({
         skill: {
           _attrs: { name: skill.name, path: skill.filePath },
           description: skill.description,

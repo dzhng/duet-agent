@@ -184,6 +184,7 @@ import {
 } from "./transient-error.js";
 import { addUsage, addUsageByModel, usageFromAiSdk } from "./usage-accounting.js";
 import { SystemRuntimeClock, type RuntimeClock } from "./runtime-clock.js";
+import type { PendingWork } from "../tasks/quiescence.js";
 import { createTaskManager, type TaskManager } from "../tasks/task-manager.js";
 import type { ScopeId, TaskEvent, TaskId, TaskSettlement, TaskSnapshot } from "../tasks/types.js";
 import { createShellStateHandle, type ShellStateHandle } from "./shell-state-handle.js";
@@ -949,7 +950,15 @@ export class TurnRunner {
         const input =
           runnableIndex >= 0 ? this.parentInputs.splice(runnableIndex, 1)[0] : undefined;
         if (!input) {
-          if (pendingBeforeInput.kind !== "open") break;
+          if (pendingBeforeInput.kind !== "open") {
+            // The loop is out of work: this is the moment the turn ends, and
+            // the only point every park reaches. A park selected while
+            // transitioning out of a completed state returns no outcome at all,
+            // so hooking the terminal result instead would miss every park
+            // after the first.
+            if (this.queueParkNudgeIfDue(completion.status, pendingBeforeInput)) continue;
+            break;
+          }
           if (this.parentInputs.length > 0) {
             await this.taskManager.waitForSettlement();
           } else {
@@ -988,7 +997,6 @@ export class TurnRunner {
         }
         if (result?.type === "terminal") {
           if (this.queueAdvisorCompletionReviewIfDue(result.status)) continue;
-          if (this.queueParkNudgeIfDue(result.status)) continue;
           completion = {
             status: result.status === "error" ? "failed" : "completed",
             ...(result.result !== undefined ? { result: result.result } : {}),
@@ -1509,21 +1517,26 @@ export class TurnRunner {
   }
 
   /**
-   * Queue that nudge pass at most once per turn, and only when a turn that
-   * succeeded is about to end with the machine parked. A park holds without
-   * scheduling any wake, so nothing else would ever resume the machine: if the
-   * parent parked and then simply forgot to transition, this is the last moment
-   * anyone can catch it. Spending the nudge once per executed state keeps a
-   * parent that legitimately waits for the user from being nagged into
-   * transitioning, while a loop that parks between real work rounds still gets
-   * a nudge each round (see {@link executePlannedWork}).
+   * Queue that nudge pass when a turn that succeeded is about to end with the
+   * machine parked. A park holds without scheduling any wake, so nothing else
+   * would ever resume the machine: if the parent parked and then simply forgot
+   * to transition, this is the last moment anyone can catch it. Spending the
+   * nudge once per executed state keeps a parent that legitimately waits for
+   * the user from being nagged into transitioning, while a loop that parks
+   * between real work rounds still gets a nudge each round (see
+   * {@link executePlannedWork}). Anything still pending — running work, or a
+   * scheduled wake that will resume the machine on its own — means the turn is
+   * not ending on a stalled park, so there is nothing to remind anyone about.
    */
-  private queueParkNudgeIfDue(status: "completed" | "failed" | "cancelled" | "error"): boolean {
+  private queueParkNudgeIfDue(
+    status: "completed" | "failed" | "cancelled" | "error",
+    pending: PendingWork,
+  ): boolean {
     if (
       status !== "completed" ||
       this.parkNudged ||
-      !currentParkState(this.stateMachine) ||
-      this.taskManager.pendingWork().kind === "open"
+      pending.kind !== "complete" ||
+      !currentParkState(this.stateMachine)
     ) {
       return false;
     }

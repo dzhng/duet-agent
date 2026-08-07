@@ -210,6 +210,56 @@ describe("TurnRunner skills", () => {
   );
 
   testIfDocker(
+    "a disableModelInvocation skill is never advertised but still expands on /name",
+    async () => {
+      tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));
+      const hiddenPath = join(tempDir, "SKILL.md");
+      await writeFile(
+        hiddenPath,
+        dedent`
+        ---
+        name: hidden-skill
+        description: Hidden skill description.
+        ---
+
+        Hidden skill instructions.
+      `,
+      );
+      const hidden: Skill = {
+        name: "hidden-skill",
+        description: "Hidden skill description.",
+        filePath: hiddenPath,
+        baseDir: tempDir,
+        sourceInfo: {} as Skill["sourceInfo"],
+        disableModelInvocation: true,
+      };
+
+      // Not in the menu: the model cannot reach for it on its own.
+      const promptRunner = new SkillPromptTurnRunner({
+        model: "anthropic:claude-opus-4-7",
+        cwd: process.cwd(),
+        skillDiscovery: { includeDefaults: false },
+        skills: [hidden],
+      });
+      await promptRunner.getSkills();
+      const systemPrompt = promptRunner.systemPromptForTest("Base instructions.");
+      expect(systemPrompt).not.toContain("hidden-skill");
+      expect(systemPrompt).not.toContain("Hidden skill description.");
+
+      // Still fully usable when the user names it.
+      const { runner } = createTurnRunner({
+        mode: "agent",
+        skillDiscovery: { includeDefaults: false },
+        skills: [hidden],
+      });
+      await (
+        await startTurn(runner, { prompt: "/hidden-skill do the thing" })
+      ).turn;
+      expect(runner.workerInputs[0]?.prompt).toContain("Hidden skill instructions.");
+    },
+  );
+
+  testIfDocker(
     "injects full skill instructions for slash command prompts at runner level",
     async () => {
       tempDir = await mkdtemp(join(tmpdir(), "duet-skill-"));

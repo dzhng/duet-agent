@@ -606,7 +606,7 @@ As a final safety net for on-disk state, `TurnRunner` also caps the size of ever
 
 ## Skills
 
-Skills are loaded from `<cwd>/.duet/skills`, `<cwd>/.agents/skills`, `~/.duet/skills`, and `~/.agents/skills` by default, using `@earendil-works/pi-coding-agent`'s skill loader. The turn runner injects every loaded skill's description and instructions into the agent system prompt.
+Skills are loaded from `<cwd>/.duet/skills`, `<cwd>/.agents/skills`, `~/.duet/skills`, and `~/.agents/skills` by default, using `@earendil-works/pi-coding-agent`'s skill loader. The system prompt advertises metadata only — name, path, description — so the prompt cost of installing a skill stays flat no matter how long its SKILL.md is. Full instructions load on demand: typing `/name` expands the whole body inline for that turn, and the model can otherwise read the SKILL.md at the advertised path. A skill with `disableModelInvocation` is not advertised at all, so it activates only when something names it explicitly.
 
 A few skills ship with the package (`/relay`, `/goal`; `duet skills` lists them alongside your own). They are merged into discovery like any on-disk skill, and a same-named skill in any discovery root shadows them — a built-in is a starting point you can replace, not fixed behavior.
 

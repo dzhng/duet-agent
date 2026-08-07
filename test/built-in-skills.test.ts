@@ -43,11 +43,15 @@ describe("built-in skills surface through discovery", () => {
     expect(resolved).not.toContain("<system-reminder>");
   });
 
-  test("discoverInstalledSkills includes /goal with builtin scope", () => {
+  test("discoverInstalledSkills includes /goal with builtin scope, unadvertised", () => {
     const { skills } = discoverInstalledSkills(tempDir);
     const goal = skills.find((s) => s.name === "goal");
     expect(goal).toBeDefined();
     expect(resolveSkillScope(goal!, tempDir)).toBe("builtin");
+    // /goal is user-invoked only: it stays discoverable (pickers, `duet
+    // skills`, slash expansion) while never appearing in the model's menu.
+    expect(goal!.disableModelInvocation).toBe(true);
+    expect(skills.find((s) => s.name === "relay")!.disableModelInvocation).toBe(false);
   });
 
   test("SkillContext appends the goal skill block when /goal is in the prompt", async () => {

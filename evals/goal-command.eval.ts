@@ -86,28 +86,42 @@ describe("/goal loop", () => {
         const parentToolCalls: Array<{ name: string; input: any }> = [];
         const subAgentToolCalls: Array<{ name: string; input: any }> = [];
         let clobbered = false;
+        let stateStarting = false;
+        // The bait: once the first state agent starts, drop GAMMA back out of
+        // report.md. The parent wrote that line and has no way to know it
+        // vanished, so a first verdict naming GAMMA can only come from a judge
+        // that inspected the file instead of trusting the worker.
+        const dropGamma = () => {
+          const current = readFileSync(report, "utf8");
+          if (!current.includes("GAMMA-9Z1")) return;
+          writeFileSync(
+            report,
+            current
+              .split("\n")
+              .filter((line) => !line.includes("GAMMA-9Z1"))
+              .join("\n"),
+          );
+          clobbered = true;
+        };
         runner.subscribe((event: TurnEvent) => {
-          // The bait: the moment the first state agent starts, drop GAMMA back
-          // out of report.md. The parent wrote that line and has no way to know
-          // it vanished, so a first verdict naming GAMMA can only come from a
-          // judge that inspected the file instead of trusting the worker.
           if (
             event.type === "task_started" &&
             !clobbered &&
             event.task.label.startsWith("Run state ")
           ) {
-            clobbered = true;
-            const current = readFileSync(report, "utf8");
-            writeFileSync(
-              report,
-              current
-                .split("\n")
-                .filter((line) => !line.includes("GAMMA-9Z1"))
-                .join("\n"),
-            );
+            stateStarting = true;
+            dropGamma();
             return;
           }
           if (event.type !== "step") return;
+          // Re-apply right before the sub-agent's first tool call. A parent that
+          // batches its write with the transition lands the file *after* the
+          // state starts, which would otherwise hand the judge a complete file
+          // and silently turn this into a one-round run.
+          if (event.origin && stateStarting && event.step.type === "tool_call_start") {
+            stateStarting = false;
+            dropGamma();
+          }
           const step = event.step;
           if (step.type !== "tool_call_start") return;
           const call = { name: step.toolName, input: step.input };
@@ -152,6 +166,20 @@ describe("/goal loop", () => {
           )}`,
         ).toBeTruthy();
         const verdicts = evaluator?.[1] ?? [];
+
+        // 3b. The work really was parent-owned: the machine entered a park and
+        //     the parent worked from there. The bait depends on this shape —
+        //     it clobbers the file the parent wrote — so a run that delegated
+        //     work to a sub-agent instead is not the scenario under test.
+        const progress = (terminal.state.stateMachine?.progress?.states ?? {}) as Record<
+          string,
+          { kind?: string; runs: number }
+        >;
+        const parkRuns = Object.entries(progress).filter(([, entry]) => entry.kind === "park");
+        expect(
+          parkRuns.some(([, entry]) => entry.runs >= 1),
+          `Expected the machine to enter a park state; progress was ${JSON.stringify(progress)}`,
+        ).toBe(true);
 
         // 4. The first verdict caught the clobbered line — a gap the parent
         //    believed it had already written and never disclosed.

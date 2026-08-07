@@ -60,6 +60,37 @@ describe("end-of-turn park nudge", () => {
     });
   });
 
+  test("nudges again on a park selected after a state completed", async () => {
+    const definition = goalLoop();
+    const { runner } = createTurnRunner({ mode: definition });
+    // A second round: park, work, evaluate, then park again to fix what the
+    // evaluator found. That second park is reached while transitioning out of
+    // a completed state — a path that yields no turn outcome at all — so it is
+    // the one a naive hook on the turn's terminal result would miss, stranding
+    // the loop one round in.
+    runner.controlResults = [
+      { type: "select_state_machine_state", decision: { state: "work" } },
+      { type: "select_state_machine_state", decision: { state: "evaluate" } },
+      { type: "none" },
+      { type: "select_state_machine_state", decision: { state: "work" } },
+      { type: "select_state_machine_state", decision: { state: "evaluate" } },
+      { type: "none" },
+      { type: "select_state_machine_state", decision: { state: "goal_met" } },
+    ];
+
+    const { turn } = await startTurn(runner, { mode: definition, prompt: "Reach the goal." });
+    const terminal = await turn;
+
+    const prompts = runner.workerInputs.map((input) => input.prompt);
+    expect(nudgePasses(prompts)).toHaveLength(2);
+    expect(terminal.state.stateMachine?.progress?.states.work?.runs).toBe(2);
+    expect(terminal.state.stateMachine?.progress?.states.evaluate?.runs).toBe(2);
+    expect(terminal.state.stateMachine?.terminal).toMatchObject({
+      state: "goal_met",
+      status: "completed",
+    });
+  });
+
   test("does not nag a parent that stays parked with no work in between", async () => {
     const definition = goalLoop();
     const { runner } = createTurnRunner({ mode: definition });
