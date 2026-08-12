@@ -1,5 +1,4 @@
-import { activeDuetTier } from "../model-routing/active-tier.js";
-import { DUET_TIER_HEADER, getDuetGatewayBaseUrl } from "../model-resolution/duet-gateway.js";
+import { duetTierHeaders, getDuetGatewayBaseUrl } from "../model-resolution/duet-gateway.js";
 
 /**
  * Client for Duet gateway embeddings.
@@ -145,15 +144,14 @@ async function postBatch(options: PostBatchOptions): Promise<EmbedResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      // Embeddings bypass the model layer with their own fetch, so the tier
-      // has to be stamped here too or memory traffic arrives unattributed.
-      const tier = activeDuetTier();
       const response = await options.fetchImpl(options.url, {
         method: "POST",
         headers: {
           authorization: `Bearer ${options.apiKey}`,
           "content-type": "application/json",
-          ...(tier === undefined ? {} : { [DUET_TIER_HEADER]: tier }),
+          // Embeddings bypass the model layer with their own fetch, so the
+          // tier claim is stamped here too.
+          ...duetTierHeaders(),
         },
         body: JSON.stringify({ model: options.model, input: options.inputs }),
       });

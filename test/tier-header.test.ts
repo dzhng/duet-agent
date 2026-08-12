@@ -66,6 +66,41 @@ async function withOperatorTableRunner(
   }
 }
 
+/**
+ * Run one advisor consultation against a capture-only fetch and return the
+ * headers of its wire request. The stub 400s so the call always rejects;
+ * attribution is judged on what reached the wire, not on the response.
+ */
+async function capturedAdvisorRequestHeaders(): Promise<Headers | undefined> {
+  const originalFetch = globalThis.fetch;
+  let captured: Headers | undefined;
+  globalThis.fetch = Object.assign(
+    async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      captured = new Headers(
+        init?.headers ?? (input instanceof Request ? input.headers : undefined),
+      );
+      return new Response(JSON.stringify({ error: { message: "capture-only fetch" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    },
+    { preconnect: () => {} },
+  ) as unknown as typeof fetch;
+  try {
+    await expect(
+      callAdvisor({
+        contextText: "executor context",
+        images: [],
+        modelName: "anthropic/claude-fable-5",
+        thinkingLevel: "high",
+      }),
+    ).rejects.toThrow();
+    return captured;
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 describe("duet gateway tier attribution", () => {
   test("stamps the active tier on every duet-gateway model", () => {
     setActiveDuetTier("balanced");
@@ -160,64 +195,20 @@ describe("duet gateway tier attribution", () => {
     // every consultation fail in production while the tool reported a soft
     // "consultation failed" result.
     setActiveDuetTier("balanced");
-    const originalFetch = globalThis.fetch;
-    let captured: Headers | undefined;
-    globalThis.fetch = Object.assign(
-      async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-        captured = new Headers(
-          init?.headers ?? (input instanceof Request ? input.headers : undefined),
-        );
-        return new Response(JSON.stringify({ error: { message: "capture-only fetch" } }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
-      },
-      { preconnect: () => {} },
-    ) as unknown as typeof fetch;
-    try {
-      await expect(
-        callAdvisor({
-          contextText: "executor context",
-          images: [],
-          modelName: "anthropic/claude-fable-5",
-          thinkingLevel: "high",
-        }),
-      ).rejects.toThrow();
-      expect(captured?.get(DUET_TIER_HEADER)).toBe("balanced");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+
+    const headers = await capturedAdvisorRequestHeaders();
+
+    expect(headers?.get(DUET_TIER_HEADER)).toBe("balanced");
   });
 
   test("a concrete-pin advisor consultation stays unattributed", async () => {
     setActiveDuetTier(undefined);
-    const originalFetch = globalThis.fetch;
-    let captured: Headers | undefined;
-    globalThis.fetch = Object.assign(
-      async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-        captured = new Headers(
-          init?.headers ?? (input instanceof Request ? input.headers : undefined),
-        );
-        return new Response(JSON.stringify({ error: { message: "capture-only fetch" } }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
-      },
-      { preconnect: () => {} },
-    ) as unknown as typeof fetch;
-    try {
-      await expect(
-        callAdvisor({
-          contextText: "executor context",
-          images: [],
-          modelName: "anthropic/claude-fable-5",
-          thinkingLevel: "high",
-        }),
-      ).rejects.toThrow();
-      expect(captured?.get(DUET_TIER_HEADER)).toBeNull();
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+
+    const headers = await capturedAdvisorRequestHeaders();
+
+    // Null (header absent from a captured request) — not undefined, which
+    // would mean the consultation never reached the wire at all.
+    expect(headers?.get(DUET_TIER_HEADER)).toBeNull();
   });
 
   test("reports the active tier back to callers", () => {

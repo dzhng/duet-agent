@@ -9,6 +9,20 @@ import {
 /** Request header the product reads to attribute a gateway call to a tier. */
 export const DUET_TIER_HEADER = "x-duet-tier";
 
+/**
+ * The active routing tier as request headers, or undefined for a concrete pin.
+ *
+ * The Duet proxy 403s unclaimed generations for non-internal models
+ * (`tier_not_allowed`), so every transport that bills through the gateway —
+ * pi-resolved models, the AI SDK client, the embeddings fetch — spreads this
+ * claim into its request headers. Undefined rather than `{}` so call sites can
+ * keep the header key entirely absent on pinned traffic.
+ */
+export function duetTierHeaders(): Record<string, string> | undefined {
+  const tier = activeDuetTier();
+  return tier === undefined ? undefined : { [DUET_TIER_HEADER]: tier };
+}
+
 const DEFAULT_DUET_GATEWAY_BASE_URL = "https://gateway.duet.so";
 const OPENAI_MODEL_PREFIX = "openai/";
 const VERCEL_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
@@ -114,18 +128,18 @@ export function getDuetGatewayBaseUrl(): string {
  */
 export function resolveDuetGatewayModel(modelId: string): Model<any> {
   const upstream = resolveDuetGatewayUpstream(modelId);
-  // Every duet-gateway model is built here — parent step, classifier, advisor,
-  // vision fallback, subagents and memory alike — so stamping the routing tier
-  // once at this seam attributes all of them without per-call-site plumbing.
-  // Absent for concrete pins, and never added to other transports.
-  const tier = activeDuetTier();
+  // Every duet-gateway model is built here — parent step, classifier, vision
+  // fallback, subagents and memory alike — so stamping the routing tier once
+  // at this seam attributes all of them without per-call-site plumbing. Never
+  // added to other transports.
+  const tierHeaders = duetTierHeaders();
 
   return {
     ...upstream,
     provider: "duet-gateway",
     id: modelId,
     baseUrl: getDuetGatewayBaseUrlForModel(upstream),
-    ...(tier === undefined ? {} : { headers: { ...upstream.headers, [DUET_TIER_HEADER]: tier } }),
+    ...(tierHeaders && { headers: { ...upstream.headers, ...tierHeaders } }),
   };
 }
 
