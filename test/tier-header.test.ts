@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { activeDuetTier, setActiveDuetTier } from "../src/model-routing/active-tier.js";
+import { callAdvisor } from "../src/model-routing/advisor.js";
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { DUET_TIER_HEADER, resolveDuetGatewayModel } from "../src/model-resolution/duet-gateway.js";
 import { resolveModelName } from "../src/model-resolution/resolver.js";
@@ -69,9 +70,11 @@ describe("duet gateway tier attribution", () => {
   test("stamps the active tier on every duet-gateway model", () => {
     setActiveDuetTier("balanced");
 
-    // One assertion per routing role the product bills: the parent step, the
-    // classifier, the advisor and the vision fallback all resolve through this
-    // seam, so a per-role regression shows up here rather than in production.
+    // One assertion per routing role that bills through the pi transport: the
+    // parent step, the classifier, and the vision fallback all resolve through
+    // this seam, so a per-role regression shows up here rather than in
+    // production. The advisor bills through the AI SDK client instead and is
+    // covered by its own consultation tests below.
     for (const modelId of [
       "anthropic/claude-fable-5",
       "openai/gpt-5.6-luna",
@@ -148,6 +151,73 @@ describe("duet gateway tier attribution", () => {
       expect(runner.parentModelForTest().headers?.[DUET_TIER_HEADER]).toBeUndefined();
       expect(activeDuetTier()).toBeUndefined();
     });
+  });
+
+  test("an advisor consultation claims the active tier on its gateway request", async () => {
+    // The advisor bills through the AI SDK client rather than the pi transport,
+    // so the pi-side model stamping never reaches its wire request. The duet
+    // gateway 403s any unclaimed request for a non-internal model, which made
+    // every consultation fail in production while the tool reported a soft
+    // "consultation failed" result.
+    setActiveDuetTier("balanced");
+    const originalFetch = globalThis.fetch;
+    let captured: Headers | undefined;
+    globalThis.fetch = Object.assign(
+      async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        captured = new Headers(
+          init?.headers ?? (input instanceof Request ? input.headers : undefined),
+        );
+        return new Response(JSON.stringify({ error: { message: "capture-only fetch" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      },
+      { preconnect: () => {} },
+    ) as unknown as typeof fetch;
+    try {
+      await expect(
+        callAdvisor({
+          contextText: "executor context",
+          images: [],
+          modelName: "anthropic/claude-fable-5",
+          thinkingLevel: "high",
+        }),
+      ).rejects.toThrow();
+      expect(captured?.get(DUET_TIER_HEADER)).toBe("balanced");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("a concrete-pin advisor consultation stays unattributed", async () => {
+    setActiveDuetTier(undefined);
+    const originalFetch = globalThis.fetch;
+    let captured: Headers | undefined;
+    globalThis.fetch = Object.assign(
+      async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        captured = new Headers(
+          init?.headers ?? (input instanceof Request ? input.headers : undefined),
+        );
+        return new Response(JSON.stringify({ error: { message: "capture-only fetch" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      },
+      { preconnect: () => {} },
+    ) as unknown as typeof fetch;
+    try {
+      await expect(
+        callAdvisor({
+          contextText: "executor context",
+          images: [],
+          modelName: "anthropic/claude-fable-5",
+          thinkingLevel: "high",
+        }),
+      ).rejects.toThrow();
+      expect(captured?.get(DUET_TIER_HEADER)).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("reports the active tier back to callers", () => {

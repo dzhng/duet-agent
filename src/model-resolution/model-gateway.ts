@@ -1,5 +1,6 @@
 import { createGateway } from "ai";
-import { getDuetGatewayBaseUrl } from "./duet-gateway.js";
+import { activeDuetTier } from "../model-routing/active-tier.js";
+import { DUET_TIER_HEADER, getDuetGatewayBaseUrl } from "./duet-gateway.js";
 
 /**
  * The `duet model` subcommand talks to models directly through the Vercel AI
@@ -49,7 +50,19 @@ export function createDuetModelGateway(): ReturnType<typeof createGateway> {
     duetKey || !vercelKey
       ? { baseURL: `${getDuetGatewayBaseUrl()}/v4/ai`, apiKey: process.env[DUET_API_KEY_ENV] }
       : { baseURL: "https://ai-gateway.vercel.sh/v4/ai", apiKey: vercelKey };
-  return createGateway({ ...upstream, fetch: longTimeoutFetch });
+  // Attribute this client's generations to the routing tier, exactly like the
+  // pi transport's model stamping: the Duet proxy 403s unclaimed requests for
+  // non-internal models (`tier_not_allowed`), so an AI SDK caller inside a
+  // routed turn — the advisor today — must carry the same claim. Constructors
+  // run per call site, so the header reads the tier current at that moment; a
+  // concrete pin has no tier and sends no header, and Vercel's own gateway
+  // ignores the extra header when the fallback credential path is in use.
+  const tier = activeDuetTier();
+  return createGateway({
+    ...upstream,
+    ...(tier === undefined ? {} : { headers: { [DUET_TIER_HEADER]: tier } }),
+    fetch: longTimeoutFetch,
+  });
 }
 
 /**
