@@ -82,28 +82,16 @@ Two ways in, same audit:
    skippable. Only trivial discretion (internal naming, cosmetic calls)
    compresses to a one-line count.
 
-   **Reach for pseudocode when the choice is about control flow, ordering, or
-   timing.** Prose describing when-something-fires reads as plausible and hides
-   the gap; five lines of pseudocode make the gate visible and let the reader
-   see the case you missed. Write it at the level of the decision, not the
-   implementation — the conditions and their order, not real function
-   signatures. The tell that you needed it: your prose contains "only when",
-   "before", "unless", or "as soon as" and the reader still cannot say what
-   happens on the second call.
-
    **Write every entry ELI5 — by default, not on request.** The reader
-   didn't live the session: walk a concrete scenario end to end — the
-   triggering event, what the work does today, what the unbuilt alternative
-   would do — and define each term of art at first use instead of leaning on
-   labels the session invented. "A gated ask is dropped, not deferred" is a
-   headline, not an entry; the entry is: *the agent has a background task
-   running and calls ask_user_question("should I deploy?") — asking now is
-   forbidden, so today the question is thrown away and the agent is told to
-   re-ask later; if it shrugs and moves on, the user never sees the
-   question. The unbuilt alternative: hold the question and deliver it when
-   the tasks finish — never lost, but possibly stale.* A compressed entry
-   that makes the user ask "explain this one" has failed; the ledger must
-   stand alone without the diff, the spec, or the transcript.
+   didn't live the session: write each entry in the
+   [eli5](../eli5/SKILL.md) register — a concrete scenario walked end to
+   end (the triggering event, what the work does today, what the unbuilt
+   alternative would do), every term of art defined at first use, and
+   pseudocode at the level of the decision when the choice is about control
+   flow, ordering, or timing. "A gated ask is dropped, not deferred" is a
+   headline, not an entry. A compressed entry that makes the user ask
+   "explain this one" has failed; the ledger must stand alone without the
+   diff, the spec, or the transcript.
 
 ## The Choices Ledger
 
