@@ -126,11 +126,19 @@ function buildAgentTool(serverName: string, client: Client, tool: ListedMcpTool)
     label: tool.title ?? tool.name,
     description: tool.description ?? `MCP tool "${tool.name}" provided by server "${serverName}".`,
     parameters,
-    execute: async (_toolCallId, params) => {
-      const result = (await client.callTool({
-        name: tool.name,
-        arguments: isPlainObject(params) ? (params as Record<string, unknown>) : {},
-      })) as CallToolResult;
+    // The abort signal is the interrupt path: user interrupts abort the agent
+    // loop's controller, and long-poll MCP tools (e.g. Composio's
+    // wait-for-connection) must die with it instead of pinning the turn until
+    // the SDK's request timeout.
+    execute: async (_toolCallId, params, signal) => {
+      const result = (await client.callTool(
+        {
+          name: tool.name,
+          arguments: isPlainObject(params) ? (params as Record<string, unknown>) : {},
+        },
+        undefined,
+        { signal },
+      )) as CallToolResult;
       return toAgentToolResult(serverName, tool.name, result);
     },
   };

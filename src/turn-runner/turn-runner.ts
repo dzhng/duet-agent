@@ -1311,6 +1311,12 @@ export class TurnRunner {
     this.interruptReason = "Interrupted";
     this.parentAgentInterrupted = this.parentAgentRunning;
     this.parentAgent?.abort();
+    // Known issue: these queues can hold user prompts that were accepted
+    // mid-turn (steer/follow_up) but not yet consumed by the model. Clearing
+    // them discards those prompts even though the caller was already told they
+    // were delivered, so an interrupt races a just-sent message and can drop
+    // it. Accepted as an edge case for now; a fix would re-emit unconsumed
+    // user prompts as pending input for the next turn instead of clearing.
     this.parentAgent?.clearAllQueues();
     this.parentInputs.length = 0;
     this.clearFollowUpQueue();

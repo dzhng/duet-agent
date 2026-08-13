@@ -1,12 +1,10 @@
 import { describe, expect } from "bun:test";
-import { createServer, type Server } from "node:http";
-import { AddressInfo } from "node:net";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
+import { startMcpHttpServer } from "../test/helpers/mcp-http-server.js";
 
 const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
 
@@ -14,11 +12,6 @@ const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
 // Picking nonsense tokens forces the model to actually call the tool to learn them.
 const MAGIC_WORD = "PLATYPUS_47_QUARTZ";
 const SQUAWK_VALUE = "SQUAWK_NINETEEN_TEAL";
-
-interface LiveMcpServer {
-  url: string;
-  close: () => Promise<void>;
-}
 
 function buildEvalMcpServer(): McpServer {
   const mcp = new McpServer({ name: "duet-eval-mcp", version: "0.0.0" });
@@ -45,70 +38,11 @@ function buildEvalMcpServer(): McpServer {
   return mcp;
 }
 
-async function readJsonBody(req: import("node:http").IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  if (chunks.length === 0) return undefined;
-  const text = Buffer.concat(chunks).toString("utf8");
-  if (!text.trim()) return undefined;
-  return JSON.parse(text);
-}
-
-async function startLiveMcpServer(): Promise<LiveMcpServer> {
-  // Stateless mode: spin up a fresh server+transport per request. This mirrors
-  // the SDK's reference example and keeps the eval free of session bookkeeping.
-  const httpServer: Server = createServer((req, res) => {
-    void (async () => {
-      try {
-        if (req.method !== "POST") {
-          res.writeHead(405, { "content-type": "application/json" });
-          res.end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: { code: -32000, message: "Method not allowed." },
-              id: null,
-            }),
-          );
-          return;
-        }
-        const body = await readJsonBody(req);
-        const server = buildEvalMcpServer();
-        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-        await server.connect(transport);
-        res.on("close", () => {
-          void transport.close();
-          void server.close();
-        });
-        await transport.handleRequest(req, res, body);
-      } catch (error) {
-        console.error("mcp eval server error:", error);
-        if (!res.headersSent) {
-          res.statusCode = 500;
-          res.end();
-        }
-      }
-    })();
-  });
-
-  await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
-  const address = httpServer.address() as AddressInfo;
-  const url = `http://127.0.0.1:${address.port}/mcp`;
-
-  return {
-    url,
-    close: async () => {
-      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
-    },
-  };
-}
-
 describe("mcp http tools", () => {
   testIfDocker(
     "exposes a live remote MCP server's tools and routes calls through the agent",
     async () => {
-      const server = await startLiveMcpServer();
+      const server = await startMcpHttpServer(buildEvalMcpServer);
       const runner = new TurnRunner({
         model,
         mode: "agent",
