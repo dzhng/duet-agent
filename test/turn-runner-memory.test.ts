@@ -600,6 +600,101 @@ describe("TurnRunner memory", () => {
     expect(rendered).toContain("PINNED STORE CONTENT");
   });
 
+  test("trained memory reaches the prompt verbatim while observations stay optimized", async () => {
+    // A trained memory is an authored markdown document. The observation
+    // optimizer's rules — strip bracketed text, collapse runs of spaces, drop
+    // arrows — are written for the observer's telemetry and destroy markdown's
+    // link syntax, list nesting, and prose arrows respectively.
+    const trained = [
+      "## Plans",
+      "",
+      "See [the pricing page](https://titan.dev/pricing).",
+      "",
+      "- Starter",
+      "  - nested qualifier",
+      "",
+      "Backfill -> excluded from the invoice.",
+    ].join("\n");
+
+    const memory = new MemoryContextCache();
+    memory.setStoredContextPack([
+      {
+        slug: "titan-pricing",
+        storeDir: "/project/.agents/memories",
+        id: "mem_titan",
+        kind: "train",
+        createdAt: 3,
+        headline: "Titan pricing",
+        content: trained,
+      },
+    ]);
+    memory.setContextPack({
+      global: [synthObservation({ id: "global", content: "user [prefers] terse replies" })],
+      local: [],
+    });
+
+    const result = await compactObservationalContext({
+      messages: [{ role: "user", content: "latest request", timestamp: 4 }],
+      memory,
+      horizon: createInitialHorizon(),
+      targetMessageTokens: 1_000,
+    });
+
+    const rendered = observationText(result[0]);
+    // Every byte of the authored document survives.
+    expect(rendered).toContain(trained);
+    // ...while the observation layer is still optimized.
+    expect(rendered).toContain("user terse replies");
+    expect(rendered).not.toContain("[prefers]");
+  });
+
+  test("each stored memory is its own element, carrying the headline the model never saw", async () => {
+    // Blank-line joining was survivable while every trained memory was one
+    // dense blob. Markdown sections would run several memories together under
+    // repeating headings with nothing marking where one ends.
+    const memory = new MemoryContextCache();
+    memory.setStoredContextPack([
+      {
+        slug: "titan-pricing",
+        storeDir: "/project/.agents/memories",
+        id: "mem_titan",
+        kind: "train",
+        createdAt: 3,
+        headline: 'Titan "Scale" pricing & limits',
+        content: "## Plans\n\nStarter is 50,000 events.",
+      },
+      {
+        slug: "onboarding-notes",
+        storeDir: "/project/.agents/memories",
+        id: "mem_onboarding",
+        kind: "note",
+        createdAt: 2,
+        content: "## Plans\n\nRenewals turn on three objections.",
+      },
+    ]);
+    memory.setContextPack({ global: [], local: [] });
+
+    const result = await compactObservationalContext({
+      messages: [{ role: "user", content: "latest request", timestamp: 4 }],
+      memory,
+      horizon: createInitialHorizon(),
+      targetMessageTokens: 1_000,
+    });
+
+    const rendered = observationText(result[0]);
+    // Two memories, two boundaries — not one blob with "## Plans" twice.
+    expect(rendered.match(/<memory\b/g)).toHaveLength(2);
+    expect(rendered.match(/<\/memory>/g)).toHaveLength(2);
+    // The headline is prompt-visible for the first time, and its quotes and
+    // ampersand must not break the element.
+    expect(rendered).toContain(
+      '<memory slug="titan-pricing" headline="Titan &quot;Scale&quot; pricing &amp; limits">',
+    );
+    // A memory with no headline omits the attribute rather than saying "undefined".
+    expect(rendered).toContain('<memory slug="onboarding-notes">');
+    expect(rendered).not.toContain("undefined");
+  });
+
   test("advisor compaction renders frozen observations above a bounded recent raw tail", async () => {
     const memory = new MemoryContextCache();
     const now = Date.now();
@@ -1537,6 +1632,15 @@ describe("scaleContextWindowUsageToTotalTokens", () => {
 interface SynthObservationInput {
   id: string;
   content: string;
+}
+
+/**
+ * The rendered observations block as text. `AgentMessage` is a union and some
+ * members (bash execution) carry no `content`, so narrow rather than assert.
+ */
+function observationText(message: AgentMessage | undefined): string {
+  if (message === undefined || !("content" in message)) return "";
+  return typeof message.content === "string" ? message.content : JSON.stringify(message.content);
 }
 
 function synthObservation(input: SynthObservationInput) {

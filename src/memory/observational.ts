@@ -14,6 +14,7 @@ import {
 } from "../turn-runner/wire-shaping.js";
 import type { WireGuardHorizon } from "../types/protocol.js";
 import type { MemoryContextCache } from "./store.js";
+import type { StoredMemory } from "./store/store.js";
 import { createMemoryId } from "./id.js";
 import type { MemorySession } from "./session.js";
 import {
@@ -703,6 +704,14 @@ function renderObservationalContext(
  * (chronological compaction summary of the current session). The
  * fixed render order matches the prompt assembly: system prompt →
  * memory section → message history.
+ *
+ * Only the two observation layers pass through
+ * `optimizeObservationsForContext`. Its rules — drop bracketed text, collapse
+ * runs of spaces, strip arrows — clean up the observer's own telemetry
+ * shorthand, and they destroy an authored document: a markdown link loses its
+ * text, a nested bullet loses the indentation that nests it, and `->` in prose
+ * silently changes the sentence. Trained memories are authored, so the stored
+ * layer renders byte-for-byte.
  */
 function renderContextPack(pack: ReturnType<MemoryContextCache["getContextPack"]>): string {
   const sections: string[] = [];
@@ -712,7 +721,7 @@ function renderContextPack(pack: ReturnType<MemoryContextCache["getContextPack"]
         "<stored_observations>",
         STORED_OBSERVATIONS_HEADING,
         STORED_OBSERVATIONS_HINT,
-        pack.stored.map((entry) => entry.content).join("\n\n"),
+        pack.stored.map(renderStoredMemory).join("\n\n"),
         "</stored_observations>",
       ].join("\n\n"),
     );
@@ -723,7 +732,9 @@ function renderContextPack(pack: ReturnType<MemoryContextCache["getContextPack"]
         "<global_observations>",
         GLOBAL_OBSERVATIONS_HEADING,
         GLOBAL_OBSERVATIONS_HINT,
-        pack.global.map((observation) => observation.content).join("\n\n"),
+        optimizeObservationsForContext(
+          pack.global.map((observation) => observation.content).join("\n\n"),
+        ),
         "</global_observations>",
       ].join("\n\n"),
     );
@@ -734,12 +745,48 @@ function renderContextPack(pack: ReturnType<MemoryContextCache["getContextPack"]
         "<local_observations>",
         LOCAL_OBSERVATIONS_HEADING,
         LOCAL_OBSERVATIONS_HINT,
-        pack.local.map((observation) => observation.content).join("\n\n"),
+        optimizeObservationsForContext(
+          pack.local.map((observation) => observation.content).join("\n\n"),
+        ),
         "</local_observations>",
       ].join("\n\n"),
     );
   }
   return sections.join("\n\n");
+}
+
+/**
+ * One trained memory as a discrete element.
+ *
+ * Blank-line joining was survivable while every memory was a single dense
+ * paragraph, but a memory is now an authored markdown document: several of
+ * them concatenated read as one document with repeating headings and no way to
+ * tell which fact came from which memory. The element is also where `headline`
+ * becomes prompt-visible — it is stored on every trained record and was never
+ * shown to the model before.
+ */
+function renderStoredMemory(entry: StoredMemory): string {
+  const headline =
+    entry.headline === undefined ? "" : ` headline="${escapeXmlAttribute(entry.headline)}"`;
+  return `<memory slug="${escapeXmlAttribute(entry.slug)}"${headline}>\n${entry.content}\n</memory>`;
+}
+
+/**
+ * Attribute-safe text. A headline is user-facing prose and may contain any of
+ * these characters.
+ *
+ * Deliberately not `observation-groups.ts`'s `escapeAttribute`, which escapes
+ * only `"`: that one round-trips through `parseObservationGroups`, and the
+ * parser does not unescape, so widening it would turn a `&` in a cwd into a
+ * literal `&amp;` on the way back. This rendering is one-way — nothing parses
+ * the prompt — so it can escape completely.
+ */
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 export async function updateObservationalMemory(
@@ -860,10 +907,11 @@ function emitMemoryActivity(
 }
 
 function buildObservationContextMessage(observations: string): AgentMessage {
-  const optimized = optimizeObservationsForContext(observations);
+  // Already layer-optimized by `renderContextPack` — optimizing again here
+  // would reach the stored layer, which must stay verbatim.
   return {
     role: "user",
-    content: `<system-reminder>${OBSERVATION_CONTEXT_PROMPT}\n\n<observations>\n${optimized}\n</observations>\n\n${OBSERVATION_CONTEXT_INSTRUCTIONS}</system-reminder>`,
+    content: `<system-reminder>${OBSERVATION_CONTEXT_PROMPT}\n\n<observations>\n${observations}\n</observations>\n\n${OBSERVATION_CONTEXT_INSTRUCTIONS}</system-reminder>`,
     timestamp: Date.now(),
   };
 }

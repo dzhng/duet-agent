@@ -34,6 +34,25 @@ describe("parseTrainArgs", () => {
     expect(config.memoryStores).toBe(false);
   });
 
+  test("asks for markdown sections and no longer asks for prose", () => {
+    // The synthesis prompt is a contract: the memory it produces is rendered
+    // as markdown on the train page. The old "tight prose, not a document
+    // dump" clause directly contradicts that, so an edit that adds the
+    // markdown instruction without removing the clause leaves the model to
+    // pick — which is the regression this pins.
+    const instructions = buildTrainSynthesisConfig({
+      folder: "/tmp/corpus",
+      model: "test:model",
+    }).systemInstructions;
+
+    expect(instructions).toContain("markdown");
+    expect(instructions).not.toContain("tight prose");
+    expect(instructions).not.toContain("not a document dump");
+    // `headline` owns the title and the page renders it as the h1, so a
+    // top-level heading in the body would duplicate it on screen.
+    expect(instructions).toMatch(/never.*`#`|`#`.*never/is);
+  });
+
   test("rejects an empty arg list", () => {
     expect(() => parseTrainArgs([])).toThrow(ExitCalled);
   });

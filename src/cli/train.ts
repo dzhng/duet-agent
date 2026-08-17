@@ -185,13 +185,22 @@ const TRAIN_SYSTEM_PROMPT = dedent`
   Never collapse an enumeration to its first item and never generalize a
   specific into a category. When in doubt, include the detail.
 
+  Write the synthesis as GitHub-flavored markdown:
+    - Sections start at \`##\`. NEVER use a top-level \`#\` — the headline
+      field is the title, and a heading repeating it is duplication.
+    - Bullets for enumerations, so the members you were told to preserve
+      stay individually visible instead of dissolving into a sentence.
+    - A table when the corpus is genuinely tabular (a plan matrix, a
+      limits grid); prose when it is not.
+    - Fenced code for literal syntax, identifiers, and config snippets.
+
   When you have read enough to write an accurate synthesis, produce
   EXACTLY one file at the cwd root and nothing else:
 
     \`.duet-train.json\` — a JSON object with exactly two string fields:
       {
         "headline": "<short title for this corpus, under 120 characters, no trailing punctuation>",
-        "observationContent": "<dense, concrete, durable, high-priority knowledge an agent would need to act on this material. Use as much length as it takes to retain every load-bearing fact above — completeness beats brevity — but keep it a single standalone memory entry of tight prose, not a document dump. No preamble, no 'this corpus contains' framing.>"
+        "observationContent": "<dense, concrete, durable, high-priority knowledge an agent would need to act on this material, written as markdown. Use as much length as it takes to retain every load-bearing fact above — completeness beats brevity. One self-contained document about this corpus and nothing else. No preamble, no 'this corpus contains' framing.>"
       }
 
   Do NOT write \`AGENTS.md\` or any other file. The JSON handoff is the
@@ -248,7 +257,9 @@ async function runAgentSynthesis(
 
   const raw = await readFile(handoffPath, "utf8").catch(() => {
     throw new Error(
-      `train: agent did not produce ${handoffPath}. Re-run with --model <stronger model> if the model is too small.`,
+      // No "try a stronger model" advice: callers pin the synthesis model, so
+      // there is nothing for the reader to escalate to. Say what happened.
+      `train: the synthesis agent finished without writing ${handoffPath}, so there is no memory to store. The corpus may be empty, unreadable, or too large to finish in one run.`,
     );
   });
   await rm(handoffPath, { force: true });
