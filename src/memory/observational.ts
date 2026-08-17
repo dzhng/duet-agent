@@ -13,7 +13,7 @@ import {
   WIRE_BYTE_TRIGGER,
 } from "../turn-runner/wire-shaping.js";
 import type { WireGuardHorizon } from "../types/protocol.js";
-import type { MemoryContextCache } from "./store.js";
+import type { ContextPack, MemoryContextCache } from "./store.js";
 import type { StoredMemory } from "./store/store.js";
 import { createMemoryId } from "./id.js";
 import type { MemorySession } from "./session.js";
@@ -713,73 +713,67 @@ function renderObservationalContext(
  * silently changes the sentence. Trained memories are authored, so the stored
  * layer renders byte-for-byte.
  */
-function renderContextPack(pack: ReturnType<MemoryContextCache["getContextPack"]>): string {
+function renderContextPack(pack: ContextPack): string {
   const sections: string[] = [];
   if (pack.stored.length > 0) {
     sections.push(
-      [
-        "<stored_observations>",
+      renderMemorySection(
+        "stored_observations",
         STORED_OBSERVATIONS_HEADING,
         STORED_OBSERVATIONS_HINT,
         pack.stored.map(renderStoredMemory).join("\n\n"),
-        "</stored_observations>",
-      ].join("\n\n"),
+      ),
     );
   }
   if (pack.global.length > 0) {
     sections.push(
-      [
-        "<global_observations>",
+      renderMemorySection(
+        "global_observations",
         GLOBAL_OBSERVATIONS_HEADING,
         GLOBAL_OBSERVATIONS_HINT,
-        optimizeObservationsForContext(
-          pack.global.map((observation) => observation.content).join("\n\n"),
-        ),
-        "</global_observations>",
-      ].join("\n\n"),
+        renderObservations(pack.global),
+      ),
     );
   }
   if (pack.local.length > 0) {
     sections.push(
-      [
-        "<local_observations>",
+      renderMemorySection(
+        "local_observations",
         LOCAL_OBSERVATIONS_HEADING,
         LOCAL_OBSERVATIONS_HINT,
-        optimizeObservationsForContext(
-          pack.local.map((observation) => observation.content).join("\n\n"),
-        ),
-        "</local_observations>",
-      ].join("\n\n"),
+        renderObservations(pack.local),
+      ),
     );
   }
   return sections.join("\n\n");
 }
 
+function renderMemorySection(tag: string, heading: string, hint: string, body: string): string {
+  return [`<${tag}>`, heading, hint, body, `</${tag}>`].join("\n\n");
+}
+
+function renderObservations(observations: Observation[]): string {
+  return optimizeObservationsForContext(
+    observations.map((observation) => observation.content).join("\n\n"),
+  );
+}
+
 /**
- * One trained memory as a discrete element.
- *
- * Blank-line joining was survivable while every memory was a single dense
- * paragraph, but a memory is now an authored markdown document: several of
- * them concatenated read as one document with repeating headings and no way to
- * tell which fact came from which memory. The element is also where `headline`
- * becomes prompt-visible — it is stored on every trained record and was never
- * shown to the model before.
+ * One trained memory as a discrete element. Each is an authored markdown
+ * document, so blank-line joining would run several of them together under
+ * repeating headings with nothing marking which fact came from which memory.
+ * The element is also what makes `headline` prompt-visible.
  */
 function renderStoredMemory(entry: StoredMemory): string {
-  const headline =
-    entry.headline === undefined ? "" : ` headline="${escapeXmlAttribute(entry.headline)}"`;
+  const headline = entry.headline ? ` headline="${escapeXmlAttribute(entry.headline)}"` : "";
   return `<memory slug="${escapeXmlAttribute(entry.slug)}"${headline}>\n${entry.content}\n</memory>`;
 }
 
 /**
- * Attribute-safe text. A headline is user-facing prose and may contain any of
- * these characters.
- *
- * Deliberately not `observation-groups.ts`'s `escapeAttribute`, which escapes
- * only `"`: that one round-trips through `parseObservationGroups`, and the
- * parser does not unescape, so widening it would turn a `&` in a cwd into a
- * literal `&amp;` on the way back. This rendering is one-way — nothing parses
- * the prompt — so it can escape completely.
+ * Attribute-safe text. Deliberately not `observation-groups.ts`'s
+ * `escapeAttribute`, which escapes only `"` because it round-trips through
+ * `parseObservationGroups` and that parser does not unescape. This rendering is
+ * one-way — nothing parses the prompt — so it can escape completely.
  */
 function escapeXmlAttribute(value: string): string {
   return value
@@ -878,7 +872,7 @@ export async function updateObservationalMemory(
   return result;
 }
 
-export function optimizeObservationsForContext(observations: string): string {
+function optimizeObservationsForContext(observations: string): string {
   let optimized = stripObservationGroups(observations);
   optimized = optimized.replace(/🟡\s*/g, "");
   optimized = optimized.replace(/🟢\s*/g, "");
