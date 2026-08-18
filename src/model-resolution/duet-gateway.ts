@@ -65,39 +65,87 @@ export function getDuetGatewayBaseUrl(): string {
  * no code change, and it is why a capability we send on the wire must either
  * come from the catalog or be named in `gatewayCapabilityGaps` below.
  *
- * Memoized on the gateway origin: `resolveDuetGatewayModel` runs on every
+ * Memoized on the gateway origin: `resolveGatewayModel` runs on every
  * model resolution — parent step, classifier, each subagent — and rebasing two
  * hundred catalog entries each time is pure waste. Tests move the origin
  * between cases, so the key is the origin rather than a plain once-flag.
  */
-const gatewayModelsByRoute = new Map<string, Model<Api>[]>();
+/**
+ * A gateway route: where a request goes, and which credential it carries.
+ *
+ * The Duet gateway is a proxy in front of Vercel's — same catalog, same model
+ * ids, same protocols — so the origin and the credential are the entire
+ * difference between them. Every rule below is therefore written once against
+ * a route rather than twice per gateway, and a third gateway of this shape
+ * costs one entry rather than another parallel set of functions.
+ */
+export interface GatewayRoute {
+  id: string;
+  name: string;
+  /** Read per call: the Duet origin is configurable, Vercel's is fixed. */
+  origin(): string;
+  auth(): ProviderAuth;
+  /** Request headers the route needs on every model it serves. */
+  headers(): Record<string, string> | undefined;
+}
+
+const DUET_GATEWAY: GatewayRoute = {
+  id: "duet-gateway",
+  name: "Duet Gateway",
+  origin: getDuetGatewayBaseUrl,
+  auth: () => ({ apiKey: envApiKeyAuth("Duet", [DUET_GATEWAY_API_KEY_ENV]) }),
+  // Every duet-gateway model resolves through this route — parent step,
+  // classifier, vision fallback, subagents and memory alike — so the routing
+  // tier is claimed here rather than at each call site.
+  headers: duetTierHeaders,
+};
+
+const VERCEL_GATEWAY: GatewayRoute = {
+  id: VERCEL_GATEWAY_PROVIDER_ID,
+  name: "Vercel AI Gateway",
+  origin: () => VERCEL_GATEWAY_BASE_URL,
+  // The transports and the model list are ours to decide; how Vercel
+  // authenticates stays the catalog's to declare.
+  auth: () => builtinGatewayAuth(),
+  // The tier claim means something only to the Duet proxy, which bills
+  // against it; Vercel would reject an unknown header's cost to no purpose.
+  headers: () => undefined,
+};
+
+export const GATEWAY_ROUTES: readonly GatewayRoute[] = [DUET_GATEWAY, VERCEL_GATEWAY];
+
+/** The route serving `providerId`, or undefined when it is not a gateway. */
+export function gatewayRoute(providerId: string): GatewayRoute | undefined {
+  return GATEWAY_ROUTES.find((route) => route.id === providerId);
+}
+
+function builtinGatewayAuth(): ProviderAuth {
+  const builtin = builtinProviders().find(({ id }) => id === VERCEL_GATEWAY_PROVIDER_ID);
+  if (!builtin) throw new Error(`Model catalog has no ${VERCEL_GATEWAY_PROVIDER_ID} provider`);
+  return builtin.auth;
+}
 
 /**
  * The catalog rebased onto one gateway route, built once per route.
  *
- * `resolveDuetGatewayModel` runs on every model resolution — parent step,
+ * `resolveGatewayModel` runs on every model resolution — parent step,
  * classifier, each subagent — so rebasing two hundred catalog entries per call
- * is pure waste. Provider and origin are the rebase's only inputs, so together
+ * is pure waste. Route id and origin are the rebase's only inputs, so together
  * they are the key; tests move the origin between cases, which is why this is
  * not a plain once-flag.
  */
-function gatewayModels(provider: string, origin: string): Model<Api>[] {
-  const route = `${provider}@${origin}`;
-  const cached = gatewayModelsByRoute.get(route);
+const gatewayModelsByRoute = new Map<string, Model<Api>[]>();
+
+function gatewayModels(route: GatewayRoute): Model<Api>[] {
+  const origin = route.origin();
+  const key = `${route.id}@${origin}`;
+  const cached = gatewayModelsByRoute.get(key);
   if (cached) return cached;
   const models = getBuiltinModels(VERCEL_GATEWAY_PROVIDER_ID).map((model) =>
-    rebaseOntoGateway(model, origin, provider),
+    rebaseOntoGateway(model, route, origin),
   );
-  gatewayModelsByRoute.set(route, models);
+  gatewayModelsByRoute.set(key, models);
   return models;
-}
-
-function duetGatewayModels(): Model<Api>[] {
-  return gatewayModels(DUET_GATEWAY_PROVIDER_ID, getDuetGatewayBaseUrl());
-}
-
-function vercelGatewayModels(): Model<Api>[] {
-  return gatewayModels(VERCEL_GATEWAY_PROVIDER_ID, VERCEL_GATEWAY_BASE_URL);
 }
 
 /**
@@ -134,7 +182,7 @@ function gatewayApi(model: Model<Api>): Api {
  * `provider` is deliberately rewritten for the Duet gateway so cost and usage
  * telemetry attribute the call to the Duet proxy rather than to Vercel.
  */
-function rebaseOntoGateway(model: Model<Api>, origin: string, provider: string): Model<Api> {
+function rebaseOntoGateway(model: Model<Api>, route: GatewayRoute, origin: string): Model<Api> {
   const api = gatewayApi(model);
   const gaps = gatewayCapabilityGaps(model.id);
   return {
@@ -145,19 +193,11 @@ function rebaseOntoGateway(model: Model<Api>, origin: string, provider: string):
     thinkingLevelMap: { ...model.thinkingLevelMap, ...gaps?.thinkingLevelMap },
     compat: { ...model.compat, ...gaps?.compat },
     api,
-    provider,
+    // Rewritten so cost and usage telemetry attribute the call to the route
+    // that served it rather than to the catalog it was declared in.
+    provider: route.id,
     baseUrl: gatewayBaseUrlForApi(origin, api),
   };
-}
-
-/** A gateway model rebased onto the Duet proxy. */
-function rebaseOntoDuetGateway(model: Model<Api>): Model<Api> {
-  return rebaseOntoGateway(model, getDuetGatewayBaseUrl(), DUET_GATEWAY_PROVIDER_ID);
-}
-
-/** The same model as served by Vercel's gateway directly. */
-function rebaseOntoVercelGateway(model: Model<Api>): Model<Api> {
-  return rebaseOntoGateway(model, VERCEL_GATEWAY_BASE_URL, VERCEL_GATEWAY_PROVIDER_ID);
 }
 
 /**
@@ -179,61 +219,25 @@ function gatewayCapabilityGaps(modelId: string): Partial<Model<Api>> | undefined
 }
 
 /**
- * The Duet gateway as a first-class pi-ai provider.
+ * A gateway as a first-class pi-ai provider.
  *
- * `auth` is the reason this is a provider rather than a bag of rewritten
- * models: a credential is resolved per provider, and `duet-gateway` is not an
- * id pi-ai's env-key map knows. Declaring the env var on the provider is what
- * lets any call resolve the Duet token without being handed one.
- */
-export function duetGatewayProvider(): Provider {
-  return gatewayProvider({
-    id: DUET_GATEWAY_PROVIDER_ID,
-    name: "Duet Gateway",
-    baseUrl: getDuetGatewayBaseUrl(),
-    auth: { apiKey: envApiKeyAuth("Duet", [DUET_GATEWAY_API_KEY_ENV]) },
-    models: duetGatewayModels(),
-  });
-}
-
-/**
- * Vercel's gateway, re-declared so a `vercel-ai-gateway:` pin reaches the same
- * transports the Duet proxy does.
+ * `auth` is why this is a provider rather than a bag of rewritten models: a
+ * credential is resolved per provider, and `duet-gateway` is not an id pi-ai's
+ * env-key map knows. Declaring it on the provider is what lets any call
+ * resolve the token without being handed one.
  *
- * pi-ai ships this provider with only the Anthropic API implementation, and
- * serialization belongs to the provider — so rewriting a model's `api` on its
- * own produces a model that claims Responses and is sent as Anthropic, losing
- * reasoning effort and mangling tool-result images. The gateway itself serves
- * all three protocols; this says so.
+ * All three transports are declared because serialization belongs to the
+ * provider: rewriting a model's `api` to one the provider does not implement
+ * yields a model that claims Responses and is sent as Anthropic, silently
+ * dropping reasoning effort and mangling tool-result images.
  */
-export function vercelGatewayProvider(): Provider {
-  const builtin = builtinProviders().find(({ id }) => id === VERCEL_GATEWAY_PROVIDER_ID);
-  if (!builtin) throw new Error(`Model catalog has no ${VERCEL_GATEWAY_PROVIDER_ID} provider`);
-  return gatewayProvider({
-    id: VERCEL_GATEWAY_PROVIDER_ID,
-    name: builtin.name,
-    baseUrl: VERCEL_GATEWAY_BASE_URL,
-    // Only the transports and the model list change here; how Vercel
-    // authenticates stays the catalog's to declare.
-    auth: builtin.auth,
-    models: vercelGatewayModels(),
-  });
-}
-
-/** Both gateways front the same catalog over the same three protocols. */
-function gatewayProvider(options: {
-  id: string;
-  name: string;
-  baseUrl: string;
-  auth: ProviderAuth;
-  models: Model<Api>[];
-}): Provider {
+export function gatewayProvider(route: GatewayRoute): Provider {
   return createProvider({
-    id: options.id,
-    name: options.name,
-    baseUrl: options.baseUrl,
-    auth: options.auth,
-    models: options.models,
+    id: route.id,
+    name: route.name,
+    baseUrl: route.origin(),
+    auth: route.auth(),
+    models: gatewayModels(route),
     api: {
       "anthropic-messages": anthropicMessagesApi(),
       "openai-completions": openAICompletionsApi(),
@@ -243,52 +247,24 @@ function gatewayProvider(options: {
 }
 
 /**
- * Resolve a `duet-gateway:<modelId>` string to a Model.
+ * Resolve a `<gateway>:<modelId>` string to a Model.
  *
- * An id the catalog has not shipped still resolves: the gateway serves a model
- * the moment Vercel lists it, and waiting for a catalog release to use it is
- * the coupling this whole module exists to avoid. The synthesized entry is
+ * An id the catalog has not shipped still resolves: a gateway serves a model
+ * the moment its vendor lists it, and waiting for a catalog release to use it
+ * is the coupling this module exists to avoid. The synthesized entry is
  * deliberately conservative so an unknown model never 400s on an
  * over-advertised window.
  */
-export function resolveDuetGatewayModel(modelId: string): Model<Api> {
-  const model = gatewayModel(duetGatewayModels(), modelId, rebaseOntoDuetGateway);
-  // Every duet-gateway model is built here — parent step, classifier, vision
-  // fallback, subagents and memory alike — so stamping the routing tier once
-  // at this seam attributes all of them without per-call-site plumbing. Never
-  // added to other transports.
-  const tierHeaders = duetTierHeaders();
-  return tierHeaders ? { ...model, headers: { ...model.headers, ...tierHeaders } } : model;
-}
-
-/**
- * Resolve a `vercel-ai-gateway:<modelId>` string to a Model.
- *
- * The same catalog over the same gateway as the Duet route, minus the routing
- * tier — that claim is only meaningful to the Duet proxy, which is what bills
- * against it.
- */
-export function resolveVercelGatewayModel(modelId: string): Model<Api> {
-  return gatewayModel(vercelGatewayModels(), modelId, rebaseOntoVercelGateway);
-}
-
-/**
- * A gateway model by id, synthesizing a pass-through when the catalog has not
- * shipped it.
- *
- * A gateway serves a model the moment its vendor lists it, and waiting for a
- * catalog release to use it is the coupling this module exists to avoid. The
- * synthesized entry is deliberately conservative so an unknown model never
- * 400s on an over-advertised window.
- */
-function gatewayModel(
-  declared: Model<Api>[],
-  modelId: string,
-  rebase: (model: Model<Api>) => Model<Api>,
-): Model<Api> {
-  return (
-    declared.find((model) => model.id === modelId) ?? rebase(synthesizePassthroughModel(modelId))
-  );
+export function resolveGatewayModel(route: GatewayRoute, modelId: string): Model<Api> {
+  const declared = gatewayModels(route).find((model) => model.id === modelId);
+  const model =
+    declared ?? rebaseOntoGateway(synthesizePassthroughModel(modelId), route, route.origin());
+  // Applied here rather than in the rebase: the rebased list is memoized per
+  // route, but the routing tier changes within a session — a mid-turn `/model`
+  // switch retargets attribution — so a header baked in at build time would
+  // report whichever tier happened to be active when the list was first built.
+  const headers = route.headers();
+  return headers ? { ...model, headers: { ...model.headers, ...headers } } : model;
 }
 
 /**
@@ -303,7 +279,7 @@ function synthesizePassthroughModel(modelId: string): Model<Api> {
     // `provider`, `baseUrl` and `api` are required fields the rebase then
     // decides for real; only `input` survives, and it is what tells the rebase
     // which transport can carry this model.
-    provider: DUET_GATEWAY_PROVIDER_ID,
+    provider: VERCEL_GATEWAY_PROVIDER_ID,
     baseUrl: VERCEL_GATEWAY_BASE_URL,
     api: "anthropic-messages",
     reasoning: true,
@@ -333,7 +309,7 @@ function stripTrailingSlash(url: string): string {
  * resolution whatsoever, so it needs the key handed to it — including for
  * `duet-gateway`, an id pi-ai's env-key map does not know.
  *
- * `resolveDuetGatewayModel` deliberately rewrites `model.provider` to
+ * A gateway rebase deliberately rewrites `model.provider` to
  * `"duet-gateway"` so cost and usage telemetry attribute the call to the Duet
  * proxy rather than to Vercel; that rename is what puts the id outside pi-ai's
  * map in the first place.

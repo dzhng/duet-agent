@@ -8,7 +8,7 @@ import {
   type RoutingCatalogAdapter,
   type RoutingTable,
 } from "../model-routing/table.js";
-import { resolveDuetGatewayModel, resolveVercelGatewayModel } from "./duet-gateway.js";
+import { gatewayRoute, resolveGatewayModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
   canonicalizeProviderModelId,
@@ -75,14 +75,12 @@ export function resolveModelName(model: string): Model<any> {
   const modelId = isKnownProvider(provider)
     ? canonicalizeProviderModelId(provider, rawModelId)
     : rawModelId;
-  // Both gateway routes resolve through their own module: they pick a
-  // transport per model rather than inheriting the catalog's blanket
-  // anthropic-messages declaration, and they always return a model, falling
-  // back to a synthesized pass-through for an id the catalog has not shipped.
-  if (provider === "duet-gateway") return clampModelOutputTokens(resolveDuetGatewayModel(modelId));
-  if (provider === "vercel-ai-gateway") {
-    return clampModelOutputTokens(resolveVercelGatewayModel(modelId));
-  }
+  // A gateway route resolves through its own module: it picks a transport per
+  // model rather than inheriting the catalog's blanket anthropic-messages
+  // declaration, and it always returns a model, falling back to a synthesized
+  // pass-through for an id the catalog has not shipped.
+  const route = gatewayRoute(provider);
+  if (route) return clampModelOutputTokens(resolveGatewayModel(route, modelId));
   // The catalog answers for every other provider. clampModelOutputTokens
   // forwards a missing model untouched at runtime.
   return clampModelOutputTokens(builtinModel(provider, modelId) as Model<any>);

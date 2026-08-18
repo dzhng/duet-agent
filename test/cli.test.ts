@@ -209,11 +209,13 @@ describe("CLI model inference", () => {
     expect(resolveModelName("openrouter:gpt-5.6-terra").id).toBe("openai/gpt-5.6-terra");
   });
 
-  // These numbers come from the model catalog now, not from a table in this
-  // repo, but they stay pinned: a passthrough synthesized for an id the
-  // catalog dropped would zero the price out, and cost accounting would lie
-  // rather than fail. Where two providers publish different numbers for the
-  // same model, that difference is theirs and each is pinned as served.
+  // Capabilities and ceilings are ours to pin: the router picks a model by
+  // them, and a synthesized pass-through advertises a conservative default
+  // that would silently change routing. Prices are NOT ours — they come from
+  // the model catalog, and re-stating a vendor's number here would rot the
+  // same way the hand-written table did. What must hold is only that a real
+  // price survived resolution: a pass-through zeroes cost, so accounting
+  // would lie rather than fail.
   test("preserves model-router capabilities and token ceilings on every provider", () => {
     const expectations = {
       "kimi-k3": {
@@ -223,7 +225,6 @@ describe("CLI model inference", () => {
           openrouter: 1_048_576,
         },
         maxTokens: 131_072,
-        costInput: { "duet-gateway": 3, "vercel-ai-gateway": 3, openrouter: 3 },
       },
       "gpt-5.6-sol": {
         contextWindow: {
@@ -232,7 +233,6 @@ describe("CLI model inference", () => {
           openrouter: 1_050_000,
         },
         maxTokens: 128_000,
-        costInput: { "duet-gateway": 5, "vercel-ai-gateway": 5, openrouter: 5 },
       },
       "gpt-5.6-terra": {
         contextWindow: {
@@ -241,7 +241,6 @@ describe("CLI model inference", () => {
           openrouter: 1_050_000,
         },
         maxTokens: 128_000,
-        costInput: { "duet-gateway": 2, "vercel-ai-gateway": 2, openrouter: 1 },
       },
     } as const;
 
@@ -252,14 +251,23 @@ describe("CLI model inference", () => {
         expect(model.reasoning).toBe(true);
         expect(model.contextWindow).toBe(expected.contextWindow[provider]);
         expect(model.maxTokens).toBe(expected.maxTokens);
-        expect(model.cost.input).toBe(expected.costInput[provider]);
+        expect(
+          model.cost.input,
+          `${provider}:${shorthand} resolved to a free model`,
+        ).toBeGreaterThan(0);
       }
     }
 
     // Advisor targets and the luna classifier bill from these same specs.
-    expect(resolveModelName("duet-gateway:anthropic/claude-fable-5").cost.input).toBe(10);
-    expect(resolveModelName("duet-gateway:anthropic/claude-sonnet-5").cost.input).toBe(2);
-    expect(resolveModelName("duet-gateway:openai/gpt-5.6-luna").cost.input).toBe(0.2);
+    for (const pin of [
+      "duet-gateway:anthropic/claude-fable-5",
+      "duet-gateway:anthropic/claude-sonnet-5",
+      "duet-gateway:openai/gpt-5.6-luna",
+    ]) {
+      expect(resolveModelName(pin).cost.input, `${pin} resolved to a free model`).toBeGreaterThan(
+        0,
+      );
+    }
   });
 
   test("keeps gpt-5.6 router models on the Responses transport at both gateways", () => {

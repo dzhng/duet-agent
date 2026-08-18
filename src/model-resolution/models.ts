@@ -3,39 +3,30 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 
 import { connectedProviders } from "../connected-providers/registry.js";
-import {
-  duetGatewayProvider,
-  getDuetGatewayBaseUrl,
-  vercelGatewayProvider,
-} from "./duet-gateway.js";
+import { GATEWAY_ROUTES, gatewayProvider } from "./duet-gateway.js";
 
 /**
- * The model registry every dispatch goes through: pi-ai's built-in providers
- * plus Duet's own gateway provider.
+ * The model registry every dispatch goes through: pi-ai's built-in providers,
+ * the gateway routes, and connected providers with Duet's own credential path
+ * declared.
  *
  * The agent loop is handed a `StreamFn` rather than resolving a transport
  * itself, so this is the one place that decides who can serve a model.
- * Registering `duet-gateway` here is what lets the gateway declare its own
- * models and its own auth instead of impersonating another provider's.
  *
- * Rebuilt when the gateway origin changes: `DUET_GATEWAY_BASE_URL` is read from
- * the environment, and tests point it at a local server between cases.
+ * Rebuilt per call rather than cached. The expensive part — rebasing two
+ * hundred catalog entries per route — is memoized behind `gatewayProvider`,
+ * which leaves assembly at ~0.05ms; a cache here would save that and buy a
+ * staleness bug, because its key would have to track every origin and
+ * credential the registry closes over.
  */
-let cached: { baseUrl: string; models: MutableModels } | undefined;
-
 export function duetModels(): MutableModels {
-  const baseUrl = getDuetGatewayBaseUrl();
-  if (cached?.baseUrl !== baseUrl) {
-    const models = builtinModels();
-    models.setProvider(duetGatewayProvider());
-    models.setProvider(vercelGatewayProvider());
-    for (const { id } of connectedProviders()) {
-      const provider = models.getProvider(id);
-      if (provider) models.setProvider(withDuetManagedAuth(provider));
-    }
-    cached = { baseUrl, models };
+  const models = builtinModels();
+  for (const route of GATEWAY_ROUTES) models.setProvider(gatewayProvider(route));
+  for (const { id } of connectedProviders()) {
+    const provider = models.getProvider(id);
+    if (provider) models.setProvider(withDuetManagedAuth(provider));
   }
-  return cached.models;
+  return models;
 }
 
 /**
