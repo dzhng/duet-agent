@@ -1,3 +1,4 @@
+import { withRequestId } from "./helpers/rpc-command.js";
 import { describe, expect } from "bun:test";
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -152,7 +153,7 @@ class RpcHarness {
   }
 
   async send(command: TurnRunnerCommand): Promise<void> {
-    this.proc.stdin.write(`${JSON.stringify(command)}\n`);
+    this.proc.stdin.write(`${JSON.stringify(withRequestId(command))}\n`);
     await this.proc.stdin.flush();
   }
 
