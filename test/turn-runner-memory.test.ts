@@ -149,7 +149,7 @@ class ModelRoutingTurnRunner extends TurnRunner {
   ): Agent {
     const agent = super.createAgent(input, onControlResult);
     this.capturedAgentModel = agent.state.model;
-    agent.streamFn = () => {
+    agent.streamFunction = () => {
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
         stream.push({
@@ -188,7 +188,7 @@ class UsageTrackingTurnRunner extends TurnRunner {
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
     const agent = super.createAgent(input, onControlResult);
-    agent.streamFn = () => {
+    agent.streamFunction = () => {
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
         stream.push({
@@ -280,7 +280,7 @@ class UsageEventTurnRunner extends TurnRunner {
     if (this.seedMessages.length > 0) {
       agent.state.messages.push(...this.seedMessages);
     }
-    agent.streamFn = () => {
+    agent.streamFunction = () => {
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
         stream.push({
@@ -341,7 +341,7 @@ class OverflowRecoveryTurnRunner extends TurnRunner {
     if (this.seedMessages.length > 0) {
       agent.state.messages.push(...this.seedMessages);
     }
-    agent.streamFn = () => {
+    agent.streamFunction = () => {
       const stream = createAssistantMessageEventStream();
       const attemptIndex = this.attempts;
       this.attempts += 1;
@@ -402,7 +402,7 @@ class MemoryEventTurnRunner extends TurnRunner {
     onControlResult?: (result: TurnRunnerControlResult) => void,
   ): Agent {
     const agent = super.createAgent(input, onControlResult);
-    agent.streamFn = () => {
+    agent.streamFunction = () => {
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
         stream.push({

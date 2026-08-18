@@ -74,8 +74,11 @@ describe("duet-gateway model routing", () => {
   });
 });
 
-describe("connected-provider model synthesis", () => {
-  test("resolves codex 5.6 clones with their native transport and published costs", () => {
+// These were synthesized from a sibling model here until the catalog shipped
+// them; the assertion stays so a future catalog gap fails loudly instead of
+// billing a zeroed passthrough.
+describe("connected-provider models", () => {
+  test("resolves the codex 5.6 models with their native transport and published costs", () => {
     const cases = [
       {
         id: "gpt-5.6-sol",
@@ -83,11 +86,11 @@ describe("connected-provider model synthesis", () => {
       },
       {
         id: "gpt-5.6-terra",
-        cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 },
+        cost: { input: 2, output: 12, cacheRead: 0.2, cacheWrite: 2.5 },
       },
       {
         id: "gpt-5.6-luna",
-        cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
+        cost: { input: 0.2, output: 1.2, cacheRead: 0.02, cacheWrite: 0.25 },
       },
     ];
 

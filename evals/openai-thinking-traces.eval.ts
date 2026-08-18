@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { streamSimple, type AssistantMessageEvent, type Model } from "@earendil-works/pi-ai";
+import type { AssistantMessageEvent, Model } from "@earendil-works/pi-ai";
+import { duetModels } from "../src/model-resolution/models.js";
 import { resolveModelName } from "../src/model-resolution/resolver.js";
 
 const openAiModel = process.env.EVAL_MODEL ?? "sol";
@@ -28,7 +29,7 @@ async function capturePayload(
   reasoning: "low" | "medium" | "high",
 ): Promise<unknown> {
   let captured: unknown;
-  const stream = streamSimple(
+  const stream = duetModels().streamSimple(
     model,
     {
       messages: [
@@ -42,7 +43,7 @@ async function capturePayload(
     {
       reasoning,
       apiKey: "eval-key",
-      onPayload: (payload) => {
+      onPayload: (payload: unknown) => {
         captured = payload;
         return abortingPayloadFor(model);
       },

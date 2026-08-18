@@ -1,3 +1,4 @@
+import type { OAuthAuth } from "@earendil-works/pi-ai";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import { printConnectHelp } from "./help.js";
@@ -35,6 +36,12 @@ export interface ConnectCommandIO {
   openUrl?: (url: string) => void;
   /** Read browser-flow fallback input or Copilot enterprise-domain input. */
   prompt?: (message: string) => Promise<string>;
+  /**
+   * OAuth implementation seam. pi-ai used to keep a global registry a test
+   * could overwrite; an implementation now hangs off its provider, so the
+   * fixture is injected here instead.
+   */
+  oauth?: (id: ConnectedProviderId) => OAuthAuth;
   /** Capability seam; production performs a real one-token provider completion. */
   probe?: typeof probeConnectedProvider;
   /** Clock used for persisted timestamps and device-code expiry events. */
@@ -202,34 +209,59 @@ async function connectProvider(
 
   let credentials: ConnectionRecord["credentials"];
   try {
-    credentials = await entry.oauth().login({
-      onAuth: ({ url }) => {
-        options.writeError(`Open ${url} to connect ${entry.label}.\n`);
-        if (!options.noBrowser) openUrl(url, options.openUrl);
-      },
-      onDeviceCode: ({ userCode, verificationUri, expiresInSeconds }) => {
-        if (options.json) {
-          emit({
-            type: "device_code",
-            provider: id,
-            verificationUri,
-            userCode,
-            expiresAt: now() + (expiresInSeconds ?? 900) * 1000,
-          });
-        } else {
-          options.writeError(`User code: ${userCode}\nVerification URL: ${verificationUri}\n`);
+    // pi-ai returns its canonical tagged credential; Duet's store holds the
+    // untagged token, and the tag is re-added at each pi-ai call site.
+    // pi-ai replaced the named login callbacks with one `notify` stream and one
+    // `prompt`, so the CLI switches on the event instead of registering a
+    // handler per kind. The device-code branch stays the only one a VM can use.
+    const { type: _tag, ...token } = await (options.oauth?.(id) ?? entry.oauth()).login({
+      signal: new AbortController().signal,
+      notify: (event) => {
+        if (event.type === "auth_url") {
+          options.writeError(`Open ${event.url} to connect ${entry.label}.\n`);
+          if (!options.noBrowser) openUrl(event.url, options.openUrl);
+          return;
         }
-        if (!options.noBrowser && !options.json) openUrl(verificationUri, options.openUrl);
+        if (event.type === "device_code") {
+          if (options.json) {
+            emit({
+              type: "device_code",
+              provider: id,
+              verificationUri: event.verificationUri,
+              userCode: event.userCode,
+              expiresAt: now() + (event.expiresInSeconds ?? 900) * 1000,
+            });
+          } else {
+            options.writeError(
+              `User code: ${event.userCode}\nVerification URL: ${event.verificationUri}\n`,
+            );
+          }
+          if (!options.noBrowser && !options.json) {
+            openUrl(event.verificationUri, options.openUrl);
+          }
+          return;
+        }
+        if (event.type === "progress" && !options.json) {
+          options.writeError(`Connecting ${entry.label}…\n`);
+        }
       },
-      onPrompt: async ({ message, allowEmpty }) => {
-        if (id === "github-copilot" && allowEmpty && !options.prompt) return "";
-        return (options.prompt ?? promptInput)(message);
+      prompt: async (request) => {
+        if (request.type === "select") {
+          const wanted = options.forceDeviceCode ? "device_code" : "browser";
+          // A provider that offers no choice still gets our preference back;
+          // there is nothing to pick from, and every answer is equally arbitrary.
+          return (
+            request.options.find((option) => option.id === wanted)?.id ??
+            request.options[0]?.id ??
+            wanted
+          );
+        }
+        // Copilot's flow prompts for an optional value the VM cannot answer.
+        if (id === "github-copilot" && !options.prompt) return "";
+        return (options.prompt ?? promptInput)(request.message);
       },
-      onProgress: () => {
-        if (!options.json) options.writeError(`Connecting ${entry.label}…\n`);
-      },
-      onSelect: async () => (options.forceDeviceCode ? "device_code" : "browser"),
     });
+    credentials = token;
   } catch (error) {
     const code = loginErrorCode(error);
     if (options.json) emit({ type: "error", provider: id, code });

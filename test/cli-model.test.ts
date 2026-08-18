@@ -134,7 +134,17 @@ describe("model resolution debug output", () => {
       model: "openai-codex:gpt-5.6-sol",
       api: "openai-codex-responses",
       baseUrl: "https://chatgpt.com/backend-api",
-      cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
+      cost: {
+        input: 5,
+        output: 30,
+        cacheRead: 0.5,
+        cacheWrite: 6.25,
+        // Long-context tier pricing, which the catalog carries and the debug
+        // output prints verbatim.
+        tiers: [
+          { inputTokensAbove: 272000, input: 10, output: 45, cacheRead: 1, cacheWrite: 12.5 },
+        ],
+      },
     });
   });
 });

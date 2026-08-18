@@ -1,9 +1,8 @@
-import {
-  pollOAuthDeviceCodeFlow,
-  registerOAuthProvider,
-  type OAuthCredentials,
-  type OAuthProviderInterface,
-} from "@earendil-works/pi-ai/oauth";
+import type { Model, OAuthCredential, Provider } from "@earendil-works/pi-ai";
+import { createProvider } from "@earendil-works/pi-ai";
+import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import type { ConnectedProviderId } from "./store.js";
 
 export const FAKE_ISSUER_ENV = "DUET_CONNECT_FAKE_ISSUER_URL";
@@ -75,9 +74,18 @@ interface TokenResponse {
 }
 
 let installedBaseUrl: string | undefined;
-let installedProviders: readonly OAuthProviderInterface[] | undefined;
+let installedProviders: readonly Provider[] | undefined;
 
-/** Registers fake providers through pi-ai only when explicitly enabled. */
+/**
+ * Point the connected-provider registry at a fake issuer when one is
+ * configured.
+ *
+ * pi-ai used to keep a global OAuth registry to register into. It does not
+ * any more — an implementation hangs off the provider that uses it — so the
+ * fake is published here and `connectedProviders()` reads it instead of the
+ * built-in provider. That also makes the swap explicit rather than a global
+ * side effect.
+ */
 export function installFakeIssuerIfConfigured(
   env: Record<string, string | undefined> = process.env,
 ): "installed" | "skipped" {
@@ -91,66 +99,104 @@ export function installFakeIssuerIfConfigured(
       createFakeProvider("github-copilot", "GitHub Copilot", baseUrl),
     ];
   }
-  for (const provider of installedProviders) registerOAuthProvider(provider);
   return "installed";
 }
 
-function createFakeProvider(
-  id: ConnectedProviderId,
-  name: string,
-  baseUrl: string,
-): OAuthProviderInterface {
-  return {
+/** Forget any installed fake, so one test's issuer cannot leak into the next. */
+export function resetFakeIssuer(): void {
+  installedBaseUrl = undefined;
+  installedProviders = undefined;
+}
+
+/** The fake standing in for `id`, or undefined when none is configured. */
+export function fakeConnectedProvider(id: ConnectedProviderId): Provider | undefined {
+  return installedProviders?.find((provider) => provider.id === id);
+}
+
+function createFakeProvider(id: ConnectedProviderId, name: string, baseUrl: string): Provider {
+  return createProvider({
     id,
     name,
-    async login(callbacks) {
-      const device = await postJson<DeviceCodeResponse>(`${baseUrl}/device/code`, {
-        client_id: `duet-agent:${id}`,
-        scope: id === "openai-codex" ? "openid profile email" : "read:user",
-      });
-      callbacks.onDeviceCode({
-        userCode: device.user_code,
-        verificationUri: device.verification_uri,
-        intervalSeconds: device.interval,
-        expiresInSeconds: device.expires_in,
-      });
-      return pollOAuthDeviceCodeFlow({
-        intervalSeconds: device.interval,
-        expiresInSeconds: device.expires_in,
-        signal: callbacks.signal,
-        poll: async () =>
-          tokenPollResult(
-            await postJson<TokenResponse>(`${baseUrl}/token`, {
-              device_code: device.device_code,
-              grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-            }),
-          ),
-      });
-    },
-    async refreshToken(credentials) {
-      const token = await postJson<TokenResponse>(`${baseUrl}/token`, {
-        refresh_token: credentials.refresh,
-        grant_type: "refresh_token",
-      });
-      return credentialsFromToken(token, credentials.refresh);
-    },
-    getApiKey(credentials) {
-      return credentials.access;
-    },
-    modifyModels(models) {
-      return models.map((model) => ({
-        ...model,
-        api: "openai-completions",
-        baseUrl,
-        compat: {
-          ...model.compat,
-          supportsStore: false,
-          supportsDeveloperRole: false,
-          supportsReasoningEffort: false,
+    baseUrl,
+    api: openAICompletionsApi(),
+    // The issuer under test is a plain OpenAI-compatible server, so the real
+    // provider's models are carried over its transport with the vendor
+    // extensions a fixture cannot serve turned off.
+    models: getBuiltinModels(id as Parameters<typeof getBuiltinModels>[0]).map(
+      (model): Model<"openai-completions"> => {
+        const carried = model as Model<"openai-completions">;
+        return {
+          ...carried,
+          api: "openai-completions",
+          baseUrl,
+          compat: {
+            ...carried.compat,
+            supportsStore: false,
+            supportsDeveloperRole: false,
+            supportsReasoningEffort: false,
+          },
+        };
+      },
+    ),
+    auth: {
+      oauth: {
+        name,
+        async login(interaction) {
+          const device = await postJson<DeviceCodeResponse>(`${baseUrl}/device/code`, {
+            client_id: `duet-agent:${id}`,
+            scope: id === "openai-codex" ? "openid profile email" : "read:user",
+          });
+          interaction.notify({
+            type: "device_code",
+            userCode: device.user_code,
+            verificationUri: device.verification_uri,
+            intervalSeconds: device.interval,
+            expiresInSeconds: device.expires_in,
+          });
+          const credentials = await pollFakeDeviceCode(baseUrl, device, interaction.signal);
+          return { ...credentials, type: "oauth" };
         },
-      }));
+        async refresh(credential) {
+          const token = await postJson<TokenResponse>(`${baseUrl}/token`, {
+            refresh_token: credential.refresh,
+            grant_type: "refresh_token",
+          });
+          return { ...credentialsFromToken(token, credential.refresh), type: "oauth" };
+        },
+        async toAuth(credential: OAuthCredential) {
+          return { apiKey: credential.access, baseUrl };
+        },
+      },
     },
-  };
+  });
+}
+
+/**
+ * RFC-8628 polling for the fake issuer. pi-ai stopped exporting its own device
+ * poller, and a fixture that only has to honour pending/slow_down/denied does
+ * not need one.
+ */
+async function pollFakeDeviceCode(
+  baseUrl: string,
+  device: DeviceCodeResponse,
+  signal: AbortSignal,
+): Promise<OAuthCredentials> {
+  const deadline = Date.now() + (device.expires_in ?? 600) * 1000;
+  let intervalMs = (device.interval ?? 1) * 1000;
+  while (Date.now() < deadline) {
+    signal.throwIfAborted();
+    const result = tokenPollResult(
+      await postJson<TokenResponse>(`${baseUrl}/token`, {
+        device_code: device.device_code,
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      }),
+    );
+    if (result.status === "complete") return result.value;
+    if (result.status === "failed") throw new Error(result.message);
+    if (result.status === "slow_down") intervalMs += 1000;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error("Device login expired.");
 }
 
 function tokenPollResult(

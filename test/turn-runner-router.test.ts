@@ -165,7 +165,7 @@ class RouterTurnRunner extends TurnRunner {
       thinkingLevel: input.state.options?.thinkingLevel,
     });
     const agent = super.createAgent(input, onControlResult);
-    agent.streamFn = (model, context, options) => {
+    agent.streamFunction = (model, context, options) => {
       const stream = createAssistantMessageEventStream();
       this.requestModels.push(model);
       this.requestMessages.push(structuredClone(context.messages));

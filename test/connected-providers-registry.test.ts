@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { getOAuthProvider, resetOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import {
   connectedProviders,
   resolveConnectedProviderAlias,
@@ -8,9 +7,16 @@ import {
   FAKE_ISSUER_ENV,
   FAKE_ISSUER_WIRE_TABLE,
   installFakeIssuerIfConfigured,
+  resetFakeIssuer,
 } from "../src/connected-providers/fake-issuer.js";
 
-afterEach(() => resetOAuthProviders());
+afterEach(() => resetFakeIssuer());
+
+function codexProvider() {
+  const entry = connectedProviders().find(({ id }) => id === "openai-codex");
+  if (!entry) throw new Error("openai-codex is not a connected provider");
+  return entry.provider();
+}
 
 describe("connected provider registry", () => {
   test("resolves user aliases and canonical provider ids", () => {
@@ -42,17 +48,26 @@ describe("connected provider registry", () => {
     expect(resolveConnectedProviderAlias("unknown")).toBeUndefined();
   });
 
+  // The registry is the seam the rest of the agent reads a provider through,
+  // so the fake has to be visible there — it used to be installed into a pi-ai
+  // global that no longer exists.
   test("fake issuer installation is unset-safe and idempotent", () => {
-    const builtIn = getOAuthProvider("openai-codex");
+    const realBaseUrl = codexProvider().baseUrl;
+    expect(realBaseUrl).toBe("https://chatgpt.com/backend-api");
     expect(installFakeIssuerIfConfigured({})).toBe("skipped");
-    expect(getOAuthProvider("openai-codex")).toBe(builtIn);
+    expect(codexProvider().baseUrl).toBe(realBaseUrl);
 
     const env = { [FAKE_ISSUER_ENV]: "http://127.0.0.1:43210" };
     expect(installFakeIssuerIfConfigured(env)).toBe("installed");
-    const installed = getOAuthProvider("openai-codex");
-    expect(installed).not.toBe(builtIn);
+    const installed = codexProvider();
+    expect(installed.baseUrl).toBe("http://127.0.0.1:43210");
+    // Idempotent means the same instance, not merely an equal one: a rebuild
+    // on every read would drop an in-flight login's state.
     expect(installFakeIssuerIfConfigured(env)).toBe("installed");
-    expect(getOAuthProvider("openai-codex")).toBe(installed);
+    expect(codexProvider()).toBe(installed);
+
+    resetFakeIssuer();
+    expect(codexProvider().baseUrl).toBe(realBaseUrl);
   });
 
   test("exports the pinned fake-issuer request contract", () => {

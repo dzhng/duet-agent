@@ -209,30 +209,57 @@ describe("CLI model inference", () => {
     expect(resolveModelName("openrouter:gpt-5.6-terra").id).toBe("openai/gpt-5.6-terra");
   });
 
+  // These numbers come from the model catalog now, not from a table in this
+  // repo, but they stay pinned: a passthrough synthesized for an id the
+  // catalog dropped would zero the price out, and cost accounting would lie
+  // rather than fail. Where two providers publish different numbers for the
+  // same model, that difference is theirs and each is pinned as served.
   test("preserves model-router capabilities and token ceilings on every provider", () => {
     const expectations = {
-      "kimi-k3": { contextWindow: 1_000_000, maxTokens: 131_072, costInput: 3 },
-      "gpt-5.6-sol": { contextWindow: 1_050_000, maxTokens: 128_000, costInput: 5 },
-      "gpt-5.6-terra": { contextWindow: 1_050_000, maxTokens: 128_000, costInput: 2.5 },
+      "kimi-k3": {
+        contextWindow: {
+          "duet-gateway": 1_000_000,
+          "vercel-ai-gateway": 1_000_000,
+          openrouter: 1_048_576,
+        },
+        maxTokens: 131_072,
+        costInput: { "duet-gateway": 3, "vercel-ai-gateway": 3, openrouter: 3 },
+      },
+      "gpt-5.6-sol": {
+        contextWindow: {
+          "duet-gateway": 1_050_000,
+          "vercel-ai-gateway": 1_050_000,
+          openrouter: 1_050_000,
+        },
+        maxTokens: 128_000,
+        costInput: { "duet-gateway": 5, "vercel-ai-gateway": 5, openrouter: 5 },
+      },
+      "gpt-5.6-terra": {
+        contextWindow: {
+          "duet-gateway": 1_050_000,
+          "vercel-ai-gateway": 1_050_000,
+          openrouter: 1_050_000,
+        },
+        maxTokens: 128_000,
+        costInput: { "duet-gateway": 2, "vercel-ai-gateway": 2, openrouter: 1 },
+      },
     } as const;
 
     for (const [shorthand, expected] of Object.entries(expectations)) {
-      for (const provider of ["duet-gateway", "vercel-ai-gateway", "openrouter"]) {
+      for (const provider of ["duet-gateway", "vercel-ai-gateway", "openrouter"] as const) {
         const model = resolveModelName(`${provider}:${shorthand}`);
         expect(model.input).toEqual(["text", "image"]);
         expect(model.reasoning).toBe(true);
-        expect(model.contextWindow).toBe(expected.contextWindow);
+        expect(model.contextWindow).toBe(expected.contextWindow[provider]);
         expect(model.maxTokens).toBe(expected.maxTokens);
-        // Clones inherit sibling prices and passthroughs zero them out, so the
-        // published price must be pinned or cost accounting silently lies.
-        expect(model.cost.input).toBe(expected.costInput);
+        expect(model.cost.input).toBe(expected.costInput[provider]);
       }
     }
 
     // Advisor targets and the luna classifier bill from these same specs.
     expect(resolveModelName("duet-gateway:anthropic/claude-fable-5").cost.input).toBe(10);
     expect(resolveModelName("duet-gateway:anthropic/claude-sonnet-5").cost.input).toBe(2);
-    expect(resolveModelName("duet-gateway:openai/gpt-5.6-luna").cost.input).toBe(1);
+    expect(resolveModelName("duet-gateway:openai/gpt-5.6-luna").cost.input).toBe(0.2);
   });
 
   test("keeps gpt-5.6 router models on the Responses transport at both gateways", () => {
@@ -434,9 +461,9 @@ describe("CLI model inference", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "test-duet";
 
-    // glm-4.7's catalog maxTokens (40000) is already under any backend cap, so
-    // resolution must not alter it.
-    expect(resolveModelName("glm-4.7").maxTokens).toBe(40000);
+    // glm-4.7's catalog maxTokens (120000) is already under any backend cap,
+    // so resolution must not alter it.
+    expect(resolveModelName("glm-4.7").maxTokens).toBe(120000);
   });
 
   test("resolves the glm-5.2 shorthand through the duet gateway", () => {

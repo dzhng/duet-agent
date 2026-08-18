@@ -1,4 +1,6 @@
-import { findEnvKeys, getModel, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { findEnvKeys } from "@earendil-works/pi-ai/compat";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 
 import {
   BUILT_IN_ROUTING_TABLE,
@@ -6,11 +8,7 @@ import {
   type RoutingCatalogAdapter,
   type RoutingTable,
 } from "../model-routing/table.js";
-import {
-  applyVercelGatewayModelOverrides,
-  resolveDuetGatewayModel,
-  resolveMissingModel,
-} from "./duet-gateway.js";
+import { rebaseOntoVercelGateway, resolveDuetGatewayModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
   canonicalizeProviderModelId,
@@ -83,19 +81,18 @@ export function resolveModelName(model: string): Model<any> {
     // shipped yet, so new gateway models work without a code change here.
     return clampModelOutputTokens(resolveDuetGatewayModel(modelId));
   }
-  // getModel returns undefined for models the upstream catalog has not shipped
-  // yet; fall back to a synthesized clone (e.g. Fable 5) before forwarding.
-  // clampModelOutputTokens forwards a missing model untouched at runtime.
-  const catalogModel =
-    getModel(
-      provider as Parameters<typeof getModel>[0],
-      modelId as Parameters<typeof getModel>[1],
-    ) ?? (resolveMissingModel(provider, modelId) as Model<any>);
-  const resolved =
-    provider === "vercel-ai-gateway" && catalogModel
-      ? applyVercelGatewayModelOverrides(modelId, catalogModel)
-      : catalogModel;
-  return clampModelOutputTokens(resolved);
+  // The catalog answers for every provider now; the clone table that used to
+  // cover its gaps is gone. clampModelOutputTokens forwards a missing model
+  // untouched at runtime.
+  const resolved = builtinModel(provider, modelId);
+  // A direct vercel pin is the same gateway the Duet proxy fronts, so it picks
+  // its transport the same way rather than inheriting the catalog's blanket
+  // anthropic-messages declaration.
+  return clampModelOutputTokens(
+    (provider === "vercel-ai-gateway" && resolved
+      ? rebaseOntoVercelGateway(resolved)
+      : resolved) as Model<any>,
+  );
 }
 
 /** Resolve an auxiliary actor through configured metered router order only. */
@@ -264,10 +261,7 @@ export function resolveModelReference(
     if (deps.apiKey(provider)) {
       // The account hook can filter models the plan cannot serve (Copilot
       // availableModelIds); a filtered model falls through to router order.
-      const spec = getModel(
-        provider as Parameters<typeof getModel>[0],
-        transport.modelId as Parameters<typeof getModel>[1],
-      );
+      const spec = builtinModel(provider, transport.modelId);
       if (!spec || deps.applyHook(provider, spec)) {
         return `${provider}:${transport.modelId}`;
       }
@@ -304,4 +298,12 @@ export function describeModelResolution(resolution: ModelResolution): string {
   return resolution.routed
     ? `${routed}routing-table default`
     : "built-in default (no provider env vars set)";
+}
+
+/** Catalog read for ids this module only knows as strings. */
+function builtinModel(provider: string, modelId: string): Model<Api> | undefined {
+  return getBuiltinModel(
+    provider as Parameters<typeof getBuiltinModel>[0],
+    modelId as Parameters<typeof getBuiltinModel>[1],
+  ) as Model<Api> | undefined;
 }

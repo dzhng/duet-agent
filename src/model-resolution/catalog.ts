@@ -44,8 +44,8 @@ interface ModelDefinition {
    * Provider-specific id used to carry this curated model on each supported
    * transport. List a transport only when it actually serves the model: an
    * unlisted transport falls through to the next candidate, while a listed one
-   * pi-ai's catalog has not shipped resolves to an undefined model unless it
-   * also has a `MISSING_MODEL_CLONES` entry (duet-gateway.ts).
+   * the model catalog has not shipped resolves to an undefined model — except
+   * on the gateways, which synthesize a conservative passthrough instead.
    *
    * Ids follow the transport's own namespace, which tracks the `TransportName`
    * union: `RouterProviderName` gateways aggregate many vendors and need the
@@ -184,11 +184,10 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     },
   },
   {
-    // The default observational-memory model. Both gateways synthesize an
-    // openai-responses passthrough for it (the duet path via
-    // `resolveDuetGatewayUpstream`, the vercel path via `resolveMissingModel`)
-    // rather than serving it over anthropic-messages, which would silently drop
-    // the low reasoning effort the observer and reflectors request.
+    // The default observational-memory model. Both gateways carry every OpenAI
+    // model on the Responses transport rather than over anthropic-messages,
+    // which would silently drop the low reasoning effort the observer and
+    // reflectors request; see `gatewayApi` in duet-gateway.ts.
     family: "luna",
     shorthand: "gpt-5.6-luna",
     aliases: ["openai/gpt-5.6-luna", "openai/gpt-5-6-luna"],
@@ -266,10 +265,8 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     maxOutputTokens: 262144,
   },
   {
-    // Anthropic's Claude Fable 5 uses `anthropic/claude-fable-5` on every router
-    // provider. pi-ai's catalog does not ship it yet, so resolution clones the
-    // Opus 4.8 entry (identical anthropic-messages transport, 1M context, 128k
-    // output cap) until it does; see `resolveMissingModel` in duet-gateway.ts.
+    // Anthropic's Claude Fable 5 uses `anthropic/claude-fable-5` on every
+    // router provider.
     family: "fable",
     shorthand: "fable-5",
     aliases: ["claude-fable-5", "anthropic/claude-fable-5"],

@@ -20,7 +20,7 @@ class CapturingTurnRunner extends TurnRunner {
       ...this.createTools(input.state.mode),
     });
     const contexts: Context[] = [];
-    agent.streamFn = (_model, context) => {
+    agent.streamFunction = (_model, context) => {
       contexts.push(JSON.parse(JSON.stringify(context)) as Context);
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
