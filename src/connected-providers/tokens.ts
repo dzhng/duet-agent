@@ -152,12 +152,16 @@ export function applyConnectedModelHook<T extends { id: string }>(
 ): T | undefined {
   const credentials = connectedTokens.credentials(provider);
   if (!credentials) return model;
-  const oauth = connectedProviders()
-    .find((entry) => entry.id === provider)
-    ?.oauth();
-  if (!oauth?.modifyModels) return model;
-  const kept = oauth.modifyModels([model as never], credentials) as unknown as T[];
-  return kept.find((entry) => entry.id === model.id);
+  // Account-specific model availability belongs to the provider, via
+  // `filterModels`.
+  const entry = connectedProviders().find((candidate) => candidate.id === provider);
+  const filterModels = entry?.provider().filterModels;
+  if (!filterModels) return model;
+  const kept = filterModels([model as never], {
+    ...credentials,
+    type: "oauth",
+  }) as unknown as T[];
+  return kept.find((candidate) => candidate.id === model.id);
 }
 
 export function loadConnectedTokensSnapshot(): Promise<readonly ConnectionRecord[]> {

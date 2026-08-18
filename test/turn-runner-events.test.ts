@@ -21,7 +21,7 @@ class ToolEventTurnRunner extends TurnRunner {
     onControlResult?: Parameters<TurnRunner["createAgent"]>[1],
   ): Agent {
     const agent = super.createAgent(input, onControlResult);
-    agent.streamFn = () => {
+    agent.streamFunction = () => {
       const stream = createAssistantMessageEventStream();
       this.pendingStreams.push(stream);
       return stream;

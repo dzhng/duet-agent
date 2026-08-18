@@ -1,5 +1,5 @@
+import { complete } from "@earendil-works/pi-ai/compat";
 import {
-  complete,
   validateToolArguments,
   type ImageContent,
   type Model,

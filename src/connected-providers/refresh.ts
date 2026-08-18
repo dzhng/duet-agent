@@ -1,4 +1,4 @@
-import { githubCopilotOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { connectedProviders } from "./registry.js";
 import type { ConnectedProviderId, OAuthCredentials } from "./store.js";
 
 const OPENAI_TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -13,7 +13,13 @@ export async function refreshConnectedCredentials(
   credentials: OAuthCredentials,
 ): Promise<OAuthCredentials> {
   if (provider === "github-copilot") {
-    return githubCopilotOAuthProvider.refreshToken(credentials);
+    // pi-ai's OAuth implementations hang off their provider now, and the
+    // exchange is `refresh(credential, signal)` rather than `refreshToken`.
+    const oauth = connectedProviders()
+      .find((entry) => entry.id === provider)
+      ?.oauth();
+    if (!oauth) throw new Error(`OAuth provider is not registered: ${provider}`);
+    return oauth.refresh({ ...credentials, type: "oauth" }, new AbortController().signal);
   }
   return refreshOpenAICodexCredentials(credentials.refresh);
 }

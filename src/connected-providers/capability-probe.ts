@@ -1,6 +1,5 @@
+import { complete } from "@earendil-works/pi-ai/compat";
 import {
-  complete,
-  getModels,
   type Api,
   type AssistantMessage,
   type Context,
@@ -37,13 +36,18 @@ export async function probeConnectedProvider(
   credentials: OAuthCredentials,
   deps: CapabilityProbeDependencies = {},
 ): Promise<CapabilityProbeResult> {
-  const provider = connectedProviders()
-    .find((entry) => entry.id === id)
-    ?.oauth();
-  if (!provider) return unknown("Provider is not registered.");
+  const entry = connectedProviders().find((candidate) => candidate.id === id);
+  if (!entry) return unknown("Provider is not registered.");
+  const oauth = entry.oauth();
+  const credential = { ...credentials, type: "oauth" as const };
 
-  const catalog = getModels(id);
-  const available = provider.modifyModels?.(catalog, credentials) ?? catalog;
+  // The provider owns its model list: a configured fake issuer stands in for
+  // the whole provider, and its models carry the fixture's baseUrl/transport.
+  const provider = entry.provider();
+  const catalog = provider.getModels();
+  // Account-specific availability is the provider's, not the OAuth
+  // implementation's: an ineligible Copilot plan filters every model out.
+  const available = provider.filterModels?.(catalog, credential) ?? catalog;
   const servedModelIds =
     id === "openai-codex" ? [...CHATGPT_SERVED_MODEL_IDS] : available.map((model) => model.id);
   const copilotHasNoModels = id === "github-copilot" && hasEmptyAvailableModelIds(credentials);
@@ -61,7 +65,7 @@ export async function probeConnectedProvider(
         messages: [{ role: "user", content: "ok", timestamp: Date.now() }],
       },
       {
-        apiKey: provider.getApiKey(credentials),
+        apiKey: (await oauth.toAuth(credential)).apiKey,
         maxTokens: 1,
         onResponse: (response) => {
           responseStatus = response.status;
@@ -111,7 +115,7 @@ function errorStatus(error: unknown): number | undefined {
 
 function selectProbeModel(
   id: ConnectedProviderId,
-  available: Model<Api>[],
+  available: readonly Model<Api>[],
 ): Model<Api> | undefined {
   if (id === "openai-codex") {
     const donor = available.find((model) => model.id === "gpt-5.4-mini") ?? available[0];

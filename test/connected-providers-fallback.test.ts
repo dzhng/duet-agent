@@ -47,7 +47,7 @@ class FallbackRunner extends TurnRunner {
   ): Agent {
     const agent = super.createAgent(input, onControlResult);
     agent.getApiKey = () => "test-provider-key";
-    agent.streamFn = (model, context) => {
+    agent.streamFunction = (model, context) => {
       const pending = {
         model,
         context: JSON.parse(JSON.stringify(context)) as Context,

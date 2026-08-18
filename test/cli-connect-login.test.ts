@@ -1,12 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
-import {
-  registerOAuthProvider,
-  resetOAuthProviders,
-  type OAuthLoginCallbacks,
-} from "@earendil-works/pi-ai/oauth";
+import { describe, expect, test } from "bun:test";
+import type { OAuthAuth, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import { runConnectCommand } from "../src/cli/connect.js";
 import { FAKE_ISSUER_ENV } from "../src/connected-providers/fake-issuer.js";
 import type { ConnectedProviderStore, ConnectionRecord } from "../src/connected-providers/store.js";
@@ -16,32 +12,41 @@ import { testIfDocker } from "./helpers/docker-only.js";
 const SECRET_ACCESS = "connect-access-must-never-appear";
 const SECRET_REFRESH = "connect-refresh-must-never-appear";
 
-afterEach(() => resetOAuthProviders());
-
 describe("duet connect login", () => {
   test("ChatGPT defaults by TTY while Copilot remains device-code", async () => {
     const selectedModes: string[] = [];
     const opened: string[] = [];
-    registerLoginFixture("openai-codex", async (callbacks) => {
-      const selected = await callbacks.onSelect({ message: "mode", options: [] });
-      selectedModes.push(selected ?? "cancelled");
-      if (selected === "device_code") {
-        callbacks.onDeviceCode({
-          userCode: "CHAT-GPT1",
-          verificationUri: "https://verify.test/chatgpt",
+    const fixtures: Record<string, OAuthAuth> = {
+      "openai-codex": loginFixture(async (interaction) => {
+        const selected = await interaction.prompt({
+          type: "select",
+          message: "mode",
+          options: [
+            { id: "device_code", label: "Device code" },
+            { id: "browser", label: "Browser" },
+          ],
+        });
+        selectedModes.push(selected ?? "cancelled");
+        if (selected === "device_code") {
+          interaction.notify({
+            type: "device_code",
+            userCode: "CHAT-GPT1",
+            verificationUri: "https://verify.test/chatgpt",
+            expiresInSeconds: 600,
+          });
+        } else {
+          interaction.notify({ type: "auth_url", url: "https://browser.test/authorize" });
+        }
+      }),
+      "github-copilot": loginFixture(async (interaction) => {
+        interaction.notify({
+          type: "device_code",
+          userCode: "COPI-LOT1",
+          verificationUri: "https://verify.test/copilot",
           expiresInSeconds: 600,
         });
-      } else {
-        callbacks.onAuth({ url: "https://browser.test/authorize" });
-      }
-    });
-    registerLoginFixture("github-copilot", async (callbacks) => {
-      callbacks.onDeviceCode({
-        userCode: "COPI-LOT1",
-        verificationUri: "https://verify.test/copilot",
-        expiresInSeconds: 600,
-      });
-    });
+      }),
+    };
     const records: ConnectionRecord[] = [];
     let stdout = "";
     let stderr = "";
@@ -56,6 +61,7 @@ describe("duet connect login", () => {
         stderr += text;
       },
       probe: async () => ({ eligibility: "eligible" as const, servedModelIds: [] }),
+      oauth: (id: string) => fixtures[id]!,
     };
 
     await runConnectCommand(["chatgpt"], io);
@@ -273,26 +279,30 @@ function memoryStore(records: ConnectionRecord[]): ConnectedProviderStore {
   };
 }
 
-function registerLoginFixture(
-  id: "openai-codex" | "github-copilot",
-  announce: (callbacks: OAuthLoginCallbacks) => Promise<void>,
-): void {
-  registerOAuthProvider({
-    id,
-    name: id,
-    async login(callbacks) {
-      await announce(callbacks);
+/**
+ * An OAuth implementation that announces whatever the case under test needs
+ * and then hands back secrets, so the assertions can prove the CLI never
+ * prints them.
+ */
+function loginFixture(
+  announce: (interaction: ProviderAuthInteraction) => Promise<void>,
+): OAuthAuth {
+  return {
+    name: "fixture",
+    async login(interaction) {
+      await announce(interaction);
       return {
+        type: "oauth",
         access: SECRET_ACCESS,
         refresh: SECRET_REFRESH,
         expires: 2_000_000_000_000,
       };
     },
-    async refreshToken(credentials) {
-      return credentials;
+    async refresh(credential) {
+      return credential;
     },
-    getApiKey(credentials) {
-      return credentials.access;
+    async toAuth(credential) {
+      return { apiKey: credential.access };
     },
-  });
+  };
 }

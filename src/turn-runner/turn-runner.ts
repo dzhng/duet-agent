@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import { isContextOverflow, type ImageContent, type Usage } from "@earendil-works/pi-ai";
 import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
+import { duetStreamFn } from "../model-resolution/models.js";
 import type { TransportName } from "../model-resolution/catalog.js";
 import {
   ensureFreshConnectedTokens,
@@ -3026,6 +3027,9 @@ export class TurnRunner {
     // carrying the don't-switch-mid-task cache preference.
     let agent!: Agent;
     agent = new Agent({
+      // Dispatch comes from the registry that knows the Duet gateway provider;
+      // the loop resolves no transport of its own.
+      streamFn: duetStreamFn,
       initialState: {
         model,
         thinkingLevel: initialRoute?.thinkingLevel ?? options.thinkingLevel ?? "medium",

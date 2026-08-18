@@ -1,3 +1,4 @@
+import { withRequestId } from "./helpers/rpc-command.js";
 import { describe, expect } from "bun:test";
 import dedent from "dedent";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
@@ -138,7 +139,7 @@ async function runRpcSession(
   });
   const sink = proc.stdin;
   for (const command of commands) {
-    sink.write(`${JSON.stringify(command)}\n`);
+    sink.write(`${JSON.stringify(withRequestId(command))}\n`);
     await sink.flush();
   }
   await sink.end();

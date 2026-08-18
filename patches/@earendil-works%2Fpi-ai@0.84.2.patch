@@ -1,0 +1,35 @@
+diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
+index c9fe5d14f51a43142f8d182cf9ac9d7ce69f2175..4cc2533489373338a3a161b03ef0a3ff99f65e56 100644
+--- a/dist/api/openai-codex-responses.js
++++ b/dist/api/openai-codex-responses.js
+@@ -1152,7 +1152,7 @@ async function processWebSocketStream(url, body, headers, output, stream, model,
+     // WebSocket continuation still works via connection-scoped previous_response_id state.
+     const fullBody = body;
+     const requestBody = useCachedContext && entry ? buildCachedWebSocketRequestBody(entry, fullBody) : fullBody;
+-    const stats = cacheSessionId ? getOrCreateWebSocketDebugStats(cacheSessionId) : undefined;
++    headers.set("originator", "pi");
+     if (stats) {
+         stats.requests++;
+         if (reused)
+@@ -1265,7 +1265,7 @@ function buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token)
+     }
+     headers.set("Authorization", `Bearer ${token}`);
+     headers.set("chatgpt-account-id", accountId);
+-    headers.set("originator", "pi");
++    headers.set("originator", process.env.DUET_CODEX_ORIGINATOR || "pi");
+     headers.set("User-Agent", getPiUserAgent());
+     return headers;
+ }
+diff --git a/dist/auth/oauth/openai-codex.js b/dist/auth/oauth/openai-codex.js
+index 04813e44dde0d5cd2a828aa0a2fbc0ed1dfc2df9..6051da84226687957fb1956ade4573d49081f780 100644
+--- a/dist/auth/oauth/openai-codex.js
++++ b/dist/auth/oauth/openai-codex.js
+@@ -134,6 +134,8 @@ async function refreshAccessToken(refreshToken, signal) {
+                 grant_type: "refresh_token",
+                 refresh_token: refreshToken,
+                 client_id: CLIENT_ID,
++                // OpenAI's token endpoint 401s without the scope param.
++                scope: "openid profile email",
+             }),
+             signal,
+         });

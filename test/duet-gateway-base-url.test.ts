@@ -3,10 +3,7 @@ import {
   fetchModelCatalog,
   createDuetModelGateway,
 } from "../src/model-resolution/model-gateway.js";
-import {
-  getDuetGatewayBaseUrl,
-  resolveDuetGatewayModel,
-} from "../src/model-resolution/duet-gateway.js";
+import { getDuetGatewayBaseUrl } from "../src/model-resolution/duet-gateway.js";
 import { resolveModelName } from "../src/model-resolution/resolver.js";
 
 const ENV_KEYS = ["DUET_GATEWAY_BASE_URL", "DUET_API_KEY"] as const;
@@ -51,7 +48,7 @@ describe("getDuetGatewayBaseUrl", () => {
 
 describe("duet-gateway model routing", () => {
   test("maps GLM xhigh to the gateway's maximum reasoning effort", () => {
-    const model = resolveDuetGatewayModel("zai/glm-5.2");
+    const model = resolveModelName("duet-gateway:zai/glm-5.2");
 
     expect(model.compat).toMatchObject({ forceAdaptiveThinking: true });
     expect(model.thinkingLevelMap?.xhigh).toBe("max");
@@ -60,7 +57,7 @@ describe("duet-gateway model routing", () => {
   test("uses the dedicated base directly for anthropic transport models", () => {
     process.env.DUET_GATEWAY_BASE_URL = "https://gateway.example.com/base";
 
-    const model = resolveDuetGatewayModel("anthropic/claude-opus-4.8");
+    const model = resolveModelName("duet-gateway:anthropic/claude-opus-4.8");
 
     expect(model.baseUrl).toBe("https://gateway.example.com/base");
   });
@@ -68,39 +65,29 @@ describe("duet-gateway model routing", () => {
   test("appends /v1 to the dedicated base for OpenAI transport models", () => {
     process.env.DUET_GATEWAY_BASE_URL = "https://gateway.example.com/base";
 
-    const model = resolveDuetGatewayModel("openai/gpt-5.6-sol");
+    const model = resolveModelName("duet-gateway:openai/gpt-5.6-sol");
 
     expect(model.baseUrl).toBe("https://gateway.example.com/base/v1");
   });
 });
 
-describe("connected-provider model synthesis", () => {
-  test("resolves codex 5.6 clones with their native transport and published costs", () => {
-    const cases = [
-      {
-        id: "gpt-5.6-sol",
-        cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 6.25 },
-      },
-      {
-        id: "gpt-5.6-terra",
-        cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 3.125 },
-      },
-      {
-        id: "gpt-5.6-luna",
-        cost: { input: 1, output: 6, cacheRead: 0.1, cacheWrite: 1.25 },
-      },
-    ];
-
-    for (const expected of cases) {
-      const model = resolveModelName(`openai-codex:${expected.id}`);
+// The transport and route are ours to pin; the prices are the vendor's, so
+// this asserts only that a real one survived resolution — a model missing
+// from the catalog resolves to a zeroed pass-through, and cost accounting
+// would then lie rather than fail.
+describe("connected-provider models", () => {
+  test("resolves the codex 5.6 models on their native transport, priced", () => {
+    for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+      const model = resolveModelName(`openai-codex:${id}`);
 
       expect(model).toMatchObject({
-        id: expected.id,
+        id,
         provider: "openai-codex",
         api: "openai-codex-responses",
         baseUrl: "https://chatgpt.com/backend-api",
-        cost: expected.cost,
       });
+      expect(model.cost.input, `${id} resolved to a free model`).toBeGreaterThan(0);
+      expect(model.cost.output, `${id} resolved to a free model`).toBeGreaterThan(0);
     }
   });
 });

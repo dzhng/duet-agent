@@ -50,8 +50,19 @@ export async function callAdvisor(input: CallAdvisorInput): Promise<AdvisorResul
     system: ADVISOR_SYSTEM_PROMPT,
     messages: [{ role: "user", content }],
     maxOutputTokens: ADVISOR_MAX_OUTPUT_TOKENS,
-    reasoning: input.thinkingLevel,
+    reasoning: advisorReasoningLevel(input.thinkingLevel),
     abortSignal: input.signal,
   });
   return { advice: result.text, usage: result.usage };
+}
+
+/**
+ * pi-ai gained a `max` thinking level; the AI SDK's `reasoning` option stops at
+ * `xhigh`. The advisor is a side call, so the closest supported level is the
+ * honest mapping rather than dropping the request to a default.
+ */
+function advisorReasoningLevel(
+  level: ThinkingLevel,
+): "minimal" | "low" | "medium" | "high" | "xhigh" {
+  return level === "max" ? "xhigh" : level;
 }

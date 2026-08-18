@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
-import { complete, type Context } from "@earendil-works/pi-ai";
+import type { Context } from "@earendil-works/pi-ai";
+import { duetModels } from "../src/model-resolution/models.js";
 import { convertToLlm } from "@earendil-works/pi-coding-agent";
 import dedent from "dedent";
 import { readFile } from "node:fs/promises";
@@ -99,11 +100,15 @@ describe("session_VO5yjfS1vV6_ wire-starvation continuation", () => {
           systemPrompt: payload.systemPrompt,
           messages: convertToLlm(payload.dispatched),
         };
-        // pi-ai's built-in env-key map does not know the project-local
-        // `duet-gateway` provider, so a bare `complete()` would resolve
-        // an empty apiKey. Pass it explicitly via the project shim.
+        // Connected providers hold their token in Duet's own credential
+        // store, not in pi-ai's, so the key is resolved through the project
+        // shim and passed explicitly.
         const apiKey = resolveProviderApiKey(model.provider);
-        const response = await complete(model, context, apiKey ? { apiKey } : undefined);
+        const response = await duetModels().completeSimple(
+          model,
+          context,
+          apiKey ? { apiKey } : undefined,
+        );
         const replyText = response.content
           .filter((block): block is { type: "text"; text: string } => block.type === "text")
           .map((block) => block.text)

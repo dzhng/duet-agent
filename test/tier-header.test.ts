@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { activeDuetTier, setActiveDuetTier } from "../src/model-routing/active-tier.js";
 import { callAdvisor } from "../src/model-routing/advisor.js";
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
-import { DUET_TIER_HEADER, resolveDuetGatewayModel } from "../src/model-resolution/duet-gateway.js";
+import { DUET_TIER_HEADER } from "../src/model-resolution/duet-gateway.js";
 import { resolveModelName } from "../src/model-resolution/resolver.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 
@@ -116,14 +116,16 @@ describe("duet gateway tier attribution", () => {
       "moonshotai/kimi-k3",
       "zai/glm-5.2",
     ]) {
-      expect(resolveDuetGatewayModel(modelId).headers?.[DUET_TIER_HEADER]).toBe("balanced");
+      expect(resolveModelName(`duet-gateway:${modelId}`).headers?.[DUET_TIER_HEADER]).toBe(
+        "balanced",
+      );
     }
   });
 
   test("omits the header entirely when a concrete model is pinned", () => {
     setActiveDuetTier(undefined);
 
-    const model = resolveDuetGatewayModel("anthropic/claude-fable-5");
+    const model = resolveModelName("duet-gateway:anthropic/claude-fable-5");
 
     expect(model.headers?.[DUET_TIER_HEADER]).toBeUndefined();
   });
@@ -133,17 +135,17 @@ describe("duet gateway tier attribution", () => {
     // a name it has never heard of rather than validating against a fixed set.
     setActiveDuetTier("some-operator-defined-tier");
 
-    expect(resolveDuetGatewayModel("openai/gpt-5.6-sol").headers?.[DUET_TIER_HEADER]).toBe(
+    expect(resolveModelName("duet-gateway:openai/gpt-5.6-sol").headers?.[DUET_TIER_HEADER]).toBe(
       "some-operator-defined-tier",
     );
   });
 
   test("stamping is additive — the tiered model differs only by the header", () => {
     setActiveDuetTier(undefined);
-    const bare = resolveDuetGatewayModel("anthropic/claude-fable-5");
+    const bare = resolveModelName("duet-gateway:anthropic/claude-fable-5");
 
     setActiveDuetTier("frontier");
-    const { headers, ...rest } = resolveDuetGatewayModel("anthropic/claude-fable-5");
+    const { headers, ...rest } = resolveModelName("duet-gateway:anthropic/claude-fable-5");
 
     expect(headers).toEqual({ [DUET_TIER_HEADER]: "frontier" });
     expect(rest).toEqual(bare);

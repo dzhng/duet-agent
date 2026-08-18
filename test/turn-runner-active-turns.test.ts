@@ -42,7 +42,7 @@ class StreamingTurnRunner extends TurnRunner {
   ): Agent {
     this.agentsCreated += 1;
     const agent = super.createAgent(input, onControlResult);
-    agent.streamFn = (_model, context) => {
+    agent.streamFunction = (_model, context) => {
       this.contexts.push(JSON.parse(JSON.stringify(context)) as Context);
       const stream = createAssistantMessageEventStream();
       this.pendingStreams.push(stream);

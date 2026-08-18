@@ -1,3 +1,4 @@
+import { withRequestId } from "./helpers/rpc-command.js";
 import { describe, expect } from "bun:test";
 import dedent from "dedent";
 import { Buffer } from "node:buffer";
@@ -705,7 +706,7 @@ async function runRpcSessionStreaming(
   // are not asserted on but the pipe must keep moving.
   void new Response(proc.stderr).text();
   const send = async (command: TurnRunnerCommand) => {
-    proc.stdin.write(`${JSON.stringify(command)}\n`);
+    proc.stdin.write(`${JSON.stringify(withRequestId(command))}\n`);
     await proc.stdin.flush();
   };
 
@@ -825,7 +826,7 @@ async function writeCommandsToStdin(
 ): Promise<void> {
   const sink = proc.stdin;
   for (const command of commands) {
-    sink.write(`${JSON.stringify(command)}\n`);
+    sink.write(`${JSON.stringify(withRequestId(command))}\n`);
     await sink.flush();
   }
   await sink.end();
