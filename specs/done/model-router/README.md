@@ -85,8 +85,8 @@ losing alternatives). The build followed it with the divergences recorded below.
   `src/tui/session-subscription.ts`/`sidebar.ts`; gateway credential fallback in
   `src/cli/model-gateway.ts` (`createDuetModelGateway`).
 - Catalog: kimi-k3 / gpt-5.6-sol / gpt-5.6-terra entries in `src/model-resolution/catalog.ts`;
-  gateway clone overrides (`MISSING_MODEL_CLONES`, kimi `high→max` thinking map) in
-  `duet-gateway.ts`.
+  gateway capability gaps (`gatewayCapabilityGaps`) in `duet-gateway.ts` — the clone table
+  (`MISSING_MODEL_CLONES`) it replaced died with the pi-ai 0.84 migration, see below.
 - Tests that pin behavior: `test/model-routing-*.test.ts`, `test/turn-runner-router.test.ts`,
   `test/turn-runner-tools.test.ts`, `test/advisor-transcript.test.ts`, `test/cli-route.test.ts`;
   live evals `evals/model-routing-classifier.eval.ts` (28-case scorecard; a manual
@@ -203,6 +203,12 @@ with the whole static-spec mechanism during a future pi-ai 0.80 migration — a 
 (resolution, transports, capability sourcing move to the live store), not a version bump. Note
 also pi-agent-core exact-pins its nested pi-ai, so root must stay on the identical version or
 the `Model` type graph splits.
+
+**That migration landed (2026-08, pi-ai 0.84).** The clone table and per-gateway override
+records are gone: both gateways are now declared as first-class pi-ai providers that rebase
+the upstream catalog onto their own route, and the only local model metadata left is
+`gatewayCapabilityGaps` in `src/model-resolution/duet-gateway.ts` — entries that exist solely
+while a capability the gateways serve has no catalog field behind it.
 
 ## Post-close increment: step-output triggers (2026-07-18)
 

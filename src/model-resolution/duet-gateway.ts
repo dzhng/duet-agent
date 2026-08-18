@@ -57,20 +57,6 @@ export function getDuetGatewayBaseUrl(): string {
 }
 
 /**
- * Every model the Duet gateway serves, declared from pi-ai's Vercel AI Gateway
- * catalog and rebased onto the Duet proxy.
- *
- * The catalog is the only source of a model's capabilities; nothing here
- * declares a model. That is what lets a newly served gateway model work with
- * no code change, and it is why a capability we send on the wire must either
- * come from the catalog or be named in `gatewayCapabilityGaps` below.
- *
- * Memoized on the gateway origin: `resolveGatewayModel` runs on every
- * model resolution — parent step, classifier, each subagent — and rebasing two
- * hundred catalog entries each time is pure waste. Tests move the origin
- * between cases, so the key is the origin rather than a plain once-flag.
- */
-/**
  * A gateway route: where a request goes, and which credential it carries.
  *
  * The Duet gateway is a proxy in front of Vercel's — same catalog, same model
@@ -127,6 +113,11 @@ function builtinGatewayAuth(): ProviderAuth {
 
 /**
  * The catalog rebased onto one gateway route, built once per route.
+ *
+ * The catalog is the only source of a model's capabilities; nothing here
+ * declares a model. That is what lets a newly served gateway model work with
+ * no code change, and it is why a capability we send on the wire must either
+ * come from the catalog or be named in `gatewayCapabilityGaps` below.
  *
  * `resolveGatewayModel` runs on every model resolution — parent step,
  * classifier, each subagent — so rebasing two hundred catalog entries per call

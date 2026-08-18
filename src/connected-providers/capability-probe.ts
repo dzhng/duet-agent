@@ -1,5 +1,4 @@
 import { complete } from "@earendil-works/pi-ai/compat";
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   type Api,
   type AssistantMessage,
@@ -42,10 +41,13 @@ export async function probeConnectedProvider(
   const oauth = entry.oauth();
   const credential = { ...credentials, type: "oauth" as const };
 
-  const catalog = getBuiltinModels(id as Parameters<typeof getBuiltinModels>[0]);
+  // The provider owns its model list: a configured fake issuer stands in for
+  // the whole provider, and its models carry the fixture's baseUrl/transport.
+  const provider = entry.provider();
+  const catalog = provider.getModels();
   // Account-specific availability is the provider's, not the OAuth
   // implementation's: an ineligible Copilot plan filters every model out.
-  const available = entry.provider().filterModels?.(catalog, credential) ?? catalog;
+  const available = provider.filterModels?.(catalog, credential) ?? catalog;
   const servedModelIds =
     id === "openai-codex" ? [...CHATGPT_SERVED_MODEL_IDS] : available.map((model) => model.id);
   const copilotHasNoModels = id === "github-copilot" && hasEmptyAvailableModelIds(credentials);
