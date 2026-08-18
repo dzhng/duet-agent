@@ -152,8 +152,8 @@ export function applyConnectedModelHook<T extends { id: string }>(
 ): T | undefined {
   const credentials = connectedTokens.credentials(provider);
   if (!credentials) return model;
-  // Account-specific model availability moved from the OAuth implementation
-  // onto the provider (`filterModels`).
+  // Account-specific model availability belongs to the provider, via
+  // `filterModels`.
   const entry = connectedProviders().find((candidate) => candidate.id === provider);
   const filterModels = entry?.provider().filterModels;
   if (!filterModels) return model;

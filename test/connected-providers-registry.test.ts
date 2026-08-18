@@ -49,8 +49,7 @@ describe("connected provider registry", () => {
   });
 
   // The registry is the seam the rest of the agent reads a provider through,
-  // so the fake has to be visible there — it used to be installed into a pi-ai
-  // global that no longer exists.
+  // so a fake issuer is only actually installed if it is visible here.
   test("fake issuer installation is unset-safe and idempotent", () => {
     const realBaseUrl = codexProvider().baseUrl;
     expect(realBaseUrl).toBe("https://chatgpt.com/backend-api");

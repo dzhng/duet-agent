@@ -30,10 +30,10 @@ afterEach(() => {
 /**
  * The turn runner resolves a connected provider's token itself — Duet stores
  * and refreshes ChatGPT/Copilot credentials, pi-ai's credential store never
- * sees them — and hands it to the loop as `apiKey`. pi-ai only honors that
- * override for a provider that declares api-key auth, and `openai-codex`
- * declares OAuth only, so dispatch used to reject the request before it ever
- * reached the wire.
+ * sees them — and hands it to the loop as `apiKey`. That override is honored
+ * only for a provider that declares api-key auth, and `openai-codex` declares
+ * OAuth alone, so if the registry stops saying Duet holds the credential,
+ * every connected turn is refused before a request is built.
  */
 test.each(["openai-codex", "github-copilot", "duet-gateway"])(
   "%s dispatch sends the caller's key instead of refusing the request",

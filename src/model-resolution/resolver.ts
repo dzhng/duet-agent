@@ -8,7 +8,7 @@ import {
   type RoutingCatalogAdapter,
   type RoutingTable,
 } from "../model-routing/table.js";
-import { rebaseOntoVercelGateway, resolveDuetGatewayModel } from "./duet-gateway.js";
+import { resolveDuetGatewayModel, resolveVercelGatewayModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
   canonicalizeProviderModelId,
@@ -75,24 +75,17 @@ export function resolveModelName(model: string): Model<any> {
   const modelId = isKnownProvider(provider)
     ? canonicalizeProviderModelId(provider, rawModelId)
     : rawModelId;
-  if (provider === "duet-gateway") {
-    // resolveDuetGatewayModel always returns a model: it falls back to a
-    // synthesized pass-through spec for gateway ids pi-ai's catalog has not
-    // shipped yet, so new gateway models work without a code change here.
-    return clampModelOutputTokens(resolveDuetGatewayModel(modelId));
+  // Both gateway routes resolve through their own module: they pick a
+  // transport per model rather than inheriting the catalog's blanket
+  // anthropic-messages declaration, and they always return a model, falling
+  // back to a synthesized pass-through for an id the catalog has not shipped.
+  if (provider === "duet-gateway") return clampModelOutputTokens(resolveDuetGatewayModel(modelId));
+  if (provider === "vercel-ai-gateway") {
+    return clampModelOutputTokens(resolveVercelGatewayModel(modelId));
   }
-  // The catalog answers for every provider now; the clone table that used to
-  // cover its gaps is gone. clampModelOutputTokens forwards a missing model
-  // untouched at runtime.
-  const resolved = builtinModel(provider, modelId);
-  // A direct vercel pin is the same gateway the Duet proxy fronts, so it picks
-  // its transport the same way rather than inheriting the catalog's blanket
-  // anthropic-messages declaration.
-  return clampModelOutputTokens(
-    (provider === "vercel-ai-gateway" && resolved
-      ? rebaseOntoVercelGateway(resolved)
-      : resolved) as Model<any>,
-  );
+  // The catalog answers for every other provider. clampModelOutputTokens
+  // forwards a missing model untouched at runtime.
+  return clampModelOutputTokens(builtinModel(provider, modelId) as Model<any>);
 }
 
 /** Resolve an auxiliary actor through configured metered router order only. */

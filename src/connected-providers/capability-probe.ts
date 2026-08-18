@@ -43,8 +43,8 @@ export async function probeConnectedProvider(
   const credential = { ...credentials, type: "oauth" as const };
 
   const catalog = getBuiltinModels(id as Parameters<typeof getBuiltinModels>[0]);
-  // Account-specific availability moved from the OAuth implementation onto the
-  // provider itself (Copilot's ineligible plans filter every model out).
+  // Account-specific availability is the provider's, not the OAuth
+  // implementation's: an ineligible Copilot plan filters every model out.
   const available = entry.provider().filterModels?.(catalog, credential) ?? catalog;
   const servedModelIds =
     id === "openai-codex" ? [...CHATGPT_SERVED_MODEL_IDS] : available.map((model) => model.id);

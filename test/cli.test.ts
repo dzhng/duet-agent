@@ -496,6 +496,15 @@ describe("CLI model inference", () => {
     const synthesizedOpenAI = resolveModelName("duet:openai/gpt-future");
     expect(synthesizedOpenAI.api).toBe("openai-responses");
     expect(synthesizedOpenAI.baseUrl.endsWith("/v1")).toBe(true);
+
+    // A direct vercel pin fronts the same catalog, so it synthesizes on the
+    // same terms. Resolution declares a Model, not a Model|undefined, and an
+    // unshipped id is exactly where that promise gets tested.
+    const vercel = resolveModelName("vercel:zai/glm-9.9-not-in-catalog");
+    expect(vercel.id).toBe("zai/glm-9.9-not-in-catalog");
+    expect(vercel.provider).toBe("vercel-ai-gateway");
+    expect(vercel.api).toBe("anthropic-messages");
+    expect(vercel.baseUrl).toBe("https://ai-gateway.vercel.sh");
   });
 
   test("keeps vercel-gateway OpenAI models on the openai-responses transport", () => {

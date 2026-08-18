@@ -80,11 +80,11 @@ let installedProviders: readonly Provider[] | undefined;
  * Point the connected-provider registry at a fake issuer when one is
  * configured.
  *
- * pi-ai used to keep a global OAuth registry to register into. It does not
- * any more — an implementation hangs off the provider that uses it — so the
- * fake is published here and `connectedProviders()` reads it instead of the
- * built-in provider. That also makes the swap explicit rather than a global
- * side effect.
+ * An OAuth implementation hangs off the provider that uses it, so standing in
+ * for the real issuer means standing in for the whole provider:
+ * `connectedProviders()` reads what this publishes in place of the built-in
+ * one. Being a read rather than a global mutation is what keeps the swap
+ * visible at the seam that consumes it.
  */
 export function installFakeIssuerIfConfigured(
   env: Record<string, string | undefined> = process.env,
@@ -172,9 +172,9 @@ function createFakeProvider(id: ConnectedProviderId, name: string, baseUrl: stri
 }
 
 /**
- * RFC-8628 polling for the fake issuer. pi-ai stopped exporting its own device
- * poller, and a fixture that only has to honour pending/slow_down/denied does
- * not need one.
+ * RFC-8628 polling for the fake issuer — pending, slow_down, denied, expired.
+ * That is the whole protocol surface the conformance fixtures exercise, so it
+ * is spelled out here rather than reaching for a general implementation.
  */
 async function pollFakeDeviceCode(
   baseUrl: string,

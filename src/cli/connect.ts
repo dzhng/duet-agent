@@ -37,9 +37,9 @@ export interface ConnectCommandIO {
   /** Read browser-flow fallback input or Copilot enterprise-domain input. */
   prompt?: (message: string) => Promise<string>;
   /**
-   * OAuth implementation seam. pi-ai used to keep a global registry a test
-   * could overwrite; an implementation now hangs off its provider, so the
-   * fixture is injected here instead.
+   * OAuth implementation seam. An implementation hangs off its provider, so a
+   * test that needs a different one injects it here rather than swapping a
+   * registry out from under the command.
    */
   oauth?: (id: ConnectedProviderId) => OAuthAuth;
   /** Capability seam; production performs a real one-token provider completion. */

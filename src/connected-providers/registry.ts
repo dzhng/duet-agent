@@ -23,11 +23,10 @@ export interface ConnectedProviderEntry {
 }
 
 /**
- * pi-ai stopped keeping a global OAuth registry: an implementation now hangs
- * off the model provider that uses it, so it is read from the built-in
- * provider list rather than looked up by id. That also makes this the one
- * place a configured fake issuer can stand in for the real one — it used to
- * overwrite the global registry from underneath every caller.
+ * An OAuth implementation hangs off the model provider that uses it, so it is
+ * read from the built-in provider list rather than looked up by id. That makes
+ * this the single seam a configured fake issuer substitutes at, in view of
+ * every caller that goes through the registry.
  */
 function piProvider(id: ConnectedProviderId): Provider {
   const provider =

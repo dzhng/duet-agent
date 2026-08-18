@@ -3027,8 +3027,8 @@ export class TurnRunner {
     // carrying the don't-switch-mid-task cache preference.
     let agent!: Agent;
     agent = new Agent({
-      // pi-agent-core stopped resolving transports itself; dispatch comes from
-      // the registry that knows the Duet gateway provider.
+      // Dispatch comes from the registry that knows the Duet gateway provider;
+      // the loop resolves no transport of its own.
       streamFn: duetStreamFn,
       initialState: {
         model,

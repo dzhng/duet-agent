@@ -13,8 +13,8 @@ import {
  * The model registry every dispatch goes through: pi-ai's built-in providers
  * plus Duet's own gateway provider.
  *
- * pi-agent-core no longer resolves a transport itself — a caller hands it a
- * `StreamFn` — so this is the one place that decides who can serve a model.
+ * The agent loop is handed a `StreamFn` rather than resolving a transport
+ * itself, so this is the one place that decides who can serve a model.
  * Registering `duet-gateway` here is what lets the gateway declare its own
  * models and its own auth instead of impersonating another provider's.
  *
