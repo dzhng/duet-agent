@@ -9,7 +9,7 @@ import type { TurnEvent } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 /**
  * Replay of session `c_cGfNEIotLU` ("Investigate corrupted memory DBs") with

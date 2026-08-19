@@ -10,7 +10,7 @@ import type { StateMachineDefinition, StateMachineState } from "../src/types/sta
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 /** Requirement tokens. Random enough that a verdict naming one cannot be luck. */
 const ALPHA = "STATUS: ALPHA-7Q2";

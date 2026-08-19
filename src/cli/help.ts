@@ -72,9 +72,9 @@ INTERACTIVE
 MODELS
   The default is the routed frontier tier. Use frontier, balanced, or economy
   to select a routing policy, or a concrete shorthand to bypass routing and pin.
-  Concrete names include opus, sonnet, haiku, and sol (versionless families), or versioned forms like opus-4.8.
+  Concrete names include opus, sonnet, haiku, and sol (versionless families), or versioned forms like opus-5.
   They map to the first configured router that supports that model.
-  Full provider:modelId syntax is also supported, e.g. duet:anthropic/claude-opus-4.8.
+  Full provider:modelId syntax is also supported, e.g. duet:anthropic/claude-opus-5.
   --provider pins that provider's concrete default; the memory model remains concrete.
 
   duet-gateway: routes through the Duet gateway proxy
@@ -85,10 +85,10 @@ MODELS
 EXAMPLES
   duet "build a REST API with Express and TypeScript"
   duet -m sol "analyze the performance of our test suite"
-  duet --memory-model sonnet-4.6 "summarize this repo"
+  duet --memory-model sonnet-5 "summarize this repo"
   duet --provider openrouter "explain this codebase"
   duet --provider duet "refactor the auth module"
-  duet -m opus-4.7 "refactor the auth module"
+  duet -m opus-5 "refactor the auth module"
   duet --system-prompt "Prefer concise answers." "review this repo"
   duet --system-prompt-file TEAM.md "review this repo"
   duet --env-file ~/.config/duet/env "review this repo"
@@ -481,7 +481,7 @@ OPTIONS
 
 EXAMPLES
   duet train ./docs/my-project
-  duet train ./research --slug acme-research --model sonnet-4.6
+  duet train ./research --slug acme-research --model sonnet-5
   duet train list
   duet train list --json
   duet train show acme-research

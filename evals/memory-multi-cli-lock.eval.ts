@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 /**
  * Red eval: starting a second CLI while a first CLI is alive against a

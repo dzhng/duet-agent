@@ -5,7 +5,7 @@ import type { TurnEvent, TurnState } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 describe("parent asks while a state machine is parked", () => {
   testIfDocker(

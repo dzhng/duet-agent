@@ -4,7 +4,7 @@ import path from "node:path";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { runTrainEval } from "./helpers/train.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 const fixtureDir = path.join(import.meta.dir, "fixtures", "train-corpus-snowflake");
 const slug = "snowflake-eval";
 

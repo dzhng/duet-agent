@@ -309,8 +309,8 @@ export DUET_API_KEY=...
 
 duet "build a REST API with Express"
 duet                                                                  # interactive TUI
-duet -m opus-4.8 --workdir ./my-project "refactor the auth module"
-duet --memory-model sonnet-4.6 "summarize this repo"
+duet -m opus-5 --workdir ./my-project "refactor the auth module"
+duet --memory-model sonnet-5 "summarize this repo"
 duet --system-prompt "Prefer concise answers." "review this repo"
 duet --system-prompt-file TEAM.md "review this repo"
 duet --no-system-prompt-files "review this repo"
@@ -320,10 +320,10 @@ duet memory                                                           # browse d
 
 # Through Vercel AI Gateway
 export AI_GATEWAY_API_KEY=...
-duet -m opus-4.8 "review this repo"
+duet -m opus-5 "review this repo"
 ```
 
-Model names can be a virtual tier (`frontier`, `balanced`, `economy` — routed per prompt), a versionless family (`opus`, `sonnet`, `haiku`, `sol`, and others), full `provider:modelId` syntax, or a versioned shorthand such as `opus-4.8` or `gpt-5.6-sol`. Family names resolve to the latest curated version, while concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
+Model names can be a virtual tier (`frontier`, `balanced`, `economy` — routed per prompt), a versionless family (`opus`, `sonnet`, `haiku`, `sol`, and others), full `provider:modelId` syntax, or a versioned shorthand such as `opus-5` or `gpt-5.6-sol`. Family names resolve to the latest curated version, while concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
 
 </details>
 
@@ -431,7 +431,7 @@ DB-backed memory commands accept `--db <absolute-path>` and `--wait <seconds>`. 
 ```bash
 duet train ./snowflake-notes              # writes to the nearest .agents/memories
 duet train ./snowflake-notes --slug snow  # custom slug (default: folder basename)
-duet train ./snowflake-notes --model opus-4.8
+duet train ./snowflake-notes --model opus-5
 duet train ./snowflake-notes --db /tmp/scratch.db  # write to a throwaway DB instead
 ```
 
@@ -494,7 +494,7 @@ bun run cli -- "build a REST API with Express"
 import { TurnRunner } from "@duetso/agent";
 
 const turnRunner = new TurnRunner({
-  model: "opus-4.8",
+  model: "opus-5",
   cwd: process.cwd(),
   mode: "auto",
 });
@@ -569,7 +569,7 @@ The rendered memory section above the message tail is a frozen pack with two ind
 import { TurnRunner } from "@duetso/agent";
 
 const turnRunner = new TurnRunner({
-  model: "opus-4.8",
+  model: "opus-5",
   memoryDbPath: false, // Disables observational memory and compaction.
 });
 ```

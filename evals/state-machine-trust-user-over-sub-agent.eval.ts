@@ -7,7 +7,7 @@ import type { TurnEvent, TurnEventOrigin } from "../src/types/protocol.js";
 import type { StateMachineAgentState, StateMachineDefinition } from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 /**
  * Regression eval for parent-vs-sub-agent trust.

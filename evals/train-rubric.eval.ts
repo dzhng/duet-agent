@@ -12,13 +12,13 @@ import { runTrainEval } from "./helpers/train.js";
  * observation against the gold-standard rubric established by Opus 4.8
  * (evals/rubrics/<slug>.json). Coverage = fraction of 'must' facts conveyed.
  *
- *   EVAL_MODEL=sonnet-4.6 npm run eval        # via the docker harness
+ *   EVAL_MODEL=sonnet-5 npm run eval        # via the docker harness
  *
- * Grading always uses a fixed strong judge (JUDGE_MODEL, default opus-4.7)
+ * Grading always uses a fixed strong judge (JUDGE_MODEL, default opus-5)
  * so scores are comparable across candidate models.
  */
-const model = process.env.EVAL_MODEL ?? "opus-4.8";
-const judgeModel = process.env.JUDGE_MODEL ?? "opus-4.7";
+const model = process.env.EVAL_MODEL ?? "opus-5";
+const judgeModel = process.env.JUDGE_MODEL ?? "opus-5";
 const threshold = Number(process.env.COVERAGE_THRESHOLD ?? "0.8");
 
 describe(`train rubric coverage [model=${model}]`, () => {

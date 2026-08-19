@@ -29,7 +29,7 @@ import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
  * questions, and zero on prompts that are obviously self-contained.
  */
 
-const actorModel = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const actorModel = process.env.EVAL_MODEL ?? "sonnet-5";
 const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 
 let tempDirs: string[] = [];

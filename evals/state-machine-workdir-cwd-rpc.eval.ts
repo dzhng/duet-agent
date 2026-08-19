@@ -8,7 +8,7 @@ import type { TurnEvent, TurnRunnerCommand, TurnTerminalEvent } from "../src/typ
 import type { StateMachineSessionEvent } from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 /**
  * End-to-end proof that a relative per-state `cwd` resolves against the

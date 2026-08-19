@@ -4,7 +4,7 @@ import type { TurnEvent } from "../src/types/protocol.js";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 describe("held-open quiescence", () => {
   testIfDocker(

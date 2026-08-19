@@ -10,8 +10,8 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
 
 // The orchestrating runner routes on this model; the per-state override points
 // the sub-agent at a different one so the captured value is unambiguous.
-const runnerModel = process.env.EVAL_MODEL ?? "sonnet-4.6";
-const stateModel = runnerModel === "haiku-4.5" ? "sonnet-4.6" : "haiku-4.5";
+const runnerModel = process.env.EVAL_MODEL ?? "sonnet-5";
+const stateModel = runnerModel === "haiku-4.5" ? "sonnet-5" : "haiku-4.5";
 const stateThinkingLevel = "high" as const;
 
 // Captures the options every agent gets at creation time, tagging which calls

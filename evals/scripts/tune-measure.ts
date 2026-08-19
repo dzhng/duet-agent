@@ -12,8 +12,8 @@
  * Needs DUET_API_KEY (or ANTHROPIC_API_KEY). Not Docker — drives the train
  * harness in-process. Rubrics must already exist.
  *
- *   bun run evals/scripts/tune-measure.ts                     # sonnet-4.6 + opus-4.8
- *   bun run evals/scripts/tune-measure.ts sonnet-4.6          # sonnet only
+ *   bun run evals/scripts/tune-measure.ts                     # sonnet-5 + opus-5
+ *   bun run evals/scripts/tune-measure.ts sonnet-5          # sonnet only
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -22,9 +22,9 @@ import { CORPORA, fixtureDirFor, rubricPathFor } from "../helpers/corpora.js";
 import { gradeAgainstRubric, type GradeResult, type Rubric } from "../helpers/rubric.js";
 import { runTrainEval } from "../helpers/train.js";
 
-const judgeModel = process.env.JUDGE_MODEL ?? "opus-4.7";
+const judgeModel = process.env.JUDGE_MODEL ?? "opus-5";
 const argv = process.argv.slice(2);
-const candidates = argv.length ? argv : ["sonnet-4.6", "opus-4.8"];
+const candidates = argv.length ? argv : ["sonnet-5", "opus-5"];
 
 interface CellResult {
   coverage: number | null;
@@ -142,12 +142,12 @@ writeFileSync(
 console.log(`\nsnapshot: ${snapshotPath}`);
 
 // Gap summary line the orchestrator can read at a glance.
-if (candidates.includes("sonnet-4.6") && candidates.includes("opus-4.8")) {
-  const s = avg("sonnet-4.6");
-  const o = avg("opus-4.8");
+if (candidates.includes("sonnet-5") && candidates.includes("opus-5")) {
+  const s = avg("sonnet-5");
+  const o = avg("opus-5");
   if (s !== null && o !== null) {
     console.log(
-      `\nGAP sonnet-4.6 vs opus-4.8: ${(s * 100).toFixed(0)}% vs ${(o * 100).toFixed(0)}% (delta ${((s - o) * 100).toFixed(0)} pts)`,
+      `\nGAP sonnet-5 vs opus-5: ${(s * 100).toFixed(0)}% vs ${(o * 100).toFixed(0)}% (delta ${((s - o) * 100).toFixed(0)} pts)`,
     );
   }
 }

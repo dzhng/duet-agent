@@ -177,8 +177,8 @@ still emits exactly one terminal event.
   alongside `message`. State-machine sub-agents and synthesized answer
   prompts ignore them.
 
-The model must be vision-capable. The default routing (`sonnet-4.6`,
-`opus-4.7`, `gpt-5.6-sol`, etc.) supports images; `haiku-4.5` does not — if you
+The model must be vision-capable. The default routing (`kimi-k3`,
+`opus-5`, `gpt-5.6-sol`, etc.) supports images; `haiku-4.5` does not — if you
 override the model, pick one that does.
 
 ## State, memory, AGENTS.md, and skills
@@ -248,7 +248,7 @@ JSON: ..." }` event and are skipped. The loop keeps reading.
 (
   printf '%s\n' '{"type":"start"}'
   printf '%s\n' '{"type":"prompt","message":"What is 2+2? Reply with one number.","behavior":"follow_up"}'
-) | duet --rpc --workdir /tmp --incognito --model sonnet-4.6
+) | duet --rpc --workdir /tmp --incognito --model sonnet-5
 ```
 
 Read the JSONL on stdout; the last event with type `complete` carries the

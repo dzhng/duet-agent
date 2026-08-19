@@ -12,7 +12,7 @@ import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { judge } from "../test/helpers/judge.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 /**
  * Build a solid red PNG of the requested size. Anthropic's image preprocessor

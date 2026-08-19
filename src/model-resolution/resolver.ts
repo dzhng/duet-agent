@@ -64,7 +64,7 @@ export function resolveModelName(model: string): Model<any> {
   const rawProvider = model.slice(0, separator);
   const rawModelId = model.slice(separator + 1);
   // The CLI supports only the router providers (duet-gateway, vercel-ai-gateway,
-  // openrouter). Any other explicit pin — e.g. `anthropic:claude-opus-4-8` or
+  // openrouter). Any other explicit pin — e.g. `anthropic:claude-opus-5` or
   // `openai:gpt-5.6-sol` — is an unknown provider here: `resolveProviderShorthand`
   // returns undefined, the raw provider passes through, and `getModel` below
   // forwards it to pi-ai unchanged. That's incidental passthrough, not a

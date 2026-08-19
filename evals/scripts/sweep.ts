@@ -9,7 +9,7 @@
  * (run generate-rubrics.ts first).
  *
  *   bun run evals/scripts/sweep.ts                          # default 3-model sweep
- *   bun run evals/scripts/sweep.ts opus-4.8 sonnet-4.6      # custom model list
+ *   bun run evals/scripts/sweep.ts opus-5 sonnet-5      # custom model list
  */
 import { existsSync, readFileSync } from "node:fs";
 
@@ -17,7 +17,7 @@ import { CORPORA, fixtureDirFor, rubricPathFor } from "../helpers/corpora.js";
 import { gradeAgainstRubric, type Rubric } from "../helpers/rubric.js";
 import { runTrainEval } from "../helpers/train.js";
 
-const judgeModel = process.env.JUDGE_MODEL ?? "opus-4.7";
+const judgeModel = process.env.JUDGE_MODEL ?? "opus-5";
 const models = process.argv.slice(2);
 const candidates = models.length ? models : ["opus", "sonnet", "haiku"];
 

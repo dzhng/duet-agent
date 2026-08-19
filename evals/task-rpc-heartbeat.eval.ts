@@ -12,7 +12,7 @@ import type {
 } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 const EVENT_TIMEOUT_MS = 45_000;
 
 type RpcWireEvent = TurnEvent;

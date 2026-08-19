@@ -12,7 +12,7 @@ import type { TrainListEntry } from "../src/train/types.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { bufferStream } from "./helpers/train.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 const fixtureDir = path.join(import.meta.dir, "fixtures", "train-corpus-htmx");
 const slug = "htmx-store-eval";
 

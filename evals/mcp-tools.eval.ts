@@ -6,7 +6,7 @@ import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { startMcpHttpServer } from "../test/helpers/mcp-http-server.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 // Deterministic, model-can't-guess values returned by the live MCP server.
 // Picking nonsense tokens forces the model to actually call the tool to learn them.

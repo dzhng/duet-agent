@@ -5,7 +5,7 @@
  *
  * Usage:
  *   duet "build a todo app in React"
- *   duet --model opus-4.7 "refactor auth system"
+ *   duet --model opus-5 "refactor auth system"
  *   echo "fix the bug in server.ts" | duet
  *
  * The actual command implementations live under `src/cli/`. This file is the

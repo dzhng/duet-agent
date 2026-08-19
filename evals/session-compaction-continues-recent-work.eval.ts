@@ -67,7 +67,7 @@ const RECENT_WORK = dedent`
   blocks surface.
 `;
 
-const EVAL_MODEL = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const EVAL_MODEL = process.env.EVAL_MODEL ?? "sonnet-5";
 
 describe("session_VO5yjfS1vV6_ wire-starvation continuation", () => {
   testIfDocker(

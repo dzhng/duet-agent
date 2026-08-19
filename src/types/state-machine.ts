@@ -289,7 +289,7 @@ export interface StateMachineAgentState extends StateMachineBaseState {
    */
   cwd?: string;
   /**
-   * Exact model for this sub-agent, as shorthand (e.g. "opus-4.7") or
+   * Exact model for this sub-agent, as shorthand (e.g. "opus-5") or
    * provider:modelId. When unset the sub-agent inherits the parent runner's
    * model. Intentionally NOT exposed on create_state_machine_definition or on
    * select_state_machine_state's override: the orchestrating model does not

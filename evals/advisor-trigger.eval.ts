@@ -17,7 +17,7 @@ import type { TurnEvent, TurnUsageEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 
-const executorModel = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const executorModel = process.env.EVAL_MODEL ?? "sonnet-5";
 
 interface CapturedToolCall {
   name: string;

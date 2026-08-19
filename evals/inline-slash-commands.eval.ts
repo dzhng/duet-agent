@@ -6,8 +6,8 @@ import { join } from "node:path";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const baselineModel = process.env.EVAL_BASELINE_MODEL ?? "opus-4.7";
-const overrideModel = process.env.EVAL_OVERRIDE_MODEL ?? "sonnet-4.6";
+const baselineModel = process.env.EVAL_BASELINE_MODEL ?? "opus-5";
+const overrideModel = process.env.EVAL_OVERRIDE_MODEL ?? "sonnet-5";
 
 /**
  * Live CLI eval covering the "hey can you review this /model X" use case:

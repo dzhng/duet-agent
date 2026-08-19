@@ -32,10 +32,10 @@ import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
  * behavior into a regression gate.
  */
 
-// This eval pins the actor to opus-4.7 because source-of-truth-first behavior
+// This eval pins the actor to opus-5 because source-of-truth-first behavior
 // is the kind of judgement call where the larger model is held to a higher
 // bar; sonnet-tier models will be tuned against a separate scenario set.
-const actorModel = process.env.EVAL_MODEL ?? "opus-4.7";
+const actorModel = process.env.EVAL_MODEL ?? "opus-5";
 const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 
 let tempDirs: string[] = [];

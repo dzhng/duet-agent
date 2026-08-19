@@ -7,15 +7,15 @@
  * like?" It needs model credentials (DUET_API_KEY or ANTHROPIC_API_KEY) but
  * does NOT need Docker — it's a plain Opus call over the checked-in corpora.
  *
- *   bun run evals/scripts/generate-rubrics.ts             # all corpora, opus-4.8
- *   RUBRIC_MODEL=opus-4.8 bun run evals/scripts/generate-rubrics.ts vercel-eval
+ *   bun run evals/scripts/generate-rubrics.ts             # all corpora, opus-5
+ *   RUBRIC_MODEL=opus-5 bun run evals/scripts/generate-rubrics.ts vercel-eval
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 
 import { CORPORA, RUBRICS_DIR, fixtureDirFor, rubricPathFor } from "../helpers/corpora.js";
 import { generateRubric } from "../helpers/rubric.js";
 
-const model = process.env.RUBRIC_MODEL ?? "opus-4.8";
+const model = process.env.RUBRIC_MODEL ?? "opus-5";
 const only = process.argv.slice(2);
 const targets = only.length ? CORPORA.filter((c) => only.includes(c.slug)) : CORPORA;
 

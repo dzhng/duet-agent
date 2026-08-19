@@ -10,7 +10,7 @@ import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 const advisorThinking = parseThinkingLevel(
   process.env.EVAL_ADVISOR_THINKING ??
     BUILT_IN_ROUTING_TABLE.tiers.frontier.advisor.target.thinkingLevel,

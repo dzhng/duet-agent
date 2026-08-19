@@ -5,7 +5,7 @@ import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnState } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "opus-4.7";
+const model = process.env.EVAL_MODEL ?? "opus-5";
 
 /**
  * Repro of the dev-sessions "thread context loss" report (May 15, 2026).

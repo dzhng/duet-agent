@@ -6,7 +6,7 @@ import { usageFromMessages } from "../src/turn-runner/usage-accounting.js";
 import type { TurnEvent, TurnTokenUsage, TurnUsageEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 /** Assert two usage records are byte-identical token-wise and equal in total cost. */
 function expectSameUsage(actual: TurnTokenUsage, expected: TurnTokenUsage, label: string) {

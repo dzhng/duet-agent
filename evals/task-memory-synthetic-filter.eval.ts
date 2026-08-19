@@ -18,7 +18,7 @@ import { createAssistantMessage } from "../test/helpers/messages.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
 const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 const REAL_FACT = "REAL_USER_MEMORY_FACT_K9";
 const TASK_NOTICE = "SYNTHETIC_TASK_NOTICE_M4";
 const PARK_NOTICE = "SYNTHETIC_PARK_NOTICE_P8";

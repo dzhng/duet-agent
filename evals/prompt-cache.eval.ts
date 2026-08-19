@@ -4,7 +4,7 @@ import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnState } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 describe("prompt cache resume", () => {
   testIfDocker(

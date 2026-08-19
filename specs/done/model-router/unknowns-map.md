@@ -48,12 +48,17 @@ The completed four-quadrant map from the explore-unknowns walk (2026-07-17/18).
 
 | Tier               | visual       | plan                | implement                                        | writing              | general              | advisor                   |
 | ------------------ | ------------ | ------------------- | ------------------------------------------------ | -------------------- | -------------------- | ------------------------- |
-| frontier (default) | kimi-k3 high | fable-5 high        | gpt-5.6-sol high                                 | opus-4.8 medium      | gpt-5.6-sol medium   | fable-5, on               |
+| frontier (default) | kimi-k3 high | opus-5 high         | gpt-5.6-sol high                                 | opus-5 medium        | gpt-5.6-sol medium   | fable-5, on               |
 | balanced           | kimi-k3 high | gpt-5.6-sol high    | gpt-5.6-terra high                               | sonnet-5 medium      | gpt-5.6-terra medium | fable-5, on               |
 | economy            | —            | gpt-5.6-luna medium | glm-5.2 medium; `implement-visual` → luna medium | — (falls to general) | gpt-5.6-luna **low** | gpt-5.6-terra medium, off |
 
 Classifier: gpt-5.6-luna, low effort, every 5 steps, freeform `guidance` field appended
 (screenshot-style admin guidance).
+
+Revision (2026-08): fable-5 is reserved for the advisor persona — no primary route may
+target it, so a completion right after an advisor consult never runs on the model that
+just gave the advice. The frontier plan route moved to the opus family (high) accordingly;
+opus cells resolve to the latest curated opus (opus-5 as of this revision).
 
 ---
 

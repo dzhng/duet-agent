@@ -10,7 +10,7 @@ import { testIfDocker } from "../test/helpers/docker-only.js";
 
 // Defaults to opus-4.8 — the model that actually drifted in the original
 // incident, and the only model that reliably reproduces the drift here.
-// sonnet-4.6 stays on task on this single-shot scenario, so it cannot
+// sonnet-5 stays on task on this single-shot scenario, so it cannot
 // falsify the fix; opus-class over-reasoning is what the guard protects.
 const model = process.env.EVAL_MODEL ?? "opus-4.8";
 

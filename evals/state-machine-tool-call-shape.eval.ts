@@ -5,7 +5,7 @@ import type { TurnEvent } from "../src/types/protocol.js";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "sonnet-4.6";
+const model = process.env.EVAL_MODEL ?? "sonnet-5";
 
 /**
  * Regression eval for the malformed-first-call bug.
@@ -97,7 +97,7 @@ function firstAttemptShape(calls: CapturedCall[]): {
 describe("create_state_machine_definition call shape", () => {
   // Trials per condition. Stochastic streaming bug — we want enough samples
   // to catch ~10–30% repro rates without burning the eval budget. Each trial
-  // is ~$0.05–0.20 on sonnet-4.6 in planning-only mode.
+  // is ~$0.05–0.20 on sonnet-5 in planning-only mode.
   const TRIALS = Number(process.env.EVAL_CALL_SHAPE_TRIALS ?? 3);
 
   testIfDocker(
