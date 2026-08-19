@@ -45,6 +45,10 @@
  *   marker pi-ai emits when `maxRetryDelayMs` is exceeded so higher-level
  *   logic can take over).
  *
+ * Beyond that mirror, this module also retries a provider failure that
+ * arrives with no error code at all (`unknown: ...`) — see
+ * `UNATTRIBUTED_PROVIDER_FAILURE_PATTERN`.
+ *
  * Context-overflow errors are handled by `tryRecoverFromContextOverflow`
  * and intentionally skipped here. Client errors (4xx other than 429) are
  * not retried because retrying with the same payload will not change the
@@ -71,6 +75,29 @@ const NON_RETRYABLE_PATTERN =
   /\b(?:400|401|402|403|404|405|406|407|408|410|411|412|413|414|415|416|417|418|421|422|423|424|425|426|428|431|451)\b|\bunauthorized\b|\bforbidden\b|\bnot found\b/i;
 
 /**
+ * A provider stream that failed without attributing a cause.
+ *
+ * pi-ai renders a failure as `${error.code || "unknown"}: ${error.message ||
+ * "no message"}`, so a leading `unknown:` means the provider ended the stream
+ * and supplied nothing to explain it — OpenRouter's `response.failed`
+ * passthrough is the common source. That is the shape a transient upstream
+ * blip takes when it lands mid-response, and it earns another attempt: the
+ * alternative is discarding a whole turn's work over a hiccup that usually
+ * clears on the next call.
+ *
+ * Anchored to the code slot deliberately. A bare `unknown` anywhere in the
+ * message would also match genuinely terminal failures like "unknown model"
+ * or "unknown parameter", which fail identically however many times they run.
+ * `NON_RETRYABLE_PATTERN` is still consulted first, so an unattributed
+ * wrapper around a 4xx stays terminal.
+ *
+ * Kept separate from `TRANSIENT_PATTERN` because that regex mirrors
+ * pi-coding-agent's; this rule is ours and its anchoring does not belong
+ * inside an unanchored alternation.
+ */
+const UNATTRIBUTED_PROVIDER_FAILURE_PATTERN = /^unknown:/i;
+
+/**
  * Returns true when `errorMessage` looks like a transient gateway/transport
  * failure that another attempt may resolve. Returns false for client errors
  * and any message that does not clearly indicate a server-side fault.
@@ -78,7 +105,9 @@ const NON_RETRYABLE_PATTERN =
 export function isTransientServerError(errorMessage: string | undefined): boolean {
   if (!errorMessage) return false;
   if (NON_RETRYABLE_PATTERN.test(errorMessage)) return false;
-  return TRANSIENT_PATTERN.test(errorMessage);
+  return (
+    TRANSIENT_PATTERN.test(errorMessage) || UNATTRIBUTED_PROVIDER_FAILURE_PATTERN.test(errorMessage)
+  );
 }
 
 /**

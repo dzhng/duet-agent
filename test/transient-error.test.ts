@@ -42,6 +42,12 @@ describe("isTransientServerError", () => {
     "Retry delay of 90s exceeded maxRetryDelayMs cap",
     "429 Too Many Requests",
     "Rate limit exceeded",
+    // pi-ai formats a provider failure as `${code}: ${message}` and puts
+    // "unknown" in the code slot when the provider supplies none. A stream
+    // that died without attributing a cause is the shape a transient blip
+    // takes mid-response, and it cost a real ten-minute turn all of its work.
+    "unknown: An error occurred",
+    "unknown: no message",
   ])("retries: %s", (message) => {
     expect(isTransientServerError(message)).toBe(true);
   });
@@ -52,6 +58,12 @@ describe("isTransientServerError", () => {
     "403 Forbidden",
     "404 Not Found",
     "prompt is too long: 213462 tokens > 200000 maximum",
+    // "unknown" earns a retry only in the code slot. A terminal failure that
+    // merely contains the word is still terminal — another attempt changes
+    // nothing and burns the turn again.
+    "unknown model: gpt-9",
+    "400 unknown parameter: reasoning_effort",
+    "unknown: 403 Forbidden",
     "",
     undefined,
   ])("does not retry: %s", (message) => {
