@@ -364,6 +364,41 @@ class OverflowRecoveryTurnRunner extends TurnRunner {
   }
 }
 
+/**
+ * Completes (or fails) the parent turn with one scripted assistant
+ * message while the memory pipeline always throws — the shape of a
+ * provider 401 on the observer's structured-output call.
+ */
+class FailingMemoryTurnRunner extends TurnRunner {
+  parentMessage: AssistantMessage = createAssistantMessage({ text: "the real answer" });
+
+  protected override async updateMemoryAfterAgentRun(): Promise<void> {
+    throw new Error(
+      'Model did not call required structured output tool: recordObservations. Error: OpenAI API error (401): 401 "unauthorized"',
+    );
+  }
+
+  protected override createAgent(
+    input: AgentConfigInput,
+    onControlResult?: (result: TurnRunnerControlResult) => void,
+  ): Agent {
+    const agent = super.createAgent(input, onControlResult);
+    agent.streamFunction = () => {
+      const stream = createAssistantMessageEventStream();
+      const message = this.parentMessage;
+      queueMicrotask(() => {
+        if (message.stopReason === "error") {
+          stream.push({ type: "error", reason: "error", error: message });
+        } else {
+          stream.push({ type: "done", reason: "stop", message });
+        }
+      });
+      return stream;
+    };
+    return agent;
+  }
+}
+
 class MemoryEventTurnRunner extends TurnRunner {
   readonly memoryRuns: AgentMessage[][] = [];
 
@@ -1059,6 +1094,52 @@ describe("TurnRunner memory", () => {
     expect(lastMemoryIndex).toBeGreaterThanOrEqual(0);
     expect(terminalIndex).toBeGreaterThan(lastMemoryIndex);
     expect(terminal.state.agent.messages.length).toBeGreaterThan(0);
+  });
+
+  // Memory is bookkeeping, never the turn's outcome. Seen live in prod: a
+  // provider 401 during the observer's recordObservations call rewrote a
+  // turn's terminal into that memory error — failing finished work, and on
+  // a turn that had ALSO failed, replacing the real error with the less
+  // informative one. A failed observation just leaves the message tail
+  // unobserved for the next pass to retry.
+  test("a failed memory update does not rewrite a completed turn's outcome", async () => {
+    const runner = new FailingMemoryTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+
+    const terminal = await (await startTurn(runner, { mode: "agent", prompt: "go" })).turn;
+
+    if (terminal.type !== "complete") throw new Error("expected complete terminal");
+    expect(terminal.status).toBe("completed");
+    expect(terminal.result).toContain("the real answer");
+    expect(terminal.error).toBeUndefined();
+    // The failure still surfaces — as a warning, not as the outcome.
+    const warning = events.find(
+      (event): event is Extract<TurnEvent, { type: "system" }> =>
+        event.type === "system" && event.level === "warn",
+    );
+    expect(warning?.message).toContain("recordObservations");
+  });
+
+  test("a failed memory update does not mask the turn's own failure", async () => {
+    const runner = new FailingMemoryTurnRunner({
+      model: "anthropic:claude-opus-4-7",
+      skillDiscovery: { includeDefaults: false },
+    });
+    runner.parentMessage = createAssistantMessage({
+      stopReason: "error",
+      errorMessage: "402 payment required: model call rejected",
+    });
+
+    const terminal = await (await startTurn(runner, { mode: "agent", prompt: "go" })).turn;
+
+    if (terminal.type !== "complete") throw new Error("expected complete terminal");
+    expect(terminal.status).toBe("failed");
+    expect(terminal.error).toContain("model call rejected");
+    expect(terminal.error).not.toContain("recordObservations");
   });
 
   test("resolveTurnOptions falls back through turn → state base → config → default", () => {

@@ -1041,12 +1041,17 @@ export class TurnRunner {
       try {
         await this.updateMemoryAfterAgentRun(quiescentState.agent.messages, quiescentState.options);
       } catch (error) {
-        if (!this.interruptReason) {
-          completion = {
-            status: "failed",
-            error: error instanceof Error ? error.message : String(error),
-          };
-        }
+        // Memory is bookkeeping, never the turn's outcome. Overwriting
+        // `completion` here failed finished turns retroactively — and on a
+        // turn that had ALSO failed, replaced the real error with the
+        // observer's less informative one. A failed observation just leaves
+        // the message tail unobserved for the next pass to retry, the same
+        // best-effort contract the compaction call sites already use.
+        this.emit({
+          type: "system",
+          level: "warn",
+          message: `Memory update failed: ${error instanceof Error ? error.message : String(error)}`,
+        });
       }
       const state = this.snapshotState(this.requireRunnerState());
       if (this.interruptReason) {
