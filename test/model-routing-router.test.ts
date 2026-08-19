@@ -151,7 +151,7 @@ describe("ModelRouter", () => {
     expect(router.status()).toEqual({
       tier: "frontier",
       route: "plan",
-      modelName: "fable",
+      modelName: "opus",
       thinkingLevel: "high",
       lastRationale: plan.rationale,
       assistantSteps: 1,

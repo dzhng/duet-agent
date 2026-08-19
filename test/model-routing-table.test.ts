@@ -63,7 +63,7 @@ describe("built-in model routing table", () => {
     expect(table.defaultTier).toBe("frontier");
     expect(targets("frontier")).toEqual({
       visual: { modelName: "kimi", thinkingLevel: "high" },
-      plan: { modelName: "fable", thinkingLevel: "high" },
+      plan: { modelName: "opus", thinkingLevel: "high" },
       implement: { modelName: "sol", thinkingLevel: "high" },
       writing: { modelName: "opus", thinkingLevel: "medium" },
       general: { modelName: "sol", thinkingLevel: "medium" },

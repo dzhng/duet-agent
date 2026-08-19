@@ -438,7 +438,7 @@ describe("TurnRunner virtual-model adapter", () => {
       type: "router_switch",
       tier: "frontier",
       route: "implement",
-      fromModel: "fable",
+      fromModel: "opus",
       toModel: "sol",
       thinkingLevel: "high",
       trigger: "cadence",
@@ -521,7 +521,7 @@ describe("TurnRunner virtual-model adapter", () => {
       expect.objectContaining({
         trigger: "compaction",
         fromModel: "sol",
-        toModel: "fable",
+        toModel: "opus",
       }),
     ]);
     expect(
@@ -764,7 +764,7 @@ describe("TurnRunner virtual-model adapter", () => {
     const terminal = await turn;
 
     expect(terminal.type).toBe("interrupted");
-    expect(runner.routeStatus()?.modelName).toBe("fable");
+    expect(runner.routeStatus()?.modelName).toBe("opus");
     expect(runner.parentAgentForTest().state.model.id).toBe(runner.requestModels[0]!.id);
     expect(events.filter((event) => event.type === "router_switch")).toHaveLength(1);
   });
