@@ -46,7 +46,7 @@
  *   logic can take over).
  *
  * Beyond that mirror, this module also retries a provider failure that
- * arrives with no error code at all (`unknown: ...`) — see
+ * arrives with no cause attributed to it — see
  * `UNATTRIBUTED_PROVIDER_FAILURE_PATTERN`.
  *
  * Context-overflow errors are handled by `tryRecoverFromContextOverflow`
@@ -77,25 +77,24 @@ const NON_RETRYABLE_PATTERN =
 /**
  * A provider stream that failed without attributing a cause.
  *
- * pi-ai renders a failure as `${error.code || "unknown"}: ${error.message ||
- * "no message"}`, so a leading `unknown:` means the provider ended the stream
- * and supplied nothing to explain it — OpenRouter's `response.failed`
- * passthrough is the common source. That is the shape a transient upstream
- * blip takes when it lands mid-response, and it earns another attempt: the
- * alternative is discarding a whole turn's work over a hiccup that usually
- * clears on the next call.
+ * pi-ai's `response.failed` handler renders the failure as `${error.code ||
+ * "unknown"}: ${error.message}` when the provider sends no code, and
+ * `Unknown error (no error details in response)` when it sends no error
+ * object at all — OpenRouter passthrough is the common source of both. That
+ * is the shape a transient upstream blip takes when it lands mid-response,
+ * and it earns another attempt: the alternative is discarding a whole turn's
+ * work over a hiccup that usually clears on the next call.
  *
- * Anchored to the code slot deliberately. A bare `unknown` anywhere in the
- * message would also match genuinely terminal failures like "unknown model"
- * or "unknown parameter", which fail identically however many times they run.
- * `NON_RETRYABLE_PATTERN` is still consulted first, so an unattributed
+ * Anchored to the head of the message deliberately. A bare `unknown`
+ * anywhere would also match genuinely terminal failures like "unknown model"
+ * or "unknown parameter", which fail identically however many times they
+ * run. `NON_RETRYABLE_PATTERN` is still consulted first, so an unattributed
  * wrapper around a 4xx stays terminal.
  *
  * Kept separate from `TRANSIENT_PATTERN` because that regex mirrors
- * pi-coding-agent's; this rule is ours and its anchoring does not belong
- * inside an unanchored alternation.
+ * pi-coding-agent's; this rule is ours.
  */
-const UNATTRIBUTED_PROVIDER_FAILURE_PATTERN = /^unknown:/i;
+const UNATTRIBUTED_PROVIDER_FAILURE_PATTERN = /^unknown:|^unknown error \(no error details/i;
 
 /**
  * Returns true when `errorMessage` looks like a transient gateway/transport
