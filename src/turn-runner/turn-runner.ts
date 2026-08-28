@@ -450,6 +450,8 @@ export class TurnRunner {
   private readonly parentInputWaiters = new Set<() => void>();
   /** Settlements already folded into the ledger during replacement/interrupt. */
   private readonly ignoredTaskSettlements = new Set<TaskId>();
+  /** Settled tasks taken off the task manager but not yet queued for the parent. */
+  private readonly heldSettlements: TaskSettlement[] = [];
   /** Delivery posture for task-backed foreground bash calls. */
   private readonly taskSettlementDelivery = new Map<
     TaskId,
@@ -960,11 +962,7 @@ export class TurnRunner {
             if (this.queueParkNudgeIfDue(completion.status, pendingBeforeInput)) continue;
             break;
           }
-          if (this.parentInputs.length > 0) {
-            await this.taskManager.waitForSettlement();
-          } else {
-            await this.waitForLoopActivity();
-          }
+          await this.waitForLoopActivity();
           continue;
         }
 
@@ -1129,8 +1127,14 @@ export class TurnRunner {
     this.parentInputWaiters.clear();
   }
 
+  /**
+   * Block until something the loop has not seen yet arrives: a parent input
+   * or a task settlement. Only called once the loop has found nothing
+   * runnable, so whatever is already queued must not count as activity —
+   * `enqueueAvailableSettlements` keeps the task manager's queue drained for
+   * exactly that reason.
+   */
   private async waitForLoopActivity(): Promise<void> {
-    if (this.parentInputs.length > 0) return;
     let wake!: () => void;
     const parentInput = new Promise<void>((resolve) => {
       wake = resolve;
@@ -1143,14 +1147,28 @@ export class TurnRunner {
     }
   }
 
-  private enqueueAvailableSettlements(): void {
-    if ([...this.taskSettlementDelivery.values()].includes("foreground_pending")) return;
-    const settlements: TaskSettlement[] = [];
+  /**
+   * Move every settlement off the task manager into the held buffer. The
+   * manager's queue must never keep a settlement the loop has already seen:
+   * `waitForSettlement` reads a non-empty queue as fresh activity, and a
+   * loop holding settlements behind a foreground wait would then re-run on
+   * every microtask without ever yielding to the I/O that ends the wait.
+   */
+  private holdSettledTasks(): void {
     for (
       let settlement = this.taskManager.nextSettled();
       settlement;
       settlement = this.taskManager.nextSettled()
     ) {
+      this.heldSettlements.push(settlement);
+    }
+  }
+
+  private enqueueAvailableSettlements(): void {
+    this.holdSettledTasks();
+    if ([...this.taskSettlementDelivery.values()].includes("foreground_pending")) return;
+    const settlements: TaskSettlement[] = [];
+    for (const settlement of this.heldSettlements.splice(0)) {
       const delivery = this.taskSettlementDelivery.get(settlement.id);
       this.taskSettlementDelivery.delete(settlement.id);
       if (delivery !== "suppress") settlements.push(settlement);
@@ -1201,11 +1219,8 @@ export class TurnRunner {
   }
 
   private discardStaleTaskSettlements(): void {
-    for (
-      let settlement = this.taskManager.nextSettled();
-      settlement;
-      settlement = this.taskManager.nextSettled()
-    ) {
+    this.holdSettledTasks();
+    for (const settlement of this.heldSettlements.splice(0)) {
       this.stateTasks.delete(settlement.id);
       this.ignoredTaskSettlements.delete(settlement.id);
       this.taskSettlementDelivery.delete(settlement.id);
