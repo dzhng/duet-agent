@@ -450,9 +450,9 @@ export class TurnRunner {
   private readonly parentInputWaiters = new Set<() => void>();
   /** Settlements already folded into the ledger during replacement/interrupt. */
   private readonly ignoredTaskSettlements = new Set<TaskId>();
-  /** Delivery posture for task-backed foreground bash calls. */
   /** Settled tasks taken off the task manager but not yet queued for the parent. */
   private readonly heldSettlements: TaskSettlement[] = [];
+  /** Delivery posture for task-backed foreground bash calls. */
   private readonly taskSettlementDelivery = new Map<
     TaskId,
     "foreground_pending" | "deliver" | "suppress"
@@ -1147,13 +1147,14 @@ export class TurnRunner {
     }
   }
 
-  private enqueueAvailableSettlements(): void {
-    // Always take settlements off the task manager, even while they are
-    // being held: a queue left non-empty reads as activity to
-    // `waitForSettlement`, and a parent loop idling behind a foreground
-    // wait then re-runs on every microtask without ever yielding to I/O —
-    // which is the only thing that could end the foreground wait. That
-    // starved a production runner for ten hours at 100% CPU.
+  /**
+   * Move every settlement off the task manager into the held buffer. The
+   * manager's queue must never keep a settlement the loop has already seen:
+   * `waitForSettlement` reads a non-empty queue as fresh activity, and a
+   * loop holding settlements behind a foreground wait would then re-run on
+   * every microtask without ever yielding to the I/O that ends the wait.
+   */
+  private holdSettledTasks(): void {
     for (
       let settlement = this.taskManager.nextSettled();
       settlement;
@@ -1161,6 +1162,10 @@ export class TurnRunner {
     ) {
       this.heldSettlements.push(settlement);
     }
+  }
+
+  private enqueueAvailableSettlements(): void {
+    this.holdSettledTasks();
     if ([...this.taskSettlementDelivery.values()].includes("foreground_pending")) return;
     const settlements: TaskSettlement[] = [];
     for (const settlement of this.heldSettlements.splice(0)) {
@@ -1214,13 +1219,7 @@ export class TurnRunner {
   }
 
   private discardStaleTaskSettlements(): void {
-    for (
-      let settlement = this.taskManager.nextSettled();
-      settlement;
-      settlement = this.taskManager.nextSettled()
-    ) {
-      this.heldSettlements.push(settlement);
-    }
+    this.holdSettledTasks();
     for (const settlement of this.heldSettlements.splice(0)) {
       this.stateTasks.delete(settlement.id);
       this.ignoredTaskSettlements.delete(settlement.id);
