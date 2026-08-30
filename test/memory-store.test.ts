@@ -127,3 +127,121 @@ describe("memory identifier containment", () => {
     );
   });
 });
+
+describe("hand-written memory files", () => {
+  // What an agent writes with a heredoc instead of `duet memory add`: plain
+  // YAML scalars, keys in whatever order came to mind, no id, no createdAt.
+  const handWritten = [
+    "---",
+    "kind: note",
+    "priority: high",
+    "source: imported-paige-channel",
+    "tags: [reading, books]",
+    "version: 1",
+    "---",
+    "# Paige domain facts\n",
+  ].join("\n");
+
+  test("accepts plain scalars in any key order, deriving id and createdAt from the file", () => {
+    const record = parseMemoryFile(handWritten, {
+      derived: { id: "mem_paige-domain-facts", createdAt: 1_787_934_002_586 },
+    });
+
+    expect(record).toEqual({
+      version: 1,
+      id: "mem_paige-domain-facts",
+      kind: "note",
+      createdAt: 1_787_934_002_586,
+      priority: "high",
+      source: "imported-paige-channel",
+      tags: ["reading", "books"],
+      content: "# Paige domain facts\n",
+    });
+    // Re-serializing writes the canonical form, so the next reader needs no derivation.
+    expect(serializeMemoryFile(record)).toBe(
+      [
+        "---",
+        "version: 1",
+        'id: "mem_paige-domain-facts"',
+        'kind: "note"',
+        "createdAt: 1787934002586",
+        'priority: "high"',
+        'source: "imported-paige-channel"',
+        'tags: ["reading", "books"]',
+        "---",
+        "# Paige domain facts\n",
+      ].join("\n"),
+    );
+  });
+
+  test("defaults version and kind, and keeps quoted and plain scalars equivalent", () => {
+    const record = parseMemoryFile(
+      "---\nheadline: 'Single quoted'\nnote: plain text with: colon\n---\nbody\n",
+      {
+        derived: { id: "mem_x", createdAt: 5 },
+      },
+    );
+    expect(record).toMatchObject({
+      version: 1,
+      kind: "note",
+      headline: "Single quoted",
+      extra: { note: "plain text with: colon" },
+    });
+  });
+
+  test("still refuses a file with no frontmatter at all, and one that names an unknown kind", () => {
+    expect(() =>
+      parseMemoryFile("# just markdown\n", { derived: { id: "mem_x", createdAt: 5 } }),
+    ).toThrow("frontmatter delimiter");
+    expect(() =>
+      parseMemoryFile("---\nkind: dream\n---\nbody\n", { derived: { id: "mem_x", createdAt: 5 } }),
+    ).toThrow("Invalid memory kind: dream");
+  });
+
+  test("without a derivation source, id and createdAt remain required", () => {
+    expect(() => parseMemoryFile("---\nkind: note\n---\nbody\n")).toThrow("Frontmatter id");
+  });
+});
+
+describe("the memory file that broke a workspace", () => {
+  // Verbatim shape of the files an agent wrote by hand on a production VM on
+  // 2026-08-28: plain scalars, no id, no createdAt. It must parse as-is.
+  test("parses without any edits once the store supplies an identity", async () => {
+    const text = await readFile(fixturePath("hand-written-by-agent.md"), "utf8");
+
+    const record = parseMemoryFile(text, { derived: { id: "mem_derived", createdAt: 7 } });
+
+    expect(record).toEqual({
+      version: 1,
+      id: "mem_derived",
+      kind: "note",
+      createdAt: 7,
+      priority: "high",
+      source: "imported-family-records",
+      content:
+        "# Family domain boundaries\n\n- This folder holds the family records; the agent answers only from them.\n",
+    });
+  });
+});
+
+describe("frontmatter edge cases", () => {
+  test("round-trips an escaped quote inside an inline array", () => {
+    const record = parseMemoryFile(
+      serializeMemoryFile({
+        version: 1,
+        id: "mem_q",
+        kind: "note",
+        createdAt: 1,
+        tags: ['a"b', "c, d"],
+        content: "body\n",
+      }),
+    );
+    expect(record.tags).toEqual(['a"b', "c, d"]);
+  });
+
+  test("a blank-valued key still counts toward the duplicate check", () => {
+    expect(() =>
+      parseMemoryFile("---\nkind:\nkind: train\nid: mem_x\ncreatedAt: 1\n---\nbody\n"),
+    ).toThrow("Duplicate frontmatter key: kind");
+  });
+});

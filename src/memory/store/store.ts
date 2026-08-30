@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import * as fileSystem from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
@@ -157,8 +157,25 @@ async function readParsedEntry(
   if (!status.isFile()) throw new Error(`Memory entry is not a regular file: ${path}`);
   const handle = await fileSystem.open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   const text = await handle.readFile("utf8").finally(() => handle.close());
-  const record = parseMemoryFile(text);
+  const record = parseMemoryFile(text, { derived: derivedIdentity(storeDir, slug, status) });
   return { stored: toStoredMemory(storeDir, slug, record), record };
+}
+
+// A hand-written file names no id or creation time. Its identity is then a
+// function of where it lives: stable across reads, distinct across stores that
+// share a slug, and written into the file the first time it is re-serialized.
+function derivedIdentity(
+  storeDir: string,
+  slug: string,
+  status: { birthtimeMs: number; mtimeMs: number },
+) {
+  const digest = createHash("sha256")
+    .update(`${resolve(storeDir)}\n${slug}`)
+    .digest("base64url");
+  return {
+    id: `mem_${digest.slice(0, 12)}`,
+    createdAt: Math.round(status.birthtimeMs > 0 ? status.birthtimeMs : status.mtimeMs),
+  };
 }
 
 function toStoredMemory(storeDir: string, slug: string, record: MemoryFileRecord): StoredMemory {

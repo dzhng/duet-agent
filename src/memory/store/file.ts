@@ -69,14 +69,40 @@ const KNOWN_KEY_ORDER = new Map<string, number>(KNOWN_KEYS.map((key, index) => [
 const parsedLineEndings = new WeakMap<MemoryFileRecord, "\n" | "\r\n">();
 
 /**
- * Parse the canonical YAML-compatible subset used by memory files.
- *
- * Values are canonical JSON strings, finite decimal numbers, or inline
- * arrays of canonical JSON strings. Known keys stay in the order emitted by
- * {@link serializeMemoryFile}; unknown keys may follow them and use the same
- * scalar grammar.
+ * Identity a reader can supply for a file whose frontmatter names none — a
+ * store derives it from the file itself (see `readEntry`). Each field is used
+ * only when the corresponding frontmatter key is absent.
  */
-export function parseMemoryFile(text: string): MemoryFileRecord {
+export interface DerivedMemoryIdentity {
+  /**
+   * Record id to adopt when the header has no `id`. Must satisfy the safe
+   * path-segment rule (`[A-Za-z0-9_-]+`) because ids name private archive
+   * directories; the store's derivation (`mem_` + a digest) always does.
+   */
+  id: string;
+  /**
+   * Unix epoch milliseconds to adopt when the header has no `createdAt`;
+   * drives newest-first ordering and the observed date, so a store passes
+   * the file's own birth time.
+   */
+  createdAt: number;
+}
+
+/**
+ * Parse a memory file's frontmatter.
+ *
+ * The grammar is deliberately loose on the way in and strict on the way out:
+ * agents write these files by hand as often as through `duet memory add`, so
+ * plain YAML scalars (`kind: note`), single or double quotes, inline arrays of
+ * plain items, blank and `#` lines, and any key order are all read. `version`
+ * defaults to 1 and `kind` to `note`; `id` and `createdAt` fall back to
+ * `derived` when the caller can name them from the file itself. Serializing
+ * always emits the one canonical form, so a rewritten file needs no leniency.
+ */
+export function parseMemoryFile(
+  text: string,
+  options: { derived?: DerivedMemoryIdentity } = {},
+): MemoryFileRecord {
   const lineEnding = text.startsWith("---\r\n")
     ? "\r\n"
     : text.startsWith("---\n")
@@ -93,37 +119,32 @@ export function parseMemoryFile(text: string): MemoryFileRecord {
   assertContent(content);
 
   const values = new Map<string, MemoryFrontmatterValue>();
-  let lastKnownIndex = -1;
-  let sawUnknown = false;
+  const seenKeys = new Set<string>();
   for (const line of header.split(lineEnding)) {
-    const separator = line.indexOf(": ");
-    if (separator <= 0) throw new Error(`Invalid frontmatter line: ${line}`);
-    const key = line.slice(0, separator);
-    const rawValue = line.slice(separator + 2);
+    if (line.trim().length === 0 || line.trimStart().startsWith("#")) continue;
+    const match = /^([^:]+):(?:\s+(.*))?$/.exec(line);
+    if (!match) throw new Error(`Invalid frontmatter line: ${line}`);
+    const key = match[1]!.trim();
+    const rawValue = (match[2] ?? "").trim();
     if (!KEY_PATTERN.test(key)) throw new Error(`Invalid frontmatter key: ${key}`);
-    if (values.has(key)) throw new Error(`Duplicate frontmatter key: ${key}`);
+    if (seenKeys.has(key)) throw new Error(`Duplicate frontmatter key: ${key}`);
+    seenKeys.add(key);
     if (key === "sourceFolder") {
       throw new Error("sourceFolder is private archive metadata and cannot enter a memory file");
     }
-
-    const knownIndex = KNOWN_KEY_ORDER.get(key);
-    if (knownIndex === undefined) {
-      sawUnknown = true;
-    } else {
-      if (sawUnknown || knownIndex <= lastKnownIndex) {
-        throw new Error(`Frontmatter key is out of canonical order: ${key}`);
-      }
-      lastKnownIndex = knownIndex;
-    }
+    if (rawValue.length === 0) continue;
     values.set(key, parseScalar(rawValue));
   }
 
-  const version = requireNumber(values, "version");
+  const version = optionalNumber(values, "version") ?? 1;
   if (version !== 1) throw new Error(`Unsupported memory file version: ${version}`);
-  const kind = requireString(values, "kind");
+  const kind = optionalString(values, "kind") ?? "note";
   if (kind !== "train" && kind !== "note") throw new Error(`Invalid memory kind: ${kind}`);
 
-  const createdAt = requireNumber(values, "createdAt");
+  const id = values.has("id") ? requireIdSegment(values, "id") : options.derived?.id;
+  if (id === undefined) throw new Error("Frontmatter id must be a string");
+  const createdAt = optionalNumber(values, "createdAt") ?? options.derived?.createdAt;
+  if (createdAt === undefined) throw new Error("Frontmatter createdAt must be a number");
   if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
     throw new Error("createdAt must be a non-negative integer");
   }
@@ -134,7 +155,7 @@ export function parseMemoryFile(text: string): MemoryFileRecord {
 
   const record: MemoryFileRecord = {
     version: 1,
-    id: requireIdSegment(values, "id"),
+    id,
     kind,
     createdAt,
     ...optionalStringProperty(values, "headline"),
@@ -194,20 +215,58 @@ function parseScalar(rawValue: string): MemoryFrontmatterValue {
     const value = Number(rawValue);
     if (Number.isFinite(value) && String(value) === rawValue) return value;
   }
-  try {
-    const value: unknown = JSON.parse(rawValue);
-    if (typeof value === "string" && JSON.stringify(value) === rawValue) return value;
-    if (
-      Array.isArray(value) &&
-      value.every((item): item is string => typeof item === "string") &&
-      `[${value.map((item) => JSON.stringify(item)).join(", ")}]` === rawValue
-    ) {
-      return value;
-    }
-  } catch {
-    // The grammar error below is more useful than JSON's parser diagnostic.
+  const quoted = unquote(rawValue);
+  if (quoted !== undefined) return quoted;
+  if (rawValue.startsWith("[") && rawValue.endsWith("]")) {
+    const inner = rawValue.slice(1, -1).trim();
+    if (inner.length === 0) return [];
+    return splitInlineList(inner).map((item) => unquote(item) ?? item);
   }
-  throw new Error(`Unsupported frontmatter scalar: ${rawValue}`);
+  // Anything else is a plain YAML scalar: read it as the text it is.
+  return rawValue;
+}
+
+function unquote(value: string): string | undefined {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (typeof parsed === "string") return parsed;
+    } catch {
+      // Not valid JSON: fall through to the literal text between the quotes.
+    }
+    return value.slice(1, -1);
+  }
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replaceAll("''", "'");
+  }
+  return undefined;
+}
+
+/** Split `a, "b, c", 'd'` on the commas that sit outside quotes. */
+function splitInlineList(inner: string): string[] {
+  const items: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | undefined;
+  for (let index = 0; index < inner.length; index += 1) {
+    const char = inner[index]!;
+    // A backslash inside double quotes escapes the next character (JSON
+    // rules), so an escaped quote neither closes the string nor splits it.
+    if (quote === '"' && char === "\\") {
+      current += char + (inner[index + 1] ?? "");
+      index += 1;
+      continue;
+    }
+    if (quote === undefined && (char === '"' || char === "'")) quote = char;
+    else if (quote === char) quote = undefined;
+    if (char === "," && quote === undefined) {
+      items.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  items.push(current.trim());
+  return items.filter((item) => item.length > 0);
 }
 
 function serializeScalar(value: MemoryFrontmatterValue): string {
@@ -224,12 +283,6 @@ function serializeScalar(value: MemoryFrontmatterValue): string {
   throw new Error("Frontmatter values must be strings, numbers, or string arrays");
 }
 
-function requireNumber(values: Map<string, MemoryFrontmatterValue>, key: string): number {
-  const value = values.get(key);
-  if (typeof value !== "number") throw new Error(`Frontmatter ${key} must be a number`);
-  return value;
-}
-
 function optionalNumber(
   values: Map<string, MemoryFrontmatterValue>,
   key: string,
@@ -240,9 +293,21 @@ function optionalNumber(
   return value;
 }
 
-function requireString(values: Map<string, MemoryFrontmatterValue>, key: string): string {
+function optionalString(
+  values: Map<string, MemoryFrontmatterValue>,
+  key: string,
+): string | undefined {
   const value = values.get(key);
+  if (value === undefined) return undefined;
+  // A number written where text is expected reads as its text.
+  if (typeof value === "number") return String(value);
   if (typeof value !== "string") throw new Error(`Frontmatter ${key} must be a string`);
+  return value;
+}
+
+function requireString(values: Map<string, MemoryFrontmatterValue>, key: string): string {
+  const value = optionalString(values, key);
+  if (value === undefined) throw new Error(`Frontmatter ${key} must be a string`);
   return value;
 }
 
@@ -283,8 +348,10 @@ function optionalStringArrayProperty(
   values: Map<string, MemoryFrontmatterValue>,
   key: "tags",
 ): Partial<Pick<MemoryFileRecord, "tags">> {
-  const value = values.get(key);
-  if (value === undefined) return {};
+  const raw = values.get(key);
+  if (raw === undefined) return {};
+  // A single plain scalar is a one-item list.
+  const value = typeof raw === "string" ? [raw] : raw;
   if (!Array.isArray(value) || value.some((item) => item.trim().length === 0)) {
     throw new Error(`Frontmatter ${key} must be a string array without blank items`);
   }
