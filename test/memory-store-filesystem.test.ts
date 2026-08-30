@@ -206,3 +206,42 @@ function storedView(storeDir: string, input: MemoryEntryInput) {
     content: input.content,
   };
 }
+
+describe("hand-written memory files in a store", () => {
+  // The verbatim shape an agent wrote on a production VM (2026-08-28). The
+  // store must read it as-is, give it a stable identity, and make that
+  // identity durable the first time it rewrites the file.
+  testIfDocker("reads the file unchanged and pins its identity on first rewrite", async () => {
+    const root = await fileSystem.mkdtemp(join(tmpdir(), "duet-memory-store-hand-written-"));
+    const storeDir = join(root, "memories");
+    try {
+      await fileSystem.mkdir(storeDir);
+      await fileSystem.copyFile(
+        join(fixtures, "hand-written-by-agent.md"),
+        join(storeDir, "family-domain-boundaries.md"),
+      );
+
+      const first = await readEntry(storeDir, "family-domain-boundaries");
+      const second = await readEntry(storeDir, "family-domain-boundaries");
+
+      expect(first).toMatchObject({
+        slug: "family-domain-boundaries",
+        kind: "note",
+        content:
+          "# Family domain boundaries\n\n- This folder holds the family records; the agent answers only from them.\n",
+      });
+      expect(first.id).toMatch(/^mem_[A-Za-z0-9_-]{12}$/);
+      expect(first.createdAt).toBeGreaterThan(0);
+      expect(second).toEqual(first);
+      expect((await listStore(storeDir)).map((entry) => entry.id)).toEqual([first.id]);
+
+      await updateEntry(storeDir, "family-domain-boundaries", "Rewritten body.\n");
+      const raw = await fileSystem.readFile(join(storeDir, "family-domain-boundaries.md"), "utf8");
+      expect(raw.startsWith(`---\nversion: 1\nid: "${first.id}"\nkind: "note"\n`)).toBe(true);
+      expect(raw).toContain('priority: "high"\nsource: "imported-family-records"\n');
+      expect((await readEntry(storeDir, "family-domain-boundaries")).id).toBe(first.id);
+    } finally {
+      await fileSystem.rm(root, { recursive: true, force: true });
+    }
+  });
+});

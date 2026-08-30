@@ -68,9 +68,23 @@ const KNOWN_KEY_ORDER = new Map<string, number>(KNOWN_KEYS.map((key, index) => [
 // parsed object preserves CRLF without exposing a formatting field to callers.
 const parsedLineEndings = new WeakMap<MemoryFileRecord, "\n" | "\r\n">();
 
-/** Identity a reader can supply for a file whose frontmatter names none. */
+/**
+ * Identity a reader can supply for a file whose frontmatter names none — a
+ * store derives it from the file itself (see `readEntry`). Each field is used
+ * only when the corresponding frontmatter key is absent.
+ */
 export interface DerivedMemoryIdentity {
+  /**
+   * Record id to adopt when the header has no `id`. Must satisfy the safe
+   * path-segment rule (`[A-Za-z0-9_-]+`) because ids name private archive
+   * directories; the store's derivation (`mem_` + a digest) always does.
+   */
   id: string;
+  /**
+   * Unix epoch milliseconds to adopt when the header has no `createdAt`;
+   * drives newest-first ordering and the observed date, so a store passes
+   * the file's own birth time.
+   */
   createdAt: number;
 }
 
@@ -105,6 +119,7 @@ export function parseMemoryFile(
   assertContent(content);
 
   const values = new Map<string, MemoryFrontmatterValue>();
+  const seenKeys = new Set<string>();
   for (const line of header.split(lineEnding)) {
     if (line.trim().length === 0 || line.trimStart().startsWith("#")) continue;
     const match = /^([^:]+):(?:\s+(.*))?$/.exec(line);
@@ -112,7 +127,8 @@ export function parseMemoryFile(
     const key = match[1]!.trim();
     const rawValue = (match[2] ?? "").trim();
     if (!KEY_PATTERN.test(key)) throw new Error(`Invalid frontmatter key: ${key}`);
-    if (values.has(key)) throw new Error(`Duplicate frontmatter key: ${key}`);
+    if (seenKeys.has(key)) throw new Error(`Duplicate frontmatter key: ${key}`);
+    seenKeys.add(key);
     if (key === "sourceFolder") {
       throw new Error("sourceFolder is private archive metadata and cannot enter a memory file");
     }
@@ -231,7 +247,15 @@ function splitInlineList(inner: string): string[] {
   const items: string[] = [];
   let current = "";
   let quote: '"' | "'" | undefined;
-  for (const char of inner) {
+  for (let index = 0; index < inner.length; index += 1) {
+    const char = inner[index]!;
+    // A backslash inside double quotes escapes the next character (JSON
+    // rules), so an escaped quote neither closes the string nor splits it.
+    if (quote === '"' && char === "\\") {
+      current += char + (inner[index + 1] ?? "");
+      index += 1;
+      continue;
+    }
     if (quote === undefined && (char === '"' || char === "'")) quote = char;
     else if (quote === char) quote = undefined;
     if (char === "," && quote === undefined) {

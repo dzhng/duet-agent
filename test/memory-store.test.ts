@@ -202,3 +202,46 @@ describe("hand-written memory files", () => {
     expect(() => parseMemoryFile("---\nkind: note\n---\nbody\n")).toThrow("Frontmatter id");
   });
 });
+
+describe("the memory file that broke a workspace", () => {
+  // Verbatim shape of the files an agent wrote by hand on a production VM on
+  // 2026-08-28: plain scalars, no id, no createdAt. It must parse as-is.
+  test("parses without any edits once the store supplies an identity", async () => {
+    const text = await readFile(fixturePath("hand-written-by-agent.md"), "utf8");
+
+    const record = parseMemoryFile(text, { derived: { id: "mem_derived", createdAt: 7 } });
+
+    expect(record).toEqual({
+      version: 1,
+      id: "mem_derived",
+      kind: "note",
+      createdAt: 7,
+      priority: "high",
+      source: "imported-family-records",
+      content:
+        "# Family domain boundaries\n\n- This folder holds the family records; the agent answers only from them.\n",
+    });
+  });
+});
+
+describe("frontmatter edge cases", () => {
+  test("round-trips an escaped quote inside an inline array", () => {
+    const record = parseMemoryFile(
+      serializeMemoryFile({
+        version: 1,
+        id: "mem_q",
+        kind: "note",
+        createdAt: 1,
+        tags: ['a"b', "c, d"],
+        content: "body\n",
+      }),
+    );
+    expect(record.tags).toEqual(['a"b', "c, d"]);
+  });
+
+  test("a blank-valued key still counts toward the duplicate check", () => {
+    expect(() =>
+      parseMemoryFile("---\nkind:\nkind: train\nid: mem_x\ncreatedAt: 1\n---\nbody\n"),
+    ).toThrow("Duplicate frontmatter key: kind");
+  });
+});

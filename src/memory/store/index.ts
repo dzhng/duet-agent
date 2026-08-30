@@ -19,6 +19,7 @@ export {
 export {
   deleteEntry,
   listStore,
+  listStoreTolerant,
   readEntry,
   updateEntry,
   writeEntry,
