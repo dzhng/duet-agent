@@ -208,9 +208,9 @@ function storedView(storeDir: string, input: MemoryEntryInput) {
 }
 
 describe("hand-written memory files in a store", () => {
-  // The verbatim shape an agent wrote on a production VM (2026-08-28). The
-  // store must read it as-is, give it a stable identity, and make that
-  // identity durable the first time it rewrites the file.
+  // The verbatim shape an agent wrote on a production VM. The store must read
+  // it as-is, give it a stable identity, and make that identity durable the
+  // first time it rewrites the file.
   testIfDocker("reads the file unchanged and pins its identity on first rewrite", async () => {
     const root = await fileSystem.mkdtemp(join(tmpdir(), "duet-memory-store-hand-written-"));
     const storeDir = join(root, "memories");

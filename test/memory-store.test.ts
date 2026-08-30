@@ -204,8 +204,8 @@ describe("hand-written memory files", () => {
 });
 
 describe("the memory file that broke a workspace", () => {
-  // Verbatim shape of the files an agent wrote by hand on a production VM on
-  // 2026-08-28: plain scalars, no id, no createdAt. It must parse as-is.
+  // Verbatim shape of a file an agent wrote by hand on a production VM: plain
+  // scalars, no id, no createdAt. It must parse as-is.
   test("parses without any edits once the store supplies an identity", async () => {
     const text = await readFile(fixturePath("hand-written-by-agent.md"), "utf8");
 

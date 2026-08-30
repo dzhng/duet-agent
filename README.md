@@ -414,7 +414,7 @@ Command-specific notes:
 
 - **`duet memory` (query):** `--json` emits a bare array ordered by pack score; `--source` and `--session` narrow the set alongside `--type`, `--priority`, `--from`, and `--to`.
 - **`duet memory recall`:** query text comes from `--query <q>` or positional args. `--scope session|global` requires `--session <id>` to compare against; `all` (default) ignores it. `--json` emits a bare array ordered best-first, each row carrying both `packScore` and `relevanceScore`.
-- **`duet memory add`:** added memories are always `note` kind. Flagless writes go to the nearest ancestor `.agents/memories`; pass `--db` to retain observational-row ranking, embedding, and session attribution. Content comes from positional args or stdin, and empty input is a usage error.
+- **`duet memory add`:** added memories are always `note` kind. Flagless writes go to the nearest ancestor `.agents/memories`; pass `--db` to retain observational-row ranking, embedding, and session attribution. Content comes from positional args or stdin, and empty input is a usage error. Files an agent writes by hand load too: the store reads plain YAML frontmatter in any key order, derives a missing `id`/`createdAt` from the file's own path and birth time, and writes them back in canonical form on the first update.
 
 DB-backed memory commands accept `--db <absolute-path>` and `--wait <seconds>`. `memory add` also accepts a single `--store`; `memory recall` deliberately rejects stores because file memories are already loaded into agent context. Exit codes are stable for scripting: `0` success, `64` usage or validation error, `75` memory-DB lock-wait budget exhausted, and `1` for anything else.
 

@@ -7,6 +7,7 @@ import {
   parseMemoryFile,
   serializeMemoryFile,
   slugFromFilename,
+  type DerivedMemoryIdentity,
   type MemoryFileRecord,
 } from "./file.js";
 
@@ -168,7 +169,7 @@ function derivedIdentity(
   storeDir: string,
   slug: string,
   status: { birthtimeMs: number; mtimeMs: number },
-) {
+): DerivedMemoryIdentity {
   const digest = createHash("sha256")
     .update(`${resolve(storeDir)}\n${slug}`)
     .digest("base64url");

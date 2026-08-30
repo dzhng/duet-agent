@@ -50,7 +50,7 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const ID_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
 const KEY_PATTERN = /^[A-Za-z][A-Za-z0-9]*$/;
 const NUMBER_PATTERN = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/;
-const KNOWN_KEYS = [
+const KNOWN_KEYS = new Set([
   "version",
   "id",
   "kind",
@@ -62,8 +62,7 @@ const KNOWN_KEYS = [
   "priority",
   "source",
   "tags",
-] as const;
-const KNOWN_KEY_ORDER = new Map<string, number>(KNOWN_KEYS.map((key, index) => [key, index]));
+]);
 // Line endings are byte-format state, not record metadata. Keeping them on the
 // parsed object preserves CRLF without exposing a formatting field to callers.
 const parsedLineEndings = new WeakMap<MemoryFileRecord, "\n" | "\r\n">();
@@ -142,9 +141,9 @@ export function parseMemoryFile(
   if (kind !== "train" && kind !== "note") throw new Error(`Invalid memory kind: ${kind}`);
 
   const id = values.has("id") ? requireIdSegment(values, "id") : options.derived?.id;
-  if (id === undefined) throw new Error("Frontmatter id must be a string");
+  if (id === undefined) throw new Error("Frontmatter id is required");
   const createdAt = optionalNumber(values, "createdAt") ?? options.derived?.createdAt;
-  if (createdAt === undefined) throw new Error("Frontmatter createdAt must be a number");
+  if (createdAt === undefined) throw new Error("Frontmatter createdAt is required");
   if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
     throw new Error("createdAt must be a non-negative integer");
   }
@@ -190,7 +189,7 @@ export function serializeMemoryFile(record: MemoryFileRecord): string {
   appendOptional(fields, "source", record.source);
   appendOptional(fields, "tags", record.tags);
   for (const [key, value] of Object.entries(record.extra ?? {})) {
-    if (!KEY_PATTERN.test(key) || KNOWN_KEY_ORDER.has(key) || key === "sourceFolder") {
+    if (!KEY_PATTERN.test(key) || KNOWN_KEYS.has(key) || key === "sourceFolder") {
       throw new Error(`Invalid extra frontmatter key: ${key}`);
     }
     fields.push([key, value]);
@@ -361,7 +360,7 @@ function optionalStringArrayProperty(
 function extraProperties(
   values: Map<string, MemoryFrontmatterValue>,
 ): Partial<Pick<MemoryFileRecord, "extra">> {
-  const extra = Object.fromEntries(Array.from(values).filter(([key]) => !KNOWN_KEY_ORDER.has(key)));
+  const extra = Object.fromEntries(Array.from(values).filter(([key]) => !KNOWN_KEYS.has(key)));
   return Object.keys(extra).length === 0 ? {} : { extra };
 }
 
