@@ -9,7 +9,7 @@ import {
   normalizePersistedTelemetry,
   type AdvisorContextObservation,
   type RolloutTelemetry,
-} from "./telemetry.js";
+} from "../../shared/rollout-telemetry.js";
 
 export { lintPatch, type PatchLint } from "./patch-policy.js";
 
