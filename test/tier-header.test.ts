@@ -91,7 +91,7 @@ async function capturedAdvisorRequestHeaders(): Promise<Headers | undefined> {
       callAdvisor({
         contextText: "executor context",
         images: [],
-        modelName: "anthropic/claude-fable-5",
+        modelName: "anthropic/claude-fable-5.1",
         thinkingLevel: "high",
       }),
     ).rejects.toThrow();
@@ -111,7 +111,7 @@ describe("duet gateway tier attribution", () => {
     // production. The advisor bills through the AI SDK client instead and is
     // covered by its own consultation tests below.
     for (const modelId of [
-      "anthropic/claude-fable-5",
+      "anthropic/claude-fable-5.1",
       "openai/gpt-5.6-luna",
       "moonshotai/kimi-k3",
       "zai/glm-5.2",
@@ -125,7 +125,7 @@ describe("duet gateway tier attribution", () => {
   test("omits the header entirely when a concrete model is pinned", () => {
     setActiveDuetTier(undefined);
 
-    const model = resolveModelName("duet-gateway:anthropic/claude-fable-5");
+    const model = resolveModelName("duet-gateway:anthropic/claude-fable-5.1");
 
     expect(model.headers?.[DUET_TIER_HEADER]).toBeUndefined();
   });
@@ -142,10 +142,10 @@ describe("duet gateway tier attribution", () => {
 
   test("stamping is additive — the tiered model differs only by the header", () => {
     setActiveDuetTier(undefined);
-    const bare = resolveModelName("duet-gateway:anthropic/claude-fable-5");
+    const bare = resolveModelName("duet-gateway:anthropic/claude-fable-5.1");
 
     setActiveDuetTier("frontier");
-    const { headers, ...rest } = resolveModelName("duet-gateway:anthropic/claude-fable-5");
+    const { headers, ...rest } = resolveModelName("duet-gateway:anthropic/claude-fable-5.1");
 
     expect(headers).toEqual({ [DUET_TIER_HEADER]: "frontier" });
     expect(rest).toEqual(bare);

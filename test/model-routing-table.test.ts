@@ -25,6 +25,7 @@ const catalogNames = new Set([
   "luna",
   "glm",
   "kimi-k3",
+  "fable-5.1",
   "fable-5",
   "gpt-5.6-sol",
   "opus-4.8",
@@ -138,7 +139,7 @@ describe("built-in model routing table", () => {
     // Capability probe recorded with the product rationale for removing the vision route axis.
     for (const name of [
       "kimi-k3",
-      "fable-5",
+      "fable-5.1",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",

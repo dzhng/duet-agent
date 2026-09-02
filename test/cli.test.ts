@@ -205,7 +205,7 @@ describe("CLI model inference", () => {
   });
 
   test("resolves both advisor targets through OpenRouter", () => {
-    expect(resolveModelName("openrouter:fable-5").id).toBe("anthropic/claude-fable-5");
+    expect(resolveModelName("openrouter:fable-5.1").id).toBe("anthropic/claude-fable-5.1");
     expect(resolveModelName("openrouter:gpt-5.6-terra").id).toBe("openai/gpt-5.6-terra");
   });
 
@@ -260,7 +260,7 @@ describe("CLI model inference", () => {
 
     // Advisor targets and the luna classifier bill from these same specs.
     for (const pin of [
-      "duet-gateway:anthropic/claude-fable-5",
+      "duet-gateway:anthropic/claude-fable-5.1",
       "duet-gateway:anthropic/claude-sonnet-5",
       "duet-gateway:openai/gpt-5.6-luna",
     ]) {

@@ -1,6 +1,5 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
 import { findEnvKeys } from "@earendil-works/pi-ai/compat";
-import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
 
 import {
   BUILT_IN_ROUTING_TABLE,
@@ -8,7 +7,7 @@ import {
   type RoutingCatalogAdapter,
   type RoutingTable,
 } from "../model-routing/table.js";
-import { gatewayRoute, resolveGatewayModel } from "./duet-gateway.js";
+import { catalogModel, gatewayRoute, resolveGatewayModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
   canonicalizeProviderModelId,
@@ -83,7 +82,7 @@ export function resolveModelName(model: string): Model<any> {
   if (route) return clampModelOutputTokens(resolveGatewayModel(route, modelId));
   // The catalog answers for every other provider. clampModelOutputTokens
   // forwards a missing model untouched at runtime.
-  return clampModelOutputTokens(builtinModel(provider, modelId) as Model<any>);
+  return clampModelOutputTokens(catalogModel(provider, modelId) as Model<any>);
 }
 
 /** Resolve an auxiliary actor through configured metered router order only. */
@@ -252,7 +251,7 @@ export function resolveModelReference(
     if (deps.apiKey(provider)) {
       // The account hook can filter models the plan cannot serve (Copilot
       // availableModelIds); a filtered model falls through to router order.
-      const spec = builtinModel(provider, transport.modelId);
+      const spec = catalogModel(provider, transport.modelId);
       if (!spec || deps.applyHook(provider, spec)) {
         return `${provider}:${transport.modelId}`;
       }
@@ -289,12 +288,4 @@ export function describeModelResolution(resolution: ModelResolution): string {
   return resolution.routed
     ? `${routed}routing-table default`
     : "built-in default (no provider env vars set)";
-}
-
-/** Catalog read for ids this module only knows as strings. */
-function builtinModel(provider: string, modelId: string): Model<Api> | undefined {
-  return getBuiltinModel(
-    provider as Parameters<typeof getBuiltinModel>[0],
-    modelId as Parameters<typeof getBuiltinModel>[1],
-  ) as Model<Api> | undefined;
 }

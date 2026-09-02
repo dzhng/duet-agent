@@ -265,8 +265,27 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     maxOutputTokens: 262144,
   },
   {
-    // Anthropic's Claude Fable 5 uses `anthropic/claude-fable-5` on every
-    // router provider.
+    // Leads the fable family, so the `fable` alias the advisor routes on
+    // resolves here. pi-ai has not shipped the id; MISSING_MODEL_CLONES in
+    // duet-gateway.ts supplies its spec. The github-copilot id is a guess that
+    // fails soft the way opus-5's does.
+    family: "fable",
+    shorthand: "fable-5.1",
+    aliases: [
+      "claude-fable-5.1",
+      "claude-fable-5-1",
+      "anthropic/claude-fable-5.1",
+      "anthropic/claude-fable-5-1",
+    ],
+    modelsByProvider: {
+      "duet-gateway": "anthropic/claude-fable-5.1",
+      "vercel-ai-gateway": "anthropic/claude-fable-5.1",
+      openrouter: "anthropic/claude-fable-5.1",
+      "github-copilot": "claude-fable-5.1",
+    },
+  },
+  {
+    // The previous fable, kept resolvable as a versioned pin.
     family: "fable",
     shorthand: "fable-5",
     aliases: ["claude-fable-5", "anthropic/claude-fable-5"],

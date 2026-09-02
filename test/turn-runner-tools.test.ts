@@ -60,7 +60,7 @@ describe("TurnRunner tools", () => {
     const tool = createAskAdvisorTool({
       getContext: async () => ({ systemPrompt: "executor prompt", messages: [], tools: [] }),
       resolveModel: () => ({
-        modelName: "anthropic/claude-fable-5",
+        modelName: "anthropic/claude-fable-5.1",
         contextWindowTokens: 200_000,
         acceptsImages: true,
       }),
@@ -120,7 +120,7 @@ describe("TurnRunner tools", () => {
         };
       },
       resolveModel: () => ({
-        modelName: "anthropic/claude-fable-5",
+        modelName: "anthropic/claude-fable-5.1",
         contextWindowTokens: 200_000,
         acceptsImages: true,
       }),
@@ -158,7 +158,7 @@ describe("TurnRunner tools", () => {
     ]);
     expect(result.details).toEqual({
       type: "ask_advisor",
-      model: "anthropic/claude-fable-5",
+      model: "anthropic/claude-fable-5.1",
       context: expect.objectContaining({
         contextWindowTokens: 200_000,
         truncated: false,
@@ -215,7 +215,7 @@ describe("TurnRunner tools", () => {
         tools: [],
       }),
       resolveModel: () => ({
-        modelName: "anthropic/claude-fable-5",
+        modelName: "anthropic/claude-fable-5.1",
         contextWindowTokens: 200_000,
         acceptsImages: true,
       }),
@@ -300,7 +300,7 @@ describe("TurnRunner tools", () => {
         tools: [],
       }),
       resolveModel: () => ({
-        modelName: "anthropic/claude-fable-5",
+        modelName: "anthropic/claude-fable-5.1",
         contextWindowTokens: 200_000,
         acceptsImages: true,
       }),
@@ -343,7 +343,7 @@ describe("TurnRunner tools", () => {
         tools: [],
       }),
       resolveModel: () => ({
-        modelName: "anthropic/claude-fable-5",
+        modelName: "anthropic/claude-fable-5.1",
         contextWindowTokens: 200_000,
         acceptsImages: true,
       }),

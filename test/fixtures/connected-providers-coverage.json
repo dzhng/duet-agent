@@ -1,5 +1,9 @@
 {
   "fable": {
+    "fable-5.1": {
+      "openai-codex": null,
+      "github-copilot": "claude-fable-5.1"
+    },
     "fable-5": {
       "openai-codex": null,
       "github-copilot": "claude-fable-5"

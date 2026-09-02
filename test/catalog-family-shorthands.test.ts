@@ -21,11 +21,11 @@ interface FamilyCase {
 const familyCases: readonly FamilyCase[] = [
   {
     family: "fable",
-    latest: "fable-5",
+    latest: "fable-5.1",
     modelsByProvider: {
-      "duet-gateway": "anthropic/claude-fable-5",
-      "vercel-ai-gateway": "anthropic/claude-fable-5",
-      openrouter: "anthropic/claude-fable-5",
+      "duet-gateway": "anthropic/claude-fable-5.1",
+      "vercel-ai-gateway": "anthropic/claude-fable-5.1",
+      openrouter: "anthropic/claude-fable-5.1",
     },
   },
   {
@@ -146,6 +146,7 @@ describe("catalog family shorthands", () => {
 
   test("keeps every surviving versioned shorthand resolvable", () => {
     const survivingShorthands = [
+      "fable-5.1",
       "fable-5",
       "opus-5",
       "opus-4.8",

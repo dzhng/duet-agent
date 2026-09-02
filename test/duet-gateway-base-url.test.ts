@@ -71,6 +71,36 @@ describe("duet-gateway model routing", () => {
   });
 });
 
+// Fable 5.1 is the advisor's model and pi-ai has not shipped it, so every
+// router resolves it through a cloned sibling. These are Anthropic's published
+// numbers; a synthesized pass-through would bill it as free and text-only.
+describe("models the catalog has not shipped", () => {
+  test("resolves Fable 5.1 on its published contract on every router", () => {
+    for (const provider of ["duet-gateway", "vercel-ai-gateway", "openrouter"] as const) {
+      const model = resolveModelName(`${provider}:anthropic/claude-fable-5.1`);
+
+      expect(model.cost, provider).toEqual({
+        input: 10,
+        output: 50,
+        cacheRead: 0.25,
+        cacheWrite: 12.5,
+      });
+      expect(model.input, provider).toContain("image");
+      expect(model.contextWindow, provider).toBe(1_000_000);
+      expect(model.maxTokens, provider).toBe(128_000);
+    }
+  });
+
+  test("still falls back to a conservative pass-through for a genuinely unknown id", () => {
+    const model = resolveModelName("duet-gateway:anthropic/claude-not-a-model");
+
+    expect(model.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+    expect(model.input).toEqual(["text"]);
+    expect(model.contextWindow).toBe(256_000);
+    expect(model.maxTokens).toBe(64_000);
+  });
+});
+
 // The transport and route are ours to pin; the prices are the vendor's, so
 // this asserts only that a real one survived resolution — a model missing
 // from the catalog resolves to a zeroed pass-through, and cost accounting
