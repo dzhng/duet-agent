@@ -25,6 +25,9 @@ import { fail, loadCliEnvFiles, resolveUserPath } from "./shared.js";
  */
 type RequestType = "text" | "image" | "video";
 
+/** Values OpenAI's image endpoint accepts for `background`. */
+type ImageBackground = "transparent" | "opaque" | "auto";
+
 /** Parsed `duet model` flags. Prompt is positional or read from stdin. */
 interface ModelArgs {
   model?: string;
@@ -38,6 +41,13 @@ interface ModelArgs {
   system?: string;
   size?: string;
   aspect?: string;
+  /**
+   * OpenAI image models' `background` option. `transparent` returns an RGBA
+   * PNG with the alpha channel populated; asking for transparency in the
+   * prompt alone does not. Sent as `providerOptions.openai.background`, so
+   * other providers ignore it.
+   */
+  background?: ImageBackground;
   n?: number;
   seed?: number;
   duration?: number;
@@ -147,6 +157,7 @@ async function runImagePath(
     aspectRatio: parseAspect(parsed.aspect),
     n: parsed.n,
     seed: parsed.seed,
+    ...(parsed.background && { providerOptions: { openai: { background: parsed.background } } }),
   }).catch(failOnBillingError);
 
   for (const warning of result.warnings) {
@@ -384,6 +395,9 @@ export function parseArgs(args: string[]): ModelArgs {
       case "--aspect":
         out.aspect = next();
         break;
+      case "--background":
+        out.background = parseBackground(next());
+        break;
       case "--n":
         out.n = Number(next());
         break;
@@ -450,6 +464,11 @@ function printResolvedTransportModel(
       2,
     )}\n`,
   );
+}
+
+function parseBackground(value: string): ImageBackground {
+  if (value === "transparent" || value === "opaque" || value === "auto") return value;
+  fail(`Invalid --background: ${value} (expected transparent|opaque|auto)`);
 }
 
 function parseType(value: string): RequestType {

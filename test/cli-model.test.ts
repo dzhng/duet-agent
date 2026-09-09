@@ -69,6 +69,17 @@ describe("parseArgs", () => {
     expect(parsed.help).toBe(false);
   });
 
+  test("--background is an OpenAI image switch with three modes", () => {
+    expect(parseArgs(["--background", "transparent"]).background).toBe("transparent");
+    expect(parseArgs(["--background", "opaque"]).background).toBe("opaque");
+    expect(parseArgs(["--background", "auto"]).background).toBe("auto");
+    expect(parseArgs([]).background).toBeUndefined();
+  });
+
+  test("rejects an invalid --background", () => {
+    expect(() => parseArgs(["--background", "clear"])).toThrow(ExitCalled);
+  });
+
   test("--help sets the help flag", () => {
     expect(parseArgs(["--help"]).help).toBe(true);
     expect(parseArgs(["-h"]).help).toBe(true);

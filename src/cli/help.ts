@@ -398,6 +398,8 @@ OPTIONS
   --system <text>          System prompt for text/image-language models
   --size <WxH>             Image size, e.g. 1024x1024
   --aspect <W:H>           Aspect ratio, e.g. 16:9
+  --background <mode>      transparent|opaque|auto (OpenAI image models);
+                           transparent returns an RGBA PNG
   --n <count>              Number of outputs to generate
   --seed <int>             Generation seed
   --duration <seconds>     Video length
@@ -409,6 +411,7 @@ OPTIONS
 EXAMPLES
   duet model -m openai/gpt-5.6-sol "write a haiku about gateways"
   duet model -m bfl/flux-pro-1.1 -o art.png "a fox in snow"
+  duet model -m openai/gpt-image-2.5-flare --background transparent -o logo.png "a maple leaf"
   duet model -m google/gemini-2.5-flash-image --type image --image src.png "add a hat"
   duet model -m bytedance/seedance-2.0 --type video -o clip.mp4 "slow pan over dunes"
 `);
