@@ -73,6 +73,15 @@ const familyCases: readonly FamilyCase[] = [
     },
   },
   {
+    family: "astra",
+    latest: "gpt-6-astra",
+    modelsByProvider: {
+      "duet-gateway": "openai/gpt-6-astra",
+      "vercel-ai-gateway": "openai/gpt-6-astra",
+      openrouter: "openai/gpt-6-astra",
+    },
+  },
+  {
     family: "luna",
     latest: "gpt-5.6-luna",
     modelsByProvider: {
@@ -157,6 +166,7 @@ describe("catalog family shorthands", () => {
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
+      "gpt-6-astra",
       "kimi-k3",
       "grok-4.3",
       "deepseek-v4-pro",

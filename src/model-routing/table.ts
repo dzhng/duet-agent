@@ -245,13 +245,13 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
           target: { modelName: "sol", thinkingLevel: "medium" },
         },
       },
-      // fable is reserved for the advisor persona only — no primary route
-      // in this tier may target it, so a completion immediately following
-      // an advisor consult never runs on the same model the advisor just
-      // used.
+      // A tier's advisor model is reserved for the advisor persona only — no
+      // primary route in the tier may target it, so a completion immediately
+      // following an advisor consult never runs on the same model the advisor
+      // just used.
       advisor: {
         enabled: true,
-        target: { modelName: "fable", thinkingLevel: "high" },
+        target: { modelName: "astra", thinkingLevel: "high" },
         minStepsBetween: 5,
       },
     },

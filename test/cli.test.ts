@@ -204,7 +204,8 @@ describe("CLI model inference", () => {
     }
   });
 
-  test("resolves both advisor targets through OpenRouter", () => {
+  test("resolves every advisor target through OpenRouter", () => {
+    expect(resolveModelName("openrouter:gpt-6-astra").id).toBe("openai/gpt-6-astra");
     expect(resolveModelName("openrouter:fable-5.1").id).toBe("anthropic/claude-fable-5.1");
     expect(resolveModelName("openrouter:gpt-5.6-terra").id).toBe("openai/gpt-5.6-terra");
   });

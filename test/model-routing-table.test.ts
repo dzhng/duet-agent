@@ -23,6 +23,7 @@ const catalogNames = new Set([
   "terra",
   "sonnet",
   "luna",
+  "astra",
   "glm",
   "kimi-k3",
   "fable-5.1",
@@ -32,6 +33,7 @@ const catalogNames = new Set([
   "gpt-5.6-terra",
   "sonnet-5",
   "gpt-5.6-luna",
+  "gpt-6-astra",
   "glm-5.2",
 ]);
 const catalog: RoutingCatalogAdapter = {
@@ -85,10 +87,14 @@ describe("built-in model routing table", () => {
 
     expect(table.tiers.frontier.advisor).toEqual({
       enabled: true,
+      target: { modelName: "astra", thinkingLevel: "high" },
+      minStepsBetween: 5,
+    });
+    expect(table.tiers.balanced.advisor).toEqual({
+      enabled: true,
       target: { modelName: "fable", thinkingLevel: "high" },
       minStepsBetween: 5,
     });
-    expect(table.tiers.balanced.advisor).toEqual(table.tiers.frontier.advisor);
     expect(table.tiers.economy.advisor).toEqual({
       enabled: false,
       target: { modelName: "terra", thinkingLevel: "medium" },
@@ -143,6 +149,7 @@ describe("built-in model routing table", () => {
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
+      "gpt-6-astra",
       "opus-4.8",
       "sonnet-5",
     ]) {

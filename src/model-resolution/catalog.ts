@@ -16,6 +16,7 @@ export type FamilyName =
   | "sol"
   | "terra"
   | "luna"
+  | "astra"
   | "kimi"
   | "grok"
   | "deepseek"
@@ -219,6 +220,18 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "vercel-ai-gateway": "openai/gpt-5.6-terra",
       openrouter: "openai/gpt-5.6-terra",
       "openai-codex": "gpt-5.6-terra",
+    },
+    maxOutputTokens: 128000,
+  },
+  {
+    // An advisor model; the `astra` alias resolves here.
+    family: "astra",
+    shorthand: "gpt-6-astra",
+    aliases: ["openai/gpt-6-astra"],
+    modelsByProvider: {
+      "duet-gateway": "openai/gpt-6-astra",
+      "vercel-ai-gateway": "openai/gpt-6-astra",
+      openrouter: "openai/gpt-6-astra",
     },
     maxOutputTokens: 128000,
   },

@@ -19,6 +19,7 @@ const KIMI_ID = "moonshotai/kimi-k3";
 const SOL_ID = "openai/gpt-5.6-sol";
 const LUNA_ID = "openai/gpt-5.6-luna";
 const FABLE_ID = "anthropic/claude-fable-5.1";
+const ASTRA_ID = "openai/gpt-6-astra";
 const MAX_SWITCHES = 4;
 
 interface RoutedToolCall {
@@ -316,6 +317,7 @@ describe("mixed-task model routing promotion", () => {
       const parentModels = new Set(calls.map((call) => call.model));
       expect(parentModels.has(LUNA_ID)).toBe(false);
       expect(parentModels.has(FABLE_ID)).toBe(false);
+      expect(parentModels.has(ASTRA_ID)).toBe(false);
       expect(calls.some((call) => call.tool === "ask_advisor")).toBe(false);
       expect([...parentModels].every((model) => model === KIMI_ID || model === SOL_ID)).toBe(true);
 

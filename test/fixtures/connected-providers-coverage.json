@@ -51,6 +51,12 @@
       "github-copilot": null
     }
   },
+  "astra": {
+    "gpt-6-astra": {
+      "openai-codex": null,
+      "github-copilot": null
+    }
+  },
   "luna": {
     "gpt-5.6-luna": {
       "openai-codex": "gpt-5.6-luna",

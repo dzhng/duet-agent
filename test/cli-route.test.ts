@@ -139,7 +139,7 @@ describe("runRouteCommand", () => {
     expect(result.tier).toBe("frontier");
     expect(typeof result.tokens).toBe("number");
     expect(result.estimates.map(({ tier, model, enabled }) => ({ tier, model, enabled }))).toEqual([
-      { tier: "frontier", model: "fable", enabled: true },
+      { tier: "frontier", model: "astra", enabled: true },
       { tier: "balanced", model: "fable", enabled: true },
       { tier: "economy", model: "terra", enabled: false },
     ]);
@@ -149,7 +149,7 @@ describe("runRouteCommand", () => {
     expect(result.transcript).toContain('"tools"');
     expect(output).toContain("Session: session_fixture");
     expect(output).toContain(`Transcript tokens: ${result.tokens}`);
-    expect(output).toContain("frontier: fable");
+    expect(output).toContain("frontier: astra");
     expect(output).toContain("economy: terra (disabled)");
     expect(output).toContain(result.transcript);
   });
