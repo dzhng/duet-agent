@@ -279,9 +279,8 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   },
   {
     // Leads the fable family, so the `fable` alias the advisor routes on
-    // resolves here. pi-ai has not shipped the id; MISSING_MODEL_CLONES in
-    // duet-gateway.ts supplies its spec. The github-copilot id is a guess that
-    // fails soft the way opus-5's does.
+    // resolves here. The github-copilot id is a guess that fails soft the way
+    // opus-5's does.
     family: "fable",
     shorthand: "fable-5.1",
     aliases: [

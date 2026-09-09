@@ -136,10 +136,9 @@ function gatewayModels(route: GatewayRoute): Model<Api>[] {
   const key = `${route.id}@${origin}`;
   const cached = gatewayModelsByRoute.get(key);
   if (cached) return cached;
-  const models = [
-    ...getBuiltinModels(VERCEL_GATEWAY_PROVIDER_ID),
-    ...missingCatalogModels(VERCEL_GATEWAY_PROVIDER_ID),
-  ].map((model) => rebaseOntoGateway(model, route, origin));
+  const models = getBuiltinModels(VERCEL_GATEWAY_PROVIDER_ID).map((model) =>
+    rebaseOntoGateway(model, route, origin),
+  );
   gatewayModelsByRoute.set(key, models);
   return models;
 }
@@ -214,52 +213,12 @@ function gatewayCapabilityGaps(modelId: string): Partial<Model<Api>> | undefined
   return undefined;
 }
 
-/**
- * Models the routers serve that pi-ai's catalog has not shipped, each cloned
- * from a shipped sibling with only the fields whose published contract differs.
- *
- * Like `gatewayCapabilityGaps`, an entry is a bug report against the catalog,
- * deleted the moment it ships the id. Without it the gateways would fall back
- * to `synthesizePassthroughModel` — free and text-only — and every other
- * provider would not resolve the id at all.
- */
-const MISSING_MODEL_CLONES: readonly {
-  from: string;
-  to: string;
-  name: string;
-  cost?: Partial<Model<Api>["cost"]>;
-}[] = [
-  // Fable 5.1 differs from Fable 5 only in cache reads: $0.25/MTok against $1.00.
-  {
-    from: "anthropic/claude-fable-5",
-    to: "anthropic/claude-fable-5.1",
-    name: "Claude Fable 5.1",
-    cost: { cacheRead: 0.25 },
-  },
-];
-
-/** The catalog's spec for `provider:modelId`, or the clone standing in for one it lacks. */
+/** The catalog's spec for `provider:modelId`. */
 export function catalogModel(provider: string, modelId: string): Model<Api> | undefined {
-  return (
-    shippedModel(provider, modelId) ??
-    missingCatalogModels(provider).find((model) => model.id === modelId)
-  );
-}
-
-function shippedModel(provider: string, modelId: string): Model<Api> | undefined {
   return getBuiltinModel(
     provider as Parameters<typeof getBuiltinModel>[0],
     modelId as Parameters<typeof getBuiltinModel>[1],
   ) as Model<Api> | undefined;
-}
-
-/** Clones whose source `provider` ships; one it does not is dropped rather than guessed at. */
-function missingCatalogModels(provider: string): Model<Api>[] {
-  return MISSING_MODEL_CLONES.flatMap((clone) => {
-    const source = shippedModel(provider, clone.from);
-    if (!source) return [];
-    return [{ ...source, id: clone.to, name: clone.name, cost: { ...source.cost, ...clone.cost } }];
-  });
 }
 
 /**

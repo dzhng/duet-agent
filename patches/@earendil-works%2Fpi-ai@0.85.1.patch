@@ -1,17 +1,8 @@
 diff --git a/dist/api/openai-codex-responses.js b/dist/api/openai-codex-responses.js
-index c9fe5d14f51a43142f8d182cf9ac9d7ce69f2175..4cc2533489373338a3a161b03ef0a3ff99f65e56 100644
+index bf979d439f531c62494291050722f7e93435280d..287dbeaceae91a0994fbf6a11a02a85f2b07ea6d 100644
 --- a/dist/api/openai-codex-responses.js
 +++ b/dist/api/openai-codex-responses.js
-@@ -1152,7 +1152,7 @@ async function processWebSocketStream(url, body, headers, output, stream, model,
-     // WebSocket continuation still works via connection-scoped previous_response_id state.
-     const fullBody = body;
-     const requestBody = useCachedContext && entry ? buildCachedWebSocketRequestBody(entry, fullBody) : fullBody;
--    const stats = cacheSessionId ? getOrCreateWebSocketDebugStats(cacheSessionId) : undefined;
-+    headers.set("originator", "pi");
-     if (stats) {
-         stats.requests++;
-         if (reused)
-@@ -1265,7 +1265,7 @@ function buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token)
+@@ -1271,7 +1271,7 @@ function buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token)
      }
      headers.set("Authorization", `Bearer ${token}`);
      headers.set("chatgpt-account-id", accountId);

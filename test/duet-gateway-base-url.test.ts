@@ -71,10 +71,12 @@ describe("duet-gateway model routing", () => {
   });
 });
 
-// Fable 5.1 is the advisor's model and pi-ai has not shipped it, so every
-// router resolves it through a cloned sibling. These are Anthropic's published
-// numbers; a synthesized pass-through would bill it as free and text-only.
-describe("models the catalog has not shipped", () => {
+// Fable 5.1 and GPT-6 Astra are the advisor's models, and the advisor bills on
+// these numbers. They are the vendors' published rates and limits, pinned on
+// every router the advisor can route to; a model that slipped out of the
+// catalog would resolve to a synthesized pass-through and bill as free and
+// text-only rather than fail.
+describe("advisor models' published contract", () => {
   test("resolves Fable 5.1 on its published contract on every router", () => {
     for (const provider of ["duet-gateway", "vercel-ai-gateway", "openrouter"] as const) {
       const model = resolveModelName(`${provider}:anthropic/claude-fable-5.1`);
@@ -87,6 +89,22 @@ describe("models the catalog has not shipped", () => {
       });
       expect(model.input, provider).toContain("image");
       expect(model.contextWindow, provider).toBe(1_000_000);
+      expect(model.maxTokens, provider).toBe(128_000);
+    }
+  });
+
+  test("resolves GPT-6 Astra on its published contract on every router", () => {
+    for (const provider of ["duet-gateway", "vercel-ai-gateway", "openrouter"] as const) {
+      const model = resolveModelName(`${provider}:openai/gpt-6-astra`);
+
+      expect(model.cost, provider).toEqual({
+        input: 10,
+        output: 50,
+        cacheRead: 1,
+        cacheWrite: 12.5,
+      });
+      expect(model.input, provider).toContain("image");
+      expect(model.contextWindow, provider).toBe(1_050_000);
       expect(model.maxTokens, provider).toBe(128_000);
     }
   });

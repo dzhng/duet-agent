@@ -51,6 +51,7 @@ import {
   ModelRouter,
   type ModelRouterOptions,
   type RouterStatus,
+  type RouterPrepareInput,
   type RouterSwitch,
 } from "../model-routing/router.js";
 import {
@@ -2671,11 +2672,7 @@ export class TurnRunner {
       if (!input.continuation) {
         this.modelRouter?.noteTurnStart({ promptHasImages: (input.images?.length ?? 0) > 0 });
       }
-      const switched = await this.modelRouter?.prepareTurn({
-        prevTurnHint: input.prompt,
-        signal: agent.signal,
-      });
-      if (switched) await this.applyRouterSwitch(agent, switched);
+      await this.rerouteIfDue(agent, { prevTurnHint: input.prompt, signal: agent.signal });
       await agent.prompt(input.prompt, input.images);
       await this.retryConnectedTransportFallback(agent, () => visibleOutput);
       // Single-shot recovery: if the provider rejected the first attempt
@@ -2685,8 +2682,12 @@ export class TurnRunner {
       // Continuing (rather than re-prompting) keeps the existing user
       // message at the tail instead of appending a duplicate. A
       // still-too-big second attempt falls through as `failed` — no
-      // further retries.
+      // further retries. Recovery arms a compaction classification, and the
+      // loop's prepareNextTurn only runs ahead of a turn that follows a
+      // completed one, so the retry consumes it here or it leaks into the
+      // next user turn.
       if (await this.tryRecoverFromContextOverflow(agent)) {
+        await this.rerouteIfDue(agent, { signal: agent.signal });
         await agent.continue();
       }
       if (
@@ -3066,12 +3067,7 @@ export class TurnRunner {
       transformContext: this.createMemoryTransform(input.memoryContext),
       ...(input.parentModelRouting
         ? {
-            prepareNextTurn: async (signal?: AbortSignal) => {
-              const switched = await this.modelRouter?.prepareTurn({
-                signal,
-              });
-              return switched ? await this.applyRouterSwitch(agent, switched) : undefined;
-            },
+            prepareNextTurn: (signal?: AbortSignal) => this.rerouteIfDue(agent, { signal }),
           }
         : {}),
       steeringMode: "all",
@@ -3639,6 +3635,12 @@ export class TurnRunner {
   /** Composition seam used by production binding and deterministic runner tests. */
   protected createModelRouter(options: ModelRouterOptions): ModelRouter {
     return new ModelRouter(options);
+  }
+
+  /** Classify if a milestone or the cadence is due, and apply the resulting switch. */
+  private async rerouteIfDue(agent: Agent, input: RouterPrepareInput) {
+    const switched = await this.modelRouter?.prepareTurn(input);
+    return switched ? await this.applyRouterSwitch(agent, switched) : undefined;
   }
 
   /** Resolve and atomically apply one router-owned model/effort change. */
