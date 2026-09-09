@@ -282,7 +282,7 @@ describe("mixed-task model routing promotion", () => {
       expect(visualWork[0]!.index).toBeLessThan(backendWork[0]!.index);
       expect(visualWork.some((call) => call.model === KIMI_ID)).toBe(true);
       const kimiToSol = switches.find(
-        (event) => event.fromModel === "kimi-k3" && event.toModel === "gpt-5.6-sol",
+        (event) => event.fromModel === "kimi" && event.toModel === "sol",
       );
       expect(kimiToSol, JSON.stringify(switches, null, 2)).toBeDefined();
       const solBackendWork = backendWork.filter((call) => call.model === SOL_ID);
@@ -295,22 +295,25 @@ describe("mixed-task model routing promotion", () => {
       );
       expect(visualWork.some((call) => call.model === SOL_ID)).toBe(false);
 
+      // Advisor lifecycle checkpoints are steered in as system-reminder user
+      // messages; the one real user message is the prompt itself.
       const userMessages = terminal.state.agent.messages.filter(
-        (message) => message.role === "user",
+        (message) =>
+          message.role === "user" && !JSON.stringify(message.content).includes("<system-reminder>"),
       );
       expect(userMessages).toHaveLength(1);
 
       const cadenceSwitches = switches.filter((event) => event.trigger === "cadence");
       expect(cadenceSwitches.length, JSON.stringify(switches, null, 2)).toBeGreaterThanOrEqual(1);
       expect(switches.length).toBeLessThanOrEqual(MAX_SWITCHES);
-      const kimiSwitchIndex = switches.findIndex((event) => event.toModel === "kimi-k3");
+      const kimiSwitchIndex = switches.findIndex((event) => event.toModel === "kimi");
       const solSwitchIndex = switches.findIndex(
-        (event, index) => index > kimiSwitchIndex && event.toModel === "gpt-5.6-sol",
+        (event, index) => index > kimiSwitchIndex && event.toModel === "sol",
       );
       expect(kimiSwitchIndex, JSON.stringify(switches, null, 2)).toBeGreaterThanOrEqual(0);
       expect(solSwitchIndex, JSON.stringify(switches, null, 2)).toBeGreaterThan(kimiSwitchIndex);
       for (const switched of switches) {
-        expect(["kimi-k3", "gpt-5.6-sol"]).toContain(switched.toModel);
+        expect(["kimi", "sol"]).toContain(switched.toModel);
         expect(switched.thinkingLevel).toBe("high");
       }
 
