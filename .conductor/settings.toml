@@ -1,0 +1,41 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+# Shared Conductor defaults for duet-agent. Bun is the package manager
+# (see packageManager in package.json); the canonical test and eval
+# commands run inside Docker, so they are only offered in local workspaces.
+# There is no dev server or configurable port: the CLI is a Bun-native TUI.
+
+[scripts]
+# Mirrors CI: install from the lockfile so patchedDependencies and the
+# Husky pre-commit hook (via the `prepare` script) are set up in every
+# workspace. Docker is a prerequisite for `bun run test`; install or start
+# it with `bun run setup` on the host, not here.
+setup = "bun install --frozen-lockfile"
+
+# Remove build output and workspace-local duet runtime state before the
+# worktree is archived. Both are gitignored, so tracked files are untouched.
+archive = "rm -rf dist .duet"
+
+# Nothing binds a port or shares a database across workspaces; each Docker
+# test run is a throwaway container, so workspaces can run side by side.
+run_mode = "concurrent"
+
+[scripts.run.test]
+# Canonical test suite (AGENTS.md: use `bun run test`, never raw `bun test`).
+# Mounts the workspace read-only into an oven/bun container, so it is
+# workspace-safe but needs a local Docker daemon.
+available_in = ["local"]
+command = "bun run test"
+default = true
+icon = "test-tube"
+
+[scripts.run.check]
+# Same gates the Husky pre-commit hook enforces, minus the formatter write.
+command = "bun run check-types && bun run lint && bun run format:check"
+icon = "check"
+
+[scripts.run.dev]
+# Incremental TypeScript build in watch mode; useful when iterating on
+# dist/ consumers or the compiled CLI entry.
+command = "bun run dev"
+icon = "code"
