@@ -3,9 +3,9 @@ import { join } from "node:path";
 
 import { hashJson, hashText } from "./artifacts.js";
 import type { CampaignConfigName } from "./config-override.js";
-import { LocalCommandRunner, type CommandRunner } from "./container.js";
+import { LocalCommandRunner, type CommandRunner } from "../../shared/command-runner.js";
 import type { CampaignSpec } from "./orchestrator.js";
-import type { DuetArtifact } from "./packaging.js";
+import type { DuetArtifact } from "../../shared/duet-packaging.js";
 
 /** Frozen campaign inputs embedded beside rollout artifacts. */
 export interface CampaignProvenance {

@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { PGLITE_RUNTIME_ASSET_NAMES } from "../../../src/memory/pglite.js";
-import type { CommandResult } from "../src/container.js";
-import type { ExecTransport } from "../src/duet-client.js";
-import type { DuetArtifact } from "../src/packaging.js";
+import type { CommandResult } from "../../shared/command-runner.js";
+import type { ExecTransport } from "../../shared/duet-rpc-client.js";
+import type { DuetArtifact } from "../../shared/duet-packaging.js";
 import { SWEBENCH_SYSTEM_PROMPT } from "../src/prompt.js";
 import { runRollout, type RolloutContainer } from "../src/rollout.js";
 import { runContainerSmoke } from "../src/smoke.js";
