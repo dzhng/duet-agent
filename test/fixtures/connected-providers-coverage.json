@@ -53,7 +53,7 @@
   },
   "astra": {
     "gpt-6-astra": {
-      "openai-codex": null,
+      "openai-codex": "gpt-6-astra",
       "github-copilot": null
     }
   },

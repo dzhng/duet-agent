@@ -128,35 +128,41 @@ describe("usesLanguageImagePath", () => {
 });
 
 describe("model resolution debug output", () => {
-  test("prints the connected transport model spec without making a request", async () => {
-    const writes: string[] = [];
-    const writeSpy = spyOn(process.stdout, "write").mockImplementation((chunk) => {
-      writes.push(String(chunk));
-      return true;
-    });
+  test.each([
+    ["sol", "gpt-5.6-sol"],
+    ["astra", "gpt-6-astra"],
+  ])(
+    "prints the ChatGPT transport spec for %s without making a request",
+    async (shorthand, modelId) => {
+      const writes: string[] = [];
+      const writeSpy = spyOn(process.stdout, "write").mockImplementation((chunk) => {
+        writes.push(String(chunk));
+        return true;
+      });
 
-    try {
-      await runModelCommand(["--resolve", "sol", "--transport", "openai-codex"]);
-    } finally {
-      writeSpy.mockRestore();
-    }
+      try {
+        await runModelCommand(["--resolve", shorthand, "--transport", "openai-codex"]);
+      } finally {
+        writeSpy.mockRestore();
+      }
 
-    // What this command owes the reader is the routing decision — which
-    // transport and which endpoint a name resolves to — plus whatever the
-    // catalog says the model costs, printed verbatim rather than reshaped.
-    // The vendor owns those numbers, so only their presence is asserted.
-    const printed = JSON.parse(writes.join("")) as {
-      model: string;
-      api: string;
-      baseUrl: string;
-      cost: { input: number; output: number };
-    };
-    expect(printed).toMatchObject({
-      model: "openai-codex:gpt-5.6-sol",
-      api: "openai-codex-responses",
-      baseUrl: "https://chatgpt.com/backend-api",
-    });
-    expect(printed.cost.input).toBeGreaterThan(0);
-    expect(printed.cost.output).toBeGreaterThan(0);
-  });
+      // What this command owes the reader is the routing decision — which
+      // transport and which endpoint a name resolves to — plus whatever the
+      // catalog says the model costs, printed verbatim rather than reshaped.
+      // The vendor owns those numbers, so only their presence is asserted.
+      const printed = JSON.parse(writes.join("")) as {
+        model: string;
+        api: string;
+        baseUrl: string;
+        cost: { input: number; output: number };
+      };
+      expect(printed).toMatchObject({
+        model: `openai-codex:${modelId}`,
+        api: "openai-codex-responses",
+        baseUrl: "https://chatgpt.com/backend-api",
+      });
+      expect(printed.cost.input).toBeGreaterThan(0);
+      expect(printed.cost.output).toBeGreaterThan(0);
+    },
+  );
 });

@@ -10,7 +10,12 @@ import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import { connectedProviders } from "./registry.js";
 import type { ConnectedProviderId, ConnectionEligibility } from "./store.js";
 
-const CHATGPT_SERVED_MODEL_IDS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
+const CHATGPT_SERVED_MODEL_IDS = [
+  "gpt-6-astra",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+] as const;
 const CHATGPT_PROBE_MODEL_ID = "gpt-5.6-luna";
 
 export interface CapabilityProbeResult {

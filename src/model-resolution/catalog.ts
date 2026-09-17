@@ -231,6 +231,7 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
       "duet-gateway": "openai/gpt-6-astra",
       "vercel-ai-gateway": "openai/gpt-6-astra",
       openrouter: "openai/gpt-6-astra",
+      "openai-codex": "gpt-6-astra",
     },
     maxOutputTokens: 128000,
   },
