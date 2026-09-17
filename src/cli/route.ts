@@ -10,15 +10,11 @@ import { ADVISOR_MAX_OUTPUT_TOKENS } from "../model-routing/advisor.js";
 import { classifyRoute, type ClassifierDecision } from "../model-routing/classifier.js";
 import { loadRoutingTable, type LoadedRoutingTable } from "../model-routing/loader.js";
 import { resolveRoute } from "../model-routing/resolve.js";
+import { formatRouteProbabilities } from "../model-routing/router.js";
 import type { TurnFacts } from "../model-routing/step-triggers.js";
 import { isConnectedProviderId } from "../connected-providers/store.js";
 import { isProviderPinnedModelName } from "../model-resolution/catalog.js";
-import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
-import {
-  pinnedModelReference,
-  resolveModelName,
-  routingCatalogAdapter,
-} from "../model-resolution/resolver.js";
+import { resolveModelName, routingCatalogAdapter } from "../model-resolution/resolver.js";
 import { DEFAULT_MEMORY_DB_PATH, DEFAULT_SESSION_STORAGE_DIR } from "../session/session-manager.js";
 import { listRecentSessions } from "../tui/recent-sessions.js";
 import { TurnRunner } from "../turn-runner/turn-runner.js";
@@ -55,8 +51,10 @@ export interface RouteCommandResult {
   model: string;
   /** Reasoning effort attached to the final concrete target. */
   effort: ThinkingLevel;
-  /** One-sentence explanation from the classifier. */
-  rationale: string;
+  /** One-sentence explanation, present only when the chat classifier answered. */
+  rationale?: string;
+  /** Probability per route, present only when an evaluation model answered. */
+  probabilities?: Record<string, number>;
   /** Virtual tiers traversed while resolving the selected route. */
   resolutionChain: string[];
   /** Built-in marker or path of the active replacement table. */
@@ -171,22 +169,16 @@ function tableSource(loaded: LoadedRoutingTable): string {
   return loaded.source === "built-in" ? loaded.source : loaded.path;
 }
 
-function classifierModelReference(modelName: string): string {
-  const reference = pinnedModelReference(modelName);
-  const provider = reference.slice(0, reference.indexOf(":"));
-  if (!resolveProviderApiKey(provider)) {
-    throw new Error(`No API key configured for classifier provider "${provider}".`);
-  }
-  return reference;
-}
-
 function renderHuman(result: RouteCommandResult): string {
   return [
     `Tier: ${result.tier}`,
     `Route: ${result.route}`,
     `Model: ${result.model}`,
     `Effort: ${result.effort}`,
-    `Rationale: ${result.rationale}`,
+    ...(result.rationale ? [`Rationale: ${result.rationale}`] : []),
+    ...(result.probabilities
+      ? [`Confidence: ${formatRouteProbabilities(result.probabilities)}`]
+      : []),
     `Resolution chain: ${result.resolutionChain.join(" -> ")}`,
     `Table source: ${result.tableSource}`,
     ...(result.transport
@@ -233,10 +225,7 @@ export async function runRouteCommand(
       hasImages: facts.hasImages,
       trigger: "turn_start",
     },
-    {
-      model: classifierModelReference(loaded.table.classifier.target.modelName),
-      thinkingLevel: loaded.table.classifier.target.thinkingLevel,
-    },
+    { target: loaded.table.classifier.target },
   );
   const resolved = resolveRoute(
     loaded.table,
@@ -257,7 +246,8 @@ export async function runRouteCommand(
     route: decision.route,
     model: resolved.modelName,
     effort: resolved.thinkingLevel,
-    rationale: decision.rationale,
+    ...(decision.rationale ? { rationale: decision.rationale } : {}),
+    ...(decision.probabilities ? { probabilities: decision.probabilities } : {}),
     resolutionChain: resolved.chain,
     tableSource: tableSource(loaded),
     ...(explainedModel

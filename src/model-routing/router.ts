@@ -38,8 +38,10 @@ export interface RouterSwitch {
   thinkingLevel: ThinkingLevel;
   /** Runtime milestone that requested classification. */
   trigger: RouteTrigger;
-  /** Classifier explanation for the selected route. */
-  rationale: string;
+  /** One-sentence classifier explanation, present only when the chat classifier answered. */
+  rationale?: string;
+  /** Probability per route, present only when an evaluation model answered. */
+  probabilities?: Record<string, number>;
   /** True when image capability applied the selected route's fallback model. */
   visionFallback: boolean;
 }
@@ -64,8 +66,10 @@ export interface RouterStatus {
   modelName?: string;
   /** Current route-owned effort, absent only before boot resolution. */
   thinkingLevel?: ThinkingLevel;
-  /** Most recent successful classifier explanation. */
+  /** Explanation from the most recent successful chat classification. */
   lastRationale?: string;
+  /** Route distribution from the most recent successful evaluation classification. */
+  lastProbabilities?: Record<string, number>;
   /** Number of completed parent assistant messages observed by the router. */
   assistantSteps: number;
   /** Steps remaining before cadence classification; zero means classification is due. */
@@ -80,12 +84,25 @@ export interface RouterStatus {
   facts: TurnFacts;
 }
 
+/**
+ * Render a route distribution most-likely first, e.g. `implement 0.82 · general 0.18`.
+ * Routes the classifier all but ruled out are dropped: they round to `0.00` and
+ * bury the choice that was actually made. The leader always survives the filter.
+ */
+export function formatRouteProbabilities(probabilities: Record<string, number>): string {
+  const ranked = Object.entries(probabilities).sort(([, left], [, right]) => right - left);
+  const shown = ranked.filter(([, probability]) => probability >= 0.005);
+  return (shown.length > 0 ? shown : ranked.slice(0, 1))
+    .map(([route, probability]) => `${route} ${probability.toFixed(2)}`)
+    .join(" · ");
+}
+
 export interface ModelRouterOptions {
   /** Complete routing table loaded for this project. */
   table: RoutingTable;
   /** Virtual tier selected for this session. */
   tier: string;
-  /** Injected route classifier; production binds it to the table classifier target. */
+  /** Injected route classifier; production binds it to the table's classifier target. */
   classify: RouteClassifier;
   /** Injected concrete-model capability lookup used by route resolution. */
   resolveCatalog: RouteResolutionCatalog;
@@ -111,6 +128,7 @@ export class ModelRouter {
   private lastStepDelta?: string;
   private currentTurnHint?: string;
   private lastRationale?: string;
+  private lastProbabilities?: Record<string, number>;
   private pinned = false;
   private advisorConsultInFlight = false;
   private facts: TurnFacts = { hasImages: false };
@@ -254,6 +272,7 @@ export class ModelRouter {
       const baseline = previous ?? this.initialTarget(context);
       this.current = next;
       this.lastRationale = decision.rationale;
+      this.lastProbabilities = decision.probabilities;
       this.lastClassificationStep = this.assistantSteps;
       this.firstClassificationPending = false;
       this.advisorClassificationPending = false;
@@ -271,7 +290,8 @@ export class ModelRouter {
         toModel: next.modelName,
         thinkingLevel: next.thinkingLevel,
         trigger,
-        rationale: decision.rationale,
+        ...(decision.rationale ? { rationale: decision.rationale } : {}),
+        ...(decision.probabilities ? { probabilities: decision.probabilities } : {}),
         visionFallback: next.visionFallback,
       };
       // A replacement model starts with a fresh advisor floor. Its first
@@ -337,6 +357,7 @@ export class ModelRouter {
           }
         : {}),
       ...(this.lastRationale ? { lastRationale: this.lastRationale } : {}),
+      ...(this.lastProbabilities ? { lastProbabilities: { ...this.lastProbabilities } } : {}),
       assistantSteps: this.assistantSteps,
       stepsUntilClassification: this.shouldClassify() ? 0 : cadenceRemaining,
       pinned: this.pinned,

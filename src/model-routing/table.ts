@@ -3,113 +3,111 @@ import { Type } from "typebox";
 import { THINKING_LEVELS, isThinkingLevel } from "../session/thinking-level.js";
 import { walkVirtualRoute } from "./resolve.js";
 
-const ThinkingLevelSchema = Type.Union(
-  THINKING_LEVELS.map((level) => Type.Literal(level)),
-  { description: "Reasoning effort applied when the target model runs." },
+function thinkingLevelSchema(description: string) {
+  return Type.Union(
+    THINKING_LEVELS.map((level) => Type.Literal(level)),
+    { description },
+  );
+}
+
+const ThinkingLevelSchema = thinkingLevelSchema(
+  "Reasoning effort applied when the target model runs.",
 );
 
-const RouteTargetSchema = Type.Object(
-  {
-    modelName: Type.String({
+const RouteTargetSchema = Type.Object({
+  modelName: Type.String({
+    minLength: 1,
+    description:
+      "Concrete catalog name or virtual tier name. Virtual names re-enter routing with the same route.",
+  }),
+  thinkingLevel: ThinkingLevelSchema,
+});
+
+const RouteRuleSchema = Type.Object({
+  description: Type.String({
+    minLength: 1,
+    description: "Classifier-facing guidance describing when this route should be selected.",
+  }),
+  target: RouteTargetSchema,
+  visionFallbackModelName: Type.Optional(
+    Type.String({
       minLength: 1,
       description:
-        "Concrete catalog name or virtual tier name. Virtual names re-enter routing with the same route.",
+        "Concrete catalog name or virtual tier used only when this route resolves to a text-only target with image input. The route's configured effort is preserved.",
     }),
-    thinkingLevel: ThinkingLevelSchema,
-  },
-  { additionalProperties: false },
-);
+  ),
+});
 
-const RouteRuleSchema = Type.Object(
-  {
-    description: Type.String({
-      minLength: 1,
-      description: "Classifier-facing guidance describing when this route should be selected.",
-    }),
-    target: RouteTargetSchema,
-    visionFallbackModelName: Type.Optional(
-      Type.String({
-        minLength: 1,
-        description:
-          "Concrete catalog name or virtual tier used only when this route resolves to a text-only target with image input. The route's configured effort is preserved.",
+const AdvisorPolicySchema = Type.Object({
+  enabled: Type.Boolean({
+    description: "Whether the advisor tool is available while this tier is selected.",
+  }),
+  target: RouteTargetSchema,
+  minStepsBetween: Type.Integer({
+    description: "Minimum assistant-completion steps between ordinary advisor calls.",
+  }),
+});
+
+const TierDefinitionSchema = Type.Object({
+  routes: Type.Record(Type.String({ minLength: 1 }), RouteRuleSchema, {
+    description:
+      "Classifier routes for this tier. Missing routes deliberately fall through to general.",
+  }),
+  advisor: AdvisorPolicySchema,
+});
+
+const ClassifierTargetSchema = Type.Object({
+  modelName: Type.String({
+    minLength: 1,
+    description:
+      "Concrete catalog name (e.g. luna) for the structured-output classifier, or an AI Gateway evaluation model id (e.g. typesafe-ai/jev) for the evaluation classifier. The name itself selects the path.",
+  }),
+  thinkingLevel: Type.Optional(
+    thinkingLevelSchema(
+      "Reasoning effort for a catalog classifier model. An evaluation model has no reasoning axis and ignores it.",
+    ),
+  ),
+});
+
+const ClassifierConfigSchema = Type.Object({
+  target: ClassifierTargetSchema,
+  everySteps: Type.Integer({
+    description: "Assistant-completion cadence for intra-turn route classification.",
+  }),
+  guidance: Type.String({
+    description: "Freeform administrator guidance appended to the classifier's instructions.",
+  }),
+  stepTriggers: Type.Optional(
+    Type.Array(
+      Type.Object({
+        name: Type.String({
+          minLength: 1,
+          description: "Unique administrator-facing name for this step-output trigger.",
+        }),
+        keywords: Type.Array(Type.String({ minLength: 1 }), {
+          minItems: 1,
+          description:
+            "Non-empty strings matched case-insensitively against bounded step-output text.",
+        }),
       }),
+      {
+        description: "Optional taste triggers that request classification after matching output.",
+      },
     ),
-  },
-  { additionalProperties: false },
-);
-
-const AdvisorPolicySchema = Type.Object(
-  {
-    enabled: Type.Boolean({
-      description: "Whether the advisor tool is available while this tier is selected.",
-    }),
-    target: RouteTargetSchema,
-    minStepsBetween: Type.Integer({
-      description: "Minimum assistant-completion steps between ordinary advisor calls.",
-    }),
-  },
-  { additionalProperties: false },
-);
-
-const TierDefinitionSchema = Type.Object(
-  {
-    routes: Type.Record(Type.String({ minLength: 1 }), RouteRuleSchema, {
-      description:
-        "Classifier routes for this tier. Missing routes deliberately fall through to general.",
-    }),
-    advisor: AdvisorPolicySchema,
-  },
-  { additionalProperties: false },
-);
-
-const ClassifierConfigSchema = Type.Object(
-  {
-    target: RouteTargetSchema,
-    everySteps: Type.Integer({
-      description: "Assistant-completion cadence for intra-turn route classification.",
-    }),
-    guidance: Type.String({
-      description: "Freeform administrator guidance appended to the classifier prompt.",
-    }),
-    stepTriggers: Type.Optional(
-      Type.Array(
-        Type.Object(
-          {
-            name: Type.String({
-              minLength: 1,
-              description: "Unique administrator-facing name for this step-output trigger.",
-            }),
-            keywords: Type.Array(Type.String({ minLength: 1 }), {
-              minItems: 1,
-              description:
-                "Non-empty strings matched case-insensitively against bounded step-output text.",
-            }),
-          },
-          { additionalProperties: false },
-        ),
-        {
-          description: "Optional taste triggers that request classification after matching output.",
-        },
-      ),
-    ),
-  },
-  { additionalProperties: false },
-);
+  ),
+});
 
 /** Complete, replaceable configuration for virtual model routing. */
-export const RoutingTableSchema = Type.Object(
-  {
-    defaultTier: Type.String({
-      minLength: 1,
-      description: "Virtual tier selected when the caller does not provide one.",
-    }),
-    tiers: Type.Record(Type.String({ minLength: 1 }), TierDefinitionSchema, {
-      description: "Virtual model names and their routing policies.",
-    }),
-    classifier: ClassifierConfigSchema,
-  },
-  { additionalProperties: false },
-);
+export const RoutingTableSchema = Type.Object({
+  defaultTier: Type.String({
+    minLength: 1,
+    description: "Virtual tier selected when the caller does not provide one.",
+  }),
+  tiers: Type.Record(Type.String({ minLength: 1 }), TierDefinitionSchema, {
+    description: "Virtual model names and their routing policies.",
+  }),
+  classifier: ClassifierConfigSchema,
+});
 
 /** A model plus the reasoning effort the router applies to it. */
 export interface RouteTarget {
@@ -150,13 +148,25 @@ export interface TierDefinition {
   advisor: AdvisorPolicy;
 }
 
-/** Shared classifier model, cadence, and administrator-authored routing guidance. */
+/** Model that answers the route choice, and how much effort it may spend. */
+export interface ClassifierTarget {
+  /**
+   * Concrete catalog name or AI Gateway evaluation model id. A catalog name
+   * runs the structured-output classifier; any other name is called through
+   * the gateway's evaluation endpoint. Never a virtual tier.
+   */
+  modelName: string;
+  /** Reasoning effort for a catalog model; an evaluation model ignores it. */
+  thinkingLevel?: ThinkingLevel;
+}
+
+/** Shared classifier target, cadence, and administrator-authored routing guidance. */
 export interface ClassifierConfig {
-  /** Cheap model and effort used for route classification. */
-  target: RouteTarget;
+  /** Cheap model that answers the route choice. */
+  target: ClassifierTarget;
   /** Number of completed assistant steps between intra-turn classifications. */
   everySteps: number;
-  /** Freeform prompt guidance appended after the generated route descriptions. */
+  /** Freeform guidance appended to the classifier's instructions as extra routing policy. */
   guidance: string;
   /** Optional taste triggers matched against bounded text from each completed assistant step. */
   stepTriggers?: StepTriggerConfig[];
@@ -307,7 +317,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
     },
   },
   classifier: {
-    target: { modelName: "luna", thinkingLevel: "low" },
+    target: { modelName: "typesafe-ai/jev" },
     everySteps: 5,
     guidance:
       "Prefer continuity when the task has not materially changed, but switch routes when the work changes domains.",
@@ -350,11 +360,6 @@ function targetEntries(table: RoutingTable): TargetEntry[] {
       virtualAllowed: false,
     });
   }
-  entries.push({
-    path: "classifier.target",
-    target: table.classifier.target,
-    virtualAllowed: false,
-  });
   return entries;
 }
 
@@ -398,6 +403,23 @@ export function validateRoutingTable(
         message: "Advisor cadence must be a positive number of steps.",
       });
     }
+  }
+
+  const classifierModelName = table.classifier.target.modelName;
+  if (isVirtualModel(classifierModelName, table)) {
+    issues.push({
+      code: "dangling_reference",
+      path: "classifier.target.modelName",
+      message: `Classifier target "${classifierModelName}" must name a catalog model or an evaluation model id, not a virtual tier.`,
+    });
+  }
+  const classifierEffort = table.classifier.target.thinkingLevel;
+  if (classifierEffort !== undefined && !isThinkingLevel(classifierEffort)) {
+    issues.push({
+      code: "invalid_effort",
+      path: "classifier.target.thinkingLevel",
+      message: `Unknown thinking level "${String(classifierEffort)}".`,
+    });
   }
 
   if (table.classifier.everySteps <= 0) {

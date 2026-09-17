@@ -13,10 +13,7 @@ describe("task settlement routing neutrality", () => {
     table.classifier.everySteps = 99;
     table.classifier.stepTriggers = [{ name: "settlement", keywords: [KEYWORD] }];
     const inputs: ClassifierInput[] = [];
-    const decisions = [
-      { route: "general", rationale: "Initial route." },
-      { route: "plan", rationale: "The genuine assistant text requests planning." },
-    ];
+    const decisions = [{ route: "general" }, { route: "plan" }];
     const router = new ModelRouter({
       table,
       tier: "frontier",

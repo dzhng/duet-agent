@@ -10,6 +10,9 @@ import { duetTierHeaders, getDuetGatewayBaseUrl } from "./duet-gateway.js";
  */
 export const DUET_API_KEY_ENV = "DUET_API_KEY";
 
+/** Vercel AI Gateway credential used when no Duet key is configured. */
+export const AI_GATEWAY_API_KEY_ENV = "AI_GATEWAY_API_KEY";
+
 // Generation can be slow — image/video models routinely run for minutes — so
 // requests get a 15-minute ceiling rather than the SDK/runtime default.
 const GENERATION_TIMEOUT_MS = 15 * 60 * 1000;
@@ -26,6 +29,19 @@ export type ModelType =
   | "transcription";
 
 /**
+ * The upstream an AI SDK gateway client targets, or undefined when neither
+ * credential is configured. Credential precedence mirrors the harness: the
+ * Duet proxy when its key is present, else Vercel's AI Gateway (same /v4/ai
+ * protocol path) with the Vercel key. One owner for this fallback — callers
+ * never bridge env vars, and usage attribution reads the same answer.
+ */
+export function modelGatewayTransport(): "duet-gateway" | "vercel-ai-gateway" | undefined {
+  if (process.env[DUET_API_KEY_ENV]?.trim()) return "duet-gateway";
+  if (process.env[AI_GATEWAY_API_KEY_ENV]?.trim()) return "vercel-ai-gateway";
+  return undefined;
+}
+
+/**
  * Build an AI SDK gateway provider bound to the Duet proxy. Callers resolve a
  * model with `gateway('<provider>/<model>')` and pass it to `generateText`,
  * `generateImage`, etc. The base URL appends `/v4/ai` to the gateway origin —
@@ -34,22 +50,24 @@ export type ModelType =
  */
 export function createDuetModelGateway(): ReturnType<typeof createGateway> {
   // Preserve `fetch.preconnect` so the wrapper still satisfies the platform
-  // fetch signature; only the abort timeout is overridden.
+  // fetch signature. The caller's abort signal stays live alongside the
+  // timeout so an interrupted turn cancels its in-flight side calls.
   const longTimeoutFetch: typeof fetch = Object.assign(
-    (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
-      fetch(input, { ...init, signal: AbortSignal.timeout(GENERATION_TIMEOUT_MS) }),
+    (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const timeout = AbortSignal.timeout(GENERATION_TIMEOUT_MS);
+      const signal = init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+      return fetch(input, { ...init, signal });
+    },
     { preconnect: fetch.preconnect },
   );
-  // Credential precedence mirrors the harness: the Duet proxy when its key is
-  // present, else Vercel's AI Gateway (same /v4/ai protocol path) with the
-  // Vercel key. One owner for this fallback — callers never bridge env vars.
-  const duetKey = process.env[DUET_API_KEY_ENV]?.trim();
-  const vercelKey = process.env.AI_GATEWAY_API_KEY?.trim();
   const upstream =
-    duetKey || !vercelKey
-      ? { baseURL: `${getDuetGatewayBaseUrl()}/v4/ai`, apiKey: process.env[DUET_API_KEY_ENV] }
-      : { baseURL: "https://ai-gateway.vercel.sh/v4/ai", apiKey: vercelKey };
-  // An AI SDK caller inside a routed turn — the advisor today — bills through
+    modelGatewayTransport() === "vercel-ai-gateway"
+      ? {
+          baseURL: "https://ai-gateway.vercel.sh/v4/ai",
+          apiKey: process.env[AI_GATEWAY_API_KEY_ENV]?.trim(),
+        }
+      : { baseURL: `${getDuetGatewayBaseUrl()}/v4/ai`, apiKey: process.env[DUET_API_KEY_ENV] };
+  // An AI SDK caller inside a routed turn — the advisor and classifier — bills through
   // this client rather than the pi transport, so it must carry the tier claim
   // itself. Constructors run per call site, so the claim reads the tier
   // current at that moment; Vercel's own gateway ignores the extra header when

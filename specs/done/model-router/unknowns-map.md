@@ -14,7 +14,7 @@ The completed four-quadrant map from the explore-unknowns walk (2026-07-17/18).
 
 1. **Virtual-model router** — `--model frontier|balanced|economy` (extensible via config). A routing
    table maps prompts (routing rules) to concrete `{model, effort}` targets; entries may target other
-   virtual models (re-enters resolution). Routing is decided per turn by a cheap LLM classifier and
+   virtual models (re-enters resolution). Routing is decided per turn by a cheap classifier and
    re-checked intra-turn every N steps.
 2. **`ask_advisor` tool** — optional per tier; a no-param tool that sends a curated transcript to a
    stronger advisor model and returns advice. Router and advisor trigger each other (see Q3).
@@ -53,8 +53,11 @@ The completed four-quadrant map from the explore-unknowns walk (2026-07-17/18).
 | balanced           | kimi-k3 medium | gpt-5.6-sol medium | gpt-5.6-terra medium       | sonnet-5 medium  | gpt-5.6-terra medium    | fable-5 medium, on        |
 | economy            | —              | —                  | deepseek-v4.1-flash medium | gpt-5.6-luna low | deepseek-v4.1-flash low | gpt-5.6-terra medium, off |
 
-Classifier: gpt-5.6-luna, low effort, every 5 steps, freeform `guidance` field appended
-(screenshot-style admin guidance).
+Classifier: `classifier.target` names it — a catalog model (with an optional effort) answers
+through the forced `select_route` tool, any other name is an AI Gateway evaluation model id
+answering one `choice` question over the tier's routes with a probability distribution. Built-in
+default `typesafe-ai/jev`, every 5 steps, freeform `guidance` field appended (screenshot-style
+admin guidance).
 
 Revision (2026-08): fable-5 is reserved for the advisor persona — no primary route may
 target it, so a completion right after an advisor consult never runs on the model that
@@ -72,7 +75,7 @@ reservation above applies to whichever model a tier's advisor targets.
 | #   | Question                     | Decision                                                                                                                                                                         | Closed by        |
 | --- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
 | 0   | Economy vision fallback      | None: every built-in route target accepts images; `visionFallbackModelName` serves configured text-only routes                                                                   | user             |
-| 1   | How table becomes a decision | ONE classifier call over all entries; structured output picks the route                                                                                                          | user             |
+| 1   | How table becomes a decision | ONE classifier call over all entries; the target's name picks the structured-output or evaluation path                                                                           | user             |
 | 2   | Cache-awareness              | Classifier prompt only — no code hysteresis; classifier receives prev-turn context to judge "same task"                                                                          | user             |
 | 3   | Advisor cap                  | Rate-limit floor in **steps** (1 per 5, tunable per tier), not a schedule; reroute nudge is cap-exempt                                                                           | user             |
 | 4   | Advisor transcript           | Pinned first user msg + live observational-memory middle + recent tail; token budget **uniform across tiers**, default ~10k (≤20k) sized off frontier at $0.10–0.20/call         | user             |

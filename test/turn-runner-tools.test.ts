@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,10 +15,14 @@ import {
 } from "../src/turn-runner/tools.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import { ModelRouter } from "../src/model-routing/router.js";
-import { BUILT_IN_ROUTING_TABLE, type AdvisorPolicy } from "../src/model-routing/table.js";
+import {
+  BUILT_IN_ROUTING_TABLE,
+  type AdvisorPolicy,
+  type RoutingTable,
+} from "../src/model-routing/table.js";
+import type { ClassifierEvaluate, ClassifyRouteOptions } from "../src/model-routing/classifier.js";
 import { resolveModelName } from "../src/model-resolution/resolver.js";
 import type { CallAdvisorInput } from "../src/model-routing/advisor.js";
-import * as structuredOutput from "../src/core/structured-output.js";
 import type { TurnEvent, TurnTodo } from "../src/types/protocol.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
@@ -38,8 +42,14 @@ const CLASSIFIER_USAGE = {
   cacheRead: 0,
   cacheWrite: 0,
   totalTokens: 8,
-  cost: { input: 0.006, output: 0.002, cacheRead: 0, cacheWrite: 0, total: 0.008 },
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.008 },
 };
+
+const evaluateImplementRoute: ClassifierEvaluate = async () => ({
+  answers: { route: { type: "choice", choice: "implement" } },
+  usage: { inputTokens: 6, outputTokens: 2, totalTokens: 8 },
+  providerMetadata: { gateway: { cost: "0.008" } },
+});
 
 function createTurnRunnerTools(input: Omit<TurnRunnerToolsInput, "todoStorage">) {
   let storedTodos: TurnTodo[] = [];
@@ -536,13 +546,8 @@ describe("TurnRunner tools", () => {
   test("the post-advisor usage event includes both classifier and advisor spend", async () => {
     const priorKey = process.env.DUET_API_KEY;
     process.env.DUET_API_KEY = "classifier-advisor-usage-test-key";
-    const generate = spyOn(structuredOutput, "generateStructuredOutput").mockImplementation(
-      async (options) => {
-        options.onUsage?.(CLASSIFIER_USAGE);
-        return { route: "implement", rationale: "Implementation work." } as never;
-      },
-    );
     const runner = new ToolListTurnRunner("frontier");
+    runner.classifierEvaluate = evaluateImplementRoute;
     const events: TurnEvent[] = [];
     runner.subscribe((event) => events.push(event));
     try {
@@ -563,7 +568,7 @@ describe("TurnRunner tools", () => {
       expect(cumulative?.turnUsage.totalTokens).toBe(23);
       expect(cumulative?.usageByModel).toEqual([
         {
-          model: resolveModelName(BUILT_IN_ROUTING_TABLE.classifier.target.modelName).id,
+          model: BUILT_IN_ROUTING_TABLE.classifier.target.modelName,
           transport: { provider: "duet-gateway", billing: "metered" },
           usage: CLASSIFIER_USAGE,
         },
@@ -575,7 +580,6 @@ describe("TurnRunner tools", () => {
         },
       ]);
     } finally {
-      generate.mockRestore();
       await runner.dispose();
       if (priorKey === undefined) delete process.env.DUET_API_KEY;
       else process.env.DUET_API_KEY = priorKey;
@@ -1965,6 +1969,7 @@ class ToolListTurnRunner extends TurnRunner {
   readonly completedConsultRouters: ModelRouter[] = [];
   private failAdvisorAccounting = false;
   lastAdvisorInput?: CallAdvisorInput;
+  classifierEvaluate?: ClassifierEvaluate;
 
   constructor(model: string, cwd?: string) {
     super({
@@ -2014,6 +2019,11 @@ class ToolListTurnRunner extends TurnRunner {
       effectiveContextWindow: 200_000,
       contextWindowUsage: { systemPrompt: 0, messages: 0, localMemory: 0, globalMemory: 0 },
     };
+  }
+
+  protected override classifierOptions(table: RoutingTable): ClassifyRouteOptions {
+    const options = super.classifierOptions(table);
+    return this.classifierEvaluate ? { ...options, evaluate: this.classifierEvaluate } : options;
   }
 
   failAdvisorAccountingForTest(): void {

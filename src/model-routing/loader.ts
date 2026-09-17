@@ -55,9 +55,17 @@ function isMissingFile(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-function assertSchema(value: unknown, path: string): asserts value is RoutingTable {
-  if (Value.Check(RoutingTableSchema, value)) return;
-  const details = [...Value.Errors(RoutingTableSchema, value)]
+/**
+ * Normalize a parsed file into a table. A key the schema does not know is
+ * dropped rather than rejected, so a table written for another release keeps
+ * loading and its stale fields simply do nothing; an absent field the schema
+ * carries a default for takes that default. Only a value the schema knows and
+ * disagrees with is an error.
+ */
+function parseTable(value: unknown, path: string): RoutingTable {
+  const normalized = Value.Default(RoutingTableSchema, Value.Clean(RoutingTableSchema, value));
+  if (Value.Check(RoutingTableSchema, normalized)) return normalized;
+  const details = [...Value.Errors(RoutingTableSchema, normalized)]
     .map((error) => `${error.instancePath || "/"}: ${error.message}`)
     .join("; ");
   throw new Error(`Invalid routing table at ${path}: ${details}`);
@@ -104,9 +112,9 @@ export async function loadRoutingTable(
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to parse routing table at ${path}: ${detail}`, { cause: error });
     }
-    assertSchema(parsed, path);
-    assertDomain(parsed, path, options.catalogAdapter);
-    return { table: parsed, source: "file", path };
+    const table = parseTable(parsed, path);
+    assertDomain(table, path, options.catalogAdapter);
+    return { table, source: "file", path };
   }
 
   assertDomain(BUILT_IN_ROUTING_TABLE, "built-in routing table", options.catalogAdapter);

@@ -172,9 +172,7 @@ describe("advisor trigger and router interlock", () => {
         await advisor.execute("live-auxiliary-accounting", {});
 
         const usage = usageEvents.at(-1);
-        const classifierId = resolveModelName(
-          BUILT_IN_ROUTING_TABLE.classifier.target.modelName,
-        ).id;
+        const classifierId = BUILT_IN_ROUTING_TABLE.classifier.target.modelName;
         const advisorId = resolveModelName(
           table.tiers["swebench-glm-kimi"]!.advisor.target.modelName,
         ).id;
@@ -239,9 +237,7 @@ describe("advisor trigger and router interlock", () => {
           expect(advisorCalls.some((call) => (call.output?.length ?? 0) > 0)).toBe(true);
           expect(runner.classifierInputs.map((input) => input.trigger)).toContain("advisor");
 
-          const classifierId = resolveModelName(
-            BUILT_IN_ROUTING_TABLE.classifier.target.modelName,
-          ).id;
+          const classifierId = BUILT_IN_ROUTING_TABLE.classifier.target.modelName;
           const advisorId = resolveModelName(
             BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName,
           ).id;

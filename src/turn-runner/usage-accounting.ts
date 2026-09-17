@@ -31,6 +31,27 @@ export function usageFromAiSdk<TApi extends Api>(
 }
 
 /**
+ * Convert a call the gateway priced itself into the usage shape. The gateway
+ * reports one USD total rather than per-component prices, so only
+ * `cost.total` carries it; an omitted cost records the tokens at zero cost
+ * instead of inventing a catalog price for a model the catalog does not list.
+ */
+export function usageFromGatewayReport(report: {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd?: number;
+}): Usage {
+  return {
+    input: report.inputTokens,
+    output: report.outputTokens,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: report.inputTokens + report.outputTokens,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: report.costUsd ?? 0 },
+  };
+}
+
+/**
  * Returns a new `TurnTokenUsage` equal to `a + b`, treating either operand
  * being `undefined` as the empty usage.
  *

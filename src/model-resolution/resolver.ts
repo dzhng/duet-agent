@@ -99,12 +99,6 @@ export const routingCatalogAdapter: RoutingCatalogAdapter = {
     ).input.includes("image"),
 };
 
-/** Resolve a concrete catalog name to the provider-pinned reference used for model calls. */
-export function pinnedModelReference(name: string): string {
-  const model = resolveModelName(name);
-  return `${model.provider}:${model.id}`;
-}
-
 function isKnownProvider(provider: string): provider is RouterProviderName {
   return PROVIDER_ORDER.some((entry) => entry.provider === provider);
 }

@@ -120,7 +120,7 @@ describe("/route slash command", () => {
         route: "implement",
         modelName: "gpt-5.6-sol",
         thinkingLevel: "high",
-        lastRationale: "The task moved from planning into implementation.",
+        lastProbabilities: { general: 0.12, implement: 0.82, writing: 0.06 },
         assistantSteps: 8,
         stepsUntilClassification: 2,
         pinned: false,
@@ -135,11 +135,31 @@ describe("/route slash command", () => {
     expect(ctx.blocks[0]?.body).toMatchInlineSnapshot(`
       "tier: frontier
       current: implement → gpt-5.6-sol (high)
-      rationale: The task moved from planning into implementation.
+      confidence: implement 0.82 · general 0.12 · writing 0.06
       cadence: 2 steps until next check
       advisor: enabled · 1 step until available
       pinned: no"
     `);
+  });
+
+  test("says the first classification is still pending when no decision has landed", () => {
+    const ctx = makeContext({
+      routeStatus: () => ({
+        tier: "frontier",
+        assistantSteps: 0,
+        stepsUntilClassification: 0,
+        pinned: false,
+        advisorEnabled: true,
+        advisorGate: { allowed: true, stepsUntilAllowed: 0 },
+        facts: { hasImages: false },
+      }),
+    });
+
+    tryDispatchSlashCommand("/route", ctx);
+
+    expect(ctx.blocks[0]?.body).toContain("last decision: awaiting first classification");
+    expect(ctx.blocks[0]?.body).not.toContain("rationale:");
+    expect(ctx.blocks[0]?.body).not.toContain("confidence:");
   });
 
   test("says plainly when the session is not routed", () => {

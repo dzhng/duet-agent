@@ -268,7 +268,7 @@ describe("TurnRunner virtual-model adapter", () => {
     const runner = new RouterTurnRunner({
       everySteps: 99,
       stepKeywords: ["SETTLEMENT_TRIGGER_Q7"],
-      classify: scriptedClassifier([{ route: "general", rationale: "Initial route." }]),
+      classify: scriptedClassifier([{ route: "general" }]),
     });
     await startRunner(runner, []);
     const first = runner.turn({ type: "prompt", message: "Begin.", behavior: "follow_up" });
@@ -338,7 +338,7 @@ describe("TurnRunner virtual-model adapter", () => {
 
   test("concrete pin suspends routing and virtual selection rebuilds it for re-classification", async () => {
     const runner = new RouterTurnRunner({
-      classify: scriptedClassifier([{ route: "plan", rationale: "Fresh routed turn." }]),
+      classify: scriptedClassifier([{ route: "plan" }]),
     });
     await startRunner(runner, []);
 
@@ -390,7 +390,7 @@ describe("TurnRunner virtual-model adapter", () => {
     expect(saved.options?.model).toBe("frontier");
 
     const resumed = new RouterTurnRunner({
-      classify: scriptedClassifier([{ route: "plan", rationale: "Classify the resumed prompt." }]),
+      classify: scriptedClassifier([{ route: "plan" }]),
     });
     await resumed.start({ type: "start", state: saved });
     const turn = resumed.turn({
@@ -408,8 +408,8 @@ describe("TurnRunner virtual-model adapter", () => {
   test("mid-turn cross-family swap emits router_switch and attributes usage per message model", async () => {
     const runner = new RouterTurnRunner({
       classify: scriptedClassifier([
-        { route: "plan", rationale: "Start with architecture." },
-        { route: "implement", rationale: "The plan is ready to implement." },
+        { route: "plan" },
+        { route: "implement", probabilities: { implement: 0.88, plan: 0.12 } },
       ]),
     });
     const events: TurnEvent[] = [];
@@ -442,7 +442,7 @@ describe("TurnRunner virtual-model adapter", () => {
       toModel: "sol",
       thinkingLevel: "medium",
       trigger: "cadence",
-      rationale: "The plan is ready to implement.",
+      probabilities: { implement: 0.88, plan: 0.12 },
       visionFallback: false,
     });
     expect(terminal.turnUsage?.totalTokens).toBe(30);
@@ -471,10 +471,7 @@ describe("TurnRunner virtual-model adapter", () => {
 
   test("explicit compaction arms one classification without a second switch-only compaction", async () => {
     const inputs: ClassifierInput[] = [];
-    const decisions = [
-      { route: "general", rationale: "Start general work." },
-      { route: "plan", rationale: "Reconsider after compaction." },
-    ];
+    const decisions = [{ route: "general" }, { route: "plan" }];
     const runner = new RouterTurnRunner({
       everySteps: 99,
       effectiveContext: 1_000,
@@ -537,7 +534,7 @@ describe("TurnRunner virtual-model adapter", () => {
       effectiveContext: 100,
       classify: async (input) => {
         inputs.push(input);
-        return { route: "general", rationale: "Keep the target unchanged." };
+        return { route: "general" };
       },
     });
     const events: TurnEvent[] = [];
@@ -566,10 +563,7 @@ describe("TurnRunner virtual-model adapter", () => {
 
   test("context-overflow recovery classifies once without forcing an extra model turn", async () => {
     const inputs: ClassifierInput[] = [];
-    const decisions = [
-      { route: "general", rationale: "Start general work." },
-      { route: "plan", rationale: "Use a fresh target after overflow compaction." },
-    ];
+    const decisions = [{ route: "general" }, { route: "plan" }];
     const runner = new RouterTurnRunner({
       everySteps: 99,
       classify: async (input) => {
@@ -613,10 +607,7 @@ describe("TurnRunner virtual-model adapter", () => {
         model: "economy",
         cwd,
         everySteps: 99,
-        classify: scriptedClassifier([
-          { route: "implement", rationale: "The prompt requests file implementation." },
-          { route: "implement", rationale: "Continue the implementation task." },
-        ]),
+        classify: scriptedClassifier([{ route: "implement" }, { route: "implement" }]),
       });
       const events: TurnEvent[] = [];
       await startRunner(runner, events);
@@ -662,10 +653,7 @@ describe("TurnRunner virtual-model adapter", () => {
       const runner = new RouterTurnRunner({
         cwd,
         everySteps: 99,
-        classify: scriptedClassifier([
-          { route: "general", rationale: "Start general work." },
-          { route: "plan", rationale: "Escalate after the tool result." },
-        ]),
+        classify: scriptedClassifier([{ route: "general" }, { route: "plan" }]),
       });
       const events: TurnEvent[] = [];
       await startRunner(runner, events);
@@ -731,7 +719,7 @@ describe("TurnRunner virtual-model adapter", () => {
 
   test("state-agent assistant events do not tick the parent router", async () => {
     const runner = new RouterTurnRunner({
-      classify: scriptedClassifier([{ route: "general", rationale: "General." }]),
+      classify: scriptedClassifier([{ route: "general" }]),
     });
     await startRunner(runner, []);
     const message = createAssistantMessage({ text: "child result" });
@@ -745,7 +733,7 @@ describe("TurnRunner virtual-model adapter", () => {
     let calls = 0;
     const classify: RouteClassifier = async (_input, signal) => {
       calls += 1;
-      if (calls === 1) return { route: "plan", rationale: "Start on the plan model." };
+      if (calls === 1) return { route: "plan" };
       classificationStarted = true;
       return new Promise((_resolve, reject) => {
         signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
@@ -777,10 +765,7 @@ describe("TurnRunner virtual-model adapter", () => {
 
   test("memory transform re-reads the smaller routed context window", async () => {
     const runner = new RouterTurnRunner({
-      classify: scriptedClassifier([
-        { route: "general", rationale: "Stay on the large model." },
-        { route: "plan", rationale: "Move to the smaller model." },
-      ]),
+      classify: scriptedClassifier([{ route: "general" }, { route: "plan" }]),
       // haiku-4.5's real 200k window is the smallest in the catalog — luna
       // previously served this role only because its synthesized spec
       // under-reported 256k; its true window is 1.05M.
@@ -814,7 +799,7 @@ describe("advisor executor guidance layer", () => {
     const runner = new RouterTurnRunner({
       everySteps: 99,
       stubAdvisor: true,
-      classify: async () => ({ route: "general", rationale: "Keep the executor stable." }),
+      classify: async () => ({ route: "general" }),
     });
     const events: TurnEvent[] = [];
     await startRunner(runner, events);
@@ -878,7 +863,7 @@ describe("advisor executor guidance layer", () => {
     const runner = new RouterTurnRunner({
       everySteps: 99,
       stubAdvisor: true,
-      classify: async () => ({ route: "general", rationale: "Keep the executor stable." }),
+      classify: async () => ({ route: "general" }),
     });
     await startRunner(runner, []);
 
@@ -937,7 +922,7 @@ describe("advisor executor guidance layer", () => {
     const runner = new RouterTurnRunner({
       everySteps: 99,
       stubAdvisor: true,
-      classify: async () => ({ route: "general", rationale: "Keep the executor stable." }),
+      classify: async () => ({ route: "general" }),
     });
     await startRunner(runner, []);
 
@@ -976,7 +961,7 @@ describe("advisor executor guidance layer", () => {
     const runner = new RouterTurnRunner({
       everySteps: 99,
       stubAdvisor: true,
-      classify: async () => ({ route: "general", rationale: "Keep the executor stable." }),
+      classify: async () => ({ route: "general" }),
     });
     await startRunner(runner, []);
 
@@ -1011,7 +996,7 @@ describe("advisor executor guidance layer", () => {
     const runner = new RouterTurnRunner({
       everySteps: 99,
       stubAdvisor: true,
-      classify: async () => ({ route: "general", rationale: "Keep the executor stable." }),
+      classify: async () => ({ route: "general" }),
     });
     await startRunner(runner, []);
 

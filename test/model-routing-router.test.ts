@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { ClassifierDecision, ClassifierInput } from "../src/model-routing/classifier.js";
-import { ModelRouter, type RouteClassifier } from "../src/model-routing/router.js";
+import {
+  formatRouteProbabilities,
+  ModelRouter,
+  type RouteClassifier,
+} from "../src/model-routing/router.js";
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 
 const catalog = {
@@ -31,9 +35,15 @@ function createRouter(classify: RouteClassifier): ModelRouter {
   return router;
 }
 
-const general = { route: "general", rationale: "Continue general work." };
-const implement = { route: "implement", rationale: "Implementation now dominates." };
-const plan = { route: "plan", rationale: "The next phase is architectural planning." };
+const general: ClassifierDecision = { route: "general" };
+const implement: ClassifierDecision = {
+  route: "implement",
+  rationale: "Implementation now dominates.",
+};
+const plan: ClassifierDecision = {
+  route: "plan",
+  probabilities: { general: 0.07, plan: 0.81, implement: 0.12 },
+};
 
 describe("ModelRouter", () => {
   test("cadence fires at five completed assistant steps, not four", async () => {
@@ -153,7 +163,7 @@ describe("ModelRouter", () => {
       route: "plan",
       modelName: "opus",
       thinkingLevel: "medium",
-      lastRationale: plan.rationale,
+      lastProbabilities: plan.probabilities,
       assistantSteps: 1,
       stepsUntilClassification: 4,
       pinned: false,
@@ -161,6 +171,26 @@ describe("ModelRouter", () => {
       advisorGate: { allowed: true, stepsUntilAllowed: 0 },
       facts: { hasImages: false },
     });
+  });
+
+  test("a switch carries whichever explanation its classifier path returned", async () => {
+    const router = createRouter(scriptedClassifier([plan, implement]));
+
+    const evaluated = await router.prepareTurn({});
+    expect(evaluated).toMatchObject({
+      route: "plan",
+      toModel: "opus",
+      probabilities: plan.probabilities,
+    });
+    expect(evaluated).not.toHaveProperty("rationale");
+
+    for (let step = 0; step < 5; step++) router.noteAssistantStep();
+    const switched = await router.prepareTurn({});
+
+    expect(switched).toMatchObject({ route: "implement", rationale: implement.rationale });
+    expect(switched).not.toHaveProperty("probabilities");
+    expect(router.status()).toMatchObject({ lastRationale: implement.rationale });
+    expect(router.status()).not.toHaveProperty("lastProbabilities");
   });
 
   test("image facts stay sticky within a turn and reset at the next prompt", async () => {
@@ -338,4 +368,17 @@ describe("single-destination tiers", () => {
 
     expect(router.shouldClassify()).toBe(true);
   });
+});
+
+test("formats a route distribution most likely first", () => {
+  expect(formatRouteProbabilities({ general: 0.12, writing: 0.06, implement: 0.82 })).toBe(
+    "implement 0.82 · general 0.12 · writing 0.06",
+  );
+});
+
+test("drops routes the classifier ruled out, keeping the leader when it ruled out everything", () => {
+  expect(formatRouteProbabilities({ implement: 0.996, general: 0.004, writing: 0 })).toBe(
+    "implement 1.00",
+  );
+  expect(formatRouteProbabilities({ implement: 1, general: 0, writing: 0 })).toBe("implement 1.00");
 });

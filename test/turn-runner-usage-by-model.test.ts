@@ -1,8 +1,11 @@
-import { describe, expect, spyOn, test } from "bun:test";
-import * as structuredOutput from "../src/core/structured-output.js";
+import { describe, expect, test } from "bun:test";
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
-import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
-import { resolveModelName } from "../src/model-resolution/resolver.js";
+import type { ClassifierGenerate, ClassifyRouteOptions } from "../src/model-routing/classifier.js";
+import {
+  BUILT_IN_ROUTING_TABLE,
+  type ClassifierTarget,
+  type RoutingTable,
+} from "../src/model-routing/table.js";
 import {
   TurnRunner,
   type AgentWorkerInput,
@@ -205,9 +208,43 @@ class ConcurrentSpawnUsageRunner extends TurnRunner {
   }
 }
 
+const CHAT_CLASSIFIER_USAGE: TurnTokenUsage = {
+  input: 420,
+  output: 24,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 444,
+  cost: { input: 0.0004, output: 0.00014, cacheRead: 0, cacheWrite: 0, total: 0.00054 },
+};
+
+/** Classifies with the table's evaluation target unless a chat target is set. */
 class ClassifierUsageRunner extends TurnRunner {
+  chatTarget?: ClassifierTarget;
+
   constructor() {
     super({ model: "balanced", skillDiscovery: { includeDefaults: false } });
+  }
+
+  protected override classifierOptions(table: RoutingTable): ClassifyRouteOptions {
+    const options = super.classifierOptions(table);
+    if (this.chatTarget) {
+      return {
+        ...options,
+        target: this.chatTarget,
+        generate: (async (generateOptions: { onUsage?: (usage: TurnTokenUsage) => void }) => {
+          generateOptions.onUsage?.(CHAT_CLASSIFIER_USAGE);
+          return { route: "implement", rationale: "Implementation work." };
+        }) as ClassifierGenerate,
+      };
+    }
+    return {
+      ...options,
+      evaluate: async () => ({
+        answers: { route: { type: "choice", choice: "implement" } },
+        usage: { inputTokens: 431, outputTokens: 3, totalTokens: 434 },
+        providerMetadata: { gateway: { cost: "0.000018102" } },
+      }),
+    };
   }
 
   protected override async runAgentWorker(rawInput: AgentWorkerInput): Promise<AgentWorkerResult> {
@@ -232,7 +269,7 @@ class MixedBillingRunner extends TurnRunner {
 
   protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     this.recordUsage(PARENT_USAGE, "gpt-5.6-sol", "openai-codex");
-    this.recordUsage(CLASSIFIER_USAGE, "openai/gpt-5.6-luna", "duet-gateway");
+    this.recordUsage(CLASSIFIER_USAGE, "typesafe-ai/jev", "duet-gateway");
     return {
       control: { type: "none" },
       outcome: {
@@ -265,7 +302,7 @@ describe("TurnRunner per-model cost breakdown", () => {
         },
       },
       {
-        model: "openai/gpt-5.6-luna",
+        model: "typesafe-ai/jev",
         transport: { provider: "duet-gateway", billing: "metered" },
         usage: CLASSIFIER_USAGE,
       },
@@ -276,15 +313,17 @@ describe("TurnRunner per-model cost breakdown", () => {
     await runner.dispose();
   });
 
-  test("holds classifier usage for the flat terminal when no parent snapshot exists", async () => {
+  test("holds gateway-priced classifier usage for the flat terminal when no parent snapshot exists", async () => {
     const priorKey = process.env.DUET_API_KEY;
     process.env.DUET_API_KEY = "duet_gt_classifier_usage";
-    const generate = spyOn(structuredOutput, "generateStructuredOutput").mockImplementation(
-      async (options) => {
-        options.onUsage?.(CLASSIFIER_USAGE);
-        return { route: "implement", rationale: "Implementation work." } as never;
-      },
-    );
+    const jevUsage: TurnTokenUsage = {
+      input: 431,
+      output: 3,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 434,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.000018102 },
+    };
     try {
       const runner = new ClassifierUsageRunner();
       const events: TurnEvent[] = [];
@@ -301,17 +340,44 @@ describe("TurnRunner per-model cost breakdown", () => {
         (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
       );
       expect(streamed).toBeUndefined();
-      expect(terminal.turnUsage).toEqual(CLASSIFIER_USAGE);
+      expect(terminal.turnUsage).toEqual(jevUsage);
       expect(terminal.usageByModel).toEqual([
         {
-          model: resolveModelName(BUILT_IN_ROUTING_TABLE.classifier.target.modelName).id,
+          model: BUILT_IN_ROUTING_TABLE.classifier.target.modelName,
           transport: { provider: "duet-gateway", billing: "metered" },
-          usage: CLASSIFIER_USAGE,
+          usage: jevUsage,
         },
       ]);
       await runner.dispose();
     } finally {
-      generate.mockRestore();
+      if (priorKey === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = priorKey;
+    }
+  });
+
+  test("attributes a catalog classifier to its resolved metered model", async () => {
+    const priorKey = process.env.DUET_API_KEY;
+    process.env.DUET_API_KEY = "duet_gt_chat_classifier_usage";
+    try {
+      const runner = new ClassifierUsageRunner();
+      runner.chatTarget = { modelName: "luna", thinkingLevel: "low" };
+      await runner.start({ type: "start", mode: "agent" });
+
+      const terminal = await runner.turn({
+        type: "prompt",
+        message: "classify child",
+        behavior: "follow_up",
+      });
+
+      expect(terminal.usageByModel).toEqual([
+        {
+          model: "openai/gpt-5.6-luna",
+          transport: { provider: "duet-gateway", billing: "metered" },
+          usage: CHAT_CLASSIFIER_USAGE,
+        },
+      ]);
+      await runner.dispose();
+    } finally {
       if (priorKey === undefined) delete process.env.DUET_API_KEY;
       else process.env.DUET_API_KEY = priorKey;
     }

@@ -24,8 +24,7 @@
   },
   "classifier": {
     "target": {
-      "modelName": "luna",
-      "thinkingLevel": "low"
+      "modelName": "typesafe-ai/jev"
     },
     "everySteps": 5,
     "guidance": "Prefer continuity when the task has not materially changed, but switch routes when the work changes domains."

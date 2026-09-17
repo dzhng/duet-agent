@@ -1,10 +1,14 @@
 import { describe, expect } from "bun:test";
-import type { Usage } from "@earendil-works/pi-ai";
 import corpusJson from "./fixtures/model-routing/golden-prompts.json" with { type: "json" };
 import { testIfDocker } from "../test/helpers/docker-only.js";
-import { classifyRoute } from "../src/model-routing/classifier.js";
-import { CLASSIFIER_PROMPT_VERSION } from "../src/model-routing/prompts.js";
-import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
+import {
+  classifierPath,
+  classifyRoute,
+  type ClassifierUsageReport,
+} from "../src/model-routing/classifier.js";
+import { classifierPromptVersion } from "../src/model-routing/prompts.js";
+import { BUILT_IN_ROUTING_TABLE, type ClassifierTarget } from "../src/model-routing/table.js";
+import { isThinkingLevel } from "../src/session/thinking-level.js";
 
 interface GoldenCase {
   id: string;
@@ -25,14 +29,24 @@ interface CaseResult {
   trial: number;
   expected: string[];
   actual: string;
-  rationale: string;
+  rationale?: string;
+  probabilities?: Record<string, number>;
   latencyMs: number;
-  usage?: Usage;
+  usage?: ClassifierUsageReport;
   error?: string;
 }
 
 const corpus = corpusJson as GoldenCase[];
-const classifierModel = process.env.EVAL_MODEL ?? "gpt-5.6-luna";
+// The table's target by default; the env overrides exist to score the other
+// classifier path (a catalog model with an effort) against the same corpus.
+const classifierTarget: ClassifierTarget = process.env.ROUTING_CLASSIFIER_MODEL
+  ? {
+      modelName: process.env.ROUTING_CLASSIFIER_MODEL,
+      ...(process.env.ROUTING_CLASSIFIER_EFFORT
+        ? { thinkingLevel: requireThinkingLevel(process.env.ROUTING_CLASSIFIER_EFFORT) }
+        : {}),
+    }
+  : BUILT_IN_ROUTING_TABLE.classifier.target;
 const trials = Number(process.env.ROUTING_TRIALS ?? "3");
 const caseFilter = process.env.ROUTING_CASE;
 const hintStyle = process.env.ROUTING_HINT_STYLE ?? "summary";
@@ -43,6 +57,16 @@ const MAX_CLASSIFIER_INPUT_TOKENS = 1_000;
 // the recorded p50/p95 in the scorecard output is the tracking signal; this assertion
 // only catches pathological regressions (e.g. accidental full-transcript input).
 const P50_LATENCY_CEILING_MS = 5_000;
+
+function requireThinkingLevel(value: string) {
+  if (!isThinkingLevel(value)) throw new Error(`Unknown ROUTING_CLASSIFIER_EFFORT "${value}".`);
+  return value;
+}
+
+function classifierInputTokens(usage: ClassifierUsageReport | undefined): number {
+  if (!usage) return 0;
+  return usage.usage.input + usage.usage.cacheRead + usage.usage.cacheWrite;
+}
 
 function percentile(values: number[], percentileValue: number): number {
   const sorted = [...values].sort((left, right) => left - right);
@@ -60,11 +84,6 @@ function prevTurnHint(fixture: GoldenCase): string | undefined {
   throw new Error(`Unknown ROUTING_HINT_STYLE "${hintStyle}"; use summary or tools.`);
 }
 
-function classifierInputTokens(usage: Usage | undefined): number {
-  if (!usage) return 0;
-  return usage.input + usage.cacheRead + usage.cacheWrite;
-}
-
 function logFailure(result: CaseResult): void {
   console.error(
     JSON.stringify(
@@ -74,11 +93,12 @@ function logFailure(result: CaseResult): void {
         expected: result.expected,
         actual: result.actual,
         rationale: result.rationale,
-        promptVersion: CLASSIFIER_PROMPT_VERSION,
+        probabilities: result.probabilities,
+        promptVersion: classifierPromptVersion(classifierPath(classifierTarget)),
         hintStyle,
         latencyMs: result.latencyMs,
-        tokens: result.usage?.totalTokens ?? 0,
         inputTokens: classifierInputTokens(result.usage),
+        tokens: result.usage?.usage.totalTokens ?? 0,
         error: result.error,
       },
       null,
@@ -118,13 +138,13 @@ describe("model-routing classifier scorecard", () => {
             hasImages: fixture.hasImages ?? false,
             trigger: fixture.currentTarget ? ("cadence" as const) : ("turn_start" as const),
           };
-          let usage: Usage | undefined;
+          let usage: ClassifierUsageReport | undefined;
           const startedAt = performance.now();
           try {
             const decision = await classifyRoute(input, {
-              model: classifierModel,
-              onUsage: (nextUsage) => {
-                usage = nextUsage;
+              target: classifierTarget,
+              onUsage: (report) => {
+                usage = report;
               },
             });
             results.push({
@@ -133,6 +153,7 @@ describe("model-routing classifier scorecard", () => {
               expected,
               actual: decision.route,
               rationale: decision.rationale,
+              probabilities: decision.probabilities,
               latencyMs: Math.round(performance.now() - startedAt),
               usage,
             });
@@ -142,7 +163,6 @@ describe("model-routing classifier scorecard", () => {
               trial,
               expected,
               actual: "<classification-error>",
-              rationale: "No classifier decision returned.",
               latencyMs: Math.round(performance.now() - startedAt),
               usage,
               error: error instanceof Error ? error.message : String(error),
@@ -173,16 +193,16 @@ describe("model-routing classifier scorecard", () => {
       );
       const latencies = results.map((result) => result.latencyMs);
       const totalTokens = results.reduce(
-        (sum, result) => sum + (result.usage?.totalTokens ?? 0),
+        (sum, result) => sum + (result.usage?.usage.totalTokens ?? 0),
         0,
       );
       const totalCostUsd = results.reduce(
-        (sum, result) => sum + (result.usage?.cost.total ?? 0),
+        (sum, result) => sum + (result.usage?.usage.cost.total ?? 0),
         0,
       );
       const scorecard = {
-        promptVersion: CLASSIFIER_PROMPT_VERSION,
-        classifierModel,
+        promptVersion: classifierPromptVersion(classifierPath(classifierTarget)),
+        classifierTarget,
         hintStyle,
         cases: fixtures.length,
         trials,

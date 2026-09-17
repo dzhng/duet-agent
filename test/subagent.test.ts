@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { ClassifierInput } from "../src/model-routing/classifier.js";
+import type { ClassifierInput, ClassifyRouteOptions } from "../src/model-routing/classifier.js";
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { ModelRouter } from "../src/model-routing/router.js";
 import { classifySpawnModel, type SubagentRun } from "../src/turn-runner/subagent.js";
@@ -14,7 +14,7 @@ function poisonedModelRouter(): ModelRouter {
   const router = new ModelRouter({
     table: BUILT_IN_ROUTING_TABLE,
     tier: "frontier",
-    classify: async () => ({ route: "general", rationale: "Unused poison dependency." }),
+    classify: async () => ({ route: "general" }),
     resolveCatalog,
   });
   return new Proxy(router, {
@@ -121,14 +121,16 @@ describe("sub-agent model routing isolation", () => {
 
   test("classifySpawnModel inherits concrete settings and classifies a virtual setting once", async () => {
     const inputs: ClassifierInput[] = [];
-    const classify = async (input: ClassifierInput) => {
+    const models: string[] = [];
+    const classify = async (input: ClassifierInput, options: ClassifyRouteOptions) => {
       inputs.push(input);
-      return { route: "implement", rationale: "The child is implementing code." };
+      models.push(options.target.modelName);
+      return { route: "implement", probabilities: { implement: 0.9, general: 0.1 } };
     };
     const deps = {
       table: BUILT_IN_ROUTING_TABLE,
       resolveCatalog,
-      classifierOptions: { model: "gpt-5.6-luna" },
+      classifierOptions: { target: { modelName: "typesafe-ai/jev" } },
       classify,
     };
 
@@ -143,6 +145,7 @@ describe("sub-agent model routing isolation", () => {
     });
     expect(inputs).toHaveLength(1);
     expect(inputs[0]?.lastStepDelta).toBe("Write the patch.");
+    expect(models).toEqual(["typesafe-ai/jev"]);
   });
 
   test("live spawn classifies the virtual parent once without the shared router and isolates child tools", async () => {

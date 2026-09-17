@@ -2,7 +2,7 @@
 
 Virtual model routing with an interlocked advisor tool. `--model
 frontier|balanced|economy` (frontier is the default for bare `duet`) selects a _routing policy_
-instead of a model: a cheap LLM classifier picks a route from a prose routing table at every turn
+instead of a model: a cheap classifier picks a route from a prose routing table at every turn
 start and every 5 assistant steps, and the harness swaps the parent agent's model+effort
 mid-turn. Tiers with the advisor enabled inject a no-param `ask_advisor` tool that ships a
 curated transcript to a stronger model; routing changes nudge the advisor, and advisor consults
@@ -15,14 +15,22 @@ losing alternatives). The build followed it with the divergences recorded below.
 ## The reason it works this way
 
 - **Routing is a prompt product, not a code product.** Every judgment lives in prose an admin
-  can edit: route descriptions in the table, classifier system prompt, cache-switching
+  can edit: route descriptions in the table, classifier instructions, cache-switching
   preference, advisor timing guidance, reroute nudge. Code only enforces mechanics (cadence,
   caps, vision capability). This mirrors the admin-guidance UX the feature was modeled on and
   makes `duet route` + `.duet/models.json` the tuning surface — no rebuild to change taste.
 - **One classifier call over all entries** (not per-entry matching): the classifier returns a
-  route _name_, schema-constrained to a TypeBox union of the tier's actual routes, so an
-  invented route is a validation failure, never a silent misroute. Concrete model + effort come
-  only from the validated table.
+  route _name_ chosen from the tier's actual routes, so an invented route is a rejected call,
+  never a silent misroute. Concrete model + effort come only from the validated table.
+- **Two classifier paths, one entry point, chosen by the target's name.** Route choice is a
+  judgment over fixed options, which an AI Gateway _evaluation model_ answers directly with
+  calibrated probabilities — cheaper and faster than a forced tool call, and a distribution is a
+  more honest explanation than generated prose. A chat model answers the same question through a
+  forced `select_route` tool with a one-sentence rationale, and is what a workspace without an
+  AI Gateway credential (or with a favorite small chat model) runs on. `classifier.target`
+  carries either kind: a name the concrete catalog knows takes the chat path with the target's
+  optional `thinkingLevel`, anything else is an evaluation-model id and the effort is ignored.
+  `classifyRoute` owns that dispatch so no call site branches on it.
 - **Cache economics live in the classifier prompt, not code hysteresis.** "Switching discards
   the prompt cache; prefer the current model while the kind of work stays the same" is an
   instruction the classifier weighs against a prev-turn hint — fuzzy same-task judgment is
@@ -57,8 +65,19 @@ losing alternatives). The build followed it with the divergences recorded below.
   never live runner state.
 - Exempt from routing: the memory actor, the classifier itself, the advisor call, and explicit
   concrete state-machine models. Explicit _virtual_ state models resolve via `resolveTierDefault`.
-- The classifier input is lean (rules + guidance + current target + bounded prev-turn hint +
-  step delta + image flag) — never the full transcript.
+- The classifier input is lean (route descriptions + guidance + current target + bounded
+  prev-turn hint + step delta + image flag) — never the full transcript. Both paths carry the
+  same facts: the chat path as prompts, the evaluation path as question criteria plus a JSON
+  state.
+- Each path reports its own attribution — resolved metered model for the chat path, the
+  evaluation-model id and gateway-reported cost for the evaluation path — through one
+  `{modelId, transport, usage}` report, so the runner records classifier spend one way.
+- The evaluation path needs an AI Gateway credential (`DUET_API_KEY`, else `AI_GATEWAY_API_KEY`)
+  and throws without one; the chat path resolves through the ordinary metered router order. A
+  throwing classification is a no-op — the router keeps its current target.
+- A decision explains itself in whatever its path produced — a rationale (chat) or a
+  distribution (evaluation), never both and never a fabricated stand-in. `router_switch`,
+  `/route`, and `duet route` print what the decision carried.
 - `duet route` composes the exact production classification path — the workbench cannot lie.
 - The vision guard (image-bearing work never routed to a text-only model) is enforced in
   `resolve.ts` against catalog `input` metadata; kimi-k3's catalog entry is load-bearing here —
@@ -73,7 +92,8 @@ losing alternatives). The build followed it with the divergences recorded below.
 - Domain: `src/model-routing/table.ts` (`BUILT_IN_ROUTING_TABLE`, `validateRoutingTable`),
   `resolve.ts` (`resolveRoute`, vision guard), `loader.ts` (`.duet/models.json`
   complete-replacement + `exportRoutingTable`), `prompts.ts` (every tunable string),
-  `classifier.ts` (`classifyRoute`), `router.ts` (`ModelRouter`), `advisor-transcript.ts`
+  `classifier.ts` (`classifyRoute`, `classifierPath`, both request builders), `router.ts`
+  (`ModelRouter`), `advisor-transcript.ts`
   (`buildAdvisorTranscript`), `advisor.ts` (`callAdvisor`), `default-selection.ts`
   (the frontier default selection).
 - Wiring: `turn-runner.ts` — `initializeModelRouter`, `applyRouterSwitch`, `prepareNextTurn`

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runConfigCommand } from "../src/cli/config.js";
 import { parseRouteArgs, runRouteCommand } from "../src/cli/route.js";
-import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
+import { BUILT_IN_ROUTING_TABLE, type ClassifierTarget } from "../src/model-routing/table.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 describe("parseRouteArgs", () => {
@@ -61,6 +61,7 @@ describe("runRouteCommand", () => {
   test("prints the stable JSON decision shape with a stubbed classifier", async () => {
     let output = "";
     let classifierDelta: string | undefined;
+    let classifierTarget: ClassifierTarget | undefined;
     const ticks = [100, 137];
     const result = await runRouteCommand(["--json", "implement the parser"], {
       cwd: process.cwd(),
@@ -68,11 +69,12 @@ describe("runRouteCommand", () => {
         output += text;
       },
       now: () => ticks.shift()!,
-      classify: async (input) => {
+      classify: async (input, options) => {
         classifierDelta = input.lastStepDelta;
+        classifierTarget = options.target;
         return {
           route: "implement",
-          rationale: "The request asks for implementation.",
+          probabilities: { general: 0.12, implement: 0.82, writing: 0.06 },
         };
       },
     });
@@ -82,13 +84,14 @@ describe("runRouteCommand", () => {
       route: "implement",
       model: "sol",
       effort: "medium",
-      rationale: "The request asks for implementation.",
+      probabilities: { general: 0.12, implement: 0.82, writing: 0.06 },
       resolutionChain: ["frontier"],
       tableSource: "built-in",
       latencyMs: 37,
     });
     expect(result).toEqual(JSON.parse(output));
     expect(classifierDelta).toBe("implement the parser");
+    expect(classifierTarget).toEqual(BUILT_IN_ROUTING_TABLE.classifier.target);
   });
 
   test("explains the concrete transport without changing the default output shape", async () => {
@@ -100,13 +103,58 @@ describe("runRouteCommand", () => {
       },
       classify: async () => ({
         route: "implement",
-        rationale: "The request asks for implementation.",
+        probabilities: { implement: 0.82, general: 0.12, writing: 0.06 },
       }),
     });
 
     expect(output).toContain(
       "Transport: duet-gateway modelId=openai/gpt-5.6-sol reason=router_order planCovered=false",
     );
+    expect(output).toContain("Confidence: implement 0.82 · general 0.12 · writing 0.06");
+  });
+
+  test("prints the chat classifier's rationale instead of a distribution", async () => {
+    let output = "";
+    const result = await runRouteCommand(["--json", "implement the parser"], {
+      cwd: process.cwd(),
+      write: (text) => {
+        output += text;
+      },
+      classify: async () => ({ route: "implement", rationale: "The request asks for code." }),
+    });
+
+    expect(JSON.parse(output)).toMatchObject({
+      route: "implement",
+      rationale: "The request asks for code.",
+    });
+    expect(result).not.toHaveProperty("probabilities");
+
+    output = "";
+    await runRouteCommand(["implement the parser"], {
+      cwd: process.cwd(),
+      write: (text) => {
+        output += text;
+      },
+      classify: async () => ({ route: "implement", rationale: "The request asks for code." }),
+    });
+    expect(output).toContain("Rationale: The request asks for code.");
+    expect(output).not.toContain("Confidence:");
+  });
+
+  testIfDocker("names both gateway credentials when neither is configured", async () => {
+    const originalVercelKey = process.env.AI_GATEWAY_API_KEY;
+    const cwd = await mkdtemp(join(tmpdir(), "duet-route-no-credentials-"));
+    delete process.env.DUET_API_KEY;
+    delete process.env.AI_GATEWAY_API_KEY;
+    try {
+      await expect(runRouteCommand(["implement the parser"], { cwd })).rejects.toThrow(
+        "set DUET_API_KEY or AI_GATEWAY_API_KEY",
+      );
+    } finally {
+      if (originalVercelKey === undefined) delete process.env.AI_GATEWAY_API_KEY;
+      else process.env.AI_GATEWAY_API_KEY = originalVercelKey;
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   test("surfaces an unknown tier before calling the classifier", async () => {
@@ -115,7 +163,7 @@ describe("runRouteCommand", () => {
       runRouteCommand(["--model", "missing", "prompt"], {
         classify: async () => {
           classifierCalled = true;
-          return { route: "general", rationale: "unused" };
+          return { route: "general" };
         },
       }),
     ).rejects.toThrow('Unknown virtual model tier "missing".');

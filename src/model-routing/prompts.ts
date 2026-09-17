@@ -1,10 +1,15 @@
 import dedent from "dedent";
 import type { TierDefinition } from "./table.js";
 
-/** Identifies the measured classifier prompt in scorecard output. */
-export const CLASSIFIER_PROMPT_VERSION = "model-router-classifier-v3";
+/** Classifier call paths, selected by what the table's classifier target names. */
+export type ClassifierPath = "chat" | "evaluation";
 
-/** Stable classifier behavior shared by the probe CLI and runtime router. */
+/** Identifies the measured wording of the path that answered, in scorecard output. */
+export function classifierPromptVersion(path: ClassifierPath): string {
+  return path === "chat" ? "model-router-classifier-v3" : "model-router-classifier-v4";
+}
+
+/** Stable chat-classifier behavior shared by the probe CLI and runtime router. */
 export const CLASSIFIER_SYSTEM_PROMPT = dedent`
   You are a model-route classifier. Choose the single route that best matches the work the agent
   should do next, using only the supplied route names and descriptions.
@@ -12,6 +17,19 @@ export const CLASSIFIER_SYSTEM_PROMPT = dedent`
   Return exactly one existing route name through the required tool, plus a one-sentence rationale.
   Never invent, rename, combine, or return a concrete model name. Treat administrator guidance as
   additional routing policy.
+
+  Route for the current kind of work, not merely the topic or the input capabilities it needs.
+  Vision fallback or graceful degradation is handled by the router after classification. A route
+  change discards the current model's prompt cache, so prefer the current route/model while the
+  kind of work remains materially the same. Switch when the work clearly changes kind; cache
+  continuity must not keep a genuinely wrong route.
+`;
+
+/** Stable route-choice policy carried by every evaluation-model classification. */
+const CLASSIFIER_EVALUATION_POLICY = dedent`
+  Choose the single route whose description best matches the work the agent should do next. The
+  state holds the classification context: what triggered it, whether images are present, the
+  current target, a hint about the previous turn, and the current request or latest agent step.
 
   Route for the current kind of work, not merely the topic or the input capabilities it needs.
   Vision fallback or graceful degradation is handled by the router after classification. A route
@@ -101,7 +119,10 @@ export const ADVISOR_SYSTEM_PROMPT = dedent`
   context; it does not apply to you.
 `;
 
-/** Continuity framing for the classifier: cache preference when a target is active. */
+/**
+ * Continuity framing for the chat classifier, which is addressed as the agent
+ * that owns the current model.
+ */
 export function renderCacheContinuity(currentTarget: string | undefined): string {
   return currentTarget
     ? dedent`
@@ -112,7 +133,7 @@ export function renderCacheContinuity(currentTarget: string | undefined): string
     : "CURRENT TARGET: None (there is no prompt cache to preserve).";
 }
 
-/** Render every route in one tier for a single all-entries classifier decision. */
+/** Render every route in one tier for a single all-entries chat classification. */
 export function renderClassifierRules(
   tierName: string,
   tier: TierDefinition,
@@ -129,5 +150,39 @@ export function renderClassifierRules(
 
     ADMINISTRATOR GUIDANCE:
     ${guidance.trim() || "No additional guidance."}
+  `;
+}
+
+/**
+ * Continuity framing for the evaluation classifier. Separate wording from the
+ * chat renderer because an evaluation model judges the agent's situation from
+ * the outside; "you" there would name the wrong actor.
+ */
+function renderEvaluationCacheContinuity(currentTarget: string | undefined): string {
+  return currentTarget
+    ? dedent`
+        CACHE CONTINUITY: The agent is currently on ${currentTarget}. Switching away discards the
+        current model's prompt cache. Prefer this target unless the kind of work has clearly
+        changed.
+      `
+    : "CURRENT TARGET: None (there is no prompt cache to preserve).";
+}
+
+/**
+ * Complete route-choice instructions for the evaluation path: the stable
+ * policy, the administrator's guidance as additional routing policy, then the
+ * cache-continuity framing.
+ */
+export function renderClassifierInstructions(
+  guidance: string,
+  currentTarget: string | undefined,
+): string {
+  return dedent`
+    ${CLASSIFIER_EVALUATION_POLICY}
+
+    ADMINISTRATOR GUIDANCE (additional routing policy):
+    ${guidance.trim() || "No additional guidance."}
+
+    ${renderEvaluationCacheContinuity(currentTarget)}
   `;
 }

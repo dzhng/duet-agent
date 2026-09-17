@@ -1,13 +1,29 @@
-import type { ThinkingLevel, Usage } from "@earendil-works/pi-ai";
+import type { Usage } from "@earendil-works/pi-ai";
+import {
+  experimental_evaluate,
+  type Experimental_EvaluationModel,
+  type Experimental_EvaluationResult,
+} from "ai";
 import dedent from "dedent";
 import { Type } from "typebox";
 import * as structuredOutput from "../core/structured-output.js";
+import type { TransportName } from "../model-resolution/catalog.js";
+import {
+  AI_GATEWAY_API_KEY_ENV,
+  createDuetModelGateway,
+  DUET_API_KEY_ENV,
+  modelGatewayTransport,
+} from "../model-resolution/model-gateway.js";
+import { resolveMeteredModelName, routingCatalogAdapter } from "../model-resolution/resolver.js";
+import { usageFromGatewayReport } from "../turn-runner/usage-accounting.js";
 import {
   CLASSIFIER_SYSTEM_PROMPT,
   renderCacheContinuity,
+  renderClassifierInstructions,
   renderClassifierRules,
+  type ClassifierPath,
 } from "./prompts.js";
-import type { TierDefinition } from "./table.js";
+import type { ClassifierTarget, TierDefinition } from "./table.js";
 
 const CONTEXT_HINT_LIMIT = 1_000;
 
@@ -66,35 +82,102 @@ export interface ClassifierMessages {
   prompt: string;
 }
 
-/** Options for the live structured-output route decision. */
+/**
+ * Classification context the evaluation model judges. Null marks a hint the
+ * caller did not supply, so the model never reads a placeholder as content.
+ */
+export type ClassifierState = {
+  trigger: RouteTrigger;
+  tier: string;
+  imagesPresent: boolean;
+  currentTarget: string | null;
+  previousTurnHint: string | null;
+  currentRequestOrLastStepDelta: string | null;
+};
+
+/** The single choice question: one option per route in the classified tier. */
+export type ClassifierQuestions = {
+  route: {
+    type: "choice";
+    /** Route policy, administrator guidance, and cache-continuity framing. */
+    instructions: string;
+    /** Route name mapped to its administrator-authored description. */
+    criteria: Record<string, string>;
+  };
+};
+
+/** Pure evaluation request consumed by the evaluation-model classifier call. */
+export interface ClassifierRequest {
+  state: ClassifierState;
+  questions: ClassifierQuestions;
+}
+
+/** Evaluation call seam; production binds the AI SDK's `experimental_evaluate`. */
+export type ClassifierEvaluate = (
+  call: ClassifierRequest & { model: Experimental_EvaluationModel; abortSignal?: AbortSignal },
+) => Promise<
+  Pick<Experimental_EvaluationResult<ClassifierQuestions>, "answers" | "usage" | "providerMetadata">
+>;
+
+/** Structured-output call seam; production binds `generateStructuredOutput`. */
+export type ClassifierGenerate = typeof structuredOutput.generateStructuredOutput;
+
+/** One attributed classifier call, shaped the same whichever path ran it. */
+export interface ClassifierUsageReport {
+  /** Provider-specific model id the call billed under. */
+  modelId: string;
+  /** Backend that carried the call. */
+  transport: TransportName;
+  /** Priced usage; the evaluation path prices from the gateway's reported cost. */
+  usage: Usage;
+}
+
+/** Options for one live route decision, whichever classifier path the target selects. */
 export interface ClassifyRouteOptions {
-  /** Classifier model reference resolved by the caller's composition layer. */
-  model: string;
-  /** Reasoning effort configured for the classifier target in the routing table. */
-  thinkingLevel?: ThinkingLevel;
+  /** Classifier target from the routing table; its name selects the path. */
+  target: ClassifierTarget;
   /** Cancels the provider request when its owning turn is interrupted. */
   signal?: AbortSignal;
-  /** Receives classifier token and cost usage for attribution. */
-  onUsage?: (usage: Usage) => void;
+  /** Receives the attributed usage for this call. */
+  onUsage?: (report: ClassifierUsageReport) => void;
+  /** Evaluation-path network seam for deterministic tests. */
+  evaluate?: ClassifierEvaluate;
+  /** Chat-path network seam for deterministic tests. */
+  generate?: ClassifierGenerate;
 }
 
 /** A classifier choice that still names policy, not a concrete execution target. */
 export interface ClassifierDecision {
   /** Existing route name selected from the supplied tier. */
   route: string;
-  /** One-sentence explanation returned by the classifier. */
-  rationale: string;
+  /** One-sentence explanation, returned only by the chat classifier. */
+  rationale?: string;
+  /** Probability per route, returned only by an evaluation model that reports a distribution. */
+  probabilities?: Record<string, number>;
 }
 
-function boundedHint(value: string | undefined): string {
-  if (!value?.trim()) return "Not provided.";
+/**
+ * Which path a classifier target selects, and the single owner of that
+ * decision: a name the concrete catalog knows runs the chat classifier,
+ * anything else is an AI Gateway evaluation-model id.
+ */
+export function classifierPath(target: ClassifierTarget): ClassifierPath {
+  return routingCatalogAdapter.isCatalogName(target.modelName) ? "chat" : "evaluation";
+}
+
+function boundedText(value: string | undefined): string | null {
+  if (!value?.trim()) return null;
   const normalized = value.trim();
   return normalized.length <= CONTEXT_HINT_LIMIT
     ? normalized
     : `${normalized.slice(0, CONTEXT_HINT_LIMIT)}…`;
 }
 
-/** Build the complete lean classifier request without reading runtime state. */
+function boundedHint(value: string | undefined): string {
+  return boundedText(value) ?? "Not provided.";
+}
+
+/** Build the complete lean chat-classifier prompts without reading runtime state. */
 export function buildClassifierMessages(input: ClassifierInput): ClassifierMessages {
   const continuity = renderCacheContinuity(input.currentTarget);
 
@@ -115,25 +198,107 @@ export function buildClassifierMessages(input: ClassifierInput): ClassifierMessa
   };
 }
 
+/** Build the complete lean evaluation request without reading runtime state. */
+export function buildClassifierRequest(input: ClassifierInput): ClassifierRequest {
+  return {
+    state: {
+      trigger: input.trigger,
+      tier: input.tierName,
+      imagesPresent: input.hasImages,
+      currentTarget: input.currentTarget ?? null,
+      previousTurnHint: boundedText(input.prevTurnHint),
+      currentRequestOrLastStepDelta: boundedText(input.lastStepDelta),
+    },
+    questions: {
+      route: {
+        type: "choice",
+        instructions: renderClassifierInstructions(input.guidance, input.currentTarget),
+        criteria: Object.fromEntries(
+          Object.entries(input.tier.routes).map(([name, rule]) => [name, rule.description]),
+        ),
+      },
+    },
+  };
+}
+
+function gatewayCostUsd(
+  providerMetadata: Experimental_EvaluationResult<ClassifierQuestions>["providerMetadata"],
+): number | undefined {
+  const cost = providerMetadata?.gateway?.cost;
+  const value = typeof cost === "string" || typeof cost === "number" ? Number(cost) : Number.NaN;
+  return Number.isFinite(value) ? value : undefined;
+}
+
+/** Route choice from a chat model, forced through the `select_route` tool. */
+async function classifyWithChatModel(
+  input: ClassifierInput,
+  options: ClassifyRouteOptions,
+): Promise<ClassifierDecision> {
+  const model = resolveMeteredModelName(options.target.modelName);
+  const messages = buildClassifierMessages(input);
+  const generate = options.generate ?? structuredOutput.generateStructuredOutput;
+  return await generate({
+    model: `${model.provider}:${model.id}`,
+    tool: classifierResultTool(Object.keys(input.tier.routes)),
+    systemPrompt: messages.systemPrompt,
+    prompt: messages.prompt,
+    ...(options.target.thinkingLevel
+      ? { callOptions: { reasoningEffort: options.target.thinkingLevel } }
+      : {}),
+    signal: options.signal,
+    onUsage: (usage) =>
+      options.onUsage?.({
+        modelId: model.id,
+        transport: model.provider as TransportName,
+        usage,
+      }),
+  });
+}
+
+/** Route choice from an AI Gateway evaluation model, with its probability distribution. */
+async function classifyWithEvaluationModel(
+  input: ClassifierInput,
+  options: ClassifyRouteOptions,
+): Promise<ClassifierDecision> {
+  const transport = modelGatewayTransport();
+  if (!transport) {
+    throw new Error(
+      `Route classification on evaluation model "${options.target.modelName}" needs an AI Gateway credential: set ${DUET_API_KEY_ENV} or ${AI_GATEWAY_API_KEY_ENV}.`,
+    );
+  }
+  const evaluate = options.evaluate ?? experimental_evaluate;
+  const result = await evaluate({
+    model: createDuetModelGateway().evaluationModel(options.target.modelName),
+    ...buildClassifierRequest(input),
+    abortSignal: options.signal,
+  });
+  const costUsd = gatewayCostUsd(result.providerMetadata);
+  options.onUsage?.({
+    modelId: options.target.modelName,
+    transport,
+    usage: usageFromGatewayReport({
+      inputTokens: result.usage.inputTokens ?? 0,
+      outputTokens: result.usage.outputTokens ?? 0,
+      ...(costUsd === undefined ? {} : { costUsd }),
+    }),
+  });
+  const { choice, probabilities } = result.answers.route;
+  return { route: choice, ...(probabilities ? { probabilities } : {}) };
+}
+
 /** Classify one tier in one model call and reject any route outside that tier. */
 export async function classifyRoute(
   input: ClassifierInput,
   options: ClassifyRouteOptions,
 ): Promise<ClassifierDecision> {
-  const messages = buildClassifierMessages(input);
-  const result = await structuredOutput.generateStructuredOutput({
-    model: options.model,
-    tool: classifierResultTool(Object.keys(input.tier.routes)),
-    systemPrompt: messages.systemPrompt,
-    prompt: messages.prompt,
-    ...(options.thinkingLevel ? { callOptions: { reasoningEffort: options.thinkingLevel } } : {}),
-    signal: options.signal,
-    onUsage: options.onUsage,
-  });
-  if (!Object.hasOwn(input.tier.routes, result.route)) {
+  const decision =
+    classifierPath(options.target) === "chat"
+      ? await classifyWithChatModel(input, options)
+      : await classifyWithEvaluationModel(input, options);
+  if (!Object.hasOwn(input.tier.routes, decision.route)) {
     throw new Error(
-      `Classifier selected unknown route "${result.route}" for tier "${input.tierName}".`,
+      `Classifier selected unknown route "${decision.route}" for tier "${input.tierName}".`,
     );
   }
-  return result;
+  return decision;
 }

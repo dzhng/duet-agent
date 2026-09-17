@@ -3044,8 +3044,8 @@ export class TurnRunner {
     // per-prompt command options. For concrete selections the model stays
     // stable for the whole session to protect prompt caching; routed sessions
     // deliberately trade cache prefixes away when the ModelRouter swaps the
-    // model (per turn or via prepareNextTurn), with the classifier prompt
-    // carrying the don't-switch-mid-task cache preference.
+    // model (per turn or via prepareNextTurn), with the classifier's
+    // instructions carrying the don't-switch-mid-task cache preference.
     let agent!: Agent;
     agent = new Agent({
       // Dispatch comes from the registry that knows the Duet gateway provider;
@@ -3545,13 +3545,15 @@ export class TurnRunner {
     });
   }
 
-  /** One metered classifier contract shared by parent routing and spawned children. */
-  private classifierOptions(table: RoutingTable): ClassifyRouteOptions {
-    const model = resolveMeteredModelName(table.classifier.target.modelName);
+  /**
+   * One classifier contract shared by parent routing and spawned children.
+   * The classifier reports the model id and transport it actually used, so
+   * both classifier paths attribute their spend the same way.
+   */
+  protected classifierOptions(table: RoutingTable): ClassifyRouteOptions {
     return {
-      model: `${model.provider}:${model.id}`,
-      thinkingLevel: table.classifier.target.thinkingLevel,
-      onUsage: (usage) => this.recordAndEmitUsage(usage, model.id, model.provider as TransportName),
+      target: table.classifier.target,
+      onUsage: (report) => this.recordAndEmitUsage(report.usage, report.modelId, report.transport),
     };
   }
 

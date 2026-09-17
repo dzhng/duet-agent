@@ -64,7 +64,7 @@ describe("TUI rendering smoke test", () => {
       route: "implement",
       modelName: "gpt-5.6-sol",
       thinkingLevel: "high" as const,
-      lastRationale: "The task entered its implementation phase.",
+      lastProbabilities: { implement: 0.9, general: 0.1 },
       assistantSteps: 5,
       stepsUntilClassification: 5,
       pinned: false,
@@ -82,7 +82,7 @@ describe("TUI rendering smoke test", () => {
       toModel: "gpt-5.6-sol",
       thinkingLevel: "high",
       trigger: "cadence",
-      rationale: status.lastRationale,
+      probabilities: status.lastProbabilities,
       visionFallback: false,
     });
     await harness.flush();

@@ -3,7 +3,7 @@ import type { SkillAutocompleteItem } from "./autocomplete.js";
 import type { CopyController } from "./copy-controller.js";
 import type { PasteController } from "./paste-controller.js";
 import type { TranscriptWriter } from "./transcript-writer.js";
-import type { RouterStatus } from "../model-routing/router.js";
+import { formatRouteProbabilities, type RouterStatus } from "../model-routing/router.js";
 import { submitDuetFeedback } from "../lib/feedback.js";
 import { COLORS } from "./theme.js";
 
@@ -486,7 +486,15 @@ function handleRouteSlashCommand(_raw: string, ctx: SlashCommandContext): void {
     status.route && status.modelName && status.thinkingLevel
       ? `${status.route} → ${status.modelName} (${status.thinkingLevel})`
       : "awaiting initial target";
-  const rationale = status.lastRationale ?? "awaiting first classification";
+  // Each classifier path explains itself differently — prose from the chat
+  // classifier, a distribution from an evaluation model — so show what the
+  // last decision actually carried instead of inventing the other one.
+  const explanation = [
+    ...(status.lastRationale ? [`rationale: ${status.lastRationale}`] : []),
+    ...(status.lastProbabilities
+      ? [`confidence: ${formatRouteProbabilities(status.lastProbabilities)}`]
+      : []),
+  ];
   const cadence =
     status.stepsUntilClassification === 0
       ? "due now"
@@ -501,7 +509,7 @@ function handleRouteSlashCommand(_raw: string, ctx: SlashCommandContext): void {
     [
       `tier: ${status.tier}`,
       `current: ${current}`,
-      `rationale: ${rationale}`,
+      ...(explanation.length > 0 ? explanation : ["last decision: awaiting first classification"]),
       `cadence: ${cadence}`,
       `advisor: ${status.advisorEnabled ? "enabled" : "disabled"} · ${advisorCooldown}`,
       `pinned: ${pinned}`,

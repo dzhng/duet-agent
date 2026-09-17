@@ -102,7 +102,7 @@ describe("built-in model routing table", () => {
       minStepsBetween: 5,
     });
     expect(table.classifier).toEqual({
-      target: { modelName: "luna", thinkingLevel: "low" },
+      target: { modelName: "typesafe-ai/jev" },
       everySteps: 5,
       guidance:
         "Prefer continuity when the task has not materially changed, but switch routes when the work changes domains.",
@@ -181,25 +181,46 @@ describe("built-in model routing table", () => {
     ).toBe(true);
   });
 
-  test("keeps classifier and advisor targets concrete even though routes may re-enter virtual tiers", () => {
+  test("keeps advisor targets concrete even though routes may re-enter virtual tiers", () => {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-    table.classifier.target.modelName = "frontier";
     table.tiers.frontier.advisor.target.modelName = "balanced";
 
-    const issues = validateRoutingTable(table, catalog);
+    expect(validateRoutingTable(table, catalog)).toEqual([
+      expect.objectContaining({
+        code: "dangling_reference",
+        path: "tiers.frontier.advisor.target.modelName",
+      }),
+    ]);
+  });
 
-    expect(issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "dangling_reference",
-          path: "classifier.target.modelName",
-        }),
-        expect.objectContaining({
-          code: "dangling_reference",
-          path: "tiers.frontier.advisor.target.modelName",
-        }),
-      ]),
-    );
+  test("accepts a catalog classifier target and any gateway evaluation model id", () => {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.classifier.target = { modelName: "example-lab/evaluator-2" };
+
+    expect(routingCatalogAdapter.isCatalogName(table.classifier.target.modelName)).toBe(false);
+    expect(validateRoutingTable(table, catalog)).toEqual([]);
+
+    table.classifier.target = { modelName: "luna", thinkingLevel: "low" };
+    expect(validateRoutingTable(table, catalog)).toEqual([]);
+    expect(Value.Check(RoutingTableSchema, table)).toBe(true);
+  });
+
+  test("rejects a virtual tier or an unknown effort as the classifier target", () => {
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.classifier.target = { modelName: "frontier" };
+    Reflect.set(table.classifier.target, "thinkingLevel", "extreme");
+
+    expect(validateRoutingTable(table, catalog)).toEqual([
+      expect.objectContaining({
+        code: "dangling_reference",
+        path: "classifier.target.modelName",
+      }),
+      expect.objectContaining({
+        code: "invalid_effort",
+        path: "classifier.target.thinkingLevel",
+      }),
+    ]);
+    expect(Value.Check(RoutingTableSchema, table)).toBe(false);
   });
 
   test("reports dangling refs, invalid efforts and cadences, and text-only vision fallbacks", () => {
@@ -333,6 +354,46 @@ describe("routing table file loading and export", () => {
     await expect(
       loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: await makeTempDir() }),
     ).rejects.toThrow("Classifier cadence must be a positive number of steps.");
+  });
+
+  testIfDocker("loads a file carrying keys the schema does not know, dropping them", async () => {
+    const cwd = await makeTempDir();
+    const table = {
+      ...structuredClone(BUILT_IN_ROUTING_TABLE),
+      classifier: {
+        ...structuredClone(BUILT_IN_ROUTING_TABLE.classifier),
+        target: { modelName: "luna", thinkingLevel: "low" },
+        // Written by a release that named the classifier model elsewhere; the
+        // live field is `target`, so this one must simply do nothing.
+        model: "typesafe-ai/jev",
+      },
+      experimentalRoutingMode: "aggressive",
+    };
+    await mkdir(join(cwd, ".duet"));
+    await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+
+    const loaded = await loadRoutingTable({
+      cwd,
+      catalogAdapter: catalog,
+      homeDir: await makeTempDir(),
+    });
+
+    expect(loaded.source).toBe("file");
+    expect(loaded.table.classifier.target).toEqual({ modelName: "luna", thinkingLevel: "low" });
+    expect(loaded.table.classifier).not.toHaveProperty("model");
+    expect(loaded.table).not.toHaveProperty("experimentalRoutingMode");
+  });
+
+  testIfDocker("still rejects a value the schema knows and disagrees with", async () => {
+    const cwd = await makeTempDir();
+    const table = { ...structuredClone(BUILT_IN_ROUTING_TABLE), defaultTier: 7 };
+    await mkdir(join(cwd, ".duet"));
+    const path = join(cwd, ".duet", "models.json");
+    await writeFile(path, JSON.stringify(table));
+
+    await expect(
+      loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: await makeTempDir() }),
+    ).rejects.toThrow(`Invalid routing table at ${path}:`);
   });
 
   testIfDocker("fails loading when a file tier collides with a catalog alias", async () => {
