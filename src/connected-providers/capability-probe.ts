@@ -7,15 +7,10 @@ import {
   type ProviderStreamOptions,
 } from "@earendil-works/pi-ai";
 import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
+import { transportModelIds } from "../model-resolution/catalog.js";
 import { connectedProviders } from "./registry.js";
 import type { ConnectedProviderId, ConnectionEligibility } from "./store.js";
 
-const CHATGPT_SERVED_MODEL_IDS = [
-  "gpt-6-astra",
-  "gpt-5.6-sol",
-  "gpt-5.6-terra",
-  "gpt-5.6-luna",
-] as const;
 const CHATGPT_PROBE_MODEL_ID = "gpt-5.6-luna";
 
 export interface CapabilityProbeResult {
@@ -54,7 +49,7 @@ export async function probeConnectedProvider(
   // implementation's: an ineligible Copilot plan filters every model out.
   const available = provider.filterModels?.(catalog, credential) ?? catalog;
   const servedModelIds =
-    id === "openai-codex" ? [...CHATGPT_SERVED_MODEL_IDS] : available.map((model) => model.id);
+    id === "openai-codex" ? transportModelIds("openai-codex") : available.map((model) => model.id);
   const copilotHasNoModels = id === "github-copilot" && hasEmptyAvailableModelIds(credentials);
   // An ineligible Copilot account filters every model out. Probe a catalog donor
   // anyway so connect still exercises the transport and observes its stop=error.

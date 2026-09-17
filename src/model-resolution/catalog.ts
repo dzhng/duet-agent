@@ -422,6 +422,14 @@ export function transportModelId(transport: TransportName, shorthand: string): s
   return findModelDefinition(shorthand)?.modelsByProvider[transport];
 }
 
+/** Every model id a transport serves, in catalog order. */
+export function transportModelIds(transport: TransportName): string[] {
+  return MODEL_DEFINITIONS.flatMap((definition) => {
+    const modelId = definition.modelsByProvider[transport];
+    return modelId ? [modelId] : [];
+  });
+}
+
 /** Recover the curated shorthand represented by a transport-specific model id. */
 export function shorthandForTransportModel(
   transport: TransportName,
