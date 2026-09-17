@@ -110,11 +110,11 @@ const familyCases: readonly FamilyCase[] = [
   },
   {
     family: "deepseek",
-    latest: "deepseek-v4-pro",
+    latest: "deepseek-v4.1-flash",
     modelsByProvider: {
-      "duet-gateway": "deepseek/deepseek-v4-pro",
-      "vercel-ai-gateway": "deepseek/deepseek-v4-pro",
-      openrouter: "deepseek/deepseek-v4-pro",
+      "duet-gateway": "deepseek/deepseek-v4.1-flash",
+      "vercel-ai-gateway": "deepseek/deepseek-v4.1-flash",
+      openrouter: "deepseek/deepseek-v4.1-flash",
     },
   },
   {
@@ -169,6 +169,7 @@ describe("catalog family shorthands", () => {
       "gpt-6-astra",
       "kimi-k3",
       "grok-4.3",
+      "deepseek-v4.1-flash",
       "deepseek-v4-pro",
       "glm-5.2",
       "glm-4.7",

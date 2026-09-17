@@ -38,7 +38,7 @@ const plan = { route: "plan", rationale: "The next phase is architectural planni
 describe("ModelRouter", () => {
   test("cadence fires at five completed assistant steps, not four", async () => {
     const inputs: ClassifierInput[] = [];
-    const router = createRouter(scriptedClassifier([general, implement], inputs));
+    const router = createRouter(scriptedClassifier([general, plan], inputs));
 
     await router.prepareTurn({});
     for (let step = 0; step < 4; step++) {
@@ -67,7 +67,7 @@ describe("ModelRouter", () => {
   });
 
   test("pin suspends due classification and unpin resumes it", async () => {
-    const router = createRouter(scriptedClassifier([general, implement]));
+    const router = createRouter(scriptedClassifier([general, plan]));
     await router.prepareTurn({});
     for (let step = 0; step < 5; step++) router.noteAssistantStep();
     router.pin();
@@ -152,7 +152,7 @@ describe("ModelRouter", () => {
       tier: "frontier",
       route: "plan",
       modelName: "opus",
-      thinkingLevel: "high",
+      thinkingLevel: "medium",
       lastRationale: plan.rationale,
       assistantSteps: 1,
       stepsUntilClassification: 4,
@@ -223,8 +223,11 @@ describe("ModelRouter", () => {
 
   test("the next boundary redirects an image-bearing step away from a text-only target", async () => {
     const inputs: ClassifierInput[] = [];
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.tiers.economy.routes.implement.target.modelName = "glm";
+    table.tiers.economy.routes.implement.visionFallbackModelName = "luna";
     const router = new ModelRouter({
-      table: BUILT_IN_ROUTING_TABLE,
+      table,
       tier: "economy",
       classify: scriptedClassifier([implement, implement], inputs),
       resolveCatalog: catalog,

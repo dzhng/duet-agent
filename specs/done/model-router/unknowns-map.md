@@ -39,6 +39,7 @@ The completed four-quadrant map from the explore-unknowns walk (2026-07-17/18).
   `openai/gpt-5.6-sol` · `openai/gpt-5.6-terra` · `openai/gpt-5.6-luna` · `moonshotai/kimi-k3`
   (vision, 1M ctx) · `zai/glm-5.2` (Vercel) / `z-ai/glm-5.2` (OpenRouter) — **glm-5.2 is text-only**.
   `deepseek/deepseek-v4-pro` is text-only via API today (vision is chat-app-only).
+  `deepseek/deepseek-v4.1-flash` accepts images via API (verified live on Vercel AI Gateway, 2026-09-18).
 - Anthropic's advisor tool (shipped in beta 2026-04-09): server-side `advisor_20260301` / name `advisor`,
   no parameters, server forwards full transcript; their advisor-side system prompt is unpublished, but
   executor-side prompt blocks are published verbatim (timing block, advice-weight block, Haiku hard-rule
@@ -46,18 +47,18 @@ The completed four-quadrant map from the explore-unknowns walk (2026-07-17/18).
 
 **The default routing table (final).**
 
-| Tier               | visual       | plan                | implement                                        | writing              | general              | advisor                   |
-| ------------------ | ------------ | ------------------- | ------------------------------------------------ | -------------------- | -------------------- | ------------------------- |
-| frontier (default) | kimi-k3 high | opus-5 high         | gpt-5.6-sol high                                 | opus-5 medium        | gpt-5.6-sol medium   | fable-5, on               |
-| balanced           | kimi-k3 high | gpt-5.6-sol high    | gpt-5.6-terra high                               | sonnet-5 medium      | gpt-5.6-terra medium | fable-5, on               |
-| economy            | —            | gpt-5.6-luna medium | glm-5.2 medium; `implement-visual` → luna medium | — (falls to general) | gpt-5.6-luna **low** | gpt-5.6-terra medium, off |
+| Tier               | visual         | plan               | implement                  | writing          | general                 | advisor                   |
+| ------------------ | -------------- | ------------------ | -------------------------- | ---------------- | ----------------------- | ------------------------- |
+| frontier (default) | kimi-k3 medium | opus-5 medium      | gpt-5.6-sol medium         | opus-5 medium    | gpt-5.6-sol medium      | fable-5 medium, on        |
+| balanced           | kimi-k3 medium | gpt-5.6-sol medium | gpt-5.6-terra medium       | sonnet-5 medium  | gpt-5.6-terra medium    | fable-5 medium, on        |
+| economy            | —              | —                  | deepseek-v4.1-flash medium | gpt-5.6-luna low | deepseek-v4.1-flash low | gpt-5.6-terra medium, off |
 
 Classifier: gpt-5.6-luna, low effort, every 5 steps, freeform `guidance` field appended
 (screenshot-style admin guidance).
 
 Revision (2026-08): fable-5 is reserved for the advisor persona — no primary route may
 target it, so a completion right after an advisor consult never runs on the model that
-just gave the advice. The frontier plan route moved to the opus family (high) accordingly;
+just gave the advice. The frontier plan route moved to the opus family accordingly;
 opus cells resolve to the latest curated opus (opus-5 as of this revision).
 
 Revision (2026-09): GPT-6 Astra is in the catalog and can be an advisor through a routing
@@ -68,22 +69,22 @@ reservation above applies to whichever model a tier's advisor targets.
 
 ## Quadrant 2 — Known unknowns (decision ledger)
 
-| #   | Question                                                  | Decision                                                                                                                                                                       | Closed by        |
-| --- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- |
-| 0   | Economy vision fallback (deepseek API vision unavailable) | luna                                                                                                                                                                           | user             |
-| 1   | How table becomes a decision                              | ONE classifier call over all entries; structured output picks the route                                                                                                        | user             |
-| 2   | Cache-awareness                                           | Classifier prompt only — no code hysteresis; classifier receives prev-turn context to judge "same task"                                                                        | user             |
-| 3   | Advisor cap                                               | Rate-limit floor in **steps** (1 per 5, tunable per tier), not a schedule; reroute nudge is cap-exempt                                                                         | user             |
-| 4   | Advisor transcript                                        | Pinned first user msg + live observational-memory middle + recent tail; token budget **uniform across tiers**, default ~10k (≤20k) sized off frontier at $0.10–0.20/call       | user             |
-| 5   | Config format                                             | `.duet/models.json`, TypeBox; **optional** — built-in internal table is default; CLI export command writes it out for tweaking                                                 | user             |
-| 6   | Reroute cadence                                           | Every 5 steps, tunable; **an advisor call also triggers the classifier** (milestone signal)                                                                                    | user             |
-| 7   | Naming                                                    | Bare names; table wins; collision with catalog shorthand = load error (must run before `canonicalizeModelName`, `resolver.ts:130`)                                             | user             |
-| 8   | UX                                                        | Two-layer display `frontier → gpt-5.6-sol (high)`; new `router_switch` runner event rendered in TUI; `/model <concrete>` pins & suspends routing; `/route` inspector built now | user             |
-| 9   | Exemptions                                                | Memory actor, classifier, advisor, explicit state models exempt; **per-state sub-agent models MAY name a virtual** (re-enters resolution with that sub-agent's context)        | user + territory |
-| 10  | Advisor SDK wiring                                        | AI SDK gateway provider against existing gateways/keys                                                                                                                         | territory        |
-| D1  | Advisor stack                                             | Vercel AI SDK via existing `createDuetModelGateway()`; plain `generateText` now (no zod); structured outputs later may add zod                                                 | user             |
-| D2  | `usageByModel` key                                        | **Concrete model id** (real per-model spend; `/route` carries virtual context)                                                                                                 | user             |
-| D3  | `/thinking` vs router effort                              | **Router effort always wins**; `/thinking` applies only to non-routed sessions                                                                                                 | user             |
+| #   | Question                     | Decision                                                                                                                                                                         | Closed by        |
+| --- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| 0   | Economy vision fallback      | None: every built-in route target accepts images; `visionFallbackModelName` serves configured text-only routes                                                                   | user             |
+| 1   | How table becomes a decision | ONE classifier call over all entries; structured output picks the route                                                                                                          | user             |
+| 2   | Cache-awareness              | Classifier prompt only — no code hysteresis; classifier receives prev-turn context to judge "same task"                                                                          | user             |
+| 3   | Advisor cap                  | Rate-limit floor in **steps** (1 per 5, tunable per tier), not a schedule; reroute nudge is cap-exempt                                                                           | user             |
+| 4   | Advisor transcript           | Pinned first user msg + live observational-memory middle + recent tail; token budget **uniform across tiers**, default ~10k (≤20k) sized off frontier at $0.10–0.20/call         | user             |
+| 5   | Config format                | `.duet/models.json`, TypeBox; **optional** — built-in internal table is default; CLI export command writes it out for tweaking                                                   | user             |
+| 6   | Reroute cadence              | Every 5 steps, tunable; **an advisor call also triggers the classifier** (milestone signal)                                                                                      | user             |
+| 7   | Naming                       | Bare names; table wins; collision with catalog shorthand = load error (must run before `canonicalizeModelName`, `resolver.ts:130`)                                               | user             |
+| 8   | UX                           | Two-layer display `frontier → gpt-5.6-sol (medium)`; new `router_switch` runner event rendered in TUI; `/model <concrete>` pins & suspends routing; `/route` inspector built now | user             |
+| 9   | Exemptions                   | Memory actor, classifier, advisor, explicit state models exempt; **per-state sub-agent models MAY name a virtual** (re-enters resolution with that sub-agent's context)          | user + territory |
+| 10  | Advisor SDK wiring           | AI SDK gateway provider against existing gateways/keys                                                                                                                           | territory        |
+| D1  | Advisor stack                | Vercel AI SDK via existing `createDuetModelGateway()`; plain `generateText` now (no zod); structured outputs later may add zod                                                   | user             |
+| D2  | `usageByModel` key           | **Concrete model id** (real per-model spend; `/route` carries virtual context)                                                                                                   | user             |
+| D3  | `/thinking` vs router effort | **Router effort always wins**; `/thinking` applies only to non-routed sessions                                                                                                   | user             |
 
 **OPEN items** (what unblocks each) — _status updated at spec time: draft recon resolved two of
 the four builder-confirm facts (installed pi-agent passes an `AbortSignal` to `prepareNextTurn`
@@ -121,7 +122,7 @@ a real catalog entry must land first._
   export command hands the user the internal table when they want to tweak (mirrors the Droid
   admin-guidance screenshot's spirit: freeform prose rules shape automatic selection).
 - Creative-writing route added mid-walk (frontier opus-4.8 / balanced sonnet-5, medium) — economy
-  deliberately has none.
+  runs it on gpt-5.6-luna, low.
 
 ---
 

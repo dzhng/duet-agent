@@ -329,7 +329,7 @@ describe("TurnRunner virtual-model adapter", () => {
 
       expect(runner.setModel("custom")).toEqual({ routed: true });
       expect(runner.routeStatus()?.tier).toBe("custom");
-      expect(runner.parentAgentForTest().state.model.id).toBe("openai/gpt-5.6-luna");
+      expect(runner.parentAgentForTest().state.model.id).toBe("deepseek/deepseek-v4.1-flash");
       await runner.dispose();
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -370,7 +370,7 @@ describe("TurnRunner virtual-model adapter", () => {
       thinkingLevel: "high",
     });
     expect(runner.createdAgentOptions.at(-1)).toEqual({
-      model: "luna",
+      model: "deepseek",
       thinkingLevel: "low",
     });
 
@@ -440,7 +440,7 @@ describe("TurnRunner virtual-model adapter", () => {
       route: "implement",
       fromModel: "opus",
       toModel: "sol",
-      thinkingLevel: "high",
+      thinkingLevel: "medium",
       trigger: "cadence",
       rationale: "The plan is ready to implement.",
       visionFallback: false,
@@ -603,6 +603,12 @@ describe("TurnRunner virtual-model adapter", () => {
     const cwd = await mkdtemp(join(tmpdir(), "duet-router-image-step-"));
     try {
       await writeFile(join(cwd, "shot.png"), Buffer.from(TINY_PNG_BASE64, "base64"));
+      // Every built-in target accepts images, so the guard needs a configured text-only route.
+      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      table.tiers.economy!.routes.implement!.target.modelName = "glm";
+      table.tiers.economy!.routes.implement!.visionFallbackModelName = "luna";
+      await mkdir(join(cwd, ".duet"));
+      await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
       const runner = new RouterTurnRunner({
         model: "economy",
         cwd,

@@ -76,6 +76,10 @@
     }
   },
   "deepseek": {
+    "deepseek-v4.1-flash": {
+      "openai-codex": null,
+      "github-copilot": null
+    },
     "deepseek-v4-pro": {
       "openai-codex": null,
       "github-copilot": null

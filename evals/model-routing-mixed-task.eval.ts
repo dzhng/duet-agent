@@ -313,7 +313,7 @@ describe("mixed-task model routing promotion", () => {
       expect(solSwitchIndex, JSON.stringify(switches, null, 2)).toBeGreaterThan(kimiSwitchIndex);
       for (const switched of switches) {
         expect(["kimi", "sol"]).toContain(switched.toModel);
-        expect(switched.thinkingLevel).toBe("high");
+        expect(switched.thinkingLevel).toBe("medium");
       }
 
       const parentModels = new Set(calls.map((call) => call.model));

@@ -136,9 +136,10 @@ function gatewayModels(route: GatewayRoute): Model<Api>[] {
   const key = `${route.id}@${origin}`;
   const cached = gatewayModelsByRoute.get(key);
   if (cached) return cached;
-  const models = getBuiltinModels(VERCEL_GATEWAY_PROVIDER_ID).map((model) =>
-    rebaseOntoGateway(model, route, origin),
-  );
+  const models = [
+    ...getBuiltinModels(VERCEL_GATEWAY_PROVIDER_ID),
+    ...missingCatalogModels(VERCEL_GATEWAY_PROVIDER_ID),
+  ].map((model) => rebaseOntoGateway(model, route, origin));
   gatewayModelsByRoute.set(key, models);
   return models;
 }
@@ -213,12 +214,89 @@ function gatewayCapabilityGaps(modelId: string): Partial<Model<Api>> | undefined
   return undefined;
 }
 
-/** The catalog's spec for `provider:modelId`. */
+/** The published fields a missing model's contract can differ from its sibling's on. */
+type PublishedContract = Partial<Pick<Model<Api>, "input" | "contextWindow" | "maxTokens">> & {
+  cost?: Partial<Model<Api>["cost"]>;
+};
+
+interface MissingModelClone {
+  /** A shipped sibling whose transport, compat and reasoning shape the clone keeps. */
+  from: string;
+  to: string;
+  name: string;
+  /**
+   * The contract each router publishes, keyed by catalog provider. Routers
+   * price and limit the same model differently, and a provider left out gets
+   * no clone rather than another router's numbers.
+   */
+  byProvider: Partial<Record<string, PublishedContract>>;
+}
+
+/**
+ * Models the routers serve that pi-ai's catalog has not shipped, each cloned
+ * from a shipped sibling with only the fields whose published contract differs.
+ *
+ * Like `gatewayCapabilityGaps`, an entry is a bug report against the catalog,
+ * deleted the moment it ships the id. Without it the gateways would fall back
+ * to `synthesizePassthroughModel` — free and text-only — and every other
+ * provider would not resolve the id at all.
+ */
+const MISSING_MODEL_CLONES: readonly MissingModelClone[] = [
+  {
+    from: "deepseek/deepseek-v4-flash",
+    to: "deepseek/deepseek-v4.1-flash",
+    name: "DeepSeek V4.1 Flash",
+    byProvider: {
+      [VERCEL_GATEWAY_PROVIDER_ID]: {
+        input: ["text", "image"],
+        cost: { input: 0.3, output: 1.2, cacheRead: 0.03, cacheWrite: 0 },
+        contextWindow: 1_048_576,
+        maxTokens: 32_768,
+      },
+      openrouter: {
+        input: ["text", "image"],
+        cost: { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0 },
+        contextWindow: 1_048_576,
+        maxTokens: 384_000,
+      },
+    },
+  },
+];
+
+/** The catalog's spec for `provider:modelId`, or the clone standing in for one it lacks. */
 export function catalogModel(provider: string, modelId: string): Model<Api> | undefined {
+  return (
+    shippedModel(provider, modelId) ??
+    missingCatalogModels(provider).find((model) => model.id === modelId)
+  );
+}
+
+function shippedModel(provider: string, modelId: string): Model<Api> | undefined {
   return getBuiltinModel(
     provider as Parameters<typeof getBuiltinModel>[0],
     modelId as Parameters<typeof getBuiltinModel>[1],
   ) as Model<Api> | undefined;
+}
+
+/**
+ * Clones `provider` publishes a contract for and whose source it ships; any
+ * other is dropped rather than guessed at.
+ */
+function missingCatalogModels(provider: string): Model<Api>[] {
+  return MISSING_MODEL_CLONES.flatMap((clone) => {
+    const contract = clone.byProvider[provider];
+    const source = contract && shippedModel(provider, clone.from);
+    if (!source) return [];
+    return [
+      {
+        ...source,
+        ...contract,
+        id: clone.to,
+        name: clone.name,
+        cost: { ...source.cost, ...contract.cost },
+      },
+    ];
+  });
 }
 
 /**

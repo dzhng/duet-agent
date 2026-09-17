@@ -6,7 +6,7 @@ import { join } from "node:path";
 import dedent from "dedent";
 import type { ClassifierDecision, ClassifierInput } from "../src/model-routing/classifier.js";
 import { ModelRouter, type ModelRouterOptions } from "../src/model-routing/router.js";
-import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
+import { BUILT_IN_ROUTING_TABLE, type RoutingTable } from "../src/model-routing/table.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnRouterSwitchEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
@@ -15,6 +15,19 @@ import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 const MAGENTA_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAQKADAAQAAAABAAAAQAAAAABGUUKwAAAAi0lEQVR4Ae3VgQ3AIAwEscD+OweJNc7dgNe5OTu7E/5u+O3/6QZQQHwBBOIBjAIUEF8AgXgAfoIIIBBfAIF4AK4AAgjEF0AgHoArgAAC8QUQiAfgCiCAQHwBBOIBuAIIIBBfAIF4AK4AAgjEF0AgHoArgAAC8QUQiAfgCiCAQHwBBOIBuAIIIBBf4AFTuAN9D/8DSwAAAABJRU5ErkJggg==";
 const ACCEPTED_COLORS = /magenta|pink|fuchsia|purple/i;
+
+/** Every built-in target accepts images, so the vision fallback runs on a configured text-only route. */
+function textOnlyImplementTable(): RoutingTable {
+  const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+  table.tiers.economy.routes.implement.target.modelName = "glm";
+  table.tiers.economy.routes.implement.visionFallbackModelName = "luna";
+  return table;
+}
+
+async function writeRoutingTable(cwd: string, table: RoutingTable): Promise<void> {
+  await mkdir(join(cwd, ".duet"));
+  await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+}
 
 interface CapturedDecision {
   input: ClassifierInput;
@@ -51,6 +64,7 @@ describe("model routing after image-producing tool output", () => {
   async function runStepTriggerScenario(): Promise<void> {
     const cwd = await mkdtemp(join(tmpdir(), "duet-model-routing-step-trigger-"));
     await writeFile(join(cwd, "shot.png"), Buffer.from(MAGENTA_PNG_BASE64, "base64"));
+    await writeRoutingTable(cwd, textOnlyImplementTable());
     const runner = new CapturingRunner({
       model: "economy",
       mode: "agent",
@@ -134,10 +148,9 @@ describe("model routing after image-producing tool output", () => {
     async () => {
       const cwd = await mkdtemp(join(tmpdir(), "duet-model-routing-no-vision-fallback-"));
       await writeFile(join(cwd, "shot.png"), Buffer.from(MAGENTA_PNG_BASE64, "base64"));
-      const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+      const table = textOnlyImplementTable();
       delete table.tiers.economy.routes.implement.visionFallbackModelName;
-      await mkdir(join(cwd, ".duet"));
-      await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+      await writeRoutingTable(cwd, table);
       const runner = new CapturingRunner({
         model: "economy",
         mode: "agent",

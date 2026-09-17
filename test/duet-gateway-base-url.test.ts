@@ -119,6 +119,39 @@ describe("advisor models' published contract", () => {
   });
 });
 
+// pi-ai's catalog has not shipped this model, so a stand-in carries each
+// router's published rates and limits, which differ per router. Losing the
+// stand-in would resolve the gateways to a free, text-only pass-through and
+// leave OpenRouter unresolved.
+describe("DeepSeek V4.1 Flash's published contract", () => {
+  const contracts = {
+    "duet-gateway": {
+      cost: { input: 0.3, output: 1.2, cacheRead: 0.03, cacheWrite: 0 },
+      maxTokens: 32_768,
+    },
+    "vercel-ai-gateway": {
+      cost: { input: 0.3, output: 1.2, cacheRead: 0.03, cacheWrite: 0 },
+      maxTokens: 32_768,
+    },
+    openrouter: {
+      cost: { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0 },
+      maxTokens: 384_000,
+    },
+  } as const;
+
+  test("resolves on each router's published contract", () => {
+    for (const [provider, contract] of Object.entries(contracts)) {
+      const model = resolveModelName(`${provider}:deepseek/deepseek-v4.1-flash`);
+
+      expect(model.id, provider).toBe("deepseek/deepseek-v4.1-flash");
+      expect(model.cost, provider).toEqual(contract.cost);
+      expect(model.input, provider).toContain("image");
+      expect(model.contextWindow, provider).toBe(1_048_576);
+      expect(model.maxTokens, provider).toBe(contract.maxTokens);
+    }
+  });
+});
+
 // The transport and route are ours to pin; the prices are the vendor's, so
 // this asserts only that a real one survived resolution — a model missing
 // from the catalog resolves to a zeroed pass-through, and cost accounting

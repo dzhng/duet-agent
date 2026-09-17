@@ -260,6 +260,17 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     },
   },
   {
+    // Leads the deepseek family, so the `deepseek` alias resolves here.
+    family: "deepseek",
+    shorthand: "deepseek-v4.1-flash",
+    aliases: ["deepseek/deepseek-v4.1-flash"],
+    modelsByProvider: {
+      "duet-gateway": "deepseek/deepseek-v4.1-flash",
+      "vercel-ai-gateway": "deepseek/deepseek-v4.1-flash",
+      openrouter: "deepseek/deepseek-v4.1-flash",
+    },
+  },
+  {
     // DeepSeek V4 Pro is routed through the duet/vercel gateways and OpenRouter
     // under the shared `deepseek/deepseek-v4-pro` model id. We do not configure
     // a direct DeepSeek provider, so the gateway and OpenRouter entries are the

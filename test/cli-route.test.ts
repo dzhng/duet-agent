@@ -81,7 +81,7 @@ describe("runRouteCommand", () => {
       tier: "frontier",
       route: "implement",
       model: "sol",
-      effort: "high",
+      effort: "medium",
       rationale: "The request asks for implementation.",
       resolutionChain: ["frontier"],
       tableSource: "built-in",

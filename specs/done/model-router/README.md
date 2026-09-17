@@ -112,8 +112,8 @@ losing alternatives). The build followed it with the divergences recorded below.
   mid-turn kimi→sol switch is the feature's signature behavior.
 - **Virtual sub-agent state models classify via `resolveTierDefault`**, not a live classifier
   call — deliberate latency choice recorded during the build.
-- **The economy tier's planned deepseek-v4-pro vision fallback died in planning**: DeepSeek V4's
-  API is text-only (vision is chat-app-only); luna took its place.
+- **No built-in route carries a vision fallback**: every built-in target accepts images, so
+  `visionFallbackModelName` exists for configured text-only routes.
 - **Advisor timing guidance needed normative boundaries.** Anthropic's published broad guidance
   under-triggered; the shipped tool description makes consultation mandatory for consequential
   architecture / conflicting constraints / important unknowns and forbidden for routine local
@@ -220,7 +220,7 @@ at each parent `turn_end`) and returns effects: force-classify and/or sticky `Tu
 - **Correctness triggers are code, always on**: an image block in step output sets
   `facts.hasImages` and forces classification (trigger tag `step_trigger`), so the vision guard
   reroutes mid-turn — this closed the gap where an image read via the read tool never flipped
-  the prompt-only `hasImages` flag and economy's glm route continued blind. Continuation after
+  the prompt-only `hasImages` flag and a text-only route continued blind. Continuation after
   the switch was verified sound before building: the transcript always keeps the real image
   block (pi-ai only placeholder-swaps per-request for text-only models), so the vision model
   sees the pixels on replay.
@@ -231,8 +231,9 @@ at each parent `turn_end`) and returns effects: force-classify and/or sticky `Tu
 - **TurnFacts ownership**: the router seeds facts from prompt attachments at
   `noteTurnStart` and triggers extend them; classification input and the vision guard read
   router-owned facts. The runner no longer carries an images flag of its own.
-- Eval: `evals/model-routing-step-trigger.eval.ts` — live economy run where a non-visual prompt
-  routes to glm, reading a magenta PNG fires the `step_trigger` switch to luna, and the correct
+- Eval: `evals/model-routing-step-trigger.eval.ts` — live economy run, configured with a glm
+  implement target and a luna vision fallback, where a non-visual prompt routes to glm, reading
+  a magenta PNG fires the `step_trigger` switch to luna, and the correct
   color in the output proves the vision model saw the replayed image. Falsification: disabling
   the built-in image effect fails the switch assertion. Best-of-2 (turn-start classification
   variance, same bound as the advisor positive case).
@@ -266,8 +267,8 @@ at each parent `turn_end`) and returns effects: force-classify and/or sticky `Tu
   placeholder-swaps the image on the wire; live-evaled: glm answers "the current model cannot
   inspect images"). Economy's `implement-visual` route was deleted — the classifier classifies
   by kind of work, the guard owns vision; three golden-corpus cases relabeled with rationale
-  recorded in the fixture. Only glm-5.2 among built-in targets is text-only (capability probe
-  in the table tests pins this).
+  recorded in the fixture. Every built-in route target accepts images, so no built-in route
+  carries a fallback (the table tests pin this through the real catalog).
 - **Compaction ↔ classification interlocks**: any genuine wire-prefix compaction (explicit
   /compact, memory-budget transform compaction, context-overflow recovery) arms a one-shot
   `"compaction"`-tagged classification — the provider cache is already lost, so the reroute

@@ -51,10 +51,11 @@
     "expectedRoute": "plan"
   },
   {
-    "id": "plan-release-rollout",
+    "id": "general-economy-rollout-plan",
     "prompt": "Plan a zero-downtime rollout of the new event schema, with observability, abort criteria, and rollback steps.",
     "tier": "economy",
-    "expectedRoute": "plan"
+    "expectedRoute": "general",
+    "note": "Economy has no plan route; planning that implements nothing is general work."
   },
   {
     "id": "implement-api-retries",
@@ -117,11 +118,10 @@
     "expectedRoute": "general"
   },
   {
-    "id": "general-economy-writing",
+    "id": "writing-economy-thank-you-note",
     "prompt": "Write a friendly two-sentence thank-you note to a neighbor who watered my plants.",
     "tier": "economy",
-    "expectedRoute": "general",
-    "note": "Economy deliberately has no writing route, so writing falls through to general."
+    "expectedRoute": "writing"
   },
   {
     "id": "general-ambiguous",

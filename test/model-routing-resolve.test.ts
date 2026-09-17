@@ -1,28 +1,36 @@
 import { describe, expect, test } from "bun:test";
-import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
+import { BUILT_IN_ROUTING_TABLE, type RoutingTable } from "../src/model-routing/table.js";
 import { resolveRoute, resolveTierDefault } from "../src/model-routing/resolve.js";
 
 const catalog = {
   modelAcceptsImages: (name: string) => name !== "glm",
 };
 
+/** Every built-in target accepts images, so a vision fallback only exists when configured. */
+function textOnlyImplementTable(): RoutingTable {
+  const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+  table.tiers.economy.routes.implement.target.modelName = "glm";
+  table.tiers.economy.routes.implement.visionFallbackModelName = "luna";
+  return table;
+}
+
 describe("model route resolution", () => {
-  test("falls through economy writing to its low-effort general route", () => {
+  test("falls through economy visual to its low-effort general route", () => {
     expect(
-      resolveRoute(BUILT_IN_ROUTING_TABLE, "economy", "writing", { hasImages: false }, catalog),
+      resolveRoute(BUILT_IN_ROUTING_TABLE, "economy", "visual", { hasImages: false }, catalog),
     ).toEqual({
       tier: "economy",
       route: "general",
-      modelName: "luna",
+      modelName: "deepseek",
       thinkingLevel: "low",
       visionFallback: false,
       chain: ["economy"],
     });
   });
 
-  test("applies economy implement's luna fallback without changing its route or effort", () => {
+  test("applies a route's vision fallback without changing its route or effort", () => {
     expect(
-      resolveRoute(BUILT_IN_ROUTING_TABLE, "economy", "implement", { hasImages: true }, catalog),
+      resolveRoute(textOnlyImplementTable(), "economy", "implement", { hasImages: true }, catalog),
     ).toEqual({
       tier: "economy",
       route: "implement",
@@ -34,7 +42,7 @@ describe("model route resolution", () => {
   });
 
   test("keeps a text-only target when its route has no vision fallback", () => {
-    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    const table = textOnlyImplementTable();
     delete table.tiers.economy.routes.implement.visionFallbackModelName;
 
     expect(resolveRoute(table, "economy", "implement", { hasImages: true }, catalog)).toEqual({
@@ -48,14 +56,15 @@ describe("model route resolution", () => {
   });
 
   test("re-enters a virtual fallback chain while preserving the selected route effort", () => {
-    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    const table = textOnlyImplementTable();
+    table.tiers.economy.routes.implement.target.thinkingLevel = "low";
     table.tiers.economy.routes.implement.visionFallbackModelName = "frontier";
 
     expect(resolveRoute(table, "economy", "implement", { hasImages: true }, catalog)).toEqual({
       tier: "frontier",
       route: "implement",
       modelName: "sol",
-      thinkingLevel: "medium",
+      thinkingLevel: "low",
       visionFallback: true,
       chain: ["economy", "frontier"],
     });
@@ -69,7 +78,7 @@ describe("model route resolution", () => {
     expect(resolveRoute(table, "frontier", "implement", { hasImages: false }, catalog)).toEqual({
       tier: "economy",
       route: "implement",
-      modelName: "glm",
+      modelName: "deepseek",
       thinkingLevel: "medium",
       visionFallback: false,
       chain: ["frontier", "balanced", "economy"],

@@ -24,7 +24,7 @@ const catalogNames = new Set([
   "sonnet",
   "luna",
   "astra",
-  "glm",
+  "deepseek",
   "kimi-k3",
   "fable-5.1",
   "fable-5",
@@ -34,6 +34,7 @@ const catalogNames = new Set([
   "sonnet-5",
   "gpt-5.6-luna",
   "gpt-6-astra",
+  "deepseek-v4.1-flash",
   "glm-5.2",
 ]);
 const catalog: RoutingCatalogAdapter = {
@@ -65,29 +66,33 @@ describe("built-in model routing table", () => {
 
     expect(table.defaultTier).toBe("frontier");
     expect(targets("frontier")).toEqual({
-      visual: { modelName: "kimi", thinkingLevel: "high" },
-      plan: { modelName: "opus", thinkingLevel: "high" },
-      implement: { modelName: "sol", thinkingLevel: "high" },
+      visual: { modelName: "kimi", thinkingLevel: "medium" },
+      plan: { modelName: "opus", thinkingLevel: "medium" },
+      implement: { modelName: "sol", thinkingLevel: "medium" },
       writing: { modelName: "opus", thinkingLevel: "medium" },
       general: { modelName: "sol", thinkingLevel: "medium" },
     });
     expect(targets("balanced")).toEqual({
-      visual: { modelName: "kimi", thinkingLevel: "high" },
-      plan: { modelName: "sol", thinkingLevel: "high" },
-      implement: { modelName: "terra", thinkingLevel: "high" },
+      visual: { modelName: "kimi", thinkingLevel: "medium" },
+      plan: { modelName: "sol", thinkingLevel: "medium" },
+      implement: { modelName: "terra", thinkingLevel: "medium" },
       writing: { modelName: "sonnet", thinkingLevel: "medium" },
       general: { modelName: "terra", thinkingLevel: "medium" },
     });
     expect(targets("economy")).toEqual({
-      plan: { modelName: "luna", thinkingLevel: "medium" },
-      implement: { modelName: "glm", thinkingLevel: "medium" },
-      general: { modelName: "luna", thinkingLevel: "low" },
+      implement: { modelName: "deepseek", thinkingLevel: "medium" },
+      writing: { modelName: "luna", thinkingLevel: "low" },
+      general: { modelName: "deepseek", thinkingLevel: "low" },
     });
-    expect(table.tiers.economy.routes.implement.visionFallbackModelName).toBe("luna");
+    for (const definition of Object.values(table.tiers)) {
+      for (const rule of Object.values(definition.routes)) {
+        expect(rule.visionFallbackModelName).toBeUndefined();
+      }
+    }
 
     expect(table.tiers.frontier.advisor).toEqual({
       enabled: true,
-      target: { modelName: "fable", thinkingLevel: "high" },
+      target: { modelName: "fable", thinkingLevel: "medium" },
       minStepsBetween: 5,
     });
     expect(table.tiers.balanced.advisor).toEqual(table.tiers.frontier.advisor);
@@ -137,20 +142,16 @@ describe("built-in model routing table", () => {
     expect(collisions).toEqual([]);
   });
 
-  test("only glm needs a built-in per-route vision fallback", () => {
-    // Capability probe recorded with the product rationale for removing the vision route axis.
-    for (const name of [
-      "kimi-k3",
-      "fable-5.1",
-      "gpt-5.6-sol",
-      "gpt-5.6-terra",
-      "gpt-5.6-luna",
-      "gpt-6-astra",
-      "opus-4.8",
-      "sonnet-5",
-    ]) {
+  test("no built-in route needs a vision fallback because every target accepts images", () => {
+    const targets = new Set(
+      Object.values(BUILT_IN_ROUTING_TABLE.tiers).flatMap((definition) =>
+        Object.values(definition.routes).map((rule) => rule.target.modelName),
+      ),
+    );
+    for (const name of targets) {
       expect(routingCatalogAdapter.modelAcceptsImages(name), name).toBe(true);
     }
+    // The adapter still distinguishes a text-only model, so the loop above is not vacuous.
     expect(routingCatalogAdapter.modelAcceptsImages("glm-5.2")).toBe(false);
   });
 
