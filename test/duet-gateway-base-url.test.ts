@@ -71,11 +71,11 @@ describe("duet-gateway model routing", () => {
   });
 });
 
-// Fable 5.1 and GPT-6 Astra are the advisor's models, and the advisor bills on
-// these numbers. They are the vendors' published rates and limits, pinned on
-// every router the advisor can route to; a model that slipped out of the
-// catalog would resolve to a synthesized pass-through and bill as free and
-// text-only rather than fail.
+// A routing table can point the advisor at Fable 5.1 or GPT-6 Astra, and the
+// advisor bills on these numbers. They are the vendors' published rates and
+// limits, pinned on every router the advisor can route to; a model that slipped
+// out of the catalog would resolve to a synthesized pass-through and bill as
+// free and text-only rather than fail.
 describe("advisor models' published contract", () => {
   test("resolves Fable 5.1 on its published contract on every router", () => {
     for (const provider of ["duet-gateway", "vercel-ai-gateway", "openrouter"] as const) {

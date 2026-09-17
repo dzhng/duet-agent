@@ -251,7 +251,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
       // just used.
       advisor: {
         enabled: true,
-        target: { modelName: "astra", thinkingLevel: "high" },
+        target: { modelName: "fable", thinkingLevel: "high" },
         minStepsBetween: 5,
       },
     },

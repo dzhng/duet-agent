@@ -224,7 +224,6 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    // An advisor model; the `astra` alias resolves here.
     family: "astra",
     shorthand: "gpt-6-astra",
     aliases: ["openai/gpt-6-astra"],

@@ -60,9 +60,9 @@ target it, so a completion right after an advisor consult never runs on the mode
 just gave the advice. The frontier plan route moved to the opus family (high) accordingly;
 opus cells resolve to the latest curated opus (opus-5 as of this revision).
 
-Revision (2026-09): GPT-6 Astra joined fable as an advisor model; the advisor targets are
-swapped between them over time, and the reservation above applies to whichever model a
-tier's advisor currently targets. Current targets live in `BUILT_IN_ROUTING_TABLE` (table.ts).
+Revision (2026-09): GPT-6 Astra is in the catalog and can be an advisor through a routing
+file override, but the built-in table's advisors always use fable, never astra. The
+reservation above applies to whichever model a tier's advisor targets.
 
 ---
 
