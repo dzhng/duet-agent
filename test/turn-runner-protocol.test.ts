@@ -10,6 +10,73 @@ import {
 import { createAssistantMessage } from "./helpers/messages.js";
 
 describe("TurnRunner protocol scenarios", () => {
+  test("cannot silently complete recovery while an executable relay state has no worker", async () => {
+    const { runner } = createTurnRunner();
+    await runner.start({ type: "start", state: createStateMachineState("research_prospect") });
+    const terminal = await runner.turn({
+      type: "prompt",
+      message: "Finish the app.",
+      behavior: "follow_up",
+    });
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "failed",
+      error: expect.stringContaining("research_prospect"),
+    });
+  });
+
+  test("a second crash during hydration retains the obligation to recover relay work", async () => {
+    const { runner: first } = createTurnRunner();
+    const state = createStateMachineState("research_prospect");
+    state.status = "running";
+    state.tasks = [
+      {
+        id: "t1",
+        kind: "subagent",
+        name: "research_prospect",
+        label: "Research",
+        ownerScopeId: "turn-1",
+        status: "running",
+        startedAt: 1,
+      },
+    ];
+    const checkpoint = await first.start({ type: "start", state });
+    const { runner: second } = createTurnRunner();
+    await second.start({ type: "start", state: JSON.parse(JSON.stringify(checkpoint)) });
+    const terminal = await second.turn({
+      type: "prompt",
+      message: "Continue.",
+      behavior: "follow_up",
+    });
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "failed",
+      error: expect.stringContaining("research_prospect"),
+    });
+  });
+
+  test("recovery can restart the missing worker and complete the relay", async () => {
+    const { runner } = createTurnRunner();
+    await runner.start({ type: "start", state: createStateMachineState("research_prospect") });
+    runner.controlResults.push(
+      { type: "none" },
+      { type: "select_state_machine_state", decision: { state: "research_prospect" } },
+      { type: "none" },
+      { type: "select_state_machine_state", decision: { state: "meeting_scheduled" } },
+    );
+    const terminal = await runner.turn({
+      type: "prompt",
+      message: "Continue.",
+      behavior: "follow_up",
+    });
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      state: { stateMachine: { terminal: { status: "completed", state: "meeting_scheduled" } } },
+    });
+    expect(runner.stateAgentInputs[0]?.prompt).toContain("Research the prospect");
+  });
+
   test("reconciles lost tasks and delivers their output reminder exactly once", async () => {
     const { runner: firstProcess } = createTurnRunner();
     const recovered = await firstProcess.start({
@@ -403,7 +470,20 @@ describe("TurnRunner protocol scenarios", () => {
 
   test("answers unrelated prompts during an active state-machine session without changing state", async () => {
     const { runner, events } = createTurnRunner();
+    const replies: string[] = [];
+    runner.worker = async (_input, next) => {
+      const result = await next();
+      if (result.outcome.type === "complete" && result.outcome.result)
+        replies.push(result.outcome.result);
+      return result;
+    };
     const turnState = createStateMachineState("waiting_for_reply");
+    turnState.stateMachine!.definition.states = turnState.stateMachine!.definition.states.map(
+      (state) =>
+        state.name === "waiting_for_reply"
+          ? { name: state.name, kind: "park", prompt: "Wait for the user reply." }
+          : state,
+    );
     await runner.start({ type: "start", state: turnState });
 
     const terminal = await runner.turn({
@@ -412,11 +492,12 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
+    expect(replies).toContain("Paris");
     expect(events.some((event) => event.type === "state_machine")).toBe(false);
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",
-      result: expect.stringContaining("Paris"),
+
       state: {
         status: "completed",
         stateMachine: { currentState: "waiting_for_reply" },
@@ -535,6 +616,7 @@ describe("TurnRunner protocol scenarios", () => {
   test("wake is a no-op when the session is not sleeping on a poll", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
+    delete turnState.stateMachine;
     await runner.start({ type: "start", state: turnState });
 
     const terminal = await runner.turn({
