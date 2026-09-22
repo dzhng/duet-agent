@@ -576,6 +576,16 @@ const turnRunner = new TurnRunner({
 
 By default, both `duet` (TUI/run) and `duet --rpc` store durable observations in `~/.duet/memory.db`. Override the path with `--db <path>` (the flag is accepted in both modes and is ignored when `--incognito` is also set), or run with `--incognito` (or `-i`) to disable both observational database memory and curated file memory for that session. `duet --rpc` bypasses `SessionManager`, so it has no session of its own; pass `duet --rpc --session <id>` to attribute every observation written during the RPC process to a caller-owned session (one RPC process is one logical session). Omit it to leave those writes unattributed. Programmatic callers can control the two sources independently with `memoryDbPath` and `memoryStores`. The CLI's `SessionManager` is a convenience layer that stores session snapshots under `~/.duet/sessions`, but the runner owns memory hydration, pi-turn observation/reflection, compaction, and observation persistence.
 
+RPC hosts own crash durability. The transport emits private, coalesced live
+checkpoints containing the parent conversation, task records, and relay state;
+hosts must persist these together and keep them out of public history. A
+checkpoint is recovery context, not proof that an external side effect committed
+exactly once. On recovery, lost workers are identified and their output tails
+are supplied to the parent. An executable relay state cannot silently finish a
+turn without a worker or scheduled wake: bounded transition recovery must
+restart work, ask for required input, or report failure. A park remains the
+explicit way to wait for a person without running work.
+
 > [!WARNING]
 > We strongly recommend running with a `memoryDbPath` (the default). Compaction is implemented as part of the observational memory pipeline: raw transcript content is replaced by observations/reflections that the observer and reflector write to the durable store. Without a database, the runner skips that pipeline entirely — there is no compaction, the transcript grows unbounded against the raw model context window, and long sessions will eventually hit a provider context-length error. `memoryDbPath: false` is appropriate for short-lived scripts, tests, and incognito runs that stay well under the model window.
 

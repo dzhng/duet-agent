@@ -297,7 +297,8 @@ export type ParentLoopInput =
 type PendingParentLoopInput =
   | ParentLoopInput
   | { type: "advisor_completion_review" }
-  | { type: "park_nudge" };
+  | { type: "park_nudge" }
+  | { type: "recover_state"; stateName: string };
 
 type StateTaskMetadata =
   | { kind: "agent"; stateName: string; run?: SubagentRun }
@@ -441,6 +442,8 @@ export class TurnRunner {
   private readonly stateTasks = new Map<TaskId, StateTaskMetadata>();
   /** One-shot context attached to the first real parent pass after lost-task recovery. */
   private recoveredTaskReminder?: string;
+  /** Only crash recovery may demand that orphaned executable state resume. */
+  private recoverExecution = false;
   /** Ask withheld by the quiescence gate; re-surfaced on the parent's next pass. */
   private withheldAskQuestions?: TurnQuestion[];
   /** Legacy persisted user-lane projection retained until the next loop owns it. */
@@ -801,6 +804,12 @@ export class TurnRunner {
     if (startupFailure) throw startupFailure.reason;
     const hydrationStartedAt = performance.now();
     this.stateMachine = state.stateMachine;
+    this.recoverExecution =
+      command.state !== undefined &&
+      ((state.status !== "failed" &&
+        state.status !== "interrupted" &&
+        state.status !== "waiting_for_human") ||
+        (state.pendingLostTaskReminderTaskIds?.length ?? 0) > 0);
     const recovery = this.taskManager.recover(
       state.tasks ?? [],
       state.nextTaskId,
@@ -961,6 +970,23 @@ export class TurnRunner {
             // so hooking the terminal result instead would miss every park
             // after the first.
             if (this.queueParkNudgeIfDue(completion.status, pendingBeforeInput)) continue;
+            const unfinished = this.stateMachine?.definition.states.find(
+              (state) => state.name === this.stateMachine?.currentState,
+            );
+            if (
+              this.recoverExecution &&
+              completion.status === "completed" &&
+              pendingBeforeInput.kind === "complete" &&
+              !this.stateMachine?.terminal &&
+              unfinished &&
+              (unfinished.kind === "agent" ||
+                unfinished.kind === "script" ||
+                unfinished.kind === "poll" ||
+                unfinished.kind === "timer")
+            ) {
+              this.parentInputs.push({ type: "recover_state", stateName: unfinished.name });
+              continue;
+            }
             break;
           }
           await this.waitForLoopActivity();
@@ -1330,6 +1356,7 @@ export class TurnRunner {
   interrupt(_command: TurnInterruptCommand): void {
     this.requireStarted();
     if (!this.state) return;
+    this.recoverExecution = false;
     this.interruptReason = "Interrupted";
     this.parentAgentInterrupted = this.parentAgentRunning;
     this.parentAgent?.abort();
@@ -1382,6 +1409,14 @@ export class TurnRunner {
         return this.runTerminalAcknowledgmentPass();
       case "advisor_completion_review":
         return this.runAdvisorCompletionReviewPass();
+      case "recover_state":
+        return this.enforceParentTransition(
+          (retry) =>
+            systemReminder(
+              `The relay is unfinished at "${input.stateName}", but no worker or scheduled wake exists. Nothing is running in the background. Recover by selecting the appropriate state with select_state_machine_state; inspect existing results before repeating side effects. Ask the user only if required, or explicitly fail/cancel the relay. ${retry ?? ""}`,
+            ),
+          `Relay state "${input.stateName}" has no worker or scheduled wake; recovery did not select a state.`,
+        );
       case "park_nudge":
         return this.runParkNudgePass();
       case "wake":
@@ -1616,6 +1651,7 @@ export class TurnRunner {
   private async executePlannedWork(
     work: PlannedWork,
   ): Promise<SettledDecision["outcome"] | undefined> {
+    this.recoverExecution = false;
     if ("terminal" in work) {
       const settled = recordPlannedTerminal(this.requireStateMachine(), work.terminal);
       this.setStateMachine(settled.session);

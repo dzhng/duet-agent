@@ -922,4 +922,10 @@ export interface RpcCommandAcceptedEvent {
 }
 
 /** Complete newline-delimited output union for `duet --rpc`. */
-export type RpcEvent = TurnEvent | RpcCommandAcceptedEvent;
+/** Private host recovery snapshot; never part of the user-visible event history. */
+export interface RpcCheckpointEvent {
+  type: "checkpoint";
+  state: TurnState;
+}
+
+export type RpcEvent = TurnEvent | RpcCommandAcceptedEvent | RpcCheckpointEvent;

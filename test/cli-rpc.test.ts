@@ -578,6 +578,53 @@ describe("parseRpcCommandLine", () => {
 });
 
 describe("RpcEventWriter", () => {
+  test("checkpoints changing work before termination and coalesces event bursts", async () => {
+    const clock = new ManualRuntimeClock();
+    const stream = new BackpressuredWritable();
+    stream.blocked = false;
+    const state: TurnState = {
+      status: "running",
+      mode: "auto",
+      agent: { status: "running", messages: [] },
+      tasks: [
+        {
+          id: "t1",
+          kind: "subagent",
+          name: "build",
+          label: "Build app",
+          ownerScopeId: "turn-1",
+          status: "running",
+          startedAt: 1,
+        },
+      ],
+      nextTaskId: 2,
+    };
+    let snapshots = 0;
+    const writer = new RpcEventWriter(stream, clock, () => {
+      snapshots++;
+      return state;
+    });
+    writer.emit({ type: "task_started", task: state.tasks![0]! });
+    for (let i = 0; i < 20; i++)
+      writer.emit({ type: "step", step: { type: "text", text: "progress" } });
+    await clock.advanceBy(1_000);
+    expect(
+      stream.lines.map((line) => JSON.parse(line)).filter((e) => e.type === "checkpoint"),
+    ).toEqual([{ type: "checkpoint", state }]);
+    expect(snapshots).toBe(1);
+    await clock.advanceBy(2_000);
+    expect(snapshots).toBe(1);
+    writer.emit({
+      type: "complete",
+      status: "completed",
+      result: "done",
+      state: { ...state, status: "completed", tasks: [] },
+    });
+    await writer.close();
+    await clock.advanceBy(2_000);
+    expect(JSON.parse(stream.lines.at(-1)!)).toMatchObject({ type: "complete", result: "done" });
+  });
+
   test("writes the hard-cut model transport usage shape unchanged", async () => {
     const lines: string[] = [];
     const writer = new RpcEventWriter({

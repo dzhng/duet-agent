@@ -51,6 +51,8 @@ export class RpcEventWriter {
   private readonly activeTaskIds = new Set<TaskId>();
   private pendingHeartbeat?: string;
   private pumping = false;
+  private checkpointCancel?: CancelScheduled;
+  private terminalWritten = false;
   private heartbeatCancel?: CancelScheduled;
   private failure?: unknown;
   private readonly flushWaiters = new Set<() => void>();
@@ -58,6 +60,7 @@ export class RpcEventWriter {
   constructor(
     private readonly stream: RpcWritable,
     private readonly clock: RuntimeClock = new SystemRuntimeClock(),
+    private readonly snapshot?: () => TurnState | undefined,
   ) {
     // Heartbeats are unconditional process liveness: a host reads "heartbeat
     // arriving" as healthy and "silence past the interval" as wedged — no
@@ -69,6 +72,13 @@ export class RpcEventWriter {
   /** Accept a runner event synchronously while its serialized value is stable. */
   emit(event: RpcEvent): void {
     this.losslessLines.push(serializeRpcEvent(event));
+    if (isRpcTerminalEvent(event)) {
+      this.terminalWritten = true;
+      this.checkpointCancel?.();
+      this.checkpointCancel = undefined;
+    } else if (event.type !== "checkpoint" && event.type !== "turn_started") {
+      this.scheduleCheckpoint();
+    }
 
     if (event.type === "task_started" && event.task.status === "running") {
       this.activeTaskIds.add(event.task.id);
@@ -81,6 +91,21 @@ export class RpcEventWriter {
     this.pump();
   }
 
+  private scheduleCheckpoint(): void {
+    if (!this.snapshot || this.checkpointCancel || this.terminalWritten) return;
+    this.checkpointCancel = this.clock.schedule(() => {
+      this.checkpointCancel = undefined;
+      // Do not accumulate full transcripts behind a slow host. The next
+      // snapshot includes every intervening change once stdout drains.
+      if (this.pumping) {
+        this.scheduleCheckpoint();
+        return;
+      }
+      const state = this.snapshot?.();
+      if (state) this.emit({ type: "checkpoint", state: { ...state, status: "running" } });
+    }, 1_000);
+  }
+
   /** Resolve after every accepted lossless event has crossed the stream boundary. */
   async flush(): Promise<void> {
     if (this.failure !== undefined) throw this.failure;
@@ -91,6 +116,8 @@ export class RpcEventWriter {
 
   /** Stop transport-owned liveness work, then flush every accepted event. */
   async close(): Promise<void> {
+    this.checkpointCancel?.();
+    this.checkpointCancel = undefined;
     this.stopHeartbeats();
     await this.flush();
   }
@@ -251,7 +278,9 @@ export async function runRpcCommand(args: string[], pkg: PackageMetadata): Promi
   process.stderr.write(`${pkg.name} ${pkg.version} rpc\n`);
 
   const runner = new TurnRunner(config);
-  const eventWriter = new RpcEventWriter(process.stdout);
+  const eventWriter = new RpcEventWriter(process.stdout, new SystemRuntimeClock(), () =>
+    runner.getState(),
+  );
   const writeEvent = (event: RpcEvent): void => eventWriter.emit(event);
   runner.subscribe(writeEvent);
 
