@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import type { TurnEvent } from "../../../src/types/protocol.js";
 import type { CampaignConfigName } from "./config-override.js";
-import type { RolloutTelemetry } from "./telemetry.js";
+import type { RolloutTelemetry } from "../../shared/rollout-telemetry.js";
 
 /** Logical rollout identity shared by immutable retry attempts. */
 export interface RolloutIdentity {

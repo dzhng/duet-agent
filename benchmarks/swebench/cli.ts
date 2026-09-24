@@ -3,13 +3,14 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseDotenv } from "dotenv";
 
+import { PROVIDER_ENV_NAMES } from "../shared/provider-environment.js";
 import {
   CAMPAIGN_CONFIGS,
   renderCampaignConfigs,
   serializeModelsJson,
   type CampaignConfigName,
 } from "./src/config-override.js";
-import { runDuetTurn, spawnLocalDuetRpc } from "./src/duet-client.js";
+import { runDuetTurn, spawnLocalDuetRpc } from "../shared/duet-rpc-client.js";
 import { PINNED_DATASET_REVISION, fetchDataset, writeDatasetCache } from "./src/fetch-dataset.js";
 import {
   CAMPAIGN_GOLD_EXCLUSIONS,
@@ -20,7 +21,7 @@ import {
 } from "./src/manifest.js";
 import { loadRolloutAttempts } from "./src/artifacts.js";
 import { runCampaign, type CampaignRuntime, type CampaignSpec } from "./src/orchestrator.js";
-import { loadPrebuiltDuetArtifact, prepareDuetArtifact } from "./src/packaging.js";
+import { loadPrebuiltDuetArtifact, prepareDuetArtifact } from "../shared/duet-packaging.js";
 import { buildPredictions, serializePredictions } from "./src/predictions.js";
 import { ensureCampaignProvenance } from "./src/provenance.js";
 import {
@@ -32,7 +33,7 @@ import {
 } from "./src/report.js";
 import { hashConfigFile } from "./src/rollout.js";
 import { runContainerSmoke } from "./src/smoke.js";
-import { deriveTelemetry } from "./src/telemetry.js";
+import { deriveTelemetry } from "../shared/rollout-telemetry.js";
 import {
   ContainerHandle,
   removeOfficialImage,
@@ -412,7 +413,7 @@ async function loadProviderEnv(): Promise<Record<string, string>> {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const result: Record<string, string> = {};
-  for (const name of ["DUET_API_KEY", "AI_GATEWAY_API_KEY", "OPENROUTER_API_KEY"] as const) {
+  for (const name of PROVIDER_ENV_NAMES) {
     const value = process.env[name] ?? fileValues[name];
     if (value) result[name] = value;
   }

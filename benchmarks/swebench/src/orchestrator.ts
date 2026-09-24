@@ -1,4 +1,4 @@
-import type { DuetArtifact } from "./packaging.js";
+import type { DuetArtifact } from "../../shared/duet-packaging.js";
 import {
   hashJson,
   hashText,
@@ -11,9 +11,9 @@ import {
   ContainerHandle,
   removeOfficialImage,
   resolveAndPullOfficialImage,
-  type CommandRunner,
   type OfficialImage,
 } from "./container.js";
+import type { CommandRunner } from "../../shared/command-runner.js";
 import {
   selectPilotInstanceIds,
   type DatasetRow,
