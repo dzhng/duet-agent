@@ -921,11 +921,11 @@ export interface RpcCommandAcceptedEvent {
   commandType: RpcTurnCommand["type"];
 }
 
-/** Complete newline-delimited output union for `duet --rpc`. */
 /** Private host recovery snapshot; never part of the user-visible event history. */
 export interface RpcCheckpointEvent {
   type: "checkpoint";
   state: TurnState;
 }
 
+/** Complete newline-delimited output union for `duet --rpc`. */
 export type RpcEvent = TurnEvent | RpcCommandAcceptedEvent | RpcCheckpointEvent;

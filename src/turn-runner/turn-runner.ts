@@ -1450,15 +1450,15 @@ export class TurnRunner {
     const worker = await this.runParentPass({
       state: this.snapshotState({ ...this.requireRunnerState(), status: "running" }),
       prompt: systemReminder(dedent`
-        The worker has returned, but background tasks are still running:
+        Your pass has ended, but background tasks are still running:
         ${running
           .slice(0, 20)
           .map((task) => `- ${task.id} (${task.name}): ${task.label.slice(0, 300)}`)
           .join("\n")}
         ${running.length > 20 ? "Use task_output without an id to list all remaining tasks." : ""}
 
-        The turn remains open and the normal relay continuation is waiting for
-        these running tasks to finish or be stopped. Before advancing or finishing,
+        The turn remains open, and any relay continuation waits, until these
+        tasks finish or are stopped. Before advancing or finishing,
         use task_output with an id to inspect progress or with wait to wait for
         completion; use task_stop with an id for work no longer needed, such as a
         temporary preview server. Do not stop useful work just to finish. If it
@@ -1469,6 +1469,8 @@ export class TurnRunner {
       continuation: true,
     });
     this.setState(worker.outcome.state);
+    // A failed terminal here would leave the loop waiting on tasks that may
+    // never exit; throwing ends the turn and reaps them.
     if (worker.outcome.type === "complete" && worker.outcome.status === "failed") {
       throw new Error(worker.outcome.error ?? "Background task cleanup failed.");
     }
