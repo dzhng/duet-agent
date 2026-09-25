@@ -1030,6 +1030,9 @@ export class TurnRunner {
         }
         if (result?.type === "interrupted") this.interruptReason ??= "Interrupted";
         if (result?.type === "state_completed") {
+          // Reconsider tasks carried across states at each worker boundary,
+          // without re-prompting merely because the parent chose to wait.
+          remindedTasks.clear();
           this.enqueueParentInput({
             type: "transition_enforcement",
             stateName: result.stateName,

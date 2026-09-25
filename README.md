@@ -555,7 +555,9 @@ flowchart TD
 `TurnRunner.turn()` is the concurrency boundary. Callers may invoke it repeatedly while work is active; the runner folds active `prompt` and `answer` commands back into the active pi agent as `steer` or `follow_up`, queues wakes and work it cannot absorb immediately, and emits one terminal event when the whole active work chain is done.
 
 When an agent pass finishes with background tasks still running, the parent gets
-one cleanup reminder for those tasks. It can inspect or wait with `task_output`,
+one cleanup reminder for those tasks. A later relay worker finishing renews that
+reminder even for tasks carried over from the preceding state. The parent can
+inspect or wait with `task_output`,
 stop unnecessary work with `task_stop`, or leave useful work to finish naturally.
 The turn stays open while tasks run, and the automatic next-state reminder
 waits for them to settle. A live relay worker is left alone, and choosing to wait
