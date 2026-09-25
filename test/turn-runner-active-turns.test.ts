@@ -1325,3 +1325,38 @@ function stateAgentDefinition(): StateMachineDefinition {
     ],
   };
 }
+
+test("tasks settling during cleanup can perform follow-on work", async () => {
+  const { runner, events } = createStreamingRunner();
+  try {
+    const { turn } = await startTurn(runner, { mode: "agent", prompt: "Run then clean up" });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNextToolCall("bash", { command: "sleep 60", run_in_background: true });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("Background work started.");
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(lastUserText(runner.contexts.at(-1)!)).toContain("background tasks are still running");
+    const started = events.find((event) => event.type === "task_started");
+    if (!started || started.type !== "task_started") throw new Error("Background task missing");
+    runner.completeNextToolCall("task_stop", { id: started.task.id });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    expect(runner.contexts.at(-1)?.tools?.map((tool) => tool.name)).toContain("bash");
+    runner.completeNextToolCall("bash", { command: "printf FOLLOW_ON_WORK", timeout: 5 });
+    await waitFor(() => runner.pendingStreams.length === 1);
+    runner.completeNext("Follow-on work completed.");
+    const terminal = await turn;
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "completed",
+      result: "Follow-on work completed.",
+    });
+    expect(
+      events.some(
+        (event) => event.type === "task_output" && event.chunk.includes("FOLLOW_ON_WORK"),
+      ),
+    ).toBe(true);
+  } finally {
+    while (runner.pendingStreams.length) runner.completeNext("Stopped test.");
+    await runner.dispose();
+  }
+});

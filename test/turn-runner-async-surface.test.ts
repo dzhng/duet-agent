@@ -121,8 +121,11 @@ describe("TurnRunner async task surface", () => {
       type: "text",
       text: expect.stringContaining("Started background task t1"),
     });
-    expect(runner.workerInputs).toHaveLength(2);
-    expect(runner.workerInputs[1]).toMatchObject({
+    expect(
+      runner.workerInputs.find((input) =>
+        input.prompt.includes("1 task settled while you were working"),
+      ),
+    ).toMatchObject({
       continuation: true,
       prompt: expect.stringContaining("1 task settled while you were working"),
     });
@@ -153,10 +156,11 @@ describe("TurnRunner async task surface", () => {
       await startTurn(runner, { mode: "agent", prompt: "run background work" })
     ).turn;
 
-    expect(runner.workerInputs).toHaveLength(3);
+    expect(runner.workerInputs.some((input) => input.prompt.includes("first done"))).toBe(true);
+    expect(runner.workerInputs.some((input) => input.prompt.includes("second done"))).toBe(true);
     expect(runner.observerRuns).toBe(1);
     // Falsification: invoke updateMemoryAfterAgentRun after each loop input. This count becomes
-    // four (three parent passes plus quiescence), proving the assertion rejects pass cadence.
+    // greater than one, proving the assertion rejects per-pass observation cadence.
     await runner.dispose();
   });
 
@@ -203,4 +207,128 @@ describe("TurnRunner async task surface", () => {
     },
     30_000,
   );
+});
+
+class WaitingCleanupRunner extends TurnRunner {
+  readonly prompts: string[] = [];
+  release!: () => void;
+  onCleanup!: () => void;
+
+  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    this.prompts.push(input.prompt);
+    if (this.prompts.length > 3) throw new Error("Repeated cleanup prompt without new work");
+    if (this.prompts.length === 1) {
+      this.taskManager.start({
+        kind: "tool",
+        name: "build",
+        label: "A useful build",
+        ownerScopeId: "turn-1",
+        execute: async () => {
+          await new Promise<void>((resolve) => {
+            this.release = resolve;
+          });
+          return "BUILD_COMPLETE";
+        },
+      });
+    } else if (this.taskManager.list().some((task) => task.status === "running")) {
+      this.onCleanup();
+    }
+    return {
+      control: { type: "none" },
+      outcome: {
+        type: "complete",
+        status: "completed",
+        result: "Waiting is appropriate",
+        state: { ...input.state, status: "completed" },
+      },
+    };
+  }
+}
+
+test("a parent may leave useful background work running without repeated reminders or early completion", async () => {
+  const runner = new WaitingCleanupRunner({
+    model: "anthropic:claude-opus-4-7",
+    mode: "agent",
+    memoryDbPath: false,
+    skillDiscovery: { includeDefaults: false },
+  });
+  const events: TurnEvent[] = [];
+  runner.subscribe((event) => events.push(event));
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  const cleanup = new Promise<void>((resolve, reject) => {
+    runner.onCleanup = resolve;
+    watchdog = setTimeout(() => reject(new Error("Parent never got a cleanup opportunity")), 1000);
+  });
+  let turn: ReturnType<TurnRunner["turn"]> | undefined;
+  try {
+    await runner.start({ type: "start", mode: "agent" });
+    turn = runner.turn({ type: "prompt", message: "Build", behavior: "follow_up" });
+    await cleanup;
+    // Drain the continuation before releasing the externally gated work.
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(events.some((event) => event.type === "complete")).toBe(false);
+    expect(events.some((event) => event.type === "task_settled")).toBe(false);
+    expect(
+      runner.prompts.filter((prompt) => prompt.includes("background tasks are still running")),
+    ).toHaveLength(1);
+    runner.release();
+    const terminal = await turn;
+    expect(terminal.type).toBe("complete");
+    expect(terminal.state.tasks).toMatchObject([{ name: "build", status: "completed" }]);
+    expect(
+      runner.prompts.filter((prompt) => prompt.includes("background tasks are still running")),
+    ).toHaveLength(1);
+    expect(runner.prompts.at(-1)).toContain("BUILD_COMPLETE");
+  } finally {
+    clearTimeout(watchdog);
+    runner.release?.();
+    await runner.dispose();
+    await turn;
+  }
+});
+
+class FailedCleanupRunner extends AsyncSurfaceRunner {
+  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    if (input.prompt.includes("background tasks are still running")) {
+      return {
+        control: { type: "none" },
+        outcome: {
+          type: "complete",
+          status: "failed",
+          error: "Model unavailable during cleanup",
+          state: input.state,
+        },
+      };
+    }
+    return super.runAgentWorker(input);
+  }
+}
+
+test("a failed cleanup pass reports failure and reaps its background task", async () => {
+  const runner = new FailedCleanupRunner({
+    model: "anthropic:claude-opus-4-7",
+    mode: "agent",
+    memoryDbPath: false,
+    skillDiscovery: { includeDefaults: false },
+  });
+  runner.command = "sleep 60";
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const active = (await startTurn(runner, { mode: "agent", prompt: "Run" })).turn;
+    const terminal = await Promise.race([
+      active,
+      new Promise<never>((_, reject) => {
+        watchdog = setTimeout(() => reject(new Error("Failed cleanup left the turn stuck")), 1000);
+      }),
+    ]);
+    expect(terminal).toMatchObject({
+      type: "complete",
+      status: "failed",
+      error: "Model unavailable during cleanup",
+    });
+    expect(terminal.state.tasks).toMatchObject([{ name: "bash", status: "stopped" }]);
+  } finally {
+    clearTimeout(watchdog);
+    await runner.dispose();
+  }
 });

@@ -298,6 +298,7 @@ type PendingParentLoopInput =
   | ParentLoopInput
   | { type: "advisor_completion_review" }
   | { type: "park_nudge" }
+  | { type: "background_task_cleanup" }
   | { type: "recover_state"; stateName: string };
 
 type StateTaskMetadata =
@@ -947,6 +948,7 @@ export class TurnRunner {
     let completion: { status: "completed" | "failed"; result?: string; error?: string } = {
       status: "completed",
     };
+    const remindedTasks = new Set<TaskId>();
     let terminal!: TurnTerminalEvent;
     try {
       while (!questions && !this.interruptReason) {
@@ -957,6 +959,7 @@ export class TurnRunner {
             ? this.parentInputs.findIndex(
                 (queued) =>
                   queued.type === "task_settlements" ||
+                  queued.type === "background_task_cleanup" ||
                   (queued.type === "user_command" && queued.command.behavior === "steer"),
               )
             : 0;
@@ -988,6 +991,18 @@ export class TurnRunner {
               continue;
             }
             break;
+          }
+          const running = this.taskManager.list().filter((task) => task.status === "running");
+          // A live state worker still owns its work. Once it returns, give the
+          // parent one cleanup opportunity per task instead of silently parking
+          // its transition behind a server that may never exit on its own.
+          if (
+            !running.some((task) => this.stateTasks.has(task.id)) &&
+            running.some((task) => !remindedTasks.has(task.id))
+          ) {
+            for (const task of running) remindedTasks.add(task.id);
+            this.parentInputs.push({ type: "background_task_cleanup" });
+            continue;
           }
           await this.waitForLoopActivity();
           continue;
@@ -1417,11 +1432,44 @@ export class TurnRunner {
             ),
           `Relay state "${input.stateName}" has no worker or scheduled wake; recovery did not select a state.`,
         );
+      case "background_task_cleanup":
+        return this.runBackgroundTaskCleanupPass();
       case "park_nudge":
         return this.runParkNudgePass();
       case "wake":
         return this.runWakeInput();
     }
+  }
+
+  private async runBackgroundTaskCleanupPass() {
+    const running = this.taskManager.list().filter((task) => task.status === "running");
+    if (running.length === 0) return undefined;
+    const worker = await this.runParentPass({
+      state: this.snapshotState({ ...this.requireRunnerState(), status: "running" }),
+      prompt: systemReminder(dedent`
+        The worker has returned, but background tasks are still running:
+        ${running
+          .slice(0, 20)
+          .map((task) => `- ${task.id} (${task.name}): ${task.label.slice(0, 300)}`)
+          .join("\n")}
+        ${running.length > 20 ? "Use task_output without an id to list all remaining tasks." : ""}
+
+        The turn remains open and the normal relay continuation is waiting for
+        these running tasks to finish or be stopped. Before advancing or finishing,
+        use task_output with an id to inspect progress or with wait to wait for
+        completion; use task_stop with an id for work no longer needed, such as a
+        temporary preview server. Do not stop useful work just to finish. If it
+        will finish on its own soon, you may simply end this response and wait;
+        the runner will resume you when it settles. Ending this response does
+        not finish the turn while tasks remain running.
+      `),
+      continuation: true,
+    });
+    this.setState(worker.outcome.state);
+    if (worker.outcome.type === "complete" && worker.outcome.status === "failed") {
+      throw new Error(worker.outcome.error ?? "Background task cleanup failed.");
+    }
+    return this.settleContinuationPass(worker);
   }
 
   private async runUserCommandPass(
@@ -2429,6 +2477,13 @@ export class TurnRunner {
     await this.replaceActiveStateTasks("Replaced by a newly selected state.");
     await this.cancelScheduledTasks("Replaced by a newly selected state.");
     const planned = planDecision(this.requireStateMachine(), decision, this.clock.now());
+    // A cleanup or user-steer pass can satisfy the transition before its queued
+    // reminder runs. That old state's obligation must not drive a second select.
+    for (let index = this.parentInputs.length - 1; index >= 0; index--) {
+      if (this.parentInputs[index]?.type === "transition_enforcement") {
+        this.parentInputs.splice(index, 1);
+      }
+    }
     this.setStateMachine(planned.session, true);
     return this.executePlannedWork(planned.work);
   }
