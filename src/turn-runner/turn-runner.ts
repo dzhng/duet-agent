@@ -451,6 +451,12 @@ export class TurnRunner {
   private hydratedQueuedCommands?: TurnCommand[];
   /** Inputs waiting for the single parent slot between sequential passes. */
   private readonly parentInputs: PendingParentLoopInput[] = [];
+  // Pi's queues are transient delivery copies. The outer queue owns accepted
+  // commands until pi emits their exact message object as consumed input.
+  private readonly piQueuedInputs = new Map<
+    AgentMessage,
+    Extract<ParentLoopInput, { type: "user_command" }>
+  >();
   /** Wakes the loop when a user command arrives while task work is in process. */
   private readonly parentInputWaiters = new Set<() => void>();
   /** Settlements already folded into the ledger during replacement/interrupt. */
@@ -919,6 +925,9 @@ export class TurnRunner {
         ? new AdvisorTurnLifecycle(routeStatus.assistantSteps)
         : undefined;
     this.turnTools = this.createTools(this.requireRunnerState().mode).tools;
+    const hasRetainedUserCommands = this.parentInputs.some(
+      (input) => input.type === "user_command",
+    );
     this.enqueueParentInput(
       command.type === "wake" ? { type: "wake" } : { type: "user_command", command },
     );
@@ -929,7 +938,7 @@ export class TurnRunner {
       for (const queued of carriedUserCommands) {
         this.enqueueParentInput({ type: "user_command", command: queued });
       }
-    } else {
+    } else if (!hasRetainedUserCommands) {
       for (const entry of this.getFollowUpQueue()) {
         this.enqueueParentInput({
           type: "user_command",
@@ -1152,6 +1161,9 @@ export class TurnRunner {
     if ((command.type === "prompt" || command.type === "answer") && this.parentAgentRunning) {
       // The parent pi-agent is currently driving the public terminal event, so
       // user input can go straight to pi using pi's native steer/follow-up queues.
+      if (command.behavior === "follow_up") {
+        this.appendFollowUpPrompt(this.commandToUserMessage(command), command.images);
+      }
       this.sendCommandToAgent(this.requireParentAgent(), command);
       return;
     }
@@ -1171,10 +1183,12 @@ export class TurnRunner {
     const message = this.commandToUserMessage(command);
     const images = command.type === "prompt" ? command.images : undefined;
     const agentMessage = buildUserAgentMessage(message, images);
+    const input = { type: "user_command" as const, command };
+    this.enqueueParentInput(input);
+    this.piQueuedInputs.set(agentMessage, input);
     if (command.behavior === "steer") {
       agent.steer(agentMessage);
     } else {
-      this.appendFollowUpPrompt(message, images);
       agent.followUp(agentMessage);
     }
   }
@@ -1313,6 +1327,9 @@ export class TurnRunner {
   private replaceFollowUpQueue(entries: TurnFollowUpQueueEntry[]): void {
     this.setFollowUpQueue(entries);
     this.parentAgent?.clearFollowUpQueue();
+    for (const [message, input] of this.piQueuedInputs) {
+      if (input.command.behavior === "follow_up") this.piQueuedInputs.delete(message);
+    }
     this.parentInputs.splice(
       0,
       this.parentInputs.length,
@@ -1322,7 +1339,12 @@ export class TurnRunner {
     );
     if (this.parentAgentRunning) {
       for (const entry of entries) {
-        this.parentAgent?.followUp(buildUserAgentMessage(entry.message, entry.images));
+        this.sendCommandToAgent(this.requireParentAgent(), {
+          type: "prompt",
+          message: entry.message,
+          images: entry.images,
+          behavior: "follow_up",
+        });
       }
     } else if (this.activeTurnPromise) {
       for (const entry of entries) {
@@ -2846,6 +2868,10 @@ export class TurnRunner {
       }
     } finally {
       unsubscribe();
+      // A control action closes this parent pass before pi drains its queues.
+      // Unconsumed commands remain in parentInputs for the next outer pass.
+      agent.clearAllQueues();
+      this.piQueuedInputs.clear();
       this.setParentAgentRunning(false);
     }
 
@@ -3211,6 +3237,12 @@ export class TurnRunner {
             prepareNextTurn: (signal?: AbortSignal) => this.rerouteIfDue(agent, { signal }),
           }
         : {}),
+      ...(onControlResult
+        ? {
+            shouldStopAfterTurn: () =>
+              agent === this.parentAgent && this.parentControlResults.length > 0,
+          }
+        : {}),
       steeringMode: "all",
       toolExecution: "parallel",
       afterToolCall: async (context) => {
@@ -3458,6 +3490,14 @@ export class TurnRunner {
   }
 
   protected emitParentAgentEvent(event: AgentEvent): void {
+    if (event.type === "message_start" && event.message.role === "user") {
+      const input = this.piQueuedInputs.get(event.message);
+      if (input) {
+        const index = this.parentInputs.indexOf(input);
+        if (index !== -1) this.parentInputs.splice(index, 1);
+        this.piQueuedInputs.delete(event.message);
+      }
+    }
     this.emitAgentEvent(event);
     if (event.type === "turn_end" && event.message.role === "assistant") {
       this.modelRouter?.noteAssistantStep(routerStepObservation(event.message, event.toolResults));

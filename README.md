@@ -554,6 +554,12 @@ flowchart TD
 
 `TurnRunner.turn()` is the concurrency boundary. Callers may invoke it repeatedly while work is active; the runner folds active `prompt` and `answer` commands back into the active pi agent as `steer` or `follow_up`, queues wakes and work it cannot absorb immediately, and emits one terminal event when the whole active work chain is done.
 
+An accepted relay control action ends its parent pass before another queued
+message runs. The outer runner retains accepted user inputs until the parent
+actually consumes them, applies the selection, then delivers the remaining
+input. This keeps a follow-up from issuing a second control action against
+state that the first selection has not yet changed.
+
 When an agent pass finishes with background tasks still running, the parent gets
 one cleanup reminder for those tasks; each later relay worker that finishes
 renews it, including for tasks carried over from earlier states. The parent can
