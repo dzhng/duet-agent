@@ -150,7 +150,11 @@ import {
 } from "./tools.js";
 import { connectMcpServers, type McpRuntime } from "./mcp.js";
 import { SkillContext } from "./skill-context.js";
-import { currentParkState, currentScheduledState } from "./state-machine-session.js";
+import {
+  currentParkState,
+  currentScheduledState,
+  persistStateDefinition,
+} from "./state-machine-session.js";
 import {
   failActiveSession,
   markTerminalAcknowledged,
@@ -2618,6 +2622,25 @@ export class TurnRunner {
             mode,
             getDefinition: () => this.stateMachine?.definition,
             getStateMachine: () => this.stateMachine,
+            updateStateDefinition: (updatedState) => {
+              const liveWorker = [...this.stateTasks].some(
+                ([id, metadata]) =>
+                  metadata.stateName === updatedState.name &&
+                  this.taskManager.output(id)?.descriptor.status === "running",
+              );
+              const liveWake = this.taskManager
+                .list()
+                .some((task) => task.status === "scheduled" && task.name === updatedState.name);
+              if (liveWorker || liveWake) {
+                throw new Error(
+                  `State "${updatedState.name}" is running or scheduled. Use select_state_machine_state with an override to restart or reschedule it.`,
+                );
+              }
+              this.setStateMachine(
+                persistStateDefinition(this.requireStateMachine(), updatedState),
+                true,
+              );
+            },
             getActiveStateOutput: () => this.getActiveStateOutput(),
             todoStorage,
             skills,

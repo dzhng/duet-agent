@@ -576,6 +576,12 @@ the completed worker. A deliberate state selection may still rerun work when
 the parent decides a correction is needed. Previously failed or cancelled
 relays are not revived automatically.
 
+State definition edits are separate from execution. The parent can use
+`update_state_machine_state` to revise a future state's instructions or configuration
+while a relay sleeps, preserving its current state, input, and wake. The change is
+persisted and used on the next selection. A currently running or scheduled state
+must instead be explicitly selected with an override to restart or reschedule it.
+
 The parent runner transcript stays linear across the lifecycle. State-machine continuations, script results, poll results, and user follow-ups all rejoin the parent agent instead of creating separate conversation branches. Terminal events carry the next `TurnState`; callers that need process-level durability persist that snapshot and pass it back to a later `start({ state })`.
 
 </details>

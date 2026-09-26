@@ -535,6 +535,8 @@ interface TurnRunnerToolsInput {
   todoStorage: TodoWriteToolStorage;
   getDefinition?: () => StateMachineDefinition | undefined;
   getStateMachine?: () => StateMachineSession | undefined;
+  /** Persist an edited definition without selecting it; reject states with live execution or a scheduled wake. */
+  updateStateDefinition?: (state: StateMachineState) => void;
   getActiveStateOutput?: () => ActiveStateOutput | undefined;
   skills?: readonly Skill[];
   recallStorage?: RecallMemoryToolStorage;
@@ -645,11 +647,14 @@ export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] 
     );
   }
 
-  const getDefinition =
-    typeof input.mode === "object"
-      ? () => input.mode as StateMachineDefinition
-      : input.getDefinition;
+  const getDefinition = () =>
+    input.getDefinition?.() ?? (typeof input.mode === "object" ? input.mode : undefined);
   tools.push(createSelectStateTool(getDefinition, input.cwd));
+  if (input.updateStateDefinition) {
+    tools.push(
+      createUpdateStateTool(input.getStateMachine, input.updateStateDefinition, input.cwd),
+    );
+  }
   tools.push(createCurrentStateMachineStateTool(input.getStateMachine, input.getActiveStateOutput));
   return tools;
 }
@@ -1186,6 +1191,46 @@ function createSelectStateTool(
   };
 }
 
+const updateStateSchema = Type.Object({
+  state: Type.String({ description: "Name of an existing state to edit without executing it." }),
+  override: stateOverrideSchema,
+});
+
+function createUpdateStateTool(
+  getStateMachine: (() => StateMachineSession | undefined) | undefined,
+  updateStateDefinition: (state: StateMachineState) => void,
+  baseCwd: string,
+): AgentTool<typeof updateStateSchema> {
+  return {
+    name: "update_state_machine_state",
+    executionMode: "sequential",
+    label: "Update state machine state",
+    description: dedent`
+      Persist instruction or configuration changes to an existing state without selecting or running it.
+      Use this to revise a future agent prompt or script while a recurring relay sleeps. The current
+      state, its input, running tasks, and scheduled wake stay unchanged. The override has the same
+      shape as select_state_machine_state and applies to future selections. This does not end your turn.
+      A state with a running task or scheduled wake cannot be edited through this tool: select it
+      explicitly with an override to restart or reschedule it instead. Terminal states cannot be edited.
+    `,
+    parameters: updateStateSchema,
+    async execute(_toolCallId, params) {
+      const session = getStateMachine?.();
+      if (!session) throw new Error("No state machine exists to edit.");
+      const selected = session.definition.states.find((state) => state.name === params.state);
+      if (!selected) throw new Error(`Unknown state: ${params.state}.`);
+      if (selected.kind === "terminal") throw new Error("Terminal states cannot be edited.");
+      const updated = validatedStateOverride(selected, params.override, baseCwd);
+      updateStateDefinition(updated);
+      const details = { type: "state_definition_updated", state: updated };
+      return {
+        content: [{ type: "text", text: JSON.stringify(details) }],
+        details,
+      };
+    },
+  };
+}
+
 function createCurrentStateMachineStateTool(
   getStateMachine: (() => StateMachineSession | undefined) | undefined,
   getActiveStateOutput: (() => ActiveStateOutput | undefined) | undefined,
@@ -1237,22 +1282,26 @@ function assertValidSelectedState(
   // decision is always accepted.
   if (selectedState.kind === "terminal") return;
 
-  // A kind-mismatched override is silently discarded by applyStateOverride —
-  // prompt, cwd, and all — leaving the sub-agent to run with the original
-  // definition state instead of the tuned one the caller thought they sent.
-  // Reject it loudly so the caller fixes the override kind rather than
-  // shipping work the runner quietly ignored.
-  if (decision.override && decision.override.kind !== selectedState.kind) {
+  const effectiveState = validatedStateOverride(selectedState, decision.override, baseCwd);
+  assertValidStateInput(effectiveState, decision.input);
+}
+
+function validatedStateOverride(
+  selectedState: StateMachineState,
+  override: StateMachineStateOverride | undefined,
+  baseCwd: string,
+): StateMachineState {
+  // applyStateOverride ignores kind mismatches, so reject rather than report an edit it dropped.
+  if (override && override.kind !== selectedState.kind) {
     throw new Error(
-      `Override kind "${decision.override.kind}" does not match state "${selectedState.name}", which is a "${selectedState.kind}" state. Set override.kind to "${selectedState.kind}" so the override is applied instead of silently dropped.`,
+      `Override kind "${override.kind}" does not match state "${selectedState.name}", which is a "${selectedState.kind}" state. Set override.kind to "${selectedState.kind}" so the override is applied instead of silently dropped.`,
     );
   }
-
-  const effectiveState = applyStateOverride(selectedState, decision.override);
+  const effectiveState = applyStateOverride(selectedState, override);
   assertValidStateInputSchema(effectiveState);
   assertValidStateSchedule(effectiveState);
-  assertValidStateInput(effectiveState, decision.input);
   assertValidStateCwd(effectiveState, baseCwd, SELECT_CWD_GUIDANCE);
+  return effectiveState;
 }
 
 // Appended to the "cwd does not exist" error depending on where validation
