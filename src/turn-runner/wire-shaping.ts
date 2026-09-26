@@ -178,9 +178,9 @@ export function calculateWireTokens(messages: AgentMessage[]): number {
  * survives, fall back to keeping the recent tail anchored on the first
  * non-orphan message: drop only leading `toolResult` messages, since a tool
  * result whose matching tool call was evicted is the one head shape the
- * provider rejects. The budget walk in {@link findEvictionHorizon} still
- * bounds how much of that tail rides the wire, so this never reintroduces
- * unbounded context growth — it only guarantees a non-empty, valid payload.
+ * provider rejects. When the tail consists only of tool results, retain
+ * their calls as well: a complete interaction takes precedence over the
+ * soft budget when the final result alone exceeds it.
  */
 export function applyEvictionHorizon(messages: AgentMessage[], horizon: number): AgentMessage[] {
   if (horizon <= 0) return messages;
@@ -200,11 +200,26 @@ export function applyEvictionHorizon(messages: AgentMessage[], horizon: number):
   while (nonOrphan < messages.length && messages[nonOrphan]!.role === "toolResult") {
     nonOrphan += 1;
   }
-  // Degenerate tail of nothing but orphan tool results: empty-after-skip and
-  // provider-invalid both lose, so keep the raw post-horizon slice — a
-  // non-empty payload is the lesser evil and effectively never happens in
-  // practice (tool results sit adjacent to the call that produced them).
-  if (nonOrphan >= messages.length) return messages.slice(firstKept);
+  // A single large final tool result can exceed the entire budget. Keep
+  // its complete interaction even when the soft budget cannot be met:
+  // sending the result alone is rejected by providers before work can resume.
+  if (nonOrphan >= messages.length) {
+    const resultIds = new Set(
+      messages
+        .slice(firstKept)
+        .flatMap((message) => (message.role === "toolResult" ? [message.toolCallId] : [])),
+    );
+    for (let index = 0; index < firstKept; index += 1) {
+      const message = messages[index]!;
+      if (
+        message.role === "assistant" &&
+        message.content.some((part) => part.type === "toolCall" && resultIds.has(part.id))
+      ) {
+        return messages.slice(index);
+      }
+    }
+    return [];
+  }
   return messages.slice(nonOrphan);
 }
 

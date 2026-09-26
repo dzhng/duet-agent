@@ -1,7 +1,10 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { describe, expect, test } from "bun:test";
 
-import { CHARS_PER_TOKEN } from "../src/memory/observational.js";
+import {
+  createObservationalContextTransform,
+  CHARS_PER_TOKEN,
+} from "../src/memory/observational.js";
 import {
   applyEvictionHorizon,
   calculateWireBytes,
@@ -10,6 +13,8 @@ import {
   findEvictionHorizon,
   IMAGE_WIRE_TOKEN_ESTIMATE,
 } from "../src/turn-runner/wire-shaping.js";
+
+import { MemoryContextCache } from "../src/memory/store.js";
 
 function userText(text: string, timestamp: number): AgentMessage {
   return { role: "user", content: [{ type: "text", text }], timestamp } as AgentMessage;
@@ -34,6 +39,26 @@ function toolResultText(toolCallId: string, text: string, timestamp: number): Ag
 }
 
 describe("applyEvictionHorizon", () => {
+  test("compaction preserves the call for an oversized final tool result across resume", async () => {
+    const messages = [
+      userText("old request", 1),
+      assistantToolCall("latest_call", 2),
+      toolResultText("latest_call", "large output ".repeat(100), 3),
+    ];
+    const horizon = createInitialHorizon();
+    const transform = createObservationalContextTransform({
+      memory: new MemoryContextCache(),
+      horizon,
+      effectiveContext: 100,
+    });
+    const compacted = await transform(messages);
+    expect(compacted).toEqual(messages.slice(1));
+    const resumedHorizon = JSON.parse(JSON.stringify(horizon));
+    expect(applyEvictionHorizon(messages, resumedHorizon.evictionHorizon)).toEqual(
+      messages.slice(1),
+    );
+  });
+
   test("returns input unchanged when horizon is zero", () => {
     const messages = [userText("a", 1), assistantToolCall("t1", 2), toolResultText("t1", "ok", 3)];
     expect(applyEvictionHorizon(messages, 0)).toBe(messages);
