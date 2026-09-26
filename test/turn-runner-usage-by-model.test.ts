@@ -99,7 +99,9 @@ class MultiModelTurnRunner extends TurnRunner {
     }
     // Wrap-up turn after the state agent runs; no further parent usage.
     return {
-      control: { type: "none" },
+      control: input.prompt.includes('The state "research_prospect" finished.')
+        ? { type: "select_state_machine_state", decision: { state: "meeting_scheduled" } }
+        : { type: "none" },
       outcome: {
         type: "complete",
         status: "completed",
