@@ -192,6 +192,14 @@ export interface TurnState {
   /** Present when this session is executing in state-machine mode. */
   stateMachine?: StateMachineSession;
   /**
+   * A completed worker whose parent still owes a next-state selection. Retained
+   * across suspension/restart so continuing retries the decision, not the work.
+   * The output remains in state-machine history rather than being duplicated.
+   * Cleared only when a new state is successfully selected.
+   */
+  pendingStateTransition?: { stateName: string };
+
+  /**
    * Current todo list written by the todo tool. Persisted with the turn state so
    * resumed runners preserve the same work plan instead of starting with an
    * empty tool-local list.

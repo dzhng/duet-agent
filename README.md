@@ -562,6 +562,14 @@ leave useful work to finish naturally. The turn stays open while tasks run, and
 the automatic next-state reminder waits for them to settle. A live relay worker
 is left alone, and choosing to wait does not cause repeated model prompts.
 
+If a worker finishes but its parent exhausts the bounded next-state reminders,
+the relay asks for an explicit continuation instead of recording a business
+failure. The checkpoint retains the finished worker's output and outstanding
+selection. Continuing supplies that result to the parent; it does not restart
+the completed worker. A deliberate state selection may still rerun work when
+the parent decides a correction is needed. Previously failed or cancelled
+relays are not revived automatically.
+
 The parent runner transcript stays linear across the lifecycle. State-machine continuations, script results, poll results, and user follow-ups all rejoin the parent agent instead of creating separate conversation branches. Terminal events carry the next `TurnState`; callers that need process-level durability persist that snapshot and pass it back to a later `start({ state })`.
 
 </details>

@@ -313,8 +313,8 @@ type StateTaskMetadata =
 /**
  * How many times the parent is re-prompted to emit the
  * select_state_machine_state it owes after a state completes before the runner
- * gives up and records an `error` terminal. Bounds the protocol-violation retry
- * loop so a parent that never transitions can't spin forever.
+ * suspends the decision for explicit continuation. Missing-worker recovery without
+ * a completed result still fails. Both paths bound no-progress model retries.
  */
 const PARENT_TRANSITION_RETRY_BUDGET = 3;
 
@@ -972,6 +972,15 @@ export class TurnRunner {
             // transitioning out of a completed state returns no outcome at all,
             // so hooking the terminal result instead would miss every park
             // after the first.
+            const pendingTransition = this.requireRunnerState().pendingStateTransition;
+            if (pendingTransition && !this.stateMachine?.terminal) {
+              this.parentInputs.push({
+                type: "transition_enforcement",
+                ...pendingTransition,
+                output: this.completedStateOutput(pendingTransition.stateName),
+              });
+              continue;
+            }
             if (this.queueParkNudgeIfDue(completion.status, pendingBeforeInput)) continue;
             const unfinished = this.stateMachine?.definition.states.find(
               (state) => state.name === this.stateMachine?.currentState,
@@ -1033,6 +1042,10 @@ export class TurnRunner {
           // Reconsider tasks carried across states at each worker boundary,
           // without re-prompting merely because the parent chose to wait.
           remindedTasks.clear();
+          this.setState({
+            ...this.requireRunnerState(),
+            pendingStateTransition: { stateName: result.stateName },
+          });
           this.enqueueParentInput({
             type: "transition_enforcement",
             stateName: result.stateName,
@@ -1487,6 +1500,9 @@ export class TurnRunner {
     };
     const state = continuation ? runningState : this.clearFinishedTodosAtTurnStart(runningState);
     let prompt = this.commandToUserMessage(command);
+    if (state.pendingStateTransition) {
+      prompt += `\n\n${systemReminder(`The relay state "${state.pendingStateTransition.stateName}" already completed. Its next-state decision is pending. Review its saved result and select the next state; do not rerun completed work merely to resume. ${toXML({ state_completed: { output: this.completedStateOutput(state.pendingStateTransition.stateName) ?? null } })}`)}`;
+    }
     if (
       !continuation &&
       command.behavior === "steer" &&
@@ -2010,6 +2026,15 @@ export class TurnRunner {
     `;
   }
 
+  private completedStateOutput(stateName: string): unknown {
+    const history = this.stateMachine?.history ?? [];
+    for (let index = history.length - 1; index >= 0; index--) {
+      const event = history[index];
+      if (event?.type === "state_completed" && event.state === stateName) return event.output;
+    }
+    return undefined;
+  }
+
   private async selectNextStateAfterCompletion(
     stateName: string,
     output?: unknown,
@@ -2049,9 +2074,9 @@ export class TurnRunner {
    * Re-prompts up to `PARENT_TRANSITION_RETRY_BUDGET` times with `buildPrompt`
    * (the second and later attempts carry a retry reminder); the first accepted
    * selection ends enforcement, with an immediate outcome only for synchronous
-   * work. When the budget is exhausted with no control action, records an
-   * `error` terminal carrying `failureReason` — a runtime failure of the
-   * machine, not a deliberate `failed` selection.
+   * work. Exhaustion after completed work asks for an explicit continuation,
+   * preserving the decision and output. Recovery without a completed result
+   * still records an error terminal carrying `failureReason`.
    */
   private async enforceParentTransition(
     buildPrompt: (retryInstruction: string | undefined) => string,
@@ -2077,6 +2102,25 @@ export class TurnRunner {
       // Starting an asynchronous state has no immediate outcome. The select
       // control itself proves the transition obligation was satisfied.
       if (workerResult.control.type === "select_state_machine_state") return undefined;
+    }
+
+    if (this.requireRunnerState().pendingStateTransition) {
+      return {
+        type: "ask",
+        questions: [
+          {
+            header: "Relay paused",
+            question:
+              "The last relay step finished, but the agent could not choose the next step. Continue to retry that decision using the saved result?",
+            options: [
+              {
+                label: "Continue",
+                description: "Retry choosing the next step without restarting the completed work.",
+              },
+            ],
+          },
+        ],
+      };
     }
 
     const failed = failActiveSession(
@@ -2489,6 +2533,7 @@ export class TurnRunner {
         this.parentInputs.splice(index, 1);
       }
     }
+    this.setState({ ...this.requireRunnerState(), pendingStateTransition: undefined });
     this.setStateMachine(planned.session, true);
     return this.executePlannedWork(planned.work);
   }

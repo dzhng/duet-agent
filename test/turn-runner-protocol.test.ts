@@ -1319,7 +1319,7 @@ describe("TurnRunner protocol scenarios", () => {
     expect(parentPrompt).toContain("<sent>true</sent>");
   });
 
-  test("retries when the parent runner does not choose the next state after completion", async () => {
+  test("suspends an exhausted next-state decision and resumes without repeating completed work", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("waiting_for_reply");
     await runner.start({ type: "start", state: turnState });
@@ -1334,20 +1334,42 @@ describe("TurnRunner protocol scenarios", () => {
       behavior: "follow_up",
     });
 
-    // [0] parent turn, [1] research_prospect agent state, [2]-[4] the three
-    // bounded select attempts, [5] the terminal acknowledgment turn (the
-    // recorded error terminal is acknowledged like any other runtime failure).
-    expect(runner.workerInputs).toHaveLength(6);
     expect(runner.workerInputs[2]?.prompt).toContain("select_state_machine_state");
     expect(runner.workerInputs[3]?.prompt).toContain("retry 2 of 3");
     expect(runner.workerInputs[4]?.prompt).toContain("retry 3 of 3");
-    // Exhausting the bounded recovery budget is a runtime failure: the turn
-    // fails and the reason rides on terminal.error.
-    expect(terminal).toMatchObject({
-      type: "complete",
-      status: "failed",
-      error: "State completed, but the runner did not call select_state_machine_state.",
+    expect(terminal.type).toBe("ask");
+    expect(terminal.state.status).toBe("waiting_for_human");
+    expect(terminal.state.stateMachine?.terminal).toBeUndefined();
+    expect(terminal.state.pendingStateTransition).toMatchObject({ stateName: "research_prospect" });
+    const completedHistory = terminal.state.stateMachine?.history.filter(
+      (event) => event.type === "state_completed",
+    );
+    expect(completedHistory).toContainEqual(
+      expect.objectContaining({ state: "research_prospect" }),
+    );
+
+    const { runner: resumed } = createTurnRunner();
+    await resumed.start({ type: "start", state: JSON.parse(JSON.stringify(terminal.state)) });
+    resumed.controlResults.push(
+      { type: "none" },
+      { type: "select_state_machine_state", decision: { state: "meeting_scheduled" } },
+    );
+    const finished = await resumed.turn({
+      type: "prompt",
+      message: "Continue.",
+      behavior: "follow_up",
     });
+    expect(finished.type).toBe("complete");
+    expect(finished.state.stateMachine?.terminal?.status).toBe("completed");
+    expect(finished.state.pendingStateTransition).toBeUndefined();
+    expect(resumed.stateAgentInputs).toEqual([]);
+    expect(resumed.workerInputs[0]?.prompt).toContain("already completed");
+    expect(resumed.workerInputs[0]?.prompt).toContain("state_completed");
+    expect(resumed.workerInputs[0]?.prompt).toContain("Research the prospect");
+    expect(resumed.workerInputs[1]?.prompt).toContain("state_completed");
+    expect(
+      finished.state.stateMachine?.history.filter((event) => event.type === "state_completed"),
+    ).toEqual(completedHistory);
   });
 
   test("create-while-active supersedes the running machine and starts the new one", async () => {
