@@ -929,8 +929,8 @@ export class TurnRunner {
         ? new AdvisorTurnLifecycle(routeStatus.assistantSteps)
         : undefined;
     this.turnTools = this.createTools(this.requireRunnerState().mode).tools;
-    const hasRetainedUserCommands = this.parentInputs.some(
-      (input) => input.type === "user_command",
+    const hasRetainedFollowUps = this.parentInputs.some(
+      (input) => input.type === "user_command" && input.command.behavior === "follow_up",
     );
     this.enqueueParentInput(
       command.type === "wake" ? { type: "wake" } : { type: "user_command", command },
@@ -942,7 +942,11 @@ export class TurnRunner {
       for (const queued of carriedUserCommands) {
         this.enqueueParentInput({ type: "user_command", command: queued });
       }
-    } else if (!hasRetainedUserCommands) {
+    }
+    if (
+      !hasRetainedFollowUps &&
+      !carriedUserCommands?.some((queued) => queued.behavior === "follow_up")
+    ) {
       for (const entry of this.getFollowUpQueue()) {
         this.enqueueParentInput({
           type: "user_command",
@@ -1341,6 +1345,16 @@ export class TurnRunner {
         (input) => input.type !== "user_command" || input.command.behavior !== "follow_up",
       ),
     );
+    this.hydratedQueuedCommands = this.hydratedQueuedCommands?.filter(
+      (command) => !this.isFollowUpQueueCommand(command),
+    );
+    const state = this.requireRunnerState();
+    this.setState({
+      ...state,
+      queuedCommands: state.queuedCommands?.filter(
+        (command) => !this.isFollowUpQueueCommand(command),
+      ),
+    });
     if (this.parentAgentRunning) {
       for (const entry of entries) {
         this.sendCommandToAgent(this.requireParentAgent(), {

@@ -131,3 +131,58 @@ for (const terminalType of ["ask", "sleep"] as const) {
     expect(finished.state.queuedCommands).toEqual([]);
   });
 }
+
+for (const restart of ["none", "before-edit", "after-edit"] as const) {
+  test(`editing suspended follow-ups preserves them alongside a retained steer (restart=${restart})`, async () => {
+    const config = {
+      model: "anthropic:claude-opus-4-7",
+      memoryDbPath: false as const,
+      skillDiscovery: { includeDefaults: false },
+    };
+    let runner = new ControlBoundaryRunner(config);
+    runner.firstControl = "ask";
+    let injected = false;
+    runner.subscribe((event) => {
+      if (!injected && event.type === "step" && event.step.type === "tool_call") {
+        injected = true;
+        void runner.turn({ type: "prompt", message: "Retained steer", behavior: "steer" });
+        void runner.turn({ type: "prompt", message: "Original follow-up", behavior: "follow_up" });
+      }
+    });
+    await runner.start({ type: "start", state: createStateMachineState("wait_before_retry") });
+    const suspended = await runner.turn({
+      type: "prompt",
+      message: "Wait.",
+      behavior: "follow_up",
+    });
+    expect(suspended.type).toBe("ask");
+    if (restart === "before-edit") {
+      runner = new ControlBoundaryRunner(config);
+      await runner.start({ type: "start", state: JSON.parse(JSON.stringify(suspended.state)) });
+    }
+    await runner.editFollowUpQueue({
+      type: "edit_follow_up_queue",
+      prompts: [{ message: "Edited follow-up" }],
+    });
+    if (restart === "after-edit") {
+      const state = JSON.parse(JSON.stringify(runner.getState()));
+      runner = new ControlBoundaryRunner(config);
+      await runner.start({ type: "start", state });
+    }
+    runner.firstControl = undefined;
+    runner.calls = 0;
+    const finished = await runner.turn({
+      type: "prompt",
+      message: "Finish now.",
+      behavior: "follow_up",
+    });
+    const userMessages = finished.state.agent.messages
+      .filter((message) => message.role === "user")
+      .map((message) => JSON.stringify(message.content));
+    expect(userMessages.filter((message) => message.includes("Edited follow-up"))).toHaveLength(1);
+    expect(userMessages.filter((message) => message.includes("Retained steer"))).toHaveLength(1);
+    expect(userMessages.some((message) => message.includes("Original follow-up"))).toBe(false);
+    expect(finished.state.followUpQueue).toEqual([]);
+    expect(finished.state.queuedCommands).toEqual([]);
+  });
+}
