@@ -112,9 +112,9 @@ describe("duet gateway tier attribution", () => {
     // covered by its own consultation tests below.
     for (const modelId of [
       "anthropic/claude-fable-5.1",
-      "openai/gpt-5.6-luna",
+      "openai/gpt-6-luna",
       "moonshotai/kimi-k3",
-      "zai/glm-5.2",
+      "zai/glm-5.3",
     ]) {
       expect(resolveModelName(`duet-gateway:${modelId}`).headers?.[DUET_TIER_HEADER]).toBe(
         "balanced",
@@ -135,7 +135,7 @@ describe("duet gateway tier attribution", () => {
     // a name it has never heard of rather than validating against a fixed set.
     setActiveDuetTier("some-operator-defined-tier");
 
-    expect(resolveModelName("duet-gateway:openai/gpt-5.6-sol").headers?.[DUET_TIER_HEADER]).toBe(
+    expect(resolveModelName("duet-gateway:openai/gpt-6-sol").headers?.[DUET_TIER_HEADER]).toBe(
       "some-operator-defined-tier",
     );
   });
@@ -156,7 +156,7 @@ describe("duet gateway tier attribution", () => {
 
     // A vercel/openrouter pin is not Duet-metered traffic, so it must not claim
     // a Duet tier even while a routed session is active.
-    expect(resolveModelName("vercel-ai-gateway:zai/glm-5.2").headers?.[DUET_TIER_HEADER]).toBe(
+    expect(resolveModelName("vercel-ai-gateway:zai/glm-5.3").headers?.[DUET_TIER_HEADER]).toBe(
       undefined,
     );
   });
@@ -173,18 +173,18 @@ describe("duet gateway tier attribution", () => {
   });
 
   test("start() leaves a concrete pin unattributed even with a project table present", async () => {
-    await withOperatorTableRunner("gpt-5.6-sol", (runner) => {
+    await withOperatorTableRunner("gpt-6-sol", (runner) => {
       expect(runner.parentModelForTest().headers?.[DUET_TIER_HEADER]).toBeUndefined();
       expect(activeDuetTier()).toBeUndefined();
     });
   });
 
   test("a mid-session /model switch retargets attribution both ways", async () => {
-    await withOperatorTableRunner("gpt-5.6-sol", (runner) => {
+    await withOperatorTableRunner("gpt-6-sol", (runner) => {
       expect(runner.setModel("custom")).toEqual({ routed: true });
       expect(runner.parentModelForTest().headers?.[DUET_TIER_HEADER]).toBe("custom");
 
-      expect(runner.setModel("gpt-5.6-sol")).toEqual({ routed: false });
+      expect(runner.setModel("gpt-6-sol")).toEqual({ routed: false });
       expect(runner.parentModelForTest().headers?.[DUET_TIER_HEADER]).toBeUndefined();
       expect(activeDuetTier()).toBeUndefined();
     });

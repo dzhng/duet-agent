@@ -48,7 +48,7 @@ describe("getDuetGatewayBaseUrl", () => {
 
 describe("duet-gateway model routing", () => {
   test("maps GLM xhigh to the gateway's maximum reasoning effort", () => {
-    const model = resolveModelName("duet-gateway:zai/glm-5.2");
+    const model = resolveModelName("duet-gateway:zai/glm-5.3");
 
     expect(model.compat).toMatchObject({ forceAdaptiveThinking: true });
     expect(model.thinkingLevelMap?.xhigh).toBe("max");
@@ -65,7 +65,7 @@ describe("duet-gateway model routing", () => {
   test("appends /v1 to the dedicated base for OpenAI transport models", () => {
     process.env.DUET_GATEWAY_BASE_URL = "https://gateway.example.com/base";
 
-    const model = resolveModelName("duet-gateway:openai/gpt-5.6-sol");
+    const model = resolveModelName("duet-gateway:openai/gpt-6-sol");
 
     expect(model.baseUrl).toBe("https://gateway.example.com/base/v1");
   });
@@ -158,7 +158,7 @@ describe("DeepSeek V4.1 Flash's published contract", () => {
 // would then lie rather than fail.
 describe("connected-provider models", () => {
   test("resolves the codex 5.6 models on their native transport, priced", () => {
-    for (const id of ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]) {
+    for (const id of ["gpt-6-sol", "gpt-6-sol", "gpt-6-luna"]) {
       const model = resolveModelName(`openai-codex:${id}`);
 
       expect(model).toMatchObject({
@@ -184,9 +184,7 @@ describe("duet model gateway routing", () => {
           typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url,
         authorization: new Headers(init?.headers).get("authorization") ?? undefined,
       });
-      return new Response(
-        JSON.stringify({ data: [{ id: "openai/gpt-5.6-sol", type: "language" }] }),
-      );
+      return new Response(JSON.stringify({ data: [{ id: "openai/gpt-6-sol", type: "language" }] }));
     }) as typeof fetch;
 
     const catalog = await fetchModelCatalog();
@@ -197,7 +195,7 @@ describe("duet model gateway routing", () => {
         authorization: "Bearer duet_gt_test",
       },
     ]);
-    expect(catalog.get("openai/gpt-5.6-sol")).toBe("language");
+    expect(catalog.get("openai/gpt-6-sol")).toBe("language");
   });
 
   test("builds the AI SDK gateway on the dedicated base /v4/ai path", async () => {

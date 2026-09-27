@@ -122,14 +122,14 @@ describe("model routing after image-producing tool output", () => {
         expect.objectContaining({
           trigger: "step_trigger",
           route: "implement",
-          fromModel: "glm-5.2",
-          toModel: "gpt-5.6-luna",
+          fromModel: "glm-5.3",
+          toModel: "gpt-6-luna",
           visionFallback: true,
         }),
       );
       expect(terminal.type).toBe("complete");
       expect(`${colorFile}\n${finalText}`).toMatch(ACCEPTED_COLORS);
-      expect(terminal.usageByModel?.some((entry) => entry.model === "openai/gpt-5.6-luna")).toBe(
+      expect(terminal.usageByModel?.some((entry) => entry.model === "openai/gpt-6-luna")).toBe(
         true,
       );
 
@@ -201,12 +201,12 @@ describe("model routing after image-producing tool output", () => {
         expect(terminal.type).toBe("complete");
         expect(runner.routeStatus()).toMatchObject({
           route: "implement",
-          modelName: "glm-5.2",
+          modelName: "glm-5.3",
         });
-        expect(switches.some((event) => event.toModel === "gpt-5.6-luna")).toBe(false);
+        expect(switches.some((event) => event.toModel === "gpt-6-luna")).toBe(false);
         expect(switches.some((event) => event.visionFallback)).toBe(false);
-        expect(terminal.usageByModel?.some((entry) => entry.model === "zai/glm-5.2")).toBe(true);
-        expect(terminal.usageByModel?.some((entry) => entry.model === "openai/gpt-5.6-luna")).toBe(
+        expect(terminal.usageByModel?.some((entry) => entry.model === "zai/glm-5.3")).toBe(true);
+        expect(terminal.usageByModel?.some((entry) => entry.model === "openai/gpt-6-luna")).toBe(
           false,
         );
         // Live GLM phrasing: "the current model cannot inspect images" and "model does not

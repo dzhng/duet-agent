@@ -10,6 +10,7 @@ import {
 import { catalogModel, gatewayRoute, resolveGatewayModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
+  resolveFamilyShorthand,
   canonicalizeProviderModelId,
   clampModelOutputTokens,
   DEFAULT_CLI_MEMORY_MODEL,
@@ -35,8 +36,8 @@ import { isConnectedProviderId, type ConnectedProviderId } from "../connected-pr
 export { DEFAULT_CLI_MEMORY_MODEL, DEFAULT_CLI_MODEL } from "./catalog.js";
 
 /**
- * Resolves which provider:modelId the CLI talks to, plus the provenance for
- * that decision (explicit flag, inferred from env, or built-in fallback). The
+ * Retains the CLI selection and its provenance (explicit flag, inferred
+ * provider credentials, or routing-table default). The
  * shape lives in its own module so cli.ts stays focused on argv parsing and
  * the I/O harness — provider list changes don't touch the CLI surface.
  */
@@ -63,8 +64,8 @@ export function resolveModelName(model: string): Model<any> {
   const rawProvider = model.slice(0, separator);
   const rawModelId = model.slice(separator + 1);
   // The CLI supports only the router providers (duet-gateway, vercel-ai-gateway,
-  // openrouter). Any other explicit pin — e.g. `anthropic:claude-opus-5` or
-  // `openai:gpt-5.6-sol` — is an unknown provider here: `resolveProviderShorthand`
+  // openrouter). Any other explicit pin — e.g. `anthropic:claude-opus-5.5` or
+  // `openai:gpt-6-sol` — is an unknown provider here: `resolveProviderShorthand`
   // returns undefined, the raw provider passes through, and `getModel` below
   // forwards it to pi-ai unchanged. That's incidental passthrough, not a
   // supported path: pi-ai resolves it if it ships that provider/id and the
@@ -170,9 +171,10 @@ function resolveCliModelWith(
       throw new Error(`Unknown virtual model tier "${modelName}" in the active routing table.`);
     }
     return {
-      modelName: isProviderPinnedModelName(modelName)
-        ? modelName
-        : canonicalizeModelName(modelName),
+      modelName:
+        isProviderPinnedModelName(modelName) || resolveFamilyShorthand(modelName)
+          ? modelName
+          : canonicalizeModelName(modelName),
       source: "explicit",
     };
   }

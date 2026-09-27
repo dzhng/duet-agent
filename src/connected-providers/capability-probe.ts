@@ -1,3 +1,4 @@
+import { missingCatalogModels } from "../model-resolution/duet-gateway.js";
 import { complete } from "@earendil-works/pi-ai/compat";
 import {
   type Api,
@@ -11,7 +12,7 @@ import { transportModelIds } from "../model-resolution/catalog.js";
 import { connectedProviders } from "./registry.js";
 import type { ConnectedProviderId, ConnectionEligibility } from "./store.js";
 
-const CHATGPT_PROBE_MODEL_ID = "gpt-5.6-luna";
+const CHATGPT_PROBE_MODEL_ID = "gpt-6-luna";
 
 export interface CapabilityProbeResult {
   /** Whether this account can serve plan-covered model traffic. */
@@ -44,7 +45,8 @@ export async function probeConnectedProvider(
   // The provider owns its model list: a configured fake issuer stands in for
   // the whole provider, and its models carry the fixture's baseUrl/transport.
   const provider = entry.provider();
-  const catalog = provider.getModels();
+  const shipped = provider.getModels();
+  const catalog = [...shipped, ...missingCatalogModels(id, shipped)];
   // Account-specific availability is the provider's, not the OAuth
   // implementation's: an ineligible Copilot plan filters every model out.
   const available = provider.filterModels?.(catalog, credential) ?? catalog;

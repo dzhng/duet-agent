@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const baselineModel = process.env.EVAL_BASELINE_MODEL ?? "opus-5";
+const baselineModel = process.env.EVAL_BASELINE_MODEL ?? "opus-5.5";
 const overrideModel = process.env.EVAL_OVERRIDE_MODEL ?? "sonnet-5";
 
 /**

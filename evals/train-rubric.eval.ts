@@ -14,11 +14,11 @@ import { runTrainEval } from "./helpers/train.js";
  *
  *   EVAL_MODEL=sonnet-5 npm run eval        # via the docker harness
  *
- * Grading always uses a fixed strong judge (JUDGE_MODEL, default opus-5)
+ * Grading always uses a fixed strong judge (JUDGE_MODEL, default opus-5.5)
  * so scores are comparable across candidate models.
  */
-const model = process.env.EVAL_MODEL ?? "opus-5";
-const judgeModel = process.env.JUDGE_MODEL ?? "opus-5";
+const model = process.env.EVAL_MODEL ?? "opus-5.5";
+const judgeModel = process.env.JUDGE_MODEL ?? "opus-5.5";
 const threshold = Number(process.env.COVERAGE_THRESHOLD ?? "0.8");
 
 describe(`train rubric coverage [model=${model}]`, () => {

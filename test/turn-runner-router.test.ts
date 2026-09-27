@@ -321,7 +321,7 @@ describe("TurnRunner virtual-model adapter", () => {
       await mkdir(join(cwd, ".duet"));
       await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
       const runner = new RouterTurnRunner({
-        model: "gpt-5.6-sol",
+        model: "gpt-6-sol",
         cwd,
         classify: scriptedClassifier([]),
       });
@@ -342,9 +342,9 @@ describe("TurnRunner virtual-model adapter", () => {
     });
     await startRunner(runner, []);
 
-    expect(runner.setModel("gpt-5.6-luna")).toEqual({ routed: false });
+    expect(runner.setModel("gpt-6-luna")).toEqual({ routed: false });
     expect(runner.routeStatus()?.pinned).toBe(true);
-    expect(runner.parentAgentForTest().state.model.id).toBe("openai/gpt-5.6-luna");
+    expect(runner.parentAgentForTest().state.model.id).toBe("openai/gpt-6-luna");
 
     expect(runner.setModel("frontier")).toEqual({ routed: true });
     expect(runner.routeStatus()?.pinned).toBe(false);
@@ -379,7 +379,7 @@ describe("TurnRunner virtual-model adapter", () => {
       name: "inherited-child",
       prompt: "Do the inherited task.",
     });
-    expect(runner.createdAgentOptions.at(-1)?.model).toContain("openai/gpt-5.6-sol");
+    expect(runner.createdAgentOptions.at(-1)?.model).toContain("openai/gpt-6-sol");
     expect(runner.createdAgentOptions.at(-1)?.thinkingLevel).toBe("medium");
   });
 
@@ -618,7 +618,7 @@ describe("TurnRunner virtual-model adapter", () => {
         behavior: "follow_up",
       });
       await waitFor(() => runner.pendingStreams.length === 1);
-      expect(runner.requestModels.at(-1)?.id).toBe("zai/glm-5.2");
+      expect(runner.requestModels.at(-1)?.id).toBe("zai/glm-5.3");
       runner.completeNext({
         tool: { name: "read", arguments: { path: "shot.png" } },
         usageTokens: 5,
@@ -626,7 +626,7 @@ describe("TurnRunner virtual-model adapter", () => {
 
       await waitFor(() => runner.pendingStreams.length === 1);
       expect(runner.routeStatus()?.facts).toEqual({ hasImages: true });
-      expect(runner.requestModels.at(-1)?.id).toBe("openai/gpt-5.6-luna");
+      expect(runner.requestModels.at(-1)?.id).toBe("openai/gpt-6-luna");
       runner.completeNext({ text: "The image was read.", usageTokens: 5 });
       await turn;
 
@@ -688,7 +688,7 @@ describe("TurnRunner virtual-model adapter", () => {
     try {
       await writeFile(join(cwd, "shot.png"), Buffer.from(TINY_PNG_BASE64, "base64"));
       const runner = new RouterTurnRunner({
-        model: "gpt-5.6-luna",
+        model: "gpt-6-luna",
         cwd,
         classify: scriptedClassifier([]),
       });
@@ -1037,7 +1037,7 @@ describe("advisor executor guidance layer", () => {
     await economy.dispose();
 
     const concrete = new RouterTurnRunner({
-      model: "gpt-5.6-sol",
+      model: "gpt-6-sol",
       classify: scriptedClassifier([]),
     });
     await startRunner(concrete, []);

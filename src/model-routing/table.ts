@@ -277,7 +277,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         },
         implement: {
           description: IMPLEMENT_DESCRIPTION,
-          target: { modelName: "terra", thinkingLevel: "medium" },
+          target: { modelName: "sol", thinkingLevel: "medium" },
         },
         writing: {
           description: WRITING_DESCRIPTION,
@@ -285,7 +285,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         },
         general: {
           description: GENERAL_DESCRIPTION,
-          target: { modelName: "terra", thinkingLevel: "medium" },
+          target: { modelName: "sol", thinkingLevel: "medium" },
         },
       },
       advisor: {
@@ -311,7 +311,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
       },
       advisor: {
         enabled: false,
-        target: { modelName: "terra", thinkingLevel: "medium" },
+        target: { modelName: "sol", thinkingLevel: "medium" },
         minStepsBetween: 5,
       },
     },

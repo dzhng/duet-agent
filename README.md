@@ -61,6 +61,8 @@ You don't pick a model; you pick a tier. Bare `duet` runs the `frontier` **virtu
 
 The advisor is the escalation valve. Tiers that enable it inject a no-parameter `ask_advisor` tool that ships a curated slice of the transcript — the executor's system prompt, the first user message, live memory observations as the elided middle — to a stronger model. Consulting is mandatory for consequential architecture calls, conflicting constraints, and important unknowns, and forbidden for routine local work; routing changes nudge the advisor, and advisor consults trigger reclassification.
 
+Family selections remain stable in saved sessions while the [model catalog](src/model-resolution/catalog.ts) advances their execution targets. Resume preserves the transcript’s original model attribution and resolves the next turn against the current catalog. Provider selections retain their transport while known replaced targets advance on resume; an explicit different model override still takes precedence.
+
 All of the judgment lives in prose, not code: route descriptions, the cache-switching preference, and advisor timing are editable text in the routing table, so tuning the router is an edit to `.duet/models.json`, not a rebuild. `duet route "<prompt>"` shows exactly what the classifier would decide; a concrete `--model` name pins that model and bypasses routing entirely. Design rationale and invariants: `specs/done/model-router/`.
 
 ### Memory, woven in
@@ -309,7 +311,7 @@ export DUET_API_KEY=...
 
 duet "build a REST API with Express"
 duet                                                                  # interactive TUI
-duet -m opus-5 --workdir ./my-project "refactor the auth module"
+duet -m opus-5.5 --workdir ./my-project "refactor the auth module"
 duet --memory-model sonnet-5 "summarize this repo"
 duet --system-prompt "Prefer concise answers." "review this repo"
 duet --system-prompt-file TEAM.md "review this repo"
@@ -320,10 +322,10 @@ duet memory                                                           # browse d
 
 # Through Vercel AI Gateway
 export AI_GATEWAY_API_KEY=...
-duet -m opus-5 "review this repo"
+duet -m opus-5.5 "review this repo"
 ```
 
-Model names can be a virtual tier (`frontier`, `balanced`, `economy` — routed per prompt), a versionless family (`opus`, `sonnet`, `haiku`, `sol`, and others), full `provider:modelId` syntax, or a versioned shorthand such as `opus-5` or `gpt-5.6-sol`. Family names resolve to the latest curated version, while concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
+Model names can be a virtual tier (`frontier`, `balanced`, `economy` — routed per prompt), a versionless family (`opus`, `sonnet`, `haiku`, `sol`, and others), full `provider:modelId` syntax, or a versioned shorthand such as `opus-5.5` or `gpt-6-sol`. Family names resolve to the latest curated version, while concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
 
 </details>
 
@@ -354,7 +356,7 @@ Tool calls render with custom per-tool headers (e.g. `$ <command>`, `read <path>
 
 Type `/` in the composer to open the command picker, or send any of these as a message:
 
-- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts virtual tiers and the same family, versioned shorthand, and `provider:modelId` forms as the `--model` flag (e.g. `/model frontier`, `/model sonnet`, `/model duet:openai/gpt-5.6-sol`). A concrete name pins the model and suspends routing; a tier resumes it. Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with. **`/route`** inspects the live routing state.
+- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts virtual tiers and the same family, versioned shorthand, and `provider:modelId` forms as the `--model` flag (e.g. `/model frontier`, `/model sonnet`, `/model duet:openai/gpt-6-sol`). A concrete name pins the model and suspends routing; a tier resumes it. Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with. **`/route`** inspects the live routing state.
 - **`/thinking <level>`** — switch the thinking level for the **next** turn. One of `minimal`, `low`, `medium`, `high`, `xhigh`. The runner clamps to the active model's supported range at use-time. The in-flight turn (if any) keeps its level.
 - **`/feedback <message>`** — send free-form feedback to the Duet team.
 - **`/clear`** — dispose the current session and start a fresh one.
@@ -431,7 +433,7 @@ DB-backed memory commands accept `--db <absolute-path>` and `--wait <seconds>`. 
 ```bash
 duet train ./snowflake-notes              # writes to the nearest .agents/memories
 duet train ./snowflake-notes --slug snow  # custom slug (default: folder basename)
-duet train ./snowflake-notes --model opus-5
+duet train ./snowflake-notes --model opus-5.5
 duet train ./snowflake-notes --db /tmp/scratch.db  # write to a throwaway DB instead
 ```
 
@@ -494,7 +496,7 @@ bun run cli -- "build a REST API with Express"
 import { TurnRunner } from "@duetso/agent";
 
 const turnRunner = new TurnRunner({
-  model: "opus-5",
+  model: "opus-5.5",
   cwd: process.cwd(),
   mode: "auto",
 });
@@ -577,7 +579,7 @@ The rendered memory section above the message tail is a frozen pack with two ind
 import { TurnRunner } from "@duetso/agent";
 
 const turnRunner = new TurnRunner({
-  model: "opus-5",
+  model: "opus-5.5",
   memoryDbPath: false, // Disables observational memory and compaction.
 });
 ```

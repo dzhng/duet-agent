@@ -10,17 +10,9 @@
     }
   },
   "opus": {
-    "opus-5": {
+    "opus-5.5": {
       "openai-codex": null,
-      "github-copilot": "claude-opus-5"
-    },
-    "opus-4.8": {
-      "openai-codex": null,
-      "github-copilot": "claude-opus-4.8"
-    },
-    "opus-4.7": {
-      "openai-codex": null,
-      "github-copilot": "claude-opus-4.7"
+      "github-copilot": "claude-opus-5.5"
     }
   },
   "sonnet": {
@@ -40,14 +32,14 @@
     }
   },
   "sol": {
-    "gpt-5.6-sol": {
-      "openai-codex": "gpt-5.6-sol",
+    "gpt-6-sol": {
+      "openai-codex": "gpt-6-sol",
       "github-copilot": null
     }
   },
   "terra": {
-    "gpt-5.6-terra": {
-      "openai-codex": "gpt-5.6-terra",
+    "gpt-6-sol": {
+      "openai-codex": "gpt-6-sol",
       "github-copilot": null
     }
   },
@@ -58,8 +50,8 @@
     }
   },
   "luna": {
-    "gpt-5.6-luna": {
-      "openai-codex": "gpt-5.6-luna",
+    "gpt-6-luna": {
+      "openai-codex": "gpt-6-luna",
       "github-copilot": null
     }
   },
@@ -70,7 +62,7 @@
     }
   },
   "grok": {
-    "grok-4.3": {
+    "grok-4.7": {
       "openai-codex": null,
       "github-copilot": null
     }
@@ -86,11 +78,7 @@
     }
   },
   "glm": {
-    "glm-5.2": {
-      "openai-codex": null,
-      "github-copilot": null
-    },
-    "glm-4.7": {
+    "glm-5.3": {
       "openai-codex": null,
       "github-copilot": null
     }

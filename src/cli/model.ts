@@ -226,10 +226,14 @@ async function runVideoPath(parsed: ModelArgs & { model: string; prompt: string 
 
 /**
  * Video prompt: text alone for text->video, or `{ image, text }` when `--image`
- * supplies a still to animate. The AI SDK takes a single source image as bytes.
+ * supplies a still to animate. URL-only providers receive the URL unchanged;
+ * local files use the SDK byte path.
  */
 async function buildVideoPrompt(parsed: ModelArgs & { prompt: string }) {
   if (!parsed.imagePath) return parsed.prompt;
+  if (/^https?:\/\//i.test(parsed.imagePath)) {
+    return { image: parsed.imagePath, text: parsed.prompt };
+  }
   const source = await readFile(resolveUserPath(parsed.imagePath));
   return { image: new Uint8Array(source), text: parsed.prompt };
 }

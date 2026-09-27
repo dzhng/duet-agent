@@ -6,15 +6,15 @@ import type { TurnEvent } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-// Default to grok-4.3: the failure mode this eval guards against was
-// observed on grok-4.3, and larger models (sonnet, opus) do not skip the
+// Default to grok-4.7: the failure mode this eval guards against was
+// observed on grok-4.7, and larger models (sonnet, opus) do not skip the
 // tool call here, so a sonnet default would mask the regression.
-const model = process.env.EVAL_MODEL ?? "grok-4.3";
+const model = process.env.EVAL_MODEL ?? "grok-4.7";
 
 /**
  * Regression eval for the wake-on-completion tool-call requirement.
  *
- * Real session symptom (grok-4.3): when a state finished with output that
+ * Real session symptom (grok-4.7): when a state finished with output that
  * was purely internal plumbing ("Ran check-duet-inbox: 0 emails processed."),
  * the parent narrated its decision in plain text — "no user-facing post
  * needed... I should transition to the next state 'poll'" — and stopped
@@ -121,7 +121,7 @@ Wake-on-completion turn protocol. When a state finishes,
         // Reinforce the adversarial style: the user prompt itself frames
         // wake-on-completion turns as prose-only classifications. This,
         // together with the few-shot in systemInstructions, models the
-        // condition the real grok-4.3 session was in when it stopped
+        // condition the real grok-4.7 session was in when it stopped
         // calling the tool.
         prompt: dedent`
           Run the inbox workflow. On each wake-on-completion turn, write

@@ -234,7 +234,7 @@ export class Session {
       ...this.startOptions(input.options),
       ...(input.mcpServers ? { mcpServers: input.mcpServers } : {}),
     };
-    this.startPromise = this.runner.start(command).then(() => undefined);
+    this.startPromise = this.runner.start(command).then(() => this.syncModelSelections());
     await this.startPromise;
     if (state) {
       await this.persistLatestState();
@@ -455,7 +455,7 @@ export class Session {
     if (!state) return;
     this.startPromise = this.runner
       .start({ type: "start", state, ...this.startOptions() })
-      .then(() => undefined);
+      .then(() => this.syncModelSelections());
     await this.startPromise;
     await this.persistLatestState();
     if (state.status === "sleeping") {
@@ -652,6 +652,12 @@ export class Session {
     const state = this.runner.getState();
     if (!state) return;
     await this.writeStoredEnvelope(state);
+  }
+
+  private syncModelSelections(): void {
+    const options = this.runner.getState()?.options;
+    if (options?.model) this.config.model = options.model;
+    if (options?.memoryModel) this.config.memoryModel = options.memoryModel;
   }
 
   private startOptions(options?: TurnOptions): { options?: TurnOptions } {

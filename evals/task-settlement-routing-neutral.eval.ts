@@ -17,7 +17,7 @@ describe("task settlement routing neutrality", () => {
     const router = new ModelRouter({
       table,
       tier: "frontier",
-      resolveCatalog: { modelAcceptsImages: (name) => name !== "glm-5.2" },
+      resolveCatalog: { modelAcceptsImages: (name) => name !== "glm-5.3" },
       classify: async (input) => {
         inputs.push(input);
         const decision = decisions.shift();

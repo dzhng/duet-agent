@@ -167,8 +167,8 @@ describe("CLI model inference", () => {
       source: "explicit",
       routed: true,
     });
-    expect(resolveCliModel("gpt-5.6-sol", EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.6-sol",
+    expect(resolveCliModel("gpt-6-sol", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "gpt-6-sol",
       source: "explicit",
     });
   });
@@ -184,15 +184,14 @@ describe("CLI model inference", () => {
   });
   test("canonicalizes the model-router concrete shorthands", () => {
     expect(canonicalizeModelName("moonshotai/kimi-k3")).toBe("kimi-k3");
-    expect(canonicalizeModelName("openai/gpt-5.6-sol")).toBe("gpt-5.6-sol");
-    expect(canonicalizeModelName("openai/gpt-5.6-terra")).toBe("gpt-5.6-terra");
+    expect(canonicalizeModelName("openai/gpt-6-sol")).toBe("gpt-6-sol");
+    expect(canonicalizeModelName("openai/gpt-6-sol")).toBe("gpt-6-sol");
   });
 
   test("resolves every model-router concrete model on each router provider", () => {
     const modelIds = {
       "kimi-k3": "moonshotai/kimi-k3",
-      "gpt-5.6-sol": "openai/gpt-5.6-sol",
-      "gpt-5.6-terra": "openai/gpt-5.6-terra",
+      "gpt-6-sol": "openai/gpt-6-sol",
     } as const;
 
     for (const [shorthand, modelId] of Object.entries(modelIds)) {
@@ -207,7 +206,7 @@ describe("CLI model inference", () => {
   test("resolves every advisor target through OpenRouter", () => {
     expect(resolveModelName("openrouter:gpt-6-astra").id).toBe("openai/gpt-6-astra");
     expect(resolveModelName("openrouter:fable-5.1").id).toBe("anthropic/claude-fable-5.1");
-    expect(resolveModelName("openrouter:gpt-5.6-terra").id).toBe("openai/gpt-5.6-terra");
+    expect(resolveModelName("openrouter:gpt-6-sol").id).toBe("openai/gpt-6-sol");
   });
 
   // Capabilities and ceilings are ours to pin: the router picks a model by
@@ -227,15 +226,7 @@ describe("CLI model inference", () => {
         },
         maxTokens: 131_072,
       },
-      "gpt-5.6-sol": {
-        contextWindow: {
-          "duet-gateway": 1_050_000,
-          "vercel-ai-gateway": 1_050_000,
-          openrouter: 1_050_000,
-        },
-        maxTokens: 128_000,
-      },
-      "gpt-5.6-terra": {
+      "gpt-6-sol": {
         contextWindow: {
           "duet-gateway": 1_050_000,
           "vercel-ai-gateway": 1_050_000,
@@ -263,7 +254,7 @@ describe("CLI model inference", () => {
     for (const pin of [
       "duet-gateway:anthropic/claude-fable-5.1",
       "duet-gateway:anthropic/claude-sonnet-5",
-      "duet-gateway:openai/gpt-5.6-luna",
+      "duet-gateway:openai/gpt-6-luna",
     ]) {
       expect(resolveModelName(pin).cost.input, `${pin} resolved to a free model`).toBeGreaterThan(
         0,
@@ -271,8 +262,8 @@ describe("CLI model inference", () => {
     }
   });
 
-  test("keeps gpt-5.6 router models on the Responses transport at both gateways", () => {
-    for (const shorthand of ["gpt-5.6-sol", "gpt-5.6-terra"]) {
+  test("keeps gpt-6 router models on the Responses transport at both gateways", () => {
+    for (const shorthand of ["gpt-6-sol", "gpt-6-sol"]) {
       const duetModel = resolveModelName(`duet-gateway:${shorthand}`);
       expect(duetModel.api).toBe("openai-responses");
       expect(duetModel.baseUrl).toBe("https://gateway.duet.so/v1");
@@ -295,7 +286,7 @@ describe("CLI model inference", () => {
       routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.6-luna",
+      modelName: "luna",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
@@ -313,7 +304,7 @@ describe("CLI model inference", () => {
       routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.6-luna",
+      modelName: "luna",
       source: "inferred",
       envVar: "AI_GATEWAY_API_KEY",
       fromDotenv: false,
@@ -330,7 +321,7 @@ describe("CLI model inference", () => {
       routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.6-luna",
+      modelName: "luna",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
@@ -351,7 +342,7 @@ describe("CLI model inference", () => {
       routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.6-luna",
+      modelName: "luna",
       source: "default",
     });
   });
@@ -371,7 +362,7 @@ describe("CLI model inference", () => {
       routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.6-luna",
+      modelName: "luna",
       source: "inferred",
       envVar: "DUET_API_KEY",
       fromDotenv: false,
@@ -387,7 +378,7 @@ describe("CLI model inference", () => {
       routed: true,
     });
     expect(resolveCliMemoryModel(undefined, EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.6-luna",
+      modelName: "luna",
       source: "default",
     });
   });
@@ -405,31 +396,31 @@ describe("CLI model inference", () => {
     expect(resolveProviderShorthand("openai")).toBeUndefined();
     expect(resolveProviderShorthand("bogus")).toBeUndefined();
 
-    expect(pinnedDefaultModel("openrouter")).toBe("openrouter:anthropic/claude-opus-5");
-    expect(pinnedMemoryModel("openrouter")).toBe("openrouter:openai/gpt-5.6-luna");
-    expect(pinnedDefaultModel("duet-gateway")).toBe("duet-gateway:anthropic/claude-opus-5");
+    expect(pinnedDefaultModel("openrouter")).toBe("openrouter:opus");
+    expect(pinnedMemoryModel("openrouter")).toBe("openrouter:luna");
+    expect(pinnedDefaultModel("duet-gateway")).toBe("duet-gateway:opus");
   });
 
   test("keeps an explicitly provided model", () => {
     clearModelEnv();
 
-    expect(resolveCliModel("openai:gpt-5.6-sol", EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "openai:gpt-5.6-sol",
+    expect(resolveCliModel("openai:gpt-6-sol", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "openai:gpt-6-sol",
       source: "explicit",
     });
   });
 
-  test("keeps versioned shorthands and canonicalizes families to their latest versions", () => {
+  test("keeps explicit versions and preserves family selections", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "duet_gt_test";
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
 
-    expect(resolveCliModel("opus-4.7", EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "opus-4.7",
+    expect(resolveCliModel("opus-5.5", EMPTY_DOTENV_KEYS)).toEqual({
+      modelName: "opus-5.5",
       source: "explicit",
     });
     expect(resolveCliModel("sol", EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "gpt-5.6-sol",
+      modelName: "sol",
       source: "explicit",
     });
   });
@@ -439,8 +430,8 @@ describe("CLI model inference", () => {
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
 
-    expect(resolveModelName("opus-4.7").id).toBe("anthropic/claude-opus-4.7");
-    expect(resolveModelName("sol").id).toBe("openai/gpt-5.6-sol");
+    expect(resolveModelName("opus-5.5").id).toBe("anthropic/claude-opus-5.5");
+    expect(resolveModelName("sol").id).toBe("openai/gpt-6-sol");
   });
 
   test("routes Duet OpenAI models through an OpenAI-compatible API", () => {
@@ -450,7 +441,7 @@ describe("CLI model inference", () => {
     const model = resolveModelName("sol");
 
     expect(model.provider).toBe("duet-gateway");
-    expect(model.id).toBe("openai/gpt-5.6-sol");
+    expect(model.id).toBe("openai/gpt-6-sol");
     expect(model.api).toBe("openai-responses");
     expect(model.baseUrl).toBe("https://gateway.duet.so/v1");
     expect(model.reasoning).toBe(true);
@@ -470,21 +461,21 @@ describe("CLI model inference", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "test-duet";
 
-    // glm-4.7's catalog maxTokens (120000) is already under any backend cap,
+    // Haiku's catalog maxTokens (64000) is already under any backend cap,
     // so resolution must not alter it.
-    expect(resolveModelName("glm-4.7").maxTokens).toBe(120000);
+    expect(resolveModelName("haiku-4.5").maxTokens).toBe(64000);
   });
 
-  test("resolves the glm-5.2 shorthand through the duet gateway", () => {
+  test("resolves the glm-5.3 shorthand through the duet gateway", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "test-duet";
 
-    expect(resolveModelName("glm-5.2")).toMatchObject({
-      id: "zai/glm-5.2",
+    expect(resolveModelName("glm-5.3")).toMatchObject({
+      id: "zai/glm-5.3",
       thinkingLevelMap: { xhigh: "max" },
     });
-    expect(resolveModelName("duet:zai/glm-5.2").id).toBe("zai/glm-5.2");
-    expect(resolveModelName("vercel:zai/glm-5.2").thinkingLevelMap?.xhigh).toBe("max");
+    expect(resolveModelName("duet:zai/glm-5.3").id).toBe("zai/glm-5.3");
+    expect(resolveModelName("vercel:zai/glm-5.3").thinkingLevelMap?.xhigh).toBe("max");
   });
 
   test("synthesizes a pass-through model for gateway ids absent from the catalog", () => {
@@ -521,12 +512,12 @@ describe("CLI model inference", () => {
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
 
     // pi-ai serves gateway OpenAI models over anthropic-messages, which ignores
-    // reasoningEffort. The default memory model (gpt-5.6-luna) is catalog-missing
+    // reasoningEffort. The default memory model (gpt-6-luna) is catalog-missing
     // on vercel, so resolution must synthesize an openai-responses passthrough
     // pointed at the gateway's /v1 route so low reasoning effort reaches the wire.
-    const model = resolveModelName("vercel-ai-gateway:openai/gpt-5.6-luna");
+    const model = resolveModelName("vercel-ai-gateway:openai/gpt-6-luna");
     expect(model.provider).toBe("vercel-ai-gateway");
-    expect(model.id).toBe("openai/gpt-5.6-luna");
+    expect(model.id).toBe("openai/gpt-6-luna");
     expect(model.api).toBe("openai-responses");
     expect(model.baseUrl).toBe("https://ai-gateway.vercel.sh/v1");
   });
@@ -572,7 +563,7 @@ describe("CLI model inference", () => {
     // `vercel-ai-gateway:*` pin later in the same process. Per-call auth now
     // flows through resolveProviderApiKey, so resolution must be a pure
     // env-read.
-    resolveModelName("opus-4.7");
+    resolveModelName("opus-5.5");
 
     expect(process.env.AI_GATEWAY_API_KEY).toBe("vck_real_vercel_key");
   });
@@ -580,8 +571,8 @@ describe("CLI model inference", () => {
   test("rejects model shorthand when no supported provider credentials are configured", () => {
     clearModelEnv();
 
-    expect(() => resolveModelName("opus-4.7")).toThrow(
-      "Model shorthand requires credentials for a supported provider: opus-4.7",
+    expect(() => resolveModelName("opus-5.5")).toThrow(
+      "Model shorthand requires credentials for a supported provider: opus-5.5",
     );
     expect(() => resolveModelName("sol")).toThrow(
       "Model shorthand requires credentials for a supported provider: sol",
@@ -592,8 +583,8 @@ describe("CLI model inference", () => {
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
 
-    expect(resolveModelName("vercel-ai-gateway:anthropic/claude-opus-4.7").id).toBe(
-      "anthropic/claude-opus-4.7",
+    expect(resolveModelName("vercel-ai-gateway:anthropic/claude-opus-5.5").id).toBe(
+      "anthropic/claude-opus-5.5",
     );
   });
 
@@ -607,7 +598,7 @@ describe("CLI model inference", () => {
     clearModelEnv();
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
 
-    expect(resolveModelName("anthropic:claude-opus-4-7").id).toBe("claude-opus-4-7");
+    expect(resolveModelName("anthropic:claude-haiku-4-5").id).toBe("claude-haiku-4-5");
     expect(resolveModelName("openai:gpt-5.2").id).toBe("gpt-5.2");
   });
 
@@ -615,8 +606,8 @@ describe("CLI model inference", () => {
     clearModelEnv();
     process.env.DUET_API_KEY = "test-duet";
 
-    const fromCanonical = resolveModelName("duet-gateway:anthropic/claude-opus-4.7");
-    const fromShorthand = resolveModelName("duet:anthropic/claude-opus-4.7");
+    const fromCanonical = resolveModelName("duet-gateway:anthropic/claude-opus-5.5");
+    const fromShorthand = resolveModelName("duet:anthropic/claude-opus-5.5");
 
     expect(fromShorthand.id).toBe(fromCanonical.id);
     expect(fromShorthand.baseUrl).toBe(fromCanonical.baseUrl);
@@ -630,7 +621,9 @@ describe("CLI model inference", () => {
     // The duet gateway proxies vercel-ai-gateway's catalog, which spells the
     // id with a dot. Users frequently type dashes; the alias table should
     // bridge the gap on both providers.
-    expect(resolveModelName("duet:anthropic/claude-opus-4-7").id).toBe("anthropic/claude-opus-4.7");
+    expect(resolveModelName("duet:anthropic/claude-haiku-4-5").id).toBe(
+      "anthropic/claude-haiku-4.5",
+    );
     expect(resolveModelName("vercel:anthropic/claude-sonnet-4-6").id).toBe(
       "anthropic/claude-sonnet-4.6",
     );
@@ -642,10 +635,10 @@ describe("CLI model inference", () => {
 
     // No catalog alias for this id, so the duet-gateway lookup falls through
     // to the underlying vercel-ai-gateway model definition without rewriting.
-    expect(resolveModelName("duet:anthropic/claude-opus-4.7").id).toBe("anthropic/claude-opus-4.7");
+    expect(resolveModelName("duet:anthropic/claude-opus-5.5").id).toBe("anthropic/claude-opus-5.5");
   });
 
-  test("keeps versioned memory shorthands and canonicalizes memory families", () => {
+  test("keeps explicit memory versions and preserves family selections", () => {
     clearModelEnv();
     process.env.AI_GATEWAY_API_KEY = "test-gateway";
 
@@ -654,7 +647,7 @@ describe("CLI model inference", () => {
       source: "explicit",
     });
     expect(resolveCliMemoryModel("haiku", EMPTY_DOTENV_KEYS)).toEqual({
-      modelName: "haiku-4.5",
+      modelName: "haiku",
       source: "explicit",
     });
   });
@@ -671,7 +664,7 @@ describe("CLI model inference", () => {
 
     const { config, modelResolution, memoryModelResolution } = buildCliTurnConfig(
       {
-        modelName: "opus-4.7",
+        modelName: "opus-5.5",
         memoryModelName: "haiku-4.5",
         workDir: "/repo",
       },
@@ -679,12 +672,12 @@ describe("CLI model inference", () => {
     );
 
     expect(config).toMatchObject({
-      model: "opus-4.7",
+      model: "opus-5.5",
       memoryModel: "haiku-4.5",
       cwd: "/repo",
     });
     expect(modelResolution).toEqual({
-      modelName: "opus-4.7",
+      modelName: "opus-5.5",
       source: "explicit",
     });
     expect(memoryModelResolution).toEqual({
@@ -709,7 +702,7 @@ describe("CLI model inference", () => {
 
     expect(config).toEqual({
       model: "frontier",
-      memoryModel: "gpt-5.6-luna",
+      memoryModel: "luna",
       memoryDbPath: false,
       memoryStores: false,
       cwd: "/repo",
@@ -722,7 +715,7 @@ describe("CLI model inference", () => {
       routed: true,
     });
     expect(memoryModelResolution).toEqual({
-      modelName: "gpt-5.6-luna",
+      modelName: "luna",
       source: "inferred",
       envVar: "OPENROUTER_API_KEY",
       fromDotenv: false,
@@ -916,7 +909,7 @@ describe("CLI resume command", () => {
   test("preserves incognito mode", () => {
     expect(
       resumeCommand("session_123", {
-        modelName: "opus-4.7",
+        modelName: "opus-5.5",
         memoryModelName: "haiku-4.5",
         workDir: "/repo",
         incognito: true,
@@ -1080,7 +1073,7 @@ describe("CLI resume history display", () => {
       packageVersion: "0.1.12",
       workDir: "/repo",
       sessionId: "session_123",
-      modelName: "opus-4.7",
+      modelName: "opus-5.5",
       modelSource: "default",
       memoryModelName: "haiku-4.5",
     });
@@ -1096,7 +1089,7 @@ describe("CLI resume history display", () => {
       "[duet] v0.1.12",
       "[cwd] /repo",
       "[session] session_123",
-      "[model] opus-4.7 — default",
+      "[model] opus-5.5 — default",
       "[memory model] haiku-4.5",
       "you:\nprevious question",
       "previous answer",

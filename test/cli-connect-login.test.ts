@@ -127,7 +127,7 @@ describe("duet connect login", () => {
           },
           probe: async () => ({
             eligibility: "eligible",
-            servedModelIds: ["gpt-5.6-luna"],
+            servedModelIds: ["gpt-6-luna"],
           }),
           now: () => 1_700_000_000_000,
         });
