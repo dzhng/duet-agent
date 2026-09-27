@@ -7,7 +7,7 @@ import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "glm-5.2";
+const model = process.env.EVAL_MODEL ?? "glm-5.3";
 const SENTINEL = "ADVISOR-CONTEXT-7Q9M2X";
 
 class AdvisorContextEvalRunner extends TurnRunner {

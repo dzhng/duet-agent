@@ -90,10 +90,14 @@ const WIRE_SHAPES = {
 } as const;
 
 test.each([
-  ["duet-gateway:openai/gpt-5.6-sol", "openai-responses"],
+  ["duet-gateway:openai/gpt-6-sol", "openai-responses"],
+  ["duet-gateway:openai/gpt-6-luna", "openai-responses"],
+  ["duet-gateway:anthropic/claude-opus-5.5", "anthropic-messages"],
+  ["duet-gateway:spacexai/grok-4.7", "openai-completions"],
+  ["duet-gateway:zai/glm-5.3", "anthropic-messages"],
   ["duet-gateway:moonshotai/kimi-k3", "openai-completions"],
   ["duet-gateway:anthropic/claude-sonnet-5", "anthropic-messages"],
-  ["vercel-ai-gateway:openai/gpt-5.6-sol", "openai-responses"],
+  ["vercel-ai-gateway:openai/gpt-6-sol", "openai-responses"],
   ["vercel-ai-gateway:moonshotai/kimi-k3", "openai-completions"],
   ["vercel-ai-gateway:anthropic/claude-sonnet-5", "anthropic-messages"],
 ])("%s is serialized as %s, the transport it declares", async (pin, api) => {

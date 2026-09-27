@@ -16,8 +16,8 @@ import { bestOfAttempts } from "../test/helpers/best-of.js";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 
 const KIMI_ID = "moonshotai/kimi-k3";
-const SOL_ID = "openai/gpt-5.6-sol";
-const LUNA_ID = "openai/gpt-5.6-luna";
+const SOL_ID = "openai/gpt-6-sol";
+const LUNA_ID = "openai/gpt-6-luna";
 const FABLE_ID = "anthropic/claude-fable-5.1";
 const MAX_SWITCHES = 4;
 

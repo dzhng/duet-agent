@@ -84,7 +84,7 @@ function generating(
 describe("classifierPath", () => {
   test("sends catalog names to the chat classifier and everything else to evaluation", () => {
     expect(classifierPath({ modelName: "luna", thinkingLevel: "low" })).toBe("chat");
-    expect(classifierPath({ modelName: "gpt-5.6-luna" })).toBe("chat");
+    expect(classifierPath({ modelName: "gpt-6-luna" })).toBe("chat");
     expect(classifierPath({ modelName: "typesafe-ai/jev" })).toBe("evaluation");
     expect(classifierPath(BUILT_IN_ROUTING_TABLE.classifier.target)).toBe("evaluation");
   });
@@ -210,7 +210,7 @@ describe("classifyRoute on a catalog target", () => {
     expect(calls[0]!.signal).toBe(controller.signal);
     expect(calls[0]!.systemPrompt).toBe(buildClassifierMessages(fixture).systemPrompt);
     expect(calls[0]!.prompt).toBe(buildClassifierMessages(fixture).prompt);
-    expect(calls[0]!.model).toContain("gpt-5.6-luna");
+    expect(calls[0]!.model).toContain("gpt-6-luna");
     // The attributed row must name exactly the provider:model the call used,
     // whichever metered provider the workspace credential resolved to.
     expect(usage).toHaveLength(1);

@@ -1,0 +1,2090 @@
+{
+  "commit": "6cb40aa5062f24aa2bde1971f9ea521440996175",
+  "command": "bun scripts/model-refresh-baseline.ts",
+  "receipts": [
+    {
+      "input": "opus",
+      "selection": {
+        "modelName": "opus-5",
+        "source": "explicit"
+      },
+      "dispatch": "anthropic/claude-opus-5",
+      "envelope": {
+        "sessionId": "opus",
+        "updatedAt": 1790552046064,
+        "state": {
+          "status": "completed",
+          "mode": "agent",
+          "options": {
+            "model": "opus-5",
+            "memoryModel": "gpt-5.6-luna"
+          },
+          "agent": {
+            "status": "completed",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Return qualification done."
+                  }
+                ],
+                "timestamp": 1790552045814
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "qualification done"
+                  }
+                ],
+                "api": "anthropic-messages",
+                "provider": "duet-gateway",
+                "model": "anthropic/claude-opus-5",
+                "usage": {
+                  "input": 10,
+                  "output": 2,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 12,
+                  "cost": {
+                    "input": 0.00005,
+                    "output": 0.00005,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0.0001
+                  },
+                  "cacheWrite1h": 0
+                },
+                "stopReason": "stop",
+                "timestamp": 1790552045937,
+                "responseId": "msg_refresh",
+                "rawStopReason": "end_turn"
+              }
+            ]
+          },
+          "tasks": [],
+          "nextTaskId": 1,
+          "queuedCommands": []
+        },
+        "sessionCostUsd": 0.0001,
+        "lastUsage": {
+          "turnUsage": {
+            "input": 10,
+            "output": 2,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 12,
+            "cost": {
+              "input": 0.00005,
+              "output": 0.00005,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.0001
+            }
+          },
+          "usageByModel": [
+            {
+              "model": "anthropic/claude-opus-5",
+              "transport": {
+                "provider": "duet-gateway",
+                "billing": "metered"
+              },
+              "usage": {
+                "input": 10,
+                "output": 2,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 12,
+                "cost": {
+                  "input": 0.00005,
+                  "output": 0.00005,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.0001
+                }
+              }
+            }
+          ],
+          "lastMessageUsage": {
+            "input": 10,
+            "output": 2,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 12,
+            "cost": {
+              "input": 0.00005,
+              "output": 0.00005,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.0001
+            },
+            "cacheWrite1h": 0
+          },
+          "effectiveContextWindow": 200000,
+          "contextWindowUsage": {
+            "systemPrompt": 11,
+            "messages": 1,
+            "localMemory": 0,
+            "globalMemory": 0
+          }
+        }
+      }
+    },
+    {
+      "input": "sol",
+      "selection": {
+        "modelName": "gpt-5.6-sol",
+        "source": "explicit"
+      },
+      "dispatch": "openai/gpt-5.6-sol",
+      "envelope": {
+        "sessionId": "sol",
+        "updatedAt": 1790552046295,
+        "state": {
+          "status": "completed",
+          "mode": "agent",
+          "options": {
+            "model": "gpt-5.6-sol",
+            "memoryModel": "gpt-5.6-luna"
+          },
+          "agent": {
+            "status": "completed",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Return qualification done."
+                  }
+                ],
+                "timestamp": 1790552046094
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "qualification done",
+                    "textSignature": "{\"v\":1,\"id\":\"msg_refresh\"}"
+                  }
+                ],
+                "api": "openai-responses",
+                "provider": "duet-gateway",
+                "model": "openai/gpt-5.6-sol",
+                "usage": {
+                  "input": 10,
+                  "output": 2,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "reasoning": 0,
+                  "totalTokens": 12,
+                  "cost": {
+                    "input": 0.000019999999999999998,
+                    "output": 0.00002,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0.000039999999999999996
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1790552046182,
+                "responseId": "resp_refresh",
+                "rawStopReason": "completed"
+              }
+            ]
+          },
+          "tasks": [],
+          "nextTaskId": 1,
+          "queuedCommands": []
+        },
+        "sessionCostUsd": 0.000039999999999999996,
+        "lastUsage": {
+          "turnUsage": {
+            "input": 10,
+            "output": 2,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 12,
+            "cost": {
+              "input": 0.000019999999999999998,
+              "output": 0.00002,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000039999999999999996
+            }
+          },
+          "usageByModel": [
+            {
+              "model": "openai/gpt-5.6-sol",
+              "transport": {
+                "provider": "duet-gateway",
+                "billing": "metered"
+              },
+              "usage": {
+                "input": 10,
+                "output": 2,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 12,
+                "cost": {
+                  "input": 0.000019999999999999998,
+                  "output": 0.00002,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.000039999999999999996
+                }
+              }
+            }
+          ],
+          "lastMessageUsage": {
+            "input": 10,
+            "output": 2,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 12,
+            "cost": {
+              "input": 0.000019999999999999998,
+              "output": 0.00002,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000039999999999999996
+            }
+          },
+          "effectiveContextWindow": 200000,
+          "contextWindowUsage": {
+            "systemPrompt": 11,
+            "messages": 1,
+            "localMemory": 0,
+            "globalMemory": 0
+          }
+        }
+      }
+    },
+    {
+      "input": "terra",
+      "selection": {
+        "modelName": "gpt-5.6-terra",
+        "source": "explicit"
+      },
+      "dispatch": "openai/gpt-5.6-terra",
+      "envelope": {
+        "sessionId": "terra",
+        "updatedAt": 1790552046370,
+        "state": {
+          "status": "completed",
+          "mode": "agent",
+          "options": {
+            "model": "gpt-5.6-terra",
+            "memoryModel": "gpt-5.6-luna"
+          },
+          "agent": {
+            "status": "completed",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Return qualification done."
+                  }
+                ],
+                "timestamp": 1790552046320
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "qualification done",
+                    "textSignature": "{\"v\":1,\"id\":\"msg_refresh\"}"
+                  }
+                ],
+                "api": "openai-responses",
+                "provider": "duet-gateway",
+                "model": "openai/gpt-5.6-terra",
+                "usage": {
+                  "input": 10,
+                  "output": 2,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "reasoning": 0,
+                  "totalTokens": 12,
+                  "cost": {
+                    "input": 0.000019999999999999998,
+                    "output": 0.000024,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0.000044
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1790552046326,
+                "responseId": "resp_refresh",
+                "rawStopReason": "completed"
+              }
+            ]
+          },
+          "tasks": [],
+          "nextTaskId": 1,
+          "queuedCommands": []
+        },
+        "sessionCostUsd": 0.000044,
+        "lastUsage": {
+          "turnUsage": {
+            "input": 10,
+            "output": 2,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 12,
+            "cost": {
+              "input": 0.000019999999999999998,
+              "output": 0.000024,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000044
+            }
+          },
+          "usageByModel": [
+            {
+              "model": "openai/gpt-5.6-terra",
+              "transport": {
+                "provider": "duet-gateway",
+                "billing": "metered"
+              },
+              "usage": {
+                "input": 10,
+                "output": 2,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 12,
+                "cost": {
+                  "input": 0.000019999999999999998,
+                  "output": 0.000024,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.000044
+                }
+              }
+            }
+          ],
+          "lastMessageUsage": {
+            "input": 10,
+            "output": 2,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 12,
+            "cost": {
+              "input": 0.000019999999999999998,
+              "output": 0.000024,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.000044
+            }
+          },
+          "effectiveContextWindow": 200000,
+          "contextWindowUsage": {
+            "systemPrompt": 11,
+            "messages": 1,
+            "localMemory": 0,
+            "globalMemory": 0
+          }
+        }
+      }
+    },
+    {
+      "input": "luna",
+      "selection": {
+        "modelName": "gpt-5.6-luna",
+        "source": "explicit"
+      },
+      "dispatch": "openai/gpt-5.6-luna",
+      "envelope": {
+        "sessionId": "luna",
+        "updatedAt": 1790552046529,
+        "state": {
+          "status": "completed",
+          "mode": "agent",
+          "options": {
+            "model": "gpt-5.6-luna",
+            "memoryModel": "gpt-5.6-luna"
+          },
+          "agent": {
+            "status": "completed",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Return qualification done."
+                  }
+                ],
+                "timestamp": 1790552046399
+              },
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "qualification done",
+                    "textSignature": "{\"v\":1,\"id\":\"msg_refresh\"}"
+                  }
+                ],
+                "api": "openai-responses",
+                "provider": "duet-gateway",
+                "model": "openai/gpt-5.6-luna",
+                "usage": {
+                  "input": 10,
+                  "output": 2,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "reasoning": 0,
+                  "totalTokens": 12,
+                  "cost": {
+                    "input": 0.0000020000000000000003,
+                    "output": 0.0000024,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0.0000044
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1790552046406,
+                "responseId": "resp_refresh",
+                "rawStopReason": "completed"
+              }
+            ]
+          },
+          "tasks": [],
+          "nextTaskId": 1,
+          "queuedCommands": []
+        },
+        "sessionCostUsd": 0.0000044,
+        "lastUsage": {
+          "turnUsage": {
+            "input": 10,
+            "output": 2,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 12,
+            "cost": {
+              "input": 0.0000020000000000000003,
+              "output": 0.0000024,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.0000044
+            }
+          },
+          "usageByModel": [
+            {
+              "model": "openai/gpt-5.6-luna",
+              "transport": {
+                "provider": "duet-gateway",
+                "billing": "metered"
+              },
+              "usage": {
+                "input": 10,
+                "output": 2,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 12,
+                "cost": {
+                  "input": 0.0000020000000000000003,
+                  "output": 0.0000024,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0.0000044
+                }
+              }
+            }
+          ],
+          "lastMessageUsage": {
+            "input": 10,
+            "output": 2,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "reasoning": 0,
+            "totalTokens": 12,
+            "cost": {
+              "input": 0.0000020000000000000003,
+              "output": 0.0000024,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0.0000044
+            }
+          },
+          "effectiveContextWindow": 200000,
+          "contextWindowUsage": {
+            "systemPrompt": 11,
+            "messages": 1,
+            "localMemory": 0,
+            "globalMemory": 0
+          }
+        }
+      }
+    }
+  ],
+  "requests": [
+    {
+      "url": "/v1/messages",
+      "payload": {
+        "model": "anthropic/claude-opus-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Return qualification done.",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "max_tokens": 128000,
+        "stream": true,
+        "system": [
+          {
+            "type": "text",
+            "text": "<use_parallel_tool_calls>\nFor maximum efficiency, whenever you perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially. Prioritize calling tools in parallel whenever possible. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. When running multiple read-only commands like `ls` or `list_dir`, always run all of the commands in parallel. Err on the side of maximizing parallel tool calls rather than running too many tools sequentially.\n</use_parallel_tool_calls>\n\n<bash_timeout>\nBash commands are task-backed. The optional `timeout` argument is a foreground wait budget in seconds: when it expires, the command keeps running in the background and you receive a task id. It never kills the command. Use `run_in_background` to return immediately, `task_output` to inspect or wait for a task, and `task_stop` to stop one explicitly. Scope commands carefully — only task_stop, interrupt, or scope closure aborts their process groups.\n</bash_timeout>\n\n<cwd>\nCurrent working directory: /tmp/home.\nBefore responding to a request that touches files, code, or project state, spend a tool call or two exploring this directory (e.g. `ls`, `rg`, `read`) so your answer reflects what is actually here rather than assumptions. Skip exploration only for requests that are clearly unrelated to the workspace.\n</cwd>\n\nAvailable skills (metadata only — `read` the SKILL.md at the listed `path` to load full instructions when a skill's description matches the task at hand, or to edit the skill itself):\n<skills>\n<skill name=\"relay\" path=\"&lt;duet-builtin&gt;/relay/SKILL.md\">\n<description>Run durable, multi-step, or recurring work as a state machine of sub-agent, script, poll, and timer states so the work survives session boundaries and progress stays visible to the user.</description>\n</skill>\n</skills>\n\nTreat past conversations with this user as durable memory you must look up, not as context that has to already be in the active transcript. The rendered observations block above only carries the highest-signal headlines; specific details, older threads, exact identifiers, named referents (people, pets, projects, codenames), and most of yesterday's work live in the durable store and are only reachable through the `recall_memory` tool.\n\nCall `recall_memory` BEFORE answering on two classes of prompt:\n\n(1) EXPLICIT cross-session phrasing. Past-tense or session-spanning markers: \"what did you do yesterday / last week / earlier today\", \"you've already done X, right?\", \"didn't we ship Y already?\", \"in a previous session / last time / before we…\", any question about a past decision, release, branch, PR, bug, or commitment that you do not currently see context for.\n\n(2) IMPLICIT named referents. The user drops in a NAME the agent should already know — a person ( \"Walter\", \"Ali\"), a pet ( \"Doughy\"), a project or codename ( \"Project Atlas\", \"the gateway race\"), a release or branch ( \"v0.1.146\", \"david/right-bar-relay-tab\"), a personal artifact ( \"my fiddle-leaf\", \"my starter\") — and treats it as shared context without defining it in this turn. Even in present tense, with no \"remember when\" framing, the named referent has no anchor in the active conversation, so it must be looked up. \"How is Doughy doing?\", \"Has Walter weighed in?\", and \"Is the fiddle-leaf still happy?\" are all RECALL FIRST, then answer.\n\nAlso recall when the answer can only be PERSONALIZED through durable memory. Advice questions like \"given how my starter has been behaving, should I extend the bulk ferment?\" are useless without the durable context that defines \"my starter\"'s behavior. If you would have to invent or assume a personal fact to answer, recall instead.\n\nDo not guess, hedge, or say \"I don't remember\" / \"I don't have access to past sessions\" / \"I'm not sure who that is\" without trying `recall_memory` at least once. \"I don't see it in my notes\" is not a valid answer until you have actually queried. If the first query returns nothing useful, try one more phrasing or pass `expand: true` before giving up.\n\nChoose `scope` deliberately: \"global\" when the user explicitly asks about other sessions (\"yesterday\", \"another project\", \"a previous chat\"); \"session\" when they ask about something earlier in this exact conversation; \"all\" (default) when you are not sure or the referent has no obvious time anchor.\n\nSkip `recall_memory` only for general world knowledge (math, physics, public facts) or for prompts whose named referents are DEFINED IN THIS TURN ( \"let me introduce a new project called Atlas…\"). A referent the user introduces in the current message is not durable memory — it is active context, and recalling it would just return nothing.\n\nWhen you need a fact that is not already in the active transcript, never make it up. Reach for whichever lookup actually has the answer: a live source (connected tool, skill, file in cwd) if one exists for this topic, or `recall_memory` if the topic only lives in durable memory. Both are first-class lookups — the rule is *some* lookup before answering, not silence and not fabrication.\n\nPrefer a *live* source over memory when both could answer. A confident-looking observation in the rendered memory block is NOT a substitute for the live source on anything that could have changed externally (subscriptions, payments, deploys, file contents, account state, ticket status, integration data, CRM rows). Observations can be stale or wrong — including ones the agent itself wrote in a prior turn. Treat memory as a hint, not as authoritative state whenever a live source exists.\n\nYes/no confirmation questions about external state are the highest-risk shape. \"You did X already, right?\", \"is X currently true?\", \"did we ship Y?\", \"is contact Z unsubscribed?\" — never answer yes/no from memory alone when a live source can answer authoritatively. Verify with the live source first, then confirm or correct. If memory and the live source disagree, the live source wins.\n\nSkills advertised as the source of truth for a topic must be read from the SKILL.md at the `path` listed in the skill's metadata when that topic comes up. If a skill's description names it as the lookup path for people, deals, contacts, accounts, integrations, or a specific service, treat that as a hard pointer: read the skill and run the lookup it documents before answering questions in its domain.\n\nWorkspace files in the cwd that the user names or that the skill points at are also live sources — `bash`/`read` them before answering. A file in the cwd that obviously holds the ground truth (a data file, a config, a CSV, a JSON) outranks any memory observation about the same fact.\n\nWhen no live source exists for the question — a personal fact, a past decision, a named referent with no tool behind it (\"Doughy\", \"my starter\", a past project codename, a teammate the agent should already know) — `recall_memory` IS the right first move, not a fallback. Recall before answering, never invent.\n\n<current_date>\nToday's date (UTC): 2026-09-27. Resolution is intentionally limited to the day to preserve prompt caching. If you need finer-grained time, run `date` via bash.\n</current_date>",
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "tools": [
+          {
+            "name": "read",
+            "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+            "eager_input_streaming": true,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to read (relative or absolute)"
+                },
+                "offset": {
+                  "type": "number",
+                  "description": "Line number to start reading from (1-indexed)"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Maximum number of lines to read"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          },
+          {
+            "name": "bash",
+            "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds. The timeout is a foreground wait budget, not a kill timeout. Use run_in_background to return immediately.",
+            "eager_input_streaming": true,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "description": "Shell command to execute"
+                },
+                "timeout": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Foreground wait budget in seconds. Expiry moves the command to the background; it does not kill it."
+                },
+                "run_in_background": {
+                  "type": "boolean",
+                  "description": "Start the command in the background and return immediately."
+                }
+              },
+              "required": [
+                "command"
+              ]
+            }
+          },
+          {
+            "name": "edit",
+            "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+            "eager_input_streaming": true,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to edit (relative or absolute)"
+                },
+                "edits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "oldText",
+                      "newText"
+                    ],
+                    "properties": {
+                      "oldText": {
+                        "type": "string",
+                        "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+                      },
+                      "newText": {
+                        "type": "string",
+                        "description": "Replacement text for this targeted edit."
+                      }
+                    }
+                  },
+                  "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
+                }
+              },
+              "required": [
+                "path",
+                "edits"
+              ]
+            }
+          },
+          {
+            "name": "write",
+            "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+            "eager_input_streaming": true,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to write (relative or absolute)"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Content to write to the file"
+                }
+              },
+              "required": [
+                "path",
+                "content"
+              ]
+            }
+          },
+          {
+            "name": "todo_write",
+            "description": "Track multi-step work that you are doing yourself in this conversation, as a structured, visible todo list. The list is shown to the user in real time — it is your shared scratchpad of \"what we agreed to do\" and \"where we are.\"\n\nReach for this tool when the steps require *your* ongoing reasoning and tool use in this transcript: edits you need to review, search results you need to keep referencing, or work where the user wants to see your moves as you make them. Use it whenever any of these are true:\n- The user's message contains more than one independent task (\"do X, also Y, and don't forget Z\") and you will handle them yourself.\n- The work needs three or more non-trivial steps to finish (research, edit, test, commit, etc.) that you will execute in this conversation.\n- You are about to spend several tool calls on something — write the plan first so the user can see and correct it.\n- You are resuming or interrupting work and want to make state explicit.\n\nPrefer a state machine over this tool when the steps are well-scoped enough that a sub-agent or script could complete each one on its own (\"do X with these inputs and return the result\"). State-machine states run outside this transcript, so their intermediate output does not consume your context — using todo_write for that kind of work pollutes the parent context with tool output you do not actually need to keep.\n\nHard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 30-second floor. If you can already see the work will not fit in one session and you are tempted to recommend the user \"continue in the next session,\" that is the signal that this tool was the wrong choice and a state machine was the right one. When work meets this cutoff it goes to create_state_machine_definition, and once it does, do NOT also call todo_write to mirror or track it: the state machine's states ARE the visible, live plan, so a parallel todo list duplicating those same phases is redundant and wrong. Dropping the todo list is the fix here, never dropping the state machine — session-spanning many-unit work still requires the state machine.\n\nHow to use it well:\n- Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.\n- As you finish each item, call again with merge=true and just that item flipped to completed; advance the next one to in_progress in the same call.\n- If the plan changes (user redirects, you discover new work), update the list immediately so it stays honest.\n- Skip the tool for genuinely single-step requests — a one-shot answer or a single file edit doesn't need a list.\n\nTreat \"the user gave me a list of asks I will handle myself\" as an automatic cue to call this tool before doing anything else.",
+            "eager_input_streaming": true,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "merge": {
+                  "type": "boolean",
+                  "description": "false = replace the entire list (use this when you first plan the work). true = upsert by id (use this to flip a single todo's status without re-sending the rest)."
+                },
+                "todos": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "content",
+                      "status"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "Stable unique identifier used to edit this todo in later calls. Pick something short and memorable so you can reuse it with merge=true to flip status."
+                      },
+                      "content": {
+                        "type": "string",
+                        "description": "Imperative description of the task, such as 'Run tests' or 'Update README model section'. One sentence; no narration."
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "pending"
+                          },
+                          {
+                            "type": "string",
+                            "const": "in_progress"
+                          },
+                          {
+                            "type": "string",
+                            "const": "completed"
+                          },
+                          {
+                            "type": "string",
+                            "const": "failed"
+                          }
+                        ],
+                        "description": "pending = not started; in_progress = actively being worked on (keep at most one); completed = done; failed = could not finish, leave a note in content if useful."
+                      }
+                    }
+                  },
+                  "description": "Todo items to write. With merge=false, pass the full desired list. With merge=true, pass only the items being added or updated."
+                }
+              },
+              "required": [
+                "merge",
+                "todos"
+              ]
+            }
+          },
+          {
+            "name": "ask_user_question",
+            "description": "Ask the user one or more structured multiple-choice questions. Use this when progress requires user input before continuing.",
+            "eager_input_streaming": true,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "questions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "question",
+                      "options"
+                    ],
+                    "properties": {
+                      "question": {
+                        "type": "string",
+                        "description": "Question to ask the user."
+                      },
+                      "header": {
+                        "type": "string",
+                        "description": "Optional section heading for this question."
+                      },
+                      "options": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "label"
+                          ],
+                          "properties": {
+                            "label": {
+                              "type": "string",
+                              "description": "Answer text shown to the user."
+                            },
+                            "description": {
+                              "type": "string",
+                              "description": "Optional context explaining this choice."
+                            }
+                          }
+                        },
+                        "minItems": 1,
+                        "description": "Answer options the user can choose from. Each question must have at least one option so the user has something to select."
+                      },
+                      "multiSelect": {
+                        "type": "boolean",
+                        "description": "Whether the user may select more than one option."
+                      }
+                    }
+                  },
+                  "description": "Structured multiple-choice questions that must be answered before continuing."
+                }
+              },
+              "required": [
+                "questions"
+              ]
+            }
+          },
+          {
+            "name": "recall_memory",
+            "description": "Search the user's durable memory for facts, decisions, and prior context from past conversations.\n\nHybrid retrieval (vector embeddings + keyword) ranks results by reciprocal rank fusion. Use `scope: \"global\"` to look only at other sessions, `\"session\"` for the current one, or `\"all\"` (default) when unsure. Pass `expand: true` to run paraphrased variants alongside the original query when a first pass returned weak results.",
+            "eager_input_streaming": true,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text description of what to recall. Use proper nouns, code symbols, or short paraphrases of the user's prior statements; the search is hybrid (vector + keyword), so both fuzzy and exact matches work."
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20,
+                  "description": "Maximum results to return. Default 8."
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "session"
+                    },
+                    {
+                      "type": "string",
+                      "const": "global"
+                    },
+                    {
+                      "type": "string",
+                      "const": "all"
+                    }
+                  ],
+                  "description": "'session' restricts to the current conversation, 'global' to every other session, 'all' (default) searches both."
+                },
+                "expand": {
+                  "type": "boolean",
+                  "description": "When true, the agent runs the original query plus two paraphrased variants and fuses the result sets. Useful when the first call returned weak results; off by default to keep latency low."
+                }
+              },
+              "required": [
+                "query"
+              ]
+            }
+          },
+          {
+            "name": "spawn_agent",
+            "description": "Run a subagent as a tool call and return its final report. Children may spawn tasks and agents within the depth limit.",
+            "eager_input_streaming": true,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string",
+                  "description": "The task for the child agent."
+                },
+                "fork_context": {
+                  "type": "boolean",
+                  "description": "Seed the child with a copy of the caller's transcript."
+                },
+                "cwd": {
+                  "type": "string",
+                  "description": "Working directory for the child."
+                },
+                "allowed_skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Skill names the child may use."
+                },
+                "run_in_background": {
+                  "type": "boolean",
+                  "description": "Start the child in the background and return immediately."
+                },
+                "timeout": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Foreground wait budget in seconds. Expiry moves the child to the background; it does not stop it."
+                }
+              },
+              "required": [
+                "prompt"
+              ]
+            }
+          },
+          {
+            "name": "task_output",
+            "description": "List all tasks, or inspect one task's retained output. Optionally wait for that task to settle.",
+            "eager_input_streaming": true,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Task id, such as t3. Omit to list all tasks."
+                },
+                "wait": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Seconds to wait for this task to settle before returning its current output."
+                }
+              },
+              "required": []
+            }
+          },
+          {
+            "name": "task_stop",
+            "description": "Stop one running or scheduled task and return its final retained output.",
+            "eager_input_streaming": true,
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Task id to stop, such as t3."
+                }
+              },
+              "required": [
+                "id"
+              ]
+            },
+            "cache_control": {
+              "type": "ephemeral"
+            }
+          }
+        ],
+        "thinking": {
+          "type": "adaptive",
+          "display": "summarized"
+        },
+        "output_config": {
+          "effort": "medium"
+        }
+      }
+    },
+    {
+      "url": "/v1/responses",
+      "payload": {
+        "model": "openai/gpt-5.6-sol",
+        "input": [
+          {
+            "role": "developer",
+            "content": "<use_parallel_tool_calls>\nFor maximum efficiency, whenever you perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially. Prioritize calling tools in parallel whenever possible. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. When running multiple read-only commands like `ls` or `list_dir`, always run all of the commands in parallel. Err on the side of maximizing parallel tool calls rather than running too many tools sequentially.\n</use_parallel_tool_calls>\n\n<bash_timeout>\nBash commands are task-backed. The optional `timeout` argument is a foreground wait budget in seconds: when it expires, the command keeps running in the background and you receive a task id. It never kills the command. Use `run_in_background` to return immediately, `task_output` to inspect or wait for a task, and `task_stop` to stop one explicitly. Scope commands carefully — only task_stop, interrupt, or scope closure aborts their process groups.\n</bash_timeout>\n\n<cwd>\nCurrent working directory: /tmp/home.\nBefore responding to a request that touches files, code, or project state, spend a tool call or two exploring this directory (e.g. `ls`, `rg`, `read`) so your answer reflects what is actually here rather than assumptions. Skip exploration only for requests that are clearly unrelated to the workspace.\n</cwd>\n\nAvailable skills (metadata only — `read` the SKILL.md at the listed `path` to load full instructions when a skill's description matches the task at hand, or to edit the skill itself):\n<skills>\n<skill name=\"relay\" path=\"&lt;duet-builtin&gt;/relay/SKILL.md\">\n<description>Run durable, multi-step, or recurring work as a state machine of sub-agent, script, poll, and timer states so the work survives session boundaries and progress stays visible to the user.</description>\n</skill>\n</skills>\n\nTreat past conversations with this user as durable memory you must look up, not as context that has to already be in the active transcript. The rendered observations block above only carries the highest-signal headlines; specific details, older threads, exact identifiers, named referents (people, pets, projects, codenames), and most of yesterday's work live in the durable store and are only reachable through the `recall_memory` tool.\n\nCall `recall_memory` BEFORE answering on two classes of prompt:\n\n(1) EXPLICIT cross-session phrasing. Past-tense or session-spanning markers: \"what did you do yesterday / last week / earlier today\", \"you've already done X, right?\", \"didn't we ship Y already?\", \"in a previous session / last time / before we…\", any question about a past decision, release, branch, PR, bug, or commitment that you do not currently see context for.\n\n(2) IMPLICIT named referents. The user drops in a NAME the agent should already know — a person ( \"Walter\", \"Ali\"), a pet ( \"Doughy\"), a project or codename ( \"Project Atlas\", \"the gateway race\"), a release or branch ( \"v0.1.146\", \"david/right-bar-relay-tab\"), a personal artifact ( \"my fiddle-leaf\", \"my starter\") — and treats it as shared context without defining it in this turn. Even in present tense, with no \"remember when\" framing, the named referent has no anchor in the active conversation, so it must be looked up. \"How is Doughy doing?\", \"Has Walter weighed in?\", and \"Is the fiddle-leaf still happy?\" are all RECALL FIRST, then answer.\n\nAlso recall when the answer can only be PERSONALIZED through durable memory. Advice questions like \"given how my starter has been behaving, should I extend the bulk ferment?\" are useless without the durable context that defines \"my starter\"'s behavior. If you would have to invent or assume a personal fact to answer, recall instead.\n\nDo not guess, hedge, or say \"I don't remember\" / \"I don't have access to past sessions\" / \"I'm not sure who that is\" without trying `recall_memory` at least once. \"I don't see it in my notes\" is not a valid answer until you have actually queried. If the first query returns nothing useful, try one more phrasing or pass `expand: true` before giving up.\n\nChoose `scope` deliberately: \"global\" when the user explicitly asks about other sessions (\"yesterday\", \"another project\", \"a previous chat\"); \"session\" when they ask about something earlier in this exact conversation; \"all\" (default) when you are not sure or the referent has no obvious time anchor.\n\nSkip `recall_memory` only for general world knowledge (math, physics, public facts) or for prompts whose named referents are DEFINED IN THIS TURN ( \"let me introduce a new project called Atlas…\"). A referent the user introduces in the current message is not durable memory — it is active context, and recalling it would just return nothing.\n\nWhen you need a fact that is not already in the active transcript, never make it up. Reach for whichever lookup actually has the answer: a live source (connected tool, skill, file in cwd) if one exists for this topic, or `recall_memory` if the topic only lives in durable memory. Both are first-class lookups — the rule is *some* lookup before answering, not silence and not fabrication.\n\nPrefer a *live* source over memory when both could answer. A confident-looking observation in the rendered memory block is NOT a substitute for the live source on anything that could have changed externally (subscriptions, payments, deploys, file contents, account state, ticket status, integration data, CRM rows). Observations can be stale or wrong — including ones the agent itself wrote in a prior turn. Treat memory as a hint, not as authoritative state whenever a live source exists.\n\nYes/no confirmation questions about external state are the highest-risk shape. \"You did X already, right?\", \"is X currently true?\", \"did we ship Y?\", \"is contact Z unsubscribed?\" — never answer yes/no from memory alone when a live source can answer authoritatively. Verify with the live source first, then confirm or correct. If memory and the live source disagree, the live source wins.\n\nSkills advertised as the source of truth for a topic must be read from the SKILL.md at the `path` listed in the skill's metadata when that topic comes up. If a skill's description names it as the lookup path for people, deals, contacts, accounts, integrations, or a specific service, treat that as a hard pointer: read the skill and run the lookup it documents before answering questions in its domain.\n\nWorkspace files in the cwd that the user names or that the skill points at are also live sources — `bash`/`read` them before answering. A file in the cwd that obviously holds the ground truth (a data file, a config, a CSV, a JSON) outranks any memory observation about the same fact.\n\nWhen no live source exists for the question — a personal fact, a past decision, a named referent with no tool behind it (\"Doughy\", \"my starter\", a past project codename, a teammate the agent should already know) — `recall_memory` IS the right first move, not a fallback. Recall before answering, never invent.\n\n<current_date>\nToday's date (UTC): 2026-09-27. Resolution is intentionally limited to the day to preserve prompt caching. If you need finer-grained time, run `date` via bash.\n</current_date>"
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Return qualification done."
+              }
+            ]
+          }
+        ],
+        "stream": true,
+        "store": false,
+        "max_output_tokens": 128000,
+        "tools": [
+          {
+            "type": "function",
+            "name": "read",
+            "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to read (relative or absolute)"
+                },
+                "offset": {
+                  "type": "number",
+                  "description": "Line number to start reading from (1-indexed)"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Maximum number of lines to read"
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "bash",
+            "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds. The timeout is a foreground wait budget, not a kill timeout. Use run_in_background to return immediately.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "command"
+              ],
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "description": "Shell command to execute"
+                },
+                "timeout": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Foreground wait budget in seconds. Expiry moves the command to the background; it does not kill it."
+                },
+                "run_in_background": {
+                  "type": "boolean",
+                  "description": "Start the command in the background and return immediately."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "edit",
+            "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "path",
+                "edits"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to edit (relative or absolute)"
+                },
+                "edits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "oldText",
+                      "newText"
+                    ],
+                    "properties": {
+                      "oldText": {
+                        "type": "string",
+                        "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+                      },
+                      "newText": {
+                        "type": "string",
+                        "description": "Replacement text for this targeted edit."
+                      }
+                    }
+                  },
+                  "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "write",
+            "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "path",
+                "content"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to write (relative or absolute)"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Content to write to the file"
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "todo_write",
+            "description": "Track multi-step work that you are doing yourself in this conversation, as a structured, visible todo list. The list is shown to the user in real time — it is your shared scratchpad of \"what we agreed to do\" and \"where we are.\"\n\nReach for this tool when the steps require *your* ongoing reasoning and tool use in this transcript: edits you need to review, search results you need to keep referencing, or work where the user wants to see your moves as you make them. Use it whenever any of these are true:\n- The user's message contains more than one independent task (\"do X, also Y, and don't forget Z\") and you will handle them yourself.\n- The work needs three or more non-trivial steps to finish (research, edit, test, commit, etc.) that you will execute in this conversation.\n- You are about to spend several tool calls on something — write the plan first so the user can see and correct it.\n- You are resuming or interrupting work and want to make state explicit.\n\nPrefer a state machine over this tool when the steps are well-scoped enough that a sub-agent or script could complete each one on its own (\"do X with these inputs and return the result\"). State-machine states run outside this transcript, so their intermediate output does not consume your context — using todo_write for that kind of work pollutes the parent context with tool output you do not actually need to keep.\n\nHard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 30-second floor. If you can already see the work will not fit in one session and you are tempted to recommend the user \"continue in the next session,\" that is the signal that this tool was the wrong choice and a state machine was the right one. When work meets this cutoff it goes to create_state_machine_definition, and once it does, do NOT also call todo_write to mirror or track it: the state machine's states ARE the visible, live plan, so a parallel todo list duplicating those same phases is redundant and wrong. Dropping the todo list is the fix here, never dropping the state machine — session-spanning many-unit work still requires the state machine.\n\nHow to use it well:\n- Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.\n- As you finish each item, call again with merge=true and just that item flipped to completed; advance the next one to in_progress in the same call.\n- If the plan changes (user redirects, you discover new work), update the list immediately so it stays honest.\n- Skip the tool for genuinely single-step requests — a one-shot answer or a single file edit doesn't need a list.\n\nTreat \"the user gave me a list of asks I will handle myself\" as an automatic cue to call this tool before doing anything else.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "merge",
+                "todos"
+              ],
+              "properties": {
+                "merge": {
+                  "type": "boolean",
+                  "description": "false = replace the entire list (use this when you first plan the work). true = upsert by id (use this to flip a single todo's status without re-sending the rest)."
+                },
+                "todos": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "content",
+                      "status"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "Stable unique identifier used to edit this todo in later calls. Pick something short and memorable so you can reuse it with merge=true to flip status."
+                      },
+                      "content": {
+                        "type": "string",
+                        "description": "Imperative description of the task, such as 'Run tests' or 'Update README model section'. One sentence; no narration."
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "pending"
+                          },
+                          {
+                            "type": "string",
+                            "const": "in_progress"
+                          },
+                          {
+                            "type": "string",
+                            "const": "completed"
+                          },
+                          {
+                            "type": "string",
+                            "const": "failed"
+                          }
+                        ],
+                        "description": "pending = not started; in_progress = actively being worked on (keep at most one); completed = done; failed = could not finish, leave a note in content if useful."
+                      }
+                    }
+                  },
+                  "description": "Todo items to write. With merge=false, pass the full desired list. With merge=true, pass only the items being added or updated."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "ask_user_question",
+            "description": "Ask the user one or more structured multiple-choice questions. Use this when progress requires user input before continuing.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "questions"
+              ],
+              "properties": {
+                "questions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "question",
+                      "options"
+                    ],
+                    "properties": {
+                      "question": {
+                        "type": "string",
+                        "description": "Question to ask the user."
+                      },
+                      "header": {
+                        "type": "string",
+                        "description": "Optional section heading for this question."
+                      },
+                      "options": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "label"
+                          ],
+                          "properties": {
+                            "label": {
+                              "type": "string",
+                              "description": "Answer text shown to the user."
+                            },
+                            "description": {
+                              "type": "string",
+                              "description": "Optional context explaining this choice."
+                            }
+                          }
+                        },
+                        "minItems": 1,
+                        "description": "Answer options the user can choose from. Each question must have at least one option so the user has something to select."
+                      },
+                      "multiSelect": {
+                        "type": "boolean",
+                        "description": "Whether the user may select more than one option."
+                      }
+                    }
+                  },
+                  "description": "Structured multiple-choice questions that must be answered before continuing."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "recall_memory",
+            "description": "Search the user's durable memory for facts, decisions, and prior context from past conversations.\n\nHybrid retrieval (vector embeddings + keyword) ranks results by reciprocal rank fusion. Use `scope: \"global\"` to look only at other sessions, `\"session\"` for the current one, or `\"all\"` (default) when unsure. Pass `expand: true` to run paraphrased variants alongside the original query when a first pass returned weak results.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "query"
+              ],
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text description of what to recall. Use proper nouns, code symbols, or short paraphrases of the user's prior statements; the search is hybrid (vector + keyword), so both fuzzy and exact matches work."
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20,
+                  "description": "Maximum results to return. Default 8."
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "session"
+                    },
+                    {
+                      "type": "string",
+                      "const": "global"
+                    },
+                    {
+                      "type": "string",
+                      "const": "all"
+                    }
+                  ],
+                  "description": "'session' restricts to the current conversation, 'global' to every other session, 'all' (default) searches both."
+                },
+                "expand": {
+                  "type": "boolean",
+                  "description": "When true, the agent runs the original query plus two paraphrased variants and fuses the result sets. Useful when the first call returned weak results; off by default to keep latency low."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "spawn_agent",
+            "description": "Run a subagent as a tool call and return its final report. Children may spawn tasks and agents within the depth limit.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "prompt"
+              ],
+              "properties": {
+                "prompt": {
+                  "type": "string",
+                  "description": "The task for the child agent."
+                },
+                "fork_context": {
+                  "type": "boolean",
+                  "description": "Seed the child with a copy of the caller's transcript."
+                },
+                "cwd": {
+                  "type": "string",
+                  "description": "Working directory for the child."
+                },
+                "allowed_skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Skill names the child may use."
+                },
+                "run_in_background": {
+                  "type": "boolean",
+                  "description": "Start the child in the background and return immediately."
+                },
+                "timeout": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Foreground wait budget in seconds. Expiry moves the child to the background; it does not stop it."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "task_output",
+            "description": "List all tasks, or inspect one task's retained output. Optionally wait for that task to settle.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Task id, such as t3. Omit to list all tasks."
+                },
+                "wait": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Seconds to wait for this task to settle before returning its current output."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "task_stop",
+            "description": "Stop one running or scheduled task and return its final retained output.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "id"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Task id to stop, such as t3."
+                }
+              }
+            }
+          }
+        ],
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ]
+      }
+    },
+    {
+      "url": "/v1/responses",
+      "payload": {
+        "model": "openai/gpt-5.6-terra",
+        "input": [
+          {
+            "role": "developer",
+            "content": "<use_parallel_tool_calls>\nFor maximum efficiency, whenever you perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially. Prioritize calling tools in parallel whenever possible. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. When running multiple read-only commands like `ls` or `list_dir`, always run all of the commands in parallel. Err on the side of maximizing parallel tool calls rather than running too many tools sequentially.\n</use_parallel_tool_calls>\n\n<bash_timeout>\nBash commands are task-backed. The optional `timeout` argument is a foreground wait budget in seconds: when it expires, the command keeps running in the background and you receive a task id. It never kills the command. Use `run_in_background` to return immediately, `task_output` to inspect or wait for a task, and `task_stop` to stop one explicitly. Scope commands carefully — only task_stop, interrupt, or scope closure aborts their process groups.\n</bash_timeout>\n\n<cwd>\nCurrent working directory: /tmp/home.\nBefore responding to a request that touches files, code, or project state, spend a tool call or two exploring this directory (e.g. `ls`, `rg`, `read`) so your answer reflects what is actually here rather than assumptions. Skip exploration only for requests that are clearly unrelated to the workspace.\n</cwd>\n\nAvailable skills (metadata only — `read` the SKILL.md at the listed `path` to load full instructions when a skill's description matches the task at hand, or to edit the skill itself):\n<skills>\n<skill name=\"relay\" path=\"&lt;duet-builtin&gt;/relay/SKILL.md\">\n<description>Run durable, multi-step, or recurring work as a state machine of sub-agent, script, poll, and timer states so the work survives session boundaries and progress stays visible to the user.</description>\n</skill>\n</skills>\n\nTreat past conversations with this user as durable memory you must look up, not as context that has to already be in the active transcript. The rendered observations block above only carries the highest-signal headlines; specific details, older threads, exact identifiers, named referents (people, pets, projects, codenames), and most of yesterday's work live in the durable store and are only reachable through the `recall_memory` tool.\n\nCall `recall_memory` BEFORE answering on two classes of prompt:\n\n(1) EXPLICIT cross-session phrasing. Past-tense or session-spanning markers: \"what did you do yesterday / last week / earlier today\", \"you've already done X, right?\", \"didn't we ship Y already?\", \"in a previous session / last time / before we…\", any question about a past decision, release, branch, PR, bug, or commitment that you do not currently see context for.\n\n(2) IMPLICIT named referents. The user drops in a NAME the agent should already know — a person ( \"Walter\", \"Ali\"), a pet ( \"Doughy\"), a project or codename ( \"Project Atlas\", \"the gateway race\"), a release or branch ( \"v0.1.146\", \"david/right-bar-relay-tab\"), a personal artifact ( \"my fiddle-leaf\", \"my starter\") — and treats it as shared context without defining it in this turn. Even in present tense, with no \"remember when\" framing, the named referent has no anchor in the active conversation, so it must be looked up. \"How is Doughy doing?\", \"Has Walter weighed in?\", and \"Is the fiddle-leaf still happy?\" are all RECALL FIRST, then answer.\n\nAlso recall when the answer can only be PERSONALIZED through durable memory. Advice questions like \"given how my starter has been behaving, should I extend the bulk ferment?\" are useless without the durable context that defines \"my starter\"'s behavior. If you would have to invent or assume a personal fact to answer, recall instead.\n\nDo not guess, hedge, or say \"I don't remember\" / \"I don't have access to past sessions\" / \"I'm not sure who that is\" without trying `recall_memory` at least once. \"I don't see it in my notes\" is not a valid answer until you have actually queried. If the first query returns nothing useful, try one more phrasing or pass `expand: true` before giving up.\n\nChoose `scope` deliberately: \"global\" when the user explicitly asks about other sessions (\"yesterday\", \"another project\", \"a previous chat\"); \"session\" when they ask about something earlier in this exact conversation; \"all\" (default) when you are not sure or the referent has no obvious time anchor.\n\nSkip `recall_memory` only for general world knowledge (math, physics, public facts) or for prompts whose named referents are DEFINED IN THIS TURN ( \"let me introduce a new project called Atlas…\"). A referent the user introduces in the current message is not durable memory — it is active context, and recalling it would just return nothing.\n\nWhen you need a fact that is not already in the active transcript, never make it up. Reach for whichever lookup actually has the answer: a live source (connected tool, skill, file in cwd) if one exists for this topic, or `recall_memory` if the topic only lives in durable memory. Both are first-class lookups — the rule is *some* lookup before answering, not silence and not fabrication.\n\nPrefer a *live* source over memory when both could answer. A confident-looking observation in the rendered memory block is NOT a substitute for the live source on anything that could have changed externally (subscriptions, payments, deploys, file contents, account state, ticket status, integration data, CRM rows). Observations can be stale or wrong — including ones the agent itself wrote in a prior turn. Treat memory as a hint, not as authoritative state whenever a live source exists.\n\nYes/no confirmation questions about external state are the highest-risk shape. \"You did X already, right?\", \"is X currently true?\", \"did we ship Y?\", \"is contact Z unsubscribed?\" — never answer yes/no from memory alone when a live source can answer authoritatively. Verify with the live source first, then confirm or correct. If memory and the live source disagree, the live source wins.\n\nSkills advertised as the source of truth for a topic must be read from the SKILL.md at the `path` listed in the skill's metadata when that topic comes up. If a skill's description names it as the lookup path for people, deals, contacts, accounts, integrations, or a specific service, treat that as a hard pointer: read the skill and run the lookup it documents before answering questions in its domain.\n\nWorkspace files in the cwd that the user names or that the skill points at are also live sources — `bash`/`read` them before answering. A file in the cwd that obviously holds the ground truth (a data file, a config, a CSV, a JSON) outranks any memory observation about the same fact.\n\nWhen no live source exists for the question — a personal fact, a past decision, a named referent with no tool behind it (\"Doughy\", \"my starter\", a past project codename, a teammate the agent should already know) — `recall_memory` IS the right first move, not a fallback. Recall before answering, never invent.\n\n<current_date>\nToday's date (UTC): 2026-09-27. Resolution is intentionally limited to the day to preserve prompt caching. If you need finer-grained time, run `date` via bash.\n</current_date>"
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Return qualification done."
+              }
+            ]
+          }
+        ],
+        "stream": true,
+        "store": false,
+        "max_output_tokens": 128000,
+        "tools": [
+          {
+            "type": "function",
+            "name": "read",
+            "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to read (relative or absolute)"
+                },
+                "offset": {
+                  "type": "number",
+                  "description": "Line number to start reading from (1-indexed)"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Maximum number of lines to read"
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "bash",
+            "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds. The timeout is a foreground wait budget, not a kill timeout. Use run_in_background to return immediately.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "command"
+              ],
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "description": "Shell command to execute"
+                },
+                "timeout": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Foreground wait budget in seconds. Expiry moves the command to the background; it does not kill it."
+                },
+                "run_in_background": {
+                  "type": "boolean",
+                  "description": "Start the command in the background and return immediately."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "edit",
+            "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "path",
+                "edits"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to edit (relative or absolute)"
+                },
+                "edits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "oldText",
+                      "newText"
+                    ],
+                    "properties": {
+                      "oldText": {
+                        "type": "string",
+                        "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+                      },
+                      "newText": {
+                        "type": "string",
+                        "description": "Replacement text for this targeted edit."
+                      }
+                    }
+                  },
+                  "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "write",
+            "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "path",
+                "content"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to write (relative or absolute)"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Content to write to the file"
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "todo_write",
+            "description": "Track multi-step work that you are doing yourself in this conversation, as a structured, visible todo list. The list is shown to the user in real time — it is your shared scratchpad of \"what we agreed to do\" and \"where we are.\"\n\nReach for this tool when the steps require *your* ongoing reasoning and tool use in this transcript: edits you need to review, search results you need to keep referencing, or work where the user wants to see your moves as you make them. Use it whenever any of these are true:\n- The user's message contains more than one independent task (\"do X, also Y, and don't forget Z\") and you will handle them yourself.\n- The work needs three or more non-trivial steps to finish (research, edit, test, commit, etc.) that you will execute in this conversation.\n- You are about to spend several tool calls on something — write the plan first so the user can see and correct it.\n- You are resuming or interrupting work and want to make state explicit.\n\nPrefer a state machine over this tool when the steps are well-scoped enough that a sub-agent or script could complete each one on its own (\"do X with these inputs and return the result\"). State-machine states run outside this transcript, so their intermediate output does not consume your context — using todo_write for that kind of work pollutes the parent context with tool output you do not actually need to keep.\n\nHard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 30-second floor. If you can already see the work will not fit in one session and you are tempted to recommend the user \"continue in the next session,\" that is the signal that this tool was the wrong choice and a state machine was the right one. When work meets this cutoff it goes to create_state_machine_definition, and once it does, do NOT also call todo_write to mirror or track it: the state machine's states ARE the visible, live plan, so a parallel todo list duplicating those same phases is redundant and wrong. Dropping the todo list is the fix here, never dropping the state machine — session-spanning many-unit work still requires the state machine.\n\nHow to use it well:\n- Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.\n- As you finish each item, call again with merge=true and just that item flipped to completed; advance the next one to in_progress in the same call.\n- If the plan changes (user redirects, you discover new work), update the list immediately so it stays honest.\n- Skip the tool for genuinely single-step requests — a one-shot answer or a single file edit doesn't need a list.\n\nTreat \"the user gave me a list of asks I will handle myself\" as an automatic cue to call this tool before doing anything else.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "merge",
+                "todos"
+              ],
+              "properties": {
+                "merge": {
+                  "type": "boolean",
+                  "description": "false = replace the entire list (use this when you first plan the work). true = upsert by id (use this to flip a single todo's status without re-sending the rest)."
+                },
+                "todos": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "content",
+                      "status"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "Stable unique identifier used to edit this todo in later calls. Pick something short and memorable so you can reuse it with merge=true to flip status."
+                      },
+                      "content": {
+                        "type": "string",
+                        "description": "Imperative description of the task, such as 'Run tests' or 'Update README model section'. One sentence; no narration."
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "pending"
+                          },
+                          {
+                            "type": "string",
+                            "const": "in_progress"
+                          },
+                          {
+                            "type": "string",
+                            "const": "completed"
+                          },
+                          {
+                            "type": "string",
+                            "const": "failed"
+                          }
+                        ],
+                        "description": "pending = not started; in_progress = actively being worked on (keep at most one); completed = done; failed = could not finish, leave a note in content if useful."
+                      }
+                    }
+                  },
+                  "description": "Todo items to write. With merge=false, pass the full desired list. With merge=true, pass only the items being added or updated."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "ask_user_question",
+            "description": "Ask the user one or more structured multiple-choice questions. Use this when progress requires user input before continuing.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "questions"
+              ],
+              "properties": {
+                "questions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "question",
+                      "options"
+                    ],
+                    "properties": {
+                      "question": {
+                        "type": "string",
+                        "description": "Question to ask the user."
+                      },
+                      "header": {
+                        "type": "string",
+                        "description": "Optional section heading for this question."
+                      },
+                      "options": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "label"
+                          ],
+                          "properties": {
+                            "label": {
+                              "type": "string",
+                              "description": "Answer text shown to the user."
+                            },
+                            "description": {
+                              "type": "string",
+                              "description": "Optional context explaining this choice."
+                            }
+                          }
+                        },
+                        "minItems": 1,
+                        "description": "Answer options the user can choose from. Each question must have at least one option so the user has something to select."
+                      },
+                      "multiSelect": {
+                        "type": "boolean",
+                        "description": "Whether the user may select more than one option."
+                      }
+                    }
+                  },
+                  "description": "Structured multiple-choice questions that must be answered before continuing."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "recall_memory",
+            "description": "Search the user's durable memory for facts, decisions, and prior context from past conversations.\n\nHybrid retrieval (vector embeddings + keyword) ranks results by reciprocal rank fusion. Use `scope: \"global\"` to look only at other sessions, `\"session\"` for the current one, or `\"all\"` (default) when unsure. Pass `expand: true` to run paraphrased variants alongside the original query when a first pass returned weak results.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "query"
+              ],
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text description of what to recall. Use proper nouns, code symbols, or short paraphrases of the user's prior statements; the search is hybrid (vector + keyword), so both fuzzy and exact matches work."
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20,
+                  "description": "Maximum results to return. Default 8."
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "session"
+                    },
+                    {
+                      "type": "string",
+                      "const": "global"
+                    },
+                    {
+                      "type": "string",
+                      "const": "all"
+                    }
+                  ],
+                  "description": "'session' restricts to the current conversation, 'global' to every other session, 'all' (default) searches both."
+                },
+                "expand": {
+                  "type": "boolean",
+                  "description": "When true, the agent runs the original query plus two paraphrased variants and fuses the result sets. Useful when the first call returned weak results; off by default to keep latency low."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "spawn_agent",
+            "description": "Run a subagent as a tool call and return its final report. Children may spawn tasks and agents within the depth limit.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "prompt"
+              ],
+              "properties": {
+                "prompt": {
+                  "type": "string",
+                  "description": "The task for the child agent."
+                },
+                "fork_context": {
+                  "type": "boolean",
+                  "description": "Seed the child with a copy of the caller's transcript."
+                },
+                "cwd": {
+                  "type": "string",
+                  "description": "Working directory for the child."
+                },
+                "allowed_skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Skill names the child may use."
+                },
+                "run_in_background": {
+                  "type": "boolean",
+                  "description": "Start the child in the background and return immediately."
+                },
+                "timeout": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Foreground wait budget in seconds. Expiry moves the child to the background; it does not stop it."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "task_output",
+            "description": "List all tasks, or inspect one task's retained output. Optionally wait for that task to settle.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Task id, such as t3. Omit to list all tasks."
+                },
+                "wait": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Seconds to wait for this task to settle before returning its current output."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "task_stop",
+            "description": "Stop one running or scheduled task and return its final retained output.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "id"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Task id to stop, such as t3."
+                }
+              }
+            }
+          }
+        ],
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ]
+      }
+    },
+    {
+      "url": "/v1/responses",
+      "payload": {
+        "model": "openai/gpt-5.6-luna",
+        "input": [
+          {
+            "role": "developer",
+            "content": "<use_parallel_tool_calls>\nFor maximum efficiency, whenever you perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially. Prioritize calling tools in parallel whenever possible. For example, when reading 3 files, run 3 tool calls in parallel to read all 3 files into context at the same time. When running multiple read-only commands like `ls` or `list_dir`, always run all of the commands in parallel. Err on the side of maximizing parallel tool calls rather than running too many tools sequentially.\n</use_parallel_tool_calls>\n\n<bash_timeout>\nBash commands are task-backed. The optional `timeout` argument is a foreground wait budget in seconds: when it expires, the command keeps running in the background and you receive a task id. It never kills the command. Use `run_in_background` to return immediately, `task_output` to inspect or wait for a task, and `task_stop` to stop one explicitly. Scope commands carefully — only task_stop, interrupt, or scope closure aborts their process groups.\n</bash_timeout>\n\n<cwd>\nCurrent working directory: /tmp/home.\nBefore responding to a request that touches files, code, or project state, spend a tool call or two exploring this directory (e.g. `ls`, `rg`, `read`) so your answer reflects what is actually here rather than assumptions. Skip exploration only for requests that are clearly unrelated to the workspace.\n</cwd>\n\nAvailable skills (metadata only — `read` the SKILL.md at the listed `path` to load full instructions when a skill's description matches the task at hand, or to edit the skill itself):\n<skills>\n<skill name=\"relay\" path=\"&lt;duet-builtin&gt;/relay/SKILL.md\">\n<description>Run durable, multi-step, or recurring work as a state machine of sub-agent, script, poll, and timer states so the work survives session boundaries and progress stays visible to the user.</description>\n</skill>\n</skills>\n\nTreat past conversations with this user as durable memory you must look up, not as context that has to already be in the active transcript. The rendered observations block above only carries the highest-signal headlines; specific details, older threads, exact identifiers, named referents (people, pets, projects, codenames), and most of yesterday's work live in the durable store and are only reachable through the `recall_memory` tool.\n\nCall `recall_memory` BEFORE answering on two classes of prompt:\n\n(1) EXPLICIT cross-session phrasing. Past-tense or session-spanning markers: \"what did you do yesterday / last week / earlier today\", \"you've already done X, right?\", \"didn't we ship Y already?\", \"in a previous session / last time / before we…\", any question about a past decision, release, branch, PR, bug, or commitment that you do not currently see context for.\n\n(2) IMPLICIT named referents. The user drops in a NAME the agent should already know — a person ( \"Walter\", \"Ali\"), a pet ( \"Doughy\"), a project or codename ( \"Project Atlas\", \"the gateway race\"), a release or branch ( \"v0.1.146\", \"david/right-bar-relay-tab\"), a personal artifact ( \"my fiddle-leaf\", \"my starter\") — and treats it as shared context without defining it in this turn. Even in present tense, with no \"remember when\" framing, the named referent has no anchor in the active conversation, so it must be looked up. \"How is Doughy doing?\", \"Has Walter weighed in?\", and \"Is the fiddle-leaf still happy?\" are all RECALL FIRST, then answer.\n\nAlso recall when the answer can only be PERSONALIZED through durable memory. Advice questions like \"given how my starter has been behaving, should I extend the bulk ferment?\" are useless without the durable context that defines \"my starter\"'s behavior. If you would have to invent or assume a personal fact to answer, recall instead.\n\nDo not guess, hedge, or say \"I don't remember\" / \"I don't have access to past sessions\" / \"I'm not sure who that is\" without trying `recall_memory` at least once. \"I don't see it in my notes\" is not a valid answer until you have actually queried. If the first query returns nothing useful, try one more phrasing or pass `expand: true` before giving up.\n\nChoose `scope` deliberately: \"global\" when the user explicitly asks about other sessions (\"yesterday\", \"another project\", \"a previous chat\"); \"session\" when they ask about something earlier in this exact conversation; \"all\" (default) when you are not sure or the referent has no obvious time anchor.\n\nSkip `recall_memory` only for general world knowledge (math, physics, public facts) or for prompts whose named referents are DEFINED IN THIS TURN ( \"let me introduce a new project called Atlas…\"). A referent the user introduces in the current message is not durable memory — it is active context, and recalling it would just return nothing.\n\nWhen you need a fact that is not already in the active transcript, never make it up. Reach for whichever lookup actually has the answer: a live source (connected tool, skill, file in cwd) if one exists for this topic, or `recall_memory` if the topic only lives in durable memory. Both are first-class lookups — the rule is *some* lookup before answering, not silence and not fabrication.\n\nPrefer a *live* source over memory when both could answer. A confident-looking observation in the rendered memory block is NOT a substitute for the live source on anything that could have changed externally (subscriptions, payments, deploys, file contents, account state, ticket status, integration data, CRM rows). Observations can be stale or wrong — including ones the agent itself wrote in a prior turn. Treat memory as a hint, not as authoritative state whenever a live source exists.\n\nYes/no confirmation questions about external state are the highest-risk shape. \"You did X already, right?\", \"is X currently true?\", \"did we ship Y?\", \"is contact Z unsubscribed?\" — never answer yes/no from memory alone when a live source can answer authoritatively. Verify with the live source first, then confirm or correct. If memory and the live source disagree, the live source wins.\n\nSkills advertised as the source of truth for a topic must be read from the SKILL.md at the `path` listed in the skill's metadata when that topic comes up. If a skill's description names it as the lookup path for people, deals, contacts, accounts, integrations, or a specific service, treat that as a hard pointer: read the skill and run the lookup it documents before answering questions in its domain.\n\nWorkspace files in the cwd that the user names or that the skill points at are also live sources — `bash`/`read` them before answering. A file in the cwd that obviously holds the ground truth (a data file, a config, a CSV, a JSON) outranks any memory observation about the same fact.\n\nWhen no live source exists for the question — a personal fact, a past decision, a named referent with no tool behind it (\"Doughy\", \"my starter\", a past project codename, a teammate the agent should already know) — `recall_memory` IS the right first move, not a fallback. Recall before answering, never invent.\n\n<current_date>\nToday's date (UTC): 2026-09-27. Resolution is intentionally limited to the day to preserve prompt caching. If you need finer-grained time, run `date` via bash.\n</current_date>"
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Return qualification done."
+              }
+            ]
+          }
+        ],
+        "stream": true,
+        "store": false,
+        "max_output_tokens": 128000,
+        "tools": [
+          {
+            "type": "function",
+            "name": "read",
+            "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to read (relative or absolute)"
+                },
+                "offset": {
+                  "type": "number",
+                  "description": "Line number to start reading from (1-indexed)"
+                },
+                "limit": {
+                  "type": "number",
+                  "description": "Maximum number of lines to read"
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "bash",
+            "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds. The timeout is a foreground wait budget, not a kill timeout. Use run_in_background to return immediately.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "command"
+              ],
+              "properties": {
+                "command": {
+                  "type": "string",
+                  "description": "Shell command to execute"
+                },
+                "timeout": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Foreground wait budget in seconds. Expiry moves the command to the background; it does not kill it."
+                },
+                "run_in_background": {
+                  "type": "boolean",
+                  "description": "Start the command in the background and return immediately."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "edit",
+            "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "path",
+                "edits"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to edit (relative or absolute)"
+                },
+                "edits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "oldText",
+                      "newText"
+                    ],
+                    "properties": {
+                      "oldText": {
+                        "type": "string",
+                        "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+                      },
+                      "newText": {
+                        "type": "string",
+                        "description": "Replacement text for this targeted edit."
+                      }
+                    }
+                  },
+                  "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "write",
+            "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "path",
+                "content"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Path to the file to write (relative or absolute)"
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Content to write to the file"
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "todo_write",
+            "description": "Track multi-step work that you are doing yourself in this conversation, as a structured, visible todo list. The list is shown to the user in real time — it is your shared scratchpad of \"what we agreed to do\" and \"where we are.\"\n\nReach for this tool when the steps require *your* ongoing reasoning and tool use in this transcript: edits you need to review, search results you need to keep referencing, or work where the user wants to see your moves as you make them. Use it whenever any of these are true:\n- The user's message contains more than one independent task (\"do X, also Y, and don't forget Z\") and you will handle them yourself.\n- The work needs three or more non-trivial steps to finish (research, edit, test, commit, etc.) that you will execute in this conversation.\n- You are about to spend several tool calls on something — write the plan first so the user can see and correct it.\n- You are resuming or interrupting work and want to make state explicit.\n\nPrefer a state machine over this tool when the steps are well-scoped enough that a sub-agent or script could complete each one on its own (\"do X with these inputs and return the result\"). State-machine states run outside this transcript, so their intermediate output does not consume your context — using todo_write for that kind of work pollutes the parent context with tool output you do not actually need to keep.\n\nHard cutoff: if the plan would have roughly seven or more items, or any item is itself a multi-step job (a whole refactor phase, a whole test file, a whole module extraction), do not use todo_write — use create_state_machine_definition with one agent state per item. Agent states have no minimum duration; only poll intervalMs and timer wakeAt/wakeAfterMs have the 30-second floor. If you can already see the work will not fit in one session and you are tempted to recommend the user \"continue in the next session,\" that is the signal that this tool was the wrong choice and a state machine was the right one. When work meets this cutoff it goes to create_state_machine_definition, and once it does, do NOT also call todo_write to mirror or track it: the state machine's states ARE the visible, live plan, so a parallel todo list duplicating those same phases is redundant and wrong. Dropping the todo list is the fix here, never dropping the state machine — session-spanning many-unit work still requires the state machine.\n\nHow to use it well:\n- Lay out the full plan up front with merge=false. Mark exactly one item in_progress at a time.\n- As you finish each item, call again with merge=true and just that item flipped to completed; advance the next one to in_progress in the same call.\n- If the plan changes (user redirects, you discover new work), update the list immediately so it stays honest.\n- Skip the tool for genuinely single-step requests — a one-shot answer or a single file edit doesn't need a list.\n\nTreat \"the user gave me a list of asks I will handle myself\" as an automatic cue to call this tool before doing anything else.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "merge",
+                "todos"
+              ],
+              "properties": {
+                "merge": {
+                  "type": "boolean",
+                  "description": "false = replace the entire list (use this when you first plan the work). true = upsert by id (use this to flip a single todo's status without re-sending the rest)."
+                },
+                "todos": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "id",
+                      "content",
+                      "status"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "description": "Stable unique identifier used to edit this todo in later calls. Pick something short and memorable so you can reuse it with merge=true to flip status."
+                      },
+                      "content": {
+                        "type": "string",
+                        "description": "Imperative description of the task, such as 'Run tests' or 'Update README model section'. One sentence; no narration."
+                      },
+                      "status": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "const": "pending"
+                          },
+                          {
+                            "type": "string",
+                            "const": "in_progress"
+                          },
+                          {
+                            "type": "string",
+                            "const": "completed"
+                          },
+                          {
+                            "type": "string",
+                            "const": "failed"
+                          }
+                        ],
+                        "description": "pending = not started; in_progress = actively being worked on (keep at most one); completed = done; failed = could not finish, leave a note in content if useful."
+                      }
+                    }
+                  },
+                  "description": "Todo items to write. With merge=false, pass the full desired list. With merge=true, pass only the items being added or updated."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "ask_user_question",
+            "description": "Ask the user one or more structured multiple-choice questions. Use this when progress requires user input before continuing.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "questions"
+              ],
+              "properties": {
+                "questions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "question",
+                      "options"
+                    ],
+                    "properties": {
+                      "question": {
+                        "type": "string",
+                        "description": "Question to ask the user."
+                      },
+                      "header": {
+                        "type": "string",
+                        "description": "Optional section heading for this question."
+                      },
+                      "options": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": [
+                            "label"
+                          ],
+                          "properties": {
+                            "label": {
+                              "type": "string",
+                              "description": "Answer text shown to the user."
+                            },
+                            "description": {
+                              "type": "string",
+                              "description": "Optional context explaining this choice."
+                            }
+                          }
+                        },
+                        "minItems": 1,
+                        "description": "Answer options the user can choose from. Each question must have at least one option so the user has something to select."
+                      },
+                      "multiSelect": {
+                        "type": "boolean",
+                        "description": "Whether the user may select more than one option."
+                      }
+                    }
+                  },
+                  "description": "Structured multiple-choice questions that must be answered before continuing."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "recall_memory",
+            "description": "Search the user's durable memory for facts, decisions, and prior context from past conversations.\n\nHybrid retrieval (vector embeddings + keyword) ranks results by reciprocal rank fusion. Use `scope: \"global\"` to look only at other sessions, `\"session\"` for the current one, or `\"all\"` (default) when unsure. Pass `expand: true` to run paraphrased variants alongside the original query when a first pass returned weak results.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "query"
+              ],
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "description": "Free-text description of what to recall. Use proper nouns, code symbols, or short paraphrases of the user's prior statements; the search is hybrid (vector + keyword), so both fuzzy and exact matches work."
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 20,
+                  "description": "Maximum results to return. Default 8."
+                },
+                "scope": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "session"
+                    },
+                    {
+                      "type": "string",
+                      "const": "global"
+                    },
+                    {
+                      "type": "string",
+                      "const": "all"
+                    }
+                  ],
+                  "description": "'session' restricts to the current conversation, 'global' to every other session, 'all' (default) searches both."
+                },
+                "expand": {
+                  "type": "boolean",
+                  "description": "When true, the agent runs the original query plus two paraphrased variants and fuses the result sets. Useful when the first call returned weak results; off by default to keep latency low."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "spawn_agent",
+            "description": "Run a subagent as a tool call and return its final report. Children may spawn tasks and agents within the depth limit.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "prompt"
+              ],
+              "properties": {
+                "prompt": {
+                  "type": "string",
+                  "description": "The task for the child agent."
+                },
+                "fork_context": {
+                  "type": "boolean",
+                  "description": "Seed the child with a copy of the caller's transcript."
+                },
+                "cwd": {
+                  "type": "string",
+                  "description": "Working directory for the child."
+                },
+                "allowed_skills": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Skill names the child may use."
+                },
+                "run_in_background": {
+                  "type": "boolean",
+                  "description": "Start the child in the background and return immediately."
+                },
+                "timeout": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Foreground wait budget in seconds. Expiry moves the child to the background; it does not stop it."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "task_output",
+            "description": "List all tasks, or inspect one task's retained output. Optionally wait for that task to settle.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Task id, such as t3. Omit to list all tasks."
+                },
+                "wait": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Seconds to wait for this task to settle before returning its current output."
+                }
+              }
+            }
+          },
+          {
+            "type": "function",
+            "name": "task_stop",
+            "description": "Stop one running or scheduled task and return its final retained output.",
+            "parameters": {
+              "type": "object",
+              "required": [
+                "id"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Task id to stop, such as t3."
+                }
+              }
+            }
+          }
+        ],
+        "reasoning": {
+          "effort": "medium",
+          "summary": "auto"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ]
+      }
+    }
+  ]
+}

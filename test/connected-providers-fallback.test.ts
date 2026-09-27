@@ -35,7 +35,7 @@ class FallbackRunner extends TurnRunner {
 
   constructor() {
     super({
-      model: "openai-codex:gpt-5.6-sol",
+      model: "openai-codex:gpt-6-sol",
       mode: "agent",
       skillDiscovery: { includeDefaults: false },
     });

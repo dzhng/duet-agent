@@ -28,18 +28,17 @@ const catalogNames = new Set([
   "kimi-k3",
   "fable-5.1",
   "fable-5",
-  "gpt-5.6-sol",
-  "opus-4.8",
-  "gpt-5.6-terra",
+  "gpt-6-sol",
+  "opus-5.5",
   "sonnet-5",
-  "gpt-5.6-luna",
+  "gpt-6-luna",
   "gpt-6-astra",
   "deepseek-v4.1-flash",
-  "glm-5.2",
+  "glm-5.3",
 ]);
 const catalog: RoutingCatalogAdapter = {
   isCatalogName: (name) => catalogNames.has(name),
-  modelAcceptsImages: (name) => name !== "glm-5.2",
+  modelAcceptsImages: (name) => name !== "glm-5.3",
 };
 
 let tempDirs: string[] = [];
@@ -75,9 +74,9 @@ describe("built-in model routing table", () => {
     expect(targets("balanced")).toEqual({
       visual: { modelName: "kimi", thinkingLevel: "medium" },
       plan: { modelName: "sol", thinkingLevel: "medium" },
-      implement: { modelName: "terra", thinkingLevel: "medium" },
+      implement: { modelName: "sol", thinkingLevel: "medium" },
       writing: { modelName: "sonnet", thinkingLevel: "medium" },
-      general: { modelName: "terra", thinkingLevel: "medium" },
+      general: { modelName: "sol", thinkingLevel: "medium" },
     });
     expect(targets("economy")).toEqual({
       implement: { modelName: "deepseek", thinkingLevel: "medium" },
@@ -98,7 +97,7 @@ describe("built-in model routing table", () => {
     expect(table.tiers.balanced.advisor).toEqual(table.tiers.frontier.advisor);
     expect(table.tiers.economy.advisor).toEqual({
       enabled: false,
-      target: { modelName: "terra", thinkingLevel: "medium" },
+      target: { modelName: "sol", thinkingLevel: "medium" },
       minStepsBetween: 5,
     });
     expect(table.classifier).toEqual({
@@ -152,7 +151,7 @@ describe("built-in model routing table", () => {
       expect(routingCatalogAdapter.modelAcceptsImages(name), name).toBe(true);
     }
     // The adapter still distinguishes a text-only model, so the loop above is not vacuous.
-    expect(routingCatalogAdapter.modelAcceptsImages("glm-5.2")).toBe(false);
+    expect(routingCatalogAdapter.modelAcceptsImages("glm-5.3")).toBe(false);
   });
 
   test("rejects a virtual tier that collides with a catalog shorthand", () => {
@@ -226,7 +225,7 @@ describe("built-in model routing table", () => {
   test("reports dangling refs, invalid efforts and cadences, and text-only vision fallbacks", () => {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
     table.defaultTier = "missing";
-    table.tiers.frontier.routes.plan.visionFallbackModelName = "glm-5.2";
+    table.tiers.frontier.routes.plan.visionFallbackModelName = "glm-5.3";
     table.tiers.frontier.routes.plan.target.modelName = "missing-model";
     Reflect.set(table.tiers.frontier.routes.plan.target, "thinkingLevel", "extreme");
     table.tiers.frontier.advisor.minStepsBetween = 0;
@@ -244,7 +243,7 @@ describe("built-in model routing table", () => {
     );
     expect(
       issues.find((issue) => issue.code === "invalid_vision_fallback_model")?.message,
-    ).toContain('text-only model "glm-5.2"');
+    ).toContain('text-only model "glm-5.3"');
   });
 
   test("reports a missing per-route vision fallback with its dedicated issue code", () => {
@@ -311,12 +310,12 @@ describe("routing table file loading and export", () => {
         routes: {
           general: {
             description: "All custom work.",
-            target: { modelName: "gpt-5.6-luna", thinkingLevel: "low" },
+            target: { modelName: "gpt-6-luna", thinkingLevel: "low" },
           },
         },
         advisor: {
           enabled: false,
-          target: { modelName: "gpt-5.6-terra", thinkingLevel: "medium" },
+          target: { modelName: "gpt-6-sol", thinkingLevel: "medium" },
           minStepsBetween: 5,
         },
       },

@@ -129,7 +129,7 @@ describe("usesLanguageImagePath", () => {
 
 describe("model resolution debug output", () => {
   test.each([
-    ["sol", "gpt-5.6-sol"],
+    ["sol", "gpt-6-sol"],
     ["astra", "gpt-6-astra"],
   ])(
     "prints the ChatGPT transport spec for %s without making a request",

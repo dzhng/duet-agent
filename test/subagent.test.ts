@@ -134,8 +134,8 @@ describe("sub-agent model routing isolation", () => {
       classify,
     };
 
-    await expect(classifySpawnModel("Write the patch.", "gpt-5.6-sol", deps)).resolves.toEqual({
-      modelName: "gpt-5.6-sol",
+    await expect(classifySpawnModel("Write the patch.", "gpt-6-sol", deps)).resolves.toEqual({
+      modelName: "gpt-6-sol",
     });
     expect(inputs).toHaveLength(0);
 

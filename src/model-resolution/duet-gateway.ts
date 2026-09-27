@@ -206,9 +206,11 @@ function rebaseOntoGateway(model: Model<Api>, route: GatewayRoute, origin: strin
  * a second copy of it here would silently go stale.
  */
 function gatewayCapabilityGaps(modelId: string): Partial<Model<Api>> | undefined {
-  // GLM 5.2's maximum reasoning mode is reached with `"max"`; without the map
-  // the product's `xhigh` setting reaches the wire as a level GLM ignores.
-  if (modelId === "zai/glm-5.2") {
+  if (modelId === "openai/gpt-6-sol" || modelId === "openai/gpt-6-luna") {
+    return { thinkingLevelMap: { minimal: "low", xhigh: "xhigh", max: "max" } };
+  }
+  // GLM accepts max rather than xhigh on the gateway reasoning-effort surface.
+  if (modelId === "zai/glm-5.3") {
     return { thinkingLevelMap: { xhigh: "max" }, compat: { forceAdaptiveThinking: true } };
   }
   return undefined;
@@ -232,6 +234,41 @@ interface MissingModelClone {
   byProvider: Partial<Record<string, PublishedContract>>;
 }
 
+// The two metered catalogs publish the same contract for these models.
+// Connected transports reuse their costs while retaining conservative donor limits.
+const OPUS_5_5_CONTRACT: PublishedContract = {
+  input: ["text", "image"],
+  contextWindow: 1_000_000,
+  maxTokens: 128_000,
+  cost: { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+};
+const SOL_6_CONTRACT: PublishedContract = {
+  input: ["text", "image"],
+  contextWindow: 1_050_000,
+  maxTokens: 128_000,
+  cost: {
+    input: 2,
+    output: 10,
+    cacheRead: 0.2,
+    cacheWrite: 2.5,
+    tiers: [{ inputTokensAbove: 272000, input: 4, output: 15, cacheRead: 0.4, cacheWrite: 5 }],
+  },
+};
+const LUNA_6_CONTRACT: PublishedContract = {
+  input: ["text", "image"],
+  contextWindow: 1_050_000,
+  maxTokens: 128_000,
+  cost: {
+    input: 0.1,
+    output: 0.5,
+    cacheRead: 0.01,
+    cacheWrite: 0.125,
+    tiers: [
+      { inputTokensAbove: 272000, input: 0.2, output: 0.75, cacheRead: 0.02, cacheWrite: 0.25 },
+    ],
+  },
+};
+
 /**
  * Models the routers serve that pi-ai's catalog has not shipped, each cloned
  * from a shipped sibling with only the fields whose published contract differs.
@@ -242,6 +279,79 @@ interface MissingModelClone {
  * provider would not resolve the id at all.
  */
 const MISSING_MODEL_CLONES: readonly MissingModelClone[] = [
+  {
+    from: "claude-opus-5",
+    to: "claude-opus-5.5",
+    name: "Claude Opus 5.5",
+    byProvider: { "github-copilot": { cost: OPUS_5_5_CONTRACT.cost } },
+  },
+  {
+    from: "gpt-5.6-sol",
+    to: "gpt-6-sol",
+    name: "GPT-6 Sol",
+    byProvider: { "openai-codex": { cost: SOL_6_CONTRACT.cost } },
+  },
+  {
+    from: "gpt-5.6-luna",
+    to: "gpt-6-luna",
+    name: "GPT-6 Luna",
+    byProvider: { "openai-codex": { cost: LUNA_6_CONTRACT.cost } },
+  },
+
+  {
+    from: "anthropic/claude-opus-5",
+    to: "anthropic/claude-opus-5.5",
+    name: "Claude Opus 5.5",
+    byProvider: { "vercel-ai-gateway": OPUS_5_5_CONTRACT, openrouter: OPUS_5_5_CONTRACT },
+  },
+  {
+    from: "openai/gpt-5.6-sol",
+    to: "openai/gpt-6-sol",
+    name: "GPT-6 Sol",
+    byProvider: { "vercel-ai-gateway": SOL_6_CONTRACT, openrouter: SOL_6_CONTRACT },
+  },
+  {
+    from: "openai/gpt-5.6-luna",
+    to: "openai/gpt-6-luna",
+    name: "GPT-6 Luna",
+    byProvider: { "vercel-ai-gateway": LUNA_6_CONTRACT, openrouter: LUNA_6_CONTRACT },
+  },
+  {
+    from: "x-ai/grok-4.3",
+    to: "x-ai/grok-4.7",
+    name: "Grok 4.7",
+    byProvider: {
+      openrouter: {
+        input: ["text", "image"],
+        contextWindow: 500000,
+        maxTokens: 450000,
+        cost: {
+          input: 1.6,
+          output: 4.8,
+          cacheRead: 0.4,
+          cacheWrite: 0,
+        },
+      },
+    },
+  },
+  {
+    from: "spacexai/grok-4.6",
+    to: "spacexai/grok-4.7",
+    name: "Grok 4.7",
+    byProvider: {
+      "vercel-ai-gateway": {
+        input: ["text", "image"],
+        contextWindow: 500000,
+        maxTokens: 500000,
+        cost: {
+          input: 1.2,
+          output: 3.6,
+          cacheRead: 0.3,
+          cacheWrite: 0,
+        },
+      },
+    },
+  },
   {
     from: "deepseek/deepseek-v4-flash",
     to: "deepseek/deepseek-v4.1-flash",
@@ -282,10 +392,16 @@ function shippedModel(provider: string, modelId: string): Model<Api> | undefined
  * Clones `provider` publishes a contract for and whose source it ships; any
  * other is dropped rather than guessed at.
  */
-function missingCatalogModels(provider: string): Model<Api>[] {
+export function missingCatalogModels(
+  provider: string,
+  models?: readonly Model<Api>[],
+): Model<Api>[] {
   return MISSING_MODEL_CLONES.flatMap((clone) => {
+    const lookup = (id: string) =>
+      models ? models.find((model) => model.id === id) : shippedModel(provider, id);
+    if (lookup(clone.to)) return [];
     const contract = clone.byProvider[provider];
-    const source = contract && shippedModel(provider, clone.from);
+    const source = contract && lookup(clone.from);
     if (!source) return [];
     return [
       {

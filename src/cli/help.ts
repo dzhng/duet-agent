@@ -72,9 +72,9 @@ INTERACTIVE
 MODELS
   The default is the routed frontier tier. Use frontier, balanced, or economy
   to select a routing policy, or a concrete shorthand to bypass routing and pin.
-  Concrete names include opus, sonnet, haiku, and sol (versionless families), or versioned forms like opus-5.
+  Concrete names include opus, sonnet, haiku, and sol (versionless families), or versioned forms like opus-5.5.
   They map to the first configured router that supports that model.
-  Full provider:modelId syntax is also supported, e.g. duet:anthropic/claude-opus-5.
+  Full provider:modelId syntax is also supported, e.g. duet:anthropic/claude-opus-5.5.
   --provider pins that provider's concrete default; the memory model remains concrete.
 
   duet-gateway: routes through the Duet gateway proxy
@@ -88,7 +88,7 @@ EXAMPLES
   duet --memory-model sonnet-5 "summarize this repo"
   duet --provider openrouter "explain this codebase"
   duet --provider duet "refactor the auth module"
-  duet -m opus-5 "refactor the auth module"
+  duet -m opus-5.5 "refactor the auth module"
   duet --system-prompt "Prefer concise answers." "review this repo"
   duet --system-prompt-file TEAM.md "review this repo"
   duet --env-file ~/.config/duet/env "review this repo"
@@ -97,7 +97,7 @@ EXAMPLES
   duet login
   duet env
   duet memory
-  duet model -m openai/gpt-5.6-sol "write a haiku about gateways"
+  duet model -m openai/gpt-6-sol "write a haiku about gateways"
   duet model -m black-forest-labs/flux-1.1-pro -o art.png "a fox in snow"
   duet train ./docs/my-project
   duet send-feedback "the TUI flickers when..."
@@ -390,10 +390,10 @@ DESCRIPTION
   generations write files and print each path. Auth uses DUET_API_KEY.
 
 OPTIONS
-  -m, --model <name>       Gateway model id, e.g. openai/gpt-5.6-sol (required)
+  -m, --model <name>       Gateway model id, e.g. openai/gpt-6-sol (required)
   --type text|image|video  Override the catalog-inferred request type
   --image <path>           Input image: vision context (text), edit source
-                           (image), or still to animate (video)
+                           (image), or still to animate (video; path or HTTP URL)
   -o, --out <path>         Write output here; image/video auto-name when omitted
   --system <text>          System prompt for text/image-language models
   --size <WxH>             Image size, e.g. 1024x1024
@@ -409,11 +409,14 @@ OPTIONS
   -h, --help               Show this help
 
 EXAMPLES
-  duet model -m openai/gpt-5.6-sol "write a haiku about gateways"
+  duet model -m openai/gpt-6-sol "write a haiku about gateways"
   duet model -m bfl/flux-pro-1.1 -o art.png "a fox in snow"
   duet model -m openai/gpt-image-2.5-flare --background transparent -o logo.png "a maple leaf"
-  duet model -m google/gemini-2.5-flash-image --type image --image src.png "add a hat"
-  duet model -m bytedance/seedance-2.0 --type video -o clip.mp4 "slow pan over dunes"
+  duet model -m google/gemini-3.1-flash-image --type image --image src.png "add a hat"
+  duet model -m bytedance/seedance-2.5 --type video -o clip.mp4 "slow pan over dunes"
+  duet model -m bytedance/seedance-2.5 --type video --image https://example.com/source.png "animate"
+  duet model -m google/veo-3.1-generate-001 --type video -o clip.mp4 "slow pan over dunes"
+  duet model -m spacexai/grok-imagine-video-1.5 --type video -o clip.mp4 "slow pan over dunes"
 `);
 }
 

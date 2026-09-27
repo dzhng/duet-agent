@@ -69,7 +69,7 @@ export const DEFAULT_EFFECTIVE_CONTEXT = 200_000;
  * Reasoning effort for every observational-memory LLM call (observer +
  * reflectors). Memory extraction is a cheap, bounded task, so we run it at LOW
  * effort. This is honored by OpenAI-transport models (openai-responses, e.g.
- * the default gpt-5.6-luna, which maps it through the request's reasoning
+ * the default gpt-6-luna, which maps it through the request's reasoning
  * effort) and silently ignored by anthropic-messages transports (e.g. haiku).
  */
 const MEMORY_CALL_OPTIONS = { reasoningEffort: "low" } as const;

@@ -8,7 +8,7 @@ import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent } from "../src/types/protocol.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-const model = process.env.EVAL_MODEL ?? "glm-5.2";
+const model = process.env.EVAL_MODEL ?? "glm-5.3";
 const ARCHIVED_MARKER = "ARCHIVED-EVIDENCE-4H7K9P";
 const RECENT_MARKER = "RECENT-EVIDENCE-8M2Q6T";
 

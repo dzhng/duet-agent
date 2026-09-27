@@ -17,7 +17,7 @@ describe("connected provider capability probe", () => {
 
     expect(result).toEqual({
       eligibility: "eligible",
-      servedModelIds: ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra"],
+      servedModelIds: ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
     });
   });
 
@@ -131,3 +131,21 @@ function reportedFailureFixture(status: number) {
     return message;
   };
 }
+
+test("Copilot probes a current model when the account only serves that model", async () => {
+  const result = await probeConnectedProvider(
+    "github-copilot",
+    {
+      ...credentials,
+      availableModelIds: ["claude-opus-5.5"],
+    },
+    {
+      complete: async (model, context, options) =>
+        completionFixture(
+          model.id === "claude-opus-5.5" ? 200 : 404,
+          model.id === "claude-opus-5.5" ? "stop" : "error",
+        )(model, context, options),
+    },
+  );
+  expect(result).toEqual({ eligibility: "eligible", servedModelIds: ["claude-opus-5.5"] });
+});

@@ -8,7 +8,7 @@ import {
 import { BUILT_IN_ROUTING_TABLE } from "../src/model-routing/table.js";
 
 const catalog = {
-  modelAcceptsImages: (name: string) => name !== "glm" && name !== "glm-5.2",
+  modelAcceptsImages: (name: string) => name !== "glm" && name !== "glm-5.3",
 };
 
 function scriptedClassifier(
@@ -305,7 +305,7 @@ describe("single-destination tiers", () => {
         routes: {
           general: {
             description: "All work on one model.",
-            target: { modelName: "gpt-5.6-sol", thinkingLevel: "high" },
+            target: { modelName: "gpt-6-sol", thinkingLevel: "high" },
           },
         },
         advisor: structuredClone(BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor),
@@ -342,7 +342,7 @@ describe("single-destination tiers", () => {
     const table = singleDestinationTable();
     table.tiers["sol-only"]!.routes.deep = {
       description: "Same model, deeper effort.",
-      target: { modelName: "gpt-5.6-sol", thinkingLevel: "xhigh" },
+      target: { modelName: "gpt-6-sol", thinkingLevel: "xhigh" },
     };
     const router = new ModelRouter({
       table,
@@ -356,8 +356,8 @@ describe("single-destination tiers", () => {
 
   test("an applied vision fallback with a different destination disables the optimization", () => {
     const table = singleDestinationTable();
-    table.tiers["sol-only"]!.routes.general.target.modelName = "glm-5.2";
-    table.tiers["sol-only"]!.routes.general.visionFallbackModelName = "gpt-5.6-luna";
+    table.tiers["sol-only"]!.routes.general.target.modelName = "glm-5.3";
+    table.tiers["sol-only"]!.routes.general.visionFallbackModelName = "gpt-6-luna";
     const router = new ModelRouter({
       table,
       tier: "sol-only",

@@ -1186,7 +1186,7 @@ describe("TurnRunner memory", () => {
       model: "anthropic:claude-opus-4-7",
       skillDiscovery: { includeDefaults: false },
     });
-    expect(unconfigured.resolveMemoryActorModel(undefined)).toBe("gpt-5.6-luna");
+    expect(unconfigured.resolveMemoryActorModel(undefined)).toBe("luna");
   });
 
   test("routes turn and memory model overrides independently", async () => {
@@ -1199,7 +1199,7 @@ describe("TurnRunner memory", () => {
       model: "anthropic:claude-sonnet-4-5",
     });
     expect(withAgentOverride.agentModel.id).toBe("claude-sonnet-4-5");
-    expect(withAgentOverride.memoryModel).toBe("gpt-5.6-luna");
+    expect(withAgentOverride.memoryModel).toBe("luna");
 
     const withConfiguredMemoryOverride = await new ModelRoutingTurnRunner({
       model: "anthropic:claude-opus-4-7",

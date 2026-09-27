@@ -34,6 +34,8 @@ import {
 } from "./auto-upgrade.js";
 
 export interface CliTurnConfigInput {
+  /** Resume preserves persisted selections unless a model flag explicitly overrides them. */
+  resume?: boolean;
   modelName?: string;
   memoryModelName?: string;
   /** Disable both observational database memory and curated file-memory loading. */
@@ -97,8 +99,10 @@ export function buildCliTurnConfig(
 
   return {
     config: {
-      model: modelResolution.modelName,
-      memoryModel: memoryModelResolution.modelName,
+      ...(!input.resume || input.modelName ? { model: modelResolution.modelName } : {}),
+      ...(!input.resume || input.memoryModelName
+        ? { memoryModel: memoryModelResolution.modelName }
+        : {}),
       memoryDbPath: input.incognito ? false : (input.dbPath ?? DEFAULT_MEMORY_DB_PATH),
       ...(input.incognito ? { memoryStores: false } : {}),
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -298,6 +302,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       ...(modelName ? { modelName } : {}),
       ...(memoryModelName ? { memoryModelName } : {}),
       incognito,
+      resume: Boolean(resumeSessionId),
       ...(dbPath ? { dbPath } : {}),
       workDir,
       ...(systemInstructions ? { systemInstructions } : {}),
@@ -346,10 +351,12 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     const finalStatus = await upgradePromise;
     const notice = describeUpgradeStatus(pkg.name, finalStatus);
     if (notice) process.stderr.write(`${notice}\n`);
-    process.stderr.write(`Model: ${modelName}\n`);
-    process.stderr.write(`Source: ${describeModelResolution(modelResolution)}\n`);
-    process.stderr.write(`Memory model: ${memoryModelName}\n`);
-    process.stderr.write(`Memory source: ${describeModelResolution(memoryModelResolution)}\n`);
+    if (!resumeSessionId) {
+      process.stderr.write(`Model: ${modelName}\n`);
+      process.stderr.write(`Source: ${describeModelResolution(modelResolution)}\n`);
+      process.stderr.write(`Memory model: ${memoryModelName}\n`);
+      process.stderr.write(`Memory source: ${describeModelResolution(memoryModelResolution)}\n`);
+    }
   }
 
   const manager = new SessionManager(config);
@@ -386,6 +393,18 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       // Setup runs against the hydrated state; manager.create() already
       // dispatched setup for fresh sessions.
       await session.start();
+      modelName = session.config.model ?? modelName;
+      memoryModelName = session.config.memoryModel ?? memoryModelName;
+      if (!useTui) {
+        process.stderr.write(`Model: ${modelName}\n`);
+        process.stderr.write(
+          `Source: ${modelResolution.source === "explicit" ? "explicit CLI flag" : "saved session selection"}\n`,
+        );
+        process.stderr.write(`Memory model: ${memoryModelName}\n`);
+        process.stderr.write(
+          `Memory source: ${memoryModelResolution.source === "explicit" ? "explicit CLI flag" : "saved session selection"}\n`,
+        );
+      }
       resumedHistory = session.getState()?.agent.messages;
     }
 
@@ -422,10 +441,16 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
             pendingClear = true;
           },
           resumeHistoryMessages,
-          modelName,
-          modelSource: describeModelResolution(modelResolution),
-          memoryModelName,
-          memoryModelSource: describeModelResolution(memoryModelResolution),
+          modelName: activeSession.config.model ?? modelName,
+          modelSource:
+            activeIsResume && modelResolution.source !== "explicit"
+              ? "saved session selection"
+              : describeModelResolution(modelResolution),
+          memoryModelName: activeSession.config.memoryModel ?? memoryModelName,
+          memoryModelSource:
+            activeIsResume && memoryModelResolution.source !== "explicit"
+              ? "saved session selection"
+              : describeModelResolution(memoryModelResolution),
           workDir,
           sessionId: activeSession.id,
           packageName: pkg.name,
@@ -453,6 +478,9 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
         // `agent.messages` is available for transcript replay.
         await activeSession.dispose();
         activeSession = manager.resume(pendingResumeSessionId);
+        if (modelResolution.source !== "explicit") activeSession.config.model = undefined;
+        if (memoryModelResolution.source !== "explicit")
+          activeSession.config.memoryModel = undefined;
         await activeSession.hydrate();
         if (!activeSession.getState()) {
           throw new Error(`Unknown session: ${pendingResumeSessionId}`);
@@ -463,6 +491,8 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       }
     }
 
+    modelName = activeSession.config.model ?? modelName;
+    memoryModelName = activeSession.config.memoryModel ?? memoryModelName;
     process.stderr.write(
       `To resume this session:\n${resumeCommand(activeSession.id, {
         ...(modelName ? { modelName } : {}),

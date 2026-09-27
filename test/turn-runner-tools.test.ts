@@ -276,7 +276,7 @@ describe("TurnRunner tools", () => {
         tools: [],
       }),
       resolveModel: () => ({
-        modelName: "zai/glm-5.2",
+        modelName: "zai/glm-5.3",
         contextWindowTokens: 200_000,
         acceptsImages: false,
       }),
@@ -396,7 +396,7 @@ describe("TurnRunner tools", () => {
       expect(economy.toolNames()).not.toContain("ask_advisor");
       await economy.dispose();
 
-      const concrete = new ToolListTurnRunner("gpt-5.6-sol");
+      const concrete = new ToolListTurnRunner("gpt-6-sol");
       await concrete.start({ type: "start", mode: "agent" });
       expect(concrete.toolNames()).not.toContain("ask_advisor");
       await concrete.dispose();
@@ -464,7 +464,7 @@ describe("TurnRunner tools", () => {
     process.env.OPENROUTER_API_KEY = "openrouter-test-key";
     try {
       const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-      table.tiers.frontier!.advisor.target.modelName = "gpt-5.6-luna";
+      table.tiers.frontier!.advisor.target.modelName = "gpt-6-luna";
       await mkdir(join(cwd, ".duet"));
       await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
       const runner = new ToolListTurnRunner("frontier", cwd);
@@ -476,11 +476,11 @@ describe("TurnRunner tools", () => {
       const result = await advisor.execute("advisor-luna", {});
       expect(result.details).toEqual({
         type: "ask_advisor",
-        model: "openai/gpt-5.6-luna",
+        model: "openai/gpt-6-luna",
         context: expect.objectContaining({ truncated: false }),
       });
       expect(result.content).toEqual([{ type: "text", text: "Proceed with the new tier." }]);
-      expect(runner.lastAdvisorInput?.modelName).toBe("openai/gpt-5.6-luna");
+      expect(runner.lastAdvisorInput?.modelName).toBe("openai/gpt-6-luna");
       await runner.dispose();
     } finally {
       await rm(cwd, { recursive: true, force: true });

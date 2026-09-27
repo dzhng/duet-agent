@@ -104,12 +104,15 @@ export class SessionManager {
     const id = sessionId ?? createSessionId();
     const sessionPath = join(this.sessionStoragePath, sanitizeSessionId(id));
     mkdirSync(sessionPath, { recursive: true });
-    const session = new Session(this.config, {
-      id,
-      runner: this.options.createRunner?.(id),
-      resumeFromStorage,
-      sessionPath,
-    });
+    const session = new Session(
+      { ...this.config },
+      {
+        id,
+        runner: this.options.createRunner?.(id),
+        resumeFromStorage,
+        sessionPath,
+      },
+    );
     session.subscribe((event) => {
       this.emit({ sessionId: session.id, event });
     });

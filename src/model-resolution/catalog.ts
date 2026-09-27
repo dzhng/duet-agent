@@ -63,8 +63,8 @@ interface ModelDefinition {
   maxOutputTokens?: number;
 }
 
-export const DEFAULT_CLI_MODEL = "opus-5";
-export const DEFAULT_CLI_MEMORY_MODEL = "gpt-5.6-luna";
+export const DEFAULT_CLI_MODEL = "opus";
+export const DEFAULT_CLI_MEMORY_MODEL = "luna";
 
 /**
  * Global provider preference for shorthand resolution. `duet-gateway` must
@@ -94,52 +94,14 @@ const MEMORY_MODEL_BY_PROVIDER: Record<RouterProviderName, string> = {
 
 const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   {
-    // The github-copilot and openrouter ids follow the 5-series naming Fable 5
-    // already uses, ahead of confirmation that either serves Opus 5. Both fail
-    // soft: an unserved copilot model errors before any output, so
-    // `nextTransportAfterConnectedFailure` demotes the connection and retries on
-    // a gateway. Keeping copilot listed is what preserves plan coverage for the
-    // `opus` alias — dropping it silently moves subscribers onto metered billing.
     family: "opus",
-    shorthand: "opus-5",
-    aliases: ["claude-opus-5", "anthropic/claude-opus-5"],
+    shorthand: "opus-5.5",
+    aliases: ["claude-opus-5.5", "anthropic/claude-opus-5.5"],
     modelsByProvider: {
-      "duet-gateway": "anthropic/claude-opus-5",
-      "vercel-ai-gateway": "anthropic/claude-opus-5",
-      openrouter: "anthropic/claude-opus-5",
-      "github-copilot": "claude-opus-5",
-    },
-  },
-  {
-    family: "opus",
-    shorthand: "opus-4.8",
-    aliases: [
-      "claude-opus-4.8",
-      "claude-opus-4-8",
-      "anthropic/claude-opus-4.8",
-      "anthropic/claude-opus-4-8",
-    ],
-    modelsByProvider: {
-      "duet-gateway": "anthropic/claude-opus-4.8",
-      "vercel-ai-gateway": "anthropic/claude-opus-4.8",
-      openrouter: "anthropic/claude-opus-4.8",
-      "github-copilot": "claude-opus-4.8",
-    },
-  },
-  {
-    family: "opus",
-    shorthand: "opus-4.7",
-    aliases: [
-      "claude-opus-4.7",
-      "claude-opus-4-7",
-      "anthropic/claude-opus-4.7",
-      "anthropic/claude-opus-4-7",
-    ],
-    modelsByProvider: {
-      "duet-gateway": "anthropic/claude-opus-4.7",
-      "vercel-ai-gateway": "anthropic/claude-opus-4.7",
-      openrouter: "anthropic/claude-opus-4.7",
-      "github-copilot": "claude-opus-4.7",
+      "duet-gateway": "anthropic/claude-opus-5.5",
+      "vercel-ai-gateway": "anthropic/claude-opus-5.5",
+      openrouter: "anthropic/claude-opus-5.5",
+      "github-copilot": "claude-opus-5.5",
     },
   },
   {
@@ -190,36 +152,24 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     // which would silently drop the low reasoning effort the observer and
     // reflectors request; see `gatewayApi` in duet-gateway.ts.
     family: "luna",
-    shorthand: "gpt-5.6-luna",
-    aliases: ["openai/gpt-5.6-luna", "openai/gpt-5-6-luna"],
+    shorthand: "gpt-6-luna",
+    aliases: ["openai/gpt-6-luna"],
     modelsByProvider: {
-      "duet-gateway": "openai/gpt-5.6-luna",
-      "vercel-ai-gateway": "openai/gpt-5.6-luna",
-      openrouter: "openai/gpt-5.6-luna",
-      "openai-codex": "gpt-5.6-luna",
+      "duet-gateway": "openai/gpt-6-luna",
+      "vercel-ai-gateway": "openai/gpt-6-luna",
+      openrouter: "openai/gpt-6-luna",
+      "openai-codex": "gpt-6-luna",
     },
   },
   {
     family: "sol",
-    shorthand: "gpt-5.6-sol",
-    aliases: ["openai/gpt-5.6-sol", "openai/gpt-5-6-sol"],
+    shorthand: "gpt-6-sol",
+    aliases: ["openai/gpt-6-sol"],
     modelsByProvider: {
-      "duet-gateway": "openai/gpt-5.6-sol",
-      "vercel-ai-gateway": "openai/gpt-5.6-sol",
-      openrouter: "openai/gpt-5.6-sol",
-      "openai-codex": "gpt-5.6-sol",
-    },
-    maxOutputTokens: 128000,
-  },
-  {
-    family: "terra",
-    shorthand: "gpt-5.6-terra",
-    aliases: ["openai/gpt-5.6-terra", "openai/gpt-5-6-terra"],
-    modelsByProvider: {
-      "duet-gateway": "openai/gpt-5.6-terra",
-      "vercel-ai-gateway": "openai/gpt-5.6-terra",
-      openrouter: "openai/gpt-5.6-terra",
-      "openai-codex": "gpt-5.6-terra",
+      "duet-gateway": "openai/gpt-6-sol",
+      "vercel-ai-gateway": "openai/gpt-6-sol",
+      openrouter: "openai/gpt-6-sol",
+      "openai-codex": "gpt-6-sol",
     },
     maxOutputTokens: 128000,
   },
@@ -248,16 +198,14 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     maxOutputTokens: 131072,
   },
   {
-    // xAI's Grok 4.3 is routed through the duet/vercel gateways under the
-    // `xai/grok-4.3` model id. We do not currently configure a direct xAI
-    // provider, so the gateway entries are the only routes.
+    // Gateway and OpenRouter use different vendor namespaces for Grok.
     family: "grok",
-    shorthand: "grok-4.3",
-    aliases: ["xai/grok-4.3", "xai/grok-4-3", "grok-4-3"],
+    shorthand: "grok-4.7",
+    aliases: ["spacexai/grok-4.7", "spacexai/grok-4-7", "grok-4-7"],
     modelsByProvider: {
-      "duet-gateway": "xai/grok-4.3",
-      "vercel-ai-gateway": "xai/grok-4.3",
-      openrouter: "x-ai/grok-4.3",
+      "duet-gateway": "spacexai/grok-4.7",
+      "vercel-ai-gateway": "spacexai/grok-4.7",
+      openrouter: "x-ai/grok-4.7",
     },
   },
   {
@@ -289,9 +237,8 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     maxOutputTokens: 262144,
   },
   {
-    // Leads the fable family, so the `fable` alias the advisor routes on
-    // resolves here. The github-copilot id is a guess that fails soft the way
-    // opus-5's does.
+    // Leads the fable family used by the advisor. Connected-account
+    // availability is still checked by the provider hook.
     family: "fable",
     shorthand: "fable-5.1",
     aliases: [
@@ -320,29 +267,16 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     },
   },
   {
-    // Zhipu's GLM 5.2 is routed through the duet/vercel gateways under the
-    // `zai/glm-5.2` model id and through OpenRouter as `z-ai/glm-5.2`. We do not
+    // Zhipu's GLM 5.3 is routed through the duet/vercel gateways under the
+    // `zai/glm-5.3` model id and through OpenRouter as `z-ai/glm-5.3`. We do not
     // configure a direct Zhipu provider, so these are the only routes.
     family: "glm",
-    shorthand: "glm-5.2",
-    aliases: ["zai/glm-5.2", "z-ai/glm-5.2", "glm-5-2"],
+    shorthand: "glm-5.3",
+    aliases: ["zai/glm-5.3", "z-ai/glm-5.3", "glm-5-3"],
     modelsByProvider: {
-      "duet-gateway": "zai/glm-5.2",
-      "vercel-ai-gateway": "zai/glm-5.2",
-      openrouter: "z-ai/glm-5.2",
-    },
-  },
-  {
-    // Zhipu's GLM 4.7 is routed through the duet/vercel gateways under the
-    // `zai/glm-4.7` model id and through OpenRouter as `z-ai/glm-4.7`. We do not
-    // configure a direct Zhipu provider, so these are the only routes.
-    family: "glm",
-    shorthand: "glm-4.7",
-    aliases: ["zai/glm-4.7", "z-ai/glm-4.7", "glm-4-7"],
-    modelsByProvider: {
-      "duet-gateway": "zai/glm-4.7",
-      "vercel-ai-gateway": "zai/glm-4.7",
-      openrouter: "z-ai/glm-4.7",
+      "duet-gateway": "zai/glm-5.3",
+      "vercel-ai-gateway": "zai/glm-5.3",
+      openrouter: "z-ai/glm-5.3",
     },
   },
 ];
@@ -353,6 +287,10 @@ for (const definition of MODEL_DEFINITIONS) {
   familyLatest[definition.family] ??= definition.shorthand;
   (shorthandsByFamily[definition.family] ??= []).push(definition.shorthand);
 }
+
+// Terra remains a durable selection for the coding role now served by Sol.
+familyLatest.terra = familyLatest.sol;
+shorthandsByFamily.terra = shorthandsByFamily.sol;
 
 /**
  * Every curated shorthand, grouped by family in catalog order. Exported so
@@ -488,18 +426,47 @@ export const PROVIDER_SHORTHANDS: readonly string[] = ["duet", "vercel", "openro
 
 /** Build a `provider:modelId` reference for a provider's default chat model. */
 export function pinnedDefaultModel(provider: RouterProviderName): string {
-  return pinnedShorthand(provider, getProviderDefaultModel(provider));
+  return `${provider}:${getProviderDefaultModel(provider)}`;
 }
 
 /** Build a `provider:modelId` reference for a provider's memory model. */
 export function pinnedMemoryModel(provider: RouterProviderName): string {
-  return pinnedShorthand(provider, getProviderMemoryModel(provider));
+  return `${provider}:${getProviderMemoryModel(provider)}`;
 }
 
-function pinnedShorthand(provider: RouterProviderName, shorthand: string): string {
-  const candidate = getModelCandidates(shorthand).find((entry) => entry.provider === provider);
-  if (!candidate) {
-    throw new Error(`Provider ${provider} has no model mapping for ${shorthand}`);
+/** Recover family intent erased by older CLI canonicalization, only at resume.
+ * Known replaced provider defaults retain their transport and recover the family;
+ * unknown pins and historical message attribution stay untouched. */
+export function resumeModelSelection(modelName: string | undefined): string | undefined {
+  const savedFamilies: Readonly<Record<string, FamilyName>> = {
+    "opus-5": "opus",
+    "opus-4.8": "opus",
+    "opus-4.7": "opus",
+    "gpt-5.6-sol": "sol",
+    "gpt-5.6-terra": "terra",
+    "gpt-5.6-luna": "luna",
+    "grok-4.3": "grok",
+    "glm-5.2": "glm",
+    "glm-4.7": "glm",
+  };
+  if (modelName === undefined) return undefined;
+  const separator = modelName.indexOf(":");
+  const id = separator === -1 ? modelName : modelName.slice(separator + 1);
+  const family =
+    savedFamilies[
+      id
+        .toLowerCase()
+        .replace(/^(?:anthropic|openai|xai|x-ai|zai|z-ai)\//, "")
+        .replace(/^claude-/, "")
+    ];
+  if (!family) return modelName;
+  if (separator === -1) return family;
+  const rawProvider = modelName.slice(0, separator);
+  const router = resolveProviderShorthand(rawProvider);
+  if (router) return `${rawProvider}:${family}`;
+  if (rawProvider === "openai-codex" || rawProvider === "github-copilot") {
+    const target = transportModelId(rawProvider, family);
+    if (target) return `${rawProvider}:${target}`;
   }
-  return candidate.modelName;
+  return modelName;
 }

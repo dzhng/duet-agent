@@ -109,7 +109,7 @@ import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
  * --- EXPECTED FAILURES (measured on opus-4.7, current layer) ---
  *
  * On opus-4.7 (the measured baseline; the default actor has since
- * moved to opus-5 — re-measure before trusting these exact splits)
+ * moved to opus-5.5 — re-measure before trusting these exact splits)
  * ALL FIVE implicit-trigger
  * positives below are EXPECTED to stay red, and the eval will
  * report them as failures. The two negatives in this file pass on
@@ -138,13 +138,13 @@ import { DEFAULT_CLI_MEMORY_MODEL } from "../src/model-resolution/resolver.js";
  * end-to-end against real APIs, so a second run is cheap.
  */
 
-// Defaults to opus-5 because opus is the production CLI default
+// Defaults to opus-5.5 because opus is the production CLI default
 // (`DEFAULT_CLI_MODEL` in src/model-resolution/catalog.ts). Tuning the
 // trigger layer against the model the user actually runs is the only
 // version of this eval that constrains real-world behavior. Override
 // with `EVAL_MODEL=sonnet-5` to compare — see the table near the
 // bottom of this file for the cross-model behavior we measured.
-const actorModel = process.env.EVAL_MODEL ?? "opus-5";
+const actorModel = process.env.EVAL_MODEL ?? "opus-5.5";
 const memoryModel = process.env.EVAL_MEMORY_MODEL ?? DEFAULT_CLI_MEMORY_MODEL;
 
 let tempDirs: string[] = [];

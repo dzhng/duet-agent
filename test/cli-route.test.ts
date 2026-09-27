@@ -108,7 +108,7 @@ describe("runRouteCommand", () => {
     });
 
     expect(output).toContain(
-      "Transport: duet-gateway modelId=openai/gpt-5.6-sol reason=router_order planCovered=false",
+      "Transport: duet-gateway modelId=openai/gpt-6-sol reason=router_order planCovered=false",
     );
     expect(output).toContain("Confidence: implement 0.82 · general 0.12 · writing 0.06");
   });
@@ -189,7 +189,7 @@ describe("runRouteCommand", () => {
     expect(result.estimates.map(({ tier, model, enabled }) => ({ tier, model, enabled }))).toEqual([
       { tier: "frontier", model: "fable", enabled: true },
       { tier: "balanced", model: "fable", enabled: true },
-      { tier: "economy", model: "terra", enabled: false },
+      { tier: "economy", model: "sol", enabled: false },
     ]);
     expect(result.estimates.every((estimate) => typeof estimate.inputUsd === "number")).toBe(true);
     expect(result.transcript).toContain("Design the model router before implementing it.");
@@ -198,7 +198,7 @@ describe("runRouteCommand", () => {
     expect(output).toContain("Session: session_fixture");
     expect(output).toContain(`Transcript tokens: ${result.tokens}`);
     expect(output).toContain("frontier: fable");
-    expect(output).toContain("economy: terra (disabled)");
+    expect(output).toContain("economy: sol (disabled)");
     expect(output).toContain(result.transcript);
   });
 });

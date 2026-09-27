@@ -30,11 +30,11 @@ const familyCases: readonly FamilyCase[] = [
   },
   {
     family: "opus",
-    latest: "opus-5",
+    latest: "opus-5.5",
     modelsByProvider: {
-      "duet-gateway": "anthropic/claude-opus-5",
-      "vercel-ai-gateway": "anthropic/claude-opus-5",
-      openrouter: "anthropic/claude-opus-5",
+      "duet-gateway": "anthropic/claude-opus-5.5",
+      "vercel-ai-gateway": "anthropic/claude-opus-5.5",
+      openrouter: "anthropic/claude-opus-5.5",
     },
   },
   {
@@ -56,20 +56,20 @@ const familyCases: readonly FamilyCase[] = [
   },
   {
     family: "sol",
-    latest: "gpt-5.6-sol",
+    latest: "gpt-6-sol",
     modelsByProvider: {
-      "duet-gateway": "openai/gpt-5.6-sol",
-      "vercel-ai-gateway": "openai/gpt-5.6-sol",
-      openrouter: "openai/gpt-5.6-sol",
+      "duet-gateway": "openai/gpt-6-sol",
+      "vercel-ai-gateway": "openai/gpt-6-sol",
+      openrouter: "openai/gpt-6-sol",
     },
   },
   {
     family: "terra",
-    latest: "gpt-5.6-terra",
+    latest: "gpt-6-sol",
     modelsByProvider: {
-      "duet-gateway": "openai/gpt-5.6-terra",
-      "vercel-ai-gateway": "openai/gpt-5.6-terra",
-      openrouter: "openai/gpt-5.6-terra",
+      "duet-gateway": "openai/gpt-6-sol",
+      "vercel-ai-gateway": "openai/gpt-6-sol",
+      openrouter: "openai/gpt-6-sol",
     },
   },
   {
@@ -83,11 +83,11 @@ const familyCases: readonly FamilyCase[] = [
   },
   {
     family: "luna",
-    latest: "gpt-5.6-luna",
+    latest: "gpt-6-luna",
     modelsByProvider: {
-      "duet-gateway": "openai/gpt-5.6-luna",
-      "vercel-ai-gateway": "openai/gpt-5.6-luna",
-      openrouter: "openai/gpt-5.6-luna",
+      "duet-gateway": "openai/gpt-6-luna",
+      "vercel-ai-gateway": "openai/gpt-6-luna",
+      openrouter: "openai/gpt-6-luna",
     },
   },
   {
@@ -101,11 +101,11 @@ const familyCases: readonly FamilyCase[] = [
   },
   {
     family: "grok",
-    latest: "grok-4.3",
+    latest: "grok-4.7",
     modelsByProvider: {
-      "duet-gateway": "xai/grok-4.3",
-      "vercel-ai-gateway": "xai/grok-4.3",
-      openrouter: "x-ai/grok-4.3",
+      "duet-gateway": "spacexai/grok-4.7",
+      "vercel-ai-gateway": "spacexai/grok-4.7",
+      openrouter: "x-ai/grok-4.7",
     },
   },
   {
@@ -119,11 +119,11 @@ const familyCases: readonly FamilyCase[] = [
   },
   {
     family: "glm",
-    latest: "glm-5.2",
+    latest: "glm-5.3",
     modelsByProvider: {
-      "duet-gateway": "zai/glm-5.2",
-      "vercel-ai-gateway": "zai/glm-5.2",
-      openrouter: "z-ai/glm-5.2",
+      "duet-gateway": "zai/glm-5.3",
+      "vercel-ai-gateway": "zai/glm-5.3",
+      openrouter: "z-ai/glm-5.3",
     },
   },
 ];
@@ -157,22 +157,18 @@ describe("catalog family shorthands", () => {
     const survivingShorthands = [
       "fable-5.1",
       "fable-5",
-      "opus-5",
-      "opus-4.8",
-      "opus-4.7",
+      "opus-5.5",
       "sonnet-5",
       "sonnet-4.6",
       "haiku-4.5",
-      "gpt-5.6-sol",
-      "gpt-5.6-terra",
-      "gpt-5.6-luna",
+      "gpt-6-sol",
+      "gpt-6-luna",
       "gpt-6-astra",
       "kimi-k3",
-      "grok-4.3",
+      "grok-4.7",
       "deepseek-v4.1-flash",
       "deepseek-v4-pro",
-      "glm-5.2",
-      "glm-4.7",
+      "glm-5.3",
     ];
 
     for (const shorthand of survivingShorthands) {
@@ -198,8 +194,8 @@ describe("catalog family shorthands", () => {
 });
 
 test("openrouter memory model resolves to a defined luna spec with real cost", () => {
-  const resolution = resolveModelName("openrouter:openai/gpt-5.6-luna");
-  expect(resolution.id).toBe("openai/gpt-5.6-luna");
+  const resolution = resolveModelName("openrouter:openai/gpt-6-luna");
+  expect(resolution.id).toBe("openai/gpt-6-luna");
   expect(resolution.provider).toBe("openrouter");
   expect(resolution.cost.input).toBeGreaterThan(0);
   expect(getProviderMemoryModel("openrouter")).toBe(DEFAULT_CLI_MEMORY_MODEL);

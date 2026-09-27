@@ -146,7 +146,7 @@ describe("advisor trigger and router interlock", () => {
           routes: {
             general: {
               description: "SWE-bench software implementation and debugging.",
-              target: { modelName: "glm-5.2", thinkingLevel: "high" },
+              target: { modelName: "glm-5.3", thinkingLevel: "high" },
               visionFallbackModelName: "kimi-k3",
             },
           },

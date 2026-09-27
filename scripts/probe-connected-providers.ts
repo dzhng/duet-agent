@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const AUTH_PATH = join(process.env.HOME ?? "", ".duet", "codex-probe-auth.json");
-const DEFAULT_IDS = ["gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
+const DEFAULT_IDS = ["gpt-5.5", "gpt-6-sol", "gpt-6-sol", "gpt-6-luna"];
 
 // Representative Duet-shaped system prompt: multi-section, imperative, with
 // tool-use instructions — close enough to detect instruction rewriting or
