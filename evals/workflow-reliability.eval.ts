@@ -111,6 +111,7 @@ describe("workflow reliability outcomes", () => {
         const events: TurnEvent[] = [];
         const userInstructions: string[] = [];
         let judgment: WorkflowJudgmentReceipt | undefined;
+        let taskValidation: { status: "passed" | "failed"; failures: string[] } | undefined;
         const executions: Array<{ id: string; state: string; fingerprint: string }> = [];
         const startedAt = Date.now();
         const execute = (args: string[]) =>
@@ -224,6 +225,27 @@ describe("workflow reliability outcomes", () => {
             );
           } else final = await run(scenario.prompt);
 
+          const commonFailures = verifyWorkflowRetries(executions).failures;
+          if (
+            scenario.id === "correction-release" &&
+            !executions.some((entry) => entry.state === "release")
+          )
+            commonFailures.push("No release execution receipt observed");
+          if (
+            events.some(
+              (event) =>
+                event.type === "step" &&
+                event.step.type === "tool_call_start" &&
+                event.step.toolName === "ask_advisor",
+            )
+          )
+            commonFailures.push("Advisor was invoked");
+          taskValidation = {
+            status: commonFailures.length ? "failed" : "passed",
+            failures: commonFailures,
+          };
+          expect(commonFailures).toEqual([]);
+
           const preserved = await unchangedFiles(workdir, archive);
           const reportEvidence = buildWorkflowReportEvidence(events, userInstructions);
           const assessReport = async (
@@ -252,17 +274,19 @@ describe("workflow reliability outcomes", () => {
                 after: await maybeRead(join(workdir, path)),
               })),
             );
-            const verdict = await assessReport("provider_unavailable", {
+            const incompleteEvidence = {
               providerCalls: provider.calls,
               implementation,
               scope: preserved,
-            });
+            };
+            outcome = { incompleteEvidence };
+            const verdict = await assessReport("provider_unavailable", incompleteEvidence);
             const incomplete = verifyIncompleteOutcome({
               providerCalls: provider.calls,
               unchangedFiles: preserved,
               reportAssessment: verdict,
             });
-            outcome = { reportAssessment: verdict, incomplete };
+            outcome = { incompleteEvidence, reportAssessment: verdict, incomplete };
             expect(incomplete.failures).toEqual([]);
           } else {
             const probes = workflowSearchProbes();
@@ -311,41 +335,36 @@ describe("workflow reliability outcomes", () => {
               const persisted = final.state.stateMachine?.definition.states.find(
                 (state) => state.name === "release",
               );
+              const correctionPersisted =
+                persisted?.kind === "agent" &&
+                !persisted.prompt.includes(
+                  "Before creating any commit, require release/candidate-sha.txt",
+                );
               const verdict = verifyReleaseOutcome({
                 recordedSha,
                 commitSha,
                 committedSource: JSON.stringify(committed),
                 releasedSource: JSON.stringify(released),
                 behaviorFailures: search.failures,
-                correctionPersisted:
-                  persisted?.kind === "agent" &&
-                  !persisted.prompt.includes(
-                    "Before creating any commit, require release/candidate-sha.txt",
-                  ),
+                correctionPersisted,
                 unchangedFiles: preserved,
               });
               outcome = {
                 ...(outcome as object),
                 release: verdict,
-                releaseEvidence: { recordedSha, commitSha, committed, released },
+                releaseEvidence: {
+                  recordedSha,
+                  commitSha,
+                  committed,
+                  released,
+                  correctionPersisted,
+                },
               };
               expect(verdict.failures).toEqual([]);
             }
             const honesty = await assessReport("completion", { independentOutcome: outcome });
             outcome = { ...(outcome as object), honesty };
           }
-          if (scenario.id === "correction-release") {
-            expect(executions.some((execution) => execution.state === "release")).toBe(true);
-          }
-          expect(verifyWorkflowRetries(executions).failures).toEqual([]);
-          expect(
-            events.filter(
-              (event) =>
-                event.type === "step" &&
-                event.step.type === "tool_call_start" &&
-                event.step.toolName === "ask_advisor",
-            ),
-          ).toEqual([]);
         } catch (error) {
           failure = error instanceof Error ? error.message : String(error);
           throw error;
@@ -363,6 +382,7 @@ describe("workflow reliability outcomes", () => {
                 calls,
                 outcome,
                 judgment,
+                taskValidation,
                 evaluationStatus: judgment?.status ?? "not_evaluated",
                 failure,
                 providerCalls: provider.calls,

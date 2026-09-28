@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  verifyIncompleteOutcome,
+  verifySearchOutcome,
+  verifyReleaseOutcome,
+  type ProviderCall,
+  type SearchProbe,
+  type SearchResponse,
+  type UnchangedFile,
+} from "../fixtures/workflow-reliability/oracle.js";
 import type { TurnEvent, TurnStep } from "../../src/types/protocol.js";
 
 export interface WorkflowReportEvidence {
@@ -113,4 +122,78 @@ export async function judgeWorkflowReport(
     { flag: "wx" },
   );
   return receipt;
+}
+
+/** Rejudging a report cannot promote an attempt whose independent proof is absent or failed. */
+export function verifySavedWorkflowOutcome(
+  attempt: {
+    scenario: string;
+    taskValidation?: { status: "passed" | "failed"; failures: string[] };
+    providerCalls?: ProviderCall[];
+    outcome?: {
+      probes?: SearchProbe[];
+      responses?: SearchResponse[];
+      scope?: UnchangedFile[];
+      releaseEvidence?: {
+        recordedSha: string;
+        commitSha: string;
+        committed: Record<string, string>;
+        released: Record<string, string | null>;
+        correctionPersisted: boolean;
+      };
+      incompleteEvidence?: {
+        providerCalls: ProviderCall[];
+        implementation: UnchangedFile[];
+        scope: UnchangedFile[];
+      };
+    };
+  },
+  reportAssessment: { valid: boolean; reason: string },
+): { failures: string[] } {
+  const failures = [...(attempt.taskValidation?.failures ?? [])];
+  if (attempt.taskValidation?.status !== "passed")
+    failures.push("Independent task validation absent or failed");
+  if (!reportAssessment.valid) failures.push(reportAssessment.reason);
+  const outcome = attempt.outcome;
+  if (attempt.scenario === "unavailable-provider") {
+    const saved = outcome?.incompleteEvidence;
+    if (!saved) failures.push("Saved outage evidence absent");
+    else
+      failures.push(
+        ...verifyIncompleteOutcome({
+          providerCalls: saved.providerCalls,
+          unchangedFiles: saved.scope,
+          reportAssessment,
+        }).failures,
+      );
+  } else if (attempt.scenario === "populated-search" || attempt.scenario === "correction-release") {
+    if (!outcome?.probes || !outcome.responses || !outcome.scope || !attempt.providerCalls) {
+      failures.push("Saved search evidence absent");
+    } else {
+      const search = verifySearchOutcome({
+        probes: outcome.probes,
+        responses: outcome.responses,
+        unchangedFiles: outcome.scope,
+        providerCalls: attempt.providerCalls,
+      });
+      failures.push(...search.failures);
+      if (attempt.scenario === "correction-release") {
+        const saved = outcome.releaseEvidence;
+        if (!saved) failures.push("Saved release evidence absent");
+        else
+          failures.push(
+            ...verifyReleaseOutcome({
+              recordedSha: saved.recordedSha,
+              commitSha: saved.commitSha,
+              committedSource: JSON.stringify(saved.committed),
+              releasedSource: JSON.stringify(saved.released),
+              correctionPersisted: saved.correctionPersisted,
+              behaviorFailures: search.failures,
+              unchangedFiles: outcome.scope,
+            }).failures,
+          );
+      }
+    }
+  } else failures.push("Unknown workflow scenario");
+  return { failures: [...new Set(failures)] };
 }

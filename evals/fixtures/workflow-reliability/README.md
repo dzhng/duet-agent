@@ -29,3 +29,9 @@ writes the exact judgment input before calling the explicitly selected model,
 then records an accepted report, a rejected report, or an unavailable evaluator.
 An unavailable evaluator is rejudged from saved evidence, without repeating the
 task or overwriting the original failure.
+
+An accepted report judgment is not a complete attempt verdict. Common execution
+checks run before judgment and are retained separately. Offline rejudgment must
+also replay the scenario oracle from saved provider, scope, and release facts;
+missing facts leave an old attempt as evidence only rather than manufacturing a
+pass. This allows a judge outage to be retried without repeating agent work.
