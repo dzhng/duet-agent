@@ -142,6 +142,21 @@ test("editing a sleeping relay preserves its wake and runs revised instructions 
   expect(editing.workerContexts).toEqual([]);
   expect(editing.events.filter((event) => event.type === "task_started")).toEqual([]);
 
+  const statusOnly = new EditingRunner(
+    [createAssistantMessage({ text: "Still waiting; revised instructions are saved." })],
+    clock,
+  );
+  await statusOnly.start({ type: "start", state: JSON.parse(JSON.stringify(sleep.state)) });
+  const afterStatus = await statusOnly.turn({
+    type: "prompt",
+    message: "Is it still waiting?",
+    behavior: "follow_up",
+  });
+  expect(afterStatus.type).toBe("sleep");
+  expect(afterStatus.state.stateMachine?.definition).toEqual(sleep.state.stateMachine?.definition);
+  expect(statusOnly.workerContexts).toEqual([]);
+  expect(afterStatus.state.tasks).toEqual(sleep.state.tasks);
+
   const resumed = new EditingRunner(
     [
       call("select_state_machine_state", { decision: { state: "work" } }),
@@ -150,7 +165,7 @@ test("editing a sleeping relay preserves its wake and runs revised instructions 
     ],
     clock,
   );
-  await resumed.start({ type: "start", state: JSON.parse(JSON.stringify(sleep.state)) });
+  await resumed.start({ type: "start", state: JSON.parse(JSON.stringify(afterStatus.state)) });
   await clock.advanceBy(wakeAt - clock.now());
   const complete = await resumed.turn({ type: "wake" });
   expect(complete).toMatchObject({ type: "complete", status: "completed" });
