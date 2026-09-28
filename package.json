@@ -22,7 +22,10 @@
     "dist/package.json",
     "dist/src",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "dist/eval-fixtures",
+    "dist/evals/fixtures/workflow-reliability/oracle.js",
+    "dist/evals/fixtures/workflow-reliability/oracle.d.ts"
   ],
   "type": "module",
   "main": "dist/src/index.js",
@@ -36,18 +39,24 @@
       "types": "./dist/src/memory/store/index.d.ts",
       "import": "./dist/src/memory-store.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./workflow-fixtures": {
+      "types": "./dist/evals/fixtures/workflow-reliability/oracle.d.ts",
+      "import": "./dist/evals/fixtures/workflow-reliability/oracle.js"
+    },
+    "./workflow-fixtures/archive": "./dist/eval-fixtures/workflow-reliability.json",
+    "./workflow-fixtures/manifest": "./dist/eval-fixtures/manifest.json"
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
     "setup": "bash scripts/setup-docker.sh",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build src/memory/store/index.ts --target node --format esm --outfile dist/src/memory-store.js",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && bun build src/memory/store/index.ts --target node --format esm --outfile dist/src/memory-store.js && bun scripts/build-workflow-fixtures.ts",
     "check-types": "tsc --noEmit",
     "cli": "bun src/cli.ts",
     "dev": "tsc -p tsconfig.build.json --watch",
-    "eval": "docker run --rm -v \"$PWD:/src:ro\" -w /work -e HOME=/tmp/home -e DUET_TEST_IN_DOCKER=1 -e DUET_API_KEY -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e EVAL_MODEL -e EVAL_ADVISOR_THINKING -e JUDGE_MODEL -e COVERAGE_THRESHOLD oven/bun:1.3.11 sh -lc 'cp -R /src/. /work && bun install --frozen-lockfile && bun test ./evals/*.eval.ts'",
+    "eval": "docker run --rm -v \"$PWD:/src:ro\" -v \"$PWD/tmp/eval-artifacts:/evidence\" -e EVAL_ARTIFACT_DIR=/evidence -w /work -e HOME=/tmp/home -e DUET_TEST_IN_DOCKER=1 -e DUET_API_KEY -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e EVAL_MODEL -e EVAL_CANDIDATE_REVISION -e EVAL_ADVISOR_THINKING -e JUDGE_MODEL -e COVERAGE_THRESHOLD oven/bun:1.3.11 sh -lc 'apt-get update -qq && apt-get install -y -qq git >/dev/null && cp -R /src/. /work && bun install --frozen-lockfile && bun scripts/build-workflow-fixtures.ts && bun test ./evals/*.eval.ts'",
     "format": "oxfmt --write --no-error-on-unmatched-pattern",
     "format:check": "oxfmt --check --no-error-on-unmatched-pattern",
     "lint": "oxlint src/",

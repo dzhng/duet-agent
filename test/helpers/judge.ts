@@ -28,9 +28,12 @@ export async function judge(input: {
   value: unknown;
   model?: string;
   systemPrompt?: string;
+  /** Bound a live evaluation without leaving the provider request in flight. */
+  signal?: AbortSignal;
 }): Promise<JudgeResult> {
   return generateStructuredOutput({
     model: input.model ?? judgeModel,
+    signal: input.signal,
     tool: judgeTool,
     systemPrompt:
       input.systemPrompt ??

@@ -1,4 +1,4 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "evals/fixtures/workflow-reliability/oracle.ts"]
 }

@@ -1,0 +1,10 @@
+{
+  "name": "synthetic-directory",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun server.ts",
+    "test": "bun test search.test.ts",
+    "build": "bun build server.ts --target=bun --outfile=build/server.js"
+  }
+}

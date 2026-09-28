@@ -258,6 +258,8 @@ bun run test         # runs the test suite inside Docker
 
 Use `bun run test` and `bun run eval`, not raw `bun test`, as the source of truth. File-writing tests and evals run in Docker so focused host runs cannot create `.duet`, PGlite databases, or home-directory skill fixtures in the checkout.
 
+[Workflow outcome fixtures](evals/fixtures/workflow-reliability/README.md) share independent behavioral oracles between CLI evals and deployed acceptance journeys.
+
 Paid evaluation infrastructure and its separate verification commands live in
 the [SWE-bench benchmark](benchmarks/swebench/README.md).
 

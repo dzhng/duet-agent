@@ -1,0 +1,36 @@
+{
+  "people": [
+    {
+      "id": "person-ada",
+      "name": "Ada Vale",
+      "title": "Platform engineer",
+      "location": "Berlin",
+      "email": "ada@orbit.example",
+      "company": "Orbit"
+    },
+    {
+      "id": "person-bo",
+      "name": "Bo Reed",
+      "title": "Designer",
+      "location": "Oslo",
+      "email": "bo@studio.example",
+      "company": "Studio"
+    }
+  ],
+  "jobs": [
+    {
+      "id": "job-platform",
+      "title": "Platform engineer",
+      "location": "Berlin",
+      "remote": true,
+      "company": "Orbit"
+    },
+    {
+      "id": "job-designer",
+      "title": "Product designer",
+      "location": "Oslo",
+      "remote": false,
+      "company": "Studio"
+    }
+  ]
+}
