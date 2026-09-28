@@ -13,6 +13,7 @@ import {
   type AskAdvisorToolStorage,
   type TurnRunnerControlResult,
 } from "../src/turn-runner/tools.js";
+import { admitToolArguments } from "../src/turn-runner/tool-admission.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import { ModelRouter } from "../src/model-routing/router.js";
 import {
@@ -890,7 +891,7 @@ describe("TurnRunner tools", () => {
     );
   });
 
-  test("rejects a definition whose state cwd does not exist", async () => {
+  test("missing definition cwd guidance permits recovery with an existing directory", async () => {
     const tools = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" });
     const createDefinitionTool = tools.find(
       (tool) => tool.name === "create_state_machine_definition",
@@ -919,7 +920,34 @@ describe("TurnRunner tools", () => {
     );
     // The creation-time guidance points the model at the omit-now/set-later
     // pattern rather than the selection-time "already created" phrasing.
-    await expect(result).rejects.toThrow("omit cwd here and set it via override.cwd");
+    const error = await result.catch((error: Error) => error);
+    const fieldPath = /set it via ([a-zA-Z.]+)/.exec((error as Error).message)?.[1];
+    expect(fieldPath).toBeDefined();
+    const definition = {
+      name: "outreach",
+      prompt: "Use for outreach work.",
+      states: [
+        { kind: "agent" as const, name: "implement", prompt: "Do the work." },
+        { kind: "terminal" as const, name: "done", status: "completed" as const },
+      ],
+    };
+    const select = createTurnRunnerTools({ cwd: process.cwd(), mode: definition }).find(
+      (tool) => tool.name === "select_state_machine_state",
+    )!;
+    const selection: Record<string, unknown> = {
+      decision: { state: "implement", override: { kind: "agent", state: {} } },
+    };
+    const segments = fieldPath!.split(".");
+    let target = selection;
+    for (const segment of segments.slice(0, -1))
+      target = (target[segment] ??= {}) as Record<string, unknown>;
+    target[segments.at(-1)!] = process.cwd();
+    const admitted = admitToolArguments(select);
+    const recovered = await admitted.execute("recovery", admitted.prepareArguments!(selection));
+    expect(recovered.details).toEqual({
+      type: "select_state_machine_state",
+      decision: { state: "implement", override: { kind: "agent", state: { cwd: process.cwd() } } },
+    });
   });
 
   test("rejects create-while-active without replaceActive, naming the active machine", async () => {
