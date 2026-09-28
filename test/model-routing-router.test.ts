@@ -25,8 +25,10 @@ function scriptedClassifier(
 }
 
 function createRouter(classify: RouteClassifier): ModelRouter {
+  const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+  table.tiers.frontier.advisor.enabled = true;
   const router = new ModelRouter({
-    table: BUILT_IN_ROUTING_TABLE,
+    table,
     tier: "frontier",
     classify,
     resolveCatalog: catalog,

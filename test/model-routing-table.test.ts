@@ -90,7 +90,7 @@ describe("built-in model routing table", () => {
     }
 
     expect(table.tiers.frontier.advisor).toEqual({
-      enabled: true,
+      enabled: false,
       target: { modelName: "fable", thinkingLevel: "medium" },
       minStepsBetween: 5,
     });

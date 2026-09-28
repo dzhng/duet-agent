@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test";
+import { afterAll, beforeAll, describe, expect } from "bun:test";
 import { bestOfAttempts } from "../test/helpers/best-of.js";
 import dedent from "dedent";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -14,8 +14,10 @@ import {
 } from "../src/model-routing/router.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnUsageEvent } from "../src/types/protocol.js";
-import { testIfDocker } from "../test/helpers/docker-only.js";
+import { inDockerTest, testIfDocker } from "../test/helpers/docker-only.js";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
+
+let advisorFixtureCwd: string | undefined;
 
 const executorModel = process.env.EVAL_MODEL ?? "sonnet-5";
 
@@ -31,7 +33,7 @@ class CapturingRunner extends TurnRunner {
     super({
       model,
       mode: "agent",
-      cwd,
+      cwd: cwd ?? advisorFixtureCwd,
       memoryDbPath: false,
       skillDiscovery: { includeDefaults: false },
       systemInstructions,
@@ -132,13 +134,30 @@ function captureToolCalls(runner: TurnRunner): CapturedToolCall[] {
   return calls;
 }
 
+async function writeAdvisorConfig(cwd: string): Promise<void> {
+  const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+  table.tiers.frontier!.advisor.enabled = true;
+  await mkdir(join(cwd, ".duet"));
+  await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+}
+
 describe("advisor trigger and router interlock", () => {
+  beforeAll(async () => {
+    if (!inDockerTest) return;
+    advisorFixtureCwd = await mkdtemp(join(tmpdir(), "advisor-opt-in-eval-"));
+    await writeAdvisorConfig(advisorFixtureCwd);
+  });
+  afterAll(async () => {
+    if (advisorFixtureCwd) await rm(advisorFixtureCwd, { recursive: true, force: true });
+    advisorFixtureCwd = undefined;
+  });
   testIfDocker(
     "real classifier and advisor calls share one cumulative per-model ledger",
     async () => {
       const workDir = await mkdtemp(join(tmpdir(), "duet-live-auxiliary-usage-"));
       const table = structuredClone(BUILT_IN_ROUTING_TABLE);
       const advisor = structuredClone(table.tiers.frontier!.advisor);
+      advisor.enabled = true;
       advisor.target = { modelName: "kimi-k3", thinkingLevel: "high" };
       table.defaultTier = "swebench-glm-kimi";
       table.tiers = {
@@ -272,6 +291,7 @@ describe("advisor trigger and router interlock", () => {
     async () => {
       await bestOfAttempts(2, async () => {
         const workDir = await mkdtemp(join(tmpdir(), "duet-advisor-lifecycle-"));
+        await writeAdvisorConfig(workDir);
         const chainDir = join(workDir, "chain");
         await mkdir(chainDir);
         const chainLength = 10;

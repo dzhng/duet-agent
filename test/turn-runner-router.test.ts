@@ -24,7 +24,9 @@ import type { TurnEvent } from "../src/types/protocol.js";
 import type { StateMachineAgentState } from "../src/types/state-machine.js";
 import { waitFor } from "./helpers/async.js";
 import { createAssistantMessage } from "./helpers/messages.js";
-import { testIfDocker } from "./helpers/docker-only.js";
+import { inDockerTest, testIfDocker } from "./helpers/docker-only.js";
+
+let advisorFixtureCwd: string | undefined;
 
 const previousDuetApiKey = process.env.DUET_API_KEY;
 
@@ -46,6 +48,7 @@ class RouterTurnRunner extends TurnRunner {
   readonly pendingStreams: PendingStream[] = [];
   readonly requestModels: Model<any>[] = [];
   readonly requestMessages: Context["messages"][] = [];
+  readonly requestContexts: Context[] = [];
   readonly createdAgentOptions: Array<{ model?: string; thinkingLevel?: string }> = [];
   readonly advisorContextTexts: string[] = [];
   private readonly classify: RouteClassifier;
@@ -68,7 +71,7 @@ class RouterTurnRunner extends TurnRunner {
     super({
       model: options.model ?? "frontier",
       mode: "agent",
-      ...(options.cwd ? { cwd: options.cwd } : {}),
+      cwd: options.cwd ?? advisorFixtureCwd,
       memoryDbPath: false,
       skillDiscovery: { includeDefaults: false },
       effectiveContext: options.effectiveContext,
@@ -169,6 +172,7 @@ class RouterTurnRunner extends TurnRunner {
       const stream = createAssistantMessageEventStream();
       this.requestModels.push(model);
       this.requestMessages.push(structuredClone(context.messages));
+      this.requestContexts.push(context);
       this.pendingStreams.push({ model, stream });
       if (options?.signal?.aborted) {
         queueMicrotask(() => {
@@ -795,71 +799,86 @@ describe("TurnRunner virtual-model adapter", () => {
 });
 
 describe("advisor executor guidance layer", () => {
-  test("completion review resets a recent orientation consultation's cooldown", async () => {
-    const runner = new RouterTurnRunner({
-      everySteps: 99,
-      stubAdvisor: true,
-      classify: async () => ({ route: "general" }),
-    });
-    const events: TurnEvent[] = [];
-    await startRunner(runner, events);
+  beforeAll(async () => {
+    if (!inDockerTest) return;
+    advisorFixtureCwd = await mkdtemp(join(tmpdir(), "advisor-opt-in-"));
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.tiers.frontier!.advisor.enabled = true;
+    await mkdir(join(advisorFixtureCwd, ".duet"));
+    await writeFile(join(advisorFixtureCwd, ".duet", "models.json"), JSON.stringify(table));
+  });
+  afterAll(async () => {
+    if (advisorFixtureCwd) await rm(advisorFixtureCwd, { recursive: true, force: true });
+    advisorFixtureCwd = undefined;
+  });
+  testIfDocker(
+    "completion review resets a recent orientation consultation's cooldown",
+    async () => {
+      const runner = new RouterTurnRunner({
+        everySteps: 99,
+        stubAdvisor: true,
+        classify: async () => ({ route: "general" }),
+      });
+      const events: TurnEvent[] = [];
+      await startRunner(runner, events);
 
-    const turn = runner.turn({
-      type: "prompt",
-      message: "Implement the durable queue migration.",
-      behavior: "follow_up",
-    });
-    for (let step = 0; step < 3; step++) {
+      const turn = runner.turn({
+        type: "prompt",
+        message: "Implement the durable queue migration.",
+        behavior: "follow_up",
+      });
+      for (let step = 0; step < 3; step++) {
+        await waitFor(() => runner.pendingStreams.length === 1);
+        runner.completeNext({
+          tool: { name: "bash", arguments: { command: "true" } },
+          usageTokens: 5,
+        });
+      }
+
+      await waitFor(() => runner.pendingStreams.length === 1);
+      expect(JSON.stringify(runner.requestMessages.at(-1))).toContain("orientation checkpoint");
+      runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+      await waitFor(() => runner.advisorContextTexts.length === 1);
       await waitFor(() => runner.pendingStreams.length === 1);
       runner.completeNext({
         tool: { name: "bash", arguments: { command: "true" } },
         usageTokens: 5,
       });
-    }
+      await waitFor(() => runner.pendingStreams.length === 1);
+      expect(runner.routeStatus()?.advisorGate.allowed).toBe(false);
+      expect(runner.routeStatus()?.advisorGate.stepsUntilAllowed).toBeGreaterThan(0);
+      runner.completeNext({ text: "The migration is implemented.", usageTokens: 5 });
 
-    await waitFor(() => runner.pendingStreams.length === 1);
-    expect(JSON.stringify(runner.requestMessages.at(-1))).toContain("orientation checkpoint");
-    runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
-    await waitFor(() => runner.advisorContextTexts.length === 1);
-    await waitFor(() => runner.pendingStreams.length === 1);
-    runner.completeNext({
-      tool: { name: "bash", arguments: { command: "true" } },
-      usageTokens: 5,
-    });
-    await waitFor(() => runner.pendingStreams.length === 1);
-    expect(runner.routeStatus()?.advisorGate.allowed).toBe(false);
-    expect(runner.routeStatus()?.advisorGate.stepsUntilAllowed).toBeGreaterThan(0);
-    runner.completeNext({ text: "The migration is implemented.", usageTokens: 5 });
+      await waitFor(() => runner.pendingStreams.length === 1);
+      expect(runner.routeStatus()?.advisorGate).toEqual({ allowed: true, stepsUntilAllowed: 0 });
+      const completionRequest = JSON.stringify(runner.requestMessages.at(-1));
+      expect(completionRequest).toContain("completion-review checkpoint");
+      expect(completionRequest).toContain("Implement the durable queue migration.");
+      expect(completionRequest).toContain("Advisor review 1");
+      runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+      await waitFor(() => runner.advisorContextTexts.length === 2);
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({ text: "Migration complete and reviewed.", usageTokens: 5 });
 
-    await waitFor(() => runner.pendingStreams.length === 1);
-    expect(runner.routeStatus()?.advisorGate).toEqual({ allowed: true, stepsUntilAllowed: 0 });
-    const completionRequest = JSON.stringify(runner.requestMessages.at(-1));
-    expect(completionRequest).toContain("completion-review checkpoint");
-    expect(completionRequest).toContain("Implement the durable queue migration.");
-    expect(completionRequest).toContain("Advisor review 1");
-    runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
-    await waitFor(() => runner.advisorContextTexts.length === 2);
-    await waitFor(() => runner.pendingStreams.length === 1);
-    runner.completeNext({ text: "Migration complete and reviewed.", usageTokens: 5 });
+      const terminal = await turn;
+      expect(terminal.type).toBe("complete");
+      if (terminal.type !== "complete") throw new Error(`Unexpected terminal: ${terminal.type}`);
+      expect(terminal.result).toBe("Migration complete and reviewed.");
+      expect(runner.advisorContextTexts[1]).toContain("The migration is implemented.");
+      expect(runner.advisorContextTexts[1]).toContain("completion-review checkpoint");
+      expect(
+        events.filter(
+          (event) =>
+            event.type === "step" &&
+            event.step.type === "tool_call_start" &&
+            event.step.toolName === "ask_advisor",
+        ),
+      ).toHaveLength(2);
+      await runner.dispose();
+    },
+  );
 
-    const terminal = await turn;
-    expect(terminal.type).toBe("complete");
-    if (terminal.type !== "complete") throw new Error(`Unexpected terminal: ${terminal.type}`);
-    expect(terminal.result).toBe("Migration complete and reviewed.");
-    expect(runner.advisorContextTexts[1]).toContain("The migration is implemented.");
-    expect(runner.advisorContextTexts[1]).toContain("completion-review checkpoint");
-    expect(
-      events.filter(
-        (event) =>
-          event.type === "step" &&
-          event.step.type === "tool_call_start" &&
-          event.step.toolName === "ask_advisor",
-      ),
-    ).toHaveLength(2);
-    await runner.dispose();
-  });
-
-  test("tool work after an early completion review receives a final review", async () => {
+  testIfDocker("tool work after an early completion review receives a final review", async () => {
     const runner = new RouterTurnRunner({
       everySteps: 99,
       stubAdvisor: true,
@@ -918,108 +937,117 @@ describe("advisor executor guidance layer", () => {
     await runner.dispose();
   });
 
-  test("a third-step final response consumes the orientation steer before the pass stops", async () => {
-    const runner = new RouterTurnRunner({
-      everySteps: 99,
-      stubAdvisor: true,
-      classify: async () => ({ route: "general" }),
-    });
-    await startRunner(runner, []);
+  testIfDocker(
+    "a third-step final response consumes the orientation steer before the pass stops",
+    async () => {
+      const runner = new RouterTurnRunner({
+        everySteps: 99,
+        stubAdvisor: true,
+        classify: async () => ({ route: "general" }),
+      });
+      await startRunner(runner, []);
 
-    const turn = runner.turn({
-      type: "prompt",
-      message: "Investigate the migration and finish after the evidence is clear.",
-      behavior: "follow_up",
-    });
-    for (let step = 0; step < 2; step++) {
+      const turn = runner.turn({
+        type: "prompt",
+        message: "Investigate the migration and finish after the evidence is clear.",
+        behavior: "follow_up",
+      });
+      for (let step = 0; step < 2; step++) {
+        await waitFor(() => runner.pendingStreams.length === 1);
+        runner.completeNext({
+          tool: { name: "bash", arguments: { command: "true" } },
+          usageTokens: 5,
+        });
+      }
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({ text: "The evidence looks complete.", usageTokens: 5 });
+
+      await waitFor(() => runner.pendingStreams.length === 1);
+      expect(JSON.stringify(runner.requestMessages.at(-1))).toContain("orientation checkpoint");
+      runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+      await waitFor(() => runner.advisorContextTexts.length === 1);
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({ text: "Evidence reviewed; migration complete.", usageTokens: 5 });
+
+      const terminal = await turn;
+      expect(terminal.type).toBe("complete");
+      expect(runner.advisorContextTexts).toHaveLength(1);
+      expect(JSON.stringify(terminal.state.agent.messages)).not.toContain(
+        "completion-review checkpoint",
+      );
+      await runner.dispose();
+    },
+  );
+
+  testIfDocker(
+    "a voluntary final-evidence consultation does not trigger an immediate duplicate",
+    async () => {
+      const runner = new RouterTurnRunner({
+        everySteps: 99,
+        stubAdvisor: true,
+        classify: async () => ({ route: "general" }),
+      });
+      await startRunner(runner, []);
+
+      const turn = runner.turn({
+        type: "prompt",
+        message: "Inspect the evidence, obtain strategic review when ready, and finish.",
+        behavior: "follow_up",
+      });
+      for (let step = 0; step < 2; step++) {
+        await waitFor(() => runner.pendingStreams.length === 1);
+        runner.completeNext({
+          tool: { name: "bash", arguments: { command: "true" } },
+          usageTokens: 5,
+        });
+      }
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+      await waitFor(() => runner.advisorContextTexts.length === 1);
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNext({ text: "Reviewed and complete.", usageTokens: 5 });
+
+      const terminal = await turn;
+      expect(terminal.type).toBe("complete");
+      expect(runner.advisorContextTexts).toHaveLength(1);
+      const transcript = JSON.stringify(terminal.state.agent.messages);
+      expect(transcript).not.toContain("orientation checkpoint");
+      expect(transcript).not.toContain("completion-review checkpoint");
+      await runner.dispose();
+    },
+  );
+
+  testIfDocker(
+    "routine agent work finishes without lifecycle consultation checkpoints",
+    async () => {
+      const runner = new RouterTurnRunner({
+        everySteps: 99,
+        stubAdvisor: true,
+        classify: async () => ({ route: "general" }),
+      });
+      await startRunner(runner, []);
+
+      const turn = runner.turn({
+        type: "prompt",
+        message: "Read one value and answer.",
+        behavior: "follow_up",
+      });
       await waitFor(() => runner.pendingStreams.length === 1);
       runner.completeNext({
         tool: { name: "bash", arguments: { command: "true" } },
         usageTokens: 5,
       });
-    }
-    await waitFor(() => runner.pendingStreams.length === 1);
-    runner.completeNext({ text: "The evidence looks complete.", usageTokens: 5 });
-
-    await waitFor(() => runner.pendingStreams.length === 1);
-    expect(JSON.stringify(runner.requestMessages.at(-1))).toContain("orientation checkpoint");
-    runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
-    await waitFor(() => runner.advisorContextTexts.length === 1);
-    await waitFor(() => runner.pendingStreams.length === 1);
-    runner.completeNext({ text: "Evidence reviewed; migration complete.", usageTokens: 5 });
-
-    const terminal = await turn;
-    expect(terminal.type).toBe("complete");
-    expect(runner.advisorContextTexts).toHaveLength(1);
-    expect(JSON.stringify(terminal.state.agent.messages)).not.toContain(
-      "completion-review checkpoint",
-    );
-    await runner.dispose();
-  });
-
-  test("a voluntary final-evidence consultation does not trigger an immediate duplicate", async () => {
-    const runner = new RouterTurnRunner({
-      everySteps: 99,
-      stubAdvisor: true,
-      classify: async () => ({ route: "general" }),
-    });
-    await startRunner(runner, []);
-
-    const turn = runner.turn({
-      type: "prompt",
-      message: "Inspect the evidence, obtain strategic review when ready, and finish.",
-      behavior: "follow_up",
-    });
-    for (let step = 0; step < 2; step++) {
       await waitFor(() => runner.pendingStreams.length === 1);
-      runner.completeNext({
-        tool: { name: "bash", arguments: { command: "true" } },
-        usageTokens: 5,
-      });
-    }
-    await waitFor(() => runner.pendingStreams.length === 1);
-    runner.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
-    await waitFor(() => runner.advisorContextTexts.length === 1);
-    await waitFor(() => runner.pendingStreams.length === 1);
-    runner.completeNext({ text: "Reviewed and complete.", usageTokens: 5 });
+      runner.completeNext({ text: "Done.", usageTokens: 5 });
 
-    const terminal = await turn;
-    expect(terminal.type).toBe("complete");
-    expect(runner.advisorContextTexts).toHaveLength(1);
-    const transcript = JSON.stringify(terminal.state.agent.messages);
-    expect(transcript).not.toContain("orientation checkpoint");
-    expect(transcript).not.toContain("completion-review checkpoint");
-    await runner.dispose();
-  });
-
-  test("routine agent work finishes without lifecycle consultation checkpoints", async () => {
-    const runner = new RouterTurnRunner({
-      everySteps: 99,
-      stubAdvisor: true,
-      classify: async () => ({ route: "general" }),
-    });
-    await startRunner(runner, []);
-
-    const turn = runner.turn({
-      type: "prompt",
-      message: "Read one value and answer.",
-      behavior: "follow_up",
-    });
-    await waitFor(() => runner.pendingStreams.length === 1);
-    runner.completeNext({
-      tool: { name: "bash", arguments: { command: "true" } },
-      usageTokens: 5,
-    });
-    await waitFor(() => runner.pendingStreams.length === 1);
-    runner.completeNext({ text: "Done.", usageTokens: 5 });
-
-    const terminal = await turn;
-    expect(terminal.type).toBe("complete");
-    expect(runner.advisorContextTexts).toEqual([]);
-    expect(JSON.stringify(terminal.state.agent.messages)).not.toContain("checkpoint");
-    expect(runner.requestMessages).toHaveLength(2);
-    await runner.dispose();
-  });
+      const terminal = await turn;
+      expect(terminal.type).toBe("complete");
+      expect(runner.advisorContextTexts).toEqual([]);
+      expect(JSON.stringify(terminal.state.agent.messages)).not.toContain("checkpoint");
+      expect(runner.requestMessages).toHaveLength(2);
+      await runner.dispose();
+    },
+  );
 
   testIfDocker("routed tiers with the advisor enabled carry the timing layer", async () => {
     const frontier = new RouterTurnRunner({ classify: scriptedClassifier([]) });
@@ -1062,3 +1090,138 @@ describe("advisor executor guidance layer", () => {
     await runner.dispose();
   });
 });
+
+describe("shipped compound advisor policy", () => {
+  testIfDocker(
+    "every shipped tier completes ordinary work without advisor tools or guidance",
+    async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "compound-policy-"));
+      try {
+        for (const model of Object.keys(BUILT_IN_ROUTING_TABLE.tiers)) {
+          const runner = new RouterTurnRunner({
+            cwd,
+            model,
+            stubAdvisor: true,
+            everySteps: 99,
+            classify: async () => ({ route: "general" }),
+          });
+          try {
+            await startRunner(runner, []);
+            const turn = runner.turn({
+              type: "prompt",
+              message: "Answer with Done.",
+              behavior: "follow_up",
+            });
+            await waitFor(() => runner.pendingStreams.length === 1);
+            expect(runner.requestContexts[0]!.tools?.map((tool) => tool.name)).not.toContain(
+              "ask_advisor",
+            );
+            expect(runner.requestContexts[0]!.systemPrompt).not.toContain("ask_advisor");
+            runner.completeNext({ text: "Done.", usageTokens: 5 });
+            const terminal = await turn;
+            expect(terminal.type).toBe("complete");
+            expect(runner.advisorContextTexts).toEqual([]);
+            expect(JSON.stringify(terminal.state.agent.messages)).not.toContain(
+              "completion-review checkpoint",
+            );
+          } finally {
+            await runner.dispose();
+          }
+        }
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+testIfDocker(
+  "current policy governs resumed compound sessions and their nested workers",
+  async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "compound-resume-"));
+    const nestedCwd = join(cwd, "worker");
+    await mkdir(join(cwd, ".duet"));
+    await mkdir(nestedCwd);
+    try {
+      for (const model of Object.keys(BUILT_IN_ROUTING_TABLE.tiers)) {
+        const previousTable = structuredClone(BUILT_IN_ROUTING_TABLE);
+        previousTable.tiers[model]!.advisor.enabled = true;
+        const path = join(cwd, ".duet", "models.json");
+        await writeFile(path, JSON.stringify(previousTable));
+        const previous = new RouterTurnRunner({
+          cwd,
+          model,
+          stubAdvisor: true,
+          everySteps: 99,
+          classify: async () => ({ route: "general" }),
+        });
+        let saved;
+        try {
+          await startRunner(previous, []);
+          const turn = previous.turn({
+            type: "prompt",
+            message: "Review this task.",
+            behavior: "follow_up",
+          });
+          await waitFor(() => previous.pendingStreams.length === 1);
+          previous.completeNext({ tool: { name: "ask_advisor", arguments: {} }, usageTokens: 5 });
+          await waitFor(() => previous.pendingStreams.length === 1);
+          previous.completeNext({ text: "Reviewed.", usageTokens: 5 });
+          saved = (await turn).state;
+          expect(previous.advisorContextTexts).toHaveLength(1);
+          expect(JSON.stringify(saved.agent.messages)).toContain("Advisor review 1");
+        } finally {
+          await previous.dispose();
+        }
+
+        // The host refreshes its managed file before starting a replacement process.
+        await writeFile(path, JSON.stringify(BUILT_IN_ROUTING_TABLE));
+        const resumed = new RouterTurnRunner({
+          cwd,
+          model,
+          stubAdvisor: true,
+          everySteps: 99,
+          classify: async () => ({ route: "general" }),
+        });
+        try {
+          await resumed.start({ type: "start", state: saved });
+          expect(resumed.getState()!.agent.messages).toEqual(saved.agent.messages);
+          const turn = resumed.turn({
+            type: "prompt",
+            message: "Continue with Done.",
+            behavior: "follow_up",
+          });
+          await waitFor(() => resumed.pendingStreams.length === 1);
+          expect(resumed.requestContexts[0]!.tools?.map((tool) => tool.name)).not.toContain(
+            "ask_advisor",
+          );
+          expect(resumed.requestContexts[0]!.systemPrompt).not.toContain("ask_advisor");
+          resumed.completeNext({ text: "Done.", usageTokens: 5 });
+          expect((await turn).type).toBe("complete");
+          expect(resumed.requestContexts).toHaveLength(1);
+
+          const child = resumed.createStateAgentForTest({
+            kind: "agent",
+            name: "worker",
+            model,
+            cwd: nestedCwd,
+            prompt: "Return Worker done.",
+          });
+          const result = child.prompt();
+          await waitFor(() => resumed.pendingStreams.length === 1);
+          expect(resumed.requestContexts.at(-1)!.tools?.map((tool) => tool.name)).not.toContain(
+            "ask_advisor",
+          );
+          expect(resumed.requestContexts.at(-1)!.systemPrompt).not.toContain("ask_advisor");
+          resumed.completeNext({ text: "Worker done.", usageTokens: 5 });
+          expect(await result).toEqual({ type: "complete", result: "Worker done." });
+          expect(resumed.advisorContextTexts).toEqual([]);
+        } finally {
+          await resumed.dispose();
+        }
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);

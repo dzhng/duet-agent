@@ -262,7 +262,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
       // following an advisor consult never runs on the same model the advisor
       // just used.
       advisor: {
-        enabled: true,
+        enabled: false,
         target: { modelName: "fable", thinkingLevel: "medium" },
         minStepsBetween: 5,
       },
@@ -291,7 +291,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         },
       },
       advisor: {
-        enabled: true,
+        enabled: false,
         target: { modelName: "fable", thinkingLevel: "medium" },
         minStepsBetween: 5,
       },
