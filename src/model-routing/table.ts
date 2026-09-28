@@ -192,6 +192,8 @@ export interface RoutingTable {
 
 /** Concrete catalog capabilities injected by model-resolution composition sites. */
 export interface RoutingCatalogAdapter {
+  /** Advance retired saved selectors without changing virtual tier names or the file. */
+  normalizeSavedModelName?(name: string): string;
   /** True for every concrete shorthand or alias accepted by model resolution. */
   isCatalogName(name: string): boolean;
   /** True when the concrete model accepts image inputs. */

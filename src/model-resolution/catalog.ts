@@ -434,10 +434,12 @@ export function pinnedMemoryModel(provider: RouterProviderName): string {
   return `${provider}:${getProviderMemoryModel(provider)}`;
 }
 
-/** Recover family intent erased by older CLI canonicalization, only at resume.
- * Known replaced provider defaults retain their transport and recover the family;
- * unknown pins and historical message attribution stay untouched. */
-export function resumeModelSelection(modelName: string | undefined): string | undefined {
+/** Recover family intent from saved sessions and routing configuration.
+ * Known replaced targets retain their transport; unknown selections and historical
+ * message attribution stay untouched. */
+export function normalizeSavedModelSelection(modelName: string): string;
+export function normalizeSavedModelSelection(modelName: string | undefined): string | undefined;
+export function normalizeSavedModelSelection(modelName: string | undefined): string | undefined {
   const savedFamilies: Readonly<Record<string, FamilyName>> = {
     "opus-5": "opus",
     "opus-4.8": "opus",

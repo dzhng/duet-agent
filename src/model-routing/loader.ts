@@ -113,6 +113,20 @@ export async function loadRoutingTable(
       throw new Error(`Failed to parse routing table at ${path}: ${detail}`, { cause: error });
     }
     const table = parseTable(parsed, path);
+    const normalize = (name: string) =>
+      Object.hasOwn(table.tiers, name)
+        ? name
+        : (options.catalogAdapter.normalizeSavedModelName?.(name) ?? name);
+    for (const tier of Object.values(table.tiers)) {
+      for (const rule of Object.values(tier.routes)) {
+        rule.target.modelName = normalize(rule.target.modelName);
+        if (rule.visionFallbackModelName !== undefined) {
+          rule.visionFallbackModelName = normalize(rule.visionFallbackModelName);
+        }
+      }
+      tier.advisor.target.modelName = normalize(tier.advisor.target.modelName);
+    }
+    table.classifier.target.modelName = normalize(table.classifier.target.modelName);
     assertDomain(table, path, options.catalogAdapter);
     return { table, source: "file", path };
   }

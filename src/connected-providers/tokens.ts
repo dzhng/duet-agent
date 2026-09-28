@@ -1,4 +1,4 @@
-import { resumeModelSelection } from "../model-resolution/catalog.js";
+import { normalizeSavedModelSelection } from "../model-resolution/catalog.js";
 import { refreshConnectedCredentials } from "./refresh.js";
 import { connectedProviders } from "./registry.js";
 import {
@@ -157,7 +157,7 @@ function hasRetiredModelAvailability(
   );
   const prefix = `${provider}:`;
   return [...available].some((id) => {
-    const current = resumeModelSelection(`${prefix}${id}`)?.slice(prefix.length);
+    const current = normalizeSavedModelSelection(`${prefix}${id}`)?.slice(prefix.length);
     return current !== undefined && current !== id && !available.has(current);
   });
 }

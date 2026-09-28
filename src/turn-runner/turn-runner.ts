@@ -8,7 +8,7 @@ import {
 import { isContextOverflow, type ImageContent, type Usage } from "@earendil-works/pi-ai";
 import { resolveProviderApiKey } from "../model-resolution/duet-gateway.js";
 import { duetStreamFn } from "../model-resolution/models.js";
-import { resumeModelSelection, type TransportName } from "../model-resolution/catalog.js";
+import { normalizeSavedModelSelection, type TransportName } from "../model-resolution/catalog.js";
 import {
   ensureFreshConnectedTokens,
   markConnectedProviderReconnectNeeded,
@@ -3363,15 +3363,17 @@ export class TurnRunner {
   resolveTurnOptions(options?: TurnOptions, base?: TurnOptions): TurnOptions {
     return {
       model:
-        (options?.model === base?.model ? resumeModelSelection(options?.model) : options?.model) ??
-        resumeModelSelection(base?.model) ??
+        (options?.model === base?.model
+          ? normalizeSavedModelSelection(options?.model)
+          : options?.model) ??
+        normalizeSavedModelSelection(base?.model) ??
         this.config.model ??
         DEFAULT_CLI_MODEL,
       memoryModel:
         (options?.memoryModel === base?.memoryModel
-          ? resumeModelSelection(options?.memoryModel)
+          ? normalizeSavedModelSelection(options?.memoryModel)
           : options?.memoryModel) ??
-        resumeModelSelection(base?.memoryModel) ??
+        normalizeSavedModelSelection(base?.memoryModel) ??
         this.config.memoryModel ??
         DEFAULT_CLI_MEMORY_MODEL,
       thinkingLevel: options?.thinkingLevel ?? base?.thinkingLevel ?? this.config.thinkingLevel,
