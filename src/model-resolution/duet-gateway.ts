@@ -280,6 +280,19 @@ const LUNA_6_CONTRACT: PublishedContract = {
  */
 const MISSING_MODEL_CLONES: readonly MissingModelClone[] = [
   {
+    from: "anthropic/claude-sonnet-5",
+    to: "anthropic/claude-sonnet-5.5",
+    name: "Claude Sonnet 5.5",
+    byProvider: {
+      "vercel-ai-gateway": {
+        input: ["text", "image"],
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+        cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+      },
+    },
+  },
+  {
     from: "claude-opus-5",
     to: "claude-opus-5.5",
     name: "Claude Opus 5.5",

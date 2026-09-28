@@ -105,6 +105,15 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     },
   },
   {
+    family: "sonnet",
+    shorthand: "sonnet-5.5",
+    aliases: ["claude-sonnet-5.5", "anthropic/claude-sonnet-5.5"],
+    modelsByProvider: {
+      "duet-gateway": "anthropic/claude-sonnet-5.5",
+      "vercel-ai-gateway": "anthropic/claude-sonnet-5.5",
+    },
+  },
+  {
     // Gateway-only until anthropic-direct and openrouter serve Sonnet 5.
     family: "sonnet",
     shorthand: "sonnet-5",

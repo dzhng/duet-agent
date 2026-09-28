@@ -67,7 +67,7 @@ testIfDocker(
       async fetch(request) {
         const payload = (await request.json()) as { model: string };
         requests.push(payload.model);
-        if (payload.model === "anthropic/claude-sonnet-5") {
+        if (["anthropic/claude-sonnet-5", "anthropic/claude-sonnet-5.5"].includes(payload.model)) {
           parentCalls++;
           if (parentCalls < 3)
             return selectState(payload.model, parentCalls === 1 ? "work" : "done", parentCalls);
@@ -78,7 +78,12 @@ testIfDocker(
     process.env.DUET_GATEWAY_BASE_URL = server.url.toString();
     process.env.DUET_API_KEY = "controlled-workflow-key";
     try {
-      for (const location of ["mode", "active", "virtual"]) {
+      for (const [location, parentModel] of [
+        ["mode", "sonnet-5"],
+        ["active", "sonnet-5"],
+        ["virtual", "sonnet-5"],
+        ["active-5.5", "sonnet-5.5"],
+      ]) {
         parentCalls = 0;
         requests.length = 0;
         const cwd = join(dir, location);
@@ -100,7 +105,7 @@ testIfDocker(
         const original = baseline.receipts.find((item) => item.input === "opus")!.envelope;
         const state: TurnState = {
           ...(structuredClone(original.state) as unknown as TurnState),
-          options: { model: "sonnet-5", memoryModel: "gpt-5.6-luna" },
+          options: { model: parentModel, memoryModel: "gpt-5.6-luna" },
           mode: location === "mode" ? definition : "auto",
         };
         if (location !== "mode")
@@ -152,6 +157,7 @@ testIfDocker(
           await session.prompt({ message: "Continue the saved workflow through work and done." });
           const terminal = await session.waitForTerminal();
           expect(terminal.type).toBe("complete");
+          expect(requests).toContain(`anthropic/claude-${parentModel}`);
           expect(terminal.state.stateMachine?.terminal?.status).toBe("completed");
           expect(requests).toContain(
             location === "virtual" ? "anthropic/claude-haiku-4.5" : "openai/gpt-6-sol",

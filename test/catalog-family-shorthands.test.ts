@@ -39,10 +39,10 @@ const familyCases: readonly FamilyCase[] = [
   },
   {
     family: "sonnet",
-    latest: "sonnet-5",
+    latest: "sonnet-5.5",
     modelsByProvider: {
-      "duet-gateway": "anthropic/claude-sonnet-5",
-      "vercel-ai-gateway": "anthropic/claude-sonnet-5",
+      "duet-gateway": "anthropic/claude-sonnet-5.5",
+      "vercel-ai-gateway": "anthropic/claude-sonnet-5.5",
     },
   },
   {
@@ -199,4 +199,26 @@ test("openrouter memory model resolves to a defined luna spec with real cost", (
   expect(resolution.provider).toBe("openrouter");
   expect(resolution.cost.input).toBeGreaterThan(0);
   expect(getProviderMemoryModel("openrouter")).toBe(DEFAULT_CLI_MEMORY_MODEL);
+});
+
+test("Sonnet 5.5 resolves gateway capabilities without retargeting versioned sessions", () => {
+  for (const provider of ["duet-gateway", "vercel-ai-gateway"]) {
+    const model = resolveModelName(`${provider}:sonnet-5.5`);
+    expect(model.id).toBe("anthropic/claude-sonnet-5.5");
+    expect(model.api).toBe("anthropic-messages");
+    expect(model.input).toContain("image");
+    expect(model.reasoning).toBe(true);
+    expect(model.contextWindow).toBe(1_000_000);
+    expect(model.maxTokens).toBe(128_000);
+    expect(model.cost).toMatchObject({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 });
+    for (const version of ["5", "4.6"]) {
+      expect(resolveModelName(`${provider}:sonnet-${version}`).id).toBe(
+        `anthropic/claude-sonnet-${version}`,
+      );
+    }
+  }
+  expect(getModelCandidates("sonnet-5.5").map(({ provider }) => provider)).toEqual([
+    "duet-gateway",
+    "vercel-ai-gateway",
+  ]);
 });
