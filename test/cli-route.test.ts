@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runConfigCommand } from "../src/cli/config.js";
@@ -170,37 +170,56 @@ describe("runRouteCommand", () => {
     expect(classifierCalled).toBe(false);
   });
 
-  test("prints a read-only advisor preview for the newest stored fixture session", async () => {
-    let output = "";
-    const sessionsRoot = join(process.cwd(), "test", "fixtures", "advisor-preview");
-    const result = await runRouteCommand(["advisor-preview"], {
-      cwd: process.cwd(),
-      sessionsRoot,
-      memoryDbPath: false,
-      write: (text) => {
-        output += text;
-      },
-    });
+  testIfDocker(
+    "prints a read-only advisor preview for the newest stored fixture session",
+    async () => {
+      const cwd = await mkdtemp(join(tmpdir(), "duet-advisor-preview-policy-"));
+      try {
+        const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+        table.tiers.frontier!.advisor.enabled = true;
+        table.tiers.balanced!.advisor.enabled = true;
+        table.tiers.economy!.advisor.enabled = false;
+        await mkdir(join(cwd, ".duet"));
+        await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+        let output = "";
+        const sessionsRoot = join(process.cwd(), "test", "fixtures", "advisor-preview");
+        const result = await runRouteCommand(["advisor-preview"], {
+          cwd,
+          sessionsRoot,
+          memoryDbPath: false,
+          write: (text) => {
+            output += text;
+          },
+        });
 
-    if (!result || !("transcript" in result)) throw new Error("Expected advisor preview result");
-    expect(result.sessionId).toBe("session_fixture");
-    expect(result.tier).toBe("frontier");
-    expect(typeof result.tokens).toBe("number");
-    expect(result.estimates.map(({ tier, model, enabled }) => ({ tier, model, enabled }))).toEqual([
-      { tier: "frontier", model: "fable", enabled: true },
-      { tier: "balanced", model: "fable", enabled: true },
-      { tier: "economy", model: "sol", enabled: false },
-    ]);
-    expect(result.estimates.every((estimate) => typeof estimate.inputUsd === "number")).toBe(true);
-    expect(result.transcript).toContain("Design the model router before implementing it.");
-    expect(result.transcript).toContain('"systemPrompt"');
-    expect(result.transcript).toContain('"tools"');
-    expect(output).toContain("Session: session_fixture");
-    expect(output).toContain(`Transcript tokens: ${result.tokens}`);
-    expect(output).toContain("frontier: fable");
-    expect(output).toContain("economy: sol (disabled)");
-    expect(output).toContain(result.transcript);
-  });
+        if (!result || !("transcript" in result))
+          throw new Error("Expected advisor preview result");
+        expect(result.sessionId).toBe("session_fixture");
+        expect(result.tier).toBe("frontier");
+        expect(typeof result.tokens).toBe("number");
+        expect(
+          result.estimates.map(({ tier, model, enabled }) => ({ tier, model, enabled })),
+        ).toEqual([
+          { tier: "frontier", model: "fable", enabled: true },
+          { tier: "balanced", model: "fable", enabled: true },
+          { tier: "economy", model: "sol", enabled: false },
+        ]);
+        expect(result.estimates.every((estimate) => typeof estimate.inputUsd === "number")).toBe(
+          true,
+        );
+        expect(result.transcript).toContain("Design the model router before implementing it.");
+        expect(result.transcript).toContain('"systemPrompt"');
+        expect(result.transcript).toContain('"tools"');
+        expect(output).toContain("Session: session_fixture");
+        expect(output).toContain(`Transcript tokens: ${result.tokens}`);
+        expect(output).toContain("frontier: fable");
+        expect(output).toContain("economy: sol (disabled)");
+        expect(output).toContain(result.transcript);
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("runConfigCommand", () => {

@@ -28,10 +28,11 @@ testIfDocker(
             JSON.stringify(baseline.receipts.find((item) => item.input === "sol")!.envelope),
           );
         }
-        if (selection === "project-default") {
+        if (selection === "frontier" || selection === "project-default") {
           const table = structuredClone(BUILT_IN_ROUTING_TABLE);
           table.defaultTier = selection;
           table.tiers[selection] = structuredClone(table.tiers.frontier!);
+          table.tiers[selection]!.advisor.enabled = true;
           await mkdir(join(cwd, ".duet"));
           await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
         }
