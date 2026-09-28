@@ -11,12 +11,17 @@ import { createStateMachineState } from "./helpers/turn-runner-protocol.js";
 
 class AdmissionRunner extends TurnRunner {
   observedError = "";
+  stateAfterError: ReturnType<TurnRunner["getState"]>;
   firstCall = {
     name: "select_state_machine_state",
     arguments: {
       decision: { state: "meeting_scheduled" },
       override: { kind: "agent", state: { prompt: "private-sentinel" } },
     } as Record<string, unknown>,
+  };
+  secondCall = {
+    name: "select_state_machine_state",
+    arguments: { decision: { state: "meeting_scheduled" } } as Record<string, unknown>,
   };
   effects: unknown[] = [];
   protected override createTools(...args: Parameters<TurnRunner["createTools"]>) {
@@ -48,7 +53,10 @@ class AdmissionRunner extends TurnRunner {
       const error = [...context.messages]
         .reverse()
         .find((message) => message.role === "toolResult" && message.isError);
-      if (error) this.observedError = JSON.stringify(error.content);
+      if (error) {
+        this.observedError = JSON.stringify(error.content);
+        this.stateAfterError ??= this.getState();
+      }
       const message =
         this.calls <= 2
           ? createAssistantMessage({
@@ -56,12 +64,7 @@ class AdmissionRunner extends TurnRunner {
                 {
                   type: "toolCall",
                   id: `select-${this.calls}`,
-                  ...(this.calls === 1
-                    ? this.firstCall
-                    : {
-                        name: "select_state_machine_state",
-                        arguments: { decision: { state: "meeting_scheduled" } },
-                      }),
+                  ...(this.calls === 1 ? this.firstCall : this.secondCall),
                 },
               ],
             })
@@ -189,3 +192,47 @@ testIfDocker(
     }
   },
 );
+
+test("unknown first state is rejected before replacing the relay and corrected creation recovers", async () => {
+  const runner = new AdmissionRunner({
+    model: "anthropic:claude-opus-4-7",
+    memoryDbPath: false,
+    skillDiscovery: { includeDefaults: false },
+  });
+  const definition = {
+    name: "replacement",
+    prompt: "Work",
+    states: [
+      { name: "work", kind: "park" },
+      { name: "done", kind: "terminal", status: "completed" },
+    ],
+  };
+  runner.firstCall = {
+    name: "create_state_machine_definition",
+    arguments: { definition, firstState: '"work"', replaceActive: true },
+  };
+  runner.secondCall = {
+    name: "create_state_machine_definition",
+    arguments: { definition, firstState: "work", replaceActive: true },
+  };
+  try {
+    await runner.start({ type: "start", state: createStateMachineState("wait_before_retry") });
+    const result = await runner.turn({
+      type: "prompt",
+      message: "Replace and park.",
+      behavior: "follow_up",
+    });
+    expect(runner.observedError).toContain("Unknown state");
+    expect(runner.stateAfterError?.stateMachine?.currentState).toBe("wait_before_retry");
+    expect(runner.stateAfterError?.stateMachine?.terminal).toBeUndefined();
+    expect(result.type).toBe("complete");
+    expect(result.state.stateMachine?.currentState).toBe("work");
+    expect(
+      result.state.stateMachine?.history
+        .filter((e) => e.type === "state_started")
+        .map((e) => e.state),
+    ).toEqual(["work"]);
+  } finally {
+    await runner.dispose();
+  }
+});

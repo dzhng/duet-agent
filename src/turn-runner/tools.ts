@@ -1195,14 +1195,14 @@ function createStateMachineDefinitionTool(
         throw new Error(activeStateMachineCreateError(active));
       }
       assertValidDefinition(params.definition, baseCwd, scheduleValidation);
+      const firstState = requireDefinedState(params.definition, params.firstState);
       const result: TurnRunnerControlResult = {
         type: "create_state_machine_definition",
         definition: params.definition,
         firstState: params.firstState,
       };
-      const firstState = params.definition.states.find((state) => state.name === params.firstState);
       const text =
-        firstState?.kind === "park"
+        firstState.kind === "park"
           ? `${JSON.stringify(result, null, 2)}\n\n${parkNudge(firstState.name)}`
           : JSON.stringify(result, null, 2);
       return {
@@ -1341,6 +1341,16 @@ function createCurrentStateMachineStateTool(
   };
 }
 
+function requireDefinedState(definition: StateMachineDefinition, name: string): StateMachineState {
+  const state = definition.states.find((state) => state.name === name);
+  if (!state) {
+    throw new Error(
+      `Unknown state: ${name}. Valid states: ${definition.states.map((state) => state.name).join(", ")}`,
+    );
+  }
+  return state;
+}
+
 function assertValidSelectedState(
   decision: StateMachineRunnerDecision,
   definition: StateMachineDefinition | undefined,
@@ -1348,11 +1358,7 @@ function assertValidSelectedState(
 ): void {
   if (!definition) return;
 
-  const validStates = definition.states.map((state) => state.name);
-  const selectedState = definition.states.find((state) => state.name === decision.state);
-  if (!selectedState) {
-    throw new Error(`Unknown state: ${decision.state}. Valid states: ${validStates.join(", ")}`);
-  }
+  const selectedState = requireDefinedState(definition, decision.state);
 
   // A minimal terminal selection always escapes a broken state's inputs/cwd.
   // Extra control fields must not look accepted when no work will consume them.

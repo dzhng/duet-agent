@@ -992,6 +992,32 @@ describe("TurnRunner tools", () => {
     await expect(result).rejects.toThrow("replaceActive: true");
   });
 
+  test.each(["failed", "cancelled"])(
+    "accepts injected %s as the initial state",
+    async (firstState) => {
+      const create = createTurnRunnerTools({ cwd: process.cwd(), mode: "auto" }).find(
+        (tool) => tool.name === "create_state_machine_definition",
+      )!;
+      const result = await create.execute("create", {
+        definition: {
+          name: "escape",
+          prompt: "Stop",
+          states: [{ kind: "terminal", name: "done", status: "completed" }],
+        },
+        firstState,
+      });
+      expect(result.details).toMatchObject({
+        type: "create_state_machine_definition",
+        firstState,
+        definition: {
+          states: expect.arrayContaining([
+            { kind: "terminal", name: firstState, status: firstState },
+          ]),
+        },
+      });
+    },
+  );
+
   test("allows create-while-active when replaceActive is set", async () => {
     const activeSession = {
       definition: {
@@ -1081,6 +1107,7 @@ describe("TurnRunner tools", () => {
     if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
 
     const result = await createDefinitionTool.execute("tool-1", {
+      firstState: "done",
       definition: {
         name: "outreach",
         prompt: "Use for outreach work.",
@@ -1222,6 +1249,7 @@ describe("TurnRunner tools", () => {
     if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
 
     const result = await createDefinitionTool.execute("tool-1", {
+      firstState: "done",
       definition: {
         name: "outreach",
         prompt: "Use for outreach work.",
@@ -1254,6 +1282,7 @@ describe("TurnRunner tools", () => {
     if (!createDefinitionTool) throw new Error("create_state_machine_definition tool missing");
 
     const result = await createDefinitionTool.execute("tool-1", {
+      firstState: "done",
       definition: {
         name: "outreach",
         prompt: "Use for outreach work.",
