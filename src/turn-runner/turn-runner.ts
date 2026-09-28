@@ -2153,7 +2153,7 @@ export class TurnRunner {
         })}
 
         <system-reminder>
-        THIS TURN MUST END WITH A select_state_machine_state TOOL CALL. The state machine only advances when the tool call is actually emitted — nothing else, including text, thinking, or narration, advances it. Even if your conclusion is obvious ("this is internal plumbing, transition to X"), the conclusion is not the action; you must emit the select_state_machine_state tool call for state X in this same turn. Responses that narrate the transition without the tool call ("I should transition to X", "no user-facing post needed, moving on to Y", "the next state is Z") will be rejected and you will be re-prompted. This rule holds whether the state output is a user-facing artifact or purely internal plumbing — internal plumbing still requires the tool call to advance the machine, it just skips the user-facing message.
+        THIS PARENT PASS MUST END WITH ONE select_state_machine_state TOOL CALL. A parent pass accepts only one terminating control result. Do not combine this selection with ask_user_question or another selection in the same response. If user input is needed, select the park state alone now; after this completed-state transition to park, the runner automatically starts another parent pass, where you can call ask_user_question. Selecting park ends this pass, not that later opportunity to ask. Text or narration alone does not advance the state machine.
 
         ${retryInstruction ?? ""}
 
