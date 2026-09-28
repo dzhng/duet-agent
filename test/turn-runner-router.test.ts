@@ -1225,3 +1225,60 @@ testIfDocker(
     }
   },
 );
+
+testIfDocker(
+  "Balanced fresh and resumed work dispatches Sonnet except its specialized visual route",
+  async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "balanced-default-"));
+    try {
+      for (const route of ["plan", "implement", "general", "writing", "visual"] as const) {
+        const priorTable = structuredClone(BUILT_IN_ROUTING_TABLE);
+        priorTable.tiers.balanced.routes[route]!.target.modelName = "sol";
+        await mkdir(join(cwd, ".duet"), { recursive: true });
+        await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(priorTable));
+        const previous = new RouterTurnRunner({
+          cwd,
+          model: "balanced",
+          classify: async () => ({ route }),
+        });
+        let saved;
+        try {
+          await startRunner(previous, []);
+          saved = structuredClone(previous.getState()!);
+        } finally {
+          await previous.dispose();
+        }
+        await rm(join(cwd, ".duet", "models.json"));
+        for (const state of [undefined, saved]) {
+          const runner = new RouterTurnRunner({
+            cwd,
+            model: "balanced",
+            classify: async () => ({ route }),
+          });
+          try {
+            await runner.start({
+              type: "start",
+              ...(state ? { state } : { mode: "agent" as const }),
+            });
+            const turn = runner.turn({
+              type: "prompt",
+              message: "Complete this work.",
+              behavior: "follow_up",
+            });
+            await waitFor(() => runner.pendingStreams.length === 1);
+            expect(runner.requestModels[0]!.id).toContain(route === "visual" ? "kimi" : "sonnet");
+            expect(runner.requestContexts[0]!.tools?.map((tool) => tool.name)).not.toContain(
+              "ask_advisor",
+            );
+            runner.completeNext({ text: "Done.", usageTokens: 5 });
+            expect((await turn).state.options?.model).toBe("balanced");
+          } finally {
+            await runner.dispose();
+          }
+        }
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);

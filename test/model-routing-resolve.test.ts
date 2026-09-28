@@ -101,7 +101,7 @@ describe("model route resolution", () => {
     ).toEqual({
       tier: "balanced",
       route: "general",
-      modelName: "sol",
+      modelName: "sonnet",
       thinkingLevel: "medium",
       visionFallback: false,
       chain: ["balanced"],

@@ -275,11 +275,11 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         },
         plan: {
           description: FRONTIER_PLAN_DESCRIPTION,
-          target: { modelName: "sol", thinkingLevel: "medium" },
+          target: { modelName: "sonnet", thinkingLevel: "medium" },
         },
         implement: {
           description: IMPLEMENT_DESCRIPTION,
-          target: { modelName: "sol", thinkingLevel: "medium" },
+          target: { modelName: "sonnet", thinkingLevel: "medium" },
         },
         writing: {
           description: WRITING_DESCRIPTION,
@@ -287,7 +287,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         },
         general: {
           description: GENERAL_DESCRIPTION,
-          target: { modelName: "sol", thinkingLevel: "medium" },
+          target: { modelName: "sonnet", thinkingLevel: "medium" },
         },
       },
       advisor: {

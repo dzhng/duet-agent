@@ -73,10 +73,10 @@ describe("built-in model routing table", () => {
     });
     expect(targets("balanced")).toEqual({
       visual: { modelName: "kimi", thinkingLevel: "medium" },
-      plan: { modelName: "sol", thinkingLevel: "medium" },
-      implement: { modelName: "sol", thinkingLevel: "medium" },
+      plan: { modelName: "sonnet", thinkingLevel: "medium" },
+      implement: { modelName: "sonnet", thinkingLevel: "medium" },
       writing: { modelName: "sonnet", thinkingLevel: "medium" },
-      general: { modelName: "sol", thinkingLevel: "medium" },
+      general: { modelName: "sonnet", thinkingLevel: "medium" },
     });
     expect(targets("economy")).toEqual({
       implement: { modelName: "deepseek", thinkingLevel: "medium" },
