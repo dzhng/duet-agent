@@ -10,6 +10,7 @@ import {
 import { catalogModel, gatewayRoute, resolveGatewayModel } from "./duet-gateway.js";
 import {
   canonicalizeModelName,
+  normalizeSavedModelSelection,
   resolveFamilyShorthand,
   canonicalizeProviderModelId,
   clampModelOutputTokens,
@@ -94,6 +95,7 @@ export function resolveMeteredModelName(modelName: string): Model<any> {
 /** Shared concrete-catalog boundary used by every model-routing composition site. */
 export const routingCatalogAdapter: RoutingCatalogAdapter = {
   isCatalogName: isKnownShorthand,
+  normalizeSavedModelName: normalizeSavedModelSelection,
   modelAcceptsImages: (name: string) =>
     resolveModelName(
       isProviderPinnedModelName(name) ? name : `duet-gateway:${name}`,

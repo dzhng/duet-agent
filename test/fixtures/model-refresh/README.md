@@ -81,3 +81,12 @@ such an old-only list remains. No provider permission is inferred from the
 catalog and no durable version field is added. Concurrent launch callers wait
 for this refresh rather than using the still-valid old token. Controlled wire,
 coalescing, and no-repeat tests passed after their failing reproductions.
+
+The immutable `managed-routing-baseline.json` was emitted by Duet gateway
+commit `9b2dee1eef0ef1d5a35a1d7e988846db30f3db6a` through its real
+`MANAGED_ROUTING_TABLE` export, including provider overlays. The independently
+updated published agent 0.3.27 rejected its retired Sol and Opus targets before
+any request. The routing load regression proves that the next agent accepts
+these bytes, dispatches current targets, and leaves the file and routing policy
+unchanged. Agent and gateway update rails are independent; qualifying only an
+old agent with a new gateway table misses this inverse ordering.
