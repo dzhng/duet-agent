@@ -21,7 +21,7 @@ const judgeTool: Tool<typeof judgeSchema> = {
 // vercel-ai-gateway with AI_GATEWAY_API_KEY, or openrouter with
 // OPENROUTER_API_KEY). Pinning the provider here would break the docker
 // eval container, which only has gateway-style credentials.
-const judgeModel = "opus-4.7";
+const judgeModel = "gpt-6-sol";
 
 export async function judge(input: {
   prompt: string;
@@ -32,7 +32,7 @@ export async function judge(input: {
   signal?: AbortSignal;
 }): Promise<JudgeResult> {
   return generateStructuredOutput({
-    model: input.model ?? judgeModel,
+    model: input.model ?? process.env.JUDGE_MODEL ?? judgeModel,
     signal: input.signal,
     tool: judgeTool,
     systemPrompt:

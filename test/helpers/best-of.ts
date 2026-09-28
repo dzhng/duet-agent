@@ -14,6 +14,7 @@ export async function bestOfAttempts(attempts: number, run: () => Promise<void>)
       await run();
       return;
     } catch (error) {
+      console.error(`Eval attempt ${attempt}/${attempts} failed:`, error);
       lastFailure = error;
     }
   }
