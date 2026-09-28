@@ -174,7 +174,7 @@ describe("TUI Ctrl+C pops queued follow-up", () => {
       expect(harness.inputField.plainText).toBe(`describe ${fixture}`);
 
       harness.mockInput.pressEnter();
-      await harness.flush();
+      await harness.waitForPrompt({ count: 2 });
 
       const lastPrompt = harness.promptCalls.at(-1);
       expect(lastPrompt?.images).toEqual([TINY_PNG]);
