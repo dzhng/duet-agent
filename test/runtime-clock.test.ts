@@ -24,6 +24,7 @@ class InspectableTurnRunner extends TurnRunner {
     );
     if (!tool) throw new Error("create_state_machine_definition tool missing");
     await tool.execute("definition-1", {
+      firstState: "wake",
       definition: {
         name: "clock seam",
         prompt: "Exercise the injected schedule clock.",
