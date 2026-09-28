@@ -52,6 +52,11 @@ export function createSystemPromptWithAppendedLayers(input: {
     input.config.systemInstructions,
     ...input.systemPromptFiles,
     TOOL_EXECUTION_SYSTEM_PROMPT,
+    dedent`
+      <completion_reporting>
+      Match completion claims to the evidence. Distinguish implemented changes, checks with observed results, and relevant behavior that remains unverified. Describe code inspection as inspection. Leave unobserved failure causes unknown, or label a proposed cause as a hypothesis. Mention relevant limitations briefly; they do not by themselves justify expanding the user's requested scope.
+      </completion_reporting>
+    `,
     cwdSystemPrompt(input.config.cwd ?? process.cwd()),
     createSkillsSystemPrompt(input.skills),
     ...input.append,
