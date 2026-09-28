@@ -15,7 +15,7 @@
       "advisor": {
         "enabled": true,
         "target": {
-          "modelName": "fable-5",
+          "modelName": "fable-5.1",
           "thinkingLevel": "high"
         },
         "minStepsBetween": 5

@@ -323,6 +323,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
   // mirroring how the TUI keeps the slash form in the message and how
   // `/skill-name` references survive the dispatch.
   if (!useTui && prompt) {
+    const configuredModel = config.model;
     const { residue } = applyInlineSlashCommandsToCliConfig(
       prompt,
       config,
@@ -332,7 +333,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     // Sync the cached display name so the boot summary lines reflect any
     // inline override, including whether the retained selection is routed.
     modelName = config.model ?? modelName;
-    if (modelName !== modelResolution.modelName) {
+    if (config.model !== configuredModel) {
       modelResolution = resolveCliModel(modelName, dotenvKeys, routingTable);
     }
     // Dispatch the prompt with the slash forms stripped out. When the
@@ -359,7 +360,11 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     }
   }
 
-  const manager = new SessionManager(config);
+  const manager = new SessionManager({
+    ...config,
+    model: config.model ?? modelResolution.modelName,
+    memoryModel: config.memoryModel ?? memoryModelResolution.modelName,
+  });
   if (!useTui) {
     // Non-TUI runs (one-shot prompt, piped stdin) stream events as JSONL so
     // CI scripts can parse them. The TUI subscribes to its own rendering
@@ -384,6 +389,8 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
     let resumedHistory: import("@earendil-works/pi-agent-core").AgentMessage[] | undefined;
 
     if (resumeSessionId) {
+      if (modelResolution.source !== "explicit") session.config.model = undefined;
+      if (memoryModelResolution.source !== "explicit") session.config.memoryModel = undefined;
       // Force-load the persisted state.json so setup hands the resumed
       // state to the runner and any TUI history replays before new turns.
       await session.hydrate();
@@ -395,6 +402,10 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
       await session.start();
       modelName = session.config.model ?? modelName;
       memoryModelName = session.config.memoryModel ?? memoryModelName;
+      // Explicit launch preferences survive clear and subsequent picker resumes,
+      // including concrete selections recovered from an older saved command.
+      if (modelResolution.source === "explicit") manager.config.model = modelName;
+      if (memoryModelResolution.source === "explicit") manager.config.memoryModel = memoryModelName;
       if (!useTui) {
         process.stderr.write(`Model: ${modelName}\n`);
         process.stderr.write(
@@ -465,6 +476,7 @@ export async function runRunCommand(args: string[], pkg: PackageMetadata): Promi
           // without `--resume`.
           await activeSession.dispose();
           activeSession = manager.create(config.mode ? { mode: config.mode } : {});
+          await activeSession.start();
           activeHistory = undefined;
           activeIsResume = false;
           continue;

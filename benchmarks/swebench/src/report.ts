@@ -1,7 +1,13 @@
 import { readFile } from "node:fs/promises";
 
 import type { RolloutAttempt, RolloutFailureKind } from "./artifacts.js";
-import type { CampaignConfigName } from "./config-override.js";
+import { CAMPAIGN_CONFIGS, type CampaignConfigName } from "./config-override.js";
+import {
+  canonicalizeModelName,
+  normalizeSavedModelSelection,
+  SHORTHANDS_BY_FAMILY,
+  transportModelId,
+} from "../../../src/model-resolution/catalog.js";
 import type { ManifestEntry } from "./manifest.js";
 import { lintPatch, type PatchLint } from "./patch-policy.js";
 import { parseScoringModelName, type ScoringIdentity } from "./scoring-identity.js";
@@ -106,15 +112,15 @@ export interface ConsultationEvidenceReport {
   trial: number;
   /** Primary ITT outcome retained regardless of consultation status. */
   outcome: PairedOutcome;
-  /** Whether the configured model actually returned advice on this enabled attempt. */
+  /** Whether the configured advisor family returned advice on this enabled attempt. */
   status: ConsultationStatus;
-  /** Concrete advisor model configured for this enabled arm. */
+  /** Exact observed advisor ids for this role (comma-separated), or its current target if none. */
   expectedModel: string;
   /** Every advisor tool completion, including unsuccessful attempts. */
   totalCalls: number;
-  /** Successful calls that returned the configured concrete advisor. */
+  /** Successful calls that returned the configured advisor family. */
   successfulExpectedModelCalls: number;
-  /** Successful calls to another model, which do not enter the consultation subset. */
+  /** Successful calls to another family, which do not enter the consultation subset. */
   successfulOtherModels: Record<string, number>;
   /** Cadence-gated attempts. */
   rateLimited: number;
@@ -145,7 +151,7 @@ export interface ConsultationContextReport {
 }
 
 export interface ConfigConsultationReport {
-  /** Concrete advisor required for an attempt to enter the descriptive subset. */
+  /** Current concrete advisor target; historical members of its family also qualify. */
   expectedModel: string;
   /** Enabled attempts with at least one successful expected-model call. */
   successfulAttempts: number;
@@ -210,10 +216,11 @@ const COMPARISONS: [CampaignConfigName, CampaignConfigName][] = [
   ["kimi-pure", "kimi-fable-advisor"],
 ];
 
-const EXPECTED_ADVISORS: Partial<Record<CampaignConfigName, string>> = {
-  "glm-kimi-advisor": "moonshotai/kimi-k3",
-  "kimi-fable-advisor": "anthropic/claude-fable-5",
-};
+const EXPECTED_ADVISORS = Object.fromEntries(
+  Object.entries(CAMPAIGN_CONFIGS)
+    .filter(([, config]) => config.advisorEnabled)
+    .map(([name, config]) => [name, transportModelId("duet-gateway", config.advisorModel)!]),
+);
 
 /** Build paired statistics without excluding failed or missing outcomes. */
 export function buildCampaignReport(
@@ -591,9 +598,16 @@ function consultationEvidence(
   attempt: ReportAttempt | undefined,
 ): ConsultationEvidenceReport {
   const calls = attempt?.telemetry?.advisorCalls;
-  const successfulExpectedModelCalls = calls?.successByModel[expectedModel] ?? 0;
+  const successes = Object.entries(calls?.successByModel ?? {});
+  const successfulExpectedModels = successes.filter(([model]) =>
+    sameModelFamily(model, expectedModel),
+  );
+  const successfulExpectedModelCalls = successfulExpectedModels.reduce(
+    (total, [, count]) => total + count,
+    0,
+  );
   const successfulOtherModels = Object.fromEntries(
-    Object.entries(calls?.successByModel ?? {}).filter(([model]) => model !== expectedModel),
+    successes.filter(([model]) => !sameModelFamily(model, expectedModel)),
   );
   const status: ConsultationStatus = !attempt?.telemetry
     ? "missing_telemetry"
@@ -608,7 +622,7 @@ function consultationEvidence(
     trial,
     outcome,
     status,
-    expectedModel,
+    expectedModel: successfulExpectedModels.map(([model]) => model).join(", ") || expectedModel,
     totalCalls: calls?.total ?? 0,
     successfulExpectedModelCalls,
     successfulOtherModels,
@@ -695,8 +709,9 @@ function incrementConsultationSummary(
     0,
   );
   summary.exactAdvisorTokens +=
-    telemetry?.usageByModel.find((entry) => entry.model === summary.expectedModel)?.usage
-      .totalTokens ?? 0;
+    telemetry?.usageByModel
+      .filter((entry) => sameModelFamily(entry.model, summary.expectedModel))
+      .reduce((total, entry) => total + entry.usage.totalTokens, 0) ?? 0;
 }
 
 function formatOutcome(outcome: PairedOutcome): string {
@@ -763,11 +778,24 @@ function executorCostUsd(
   config: CampaignConfigName,
   telemetry: RolloutTelemetry | undefined,
 ): number {
-  const executor = config.startsWith("glm-") ? "glm-5.2" : "kimi-k3";
-  return Object.entries(telemetry?.costUsdByModel ?? {}).reduce(
-    (total, [model, cost]) =>
-      total + (model === executor || model.endsWith(`/${executor}`) ? cost : 0),
-    0,
+  const executor = CAMPAIGN_CONFIGS[config].executorModel;
+  // Compare family identity without changing the exact ids in historical telemetry.
+  return Object.entries(telemetry?.costUsdByModel ?? {}).reduce((total, [model, cost]) => {
+    return total + (sameModelFamily(model, executor) ? cost : 0);
+  }, 0);
+}
+
+/** Role classification accepts historical family members while evidence retains exact ids. */
+function sameModelFamily(left: string, right: string): boolean {
+  const canonical = (name: string) =>
+    canonicalizeModelName(normalizeSavedModelSelection(name.split("/").at(-1)!));
+  const a = canonical(left);
+  const b = canonical(right);
+  return (
+    a === b ||
+    Object.values(SHORTHANDS_BY_FAMILY).some(
+      (members) => members.includes(a) && members.includes(b),
+    )
   );
 }
 

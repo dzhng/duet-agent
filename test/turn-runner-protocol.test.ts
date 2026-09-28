@@ -808,7 +808,6 @@ describe("TurnRunner protocol scenarios", () => {
   test("uses optional state agent system prompts without injecting state-machine context", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("research_prospect");
-    await runner.start({ type: "start", state: turnState });
     if (!turnState.stateMachine) throw new Error("Expected state machine session");
     turnState.stateMachine.definition = {
       ...turnState.stateMachine.definition,
@@ -818,6 +817,7 @@ describe("TurnRunner protocol scenarios", () => {
           : state,
       ),
     };
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { state: "waiting_for_reply" },
@@ -857,7 +857,6 @@ describe("TurnRunner protocol scenarios", () => {
       ],
     });
     const turnState = createStateMachineState("research_prospect");
-    await runner.start({ type: "start", state: turnState });
     if (!turnState.stateMachine) throw new Error("Expected state machine session");
     turnState.stateMachine.definition = {
       ...turnState.stateMachine.definition,
@@ -867,6 +866,7 @@ describe("TurnRunner protocol scenarios", () => {
           : state,
       ),
     };
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push({
       type: "select_state_machine_state",
       decision: { state: "research_prospect" },
@@ -933,7 +933,6 @@ describe("TurnRunner protocol scenarios", () => {
   test("renders parent-provided transition input into agent prompts", async () => {
     const { runner } = createTurnRunner();
     const turnState = createStateMachineState("research_prospect");
-    await runner.start({ type: "start", state: turnState });
     assert(turnState.stateMachine);
     turnState.stateMachine.definition = {
       ...turnState.stateMachine.definition,
@@ -953,6 +952,7 @@ describe("TurnRunner protocol scenarios", () => {
           : state,
       ),
     };
+    await runner.start({ type: "start", state: turnState });
     runner.controlResults.push(
       {
         type: "select_state_machine_state",

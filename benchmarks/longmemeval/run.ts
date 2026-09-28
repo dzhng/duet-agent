@@ -71,7 +71,7 @@ function parseArgs(): CliOpts {
   let dataset = "benchmarks/longmemeval/data/longmemeval_oracle.json";
   let limit = 20;
   let runName = "smoke-oracle-20";
-  let model = "gpt-5.4-mini";
+  let model = "luna";
   let concurrency = 8;
   let stratify = false;
   let seed = 42;

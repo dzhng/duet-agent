@@ -181,7 +181,12 @@ import {
   type SubagentRun,
   type SubagentSpec,
 } from "./subagent.js";
-import { completeTurn, copyOptionalArray, createInitialTurnState } from "./turn-state.js";
+import {
+  completeTurn,
+  copyOptionalArray,
+  createInitialTurnState,
+  restoreSavedExecutionSelections,
+} from "./turn-state.js";
 import {
   DEFAULT_TRANSIENT_RETRY_POLICY,
   lastMessageIsTransientFailure,
@@ -790,13 +795,7 @@ export class TurnRunner {
       phaseTimings[name] = performance.now() - startedAt;
     };
     const mode = command.mode ?? this.config.mode ?? "auto";
-    const startOptions = command.options;
-    const state = command.state
-      ? {
-          ...command.state,
-          options: this.resolveTurnOptions(startOptions, command.state.options),
-        }
-      : createInitialTurnState(mode, this.resolveTurnOptions(startOptions));
+    let state = command.state ?? createInitialTurnState(mode, command.options);
     // These phases populate disjoint runner/global state: connected-provider
     // credentials, memory persistence/cache, MCP runtime, routing table, and
     // skill context. Parent-agent construction below is their first consumer.
@@ -806,7 +805,23 @@ export class TurnRunner {
       measure("connected_tokens", () => ensureFreshConnectedTokens()),
       measure("memory", () => this.ensureMemoryLoaded()),
       measure("mcp", () => this.ensureMcpServersConnected(command.mcpServers)),
-      measure("model_router", () => this.initializeModelRouter(state.options?.model)),
+      measure("model_router", async () => {
+        const { table } = await loadRoutingTable({
+          cwd: this.config.cwd ?? process.cwd(),
+          catalogAdapter: routingCatalogAdapter,
+        });
+        // A saved chat selection may belong to this table rather than the catalog.
+        if (command.state) {
+          state = restoreSavedExecutionSelections(
+            command.state,
+            command.options,
+            table,
+            normalizeSavedModelSelection,
+          );
+        }
+        state = { ...state, options: this.resolveTurnOptions(state.options) };
+        this.initializeModelRouter(state.options?.model, table);
+      }),
       measure("skills", () => this.ensureSkillsLoaded()),
     ]);
     const startupFailure = startupResults.find(
@@ -3476,18 +3491,10 @@ export class TurnRunner {
    */
   resolveTurnOptions(options?: TurnOptions, base?: TurnOptions): TurnOptions {
     return {
-      model:
-        (options?.model === base?.model
-          ? normalizeSavedModelSelection(options?.model)
-          : options?.model) ??
-        normalizeSavedModelSelection(base?.model) ??
-        this.config.model ??
-        DEFAULT_CLI_MODEL,
+      model: options?.model ?? base?.model ?? this.config.model ?? DEFAULT_CLI_MODEL,
       memoryModel:
-        (options?.memoryModel === base?.memoryModel
-          ? normalizeSavedModelSelection(options?.memoryModel)
-          : options?.memoryModel) ??
-        normalizeSavedModelSelection(base?.memoryModel) ??
+        options?.memoryModel ??
+        base?.memoryModel ??
         this.config.memoryModel ??
         DEFAULT_CLI_MEMORY_MODEL,
       thinkingLevel: options?.thinkingLevel ?? base?.thinkingLevel ?? this.config.thinkingLevel,
@@ -3737,23 +3744,18 @@ export class TurnRunner {
     return modelWindow !== undefined ? Math.min(userValue, modelWindow) : userValue;
   }
 
-  /** Load the project table and build the parent router when the persisted selection is virtual. */
-  private async initializeModelRouter(modelName: string | undefined): Promise<void> {
+  /** Build the parent router from the loaded table and recovered selection. */
+  private initializeModelRouter(modelName: string | undefined, table: RoutingTable): void {
     this.modelRouter = undefined;
-    this.routingTable = undefined;
+    this.routingTable = table;
     this.advisorPolicy = undefined;
-    const loaded = await loadRoutingTable({
-      cwd: this.config.cwd ?? process.cwd(),
-      catalogAdapter: routingCatalogAdapter,
-    });
-    this.routingTable = loaded.table;
     // Publish the tier against the freshly loaded table: an operator-defined
     // tier exists only there, so a check against any earlier snapshot clears
     // it and the session's gateway traffic goes out unattributed.
     this.syncActiveDuetTier(modelName);
-    if (!modelName || !isVirtualModel(modelName, loaded.table)) return;
-    this.advisorPolicy = loaded.table.tiers[modelName]!.advisor;
-    this.modelRouter = this.createBoundModelRouter(modelName, loaded.table, routingCatalogAdapter);
+    if (!modelName || !isVirtualModel(modelName, table)) return;
+    this.advisorPolicy = table.tiers[modelName]!.advisor;
+    this.modelRouter = this.createBoundModelRouter(modelName, table, routingCatalogAdapter);
   }
 
   private createBoundModelRouter(

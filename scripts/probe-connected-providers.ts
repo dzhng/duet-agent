@@ -1,4 +1,3 @@
-// Slice 00 live probe (specs/connected-providers/slices/00-live-probe.md in duet).
 // Verifies which models a ChatGPT plan serves through the codex transport and
 // whether a Duet-shaped system prompt passes unaltered. Reads credentials from
 // ~/.duet/codex-probe-auth.json (written by the device-code login), refreshing
@@ -12,11 +11,11 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const AUTH_PATH = join(process.env.HOME ?? "", ".duet", "codex-probe-auth.json");
-const DEFAULT_IDS = ["gpt-5.5", "gpt-6-sol", "gpt-6-sol", "gpt-6-luna"];
+const DEFAULT_IDS = ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"];
 
 // Representative Duet-shaped system prompt: multi-section, imperative, with
 // tool-use instructions — close enough to detect instruction rewriting or
-// rejection. The formal slice-00 pass swaps in the real builder output.
+// rejection. Live qualification can substitute the production prompt builder.
 const SYSTEM_PROMPT = [
   "You are Duet, an autonomous coding agent operating inside a user's workspace VM.",
   "Follow the user's instructions exactly. Prefer small, verifiable steps.",

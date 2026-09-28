@@ -379,8 +379,8 @@ export function shorthandForTransportModel(
 
 /**
  * Normalize a `provider:modelId` model id against catalog aliases so users can
- * pass familiar variants like `claude-opus-4-7` even when the underlying
- * provider catalog spells it `claude-opus-4.7`. Falls back to the input id
+ * pass familiar variants like `claude-opus-5-5` even when the underlying
+ * provider catalog spells it `claude-opus-5.5`. Falls back to the input id
  * when no alias matches so unknown ids reach the provider lookup unchanged.
  */
 export function canonicalizeProviderModelId(provider: RouterProviderName, modelId: string): string {
@@ -460,6 +460,7 @@ export function normalizeSavedModelSelection(modelName: string | undefined): str
         .toLowerCase()
         .replace(/^(?:anthropic|openai|xai|x-ai|zai|z-ai)\//, "")
         .replace(/^claude-/, "")
+        .replace(/(\d)-(?=\d)/g, "$1.")
     ];
   if (!family) return modelName;
   if (separator === -1) return family;

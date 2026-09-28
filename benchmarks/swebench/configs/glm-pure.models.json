@@ -6,7 +6,7 @@
         "general": {
           "description": "Backend, systems, data, CLI, and other implementation or debugging work, including tests and code changes.",
           "target": {
-            "modelName": "glm-5.2",
+            "modelName": "glm-5.3",
             "thinkingLevel": "xhigh"
           },
           "visionFallbackModelName": "kimi-k3"

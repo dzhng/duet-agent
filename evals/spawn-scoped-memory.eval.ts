@@ -95,7 +95,7 @@ describe("spawn-scoped memory", () => {
       const dir = await mkdtemp(join(tmpdir(), "duet-spawn-memory-"));
       const runner = new ScopedMemorySpawnRunner({
         sessionId: "parent",
-        model: "anthropic:claude-opus-5.5",
+        model: process.env.EVAL_MODEL ?? "opus",
         memoryDbPath: join(dir, "memory.db"),
         skillDiscovery: { includeDefaults: false },
       });
