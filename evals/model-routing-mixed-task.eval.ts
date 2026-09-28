@@ -14,10 +14,12 @@ import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 import { bestOfAttempts } from "../test/helpers/best-of.js";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
+import { exportRoutingTable } from "../src/model-routing/loader.js";
+import { classifierPath } from "../src/model-routing/classifier.js";
+import { resolveMeteredModelName } from "../src/model-resolution/resolver.js";
 
 const KIMI_ID = "moonshotai/kimi-k3";
 const SOL_ID = "openai/gpt-6-sol";
-const LUNA_ID = "openai/gpt-6-luna";
 const FABLE_ID = "anthropic/claude-fable-5.1";
 const MAX_SWITCHES = 4;
 
@@ -162,9 +164,14 @@ describe("mixed-task model routing promotion", () => {
 
   async function runMixedTaskScenario(): Promise<void> {
     // Deliberately ignore EVAL_MODEL: this promotion case must exercise --model frontier
-    // semantics through the real built-in table, real Luna classifier, and production cadence.
+    // semantics through the real built-in table, configured classifier, and production cadence.
     const cwd = await mkdtemp(join(tmpdir(), "duet-model-routing-mixed-task-"));
     await seedTask(cwd);
+    const { table } = await exportRoutingTable({ cwd, force: false });
+    const classifierModelId =
+      classifierPath(table.classifier.target) === "evaluation"
+        ? table.classifier.target.modelName
+        : resolveMeteredModelName(table.classifier.target.modelName).id;
 
     const runner = new TurnRunner({
       model: "frontier",
@@ -317,22 +324,22 @@ describe("mixed-task model routing promotion", () => {
       }
 
       const parentModels = new Set(calls.map((call) => call.model));
-      expect(parentModels.has(LUNA_ID)).toBe(false);
+      expect(parentModels.has(classifierModelId)).toBe(false);
       expect(parentModels.has(FABLE_ID)).toBe(false);
       expect(calls.some((call) => call.tool === "ask_advisor")).toBe(false);
       expect([...parentModels].every((model) => model === KIMI_ID || model === SOL_ID)).toBe(true);
 
       const kimiUsage = usageByModel.find((entry) => entry.model === KIMI_ID);
       const solUsage = usageByModel.find((entry) => entry.model === SOL_ID);
-      const classifierUsage = usageByModel.find((entry) => entry.model === LUNA_ID);
+      const classifierUsage = usageByModel.find((entry) => entry.model === classifierModelId);
       expect(kimiUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
       expect(solUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
-      // Memory is disabled and Luna never executes parent work in this scenario,
+      // Memory is disabled and the classifier never executes parent work in this scenario,
       // so this row can only come from the real route classifier.
       expect(classifierUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
-      expect(usageByModel.every((entry) => [KIMI_ID, SOL_ID, LUNA_ID].includes(entry.model))).toBe(
-        true,
-      );
+      expect(
+        usageByModel.every((entry) => [KIMI_ID, SOL_ID, classifierModelId].includes(entry.model)),
+      ).toBe(true);
       expect(terminal.turnUsage).toBeDefined();
       expect(usageByModel.reduce((total, entry) => total + entry.usage.totalTokens, 0)).toBe(
         terminal.turnUsage!.totalTokens,
