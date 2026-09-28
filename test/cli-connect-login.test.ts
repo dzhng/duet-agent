@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { OAuthAuth, ProviderAuthInteraction } from "@earendil-works/pi-ai";
 import { runConnectCommand } from "../src/cli/connect.js";
-import { FAKE_ISSUER_ENV } from "../src/connected-providers/fake-issuer.js";
+import { FAKE_ISSUER_ENV, resetFakeIssuer } from "../src/connected-providers/fake-issuer.js";
 import type { ConnectedProviderStore, ConnectionRecord } from "../src/connected-providers/store.js";
 import { createConnectedProviderStore } from "../src/connected-providers/store.js";
 import { testIfDocker } from "./helpers/docker-only.js";
@@ -133,6 +133,7 @@ describe("duet connect login", () => {
         });
         persisted = await store.read();
       } finally {
+        resetFakeIssuer();
         server.stop(true);
         await rm(homeDir, { recursive: true, force: true });
       }
