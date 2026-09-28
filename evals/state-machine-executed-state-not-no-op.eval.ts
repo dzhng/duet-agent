@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import assert from "node:assert";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  createExecutedStateCliFixture,
+  implementFixtureVersion,
+} from "./fixtures/executed-state-cli.js";
 import dedent from "dedent";
 import { startTurn } from "../test/helpers/turn-runner-protocol.js";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
@@ -121,6 +127,7 @@ class MockedSubAgentRunner extends TurnRunner {
     return {
       prompt: async (): Promise<SubagentResult> => {
         if (interruptedReason !== undefined) return { type: "interrupted" };
+        if (input.state.name === "implementing") await implementFixtureVersion(this.config.cwd!);
         return { type: "complete", result: fake };
       },
       interrupt: (reason) => {
@@ -138,9 +145,11 @@ interface DecisiveTurnResult {
   parentText: string;
 }
 
-async function runDecisiveTurn(): Promise<DecisiveTurnResult> {
+async function runDecisiveTurn(trial: number): Promise<DecisiveTurnResult> {
+  const cwd = await createExecutedStateCliFixture();
   const definition = buildDefinition();
   const runner = new MockedSubAgentRunner({
+    cwd,
     model,
     mode: definition,
     skillDiscovery: { includeDefaults: false },
@@ -163,7 +172,9 @@ async function runDecisiveTurn(): Promise<DecisiveTurnResult> {
   let consultedLiveState = false;
   const parentText: string[] = [];
 
+  const events: TurnEvent[] = [];
   runner.subscribe((event: TurnEvent) => {
+    events.push(event);
     if (event.type !== "step") return;
     // Only watch the parent orchestrator. Sub-agent steps carry an origin tag.
     if (event.origin) return;
@@ -183,13 +194,43 @@ async function runDecisiveTurn(): Promise<DecisiveTurnResult> {
     }
   });
 
-  const started = await startTurn(runner, {
-    mode: definition,
-    prompt: `Run the dev workflow for this task: ${CONCRETE_TASK} The plan/spec is done — select the implementing state to build it.`,
-  });
-  await started.turn;
-
-  return { selectStates, consultedLiveState, parentText: parentText.join("\n") };
+  try {
+    const started = await startTurn(runner, {
+      mode: definition,
+      prompt: `Run the dev workflow for this task: ${CONCRETE_TASK} The plan/spec is done — select the implementing state to build it.`,
+    });
+    await started.turn;
+    return { selectStates, consultedLiveState, parentText: parentText.join("\n") };
+  } finally {
+    try {
+      const artifacts = process.env.EVAL_ARTIFACT_DIR;
+      if (artifacts) {
+        await mkdir(artifacts, { recursive: true });
+        await writeFile(
+          join(artifacts, `executed-state-trial-${trial}.json`),
+          JSON.stringify(
+            {
+              trial,
+              cwd,
+              model,
+              events,
+              selectStates,
+              consultedLiveState,
+              parentText,
+            },
+            null,
+            2,
+          ),
+        );
+      }
+    } finally {
+      try {
+        await runner.dispose();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    }
+  }
 }
 
 describe("executed state is not misread as a no-op", () => {
@@ -203,7 +244,7 @@ describe("executed state is not misread as a no-op", () => {
       const failures: Array<{ trial: number } & DecisiveTurnResult> = [];
 
       for (let trial = 1; trial <= TRIALS; trial++) {
-        const result = await runDecisiveTurn();
+        const result = await runDecisiveTurn(trial);
 
         const cancelledNoOp = result.selectStates.includes(CANCEL_TERMINAL);
         // Reaching reviewing/done can only happen if the parent treated
