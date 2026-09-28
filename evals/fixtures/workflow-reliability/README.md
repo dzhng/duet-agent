@@ -20,3 +20,12 @@ Select a scenario with the test runner's `-t` filter and a tier with `EVAL_MODEL
 The caller owns the multi-tier/repetition matrix; this eval never retries a red
 attempt. A failed provider variant is judged on truthful incomplete reporting,
 while successful search and release variants require independent execution proof.
+
+Report judgment is separate from task execution. The
+[report evaluator](../../helpers/workflow-report.ts) reads the final assistant
+acknowledgment, completed tool inputs/results, and exact user instructions; raw
+streaming events remain evidence but are not duplicated into its prompt. It
+writes the exact judgment input before calling the explicitly selected model,
+then records an accepted report, a rejected report, or an unavailable evaluator.
+An unavailable evaluator is rejudged from saved evidence, without repeating the
+task or overwriting the original failure.
