@@ -373,7 +373,7 @@ describe("TurnRunner per-model cost breakdown", () => {
 
       expect(terminal.usageByModel).toEqual([
         {
-          model: "openai/gpt-5.6-luna",
+          model: "openai/gpt-6-luna",
           transport: { provider: "duet-gateway", billing: "metered" },
           usage: CHAT_CLASSIFIER_USAGE,
         },
