@@ -1,3 +1,4 @@
+import { judgeCookieFilterScope } from "./helpers/advisor-scope-judge.js";
 import { describe, expect } from "bun:test";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ThinkingLevel } from "@earendil-works/pi-ai";
@@ -563,9 +564,9 @@ describe("advisor completion review", () => {
           /git history|repository history|matching version|exact version|(?:module|repo(?:sitory)?|checkout).{0,20}version|tag/i,
         );
         expect(advice).toMatch(/smallest|focused|minimal|cookiefilter|cookie filter/i);
-        expect(advice).toMatch(
-          /preserv|unrelated|scope creep|do not (?:port|change|expand)|avoid (?:porting|changing)/i,
-        );
+        const scope = await judgeCookieFilterScope(advice);
+        console.log({ scope });
+        expect(scope.valid, scope.reason).toBe(true);
       } finally {
         await runner.dispose();
         await rm(cwd, { recursive: true, force: true });
