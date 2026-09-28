@@ -1,9 +1,10 @@
 import { describe, expect } from "bun:test";
 import dedent from "dedent";
 import { readFileSync, writeFileSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { TurnRunner } from "../src/turn-runner/turn-runner.js";
 import type { TurnEvent, TurnState } from "../src/types/protocol.js";
 import type { StateMachineDefinition, StateMachineState } from "../src/types/state-machine.js";
@@ -48,6 +49,7 @@ describe("/goal loop", () => {
     async () => {
       const workDir = await mkdtemp(join(tmpdir(), "goal-eval-"));
       const report = join(workDir, "report.md");
+      const diagnosticEvents: TurnEvent[] = [];
       try {
         await writeFile(
           join(workDir, "requirements.md"),
@@ -104,6 +106,18 @@ describe("/goal loop", () => {
           clobbered = true;
         };
         runner.subscribe((event: TurnEvent) => {
+          // Retain complete relay snapshots and tool results, not streaming deltas.
+          if (
+            event.type === "state_machine" ||
+            event.type === "usage" ||
+            event.type === "router_switch" ||
+            event.type === "complete" ||
+            event.type === "ask" ||
+            event.type === "sleep" ||
+            event.type === "interrupted" ||
+            (event.type === "step" && event.step.type === "tool_call")
+          )
+            diagnosticEvents.push(event);
           if (
             event.type === "task_started" &&
             !clobbered &&
@@ -214,6 +228,26 @@ describe("/goal loop", () => {
         for (const requirement of [ALPHA, BETA, GAMMA]) {
           expect(finalReport).toContain(requirement);
         }
+      } catch (error) {
+        const artifactDirectory = resolve(process.env.EVAL_ARTIFACT_DIR ?? "tmp/eval-artifacts");
+        const artifactPath = join(artifactDirectory, `goal-command-failure-${randomUUID()}.json`);
+        await mkdir(artifactDirectory, { recursive: true });
+        await writeFile(
+          artifactPath,
+          JSON.stringify(
+            {
+              model,
+              candidateRevision: process.env.EVAL_CANDIDATE_REVISION ?? null,
+              error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+              events: diagnosticEvents,
+            },
+            null,
+            2,
+          ),
+          { flag: "wx" },
+        );
+        console.error(`Goal failure diagnostics: ${artifactPath}`);
+        throw error;
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }
