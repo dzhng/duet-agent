@@ -32,7 +32,7 @@ const definition: StateMachineDefinition = {
 
 async function main() {
   const config: TurnRunnerConfig = {
-    model: "opus-4.7",
+    model: "opus",
     cwd: process.cwd(),
   };
 
