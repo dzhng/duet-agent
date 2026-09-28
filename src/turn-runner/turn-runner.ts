@@ -155,6 +155,9 @@ import {
   currentParkState,
   currentScheduledState,
   persistStateDefinition,
+  recordStateStarted,
+  recordAcceptedExecution,
+  annotateUnchangedExecution,
 } from "./state-machine-session.js";
 import {
   failActiveSession,
@@ -167,6 +170,8 @@ import {
   repeatedSelectionLoopCount,
   startSession as startStateMachineSession,
   supersede,
+  executionReceipt,
+  type ExecutionSelection,
   type PlannedWork,
   type PollPolicy,
   type ShellSettlement,
@@ -1609,6 +1614,12 @@ export class TurnRunner {
   }
 
   private async runParentPass(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    const stateName = this.stateMachine?.currentState;
+    const retryWarning = stateName ? this.repeatedSelectionLoopWarning(stateName) : undefined;
+    if (retryWarning) {
+      this.emit({ type: "system", level: "warn", message: retryWarning });
+      input = { ...input, prompt: `${input.prompt}\n\n${retryWarning}` };
+    }
     const agent = this.requireParentAgent();
     if (agent.hasQueuedMessages()) {
       throw new Error("Parent pi steer/follow-up queues must be empty at internal pass start.");
@@ -1646,7 +1657,7 @@ export class TurnRunner {
     }
     await this.cancelScheduledTasks("Scheduled wake fired.");
     this.setStateMachine(planned.session);
-    return this.executePlannedWork(planned.work);
+    return this.executePlannedWork(planned.work, planned.selection);
   }
 
   private async runTerminalAcknowledgmentPass() {
@@ -1775,6 +1786,7 @@ export class TurnRunner {
 
   private async executePlannedWork(
     work: PlannedWork,
+    selection?: ExecutionSelection,
   ): Promise<SettledDecision["outcome"] | undefined> {
     this.recoverExecution = false;
     if ("terminal" in work) {
@@ -1824,14 +1836,19 @@ export class TurnRunner {
     // reaches this line, and so is nudged at most once.
     this.parkNudged = false;
     if ("subagent" in work.run) {
-      this.startSubagentTask(work.run.subagent, work.run.stateName);
+      this.startSubagentTask(work.run.subagent, work.run.stateName, selection);
     } else {
-      this.startShellTask(work.run.shell, work.run.stateName, work.run.pollPolicy);
+      this.startShellTask(work.run.shell, work.run.stateName, work.run.pollPolicy, selection);
     }
     return undefined;
   }
 
-  private startSubagentTask(spec: SubagentSpec, stateName: string): void {
+  private startSubagentTask(
+    spec: SubagentSpec,
+    stateName: string,
+    selection?: ExecutionSelection,
+  ): void {
+    const cwd = resolveStateCwd(spec.cwd, this.config.cwd ?? process.cwd());
     const ownerScopeId = this.requireRootScope();
     const handle = this.taskManager.start({
       kind: "subagent",
@@ -1839,11 +1856,27 @@ export class TurnRunner {
       label: `Run state ${stateName}`,
       ownerScopeId,
       execute: async ({ signal, taskId }) => {
+        if (signal.aborted) return { type: "interrupted" } satisfies SubagentResult;
         const run = this.createStateSubagentRun({
-          state: { kind: "agent", name: stateName, ...spec },
+          state: { kind: "agent", name: stateName, ...spec, cwd },
           prompt: spec.prompt,
           origin: { taskId },
         });
+        if (selection) {
+          const receipt = run.prepared
+            ? annotateUnchangedExecution(
+                this.requireStateMachine(),
+                executionReceipt({ id: taskId, selection, cwd, prepared: run.prepared }),
+              )
+            : undefined;
+          const accepted = receipt
+            ? recordAcceptedExecution(this.requireStateMachine(), receipt)
+            : this.requireStateMachine();
+          this.setStateMachine(
+            recordStateStarted(accepted, selection.state, selection.input, receipt),
+            true,
+          );
+        }
         const metadata = this.stateTasks.get(taskId);
         if (metadata?.kind === "agent") metadata.run = run;
         const interrupt = () => run.interrupt(String(signal.reason ?? "Interrupted"));
@@ -1859,32 +1892,58 @@ export class TurnRunner {
     this.stateTasks.set(handle.id, { kind: "agent", stateName });
   }
 
-  private startShellTask(spec: ShellSpec, stateName: string, pollPolicy?: PollPolicy): void {
+  private startShellTask(
+    spec: ShellSpec,
+    stateName: string,
+    pollPolicy?: PollPolicy,
+    selection?: ExecutionSelection,
+  ): void {
+    const cwd = resolveStateCwd(spec.cwd, this.config.cwd ?? process.cwd());
     const shell = createShellStateHandle({
       command: spec.command,
-      cwd: resolveStateCwd(spec.cwd, this.config.cwd ?? process.cwd()),
+      cwd,
       timeoutMs: spec.timeoutMs,
       successCodes: spec.successCodes,
     });
     let taskId!: TaskId;
-    let finish!: () => void;
-    const finishedPromise = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
-    // Stop semantics are uniform across executors: process groups die by SIGKILL
-    // immediately (matching pi-bash), so the interrupted terminal is never gated
-    // on a grace window. Graceful TERM cleanup, if ever needed, is a future
-    // explicit opt-in, not a blanket default.
-    const unregisterReaper = this.taskManager.registerReaper(async (reason) => {
-      shell.interrupt(reason);
-      await finishedPromise;
-    });
     const handle = this.taskManager.start({
       kind: "tool",
       name: stateName,
       label: `Run state ${stateName}`,
       ownerScopeId: this.requireRootScope(),
       execute: async ({ signal, onOutput }) => {
+        if (signal.aborted)
+          return {
+            type: "interrupted",
+            reason: String(signal.reason ?? "Interrupted"),
+          } satisfies ShellSettlement;
+        if (selection) {
+          const receipt = annotateUnchangedExecution(
+            this.requireStateMachine(),
+            executionReceipt({ id: taskId, selection, cwd, prepared: spec }),
+          );
+          this.setStateMachine(
+            recordStateStarted(
+              recordAcceptedExecution(this.requireStateMachine(), receipt),
+              selection.state,
+              selection.input,
+              receipt,
+            ),
+            true,
+          );
+        }
+        let finish!: () => void;
+        const finishedPromise = new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        // Stop semantics are uniform across executors: process groups die by SIGKILL
+        // immediately (matching pi-bash), so the interrupted terminal is never gated
+        // on a grace window. Graceful TERM cleanup, if ever needed, is a future
+        // explicit opt-in, not a blanket default.
+        const unregisterReaper = this.taskManager.registerReaper(async (reason) => {
+          shell.interrupt(reason);
+          await finishedPromise;
+        });
         const interrupt = () => shell.interrupt(String(signal.reason ?? "Interrupted"));
         signal.addEventListener("abort", interrupt, { once: true });
         try {
@@ -2053,33 +2112,20 @@ export class TurnRunner {
     await Promise.all(scheduled.map((task) => this.taskManager.stop(task.id, reason)));
   }
 
-  /**
-   * Build a loop-warning system reminder when the orchestrator has selected the
-   * same state many times in a row within a short window with no other state
-   * running in between. This is the idle-"holding" hot loop: re-selecting a
-   * state to "keep waiting" is a no-op because selecting runs the state again
-   * immediately rather than suspending. The reminder re-teaches the only
-   * primitives that actually wait — park for a parent-owned human gate, a poll
-   * for a checkable condition, a timer for a fixed time — and tells the parent
-   * to stop re-selecting the same state unchanged. Returns undefined when the
-   * streak is below threshold or spread over too long a span to be a hot loop.
-   */
+  /** A recovery prompt describes repeated effective work without forbidding legitimate retries. */
   private repeatedSelectionLoopWarning(stateName: string): string | undefined {
     const session = this.stateMachine;
     const count = session ? repeatedSelectionLoopCount(session, stateName) : undefined;
     if (count === undefined) return undefined;
-    return dedent`
-      <system-reminder>
-      LOOP DETECTED: you have selected the "${stateName}" state ${count} times in a row, with no other state running in between, in quick succession. Selecting a state is NOT how you wait — every select_state_machine_state call runs the state again immediately and returns, so re-selecting the same "holding" state over and over is a no-op hot loop that suspends nothing.
-
-      If you are waiting on something, back it with the primitive that actually suspends, chosen by WHAT you are waiting for:
-      - a human reply or approval → select a park state, ask the user yourself with ask_user_question, then END YOUR TURN. The user's answer arrives as a fresh parent turn; select the next state when the park's purpose is fulfilled.
-      - a condition a command can check (CI finished, a file appeared, a deploy went ready) → a poll state whose command exits success only when the condition is actually met.
-      - a fixed future time → a timer state (wakeAt or wakeAfterMs).
-
-      If you are not waiting but re-running "${stateName}" to fix a failure, change override.prompt to address the specific failure before selecting again — selecting it unchanged reproduces the same result. If there is nothing left to do here, advance to the next real state or a terminal. Do NOT select "${stateName}" again unchanged.
-      </system-reminder>
-    `;
+    return systemReminder(dedent`
+      UNCHANGED EXECUTION: the last ${count} retained settled attempts of state "${stateName}"
+      ran identical effective instructions, input, cwd, and inherited context. Time elapsed and
+      intervening states do not establish progress. Before selecting again, inspect the accepted
+      execution receipt and prior output. Change the work to address the failure, identify the
+      external condition that changed and justifies a retry, or report the blocker. An identical
+      retry remains allowed when external conditions have changed. For waiting, use a park for
+      user input, a poll for a checkable condition, or a timer for a future time.
+    `);
   }
 
   private completedStateOutput(stateName: string): unknown {
@@ -2095,7 +2141,6 @@ export class TurnRunner {
     stateName: string,
     output?: unknown,
   ): Promise<SettledDecision["outcome"] | undefined> {
-    const loopWarning = this.repeatedSelectionLoopWarning(stateName);
     return this.enforceParentTransition(
       (retryInstruction) =>
         systemReminder(dedent`
@@ -2106,8 +2151,6 @@ export class TurnRunner {
             output: output ?? null,
           },
         })}
-
-        ${loopWarning ?? ""}
 
         <system-reminder>
         THIS TURN MUST END WITH A select_state_machine_state TOOL CALL. The state machine only advances when the tool call is actually emitted — nothing else, including text, thinking, or narration, advances it. Even if your conclusion is obvious ("this is internal plumbing, transition to X"), the conclusion is not the action; you must emit the select_state_machine_state tool call for state X in this same turn. Responses that narrate the transition without the tool call ("I should transition to X", "no user-facing post needed, moving on to Y", "the next state is Z") will be rejected and you will be re-prompted. This rule holds whether the state output is a user-facing artifact or purely internal plumbing — internal plumbing still requires the tool call to advance the machine, it just skips the user-facing message.
@@ -2591,7 +2634,7 @@ export class TurnRunner {
     }
     this.setState({ ...this.requireRunnerState(), pendingStateTransition: undefined });
     this.setStateMachine(planned.session, true);
-    return this.executePlannedWork(planned.work);
+    return this.executePlannedWork(planned.work, planned.selection);
   }
 
   private async replaceActiveStateTasks(reason: string): Promise<void> {

@@ -1,5 +1,6 @@
 import type {
   StateMachineDefinition,
+  StateMachineExecutionReceipt,
   StateMachineParkState,
   StateMachinePollState,
   StateMachineProgress,
@@ -130,6 +131,7 @@ export function recordStateStarted(
   stateMachine: StateMachineSession,
   state: StateMachineState,
   input?: Record<string, unknown>,
+  execution?: StateMachineExecutionReceipt,
 ): StateMachineSession {
   const now = Date.now();
   const stateMachineWithoutScheduledWake = {
@@ -152,6 +154,7 @@ export function recordStateStarted(
     ),
     history: appendHistory(stateMachine.history, {
       type: "state_started",
+      ...(execution ? { execution } : {}),
       timestamp: now,
       state: state.name,
       input,
@@ -251,94 +254,61 @@ export function consecutivePollGateSuccesses(
   return streak;
 }
 
-/**
- * Threshold for the no-progress re-selection guard: how many times in a row the
- * orchestrator may select the SAME state — with no different state running in
- * between — before the runner injects a loop warning into the next decision
- * prompt. Set above a normal retry-with-correction streak (re-running a state
- * two or three times with a fixed `override.prompt` is legitimate) so the
- * warning targets idle "holding" loops where the parent re-selects executable
- * work to "keep waiting" rather than productive retries. Park states are
- * exempt because re-selecting the same park is a legal no-work hold.
- */
-export const REPEATED_SELECTION_LOOP_THRESHOLD = 5;
-
-/**
- * Time window for the no-progress re-selection guard. Repeated selections only
- * read as a hot loop when they happen close together; a state deliberately
- * re-run hours apart is normal cadence, not a loop. Only a streak whose span
- * stays within this window triggers the warning, so a slow, legitimate revisit
- * pattern is never flagged.
- */
-export const REPEATED_SELECTION_LOOP_WINDOW_MS = 15 * 60 * 1000;
-
-/**
- * Measure the current run of back-to-back selections of `stateName` with no
- * other state started in between, returning the streak length and the elapsed
- * span from the streak's first selection to its most recent.
- *
- * This surfaces the idle-loop footgun where the orchestrator re-selects a
- * "holding" state again and again to "keep waiting" — a no-op, since selecting a
- * state runs it immediately rather than suspending the machine. Unlike
- * `consecutivePollGateSuccesses` (which counts completions of an always-true
- * poll), this telemetry counts `state_started` events for every state kind;
- * the trip policy separately exempts park. A lifecycle event naming a
- * *different* state means the machine actually moved on, so the streak resets
- * and a normal plan that revisits a state after doing other work never accumulates.
- */
-export function repeatedStateSelectionStreak(
-  stateMachine: StateMachineSession,
-  stateName: string,
-): { count: number; spanMs: number } {
-  let count = 0;
-  let earliest: number | undefined;
-  let latest: number | undefined;
-  for (let i = stateMachine.history.length - 1; i >= 0; i--) {
-    const event = stateMachine.history[i];
-    if (event.type === "state_started") {
-      if (event.state !== stateName) break;
-      count++;
-      earliest = event.timestamp;
-      if (latest === undefined) latest = event.timestamp;
-      continue;
+/** Only retained, settled executions are comparable; older and unstarted work is unknown. */
+function* settledStateExecutions(
+  session: StateMachineSession,
+  state: string,
+): Generator<{
+  execution: StateMachineExecutionReceipt;
+  outcome: "completed" | "failed" | "interrupted";
+}> {
+  let outcome: "completed" | "failed" | "interrupted" | undefined;
+  for (let index = session.history.length - 1; index >= 0; index--) {
+    const event = session.history[index]!;
+    if (event.type === "runner_decided") {
+      const decision = event.decision as { state?: unknown } | undefined;
+      if (outcome && decision?.state === state && !event.execution) return;
     }
-    // Lifecycle events naming this same state are noise inside one run cycle;
-    // an event naming a *different* state means the machine moved on, ending
-    // the streak. runner_decided / state_machine_* carry no comparable state.
-    if (
-      (event.type === "state_completed" ||
-        event.type === "state_failed" ||
-        event.type === "state_interrupted" ||
-        event.type === "state_definition_updated" ||
-        event.type === "state_machine_reactivated") &&
-      event.state !== stateName
-    ) {
-      break;
+    if (!("state" in event) || event.state !== state) continue;
+    if (event.type === "state_completed") outcome ??= "completed";
+    if (event.type === "state_failed") outcome ??= "failed";
+    if (event.type === "state_interrupted") outcome ??= "interrupted";
+    if (event.type === "state_started") {
+      if (!event.execution || !outcome) return;
+      yield { execution: event.execution, outcome };
+      outcome = undefined;
     }
   }
-  const spanMs = earliest !== undefined && latest !== undefined ? latest - earliest : 0;
-  return { count, spanMs };
 }
 
-/**
- * Apply the no-progress loop policy to a session: return the streak length when
- * `stateName` has just been re-selected enough times in a tight enough window to
- * read as an idle hot loop, or undefined otherwise. This is the single source of
- * truth for the trip condition — the turn runner uses the returned count to word
- * its loop-warning reminder, and tests assert against this same function rather
- * than re-deriving the threshold/window comparison. Park always returns
- * undefined because repeated park selection deliberately performs no work.
- */
+/** Compare the latest settled attempt for this state, never a stale matching attempt behind changed work. */
+export function annotateUnchangedExecution(
+  session: StateMachineSession,
+  execution: StateMachineExecutionReceipt,
+): StateMachineExecutionReceipt {
+  const previous = settledStateExecutions(session, execution.state).next().value;
+  return previous?.execution.fingerprint === execution.fingerprint
+    ? { ...execution, unchangedFrom: { id: previous.execution.id, outcome: previous.outcome } }
+    : execution;
+}
+
+export const REPEATED_SELECTION_LOOP_THRESHOLD = 3;
+
+/** Same effective agent/script work repeated while its settled evidence remains retained. */
 export function repeatedSelectionLoopCount(
-  stateMachine: StateMachineSession,
+  session: StateMachineSession,
   stateName: string,
 ): number | undefined {
-  if (findState(stateMachine, stateName)?.kind === "park") return undefined;
-  const { count, spanMs } = repeatedStateSelectionStreak(stateMachine, stateName);
-  if (count < REPEATED_SELECTION_LOOP_THRESHOLD || spanMs > REPEATED_SELECTION_LOOP_WINDOW_MS) {
-    return undefined;
+  const kind = findState(session, stateName)?.kind;
+  if (kind !== "agent" && kind !== "script") return undefined;
+  let fingerprint: string | undefined;
+  let count = 0;
+  for (const attempt of settledStateExecutions(session, stateName)) {
+    fingerprint ??= attempt.execution.fingerprint;
+    if (attempt.execution.fingerprint !== fingerprint) break;
+    count++;
   }
-  return count;
+  return count >= REPEATED_SELECTION_LOOP_THRESHOLD ? count : undefined;
 }
 
 export function elapsedSinceStateStarted(
@@ -486,4 +456,20 @@ function clearProgressWakeTimes(
     states[state] = { ...entry, nextWakeAt: undefined };
   }
   return { states };
+}
+
+/** Attach constructed-work acceptance to its existing decision, without creating a second ledger. */
+export function recordAcceptedExecution(
+  session: StateMachineSession,
+  execution: StateMachineExecutionReceipt,
+): StateMachineSession {
+  const history = [...session.history];
+  for (let index = history.length - 1; index >= 0; index--) {
+    const event = history[index]!;
+    if (event.type === "runner_decided") {
+      history[index] = { ...event, execution };
+      break;
+    }
+  }
+  return { ...session, history };
 }

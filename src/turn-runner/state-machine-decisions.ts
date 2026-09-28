@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TurnQuestion } from "../types/protocol.js";
 import type {
   StateMachineAgentState,
+  StateMachineScriptState,
+  StateMachineExecutionReceipt,
   StateMachineDefinition,
   StateMachineSession,
   StateMachineState,
@@ -30,16 +33,14 @@ import {
   recordStateStarted,
 } from "./state-machine-session.js";
 import type { ShellCommandOutput, ShellPartialOutput } from "./shell-state-handle.js";
-import type { SubagentResult, SubagentSpec } from "./subagent.js";
+import type { PreparedSubagentExecution, SubagentResult, SubagentSpec } from "./subagent.js";
 import type { StateMachineRunnerDecision, StateMachineStateOverride } from "./tools.js";
 
 export {
   consecutivePollGateSuccesses,
   MISCONFIGURED_POLL_GATE_THRESHOLD,
   repeatedSelectionLoopCount,
-  repeatedStateSelectionStreak,
   REPEATED_SELECTION_LOOP_THRESHOLD,
-  REPEATED_SELECTION_LOOP_WINDOW_MS,
 } from "./state-machine-session.js";
 
 type StateCompletedOutcome = { type: "state_completed"; stateName: string; output?: unknown };
@@ -85,7 +86,16 @@ export type PlannedWork =
       };
     };
 
+/** Effective selection retained until the executor has constructed the actual work. */
+export interface ExecutionSelection {
+  state: StateMachineAgentState | StateMachineScriptState;
+  input?: Record<string, unknown>;
+  persistOverride: boolean;
+}
+
 export interface PlannedDecision {
+  /** Immediate work does not enter started history until task admission succeeds. */
+  selection?: ExecutionSelection;
   /** Updated durable ledger after applying and recording the decision. */
   session: StateMachineSession;
   /** Execution or scheduling work the turn loop performs. */
@@ -197,12 +207,20 @@ export function planDecision(
   if (shouldPersistOverride) {
     session = persistStateDefinition(session, effectiveState);
   }
-  session = recordStateStarted(session, effectiveState, isTerminal ? undefined : decision.input);
+  const immediate = effectiveState.kind === "agent" || effectiveState.kind === "script";
+  session = immediate
+    ? { ...session, currentState: effectiveState.name, currentInput: decision.input }
+    : recordStateStarted(session, effectiveState, isTerminal ? undefined : decision.input);
 
   switch (effectiveState.kind) {
     case "agent":
       return {
         session,
+        selection: {
+          state: effectiveState,
+          input: decision.input,
+          persistOverride: shouldPersistOverride,
+        },
         work: {
           run: {
             subagent: subagentSpec(effectiveState, session.currentInput),
@@ -213,6 +231,11 @@ export function planDecision(
     case "script":
       return {
         session,
+        selection: {
+          state: effectiveState,
+          input: decision.input,
+          persistOverride: shouldPersistOverride,
+        },
         work: {
           run: {
             shell: {
@@ -491,8 +514,10 @@ function resolveTimerWakeAt(
   return startedAt + wakeAfterMs;
 }
 
+const INPUT_TEMPLATE_REFERENCE = /\{\{\s*input\.([A-Za-z0-9_.-]+)\s*\}\}/g;
+
 export function renderTemplate(template: string, input: Record<string, unknown>): string {
-  return template.replace(/\{\{\s*input\.([A-Za-z0-9_.-]+)\s*\}\}/g, (_match, path: string) => {
+  return template.replace(INPUT_TEMPLATE_REFERENCE, (_match, path: string) => {
     const value = path.split(".").reduce<unknown>((current, key) => {
       if (!current || typeof current !== "object") return undefined;
       return (current as Record<string, unknown>)[key];
@@ -628,4 +653,76 @@ function misconfiguredPollGateMessage(stateName: string, successStreak: number):
     'a command that exits 0 on every tick (e.g. `echo waiting for review`) is read as "condition met" and hot-loops the relay instead of waiting. ' +
     "If this gate is waiting on a human approval or reply, model it as an agent state that asks the user a question and stops — the reply wakes the relay — rather than as a poll."
   );
+}
+
+/** Canonical JSON keeps object-key order from manufacturing apparent progress. */
+function executionHash(value: unknown): string {
+  const canonical = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(canonical);
+    if (item !== null && typeof item === "object") {
+      return Object.fromEntries(
+        Object.entries(item)
+          .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+          .map(([key, nested]) => [key, canonical(nested)]),
+      );
+    }
+    return item;
+  };
+  return createHash("sha256")
+    .update(JSON.stringify(canonical(value)))
+    .digest("hex");
+}
+
+/** Build evidence from the executor's prepared work, never from the proposed call alone. */
+export function executionReceipt(input: {
+  id: string;
+  selection: ExecutionSelection;
+  cwd: string;
+  prepared: PreparedSubagentExecution | ShellSpec;
+}): StateMachineExecutionReceipt {
+  const { selection, prepared } = input;
+  const agent = "prompt" in prepared ? prepared : undefined;
+  const text = "prompt" in prepared ? prepared.prompt : prepared.command;
+  const inheritedContextHash = agent?.inheritedContext
+    ? executionHash({
+        systemPrompt: agent.inheritedContext.systemPrompt,
+        messages: agent.inheritedContext.messages.map((message) =>
+          Object.fromEntries(Object.entries(message).filter(([key]) => key !== "timestamp")),
+        ),
+      })
+    : undefined;
+  const template =
+    selection.state.kind === "agent" ? selection.state.prompt : selection.state.command;
+  const renderedInputKeys = [
+    ...new Set(
+      [...template.matchAll(INPUT_TEMPLATE_REFERENCE)].map((match) => match[1]!.split(".")[0]!),
+    ),
+  ].sort();
+  return {
+    id: input.id,
+    state: selection.state.name,
+    kind: selection.state.kind,
+    cwd: input.cwd,
+    forkContext: selection.state.kind === "agent" && selection.state.forkContext === true,
+    suppliedInputKeys: Object.keys(selection.input ?? {}).sort(),
+    renderedInputKeys,
+    persistOverride: selection.persistOverride,
+    preview: text.slice(0, 1200),
+    previewTruncated: text.length > 1200,
+    ...(inheritedContextHash ? { inheritedContextHash } : {}),
+    fingerprint: executionHash({
+      kind: selection.state.kind,
+      prompt: text,
+      cwd: input.cwd,
+      forkContext: selection.state.kind === "agent" && selection.state.forkContext === true,
+      ...("prompt" in prepared
+        ? {
+            systemPrompt: prepared.systemPrompt,
+            model: prepared.model,
+            thinkingLevel: prepared.thinkingLevel,
+            inheritedContextHash,
+          }
+        : { timeoutMs: prepared.timeoutMs, successCodes: prepared.successCodes ?? [0] }),
+    }),
+  };
 }

@@ -437,11 +437,44 @@ export interface StateMachineTerminalResult {
   reason?: string;
 }
 
+/** Bounded evidence of immediate work constructed by the executor, before it is started. */
+export interface StateMachineExecutionReceipt {
+  /** Task identity shared by the accepted decision and actual start. */
+  id: string;
+  state: string;
+  kind: "agent" | "script";
+  /** SHA-256 of canonical effective work, excluding task identity and timing. */
+  fingerprint: string;
+  /** Absolute working directory used to construct worker tools or the shell. */
+  cwd: string;
+  forkContext: boolean;
+  /** Supplied top-level input keys; keys alone do not imply delivery to a worker. */
+  suppliedInputKeys: string[];
+  /** Top-level input keys referenced by the prompt/command template. */
+  renderedInputKeys: string[];
+  /** Whether this selection persisted an override into the definition. */
+  persistOverride: boolean;
+  /** Bounded actual prompt or command; fingerprint covers the complete work. */
+  preview: string;
+  previewTruncated: boolean;
+  /** Digest of the context actually inherited by a forked worker. */
+  inheritedContextHash?: string;
+  /** Most recent settled execution of this state when effective work is identical. */
+  unchangedFrom?: { id: string; outcome: "completed" | "failed" | "interrupted" };
+}
+
 export type StateMachineSessionEvent =
   | { type: "state_machine_started"; timestamp: number }
-  | { type: "runner_decided"; timestamp: number; decision: unknown }
+  | {
+      type: "runner_decided";
+      timestamp: number;
+      decision: unknown;
+      execution?: StateMachineExecutionReceipt;
+    }
   | {
       type: "state_started";
+      /** Present only after immediate work was constructed and its task admitted. */
+      execution?: StateMachineExecutionReceipt;
       timestamp: number;
       state: string;
       input?: Record<string, unknown>;

@@ -1410,7 +1410,7 @@ const CREATE_CWD_GUIDANCE =
 // cwd is resolved identically wherever it is checked or run. `undefined`
 // (no per-state cwd) falls back to the base.
 export function resolveStateCwd(cwd: string | undefined, baseCwd: string): string {
-  if (cwd === undefined) return baseCwd;
+  if (cwd === undefined) return resolve(baseCwd);
   return isAbsolute(cwd) ? cwd : resolve(baseCwd, cwd);
 }
 

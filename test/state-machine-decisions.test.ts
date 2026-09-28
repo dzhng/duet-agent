@@ -8,6 +8,21 @@ import {
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 
 describe("StateMachineDecisions", () => {
+  test("planning agent work records selection without claiming execution started", () => {
+    const definition: StateMachineDefinition = {
+      name: "acceptance",
+      prompt: "Work.",
+      states: [{ kind: "agent", name: "work", prompt: "Do {{ input.task }}." }],
+    };
+    const planned = planDecision(
+      startSession({ prompt: "Work.", definition, currentState: "work" }),
+      { state: "work", input: { task: "the correction" } },
+    );
+    expect(planned.session.currentInput).toEqual({ task: "the correction" });
+    expect(planned.work).toMatchObject({ run: { subagent: { prompt: "Do the correction." } } });
+    expect(planned.session.history.filter((event) => event.type === "state_started")).toEqual([]);
+  });
+
   test("recordSettled normalizes script output and records completion", () => {
     const definition: StateMachineDefinition = {
       name: "script",

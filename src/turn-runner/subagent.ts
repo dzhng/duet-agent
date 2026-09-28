@@ -47,8 +47,19 @@ export type SubagentResult =
   | { type: "failed"; error: string }
   | { type: "interrupted" };
 
+/** Captured from the actual constructed worker, after skill and context expansion. */
+export interface PreparedSubagentExecution {
+  prompt: string;
+  systemPrompt: string;
+  model: string;
+  thinkingLevel?: string;
+  inheritedContext?: { systemPrompt?: string; messages: AgentMessage[] };
+}
+
 /** One in-flight execution created from a {@link SubagentSpec}. */
 export interface SubagentRun {
+  /** Absent on test executors that do not construct an actual model worker. */
+  prepared?: PreparedSubagentExecution;
   /** Starts the sub-agent using the executor-owned prompt and transcript. */
   prompt(): Promise<SubagentResult>;
   /** Aborts the sub-agent and makes its prompt settle as interrupted. */
@@ -251,6 +262,15 @@ export function createSubagentExecutor(deps: SubagentExecutorDeps) {
     // message list only when no `message_end` fired (stubbed-agent test path).
     let recordedMessageUsage = false;
     return {
+      prepared: {
+        prompt: tailPrompt,
+        systemPrompt: agent.state.systemPrompt,
+        model: `${agent.state.model.provider}:${agent.state.model.id}`,
+        thinkingLevel: agent.state.thinkingLevel,
+        ...(forkContext
+          ? { inheritedContext: { systemPrompt: forkSystemPrompt, messages: [...seedMessages] } }
+          : {}),
+      },
       prompt: async () => {
         let visibleOutput = false;
         unsubscribe = agent.subscribe((event) => {

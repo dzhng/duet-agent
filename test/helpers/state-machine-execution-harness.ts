@@ -1,3 +1,4 @@
+import { recordStateStarted } from "../../src/turn-runner/state-machine-session.js";
 import type {
   StateMachineAgentState,
   StateMachineDefinition,
@@ -147,6 +148,13 @@ export class StateMachineExecutionHarness {
     this.session = planned.session;
     if (!("terminal" in planned.work) || planned.work.terminal.notifyStarted) {
       this.config.onSessionChanged?.(this.session);
+    }
+    if (planned.selection) {
+      this.session = recordStateStarted(
+        this.session,
+        planned.selection.state,
+        planned.selection.input,
+      );
     }
     return this.execute(planned.work);
   }

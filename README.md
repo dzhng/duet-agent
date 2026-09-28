@@ -590,6 +590,20 @@ the completed worker. A deliberate state selection may still rerun work when
 the parent decides a correction is needed. Previously failed or cancelled
 relays are not revived automatically.
 
+Immediate relay selections carry execution evidence in their existing history. A decision's
+receipt describes constructed work; the matching start receipt appears only after task admission.
+Receipts include the resolved cwd, referenced versus supplied input keys, and a bounded preview
+of the actual expanded instructions. Unreferenced input stays visible as metadata and is not
+silently delivered to workers. Fingerprints compare the actual instructions and inherited context,
+so unused metadata and retry explanations cannot manufacture a changed task.
+
+Three retained identical settled attempts of one agent or script state trigger a recovery reminder
+before the next parent decision, including across slow or alternating attempts. The reminder asks
+for changed work, a changed external condition, or a concrete blocker; it never prohibits a useful
+retry. Poll and timer scheduling remains separate. History eviction and old entries without
+execution evidence make sameness unknown, so this diagnostic does not claim progress or identity
+beyond the retained history.
+
 State definition edits are separate from execution. The parent can use
 `update_state_machine_state` to revise a future state's instructions or configuration
 while a relay sleeps, preserving its current state, input, and wake. The change is
