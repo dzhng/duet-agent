@@ -56,21 +56,38 @@ export async function runRpcSessionStreaming(
 
   let limitFailure: string | undefined;
   let calls = 0;
-  const stop = () => {
-    if (process.platform === "linux") {
+  let stopping: Promise<void> | undefined;
+  const stop = (): Promise<void> => {
+    stopping ??= (async () => {
+      if (typeof proc.exitCode === "number" || typeof proc.signalCode === "string") return;
+      // The CLI's SIGTERM handler disposes the runner and reaps separately
+      // detached shell groups. Killing the CLI group first would orphan them.
+      proc.kill("SIGTERM");
+      // Let the product's five-second disposal watchdog finish before forcing
+      // exit. Each matrix attempt also owns a container if disposal wedges.
+      const force = setTimeout(() => {
+        if (process.platform === "linux") {
+          try {
+            process.kill(-proc.pid, "SIGKILL");
+          } catch {
+            /* Already exited. */
+          }
+        } else proc.kill("SIGKILL");
+      }, 6_000);
       try {
-        process.kill(-proc.pid, "SIGKILL");
-      } catch {
-        /* Already exited. */
+        await proc.exited;
+      } finally {
+        clearTimeout(force);
       }
-    } else proc.kill();
+    })();
+    return stopping;
   };
   const timer =
     options.timeoutMs === undefined
       ? undefined
       : setTimeout(() => {
           limitFailure = "RPC attempt wall-clock limit exceeded";
-          stop();
+          void stop();
         }, options.timeoutMs);
   const stream = new EventStream(proc.stdout, (event) => {
     options.onEvent?.(event);
@@ -78,7 +95,7 @@ export async function runRpcSessionStreaming(
       calls++;
       if (options.maxToolCalls !== undefined && calls >= options.maxToolCalls) {
         limitFailure = "RPC attempt tool-call limit exceeded";
-        stop();
+        void stop();
       }
     }
   });
@@ -99,8 +116,7 @@ export async function runRpcSessionStreaming(
     return { exitCode, events: stream.collected };
   } finally {
     clearTimeout(timer);
-    stop();
-    await proc.exited;
+    await stop();
   }
 }
 
