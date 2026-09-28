@@ -64,7 +64,8 @@ describe("model routing after image-producing tool output", () => {
   async function runStepTriggerScenario(): Promise<void> {
     const cwd = await mkdtemp(join(tmpdir(), "duet-model-routing-step-trigger-"));
     await writeFile(join(cwd, "shot.png"), Buffer.from(MAGENTA_PNG_BASE64, "base64"));
-    await writeRoutingTable(cwd, textOnlyImplementTable());
+    const table = textOnlyImplementTable();
+    await writeRoutingTable(cwd, table);
     const runner = new CapturingRunner({
       model: "economy",
       mode: "agent",
@@ -122,8 +123,8 @@ describe("model routing after image-producing tool output", () => {
         expect.objectContaining({
           trigger: "step_trigger",
           route: "implement",
-          fromModel: "glm-5.3",
-          toModel: "gpt-6-luna",
+          fromModel: table.tiers.economy.routes.implement.target.modelName,
+          toModel: table.tiers.economy.routes.implement.visionFallbackModelName,
           visionFallback: true,
         }),
       );
@@ -149,6 +150,7 @@ describe("model routing after image-producing tool output", () => {
       const cwd = await mkdtemp(join(tmpdir(), "duet-model-routing-no-vision-fallback-"));
       await writeFile(join(cwd, "shot.png"), Buffer.from(MAGENTA_PNG_BASE64, "base64"));
       const table = textOnlyImplementTable();
+      const visionFallbackModelName = table.tiers.economy.routes.implement.visionFallbackModelName;
       delete table.tiers.economy.routes.implement.visionFallbackModelName;
       await writeRoutingTable(cwd, table);
       const runner = new CapturingRunner({
@@ -201,9 +203,9 @@ describe("model routing after image-producing tool output", () => {
         expect(terminal.type).toBe("complete");
         expect(runner.routeStatus()).toMatchObject({
           route: "implement",
-          modelName: "glm-5.3",
+          modelName: table.tiers.economy.routes.implement.target.modelName,
         });
-        expect(switches.some((event) => event.toModel === "gpt-6-luna")).toBe(false);
+        expect(switches.some((event) => event.toModel === visionFallbackModelName)).toBe(false);
         expect(switches.some((event) => event.visionFallback)).toBe(false);
         expect(terminal.usageByModel?.some((entry) => entry.model === "zai/glm-5.3")).toBe(true);
         expect(terminal.usageByModel?.some((entry) => entry.model === "openai/gpt-6-luna")).toBe(
