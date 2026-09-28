@@ -41,7 +41,7 @@ Patterns for "only-if" assertions:
 ## 3. Write it, run it GREEN
 
 - Wrap the body in `testIfDocker` from `test/helpers/docker-only.js` — every eval that spawns a runner, writes files, or touches `$HOME` must use it.
-- Pick the model with `const model = process.env.EVAL_MODEL ?? "sonnet-4.6"` so it can be re-routed without code edits.
+- Pick the model with `const model = process.env.EVAL_MODEL ?? "sonnet"` so it can be re-routed without code edits.
 - Disable skill discovery unless the eval needs it: `skillDiscovery: { includeDefaults: false }`. Pass only the skills the scenario requires via `skills: [...]`.
 - Give the model a `systemInstructions` block that tells it this is a live eval and exactly which transitions to make, so the eval exercises the path deterministically.
 - Set a generous timeout (120_000–150_000 for a planning/single-tool turn).

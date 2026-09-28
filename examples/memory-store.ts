@@ -33,7 +33,7 @@ try {
     kind: "train",
     createdAt: Date.now(),
     headline: "Research guide",
-    model: "opus-4.8",
+    model: "opus",
     fileCount: 4,
     content: "Prefer primary sources and retain exact dates.\n",
   });

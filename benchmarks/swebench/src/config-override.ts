@@ -11,11 +11,11 @@ export const SWEBENCH_TIER = "swebench";
 /** Model substitutions and advisor treatment for one explicit campaign arm. */
 export interface RenderModelsJsonOptions {
   /** Main coding model used for every benchmark prompt. */
-  executorModel: "fable-5" | "glm-5.2" | "gpt-5.6-sol" | "kimi-k3" | "opus-4.8";
+  executorModel: "fable-5.1" | "glm-5.3" | "gpt-6-sol" | "kimi-k3" | "opus-5.5";
   /** Reasoning effort sent to the executor for every turn in this campaign arm. */
   executorThinkingLevel: ThinkingLevel;
   /** Advisor retained in both pure and advised renders so OFF changes only availability. */
-  advisorModel: "kimi-k3" | "fable-5";
+  advisorModel: "kimi-k3" | "fable-5.1";
   /** Model-specific advisor effort retained identically in the paired OFF and ON arms. */
   advisorThinkingLevel: ThinkingLevel;
   /** Exposes or removes the advisor tool without changing its target or policy. */
@@ -24,14 +24,14 @@ export interface RenderModelsJsonOptions {
 
 export const CAMPAIGN_CONFIGS = {
   "glm-pure": {
-    executorModel: "glm-5.2",
+    executorModel: "glm-5.3",
     executorThinkingLevel: "xhigh",
     advisorModel: "kimi-k3",
     advisorThinkingLevel: "medium",
     advisorEnabled: false,
   },
   "glm-kimi-advisor": {
-    executorModel: "glm-5.2",
+    executorModel: "glm-5.3",
     executorThinkingLevel: "xhigh",
     advisorModel: "kimi-k3",
     advisorThinkingLevel: "medium",
@@ -40,42 +40,42 @@ export const CAMPAIGN_CONFIGS = {
   "kimi-pure": {
     executorModel: "kimi-k3",
     executorThinkingLevel: "high",
-    advisorModel: "fable-5",
+    advisorModel: "fable-5.1",
     advisorThinkingLevel: "high",
     advisorEnabled: false,
   },
   "kimi-fable-advisor": {
     executorModel: "kimi-k3",
     executorThinkingLevel: "high",
-    advisorModel: "fable-5",
+    advisorModel: "fable-5.1",
     advisorThinkingLevel: "high",
     advisorEnabled: true,
   },
   "opus-pure": {
-    executorModel: "opus-4.8",
+    executorModel: "opus-5.5",
     executorThinkingLevel: "xhigh",
-    advisorModel: "fable-5",
+    advisorModel: "fable-5.1",
     advisorThinkingLevel: "high",
     advisorEnabled: false,
   },
   "sol-fable-advisor": {
-    executorModel: "gpt-5.6-sol",
+    executorModel: "gpt-6-sol",
     executorThinkingLevel: "xhigh",
-    advisorModel: "fable-5",
+    advisorModel: "fable-5.1",
     advisorThinkingLevel: "high",
     advisorEnabled: true,
   },
   "opus-fable-advisor": {
-    executorModel: "opus-4.8",
+    executorModel: "opus-5.5",
     executorThinkingLevel: "xhigh",
-    advisorModel: "fable-5",
+    advisorModel: "fable-5.1",
     advisorThinkingLevel: "high",
     advisorEnabled: true,
   },
   "fable-pure": {
-    executorModel: "fable-5",
+    executorModel: "fable-5.1",
     executorThinkingLevel: "high",
-    advisorModel: "fable-5",
+    advisorModel: "fable-5.1",
     advisorThinkingLevel: "high",
     advisorEnabled: false,
   },

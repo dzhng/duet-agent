@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Establish the gold-standard rubrics with the strong expectation-setting
- * model (Opus 4.8 by default), then commit evals/rubrics/<slug>.json.
+ * model (the current Opus target by default), then commit evals/rubrics/<slug>.json.
  *
  * This is step 1 of the model-comparison workflow: "what should good look
  * like?" It needs model credentials (DUET_API_KEY or ANTHROPIC_API_KEY) but

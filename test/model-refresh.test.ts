@@ -1,4 +1,8 @@
-import { pinnedDefaultModel, pinnedMemoryModel } from "../src/model-resolution/catalog.js";
+import {
+  normalizeSavedModelSelection,
+  pinnedDefaultModel,
+  pinnedMemoryModel,
+} from "../src/model-resolution/catalog.js";
 import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -117,21 +121,6 @@ testIfDocker(
   30_000,
 );
 
-test("a generated legacy resume command keeps saved family intent while an unrelated pin wins", async () => {
-  const { TurnRunner } = await import("../src/turn-runner/turn-runner.js");
-  const runner = new TurnRunner({ memoryDbPath: false });
-  expect(
-    runner.resolveTurnOptions(
-      { model: "opus-5", memoryModel: "gpt-5.6-luna" },
-      { model: "opus-5", memoryModel: "gpt-5.6-luna" },
-    ),
-  ).toMatchObject({ model: "opus", memoryModel: "luna" });
-  expect(
-    runner.resolveTurnOptions({ model: "openrouter:anthropic/claude-opus-5" }, { model: "opus-5" })
-      .model,
-  ).toBe("openrouter:anthropic/claude-opus-5");
-});
-
 testIfDocker(
   "resuming one session cannot change another session's saved selection",
   async () => {
@@ -164,25 +153,12 @@ testIfDocker(
   30_000,
 );
 
-test("saved Grok and GLM family selections remain resolvable", async () => {
-  const { TurnRunner } = await import("../src/turn-runner/turn-runner.js");
-  const runner = new TurnRunner({ memoryDbPath: false });
-  for (const receipt of otherFamilies.receipts) {
-    const options = runner.resolveTurnOptions(undefined, receipt.envelope.state.options);
-    expect(resolveModelName(`duet-gateway:${options.model}`).id).toBe(
-      receipt.input === "grok" ? "spacexai/grok-4.7" : "zai/glm-5.3",
-    );
-  }
-});
-
 test("provider defaults retain provider and family intent", () => {
   expect(pinnedDefaultModel("duet-gateway")).toBe("duet-gateway:opus");
   expect(pinnedMemoryModel("duet-gateway")).toBe("duet-gateway:luna");
 });
 
-test("all retired curated versions advance on resume without changing the provider", async () => {
-  const { TurnRunner } = await import("../src/turn-runner/turn-runner.js");
-  const runner = new TurnRunner({ memoryDbPath: false });
+test("retired saved selectors retain their provider while recovering family intent", () => {
   for (const [saved, current] of [
     ["opus-4.8", "opus"],
     ["opus-4.7", "opus"],
@@ -192,5 +168,123 @@ test("all retired curated versions advance on resume without changing the provid
     ["openai-codex:gpt-5.6-luna", "openai-codex:gpt-6-luna"],
     ["github-copilot:claude-opus-5", "github-copilot:claude-opus-5.5"],
   ])
-    expect(runner.resolveTurnOptions(undefined, { model: saved }).model).toBe(current);
+    expect(normalizeSavedModelSelection(saved)).toBe(current);
 });
+
+testIfDocker(
+  "a newly supplied different provider pin agrees with dispatch on fresh and resumed sessions",
+  async () => {
+    const previousBase = process.env.DUET_GATEWAY_BASE_URL;
+    const previousKey = process.env.DUET_API_KEY;
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const payload = (await request.json()) as { model: string };
+        requests.push(payload.model);
+        return modelRefreshCompletion(payload.model);
+      },
+    });
+    process.env.DUET_GATEWAY_BASE_URL = server.url.toString();
+    process.env.DUET_API_KEY = "controlled";
+    const dir = await mkdtemp(join(tmpdir(), "explicit-model-"));
+    tempDirs.push(dir);
+    const pin = "duet-gateway:anthropic/claude-opus-5";
+    try {
+      for (const resume of [false, true]) {
+        const sessionPath = join(dir, String(resume));
+        await mkdir(sessionPath);
+        if (resume) {
+          const original = baseline.receipts.find((item) => item.input === "opus")!.envelope;
+          const envelope = {
+            ...original,
+            state: {
+              ...original.state,
+              options: { ...original.state.options, thinkingLevel: "high" },
+            },
+          };
+          await writeFile(join(sessionPath, "state.json"), JSON.stringify(envelope));
+        }
+        const { config } = buildCliTurnConfig(
+          { workDir: dir, incognito: true, resume, modelName: pin },
+          new Set(),
+        );
+        const session = new Session(
+          { ...config, skillDiscovery: { includeDefaults: false } },
+          { id: String(resume), sessionPath, resumeFromStorage: resume },
+        );
+        try {
+          await session.start({ options: { thinkingLevel: undefined } });
+          if (resume) expect(session.getState()?.options?.thinkingLevel).toBe("high");
+          expect(session.config.model).toBe(pin);
+          await session.prompt({ message: "Confirm the explicit model choice." });
+          expect((await session.waitForTerminal()).type).toBe("complete");
+          expect(requests.at(-1)).toBe("anthropic/claude-opus-5");
+          expect(session.getState()?.options?.model).toBe(pin);
+          expect(session.getState()?.agent.messages.at(-1)).toMatchObject({
+            model: "anthropic/claude-opus-5",
+          });
+        } finally {
+          await session.dispose();
+        }
+      }
+    } finally {
+      server.stop(true);
+      if (previousBase === undefined) delete process.env.DUET_GATEWAY_BASE_URL;
+      else process.env.DUET_GATEWAY_BASE_URL = previousBase;
+      if (previousKey === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = previousKey;
+    }
+  },
+  30_000,
+);
+
+testIfDocker(
+  "saved chat tiers retain routing and advisors while memory names recover concrete intent",
+  async () => {
+    const { BUILT_IN_ROUTING_TABLE } = await import("../src/model-routing/table.js");
+    const dir = await mkdtemp(join(tmpdir(), "saved-virtual-"));
+    tempDirs.push(dir);
+    const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+    table.defaultTier = "opus-4.7";
+    table.tiers["opus-4.7"] = structuredClone(table.tiers.frontier!);
+    table.tiers["gpt-5.6-luna"] = structuredClone(table.tiers.economy!);
+    const original = baseline.receipts.find((item) => item.input === "opus")!.envelope;
+    const envelope = {
+      ...original,
+      state: {
+        ...original.state,
+        options: { ...original.state.options, model: "opus-4.7", memoryModel: "gpt-5.6-luna" },
+      },
+    };
+    await mkdir(join(dir, ".duet"));
+    await writeFile(join(dir, ".duet", "models.json"), JSON.stringify(table));
+    await writeFile(join(dir, "state.json"), JSON.stringify(envelope));
+    const previousKey = process.env.DUET_API_KEY;
+    process.env.DUET_API_KEY = "controlled";
+    const session = new Session(
+      {
+        cwd: dir,
+        memoryDbPath: false,
+        memoryStores: false,
+        skillDiscovery: { includeDefaults: false },
+      },
+      { id: "saved-virtual", sessionPath: dir, resumeFromStorage: true },
+    );
+    try {
+      await session.start();
+      expect(session.getState()?.options).toMatchObject({ model: "opus-4.7", memoryModel: "luna" });
+      expect(session.config.model).toBe("opus-4.7");
+      expect(session.routeStatus()).toMatchObject({
+        tier: "opus-4.7",
+        advisorEnabled: true,
+        pinned: false,
+      });
+      expect(session.getState()?.agent.messages as unknown).toEqual(original.state.agent.messages);
+    } finally {
+      await session.dispose();
+      if (previousKey === undefined) delete process.env.DUET_API_KEY;
+      else process.env.DUET_API_KEY = previousKey;
+    }
+  },
+);

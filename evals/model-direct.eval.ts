@@ -6,11 +6,11 @@ import { describe, expect } from "bun:test";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
 // `duet model` passes -m straight to the gateway, so evals use full gateway
-// slugs, not pi shorthands. Defaults are the cheapest verified model per type.
+// slugs, not pi shorthands. Defaults retain inexpensive text/image/fast-video lanes.
 const textModel = process.env.EVAL_MODEL ?? "anthropic/claude-haiku-4.5";
 const imageModel = process.env.EVAL_IMAGE_MODEL ?? "openai/gpt-image-1-mini";
 const videoModel = process.env.EVAL_VIDEO_MODEL ?? "bytedance/seedance-2.0-fast";
-const nanoBananaModel = process.env.EVAL_NANO_BANANA_MODEL ?? "google/gemini-2.5-flash-image";
+const nanoBananaModel = process.env.EVAL_NANO_BANANA_MODEL ?? "google/gemini-3.1-flash-image";
 
 /**
  * `duet model` talks to a gateway model directly through the AI SDK, bypassing

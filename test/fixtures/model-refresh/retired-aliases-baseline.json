@@ -1,0 +1,85 @@
+{
+  "sourceCommit": "6d12f7547d1c5f847d13c280579e99b5ded05e5d",
+  "sourcePath": "src/model-resolution/catalog.ts",
+  "retired": [
+    {
+      "family": "opus",
+      "selectors": [
+        "opus-5",
+        "claude-opus-5",
+        "anthropic/claude-opus-5"
+      ]
+    },
+    {
+      "family": "opus",
+      "selectors": [
+        "opus-4.8",
+        "claude-opus-4.8",
+        "claude-opus-4-8",
+        "anthropic/claude-opus-4.8",
+        "anthropic/claude-opus-4-8"
+      ]
+    },
+    {
+      "family": "opus",
+      "selectors": [
+        "opus-4.7",
+        "claude-opus-4.7",
+        "claude-opus-4-7",
+        "anthropic/claude-opus-4.7",
+        "anthropic/claude-opus-4-7"
+      ]
+    },
+    {
+      "family": "luna",
+      "selectors": [
+        "gpt-5.6-luna",
+        "openai/gpt-5.6-luna",
+        "openai/gpt-5-6-luna"
+      ]
+    },
+    {
+      "family": "sol",
+      "selectors": [
+        "gpt-5.6-sol",
+        "openai/gpt-5.6-sol",
+        "openai/gpt-5-6-sol"
+      ]
+    },
+    {
+      "family": "terra",
+      "selectors": [
+        "gpt-5.6-terra",
+        "openai/gpt-5.6-terra",
+        "openai/gpt-5-6-terra"
+      ]
+    },
+    {
+      "family": "grok",
+      "selectors": [
+        "grok-4.3",
+        "xai/grok-4.3",
+        "xai/grok-4-3",
+        "grok-4-3"
+      ]
+    },
+    {
+      "family": "glm",
+      "selectors": [
+        "glm-5.2",
+        "zai/glm-5.2",
+        "z-ai/glm-5.2",
+        "glm-5-2"
+      ]
+    },
+    {
+      "family": "glm",
+      "selectors": [
+        "glm-4.7",
+        "zai/glm-4.7",
+        "z-ai/glm-4.7",
+        "glm-4-7"
+      ]
+    }
+  ]
+}

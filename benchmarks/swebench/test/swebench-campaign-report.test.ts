@@ -21,6 +21,58 @@ const configs: CampaignConfigName[] = [
 ];
 
 describe("SWE-bench paired report", () => {
+  test("admits current and historical Fable advisor roles without rewriting model identities", () => {
+    const entries = fixtureEntries().slice(0, 1);
+    for (const model of ["anthropic/claude-fable-5.1", "anthropic/claude-fable-5"]) {
+      const attempts = fixtureAttempts(entries).filter(
+        (attempt) => attempt.config === "kimi-pure" || attempt.config === "kimi-fable-advisor",
+      );
+      const telemetry = attempts.find(
+        (attempt) => attempt.config === "kimi-fable-advisor",
+      )!.telemetry!;
+      telemetry.advisorCalls.total = 1;
+      telemetry.advisorCalls.success = 1;
+      telemetry.advisorCalls.successByModel = { [model]: 1 };
+      telemetry.advisorCalls.attempts = [successfulCall(model)];
+      const original = structuredClone(telemetry);
+      const report = buildCampaignReport(
+        entries,
+        ["kimi-pure", "kimi-fable-advisor"],
+        1,
+        attempts,
+        [],
+      );
+      expect(report.configs["kimi-fable-advisor"]?.consultation?.successfulAttempts).toBe(1);
+      expect(report.comparisons[0]?.consultationEvidence[0]?.expectedModel).toBe(model);
+      expect(telemetry).toEqual(original);
+    }
+  });
+
+  test("attributes current and historical executor families without changing telemetry", () => {
+    const entries = fixtureEntries().slice(0, 1);
+    for (const [config, model] of [
+      ["glm-pure", "zai/glm-5.3"],
+      ["glm-pure", "zai/glm-5.2"],
+      ["opus-pure", "anthropic/claude-opus-5.5"],
+      ["opus-pure", "anthropic/claude-opus-4.8"],
+      ["sol-fable-advisor", "openai/gpt-6-sol"],
+      ["sol-fable-advisor", "openai/gpt-5.6-sol"],
+    ] as const) {
+      const attempts = fixtureAttempts(entries)
+        .slice(0, 1)
+        .map((attempt) => ({ ...attempt, config }));
+      const telemetry = attempts[0]!.telemetry!;
+      telemetry.costUsdByModel = { [model]: 0.2, "openai/gpt-6-luna": 0.05 };
+      const original = structuredClone(telemetry);
+      const report = buildCampaignReport(entries, [config], 1, attempts, []);
+      expect(report.configs[config]).toMatchObject({
+        executorCostUsd: 0.2,
+        auxiliaryCostUsd: expect.closeTo(0.05),
+      });
+      expect(telemetry).toEqual(original);
+    }
+  });
+
   test("keeps zero-call outcomes in ITT and attributes only observed consultations", () => {
     const entries = fixtureEntries();
     const attempts = fixtureAttempts(entries);

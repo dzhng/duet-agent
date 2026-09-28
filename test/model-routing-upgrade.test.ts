@@ -1,3 +1,5 @@
+import retiredAliases from "./fixtures/model-refresh/retired-aliases-baseline.json" with { type: "json" };
+import { normalizeSavedModelSelection } from "../src/model-resolution/catalog.js";
 import { expect } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -180,6 +182,40 @@ testIfDocker(
         'Target "unknown-user-model" is neither a virtual model nor a catalog name.',
       );
       expect(await readFile(path, "utf8")).toBe(bytes);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+testIfDocker(
+  "all retired baseline aliases load as current families while unknown numbered names stay unknown",
+  async () => {
+    const dir = await mkdtemp(join(tmpdir(), "routing-aliases-"));
+    const path = join(dir, ".duet", "models.json");
+    try {
+      await mkdir(join(dir, ".duet"));
+      for (const entry of retiredAliases.retired) {
+        for (const selector of entry.selectors) {
+          const original = structuredClone(baseline);
+          original.tiers["openai-max"].routes.general.target.modelName = selector;
+          const bytes = JSON.stringify(original);
+          await writeFile(path, bytes);
+          const { table } = await loadRoutingTable({
+            cwd: dir,
+            homeDir: join(dir, "home"),
+            catalogAdapter: routingCatalogAdapter,
+          });
+          expect(table.tiers["openai-max"]!.routes.general!.target.modelName).toBe(entry.family);
+          for (const provider of ["duet", "openrouter"])
+            expect(normalizeSavedModelSelection(`${provider}:${selector}`)).toBe(
+              `${provider}:${entry.family}`,
+            );
+          expect(await readFile(path, "utf8")).toBe(bytes);
+        }
+      }
+      expect(normalizeSavedModelSelection("openai/gpt-5-7-luna")).toBe("openai/gpt-5-7-luna");
+      expect(normalizeSavedModelSelection("custom:claude-opus-4-7")).toBe("custom:claude-opus-4-7");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

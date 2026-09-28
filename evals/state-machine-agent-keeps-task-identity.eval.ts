@@ -8,11 +8,8 @@ import type {
 } from "../src/types/state-machine.js";
 import { testIfDocker } from "../test/helpers/docker-only.js";
 
-// Defaults to opus-4.8 — the model that actually drifted in the original
-// incident, and the only model that reliably reproduces the drift here.
-// sonnet-5 stays on task on this single-shot scenario, so it cannot
-// falsify the fix; opus-class over-reasoning is what the guard protects.
-const model = process.env.EVAL_MODEL ?? "opus-4.8";
+// Use the current Opus family; EVAL_MODEL can pin a particular reproduction target.
+const model = process.env.EVAL_MODEL ?? "opus";
 
 /**
  * Repro of the "sub-agent loses its task identity" failure (June 3, 2026).

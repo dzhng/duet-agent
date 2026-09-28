@@ -90,3 +90,24 @@ any request. The routing load regression proves that the next agent accepts
 these bytes, dispatches current targets, and leaves the file and routing policy
 unchanged. Agent and gateway update rails are independent; qualifying only an
 old agent with a new gateway table misses this inverse ordering.
+
+`retired-aliases-baseline.json` captures every spelling of the retired entries
+from the last pre-refresh published catalog. Alias recovery must recognize those
+spellings as well as their canonical names; it must not broaden the closed set
+of retired models or reinterpret unknown custom-provider selectors.
+
+The final combined review qualified two selection-precedence defects beyond
+routing-file compatibility. Normalizing every runtime base also reinterpreted
+a newly supplied advanced provider pin; normalization now belongs only to saved
+state hydration and routing-file load. The CLI's resume overrides omit implicit
+models, but a later clear still needs the original fresh-launch defaults. The
+terminal-boundary regression drives the actual CLI through resume and clear,
+including project routing and explicit flags, without rendering a desktop UI.
+
+Saved workflow definitions are executable input; definition snapshots in their
+history are audit data. Recovery advances the former without rewriting the
+latter. The controlled workflow regression resumes both an uninstantiated
+explicit workflow and an active workflow through real child-model requests.
+Custom chat tiers shadow catalog spellings on parent and state-agent selections;
+memory actors instead require concrete catalog selections. The collision
+regression verifies that this distinction survives session hydration.

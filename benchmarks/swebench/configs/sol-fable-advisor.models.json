@@ -6,7 +6,7 @@
         "general": {
           "description": "Backend, systems, data, CLI, and other implementation or debugging work, including tests and code changes.",
           "target": {
-            "modelName": "gpt-5.6-sol",
+            "modelName": "gpt-6-sol",
             "thinkingLevel": "xhigh"
           },
           "visionFallbackModelName": "kimi-k3"
@@ -15,7 +15,7 @@
       "advisor": {
         "enabled": true,
         "target": {
-          "modelName": "fable-5",
+          "modelName": "fable-5.1",
           "thinkingLevel": "high"
         },
         "minStepsBetween": 5

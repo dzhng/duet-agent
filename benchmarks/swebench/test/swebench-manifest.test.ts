@@ -380,7 +380,7 @@ describe("SWE-bench routing renders", () => {
     }
 
     expect(renders["glm-pure"].tiers.swebench!.routes.general!.target).toEqual({
-      modelName: "glm-5.2",
+      modelName: "glm-5.3",
       thinkingLevel: "xhigh",
     });
     expect(renders["glm-pure"].tiers.swebench!.advisor.target).toEqual({
@@ -392,40 +392,40 @@ describe("SWE-bench routing renders", () => {
       thinkingLevel: "high",
     });
     expect(renders["kimi-pure"].tiers.swebench!.advisor.target).toEqual({
-      modelName: "fable-5",
+      modelName: "fable-5.1",
       thinkingLevel: "high",
     });
     expect(renders["opus-pure"].tiers.swebench!.routes.general!.target).toEqual({
-      modelName: "opus-4.8",
+      modelName: "opus-5.5",
       thinkingLevel: "xhigh",
     });
     expect(renders["opus-pure"].tiers.swebench!.advisor).toMatchObject({
       enabled: false,
-      target: { modelName: "fable-5", thinkingLevel: "high" },
+      target: { modelName: "fable-5.1", thinkingLevel: "high" },
     });
     expect(renders["sol-fable-advisor"].tiers.swebench!.routes.general!.target).toEqual({
-      modelName: "gpt-5.6-sol",
+      modelName: "gpt-6-sol",
       thinkingLevel: "xhigh",
     });
     expect(renders["sol-fable-advisor"].tiers.swebench!.advisor).toMatchObject({
       enabled: true,
-      target: { modelName: "fable-5", thinkingLevel: "high" },
+      target: { modelName: "fable-5.1", thinkingLevel: "high" },
     });
     expect(renders["opus-fable-advisor"].tiers.swebench!.routes.general!.target).toEqual({
-      modelName: "opus-4.8",
+      modelName: "opus-5.5",
       thinkingLevel: "xhigh",
     });
     expect(renders["opus-fable-advisor"].tiers.swebench!.advisor).toMatchObject({
       enabled: true,
-      target: { modelName: "fable-5", thinkingLevel: "high" },
+      target: { modelName: "fable-5.1", thinkingLevel: "high" },
     });
     expect(renders["fable-pure"].tiers.swebench!.routes.general!.target).toEqual({
-      modelName: "fable-5",
+      modelName: "fable-5.1",
       thinkingLevel: "high",
     });
     expect(renders["fable-pure"].tiers.swebench!.advisor).toMatchObject({
       enabled: false,
-      target: { modelName: "fable-5", thinkingLevel: "high" },
+      target: { modelName: "fable-5.1", thinkingLevel: "high" },
     });
   });
 
