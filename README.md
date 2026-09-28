@@ -556,6 +556,14 @@ flowchart TD
 
 `TurnRunner.turn()` is the concurrency boundary. Callers may invoke it repeatedly while work is active; the runner folds active `prompt` and `answer` commands back into the active pi agent as `steer` or `follow_up`, queues wakes and work it cannot absorb immediately, and emits one terminal event when the whole active work chain is done.
 
+Tool arguments are admitted against the declared schema before SDK coercion or
+handler execution. Owned control envelopes reject unknown fields; deliberately
+open payload records retain their schema semantics. Invalid calls return bounded
+field-path diagnostics without echoing argument values, so an attempted correction
+cannot be silently dropped and reported as successful. Relay selection fields
+belong inside `decision`, including `decision.override.state.prompt`; terminal
+selections accept only state and reason.
+
 An accepted relay control action ends its parent pass before another queued
 message runs. The outer runner retains accepted user inputs until the parent
 actually consumes them, applies the selection, then delivers the remaining

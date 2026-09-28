@@ -69,33 +69,42 @@ export function withoutBashKillTimeout(base: BashOperations): BashOperations {
   };
 }
 
-const questionOptionSchema = Type.Object({
-  label: Type.String({ description: "Answer text shown to the user." }),
-  description: Type.Optional(
-    Type.String({ description: "Optional context explaining this choice." }),
-  ),
-});
+const questionOptionSchema = Type.Object(
+  {
+    label: Type.String({ description: "Answer text shown to the user." }),
+    description: Type.Optional(
+      Type.String({ description: "Optional context explaining this choice." }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-const questionSchema = Type.Object({
-  question: Type.String({ description: "Question to ask the user." }),
-  header: Type.Optional(
-    Type.String({ description: "Optional section heading for this question." }),
-  ),
-  options: Type.Array(questionOptionSchema, {
-    minItems: 1,
-    description:
-      "Answer options the user can choose from. Each question must have at least one option so the user has something to select.",
-  }),
-  multiSelect: Type.Optional(
-    Type.Boolean({ description: "Whether the user may select more than one option." }),
-  ),
-});
+const questionSchema = Type.Object(
+  {
+    question: Type.String({ description: "Question to ask the user." }),
+    header: Type.Optional(
+      Type.String({ description: "Optional section heading for this question." }),
+    ),
+    options: Type.Array(questionOptionSchema, {
+      minItems: 1,
+      description:
+        "Answer options the user can choose from. Each question must have at least one option so the user has something to select.",
+    }),
+    multiSelect: Type.Optional(
+      Type.Boolean({ description: "Whether the user may select more than one option." }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-const askUserQuestionSchema = Type.Object({
-  questions: Type.Array(questionSchema, {
-    description: "Structured multiple-choice questions that must be answered before continuing.",
-  }),
-});
+const askUserQuestionSchema = Type.Object(
+  {
+    questions: Type.Array(questionSchema, {
+      description: "Structured multiple-choice questions that must be answered before continuing.",
+    }),
+  },
+  { additionalProperties: false },
+);
 
 type AskUserQuestionParams = Static<typeof askUserQuestionSchema>;
 
@@ -112,28 +121,34 @@ const todoStatusSchema = Type.Union(
   },
 );
 
-const todoItemSchema = Type.Object({
-  id: Type.String({
-    description:
-      "Stable unique identifier used to edit this todo in later calls. Pick something short and memorable so you can reuse it with merge=true to flip status.",
-  }),
-  content: Type.String({
-    description:
-      "Imperative description of the task, such as 'Run tests' or 'Update README model section'. One sentence; no narration.",
-  }),
-  status: todoStatusSchema,
-});
+const todoItemSchema = Type.Object(
+  {
+    id: Type.String({
+      description:
+        "Stable unique identifier used to edit this todo in later calls. Pick something short and memorable so you can reuse it with merge=true to flip status.",
+    }),
+    content: Type.String({
+      description:
+        "Imperative description of the task, such as 'Run tests' or 'Update README model section'. One sentence; no narration.",
+    }),
+    status: todoStatusSchema,
+  },
+  { additionalProperties: false },
+);
 
-const todoWriteSchema = Type.Object({
-  merge: Type.Boolean({
-    description:
-      "false = replace the entire list (use this when you first plan the work). true = upsert by id (use this to flip a single todo's status without re-sending the rest).",
-  }),
-  todos: Type.Array(todoItemSchema, {
-    description:
-      "Todo items to write. With merge=false, pass the full desired list. With merge=true, pass only the items being added or updated.",
-  }),
-});
+const todoWriteSchema = Type.Object(
+  {
+    merge: Type.Boolean({
+      description:
+        "false = replace the entire list (use this when you first plan the work). true = upsert by id (use this to flip a single todo's status without re-sending the rest).",
+    }),
+    todos: Type.Array(todoItemSchema, {
+      description:
+        "Todo items to write. With merge=false, pass the full desired list. With merge=true, pass only the items being added or updated.",
+    }),
+  },
+  { additionalProperties: false },
+);
 
 type TodoWriteParams = Static<typeof todoWriteSchema>;
 
@@ -143,102 +158,132 @@ export interface TodoWriteToolStorage {
 }
 
 const agentOverrideSchema = Type.Partial(
-  Type.Object({
-    prompt: Type.String({ description: "Replacement user prompt for this agent state." }),
-    systemPrompt: Type.String({
-      description: "Replacement system prompt appended for this sub-agent only.",
-    }),
-    allowedSkills: Type.Array(Type.String(), {
-      description:
-        "Skill names to inject into this sub-agent. Omit to inject all available skills.",
-    }),
-    cwd: Type.String({
-      description:
-        "Replacement working directory for this sub-agent's coding tools (bash, read, write, edit). Set this whenever the work happens outside the session cwd — a git worktree, clone, or scratch dir a previous state created — instead of telling the sub-agent to `cd` in the prompt; the tools start here, so a path written into the prompt does not redirect them.",
-    }),
-    inputSchema: Type.Record(Type.String(), Type.Any(), {
-      description:
-        'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "email": { "type": "string" }, "followUpCount": { "type": "integer" } }, "required": ["email"] }. Fields omitted from required are optional.',
-    }),
-    forkContext: Type.Boolean({
-      description:
-        "When true, this sub-agent starts with a verbatim copy of the parent runner's full conversation context (prior discussion, decisions, tool history) instead of a fresh empty transcript. Defaults to false (fresh context), which is right for narrow, self-contained tasks. Set true only when the task depends on prior thread context that would be tedious or lossy to restate via prompt/input — forking copies the entire parent transcript, so leave it off for self-contained work.",
-    }),
-  }),
+  Type.Object(
+    {
+      prompt: Type.String({ description: "Replacement user prompt for this agent state." }),
+      systemPrompt: Type.String({
+        description: "Replacement system prompt appended for this sub-agent only.",
+      }),
+      allowedSkills: Type.Array(Type.String(), {
+        description:
+          "Skill names to inject into this sub-agent. Omit to inject all available skills.",
+      }),
+      cwd: Type.String({
+        description:
+          "Replacement working directory for this sub-agent's coding tools (bash, read, write, edit). Set this whenever the work happens outside the session cwd — a git worktree, clone, or scratch dir a previous state created — instead of telling the sub-agent to `cd` in the prompt; the tools start here, so a path written into the prompt does not redirect them.",
+      }),
+      inputSchema: Type.Record(Type.String(), Type.Any(), {
+        description:
+          'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "email": { "type": "string" }, "followUpCount": { "type": "integer" } }, "required": ["email"] }. Fields omitted from required are optional.',
+      }),
+      forkContext: Type.Boolean({
+        description:
+          "When true, this sub-agent starts with a verbatim copy of the parent runner's full conversation context (prior discussion, decisions, tool history) instead of a fresh empty transcript. Defaults to false (fresh context), which is right for narrow, self-contained tasks. Set true only when the task depends on prior thread context that would be tedious or lossy to restate via prompt/input — forking copies the entire parent transcript, so leave it off for self-contained work.",
+      }),
+    },
+    { additionalProperties: false },
+  ),
 );
 
 const scriptOverrideSchema = Type.Partial(
-  Type.Object({
-    command: Type.String({ description: "Replacement shell command for this script state." }),
-    cwd: Type.String({
-      description: "Replacement working directory for the command.",
-    }),
-    timeoutMs: Type.Number({ description: "Replacement command timeout in milliseconds." }),
-    successCodes: Type.Array(Type.Number(), {
-      description: "Replacement exit codes treated as successful completion.",
-    }),
-    inputSchema: Type.Record(Type.String(), Type.Any(), {
-      description:
-        'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "email": { "type": "string" }, "followUpCount": { "type": "integer" } }, "required": ["email"] }. Fields omitted from required are optional.',
-    }),
-  }),
+  Type.Object(
+    {
+      command: Type.String({ description: "Replacement shell command for this script state." }),
+      cwd: Type.String({
+        description: "Replacement working directory for the command.",
+      }),
+      timeoutMs: Type.Number({ description: "Replacement command timeout in milliseconds." }),
+      successCodes: Type.Array(Type.Number(), {
+        description: "Replacement exit codes treated as successful completion.",
+      }),
+      inputSchema: Type.Record(Type.String(), Type.Any(), {
+        description:
+          'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "email": { "type": "string" }, "followUpCount": { "type": "integer" } }, "required": ["email"] }. Fields omitted from required are optional.',
+      }),
+    },
+    { additionalProperties: false },
+  ),
 );
 
 const pollOverrideSchema = Type.Partial(
-  Type.Object({
-    intervalMs: Type.Union([Type.Number(), Type.String()], {
-      description:
-        'Replacement recurring delay between poll wake attempts. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds.',
-    }),
-    timeoutMs: Type.Number({ description: "Replacement maximum poll-state runtime." }),
-    command: Type.String({
-      description: "Replacement shell command for one poll attempt.",
-    }),
-    cwd: Type.String({
-      description: "Replacement working directory for the poll command.",
-    }),
-    successCodes: Type.Array(Type.Number(), {
-      description: "Replacement exit codes that mean this poll attempt found a result.",
-    }),
-    inputSchema: Type.Record(Type.String(), Type.Any(), {
-      description:
-        'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "messageId": { "type": "string" } }, "required": ["messageId"] }. Fields omitted from required are optional.',
-    }),
-  }),
+  Type.Object(
+    {
+      intervalMs: Type.Union([Type.Number(), Type.String()], {
+        description:
+          'Replacement recurring delay between poll wake attempts. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds.',
+      }),
+      timeoutMs: Type.Number({ description: "Replacement maximum poll-state runtime." }),
+      command: Type.String({
+        description: "Replacement shell command for one poll attempt.",
+      }),
+      cwd: Type.String({
+        description: "Replacement working directory for the poll command.",
+      }),
+      successCodes: Type.Array(Type.Number(), {
+        description: "Replacement exit codes that mean this poll attempt found a result.",
+      }),
+      inputSchema: Type.Record(Type.String(), Type.Any(), {
+        description:
+          'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "messageId": { "type": "string" } }, "required": ["messageId"] }. Fields omitted from required are optional.',
+      }),
+    },
+    { additionalProperties: false },
+  ),
 );
 
 const timerOverrideSchema = Type.Partial(
-  Type.Object({
-    wakeAt: Type.Union([Type.Number(), Type.String()], {
-      description:
-        'Replacement absolute wake time for this timer state. Accepts an ISO 8601 date string like "2026-05-24T18:00:00Z" or a Unix-epoch millisecond number.',
-    }),
-    wakeAfterMs: Type.Union([Type.Number(), Type.String()], {
-      description:
-        'Replacement relative duration measured from the moment the parent selects this timer state. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds. Mutually exclusive with wakeAt.',
-    }),
-    inputSchema: Type.Record(Type.String(), Type.Any(), {
-      description:
-        'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "scheduledAt": { "type": "number" } }, "required": ["scheduledAt"] }. Fields omitted from required are optional.',
-    }),
-  }),
+  Type.Object(
+    {
+      wakeAt: Type.Union([Type.Number(), Type.String()], {
+        description:
+          'Replacement absolute wake time for this timer state. Accepts an ISO 8601 date string like "2026-05-24T18:00:00Z" or a Unix-epoch millisecond number.',
+      }),
+      wakeAfterMs: Type.Union([Type.Number(), Type.String()], {
+        description:
+          'Replacement relative duration measured from the moment the parent selects this timer state. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds. Mutually exclusive with wakeAt.',
+      }),
+      inputSchema: Type.Record(Type.String(), Type.Any(), {
+        description:
+          'Replacement valid JSON Schema object for transition input accepted by this state, such as { "type": "object", "properties": { "scheduledAt": { "type": "number" } }, "required": ["scheduledAt"] }. Fields omitted from required are optional.',
+      }),
+    },
+    { additionalProperties: false },
+  ),
 );
 
 const parkOverrideSchema = Type.Partial(
-  Type.Object({
-    inputSchema: Type.Record(Type.String(), Type.Any(), {
-      description:
-        "Replacement valid JSON Schema object for transition input accepted by this park state.",
-    }),
-  }),
+  Type.Object(
+    {
+      inputSchema: Type.Record(Type.String(), Type.Any(), {
+        description:
+          "Replacement valid JSON Schema object for transition input accepted by this park state.",
+      }),
+    },
+    { additionalProperties: false },
+  ),
 );
 
 const stateOverrideSchema = Type.Union([
-  Type.Object({ kind: Type.Literal("agent"), state: agentOverrideSchema }),
-  Type.Object({ kind: Type.Literal("script"), state: scriptOverrideSchema }),
-  Type.Object({ kind: Type.Literal("poll"), state: pollOverrideSchema }),
-  Type.Object({ kind: Type.Literal("timer"), state: timerOverrideSchema }),
-  Type.Object({ kind: Type.Literal("park"), state: parkOverrideSchema }),
+  Type.Object(
+    { kind: Type.Literal("agent"), state: agentOverrideSchema },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { kind: Type.Literal("script"), state: scriptOverrideSchema },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { kind: Type.Literal("poll"), state: pollOverrideSchema },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { kind: Type.Literal("timer"), state: timerOverrideSchema },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { kind: Type.Literal("park"), state: parkOverrideSchema },
+    { additionalProperties: false },
+  ),
 ]);
 
 const baseStateSchema = {
@@ -254,119 +299,138 @@ const baseStateSchema = {
   ),
 };
 
-const agentStateSchema = Type.Object({
-  ...baseStateSchema,
-  kind: Type.Literal("agent", { description: "Run a sub-agent for this state." }),
-  prompt: Type.String({
-    description: "User prompt sent to the sub-agent. May use templates like {{ input.email }}.",
-  }),
-  systemPrompt: Type.Optional(
-    Type.String({ description: "Optional system prompt appended for this sub-agent only." }),
-  ),
-  allowedSkills: Type.Optional(
-    Type.Array(Type.String(), {
-      description:
-        "Skill names to inject into this sub-agent. Omit to inject all available skills.",
+const agentStateSchema = Type.Object(
+  {
+    ...baseStateSchema,
+    kind: Type.Literal("agent", { description: "Run a sub-agent for this state." }),
+    prompt: Type.String({
+      description: "User prompt sent to the sub-agent. May use templates like {{ input.email }}.",
     }),
-  ),
-  cwd: Type.Optional(
-    Type.String({
-      description:
-        "Working directory for this sub-agent's coding tools (bash, read, write, edit). Set this whenever the work happens outside the session cwd — a git worktree, clone, or scratch dir a previous state created — instead of telling the sub-agent to `cd` in the prompt; the tools start here, so a path written into the prompt does not redirect them. Defaults to the state-machine session cwd.",
-    }),
-  ),
-  forkContext: Type.Optional(
-    Type.Boolean({
-      description:
-        "When true, the sub-agent starts with a verbatim copy of the parent runner's full conversation context (prior discussion, decisions, tool history) instead of a fresh empty transcript. Defaults to false (fresh context), which is right for narrow, self-contained tasks. Set true only when the task depends on prior thread context that would be tedious or lossy to restate in the prompt — forking copies the entire parent transcript, so leave it off for self-contained work to keep the delegation cheaper and cleaner.",
-    }),
-  ),
-});
+    systemPrompt: Type.Optional(
+      Type.String({ description: "Optional system prompt appended for this sub-agent only." }),
+    ),
+    allowedSkills: Type.Optional(
+      Type.Array(Type.String(), {
+        description:
+          "Skill names to inject into this sub-agent. Omit to inject all available skills.",
+      }),
+    ),
+    cwd: Type.Optional(
+      Type.String({
+        description:
+          "Working directory for this sub-agent's coding tools (bash, read, write, edit). Set this whenever the work happens outside the session cwd — a git worktree, clone, or scratch dir a previous state created — instead of telling the sub-agent to `cd` in the prompt; the tools start here, so a path written into the prompt does not redirect them. Defaults to the state-machine session cwd.",
+      }),
+    ),
+    forkContext: Type.Optional(
+      Type.Boolean({
+        description:
+          "When true, the sub-agent starts with a verbatim copy of the parent runner's full conversation context (prior discussion, decisions, tool history) instead of a fresh empty transcript. Defaults to false (fresh context), which is right for narrow, self-contained tasks. Set true only when the task depends on prior thread context that would be tedious or lossy to restate in the prompt — forking copies the entire parent transcript, so leave it off for self-contained work to keep the delegation cheaper and cleaner.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-const scriptStateSchema = Type.Object({
-  ...baseStateSchema,
-  kind: Type.Literal("script", { description: "Run a shell command for this state." }),
-  command: Type.String({
-    description: "Shell command to execute. May use templates like {{ input.email }}.",
-  }),
-  cwd: Type.Optional(
-    Type.String({
-      description: "Working directory for the command. Defaults to the state-machine session cwd.",
+const scriptStateSchema = Type.Object(
+  {
+    ...baseStateSchema,
+    kind: Type.Literal("script", { description: "Run a shell command for this state." }),
+    command: Type.String({
+      description: "Shell command to execute. May use templates like {{ input.email }}.",
     }),
-  ),
-  timeoutMs: Type.Optional(Type.Number({ description: "Command timeout in milliseconds." })),
-  successCodes: Type.Optional(
-    Type.Array(Type.Number(), {
-      description: "Exit codes treated as successful completion. Defaults to [0].",
-    }),
-  ),
-});
+    cwd: Type.Optional(
+      Type.String({
+        description:
+          "Working directory for the command. Defaults to the state-machine session cwd.",
+      }),
+    ),
+    timeoutMs: Type.Optional(Type.Number({ description: "Command timeout in milliseconds." })),
+    successCodes: Type.Optional(
+      Type.Array(Type.Number(), {
+        description: "Exit codes treated as successful completion. Defaults to [0].",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-const pollStateSchema = Type.Object({
-  ...baseStateSchema,
-  kind: Type.Literal("poll", { description: "Perform one external wait/check attempt." }),
-  intervalMs: Type.Union([Type.Number(), Type.String()], {
-    description:
-      'Recurring delay before the next scheduled poll attempt. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds.',
-  }),
-  timeoutMs: Type.Optional(
-    Type.Number({ description: "Maximum time this state may remain polling." }),
-  ),
-  command: Type.String({
-    description:
-      "Shell command for one poll attempt. Return non-empty JSON only when polling found a result.",
-  }),
-  cwd: Type.Optional(
-    Type.String({
+const pollStateSchema = Type.Object(
+  {
+    ...baseStateSchema,
+    kind: Type.Literal("poll", { description: "Perform one external wait/check attempt." }),
+    intervalMs: Type.Union([Type.Number(), Type.String()], {
       description:
-        "Working directory for the poll command. Defaults to the state-machine session cwd.",
+        'Recurring delay before the next scheduled poll attempt. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds.',
     }),
-  ),
-  successCodes: Type.Optional(
-    Type.Array(Type.Number(), {
-      description: "Exit codes that mean this poll attempt found a result.",
-    }),
-  ),
-});
-
-const timerStateSchema = Type.Object({
-  ...baseStateSchema,
-  kind: Type.Literal("timer", {
-    description:
-      "Sleep until a future time, then resume with elapsedMs and timestamp output. Specify exactly one of wakeAt (absolute) or wakeAfterMs (relative).",
-  }),
-  wakeAt: Type.Optional(
-    Type.Union([Type.Number(), Type.String()], {
+    timeoutMs: Type.Optional(
+      Type.Number({ description: "Maximum time this state may remain polling." }),
+    ),
+    command: Type.String({
       description:
-        'Absolute wake time when this timer state should complete. Accepts an ISO 8601 date string like "2026-05-24T18:00:00Z" or a Unix-epoch millisecond number. Mutually exclusive with wakeAfterMs.',
+        "Shell command for one poll attempt. Return non-empty JSON only when polling found a result.",
     }),
-  ),
-  wakeAfterMs: Type.Optional(
-    Type.Union([Type.Number(), Type.String()], {
+    cwd: Type.Optional(
+      Type.String({
+        description:
+          "Working directory for the poll command. Defaults to the state-machine session cwd.",
+      }),
+    ),
+    successCodes: Type.Optional(
+      Type.Array(Type.Number(), {
+        description: "Exit codes that mean this poll attempt found a result.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
+
+const timerStateSchema = Type.Object(
+  {
+    ...baseStateSchema,
+    kind: Type.Literal("timer", {
       description:
-        'Relative duration measured from the moment the parent selects this timer state, after which the timer should complete. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds. Mutually exclusive with wakeAt.',
+        "Sleep until a future time, then resume with elapsedMs and timestamp output. Specify exactly one of wakeAt (absolute) or wakeAfterMs (relative).",
     }),
-  ),
-});
+    wakeAt: Type.Optional(
+      Type.Union([Type.Number(), Type.String()], {
+        description:
+          'Absolute wake time when this timer state should complete. Accepts an ISO 8601 date string like "2026-05-24T18:00:00Z" or a Unix-epoch millisecond number. Mutually exclusive with wakeAfterMs.',
+      }),
+    ),
+    wakeAfterMs: Type.Optional(
+      Type.Union([Type.Number(), Type.String()], {
+        description:
+          'Relative duration measured from the moment the parent selects this timer state, after which the timer should complete. Accepts a duration string like "3h" or "5d", or a raw number of milliseconds. Mutually exclusive with wakeAt.',
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-const parkStateSchema = Type.Object({
-  ...baseStateSchema,
-  kind: Type.Literal("park", {
-    description:
-      "Hold the machine without running work or scheduling a wake while the parent drives.",
-  }),
-});
+const parkStateSchema = Type.Object(
+  {
+    ...baseStateSchema,
+    kind: Type.Literal("park", {
+      description:
+        "Hold the machine without running work or scheduling a wake while the parent drives.",
+    }),
+  },
+  { additionalProperties: false },
+);
 
-const terminalStateSchema = Type.Object({
-  ...baseStateSchema,
-  kind: Type.Literal("terminal", { description: "Finalize the state-machine session." }),
-  status: Type.Union([
-    Type.Literal("completed", { description: "The state machine completed successfully." }),
-    Type.Literal("failed", { description: "The state machine failed." }),
-    Type.Literal("cancelled", { description: "The state machine was cancelled." }),
-  ]),
-  reason: Type.Optional(Type.String({ description: "Optional final explanation for the user." })),
-});
+const terminalStateSchema = Type.Object(
+  {
+    ...baseStateSchema,
+    kind: Type.Literal("terminal", { description: "Finalize the state-machine session." }),
+    status: Type.Union([
+      Type.Literal("completed", { description: "The state machine completed successfully." }),
+      Type.Literal("failed", { description: "The state machine failed." }),
+      Type.Literal("cancelled", { description: "The state machine was cancelled." }),
+    ]),
+    reason: Type.Optional(Type.String({ description: "Optional final explanation for the user." })),
+  },
+  { additionalProperties: false },
+);
 
 const stateMachineStateSchema = Type.Union([
   agentStateSchema,
@@ -417,61 +481,69 @@ const stateMachineDefinitionSchema = Type.Object(
     }),
   },
   {
+    additionalProperties: false,
     description:
       "State-machine definition. Use inputSchema plus {{ input.foo }} templates for state prompts and commands that need transition input.",
   },
 );
 
-const createDefinitionSchema = Type.Object({
-  definition: stateMachineDefinitionSchema,
-  firstState: Type.String({
-    description:
-      "Name of the state in `definition.states` to run first after creating the definition.",
-  }),
-  replaceActive: Type.Optional(
-    Type.Boolean({
+const createDefinitionSchema = Type.Object(
+  {
+    definition: stateMachineDefinitionSchema,
+    firstState: Type.String({
       description:
-        "Set to true ONLY to deliberately abandon the state machine that is currently running and replace it with this new one. Creating a definition while a machine is still active is otherwise rejected: the active machine must first reach a terminal (advance or end it with select_state_machine_state). When this is true the runner cancels the active machine and starts this one in its place. Defaults to false, so an agent that did not realize a machine was running cannot clobber it by accident.",
+        "Name of the state in `definition.states` to run first after creating the definition.",
     }),
-  ),
-});
+    replaceActive: Type.Optional(
+      Type.Boolean({
+        description:
+          "Set to true ONLY to deliberately abandon the state machine that is currently running and replace it with this new one. Creating a definition while a machine is still active is otherwise rejected: the active machine must first reach a terminal (advance or end it with select_state_machine_state). When this is true the runner cancels the active machine and starts this one in its place. Defaults to false, so an agent that did not realize a machine was running cannot clobber it by accident.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
 type CreateDefinitionParams = Static<typeof createDefinitionSchema>;
 type ToolStateMachineDefinition = CreateDefinitionParams["definition"];
 
-const selectStateSchema = Type.Object({
-  decision: Type.Object(
-    {
-      state: Type.String({
+const selectStateSchema = Type.Object(
+  {
+    decision: Type.Object(
+      {
+        state: Type.String({
+          description:
+            "Name of the state to advance to. Must exactly match one of the names declared in the active definition (including the auto-injected `failed` and `cancelled` terminal escape hatches). Selecting a terminal state ends the state machine.",
+        }),
+        reason: Type.Optional(
+          Type.String({
+            description:
+              "Free-form explanation attached to the resulting terminal when `state` names a terminal state. Ignored for non-terminal states.",
+          }),
+        ),
+        override: Type.Optional(stateOverrideSchema),
+        persistOverride: Type.Optional(
+          Type.Boolean({
+            description:
+              "When `override` is set, controls whether the override is merged into the active state-machine definition (so the change sticks for every future run of this state) or applied as a one-shot just for this transition. Defaults to true — the orchestrator's typical reason to override is to tune a sub-agent prompt or fix a script command, and that tuning should persist. Set to false when you want to try a variation without committing it, e.g. probing a different prompt to see if the sub-agent recovers before deciding whether to keep the change. Ignored when `override` is omitted or when selecting a terminal state.",
+          }),
+        ),
+        input: Type.Optional(
+          Type.Record(Type.String(), Type.Any(), {
+            description:
+              "Input object for the selected state. Required when the state inputSchema requires fields; templates read values as {{ input.field }}.",
+          }),
+        ),
+      },
+      {
+        additionalProperties: false,
         description:
-          "Name of the state to advance to. Must exactly match one of the names declared in the active definition (including the auto-injected `failed` and `cancelled` terminal escape hatches). Selecting a terminal state ends the state machine.",
-      }),
-      reason: Type.Optional(
-        Type.String({
-          description:
-            "Free-form explanation attached to the resulting terminal when `state` names a terminal state. Ignored for non-terminal states.",
-        }),
-      ),
-      override: Type.Optional(stateOverrideSchema),
-      persistOverride: Type.Optional(
-        Type.Boolean({
-          description:
-            "When `override` is set, controls whether the override is merged into the active state-machine definition (so the change sticks for every future run of this state) or applied as a one-shot just for this transition. Defaults to true — the orchestrator's typical reason to override is to tune a sub-agent prompt or fix a script command, and that tuning should persist. Set to false when you want to try a variation without committing it, e.g. probing a different prompt to see if the sub-agent recovers before deciding whether to keep the change. Ignored when `override` is omitted or when selecting a terminal state.",
-        }),
-      ),
-      input: Type.Optional(
-        Type.Record(Type.String(), Type.Any(), {
-          description:
-            "Input object for the selected state. Required when the state inputSchema requires fields; templates read values as {{ input.field }}.",
-        }),
-      ),
-    },
-    {
-      description:
-        "State transition decision. Use `input` when selecting states with inputSchema or {{ input.foo }} templates; `reason` carries through to terminal states.",
-    },
-  ),
-});
+          "State transition decision. Use `input` when selecting states with inputSchema or {{ input.foo }} templates; `reason` carries through to terminal states.",
+      },
+    ),
+  },
+  { additionalProperties: false },
+);
 
 export interface CurrentStateMachineStateResult {
   currentState?: string;
@@ -659,7 +731,7 @@ export function createTurnRunnerTools(input: TurnRunnerToolsInput): AgentTool[] 
   return tools;
 }
 
-const askAdvisorSchema = Type.Object({});
+const askAdvisorSchema = Type.Object({}, { additionalProperties: false });
 
 /** Build the no-parameter, non-terminating advisor consultation tool. */
 export function createAskAdvisorTool(
@@ -820,31 +892,34 @@ function createAskUserQuestionTool(): AgentTool<typeof askUserQuestionSchema> {
   };
 }
 
-const recallMemorySchema = Type.Object({
-  query: Type.String({
-    description:
-      "Free-text description of what to recall. Use proper nouns, code symbols, or short paraphrases of the user's prior statements; the search is hybrid (vector + keyword), so both fuzzy and exact matches work.",
-  }),
-  limit: Type.Optional(
-    Type.Integer({
-      minimum: 1,
-      maximum: 20,
-      description: "Maximum results to return. Default 8.",
-    }),
-  ),
-  scope: Type.Optional(
-    Type.Union([Type.Literal("session"), Type.Literal("global"), Type.Literal("all")], {
+const recallMemorySchema = Type.Object(
+  {
+    query: Type.String({
       description:
-        "'session' restricts to the current conversation, 'global' to every other session, 'all' (default) searches both.",
+        "Free-text description of what to recall. Use proper nouns, code symbols, or short paraphrases of the user's prior statements; the search is hybrid (vector + keyword), so both fuzzy and exact matches work.",
     }),
-  ),
-  expand: Type.Optional(
-    Type.Boolean({
-      description:
-        "When true, the agent runs the original query plus two paraphrased variants and fuses the result sets. Useful when the first call returned weak results; off by default to keep latency low.",
-    }),
-  ),
-});
+    limit: Type.Optional(
+      Type.Integer({
+        minimum: 1,
+        maximum: 20,
+        description: "Maximum results to return. Default 8.",
+      }),
+    ),
+    scope: Type.Optional(
+      Type.Union([Type.Literal("session"), Type.Literal("global"), Type.Literal("all")], {
+        description:
+          "'session' restricts to the current conversation, 'global' to every other session, 'all' (default) searches both.",
+      }),
+    ),
+    expand: Type.Optional(
+      Type.Boolean({
+        description:
+          "When true, the agent runs the original query plus two paraphrased variants and fuses the result sets. Useful when the first call returned weak results; off by default to keep latency low.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
 function createRecallMemoryTool(
   storage: RecallMemoryToolStorage,
@@ -1152,11 +1227,11 @@ function createSelectStateTool(
     executionMode: "sequential",
     label: "Select state machine state",
     description: dedent`
-      Select the next state-machine state. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, park, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt or wakeAfterMs (exactly one).
+      Select the next state-machine state. Pass every selection field inside \`decision\`: {"decision":{"state":"work","override":{"kind":"agent","state":{"prompt":"Updated task","cwd":"/absolute/worktree"}}}}. Top-level override/input/persistOverride fields are invalid. \`decision.state\` must exactly match one of the state names declared in the active definition; the named state's own kind in the definition (agent, script, poll, timer, park, or terminal) drives what runs. When the selected state has inputSchema or template strings like {{ input.email }}, pass the matching input object here. Poll overrides must keep intervalMs set; timer overrides may replace wakeAt or wakeAfterMs (exactly one).
 
-      Carry forward what the orchestrator now knows. By default, agent states run in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — they only see the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`override.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: a fresh sub-agent has no way to read those findings, and neither your reasoning nor your reply text reaches it — this call's \`input\`/\`override.prompt\` is its only channel. Put the facts there on the FIRST select into a finding-dependent state; selecting it bare and adding context only after it comes back confused is the failure mode, not the fix. If restating the needed context would be lossy, set \`override.state.forkContext: true\` on an agent state so it starts with a copy of the parent transcript; leave it off for self-contained work because it copies the full context.
+      Carry forward what the orchestrator now knows. By default, agent states run in a fresh sub-agent context with no view of the previous state's transcript, tool output, or output value — they only see the rendered prompt and the input you pass here. So when a previous state surfaced facts the next state will need (file paths, IDs, error messages, decisions, summaries, root causes), either pass them as \`input\` (when the state's inputSchema has matching fields) or use \`decision.override.state.prompt\` to inline the findings into the next state's prompt before running it. A static prompt that says "using the findings from the previous step" without inputs or an override is a bug: a fresh sub-agent has no way to read those findings, and neither your reasoning nor your reply text reaches it — this call's \`input\`/\`decision.override.state.prompt\` is its only channel. Put the facts there on the FIRST select into a finding-dependent state; selecting it bare and adding context only after it comes back confused is the failure mode, not the fix. If restating the needed context would be lossy, set \`decision.override.state.forkContext: true\` on an agent state so it starts with a copy of the parent transcript; leave it off for self-contained work because it copies the full context.
 
-      The working directory is part of that carry-forward, and the most common thing orchestrators get wrong. The moment a state operates anywhere other than the session cwd — a git worktree, clone, sub-package, or scratch directory whose path an earlier state returned — set \`override.cwd\` (agent states) or the script/poll \`cwd\` to that path. Do this aggressively and by default for any out-of-tree work rather than waiting for the sub-agent to orient itself. Do NOT convey the location by writing "cd into /path" or "work in the worktree at /path" in the prompt: a sub-agent's coding tools (bash, read, write, edit) start in the \`cwd\` you set, not wherever the prompt mentions, so an inlined path leaves the tools pointed at the wrong tree while the narration reads correct. The path almost always comes from a previous state's output (e.g. a worktree path printed by an implement step) — capture it and pass it as \`override.cwd\` on that transition. A relative cwd resolves against the session working directory shown in the \`<cwd>\` block of the system prompt, so prefer an absolute path for a worktree or clone that lives outside it.
+      The working directory is part of that carry-forward, and the most common thing orchestrators get wrong. The moment a state operates anywhere other than the session cwd — a git worktree, clone, sub-package, or scratch directory whose path an earlier state returned — set \`decision.override.state.cwd\` (agent states) or the script/poll \`cwd\` to that path. Do this aggressively and by default for any out-of-tree work rather than waiting for the sub-agent to orient itself. Do NOT convey the location by writing "cd into /path" or "work in the worktree at /path" in the prompt: a sub-agent's coding tools (bash, read, write, edit) start in the \`cwd\` you set, not wherever the prompt mentions, so an inlined path leaves the tools pointed at the wrong tree while the narration reads correct. The path almost always comes from a previous state's output (e.g. a worktree path printed by an implement step) — capture it and pass it as \`decision.override.state.cwd\` on that transition. A relative cwd resolves against the session working directory shown in the \`<cwd>\` block of the system prompt, so prefer an absolute path for a worktree or clone that lives outside it.
 
       Overrides persist by default. When you pass \`override\`, the merged state (prompt, command, schedule — whichever fields you set) is written back into the active definition, so every future run of that state uses the tuned version. This is the right shape when you are tightening a sub-agent prompt that hallucinated, fixing a script command that misbehaved, or tuning poll/timer cadence. Set \`persistOverride: false\` when you want a one-shot variation that does not commit — for example, probing a different prompt to see if the sub-agent recovers before deciding whether to keep the change. Persistence is a no-op for terminal states. \`override.kind\` must match the target state's kind; a mismatch is rejected outright (rather than silently dropping the override), and a per-state \`cwd\` that does not resolve to an existing directory is rejected too — fix the kind or the path before re-selecting.
 
@@ -1191,10 +1266,13 @@ function createSelectStateTool(
   };
 }
 
-const updateStateSchema = Type.Object({
-  state: Type.String({ description: "Name of an existing state to edit without executing it." }),
-  override: stateOverrideSchema,
-});
+const updateStateSchema = Type.Object(
+  {
+    state: Type.String({ description: "Name of an existing state to edit without executing it." }),
+    override: stateOverrideSchema,
+  },
+  { additionalProperties: false },
+);
 
 function createUpdateStateTool(
   getStateMachine: (() => StateMachineSession | undefined) | undefined,
@@ -1240,7 +1318,7 @@ function createCurrentStateMachineStateTool(
     label: "Get current state-machine state",
     description:
       "Inspect current state-machine progress, including background work that ran after selecting a state. Use this after resume, interruption, or uncertainty before selecting the next state, and before answering user questions about state-machine progress, poll/wake status, what has already happened, or why the session is waiting.",
-    parameters: Type.Object({}),
+    parameters: Type.Object({}, { additionalProperties: false }),
     async execute() {
       const stateMachine = getStateMachine?.();
       const activeOutput = getActiveStateOutput?.();
@@ -1276,11 +1354,20 @@ function assertValidSelectedState(
     throw new Error(`Unknown state: ${decision.state}. Valid states: ${validStates.join(", ")}`);
   }
 
-  // Terminal states don't accept override or per-transition input — they
-  // just record their status and reason. Skip the override/input checks so
-  // a caller selecting `failed` (or any other terminal) with an empty
-  // decision is always accepted.
-  if (selectedState.kind === "terminal") return;
+  // A minimal terminal selection always escapes a broken state's inputs/cwd.
+  // Extra control fields must not look accepted when no work will consume them.
+  if (selectedState.kind === "terminal") {
+    if (
+      decision.override !== undefined ||
+      decision.input !== undefined ||
+      decision.persistOverride !== undefined
+    ) {
+      throw new Error(
+        "Terminal states accept only decision.state and decision.reason; omit override, input, and persistOverride.",
+      );
+    }
+    return;
+  }
 
   const effectiveState = validatedStateOverride(selectedState, decision.override, baseCwd);
   assertValidStateInput(effectiveState, decision.input);

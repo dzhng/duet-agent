@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { admitToolArguments } from "./tool-admission.js";
 import {
   Agent,
   type AgentEvent,
@@ -2873,7 +2874,9 @@ export class TurnRunner {
 
     const agent = this.requireParentAgent();
     this.applyPendingModelSelection(agent);
-    agent.state.tools = this.turnTools ?? this.createTools(input.state.mode).tools;
+    agent.state.tools = (this.turnTools ?? this.createTools(input.state.mode).tools).map(
+      admitToolArguments,
+    );
     this.parentControlResults.length = 0;
     this.setParentAgentRunning(true);
 
@@ -3281,7 +3284,7 @@ export class TurnRunner {
             skills: input.skills,
           }),
         messages: input.state.agent.messages,
-        tools: input.tools,
+        tools: input.tools.map(admitToolArguments),
       },
       transformContext: this.createMemoryTransform(input.memoryContext),
       ...(input.parentModelRouting

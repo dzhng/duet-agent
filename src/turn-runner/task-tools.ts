@@ -6,26 +6,29 @@ import type { TaskManager } from "../tasks/task-manager.js";
 import type { ScopeId, TaskId, TaskSnapshot } from "../tasks/types.js";
 import type { SubagentResult, SubagentRun, SubagentSpec } from "./subagent.js";
 
-export const spawnAgentSchema = Type.Object({
-  prompt: Type.String({ description: "The task for the child agent." }),
-  fork_context: Type.Optional(
-    Type.Boolean({ description: "Seed the child with a copy of the caller's transcript." }),
-  ),
-  cwd: Type.Optional(Type.String({ description: "Working directory for the child." })),
-  allowed_skills: Type.Optional(
-    Type.Array(Type.String(), { description: "Skill names the child may use." }),
-  ),
-  run_in_background: Type.Optional(
-    Type.Boolean({ description: "Start the child in the background and return immediately." }),
-  ),
-  timeout: Type.Optional(
-    Type.Number({
-      minimum: 0,
-      description:
-        "Foreground wait budget in seconds. Expiry moves the child to the background; it does not stop it.",
-    }),
-  ),
-});
+export const spawnAgentSchema = Type.Object(
+  {
+    prompt: Type.String({ description: "The task for the child agent." }),
+    fork_context: Type.Optional(
+      Type.Boolean({ description: "Seed the child with a copy of the caller's transcript." }),
+    ),
+    cwd: Type.Optional(Type.String({ description: "Working directory for the child." })),
+    allowed_skills: Type.Optional(
+      Type.Array(Type.String(), { description: "Skill names the child may use." }),
+    ),
+    run_in_background: Type.Optional(
+      Type.Boolean({ description: "Start the child in the background and return immediately." }),
+    ),
+    timeout: Type.Optional(
+      Type.Number({
+        minimum: 0,
+        description:
+          "Foreground wait budget in seconds. Expiry moves the child to the background; it does not stop it.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
 export type SpawnAgentParams = Static<typeof spawnAgentSchema>;
 
@@ -148,19 +151,25 @@ function subagentResultText(result: SubagentResult): string {
 
 const MAX_INLINE_SETTLEMENT_CHARS = 2_000;
 
-const taskOutputSchema = Type.Object({
-  id: Type.Optional(Type.String({ description: "Task id, such as t3. Omit to list all tasks." })),
-  wait: Type.Optional(
-    Type.Number({
-      minimum: 0,
-      description: "Seconds to wait for this task to settle before returning its current output.",
-    }),
-  ),
-});
+const taskOutputSchema = Type.Object(
+  {
+    id: Type.Optional(Type.String({ description: "Task id, such as t3. Omit to list all tasks." })),
+    wait: Type.Optional(
+      Type.Number({
+        minimum: 0,
+        description: "Seconds to wait for this task to settle before returning its current output.",
+      }),
+    ),
+  },
+  { additionalProperties: false },
+);
 
-const taskStopSchema = Type.Object({
-  id: Type.String({ description: "Task id to stop, such as t3." }),
-});
+const taskStopSchema = Type.Object(
+  {
+    id: Type.String({ description: "Task id to stop, such as t3." }),
+  },
+  { additionalProperties: false },
+);
 
 type TaskOutputParams = Static<typeof taskOutputSchema>;
 type TaskStopParams = Static<typeof taskStopSchema>;
@@ -195,21 +204,24 @@ export function wrapBackgroundable<TParameters extends TSchema, TDetails>(
     "properties" in tool.parameters
       ? (tool.parameters.properties as Record<string, TSchema>)
       : ({} as Record<string, TSchema>);
-  const parameters = Type.Object({
-    ...baseProperties,
-    timeout: Type.Optional(
-      Type.Number({
-        minimum: 0,
-        description:
-          "Foreground wait budget in seconds. Expiry moves the command to the background; it does not kill it.",
-      }),
-    ),
-    run_in_background: Type.Optional(
-      Type.Boolean({
-        description: "Start the command in the background and return immediately.",
-      }),
-    ),
-  });
+  const parameters = Type.Object(
+    {
+      ...baseProperties,
+      timeout: Type.Optional(
+        Type.Number({
+          minimum: 0,
+          description:
+            "Foreground wait budget in seconds. Expiry moves the command to the background; it does not kill it.",
+        }),
+      ),
+      run_in_background: Type.Optional(
+        Type.Boolean({
+          description: "Start the command in the background and return immediately.",
+        }),
+      ),
+    },
+    { additionalProperties: false },
+  );
 
   return {
     ...tool,
