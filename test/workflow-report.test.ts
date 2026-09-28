@@ -162,3 +162,92 @@ test("offline positive replay rejects corrupted release bytes despite an accepte
     "Released source differs from committed source",
   );
 });
+
+test("report evidence joins native script start and completion without trusting agent summaries", () => {
+  const execution = {
+    id: "t23",
+    state: "verify",
+    kind: "script" as const,
+    cwd: "/task",
+    forkContext: false,
+    suppliedInputKeys: [],
+    renderedInputKeys: [],
+    persistOverride: false,
+    preview: "bash /tmp/verify.sh",
+    previewTruncated: false,
+    fingerprint: "script-fingerprint",
+  };
+  const output = { stdout: "ALL_PASS (13/13)", stderr: "", exitCode: 0 };
+  const history = [
+    { type: "runner_decided" as const, timestamp: 1, decision: { state: "verify" }, execution },
+    { type: "state_started" as const, timestamp: 2, state: "verify", execution },
+    { type: "state_completed" as const, timestamp: 3, state: "verify", output },
+    {
+      type: "state_started" as const,
+      timestamp: 4,
+      state: "worker",
+      execution: { ...execution, id: "t24", state: "worker", kind: "agent" as const },
+    },
+    {
+      type: "state_completed" as const,
+      timestamp: 5,
+      state: "worker",
+      output: { ...output, result: "I ran 13 tests" },
+    },
+    {
+      type: "runner_decided" as const,
+      timestamp: 6,
+      decision: { state: "unstarted" },
+      execution: { ...execution, id: "t25", state: "unstarted" },
+    },
+    { type: "state_completed" as const, timestamp: 7, state: "unstarted", output },
+    { type: "state_started" as const, timestamp: 8, state: "poll" },
+    { type: "state_completed" as const, timestamp: 9, state: "poll", output },
+    { type: "state_started" as const, timestamp: 10, state: "incomplete" },
+    { type: "state_started" as const, timestamp: 11, state: "legacy-agent" },
+    {
+      type: "state_completed" as const,
+      timestamp: 12,
+      state: "legacy-agent",
+      output: { result: JSON.stringify(output) },
+    },
+  ];
+  const snapshot: TurnEvent = {
+    type: "state_machine",
+    stateMachine: {
+      definition: {
+        name: "checks",
+        prompt: "Check",
+        states: [{ name: "done", kind: "terminal", status: "completed" }],
+      },
+      prompt: "",
+      history,
+      createdAt: 0,
+      updatedAt: 7,
+    },
+  };
+  const startedSnapshot = {
+    ...snapshot,
+    stateMachine: { ...snapshot.stateMachine, history: history.slice(0, 2) },
+  };
+  const completedSnapshot = {
+    ...snapshot,
+    stateMachine: { ...snapshot.stateMachine, history: history.slice(2) },
+  };
+  const evidence = buildWorkflowReportEvidence(
+    [startedSnapshot, completedSnapshot, completedSnapshot, ...transcript("13 tests passed")],
+    [],
+  );
+  expect(evidence.nativeStateResults).toEqual([
+    {
+      state: "verify",
+      execution,
+      startedAt: 2,
+      completedAt: 3,
+      stdout: output.stdout,
+      stderr: "",
+      exitCode: 0,
+    },
+    { state: "poll", startedAt: 8, completedAt: 9, stdout: output.stdout, stderr: "", exitCode: 0 },
+  ]);
+});
