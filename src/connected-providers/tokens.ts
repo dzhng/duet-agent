@@ -1,3 +1,4 @@
+import { resumeModelSelection } from "../model-resolution/catalog.js";
 import { refreshConnectedCredentials } from "./refresh.js";
 import { connectedProviders } from "./registry.js";
 import {
@@ -47,21 +48,30 @@ export function createConnectedTokenManager(
   const refreshCredentials = options.refreshCredentials ?? refreshConnectedCredentials;
   const cache = new Map<ConnectedProviderId, OAuthCredentials>();
   const refreshes = new Map<ConnectedProviderId, Promise<string | undefined>>();
+  const pendingCatalogRefresh = new Set<ConnectedProviderId>();
   let bootConnections: readonly ConnectionRecord[] = [];
 
   const isFresh = (credentials: OAuthCredentials): boolean =>
     credentials.expires > now() + REFRESH_SKEW_MS;
 
   const ensureFreshToken = (provider: ConnectedProviderId): Promise<string | undefined> => {
-    const cached = cache.get(provider);
-    if (cached && isFresh(cached)) return Promise.resolve(cached.access);
     const active = refreshes.get(provider);
     if (active) return active;
+    const cached = cache.get(provider);
+    if (cached && isFresh(cached) && !pendingCatalogRefresh.has(provider)) {
+      return Promise.resolve(cached.access);
+    }
 
     const pending = options.store
       .withLock<RefreshOutcome>(provider, async (current) => {
         if (!current) return { result: undefined };
-        if (isFresh(current.credentials)) {
+        // Recheck under the store lock: another process may already have
+        // refreshed the account model list. Consume the attempt even if the
+        // account still cannot serve the successor, so ordinary turns do not poll.
+        const refreshCatalog =
+          pendingCatalogRefresh.delete(provider) &&
+          hasRetiredModelAvailability(provider, current.credentials);
+        if (isFresh(current.credentials) && !refreshCatalog) {
           return { next: current, result: { credentials: current.credentials } };
         }
         let credentials: OAuthCredentials;
@@ -102,7 +112,11 @@ export function createConnectedTokenManager(
     async loadSnapshot() {
       bootConnections = await options.store.read();
       cache.clear();
+      pendingCatalogRefresh.clear();
       for (const connection of bootConnections) {
+        if (hasRetiredModelAvailability(connection.provider, connection.credentials)) {
+          pendingCatalogRefresh.add(connection.provider);
+        }
         if (isFresh(connection.credentials)) cache.set(connection.provider, connection.credentials);
       }
       return bootConnections;
@@ -130,6 +144,22 @@ export function createConnectedTokenManager(
       return cache.get(provider);
     },
   };
+}
+
+/** A valid token can carry a model list captured before a family successor shipped. */
+function hasRetiredModelAvailability(
+  provider: ConnectedProviderId,
+  credentials: OAuthCredentials,
+): boolean {
+  if (provider !== "github-copilot" || !Array.isArray(credentials.availableModelIds)) return false;
+  const available = new Set(
+    credentials.availableModelIds.filter((id): id is string => typeof id === "string"),
+  );
+  const prefix = `${provider}:`;
+  return [...available].some((id) => {
+    const current = resumeModelSelection(`${prefix}${id}`)?.slice(prefix.length);
+    return current !== undefined && current !== id && !available.has(current);
+  });
 }
 
 function isRefreshAuthFailure(error: unknown): boolean {

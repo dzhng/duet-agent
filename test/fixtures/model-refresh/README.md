@@ -69,3 +69,15 @@ first failed on `duet-gateway:anthropic/claude-opus-5` versus the required
 `duet-gateway:opus`; restoring it passed the focused suite. The complete package
 gate runs on the clean release composition after cherry-picking this change,
 so unrelated unpushed agent work is excluded from release.
+
+An additional controlled request qualified a connected-account upgrade defect:
+a valid Copilot token whose cached availability contained only Opus 5 dispatched
+the new Opus target to the metered Duet gateway. The existing token startup seam
+now requests one locked, coalesced availability refresh when its list contains a
+known retired target without its successor. An account still denying the new
+model keeps that denial; the attempt is consumed so ordinary turns do not poll.
+The tradeoff is at most one extra OAuth/model-list refresh per CLI boot while
+such an old-only list remains. No provider permission is inferred from the
+catalog and no durable version field is added. Concurrent launch callers wait
+for this refresh rather than using the still-valid old token. Controlled wire,
+coalescing, and no-repeat tests passed after their failing reproductions.

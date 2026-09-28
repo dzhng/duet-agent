@@ -129,7 +129,7 @@ describe("built-in model routing table", () => {
   test("recognizes only table-owned virtual model names", () => {
     expect(virtualModelNames(BUILT_IN_ROUTING_TABLE)).toEqual(["frontier", "balanced", "economy"]);
     expect(isVirtualModel("frontier", BUILT_IN_ROUTING_TABLE)).toBe(true);
-    expect(isVirtualModel("opus-4.8", BUILT_IN_ROUTING_TABLE)).toBe(false);
+    expect(isVirtualModel("opus-5.5", BUILT_IN_ROUTING_TABLE)).toBe(false);
     expect(validateRoutingTable(BUILT_IN_ROUTING_TABLE, catalog)).toEqual([]);
   });
 
@@ -156,12 +156,12 @@ describe("built-in model routing table", () => {
 
   test("rejects a virtual tier that collides with a catalog shorthand", () => {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-    table.tiers["opus-4.8"] = table.tiers.frontier;
+    table.tiers["opus-5.5"] = table.tiers.frontier;
 
     expect(validateRoutingTable(table, catalog)).toContainEqual({
       code: "catalog_collision",
-      path: "tiers.opus-4.8",
-      message: 'Virtual model "opus-4.8" collides with a concrete catalog shorthand or alias.',
+      path: "tiers.opus-5.5",
+      message: 'Virtual model "opus-5.5" collides with a concrete catalog shorthand or alias.',
     });
   });
 
@@ -398,14 +398,14 @@ describe("routing table file loading and export", () => {
   testIfDocker("fails loading when a file tier collides with a catalog alias", async () => {
     const cwd = await makeTempDir();
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-    table.tiers["opus-4.8"] = table.tiers.frontier;
+    table.tiers["opus-5.5"] = table.tiers.frontier;
     await mkdir(join(cwd, ".duet"));
     await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
 
     await expect(
       loadRoutingTable({ cwd, catalogAdapter: catalog, homeDir: await makeTempDir() }),
     ).rejects.toThrow(
-      'Virtual model "opus-4.8" collides with a concrete catalog shorthand or alias.',
+      'Virtual model "opus-5.5" collides with a concrete catalog shorthand or alias.',
     );
   });
 
