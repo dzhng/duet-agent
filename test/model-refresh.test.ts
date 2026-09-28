@@ -248,6 +248,7 @@ testIfDocker(
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
     table.defaultTier = "opus-4.7";
     table.tiers["opus-4.7"] = structuredClone(table.tiers.frontier!);
+    table.tiers["opus-4.7"]!.advisor.enabled = true;
     table.tiers["gpt-5.6-luna"] = structuredClone(table.tiers.economy!);
     const original = baseline.receipts.find((item) => item.input === "opus")!.envelope;
     const envelope = {

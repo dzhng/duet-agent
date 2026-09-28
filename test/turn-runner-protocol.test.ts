@@ -915,7 +915,33 @@ describe("TurnRunner protocol scenarios", () => {
     );
     expect(runner.workerInputs[3]?.prompt).toContain("<status>completed</status>");
     expect(runner.workerInputs[3]?.prompt).toContain("<state>meeting_scheduled</state>");
-    expect(events.filter((event) => event.type === "state_machine")).toHaveLength(2);
+    const snapshots = events
+      .filter((event) => event.type === "state_machine")
+      .map((event) => event.stateMachine);
+    const selected = snapshots.find(
+      (session) =>
+        session.currentState === "research_prospect" &&
+        session.history.at(-1)?.type === "runner_decided",
+    );
+    expect(selected).toBeDefined();
+    expect(selected!.history.some((event) => event.type === "state_started")).toBe(false);
+    const started = snapshots.find(
+      (session) =>
+        session.currentState === "research_prospect" &&
+        session.history.some(
+          (event) => event.type === "state_started" && event.state === "research_prospect",
+        ),
+    );
+    expect(started?.progress?.states.research_prospect?.runs).toBe(1);
+    expect(snapshots.indexOf(started!)).toBeGreaterThan(snapshots.indexOf(selected!));
+    expect(snapshots.at(-1)?.currentState).toBe("meeting_scheduled");
+    expect(terminal.state.stateMachine?.history).toContainEqual(
+      expect.objectContaining({
+        type: "state_completed",
+        state: "research_prospect",
+        output: { result: "Completed: Research the prospect and company." },
+      }),
+    );
     expect(terminal).toMatchObject({
       type: "complete",
       status: "completed",

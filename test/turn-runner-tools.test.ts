@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +24,9 @@ import type { ClassifierEvaluate, ClassifyRouteOptions } from "../src/model-rout
 import { resolveModelName } from "../src/model-resolution/resolver.js";
 import type { CallAdvisorInput } from "../src/model-routing/advisor.js";
 import type { TurnEvent, TurnTodo } from "../src/types/protocol.js";
-import { testIfDocker } from "./helpers/docker-only.js";
+import { inDockerTest, testIfDocker } from "./helpers/docker-only.js";
+
+let advisorFixtureCwd: string | undefined;
 
 type TurnRunnerToolsInput = Parameters<typeof createTurnRunnerToolsWithStorage>[0];
 
@@ -382,261 +384,295 @@ describe("TurnRunner tools", () => {
     await expect(first).resolves.toEqual(expect.objectContaining({ terminate: false }));
   });
 
-  test("injects ask_advisor only for routed tiers that enable it", async () => {
-    const priorKey = process.env.DUET_API_KEY;
-    process.env.DUET_API_KEY = "advisor-tool-test-key";
-    try {
-      const frontier = new ToolListTurnRunner("frontier");
-      await frontier.start({ type: "start", mode: "agent" });
-      expect(frontier.toolNames()).toContain("ask_advisor");
-      await frontier.dispose();
-
-      const economy = new ToolListTurnRunner("economy");
-      await economy.start({ type: "start", mode: "agent" });
-      expect(economy.toolNames()).not.toContain("ask_advisor");
-      await economy.dispose();
-
-      const concrete = new ToolListTurnRunner("gpt-6-sol");
-      await concrete.start({ type: "start", mode: "agent" });
-      expect(concrete.toolNames()).not.toContain("ask_advisor");
-      await concrete.dispose();
-    } finally {
-      if (priorKey === undefined) delete process.env.DUET_API_KEY;
-      else process.env.DUET_API_KEY = priorKey;
-    }
-  });
-
-  test("TurnRunner captures the live executor prompt, tools, and current assistant turn", async () => {
-    const priorKey = process.env.DUET_API_KEY;
-    process.env.DUET_API_KEY = "advisor-context-test-key";
-    const runner = new ToolListTurnRunner("frontier");
-    try {
-      await runner.start({ type: "start", mode: "agent" });
-      runner.parentMessages().push(
-        { role: "user", content: "Review the live context.", timestamp: 1 },
-        {
-          role: "assistant",
-          content: [
-            { type: "thinking", thinking: "CURRENT TURN REASONING" },
-            { type: "text", text: "CURRENT TURN TEXT" },
-            { type: "toolCall", id: "advisor-live", name: "ask_advisor", arguments: {} },
-          ],
-          api: "anthropic-messages",
-          provider: "duet-gateway",
-          model: "executor-model",
-          usage: {
-            input: 1,
-            output: 1,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: 2,
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          },
-          stopReason: "toolUse",
-          timestamp: 2,
-        },
-      );
-      const advisor = runner.advisorTool();
-      if (!advisor) throw new Error("ask_advisor tool missing");
-
-      await advisor.execute("advisor-live", {});
-
-      const sent = runner.lastAdvisorInput;
-      expect(sent?.contextText).toContain("CURRENT TURN REASONING");
-      expect(sent?.contextText).toContain("CURRENT TURN TEXT");
-      expect(sent?.contextText).toContain('"name":"ask_advisor"');
-      expect(sent?.contextText).toContain('"name":"bash"');
-      expect(sent?.contextText).toContain("ADVISOR");
-    } finally {
-      await runner.dispose();
-      if (priorKey === undefined) delete process.env.DUET_API_KEY;
-      else process.env.DUET_API_KEY = priorKey;
-    }
-  });
-
-  testIfDocker("lazy advisor resolution cannot crash session startup", async () => {
-    const priorDuet = process.env.DUET_API_KEY;
-    const priorVercel = process.env.AI_GATEWAY_API_KEY;
-    const priorOpenRouter = process.env.OPENROUTER_API_KEY;
-    const cwd = await mkdtemp(join(tmpdir(), "duet-advisor-lazy-"));
-    delete process.env.DUET_API_KEY;
-    delete process.env.AI_GATEWAY_API_KEY;
-    process.env.OPENROUTER_API_KEY = "openrouter-test-key";
-    try {
+  describe("explicit advisor policy", () => {
+    beforeAll(async () => {
+      if (!inDockerTest) return;
+      advisorFixtureCwd = await mkdtemp(join(tmpdir(), "advisor-tool-policy-"));
       const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-      table.tiers.frontier!.advisor.target.modelName = "gpt-6-luna";
-      await mkdir(join(cwd, ".duet"));
-      await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
-      const runner = new ToolListTurnRunner("frontier", cwd);
+      table.tiers.frontier!.advisor.enabled = true;
+      table.tiers.economy!.advisor.enabled = false;
+      await mkdir(join(advisorFixtureCwd, ".duet"));
+      await writeFile(join(advisorFixtureCwd, ".duet", "models.json"), JSON.stringify(table));
+    });
+    afterAll(async () => {
+      if (advisorFixtureCwd) await rm(advisorFixtureCwd, { recursive: true, force: true });
+      advisorFixtureCwd = undefined;
+    });
+    testIfDocker("injects ask_advisor only for routed tiers that enable it", async () => {
+      const priorKey = process.env.DUET_API_KEY;
+      process.env.DUET_API_KEY = "advisor-tool-test-key";
+      try {
+        const frontier = new ToolListTurnRunner("frontier");
+        await frontier.start({ type: "start", mode: "agent" });
+        expect(frontier.toolNames()).toContain("ask_advisor");
+        await frontier.dispose();
 
-      await expect(runner.start({ type: "start", mode: "agent" })).resolves.toBeDefined();
-      runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
-      const advisor = runner.advisorTool();
-      if (!advisor) throw new Error("ask_advisor tool missing");
-      const result = await advisor.execute("advisor-luna", {});
-      expect(result.details).toEqual({
-        type: "ask_advisor",
-        model: "openai/gpt-6-luna",
-        context: expect.objectContaining({ truncated: false }),
-      });
-      expect(result.content).toEqual([{ type: "text", text: "Proceed with the new tier." }]);
-      expect(runner.lastAdvisorInput?.modelName).toBe("openai/gpt-6-luna");
-      await runner.dispose();
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-      if (priorDuet === undefined) delete process.env.DUET_API_KEY;
-      else process.env.DUET_API_KEY = priorDuet;
-      if (priorVercel === undefined) delete process.env.AI_GATEWAY_API_KEY;
-      else process.env.AI_GATEWAY_API_KEY = priorVercel;
-      if (priorOpenRouter === undefined) delete process.env.OPENROUTER_API_KEY;
-      else process.env.OPENROUTER_API_KEY = priorOpenRouter;
-    }
-  });
+        const economy = new ToolListTurnRunner("economy");
+        await economy.start({ type: "start", mode: "agent" });
+        expect(economy.toolNames()).not.toContain("ask_advisor");
+        await economy.dispose();
 
-  test("tier switches rebuild advisor injection and bind consults to the new router", async () => {
-    // Routed boot resolves the tier's concrete target, which requires a
-    // provider credential to be PRESENT (never called — the classifier and
-    // advisor are faked). Fresh checkouts/worktrees carry no .env, so the
-    // test supplies its own key like turn-runner-router.test.ts does.
-    const priorKey = process.env.DUET_API_KEY;
-    process.env.DUET_API_KEY = "tier-switch-test-key";
-    try {
-      await runTierSwitchScenario();
-    } finally {
-      if (priorKey === undefined) delete process.env.DUET_API_KEY;
-      else process.env.DUET_API_KEY = priorKey;
-    }
-  });
+        const concrete = new ToolListTurnRunner("gpt-6-sol");
+        await concrete.start({ type: "start", mode: "agent" });
+        expect(concrete.toolNames()).not.toContain("ask_advisor");
+        await concrete.dispose();
+      } finally {
+        if (priorKey === undefined) delete process.env.DUET_API_KEY;
+        else process.env.DUET_API_KEY = priorKey;
+      }
+    });
 
-  test("streams advisor usage after a parent snapshot and attributes its model", async () => {
-    const priorKey = process.env.DUET_API_KEY;
-    process.env.DUET_API_KEY = "advisor-usage-test-key";
-    const runner = new ToolListTurnRunner("frontier");
-    const events: TurnEvent[] = [];
-    runner.subscribe((event) => events.push(event));
-    try {
+    testIfDocker(
+      "TurnRunner captures the live executor prompt, tools, and current assistant turn",
+      async () => {
+        const priorKey = process.env.DUET_API_KEY;
+        process.env.DUET_API_KEY = "advisor-context-test-key";
+        const runner = new ToolListTurnRunner("frontier");
+        try {
+          await runner.start({ type: "start", mode: "agent" });
+          runner.parentMessages().push(
+            { role: "user", content: "Review the live context.", timestamp: 1 },
+            {
+              role: "assistant",
+              content: [
+                { type: "thinking", thinking: "CURRENT TURN REASONING" },
+                { type: "text", text: "CURRENT TURN TEXT" },
+                { type: "toolCall", id: "advisor-live", name: "ask_advisor", arguments: {} },
+              ],
+              api: "anthropic-messages",
+              provider: "duet-gateway",
+              model: "executor-model",
+              usage: {
+                input: 1,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 2,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+              },
+              stopReason: "toolUse",
+              timestamp: 2,
+            },
+          );
+          const advisor = runner.advisorTool();
+          if (!advisor) throw new Error("ask_advisor tool missing");
+
+          await advisor.execute("advisor-live", {});
+
+          const sent = runner.lastAdvisorInput;
+          expect(sent?.contextText).toContain("CURRENT TURN REASONING");
+          expect(sent?.contextText).toContain("CURRENT TURN TEXT");
+          expect(sent?.contextText).toContain('"name":"ask_advisor"');
+          expect(sent?.contextText).toContain('"name":"bash"');
+          expect(sent?.contextText).toContain("ADVISOR");
+        } finally {
+          await runner.dispose();
+          if (priorKey === undefined) delete process.env.DUET_API_KEY;
+          else process.env.DUET_API_KEY = priorKey;
+        }
+      },
+    );
+
+    testIfDocker("lazy advisor resolution cannot crash session startup", async () => {
+      const priorDuet = process.env.DUET_API_KEY;
+      const priorVercel = process.env.AI_GATEWAY_API_KEY;
+      const priorOpenRouter = process.env.OPENROUTER_API_KEY;
+      const cwd = await mkdtemp(join(tmpdir(), "duet-advisor-lazy-"));
+      delete process.env.DUET_API_KEY;
+      delete process.env.AI_GATEWAY_API_KEY;
+      process.env.OPENROUTER_API_KEY = "openrouter-test-key";
+      try {
+        const table = structuredClone(BUILT_IN_ROUTING_TABLE);
+        table.tiers.frontier!.advisor.enabled = true;
+        table.tiers.frontier!.advisor.target.modelName = "gpt-6-luna";
+        await mkdir(join(cwd, ".duet"));
+        await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
+        const runner = new ToolListTurnRunner("frontier", cwd);
+
+        await expect(runner.start({ type: "start", mode: "agent" })).resolves.toBeDefined();
+        runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
+        const advisor = runner.advisorTool();
+        if (!advisor) throw new Error("ask_advisor tool missing");
+        const result = await advisor.execute("advisor-luna", {});
+        expect(result.details).toEqual({
+          type: "ask_advisor",
+          model: "openai/gpt-6-luna",
+          context: expect.objectContaining({ truncated: false }),
+        });
+        expect(result.content).toEqual([{ type: "text", text: "Proceed with the new tier." }]);
+        expect(runner.lastAdvisorInput?.modelName).toBe("openai/gpt-6-luna");
+        await runner.dispose();
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+        if (priorDuet === undefined) delete process.env.DUET_API_KEY;
+        else process.env.DUET_API_KEY = priorDuet;
+        if (priorVercel === undefined) delete process.env.AI_GATEWAY_API_KEY;
+        else process.env.AI_GATEWAY_API_KEY = priorVercel;
+        if (priorOpenRouter === undefined) delete process.env.OPENROUTER_API_KEY;
+        else process.env.OPENROUTER_API_KEY = priorOpenRouter;
+      }
+    });
+
+    testIfDocker(
+      "tier switches rebuild advisor injection and bind consults to the new router",
+      async () => {
+        // Routed boot resolves the tier's concrete target, which requires a
+        // provider credential to be PRESENT (never called — the classifier and
+        // advisor are faked). Fresh checkouts/worktrees carry no .env, so the
+        // test supplies its own key like turn-runner-router.test.ts does.
+        const priorKey = process.env.DUET_API_KEY;
+        process.env.DUET_API_KEY = "tier-switch-test-key";
+        try {
+          await runTierSwitchScenario();
+        } finally {
+          if (priorKey === undefined) delete process.env.DUET_API_KEY;
+          else process.env.DUET_API_KEY = priorKey;
+        }
+      },
+    );
+
+    testIfDocker(
+      "streams advisor usage after a parent snapshot and attributes its model",
+      async () => {
+        const priorKey = process.env.DUET_API_KEY;
+        process.env.DUET_API_KEY = "advisor-usage-test-key";
+        const runner = new ToolListTurnRunner("frontier");
+        const events: TurnEvent[] = [];
+        runner.subscribe((event) => events.push(event));
+        try {
+          await runner.start({ type: "start", mode: "agent" });
+          runner.seedParentUsageForTest();
+          runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
+          const advisor = runner.advisorTool();
+          if (!advisor) throw new Error("ask_advisor tool missing");
+
+          await advisor.execute("advisor-usage", {});
+
+          const usage = events.find(
+            (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
+          );
+          expect(usage?.turnUsage).toMatchObject({ input: 12, output: 3, totalTokens: 15 });
+          expect(usage?.lastMessageUsage.totalTokens).toBe(0);
+          expect(usage?.usageByModel).toEqual([
+            {
+              model: resolveModelName(
+                BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName,
+              ).id,
+              transport: { provider: "duet-gateway", billing: "metered" },
+              usage: expect.objectContaining({ totalTokens: 15 }),
+            },
+          ]);
+        } finally {
+          await runner.dispose();
+          if (priorKey === undefined) delete process.env.DUET_API_KEY;
+          else process.env.DUET_API_KEY = priorKey;
+        }
+      },
+    );
+
+    testIfDocker(
+      "the post-advisor usage event includes both classifier and advisor spend",
+      async () => {
+        const priorKey = process.env.DUET_API_KEY;
+        process.env.DUET_API_KEY = "classifier-advisor-usage-test-key";
+        const runner = new ToolListTurnRunner("frontier");
+        runner.classifierEvaluate = evaluateImplementRoute;
+        const events: TurnEvent[] = [];
+        runner.subscribe((event) => events.push(event));
+        try {
+          await runner.start({ type: "start", mode: "agent" });
+          runner.seedParentUsageForTest();
+          await runner.classifySpawnForTest();
+          runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
+          const advisor = runner.advisorTool();
+          if (!advisor) throw new Error("ask_advisor tool missing");
+
+          await advisor.execute("advisor-after-classifier", {});
+
+          const usageEvents = events.filter(
+            (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
+          );
+          expect(usageEvents).toHaveLength(2);
+          const cumulative = usageEvents.at(-1);
+          expect(cumulative?.turnUsage.totalTokens).toBe(23);
+          expect(cumulative?.usageByModel).toEqual([
+            {
+              model: BUILT_IN_ROUTING_TABLE.classifier.target.modelName,
+              transport: { provider: "duet-gateway", billing: "metered" },
+              usage: CLASSIFIER_USAGE,
+            },
+            {
+              model: resolveModelName(
+                BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName,
+              ).id,
+              transport: { provider: "duet-gateway", billing: "metered" },
+              usage: expect.objectContaining({ totalTokens: 15 }),
+            },
+          ]);
+        } finally {
+          await runner.dispose();
+          if (priorKey === undefined) delete process.env.DUET_API_KEY;
+          else process.env.DUET_API_KEY = priorKey;
+        }
+      },
+    );
+
+    testIfDocker(
+      "TurnRunner emits a warning while preserving advice when advisor accounting fails",
+      async () => {
+        const priorKey = process.env.DUET_API_KEY;
+        process.env.DUET_API_KEY = "advisor-accounting-warning-test-key";
+        const runner = new ToolListTurnRunner("frontier");
+        runner.failAdvisorAccountingForTest();
+        const events: TurnEvent[] = [];
+        runner.subscribe((event) => events.push(event));
+        try {
+          await runner.start({ type: "start", mode: "agent" });
+          runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
+          const advisor = runner.advisorTool();
+          if (!advisor) throw new Error("ask_advisor tool missing");
+
+          const result = await advisor.execute("advisor-accounting-warning", {});
+
+          expect(result.content).toEqual([{ type: "text", text: "Proceed with the new tier." }]);
+          expect(result.details).toEqual(
+            expect.objectContaining({ type: "ask_advisor", model: expect.any(String) }),
+          );
+          expect(events).toContainEqual({
+            type: "system",
+            level: "warn",
+            message:
+              "Advisor usage accounting failed; advice was retained: forced accounting failure",
+          });
+        } finally {
+          await runner.dispose();
+          if (priorKey === undefined) delete process.env.DUET_API_KEY;
+          else process.env.DUET_API_KEY = priorKey;
+        }
+      },
+    );
+
+    async function runTierSwitchScenario(): Promise<void> {
+      const runner = new ToolListTurnRunner("economy");
       await runner.start({ type: "start", mode: "agent" });
-      runner.seedParentUsageForTest();
+      expect(runner.toolNames()).not.toContain("ask_advisor");
+
+      runner.setModel("frontier");
+      runner.refreshToolsForTest();
+      expect(runner.toolNames()).toContain("ask_advisor");
       runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
       const advisor = runner.advisorTool();
       if (!advisor) throw new Error("ask_advisor tool missing");
+      await advisor.execute("advisor-after-switch", {});
+      expect(runner.consultedRouters.at(-1)).toBe(runner.currentRouter());
+      expect(runner.completedConsultRouters.at(-1)).toBe(runner.currentRouter());
 
-      await advisor.execute("advisor-usage", {});
-
-      const usage = events.find(
-        (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
-      );
-      expect(usage?.turnUsage).toMatchObject({ input: 12, output: 3, totalTokens: 15 });
-      expect(usage?.lastMessageUsage.totalTokens).toBe(0);
-      expect(usage?.usageByModel).toEqual([
-        {
-          model: resolveModelName(BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName)
-            .id,
-          transport: { provider: "duet-gateway", billing: "metered" },
-          usage: expect.objectContaining({ totalTokens: 15 }),
-        },
-      ]);
-    } finally {
+      runner.setModel("economy");
+      runner.refreshToolsForTest();
+      expect(runner.toolNames()).not.toContain("ask_advisor");
       await runner.dispose();
-      if (priorKey === undefined) delete process.env.DUET_API_KEY;
-      else process.env.DUET_API_KEY = priorKey;
     }
   });
-
-  test("the post-advisor usage event includes both classifier and advisor spend", async () => {
-    const priorKey = process.env.DUET_API_KEY;
-    process.env.DUET_API_KEY = "classifier-advisor-usage-test-key";
-    const runner = new ToolListTurnRunner("frontier");
-    runner.classifierEvaluate = evaluateImplementRoute;
-    const events: TurnEvent[] = [];
-    runner.subscribe((event) => events.push(event));
-    try {
-      await runner.start({ type: "start", mode: "agent" });
-      runner.seedParentUsageForTest();
-      await runner.classifySpawnForTest();
-      runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
-      const advisor = runner.advisorTool();
-      if (!advisor) throw new Error("ask_advisor tool missing");
-
-      await advisor.execute("advisor-after-classifier", {});
-
-      const usageEvents = events.filter(
-        (event): event is Extract<TurnEvent, { type: "usage" }> => event.type === "usage",
-      );
-      expect(usageEvents).toHaveLength(2);
-      const cumulative = usageEvents.at(-1);
-      expect(cumulative?.turnUsage.totalTokens).toBe(23);
-      expect(cumulative?.usageByModel).toEqual([
-        {
-          model: BUILT_IN_ROUTING_TABLE.classifier.target.modelName,
-          transport: { provider: "duet-gateway", billing: "metered" },
-          usage: CLASSIFIER_USAGE,
-        },
-        {
-          model: resolveModelName(BUILT_IN_ROUTING_TABLE.tiers.frontier!.advisor.target.modelName)
-            .id,
-          transport: { provider: "duet-gateway", billing: "metered" },
-          usage: expect.objectContaining({ totalTokens: 15 }),
-        },
-      ]);
-    } finally {
-      await runner.dispose();
-      if (priorKey === undefined) delete process.env.DUET_API_KEY;
-      else process.env.DUET_API_KEY = priorKey;
-    }
-  });
-
-  test("TurnRunner emits a warning while preserving advice when advisor accounting fails", async () => {
-    const priorKey = process.env.DUET_API_KEY;
-    process.env.DUET_API_KEY = "advisor-accounting-warning-test-key";
-    const runner = new ToolListTurnRunner("frontier");
-    runner.failAdvisorAccountingForTest();
-    const events: TurnEvent[] = [];
-    runner.subscribe((event) => events.push(event));
-    try {
-      await runner.start({ type: "start", mode: "agent" });
-      runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
-      const advisor = runner.advisorTool();
-      if (!advisor) throw new Error("ask_advisor tool missing");
-
-      const result = await advisor.execute("advisor-accounting-warning", {});
-
-      expect(result.content).toEqual([{ type: "text", text: "Proceed with the new tier." }]);
-      expect(result.details).toEqual(
-        expect.objectContaining({ type: "ask_advisor", model: expect.any(String) }),
-      );
-      expect(events).toContainEqual({
-        type: "system",
-        level: "warn",
-        message: "Advisor usage accounting failed; advice was retained: forced accounting failure",
-      });
-    } finally {
-      await runner.dispose();
-      if (priorKey === undefined) delete process.env.DUET_API_KEY;
-      else process.env.DUET_API_KEY = priorKey;
-    }
-  });
-
-  async function runTierSwitchScenario(): Promise<void> {
-    const runner = new ToolListTurnRunner("economy");
-    await runner.start({ type: "start", mode: "agent" });
-    expect(runner.toolNames()).not.toContain("ask_advisor");
-
-    runner.setModel("frontier");
-    runner.refreshToolsForTest();
-    expect(runner.toolNames()).toContain("ask_advisor");
-    runner.parentMessages().push({ role: "user", content: "Review the plan.", timestamp: 1 });
-    const advisor = runner.advisorTool();
-    if (!advisor) throw new Error("ask_advisor tool missing");
-    await advisor.execute("advisor-after-switch", {});
-    expect(runner.consultedRouters.at(-1)).toBe(runner.currentRouter());
-    expect(runner.completedConsultRouters.at(-1)).toBe(runner.currentRouter());
-
-    runner.setModel("economy");
-    runner.refreshToolsForTest();
-    expect(runner.toolNames()).not.toContain("ask_advisor");
-    await runner.dispose();
-  }
 
   test("todo_write replaces and merges todo lists", async () => {
     let storedTodos: TurnTodo[] = [];
@@ -1975,7 +2011,7 @@ class ToolListTurnRunner extends TurnRunner {
     super({
       model,
       mode: "agent",
-      ...(cwd ? { cwd } : {}),
+      cwd: cwd ?? advisorFixtureCwd,
       memoryDbPath: false,
       skillDiscovery: { includeDefaults: false },
     });
