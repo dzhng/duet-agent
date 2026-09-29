@@ -6,6 +6,13 @@ the harness owns populated-query expectations and provider call receipts.
 Provider nonces are generated after the agent finishes, so an earlier successful
 reply cannot stand in for the verification request.
 
+The nominal provider covers both records in each category with literal fields and
+bounded role/location queries. Query constraints combine rather than widening a
+match: a valid role in the wrong city remains empty. Independent probes include
+each record and conflicting constraints; their expected IDs are not computed by
+the provider matcher. Provider unavailability belongs to the explicit outage
+variant, so success cases do not ask the agent to repair an external dependency.
+
 The [scenario manifest](scenarios.json) owns prompts and attempt limits.
 [The package build](../../../scripts/build-workflow-fixtures.ts) publishes sorted
 fixture bytes with their SHA256 alongside [the shared oracle](oracle.ts). Local

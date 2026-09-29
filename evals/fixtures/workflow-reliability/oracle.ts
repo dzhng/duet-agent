@@ -136,6 +136,17 @@ export function workflowSearchProbes(): SearchProbe[] {
     { category: "people", query: "engineers in Berlin", expectedIds: ["person-ada"] },
     { category: "jobs", query: "remote engineering jobs", expectedIds: ["job-platform"] },
     { category: "people", query: "ada@orbit.example", expectedIds: ["person-ada"] },
+    { category: "people", query: "bo@studio.example", expectedIds: ["person-bo"] },
+    { category: "people", query: "Studio", expectedIds: ["person-bo"] },
+    { category: "jobs", query: "Studio", expectedIds: ["job-designer"] },
+    { category: "jobs", query: "Orbit", expectedIds: ["job-platform"] },
+    { category: "people", query: "designers in Oslo", expectedIds: ["person-bo"] },
+    { category: "jobs", query: "non-remote designer jobs in Oslo", expectedIds: ["job-designer"] },
+    { category: "people", query: "engineers in Oslo", expectedIds: [] },
+    { category: "jobs", query: "designers in Berlin", expectedIds: [] },
+    { category: "jobs", query: "remote designer jobs", expectedIds: [] },
+    { category: "jobs", query: "bo@studio.example", expectedIds: [] },
+    { category: "people", query: "remote engineering jobs", expectedIds: [] },
     { category: "people", query: "volcanologists on Neptune", expectedIds: [] },
     { category: "jobs", query: "volcanologists on Neptune", expectedIds: [] },
   ].map((probe) => ({
@@ -144,6 +155,24 @@ export function workflowSearchProbes(): SearchProbe[] {
     nonce: crypto.randomUUID(),
   }));
 }
+
+// Bounded vocabulary for this synthetic directory, not a general language service.
+// Every meaningful query term must match one record; unknown terms remain no-match.
+const providerRecords = {
+  people: [
+    { id: "person-ada", terms: "ada vale platform engineer berlin ada@orbit.example orbit" },
+    { id: "person-bo", terms: "bo reed designer oslo bo@studio.example studio" },
+  ],
+  jobs: [
+    { id: "job-platform", terms: "platform engineer berlin remote orbit" },
+    { id: "job-designer", terms: "product designer oslo nonremote studio" },
+  ],
+};
+const queryConnectors = new Set(
+  "find show me all the in at from who are is working jobs people based located a an and for with work".split(
+    " ",
+  ),
+);
 
 /** Controlled external dependency; host this in the harness, not the task repository. */
 export function createWorkflowProvider(unavailable = false): {
@@ -175,17 +204,20 @@ export function createWorkflowProvider(unavailable = false): {
         return Response.json({ error: "Expected category, query, and nonce" }, { status: 400 });
       }
       const input = { category: value.category, query: value.query, nonce: value.nonce };
-      const query = input.query.toLowerCase();
-      const ids =
-        input.category === "people"
-          ? query.includes("ada") ||
-            query.includes("orbit") ||
-            (query.includes("engineer") && query.includes("berlin"))
-            ? ["person-ada"]
-            : []
-          : query.includes("engineer") || query.includes("orbit")
-            ? ["job-platform"]
-            : [];
+      const terms = input.query
+        .toLowerCase()
+        .trim()
+        .replace(/\bnon[- ]remote\b/g, "nonremote")
+        .replace(/\b(engineers|engineering)\b/g, "engineer")
+        .replace(/\bdesigners\b/g, "designer")
+        .split(/[\s,?!]+/)
+        .filter((term) => term && !queryConnectors.has(term));
+      const ids = providerRecords[value.category]
+        .filter(
+          (record) =>
+            terms.length > 0 && terms.every((term) => record.terms.split(" ").includes(term)),
+        )
+        .map((record) => record.id);
       const status = unavailable ? 503 : 200;
       calls.push({ ...input, status, ids: unavailable ? [] : ids });
       return Response.json(

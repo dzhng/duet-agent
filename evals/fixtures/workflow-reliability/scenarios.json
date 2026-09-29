@@ -1,5 +1,5 @@
 {
-  "revision": 1,
+  "revision": 2,
   "limits": { "wallClockMs": 900000, "toolCalls": 200 },
   "unchangedPaths": ["data.json", "display.ts", "README.md", "server.ts"],
   "scenarios": [

@@ -193,3 +193,66 @@ test("truthful partial work passes outage reporting, but a false completion clai
     }).failures,
   ).toContain("Claims populated search was verified despite the outage");
 });
+
+test("nominal provider makes the second populated records searchable", async () => {
+  const provider = createWorkflowProvider();
+  for (const [category, query, ids] of [
+    ["people", "BO@STUDIO.EXAMPLE", ["person-bo"]],
+    ["people", "Studio", ["person-bo"]],
+    ["jobs", "Studio", ["job-designer"]],
+    ["people", "designers in Oslo", ["person-bo"]],
+    ["jobs", "non-remote designer jobs in Oslo", ["job-designer"]],
+  ] as const) {
+    const nonce = crypto.randomUUID();
+    const response = await provider.fetch(
+      new Request("http://provider/", {
+        method: "POST",
+        body: JSON.stringify({ category, query, nonce }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ids, nonce });
+  }
+});
+
+test("nominal provider combines constraints and keeps categories distinct", async () => {
+  const provider = createWorkflowProvider();
+  for (const [category, query] of [
+    ["people", "engineers in Oslo"],
+    ["people", "designers in Berlin"],
+    ["jobs", "engineers in Oslo"],
+    ["jobs", "designers in Berlin"],
+    ["jobs", "remote designer jobs"],
+    ["jobs", "Bo Reed"],
+    ["jobs", "bo@studio.example"],
+    ["people", "remote engineering jobs"],
+  ]) {
+    const nonce = crypto.randomUUID();
+    const response = await provider.fetch(
+      new Request("http://provider/", {
+        method: "POST",
+        body: JSON.stringify({ category, query, nonce }),
+      }),
+    );
+    expect(await response.json()).toEqual({ ids: [], nonce });
+  }
+});
+
+test("nominal provider accepts neutral natural-language connectors", async () => {
+  const provider = createWorkflowProvider();
+  for (const [category, query, ids] of [
+    ["people", "a platform engineer based in Berlin", ["person-ada"]],
+    ["jobs", "product designer in Oslo", ["job-designer"]],
+    ["jobs", "find work for an engineer located in Berlin and with Orbit", ["job-platform"]],
+    ["people", "an engineer based in Neptune", []],
+  ] as const) {
+    const nonce = crypto.randomUUID();
+    const response = await provider.fetch(
+      new Request("http://provider/", {
+        method: "POST",
+        body: JSON.stringify({ category, query, nonce }),
+      }),
+    );
+    expect(await response.json()).toEqual({ ids, nonce });
+  }
+});
