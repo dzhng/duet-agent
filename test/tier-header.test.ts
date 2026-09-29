@@ -214,8 +214,8 @@ describe("duet gateway tier attribution", () => {
   });
 
   test("reports the active tier back to callers", () => {
-    setActiveDuetTier("economy");
-    expect(activeDuetTier()).toBe("economy");
+    setActiveDuetTier("balanced");
+    expect(activeDuetTier()).toBe("balanced");
 
     setActiveDuetTier(undefined);
     expect(activeDuetTier()).toBeUndefined();

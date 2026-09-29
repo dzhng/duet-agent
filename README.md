@@ -293,7 +293,7 @@ Duet routes every model through one of three gateways — the Duet gateway (`DUE
 
 When `--model` is omitted, duet runs the routed `frontier` **virtual model** — see [The model router + advisor](#the-model-router--advisor) for how routing and the advisor work. The flags and config:
 
-- `--model frontier|balanced|economy` selects a routing tier explicitly; any concrete model name pins that model and bypasses routing.
+- `--model frontier|balanced` selects a routing tier explicitly; any concrete model name pins that model and bypasses routing.
 - `duet config export` writes the routing table to `.duet/models.json` (routes, efforts, advisor policy, `stepTriggers` keywords, per-route `visionFallbackModelName`); `/route` inspects a live session.
 - Override discovery mirrors skills: the nearest `.duet/models.json` walking up from the working directory wins, with `~/.duet/models.json` as the global fallback. Each file is a complete replacement, never a merge.
 - It stays out of the way: tiers whose routes all resolve to one identical model+effort never call the classifier.
@@ -327,7 +327,7 @@ export AI_GATEWAY_API_KEY=...
 duet -m opus-5.5 "review this repo"
 ```
 
-Model names can be a virtual tier (`frontier`, `balanced`, `economy` — routed per prompt), a versionless family (`opus`, `sonnet`, `haiku`, `sol`, and others), full `provider:modelId` syntax, or a versioned shorthand such as `opus-5.5` or `gpt-6.1-sol`. Family names resolve to the latest curated version, while concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
+Model names can be a virtual tier (`frontier`, `balanced` — routed per prompt), a versionless family (`opus`, `sonnet`, `haiku`, `sol`, and others), full `provider:modelId` syntax, or a versioned shorthand such as `opus-5.5` or `gpt-6.1-sol`. Family names resolve to the latest curated version, while concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
 
 </details>
 

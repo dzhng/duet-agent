@@ -256,11 +256,11 @@ describe("ModelRouter", () => {
   test("the next boundary redirects an image-bearing step away from a text-only target", async () => {
     const inputs: ClassifierInput[] = [];
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-    table.tiers.economy.routes.implement.target.modelName = "glm";
-    table.tiers.economy.routes.implement.visionFallbackModelName = "luna";
+    table.tiers.balanced.routes.implement.target.modelName = "glm";
+    table.tiers.balanced.routes.implement.visionFallbackModelName = "luna";
     const router = new ModelRouter({
       table,
-      tier: "economy",
+      tier: "balanced",
       classify: scriptedClassifier([implement, implement], inputs),
       resolveCatalog: catalog,
     });

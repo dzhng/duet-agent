@@ -58,7 +58,7 @@ describe("built-in model routing table", () => {
   test("encodes the final tier matrix and policies exactly", () => {
     const table = BUILT_IN_ROUTING_TABLE;
 
-    const targets = (tier: "frontier" | "balanced" | "economy") =>
+    const targets = (tier: "frontier" | "balanced") =>
       Object.fromEntries(
         Object.entries(table.tiers[tier].routes).map(([route, rule]) => [route, rule.target]),
       );
@@ -78,12 +78,6 @@ describe("built-in model routing table", () => {
       writing: { modelName: "sonnet", thinkingLevel: "medium" },
       general: { modelName: "sol", thinkingLevel: "medium" },
     });
-    expect(targets("economy")).toEqual({
-      visual: { modelName: "kimi", thinkingLevel: "medium" },
-      implement: { modelName: "deepseek", thinkingLevel: "medium" },
-      writing: { modelName: "luna", thinkingLevel: "low" },
-      general: { modelName: "deepseek", thinkingLevel: "low" },
-    });
     for (const definition of Object.values(table.tiers)) {
       for (const rule of Object.values(definition.routes)) {
         expect(rule.visionFallbackModelName).toBeUndefined();
@@ -96,11 +90,6 @@ describe("built-in model routing table", () => {
       minStepsBetween: 5,
     });
     expect(table.tiers.balanced.advisor).toEqual(table.tiers.frontier.advisor);
-    expect(table.tiers.economy.advisor).toEqual({
-      enabled: false,
-      target: { modelName: "sol", thinkingLevel: "medium" },
-      minStepsBetween: 5,
-    });
     expect(table.classifier).toEqual({
       target: { modelName: "typesafe-ai/jev" },
       everySteps: 5,
@@ -128,7 +117,7 @@ describe("built-in model routing table", () => {
   });
 
   test("recognizes only table-owned virtual model names", () => {
-    expect(virtualModelNames(BUILT_IN_ROUTING_TABLE)).toEqual(["frontier", "balanced", "economy"]);
+    expect(virtualModelNames(BUILT_IN_ROUTING_TABLE)).toEqual(["frontier", "balanced"]);
     expect(isVirtualModel("frontier", BUILT_IN_ROUTING_TABLE)).toBe(true);
     expect(isVirtualModel("opus-5.5", BUILT_IN_ROUTING_TABLE)).toBe(false);
     expect(validateRoutingTable(BUILT_IN_ROUTING_TABLE, catalog)).toEqual([]);
@@ -169,16 +158,15 @@ describe("built-in model routing table", () => {
   test("reports the complete path through a virtual cycle", () => {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
     table.tiers.frontier.routes.implement.target.modelName = "balanced";
-    table.tiers.balanced.routes.implement.target.modelName = "economy";
-    table.tiers.economy.routes.implement.target.modelName = "frontier";
+    table.tiers.balanced.routes.implement.target.modelName = "frontier";
 
     const cycles = validateRoutingTable(table, catalog).filter(
       (issue) => issue.code === "virtual_cycle",
     );
 
-    expect(
-      cycles.some((issue) => issue.message.includes("frontier -> balanced -> economy -> frontier")),
-    ).toBe(true);
+    expect(cycles.some((issue) => issue.message.includes("frontier -> balanced -> frontier"))).toBe(
+      true,
+    );
   });
 
   test("keeps advisor targets concrete even though routes may re-enter virtual tiers", () => {
@@ -249,24 +237,24 @@ describe("built-in model routing table", () => {
 
   test("reports a missing per-route vision fallback with its dedicated issue code", () => {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-    table.tiers.economy.routes.implement.visionFallbackModelName = "missing-fallback";
+    table.tiers.balanced.routes.implement.visionFallbackModelName = "missing-fallback";
 
     expect(validateRoutingTable(table, catalog)).toContainEqual({
       code: "invalid_vision_fallback_model",
-      path: "tiers.economy.routes.implement.visionFallbackModelName",
+      path: "tiers.balanced.routes.implement.visionFallbackModelName",
       message: 'Vision fallback "missing-fallback" is neither a virtual model nor a catalog name.',
     });
   });
 
   test("reports cycles reached through a virtual vision fallback", () => {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-    table.tiers.economy.routes.implement.visionFallbackModelName = "frontier";
+    table.tiers.balanced.routes.implement.visionFallbackModelName = "frontier";
     table.tiers.frontier.routes.implement.target.modelName = "balanced";
     table.tiers.balanced.routes.implement.target.modelName = "frontier";
 
     expect(validateRoutingTable(table, catalog)).toContainEqual({
       code: "invalid_vision_fallback_model",
-      path: "tiers.economy.routes.implement.visionFallbackModelName",
+      path: "tiers.balanced.routes.implement.visionFallbackModelName",
       message: "Vision fallback cycle: frontier -> balanced -> frontier.",
     });
   });

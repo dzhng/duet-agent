@@ -51,13 +51,6 @@
     "expectedRoute": "plan"
   },
   {
-    "id": "general-economy-rollout-plan",
-    "prompt": "Plan a zero-downtime rollout of the new event schema, with observability, abort criteria, and rollback steps.",
-    "tier": "economy",
-    "expectedRoute": "general",
-    "note": "Economy has no plan route; planning that implements nothing is general work."
-  },
-  {
     "id": "implement-api-retries",
     "prompt": "Implement the missing retry logic in the TypeScript API client and add regression tests.",
     "tier": "frontier",
@@ -79,12 +72,6 @@
     "id": "implement-worker-deadlock",
     "prompt": "Debug the queue worker deadlock and patch the locking logic without changing the public API.",
     "tier": "balanced",
-    "expectedRoute": "implement"
-  },
-  {
-    "id": "implement-economy-webhook",
-    "prompt": "Implement webhook signature verification in the backend and cover malformed payloads.",
-    "tier": "economy",
     "expectedRoute": "implement"
   },
   {
@@ -116,42 +103,6 @@
     "prompt": "What is the difference between independent and mutually exclusive events? Give a short example.",
     "tier": "balanced",
     "expectedRoute": "general"
-  },
-  {
-    "id": "writing-economy-thank-you-note",
-    "prompt": "Write a friendly two-sentence thank-you note to a neighbor who watered my plants.",
-    "tier": "economy",
-    "expectedRoute": "writing"
-  },
-  {
-    "id": "general-ambiguous",
-    "prompt": "Take a look at this and tell me what you think.",
-    "tier": "economy",
-    "expectedRoute": "general"
-  },
-  {
-    "id": "economy-visual-settings",
-    "prompt": "Implement the responsive settings panel so it matches the attached design screenshot.",
-    "tier": "economy",
-    "hasImages": true,
-    "expectedRoute": "implement",
-    "note": "Recorded product rationale: route labels describe work kind; the router guard owns vision fallback or graceful degradation."
-  },
-  {
-    "id": "economy-visual-error-image",
-    "prompt": "Read the error message in the attached screenshot and tell me what it means.",
-    "tier": "economy",
-    "hasImages": true,
-    "expectedRoute": "general",
-    "note": "Recorded product rationale: explaining a screenshot is general work; the router guard owns vision capability."
-  },
-  {
-    "id": "economy-visual-chart",
-    "prompt": "Use the attached chart image to implement the same axes, legend, colors, and responsive layout.",
-    "tier": "economy",
-    "hasImages": true,
-    "expectedRoute": "implement",
-    "note": "Recorded product rationale: route labels describe work kind; the router guard owns vision fallback or graceful degradation."
   },
   {
     "id": "continuity-visual-same-task",

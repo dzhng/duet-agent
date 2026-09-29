@@ -106,7 +106,7 @@ describe("CLI model inference", () => {
       tempRoot = await mkdtemp(join(tmpdir(), "duet-cli-routing-"));
       const table = structuredClone(BUILT_IN_ROUTING_TABLE);
       table.defaultTier = "custom";
-      table.tiers = { custom: table.tiers.economy! };
+      table.tiers = { custom: table.tiers.balanced! };
       await mkdir(join(tempRoot, ".duet"));
       await writeFile(join(tempRoot, ".duet", "models.json"), JSON.stringify(table));
 

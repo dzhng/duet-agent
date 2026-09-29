@@ -296,31 +296,6 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         minStepsBetween: 5,
       },
     },
-    economy: {
-      routes: {
-        visual: {
-          description: VISUAL_DESCRIPTION,
-          target: { modelName: "kimi", thinkingLevel: "medium" },
-        },
-        implement: {
-          description: IMPLEMENT_DESCRIPTION,
-          target: { modelName: "deepseek", thinkingLevel: "medium" },
-        },
-        writing: {
-          description: WRITING_DESCRIPTION,
-          target: { modelName: "luna", thinkingLevel: "low" },
-        },
-        general: {
-          description: GENERAL_DESCRIPTION,
-          target: { modelName: "deepseek", thinkingLevel: "low" },
-        },
-      },
-      advisor: {
-        enabled: false,
-        target: { modelName: "sol", thinkingLevel: "medium" },
-        minStepsBetween: 5,
-      },
-    },
   },
   classifier: {
     target: { modelName: "typesafe-ai/jev" },

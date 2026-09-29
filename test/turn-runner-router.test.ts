@@ -321,7 +321,7 @@ describe("TurnRunner virtual-model adapter", () => {
     try {
       const table = structuredClone(BUILT_IN_ROUTING_TABLE);
       table.defaultTier = "custom";
-      table.tiers = { custom: table.tiers.economy! };
+      table.tiers = { custom: table.tiers.balanced! };
       await mkdir(join(cwd, ".duet"));
       await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
       const runner = new RouterTurnRunner({
@@ -333,7 +333,7 @@ describe("TurnRunner virtual-model adapter", () => {
 
       expect(runner.setModel("custom")).toEqual({ routed: true });
       expect(runner.routeStatus()?.tier).toBe("custom");
-      expect(runner.parentAgentForTest().state.model.id).toBe("deepseek/deepseek-v4.1-flash");
+      expect(runner.parentAgentForTest().state.model.id).toBe("openai/gpt-6.1-sol");
       await runner.dispose();
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -368,14 +368,14 @@ describe("TurnRunner virtual-model adapter", () => {
 
     runner.createStateAgentForTest({
       kind: "agent",
-      name: "economy-child",
+      name: "balanced-child",
       prompt: "Do the child task.",
-      model: "economy",
+      model: "balanced",
       thinkingLevel: "high",
     });
     expect(runner.createdAgentOptions.at(-1)).toEqual({
-      model: "deepseek",
-      thinkingLevel: "low",
+      model: "sol",
+      thinkingLevel: "medium",
     });
 
     runner.createStateAgentForTest({
@@ -603,12 +603,12 @@ describe("TurnRunner virtual-model adapter", () => {
       await writeFile(join(cwd, "shot.png"), Buffer.from(TINY_PNG_BASE64, "base64"));
       // Every built-in target accepts images, so the guard needs a configured text-only route.
       const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-      table.tiers.economy!.routes.implement!.target.modelName = "glm";
-      table.tiers.economy!.routes.implement!.visionFallbackModelName = "luna";
+      table.tiers.balanced!.routes.implement!.target.modelName = "glm";
+      table.tiers.balanced!.routes.implement!.visionFallbackModelName = "luna";
       await mkdir(join(cwd, ".duet"));
       await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
       const runner = new RouterTurnRunner({
-        model: "economy",
+        model: "balanced",
         cwd,
         everySteps: 99,
         classify: scriptedClassifier([{ route: "implement" }, { route: "implement" }]),
@@ -1057,12 +1057,12 @@ describe("advisor executor guidance layer", () => {
     );
     await frontier.dispose();
 
-    const economy = new RouterTurnRunner({ model: "economy", classify: scriptedClassifier([]) });
-    await startRunner(economy, []);
-    expect(economy.parentAgentForTest().state.systemPrompt).not.toContain(
+    const balanced = new RouterTurnRunner({ model: "balanced", classify: scriptedClassifier([]) });
+    await startRunner(balanced, []);
+    expect(balanced.parentAgentForTest().state.systemPrompt).not.toContain(
       "For tasks longer than a few steps, consult at least once",
     );
-    await economy.dispose();
+    await balanced.dispose();
 
     const concrete = new RouterTurnRunner({
       model: "gpt-6-sol",

@@ -10,9 +10,9 @@ import { testIfDocker } from "./helpers/docker-only.js";
 describe("parseRouteArgs", () => {
   test("parses tier, images, JSON, and a multi-word prompt", () => {
     expect(
-      parseRouteArgs(["--model", "economy", "--images", "--json", "fix", "the", "layout"]),
+      parseRouteArgs(["--model", "balanced", "--images", "--json", "fix", "the", "layout"]),
     ).toEqual({
-      model: "economy",
+      model: "balanced",
       images: true,
       json: true,
       help: false,
@@ -177,8 +177,7 @@ describe("runRouteCommand", () => {
       try {
         const table = structuredClone(BUILT_IN_ROUTING_TABLE);
         table.tiers.frontier!.advisor.enabled = true;
-        table.tiers.balanced!.advisor.enabled = true;
-        table.tiers.economy!.advisor.enabled = false;
+        table.tiers.balanced!.advisor.enabled = false;
         await mkdir(join(cwd, ".duet"));
         await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(table));
         let output = "";
@@ -201,8 +200,7 @@ describe("runRouteCommand", () => {
           result.estimates.map(({ tier, model, enabled }) => ({ tier, model, enabled })),
         ).toEqual([
           { tier: "frontier", model: "fable", enabled: true },
-          { tier: "balanced", model: "fable", enabled: true },
-          { tier: "economy", model: "sol", enabled: false },
+          { tier: "balanced", model: "fable", enabled: false },
         ]);
         expect(result.estimates.every((estimate) => typeof estimate.inputUsd === "number")).toBe(
           true,
@@ -213,7 +211,7 @@ describe("runRouteCommand", () => {
         expect(output).toContain("Session: session_fixture");
         expect(output).toContain(`Transcript tokens: ${result.tokens}`);
         expect(output).toContain("frontier: fable");
-        expect(output).toContain("economy: sol (disabled)");
+        expect(output).toContain("balanced: fable (disabled)");
         expect(output).toContain(result.transcript);
       } finally {
         await rm(cwd, { recursive: true, force: true });

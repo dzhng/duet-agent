@@ -37,7 +37,7 @@ COMMANDS
   upgrade                  Upgrade the global ${packageName} installation
 
 OPTIONS
-  -m, --model <name>       Virtual tier (frontier|balanced|economy) or concrete model pin
+  -m, --model <name>       Virtual tier (frontier|balanced) or concrete model pin
   --memory-model <name>    Observational memory model (default inferred from provider env)
   --provider <name>        Pin the provider and use its catalog default model.
                             Accepts: duet, vercel, openrouter.
@@ -70,7 +70,7 @@ INTERACTIVE
   filename to insert a repo-relative path into the prompt.
 
 MODELS
-  The default is the routed frontier tier. Use frontier, balanced, or economy
+  The default is the routed frontier tier. Use frontier or balanced
   to select a routing policy, or a concrete shorthand to bypass routing and pin.
   Concrete names include opus, sonnet, haiku, and sol (versionless families), or versioned forms like opus-5.5.
   They map to the first configured router that supports that model.

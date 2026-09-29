@@ -95,7 +95,7 @@ export const CAMPAIGN_CONFIG_NAMES = Object.keys(CAMPAIGN_CONFIGS) as CampaignCo
  * are campaign-owned targets.
  */
 export function renderModelsJson(options: RenderModelsJsonOptions): RoutingTable {
-  const productRoute = structuredClone(BUILT_IN_ROUTING_TABLE.tiers.economy.routes.implement);
+  const productRoute = structuredClone(BUILT_IN_ROUTING_TABLE.tiers.balanced.routes.implement);
   const productAdvisor = structuredClone(BUILT_IN_ROUTING_TABLE.tiers.frontier.advisor);
   const table: RoutingTable = {
     defaultTier: SWEBENCH_TIER,

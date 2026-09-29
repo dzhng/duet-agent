@@ -32,12 +32,6 @@ const targets = {
     implement: "sol",
     implementId: "openai/gpt-6.1-sol",
   },
-  economy: {
-    visual: "kimi",
-    visualId: "moonshotai/kimi-k3",
-    implement: "deepseek",
-    implementId: "deepseek/deepseek-v4.1-flash",
-  },
 };
 if (!(tier in targets)) throw new Error(`Unknown EVAL_TIER: ${tier}`);
 const target = targets[tier as keyof typeof targets];

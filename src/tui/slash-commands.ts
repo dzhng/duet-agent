@@ -183,7 +183,7 @@ export const BUILT_IN_SLASH_COMMANDS: readonly BuiltInSlashCommand[] = [
   },
   {
     name: "model",
-    description: "Route via frontier|balanced|economy, or pin a concrete model: /model <name>",
+    description: "Route via frontier|balanced, or pin a concrete model: /model <name>",
     matches: (message) => isInvocation(message, "model"),
     handle: handleModelSlashCommand,
     inline: "token",
@@ -451,7 +451,7 @@ function handleModelSlashCommand(raw: string, ctx: SlashCommandContext): void {
   if (!argument) {
     ctx.appendBlock(
       "[model]",
-      "Usage: /model <name>  — route via frontier|balanced|economy, or pin a concrete model",
+      "Usage: /model <name>  — route via frontier|balanced, or pin a concrete model",
       COLORS.system,
     );
     return;

@@ -101,7 +101,7 @@ describe("Session model-switch persistence", () => {
       await mkdir(sessionPath, { recursive: true });
       await mkdir(configDir, { recursive: true });
       const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-      table.tiers.custom = structuredClone(table.tiers.economy!);
+      table.tiers.custom = structuredClone(table.tiers.balanced!);
       await writeFile(join(configDir, "models.json"), JSON.stringify(table));
 
       try {

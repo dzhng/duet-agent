@@ -371,7 +371,7 @@ describe("SWE-bench routing renders", () => {
       expect(validateRoutingTable(table, routingCatalogAdapter)).toEqual([]);
       expect(table.classifier).toEqual(BUILT_IN_ROUTING_TABLE.classifier);
       expect(table.tiers.swebench!.routes.general!.description).toBe(
-        BUILT_IN_ROUTING_TABLE.tiers.economy.routes.implement.description,
+        BUILT_IN_ROUTING_TABLE.tiers.balanced.routes.implement.description,
       );
       expect(table.tiers.swebench!.routes.general!.visionFallbackModelName).toBe("kimi-k3");
       expect(table.tiers.swebench!.advisor.minStepsBetween).toBe(

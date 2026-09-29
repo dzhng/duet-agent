@@ -29,7 +29,7 @@ interface CapturedToolCall {
 class CapturingRunner extends TurnRunner {
   readonly classifierInputs: ClassifierInput[] = [];
 
-  constructor(model: "frontier" | "economy", systemInstructions?: string, cwd?: string) {
+  constructor(model: "frontier" | "balanced", systemInstructions?: string, cwd?: string) {
     super({
       model,
       mode: "agent",
@@ -408,8 +408,8 @@ describe("advisor trigger and router interlock", () => {
     30_000,
   );
 
-  testIfDocker("economy tier omits the advisor tool", async () => {
-    const runner = new CapturingRunner("economy");
+  testIfDocker("balanced tier omits the advisor tool", async () => {
+    const runner = new CapturingRunner("balanced");
     await runner.start({ type: "start", mode: "agent" });
 
     expect(runner.toolNames()).not.toContain("ask_advisor");

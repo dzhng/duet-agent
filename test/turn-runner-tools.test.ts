@@ -391,7 +391,7 @@ describe("TurnRunner tools", () => {
       advisorFixtureCwd = await mkdtemp(join(tmpdir(), "advisor-tool-policy-"));
       const table = structuredClone(BUILT_IN_ROUTING_TABLE);
       table.tiers.frontier!.advisor.enabled = true;
-      table.tiers.economy!.advisor.enabled = false;
+      table.tiers.balanced!.advisor.enabled = false;
       await mkdir(join(advisorFixtureCwd, ".duet"));
       await writeFile(join(advisorFixtureCwd, ".duet", "models.json"), JSON.stringify(table));
     });
@@ -408,10 +408,10 @@ describe("TurnRunner tools", () => {
         expect(frontier.toolNames()).toContain("ask_advisor");
         await frontier.dispose();
 
-        const economy = new ToolListTurnRunner("economy");
-        await economy.start({ type: "start", mode: "agent" });
-        expect(economy.toolNames()).not.toContain("ask_advisor");
-        await economy.dispose();
+        const balanced = new ToolListTurnRunner("balanced");
+        await balanced.start({ type: "start", mode: "agent" });
+        expect(balanced.toolNames()).not.toContain("ask_advisor");
+        await balanced.dispose();
 
         const concrete = new ToolListTurnRunner("gpt-6-sol");
         await concrete.start({ type: "start", mode: "agent" });
@@ -654,7 +654,7 @@ describe("TurnRunner tools", () => {
     );
 
     async function runTierSwitchScenario(): Promise<void> {
-      const runner = new ToolListTurnRunner("economy");
+      const runner = new ToolListTurnRunner("balanced");
       await runner.start({ type: "start", mode: "agent" });
       expect(runner.toolNames()).not.toContain("ask_advisor");
 
@@ -668,7 +668,7 @@ describe("TurnRunner tools", () => {
       expect(runner.consultedRouters.at(-1)).toBe(runner.currentRouter());
       expect(runner.completedConsultRouters.at(-1)).toBe(runner.currentRouter());
 
-      runner.setModel("economy");
+      runner.setModel("balanced");
       runner.refreshToolsForTest();
       expect(runner.toolNames()).not.toContain("ask_advisor");
       await runner.dispose();

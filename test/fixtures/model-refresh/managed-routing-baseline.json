@@ -95,39 +95,6 @@
         "minStepsBetween": 5
       }
     },
-    "economy": {
-      "routes": {
-        "implement": {
-          "description": "Backend, systems, data, CLI, and other implementation or debugging work, including tests and code changes.",
-          "target": {
-            "modelName": "deepseek",
-            "thinkingLevel": "medium"
-          }
-        },
-        "writing": {
-          "description": "Creative writing and prose where voice, narrative, or wording is the primary output rather than analysis or software work.",
-          "target": {
-            "modelName": "luna",
-            "thinkingLevel": "low"
-          }
-        },
-        "general": {
-          "description": "General questions, explanations, summaries, and requests that do not fit a more specific route.",
-          "target": {
-            "modelName": "deepseek",
-            "thinkingLevel": "low"
-          }
-        }
-      },
-      "advisor": {
-        "enabled": false,
-        "target": {
-          "modelName": "terra",
-          "thinkingLevel": "medium"
-        },
-        "minStepsBetween": 5
-      }
-    },
     "openai-frontier": {
       "routes": {
         "general": {

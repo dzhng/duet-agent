@@ -14,24 +14,6 @@ async function loadFixture(name: string): Promise<TurnEvent[]> {
 }
 
 describe("SWE-bench telemetry derivation", () => {
-  test("uses the terminal cumulative ledger for exact total and per-model cost", async () => {
-    const telemetry = deriveTelemetry(await loadFixture("economy-rpc.sanitized.ndjson"));
-
-    expect(telemetry.costUsdTotal).toBe(0.006905);
-    expect(telemetry.costUsdByModel).toEqual({ "openai/gpt-5.6-luna": 0.006905 });
-    expect(Object.values(telemetry.costUsdByModel).reduce((sum, cost) => sum + cost, 0)).toBe(
-      telemetry.costUsdTotal,
-    );
-    expect(telemetry.tokens).toEqual({
-      input: 6635,
-      output: 45,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 6680,
-    });
-    expect(telemetry.terminalStatus).toBe("completed");
-  });
-
   test("counts Kimi and Fable advisor outcomes from generic tool details", async () => {
     const kimi = deriveTelemetry(await loadFixture("kimi-advisor.ndjson"));
     expect(kimi.advisorCalls).toEqual({

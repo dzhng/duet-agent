@@ -9,79 +9,65 @@ const catalog = {
 /** Every built-in target accepts images, so a vision fallback only exists when configured. */
 function textOnlyImplementTable(): RoutingTable {
   const table = structuredClone(BUILT_IN_ROUTING_TABLE);
-  table.tiers.economy.routes.implement.target.modelName = "glm";
-  table.tiers.economy.routes.implement.visionFallbackModelName = "luna";
+  table.tiers.balanced.routes.implement.target.modelName = "glm";
+  table.tiers.balanced.routes.implement.visionFallbackModelName = "luna";
   return table;
 }
 
 describe("model route resolution", () => {
-  test("routes economy visual work to its dedicated image-capable model", () => {
-    expect(
-      resolveRoute(BUILT_IN_ROUTING_TABLE, "economy", "visual", { hasImages: false }, catalog),
-    ).toEqual({
-      tier: "economy",
-      route: "visual",
-      modelName: "kimi",
-      thinkingLevel: "medium",
-      visionFallback: false,
-      chain: ["economy"],
-    });
-  });
-
   test("applies a route's vision fallback without changing its route or effort", () => {
     expect(
-      resolveRoute(textOnlyImplementTable(), "economy", "implement", { hasImages: true }, catalog),
+      resolveRoute(textOnlyImplementTable(), "balanced", "implement", { hasImages: true }, catalog),
     ).toEqual({
-      tier: "economy",
+      tier: "balanced",
       route: "implement",
       modelName: "luna",
       thinkingLevel: "medium",
       visionFallback: true,
-      chain: ["economy"],
+      chain: ["balanced"],
     });
   });
 
   test("keeps a text-only target when its route has no vision fallback", () => {
     const table = textOnlyImplementTable();
-    delete table.tiers.economy.routes.implement.visionFallbackModelName;
+    delete table.tiers.balanced.routes.implement.visionFallbackModelName;
 
-    expect(resolveRoute(table, "economy", "implement", { hasImages: true }, catalog)).toEqual({
-      tier: "economy",
+    expect(resolveRoute(table, "balanced", "implement", { hasImages: true }, catalog)).toEqual({
+      tier: "balanced",
       route: "implement",
       modelName: "glm",
       thinkingLevel: "medium",
       visionFallback: false,
-      chain: ["economy"],
+      chain: ["balanced"],
     });
   });
 
   test("re-enters a virtual fallback chain while preserving the selected route effort", () => {
     const table = textOnlyImplementTable();
-    table.tiers.economy.routes.implement.target.thinkingLevel = "low";
-    table.tiers.economy.routes.implement.visionFallbackModelName = "frontier";
+    table.tiers.balanced.routes.implement.target.thinkingLevel = "low";
+    table.tiers.balanced.routes.implement.visionFallbackModelName = "frontier";
 
-    expect(resolveRoute(table, "economy", "implement", { hasImages: true }, catalog)).toEqual({
+    expect(resolveRoute(table, "balanced", "implement", { hasImages: true }, catalog)).toEqual({
       tier: "frontier",
       route: "implement",
       modelName: "sol",
       thinkingLevel: "low",
       visionFallback: true,
-      chain: ["economy", "frontier"],
+      chain: ["balanced", "frontier"],
     });
   });
 
   test("re-enters the same route when a target names another virtual model", () => {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
     table.tiers.frontier.routes.implement.target.modelName = "balanced";
-    table.tiers.balanced.routes.implement.target.modelName = "economy";
 
     expect(resolveRoute(table, "frontier", "implement", { hasImages: false }, catalog)).toEqual({
-      tier: "economy",
+      tier: "balanced",
       route: "implement",
-      modelName: "deepseek",
+      modelName: "sol",
       thinkingLevel: "medium",
       visionFallback: false,
-      chain: ["frontier", "balanced", "economy"],
+      chain: ["frontier", "balanced"],
     });
   });
 

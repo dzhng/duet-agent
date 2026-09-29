@@ -145,7 +145,7 @@ async function runLocalRollout(args: string[]): Promise<void> {
   const transport = spawnLocalDuetRpc([
     "--incognito",
     "--model",
-    "economy",
+    "balanced",
     "--no-system-prompt-files",
   ]);
   const outcome = await runDuetTurn(

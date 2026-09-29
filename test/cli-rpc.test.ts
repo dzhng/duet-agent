@@ -426,7 +426,7 @@ describe("RPC project routing", () => {
     try {
       const table = structuredClone(BUILT_IN_ROUTING_TABLE);
       table.defaultTier = "project-default";
-      table.tiers = { "project-default": table.tiers.economy! };
+      table.tiers = { "project-default": table.tiers.balanced! };
       await mkdir(join(workDir, ".duet"));
       await writeFile(join(workDir, ".duet", "models.json"), JSON.stringify(table));
 

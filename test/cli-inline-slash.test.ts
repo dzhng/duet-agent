@@ -70,7 +70,7 @@ describe("applyInlineSlashCommandsToCliConfig", () => {
   test("inline /model validates virtual names against the loaded replacement table", () => {
     const table = structuredClone(BUILT_IN_ROUTING_TABLE);
     table.defaultTier = "custom";
-    table.tiers = { custom: table.tiers.economy! };
+    table.tiers = { custom: table.tiers.balanced! };
     const config = makeConfig();
     const log = makeLog();
 
