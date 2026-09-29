@@ -293,3 +293,94 @@ test("completed worker statements retain attribution without becoming verificati
   expect(evidence.nativeStateResults).toEqual([]);
   expect(evidence.toolResults.map((tool) => tool.input)).toEqual([{ command: "bun test" }]);
 });
+
+test("native evidence retains failed and interrupted script settlements without inventing completion", () => {
+  const execution = {
+    id: "t1",
+    state: "verify",
+    kind: "script" as const,
+    cwd: "/task",
+    forkContext: false,
+    suppliedInputKeys: [],
+    renderedInputKeys: [],
+    persistOverride: false,
+    preview: "verify",
+    previewTruncated: false,
+    fingerprint: "verify",
+  };
+  const failed = {
+    type: "state_failed" as const,
+    timestamp: 2,
+    state: "verify",
+    error: "Command exited with code 1",
+  };
+  const interrupted = {
+    type: "state_interrupted" as const,
+    timestamp: 4,
+    state: "verify",
+    reason: "User interrupted",
+    output: { stdout: "2 checks passed\n", stderr: "still running\n" },
+  };
+  const snapshot: TurnEvent = {
+    type: "state_machine",
+    stateMachine: {
+      definition: { name: "verify", prompt: "Verify", states: [] },
+      prompt: "Verify",
+      createdAt: 0,
+      updatedAt: 4,
+      history: [
+        { type: "state_started", timestamp: 1, state: "verify", execution },
+        failed,
+        {
+          type: "state_started",
+          timestamp: 3,
+          state: "verify",
+          execution: { ...execution, id: "t2" },
+        },
+        interrupted,
+        { type: "state_failed", timestamp: 5, state: "unstarted", error: "Admission failed" },
+        {
+          type: "state_started",
+          timestamp: 6,
+          state: "worker",
+          execution: { ...execution, id: "t3", state: "worker", kind: "agent" },
+        },
+        {
+          type: "state_failed",
+          timestamp: 7,
+          state: "worker",
+          error: "Worker claims shell failure",
+        },
+      ],
+    },
+  };
+  const initialSnapshot: TurnEvent = {
+    ...snapshot,
+    stateMachine: {
+      ...snapshot.stateMachine,
+      history: snapshot.stateMachine.history
+        .slice(0, 4)
+        .map((entry) =>
+          entry.type === "state_interrupted" ? { ...entry, output: undefined } : entry,
+        ),
+    },
+  };
+  const evidence = buildWorkflowReportEvidence(
+    [
+      initialSnapshot,
+      snapshot,
+      snapshot,
+      ...transcript("Verification failed, then was interrupted."),
+    ],
+    [],
+  );
+  expect(evidence.nativeStateResults).toEqual([
+    { state: "verify", execution, startedAt: 1, settlement: failed },
+    {
+      state: "verify",
+      execution: { ...execution, id: "t2" },
+      startedAt: 3,
+      settlement: interrupted,
+    },
+  ]);
+});

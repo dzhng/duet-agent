@@ -28,15 +28,27 @@ export interface WorkflowReportEvidence {
     completedAt: number;
     report: string;
   }>;
-  nativeStateResults: Array<{
-    state: string;
-    execution?: StateMachineExecutionReceipt;
-    startedAt: number;
-    completedAt: number;
-    stdout: string;
-    stderr: string;
-    exitCode: number;
-  }>;
+  nativeStateResults: Array<
+    {
+      state: string;
+      execution?: StateMachineExecutionReceipt;
+      startedAt: number;
+    } & (
+      | {
+          completedAt: number;
+          stdout: string;
+          stderr: string;
+          exitCode: number;
+        }
+      | {
+          /** Failed/interrupted observations retain only what the runtime actually recorded. */
+          settlement: Extract<
+            StateMachineSessionEvent,
+            { type: "state_failed" | "state_interrupted" }
+          >;
+        }
+    )
+  >;
   userInstructions: string[];
   /** Identifies the retained raw event stream without sending its deltas to the judge. */
   eventsSha256: string;
@@ -78,7 +90,14 @@ export function buildWorkflowReportEvidence(
         : "state" in event
           ? event.state.stateMachine
           : undefined;
-    for (const entry of machine?.history ?? []) history.set(JSON.stringify(entry), entry);
+    for (const entry of machine?.history ?? []) {
+      // Interruption snapshots may later fill in the same event's partial output.
+      const key =
+        entry.type === "state_interrupted"
+          ? JSON.stringify([entry.type, entry.state, entry.timestamp])
+          : JSON.stringify(entry);
+      history.set(key, entry);
+    }
   }
   const pending = new Map<string, Extract<StateMachineSessionEvent, { type: "state_started" }>>();
   const workerReports: WorkflowReportEvidence["workerReports"] = [];
@@ -89,8 +108,18 @@ export function buildWorkflowReportEvidence(
   for (const entry of [...history.values()].sort((a, b) => a.timestamp - b.timestamp)) {
     if (entry.type === "state_machine_started") pending.clear();
     if (entry.type === "state_started") pending.set(entry.state, entry);
-    if (entry.type === "state_failed" || entry.type === "state_interrupted")
+    if (entry.type === "state_failed" || entry.type === "state_interrupted") {
+      const started = pending.get(entry.state);
       pending.delete(entry.state);
+      if (started?.execution?.kind === "script" && started.execution.state === entry.state) {
+        nativeStateResults.push({
+          state: entry.state,
+          execution: started.execution,
+          startedAt: started.timestamp,
+          settlement: entry,
+        });
+      }
+    }
     if (entry.type !== "state_completed") continue;
     const started = pending.get(entry.state);
     pending.delete(entry.state);
