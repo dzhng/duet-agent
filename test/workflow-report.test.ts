@@ -251,3 +251,45 @@ test("report evidence joins native script start and completion without trusting 
     { state: "poll", startedAt: 8, completedAt: 9, stdout: output.stdout, stderr: "", exitCode: 0 },
   ]);
 });
+
+test("completed worker statements retain attribution without becoming verification evidence", () => {
+  const execution = {
+    id: "t2",
+    state: "release",
+    kind: "agent" as const,
+    cwd: "/task",
+    forkContext: false,
+    suppliedInputKeys: [],
+    renderedInputKeys: [],
+    persistOverride: false,
+    preview: "Release",
+    previewTruncated: false,
+    fingerprint: "worker",
+  };
+  const report = "The leading bbb is a placeholder. I ran an unrecorded browser test.";
+  const snapshot: TurnEvent = {
+    type: "state_machine",
+    stateMachine: {
+      definition: { name: "release", prompt: "Release", states: [] },
+      prompt: "Release",
+      createdAt: 0,
+      updatedAt: 2,
+      history: [
+        { type: "state_started", state: "release", timestamp: 1, execution },
+        { type: "state_completed", state: "release", timestamp: 2, output: { result: report } },
+      ],
+    },
+  };
+  const events = transcript("The worker reported a placeholder SHA; I did not rerun its tests.");
+  const tool = events[1]!;
+  if (tool.type !== "step") throw new Error("Missing fixture tool");
+  tool.origin = { taskId: "t2" };
+  const evidence = buildWorkflowReportEvidence([snapshot, snapshot, ...events], []);
+  expect(evidence.workerReports).toEqual([
+    { state: "release", execution, startedAt: 1, completedAt: 2, report },
+  ]);
+  expect(evidence.toolResults[0]).toMatchObject({ origin: { taskId: "t2" } });
+  // A worker's claim is evidence of its words, never an invented successful execution.
+  expect(evidence.nativeStateResults).toEqual([]);
+  expect(evidence.toolResults.map((tool) => tool.input)).toEqual([{ command: "bun test" }]);
+});
