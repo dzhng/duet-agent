@@ -145,16 +145,26 @@ describe("model routing after image-producing tool output", () => {
   }
 
   testIfDocker(
-    "lets glm complete with graceful degradation when implement has no vision fallback",
+    "lets a configured text-only route complete with graceful degradation without a vision fallback",
     async () => {
       const cwd = await mkdtemp(join(tmpdir(), "duet-model-routing-no-vision-fallback-"));
       await writeFile(join(cwd, "shot.png"), Buffer.from(MAGENTA_PNG_BASE64, "base64"));
       const table = textOnlyImplementTable();
-      const visionFallbackModelName = table.tiers.economy.routes.implement.visionFallbackModelName;
-      delete table.tiers.economy.routes.implement.visionFallbackModelName;
+      const rule = table.tiers.economy.routes.implement;
+      const visionFallbackModelName = rule.visionFallbackModelName;
+      delete rule.visionFallbackModelName;
+      // This case tests degradation on a text-only route. Other Economy routes
+      // accept images, so live classification could avoid the condition entirely.
+      table.defaultTier = "text-only-eval";
+      table.tiers = {
+        "text-only-eval": {
+          routes: { general: rule },
+          advisor: { ...table.tiers.economy.advisor, enabled: false },
+        },
+      };
       await writeRoutingTable(cwd, table);
       const runner = new CapturingRunner({
-        model: "economy",
+        model: "text-only-eval",
         mode: "agent",
         cwd,
         memoryDbPath: false,
@@ -202,8 +212,8 @@ describe("model routing after image-producing tool output", () => {
 
         expect(terminal.type).toBe("complete");
         expect(runner.routeStatus()).toMatchObject({
-          route: "implement",
-          modelName: table.tiers.economy.routes.implement.target.modelName,
+          route: "general",
+          modelName: rule.target.modelName,
         });
         expect(switches.some((event) => event.toModel === visionFallbackModelName)).toBe(false);
         expect(switches.some((event) => event.visionFallback)).toBe(false);
