@@ -22,6 +22,8 @@ const stateThinkingLevel = "high" as const;
 class CapturingRunner extends TurnRunner {
   readonly stateAgentOptions: { model?: string; thinkingLevel?: string }[] = [];
 
+  readonly stateAgentModels: { parent: string; child: string }[] = [];
+
   protected createAgent(
     input: AgentConfigInput,
     onControlResult?: (result: TurnRunnerControlResult) => void,
@@ -32,7 +34,16 @@ class CapturingRunner extends TurnRunner {
         thinkingLevel: input.state.options?.thinkingLevel,
       });
     }
-    return super.createAgent(input, onControlResult);
+    const agent = super.createAgent(input, onControlResult);
+    if (input.prependSystemPrompt !== undefined) {
+      const parent = this.requireParentAgent().state.model;
+      const child = agent.state.model;
+      this.stateAgentModels.push({
+        parent: `${parent.provider}:${parent.id}`,
+        child: `${child.provider}:${child.id}`,
+      });
+    }
+    return agent;
   }
 }
 
@@ -124,8 +135,11 @@ describe("state machine agent state model", () => {
       // falsification check — if the override path leaked into the no-override
       // definition, stateModel would show up here.
       expect(runner.stateAgentOptions.length).toBeGreaterThan(0);
+      console.log("INHERITED_STATE_MODELS", JSON.stringify(runner.stateAgentModels));
+      for (const { parent, child } of runner.stateAgentModels) {
+        expect(child).toBe(parent);
+      }
       for (const options of runner.stateAgentOptions) {
-        expect(options.model).toBe(runnerModel);
         expect(options.model).not.toBe(stateModel);
       }
     },
