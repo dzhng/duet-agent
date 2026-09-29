@@ -16,6 +16,10 @@
     }
   },
   "sonnet": {
+    "sonnet-5.5": {
+      "openai-codex": null,
+      "github-copilot": null
+    },
     "sonnet-5": {
       "openai-codex": null,
       "github-copilot": null
