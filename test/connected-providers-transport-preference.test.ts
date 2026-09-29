@@ -9,7 +9,7 @@ describe("connected provider transport preference", () => {
       }),
     ).toEqual({
       transport: "openai-codex",
-      modelId: "gpt-6-sol",
+      modelId: "gpt-6.1-sol",
       planCovered: true,
       reason: "connected",
     });
@@ -21,25 +21,25 @@ describe("connected provider transport preference", () => {
         name: "no connections + covered shorthand",
         input: "sol",
         connections: [],
-        expected: ["duet-gateway", "openai/gpt-6-sol", false, "router_order"],
+        expected: ["duet-gateway", "openai/gpt-6.1-sol", false, "router_order"],
       },
       {
         name: "eligible codex + covered shorthand",
         input: "sol",
         connections: [{ provider: "openai-codex", eligibility: "eligible" }],
-        expected: ["openai-codex", "gpt-6-sol", true, "connected"],
+        expected: ["openai-codex", "gpt-6.1-sol", true, "connected"],
       },
       {
         name: "unknown eligibility is usable until a probe rejects the plan",
         input: "sol",
         connections: [{ provider: "openai-codex", eligibility: "unknown" }],
-        expected: ["openai-codex", "gpt-6-sol", true, "connected"],
+        expected: ["openai-codex", "gpt-6.1-sol", true, "connected"],
       },
       {
         name: "plan-ineligible codex + covered shorthand",
         input: "sol",
         connections: [{ provider: "openai-codex", eligibility: "plan_ineligible" }],
-        expected: ["duet-gateway", "openai/gpt-6-sol", false, "router_order"],
+        expected: ["duet-gateway", "openai/gpt-6.1-sol", false, "router_order"],
       },
       {
         name: "eligible copilot + covered shorthand",
@@ -60,7 +60,7 @@ describe("connected provider transport preference", () => {
           { provider: "github-copilot", eligibility: "eligible" },
           { provider: "openai-codex", eligibility: "eligible" },
         ],
-        expected: ["openai-codex", "gpt-6-sol", true, "connected"],
+        expected: ["openai-codex", "gpt-6.1-sol", true, "connected"],
       },
       {
         name: "both connections + copilot-only routed result",
@@ -107,7 +107,7 @@ test("router order skips routers without configured credentials", () => {
   });
   expect(choice).toEqual({
     transport: "openrouter",
-    modelId: "openai/gpt-6-sol",
+    modelId: "openai/gpt-6.1-sol",
     planCovered: false,
     reason: "router_order",
   });

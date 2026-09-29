@@ -383,7 +383,7 @@ describe("TurnRunner virtual-model adapter", () => {
       name: "inherited-child",
       prompt: "Do the inherited task.",
     });
-    expect(runner.createdAgentOptions.at(-1)?.model).toContain("openai/gpt-6-sol");
+    expect(runner.createdAgentOptions.at(-1)?.model).toContain("openai/gpt-6.1-sol");
     expect(runner.createdAgentOptions.at(-1)?.thinkingLevel).toBe("medium");
   });
 
@@ -1227,13 +1227,14 @@ testIfDocker(
 );
 
 testIfDocker(
-  "Balanced fresh and resumed work dispatches Sonnet except its specialized visual route",
+  "Balanced fresh and resumed work dispatches Sol with Sonnet writing and visual routes",
   async () => {
     const cwd = await mkdtemp(join(tmpdir(), "balanced-default-"));
     try {
       for (const route of ["plan", "implement", "general", "writing", "visual"] as const) {
         const priorTable = structuredClone(BUILT_IN_ROUTING_TABLE);
-        priorTable.tiers.balanced.routes[route]!.target.modelName = "sol";
+        priorTable.tiers.balanced.routes[route]!.target.modelName =
+          route === "visual" ? "kimi" : "sonnet";
         await mkdir(join(cwd, ".duet"), { recursive: true });
         await writeFile(join(cwd, ".duet", "models.json"), JSON.stringify(priorTable));
         const previous = new RouterTurnRunner({
@@ -1266,7 +1267,9 @@ testIfDocker(
               behavior: "follow_up",
             });
             await waitFor(() => runner.pendingStreams.length === 1);
-            expect(runner.requestModels[0]!.id).toContain(route === "visual" ? "kimi" : "sonnet");
+            expect(runner.requestModels[0]!.id).toContain(
+              route === "visual" || route === "writing" ? "sonnet" : "gpt-6.1-sol",
+            );
             expect(runner.requestContexts[0]!.tools?.map((tool) => tool.name)).not.toContain(
               "ask_advisor",
             );

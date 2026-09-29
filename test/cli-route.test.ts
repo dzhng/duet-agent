@@ -108,7 +108,7 @@ describe("runRouteCommand", () => {
     });
 
     expect(output).toContain(
-      "Transport: duet-gateway modelId=openai/gpt-6-sol reason=router_order planCovered=false",
+      "Transport: duet-gateway modelId=openai/gpt-6.1-sol reason=router_order planCovered=false",
     );
     expect(output).toContain("Confidence: implement 0.82 · general 0.12 · writing 0.06");
   });

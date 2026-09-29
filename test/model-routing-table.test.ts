@@ -65,20 +65,21 @@ describe("built-in model routing table", () => {
 
     expect(table.defaultTier).toBe("frontier");
     expect(targets("frontier")).toEqual({
-      visual: { modelName: "kimi", thinkingLevel: "medium" },
+      visual: { modelName: "opus", thinkingLevel: "medium" },
       plan: { modelName: "opus", thinkingLevel: "medium" },
       implement: { modelName: "sol", thinkingLevel: "medium" },
       writing: { modelName: "opus", thinkingLevel: "medium" },
       general: { modelName: "sol", thinkingLevel: "medium" },
     });
     expect(targets("balanced")).toEqual({
-      visual: { modelName: "kimi", thinkingLevel: "medium" },
-      plan: { modelName: "sonnet", thinkingLevel: "medium" },
-      implement: { modelName: "sonnet", thinkingLevel: "medium" },
+      visual: { modelName: "sonnet", thinkingLevel: "medium" },
+      plan: { modelName: "sol", thinkingLevel: "medium" },
+      implement: { modelName: "sol", thinkingLevel: "medium" },
       writing: { modelName: "sonnet", thinkingLevel: "medium" },
-      general: { modelName: "sonnet", thinkingLevel: "medium" },
+      general: { modelName: "sol", thinkingLevel: "medium" },
     });
     expect(targets("economy")).toEqual({
+      visual: { modelName: "kimi", thinkingLevel: "medium" },
       implement: { modelName: "deepseek", thinkingLevel: "medium" },
       writing: { modelName: "luna", thinkingLevel: "low" },
       general: { modelName: "deepseek", thinkingLevel: "low" },

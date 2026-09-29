@@ -36,12 +36,20 @@
     }
   },
   "sol": {
+    "gpt-6.1-sol": {
+      "openai-codex": "gpt-6.1-sol",
+      "github-copilot": null
+    },
     "gpt-6-sol": {
       "openai-codex": "gpt-6-sol",
       "github-copilot": null
     }
   },
   "terra": {
+    "gpt-6.1-sol": {
+      "openai-codex": "gpt-6.1-sol",
+      "github-copilot": null
+    },
     "gpt-6-sol": {
       "openai-codex": "gpt-6-sol",
       "github-copilot": null

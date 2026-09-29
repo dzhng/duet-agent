@@ -158,7 +158,7 @@ describe("DeepSeek V4.1 Flash's published contract", () => {
 // would then lie rather than fail.
 describe("connected-provider models", () => {
   test("resolves the codex 5.6 models on their native transport, priced", () => {
-    for (const id of ["gpt-6-sol", "gpt-6-sol", "gpt-6-luna"]) {
+    for (const id of ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
       const model = resolveModelName(`openai-codex:${id}`);
 
       expect(model).toMatchObject({

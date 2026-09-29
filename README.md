@@ -327,7 +327,7 @@ export AI_GATEWAY_API_KEY=...
 duet -m opus-5.5 "review this repo"
 ```
 
-Model names can be a virtual tier (`frontier`, `balanced`, `economy` — routed per prompt), a versionless family (`opus`, `sonnet`, `haiku`, `sol`, and others), full `provider:modelId` syntax, or a versioned shorthand such as `opus-5.5` or `gpt-6-sol`. Family names resolve to the latest curated version, while concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
+Model names can be a virtual tier (`frontier`, `balanced`, `economy` — routed per prompt), a versionless family (`opus`, `sonnet`, `haiku`, `sol`, and others), full `provider:modelId` syntax, or a versioned shorthand such as `opus-5.5` or `gpt-6.1-sol`. Family names resolve to the latest curated version, while concrete shorthands resolve to the first configured gateway; use full `provider:modelId` syntax — or `--provider <name>` — to pin a specific gateway.
 
 </details>
 
@@ -358,7 +358,7 @@ Tool calls render with custom per-tool headers (e.g. `$ <command>`, `read <path>
 
 Type `/` in the composer to open the command picker, or send any of these as a message:
 
-- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts virtual tiers and the same family, versioned shorthand, and `provider:modelId` forms as the `--model` flag (e.g. `/model frontier`, `/model sonnet`, `/model duet:openai/gpt-6-sol`). A concrete name pins the model and suspends routing; a tier resumes it. Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with. **`/route`** inspects the live routing state.
+- **`/model <name>`** — switch the model used for **subsequent** turns. Accepts virtual tiers and the same family, versioned shorthand, and `provider:modelId` forms as the `--model` flag (e.g. `/model frontier`, `/model sonnet`, `/model duet:openai/gpt-6.1-sol`). A concrete name pins the model and suspends routing; a tier resumes it. Unknown shorthands or missing provider credentials surface an error and leave the current model in place. The in-flight turn (if any) keeps the model it started with. **`/route`** inspects the live routing state.
 - **`/thinking <level>`** — switch the thinking level for the **next** turn. One of `minimal`, `low`, `medium`, `high`, `xhigh`. The runner clamps to the active model's supported range at use-time. The in-flight turn (if any) keeps its level.
 - **`/feedback <message>`** — send free-form feedback to the Duet team.
 - **`/clear`** — dispose the current session and start a fresh one.

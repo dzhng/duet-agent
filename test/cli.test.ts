@@ -431,7 +431,7 @@ describe("CLI model inference", () => {
     process.env.ANTHROPIC_API_KEY = "test-anthropic";
 
     expect(resolveModelName("opus-5.5").id).toBe("anthropic/claude-opus-5.5");
-    expect(resolveModelName("sol").id).toBe("openai/gpt-6-sol");
+    expect(resolveModelName("sol").id).toBe("openai/gpt-6.1-sol");
   });
 
   test("routes Duet OpenAI models through an OpenAI-compatible API", () => {
@@ -441,7 +441,7 @@ describe("CLI model inference", () => {
     const model = resolveModelName("sol");
 
     expect(model.provider).toBe("duet-gateway");
-    expect(model.id).toBe("openai/gpt-6-sol");
+    expect(model.id).toBe("openai/gpt-6.1-sol");
     expect(model.api).toBe("openai-responses");
     expect(model.baseUrl).toBe("https://gateway.duet.so/v1");
     expect(model.reasoning).toBe(true);

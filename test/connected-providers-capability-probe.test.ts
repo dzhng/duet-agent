@@ -17,7 +17,7 @@ describe("connected provider capability probe", () => {
 
     expect(result).toEqual({
       eligibility: "eligible",
-      servedModelIds: ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra"],
+      servedModelIds: ["gpt-6-luna", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-astra"],
     });
   });
 

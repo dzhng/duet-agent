@@ -206,7 +206,11 @@ function rebaseOntoGateway(model: Model<Api>, route: GatewayRoute, origin: strin
  * a second copy of it here would silently go stale.
  */
 function gatewayCapabilityGaps(modelId: string): Partial<Model<Api>> | undefined {
-  if (modelId === "openai/gpt-6-sol" || modelId === "openai/gpt-6-luna") {
+  if (
+    modelId === "openai/gpt-6.1-sol" ||
+    modelId === "openai/gpt-6-sol" ||
+    modelId === "openai/gpt-6-luna"
+  ) {
     return { thinkingLevelMap: { minimal: "low", xhigh: "xhigh", max: "max" } };
   }
   // GLM accepts max rather than xhigh on the gateway reasoning-effort surface.
@@ -254,6 +258,16 @@ const SOL_6_CONTRACT: PublishedContract = {
     tiers: [{ inputTokensAbove: 272000, input: 4, output: 15, cacheRead: 0.4, cacheWrite: 5 }],
   },
 };
+const SOL_6_1_CONTRACT: PublishedContract = {
+  ...SOL_6_CONTRACT,
+  cost: {
+    input: 2,
+    output: 10,
+    cacheRead: 0.1,
+    cacheWrite: 2.5,
+    tiers: [{ inputTokensAbove: 272000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
+  },
+};
 const LUNA_6_CONTRACT: PublishedContract = {
   input: ["text", "image"],
   contextWindow: 1_050_000,
@@ -279,6 +293,18 @@ const LUNA_6_CONTRACT: PublishedContract = {
  * provider would not resolve the id at all.
  */
 const MISSING_MODEL_CLONES: readonly MissingModelClone[] = [
+  {
+    from: "openai/gpt-5.6-sol",
+    to: "openai/gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
+    byProvider: { "vercel-ai-gateway": SOL_6_1_CONTRACT, openrouter: SOL_6_1_CONTRACT },
+  },
+  {
+    from: "gpt-5.6-sol",
+    to: "gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
+    byProvider: { "openai-codex": { cost: SOL_6_1_CONTRACT.cost } },
+  },
   {
     from: "anthropic/claude-sonnet-5",
     to: "anthropic/claude-sonnet-5.5",

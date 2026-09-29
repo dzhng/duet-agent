@@ -97,7 +97,7 @@ EXAMPLES
   duet login
   duet env
   duet memory
-  duet model -m openai/gpt-6-sol "write a haiku about gateways"
+  duet model -m openai/gpt-6.1-sol "write a haiku about gateways"
   duet model -m black-forest-labs/flux-1.1-pro -o art.png "a fox in snow"
   duet train ./docs/my-project
   duet send-feedback "the TUI flickers when..."
@@ -390,7 +390,7 @@ DESCRIPTION
   generations write files and print each path. Auth uses DUET_API_KEY.
 
 OPTIONS
-  -m, --model <name>       Gateway model id, e.g. openai/gpt-6-sol (required)
+  -m, --model <name>       Gateway model id, e.g. openai/gpt-6.1-sol (required)
   --type text|image|video  Override the catalog-inferred request type
   --image <path>           Input image: vision context (text), edit source
                            (image), or still to animate (video; path or HTTP URL)
@@ -409,7 +409,7 @@ OPTIONS
   -h, --help               Show this help
 
 EXAMPLES
-  duet model -m openai/gpt-6-sol "write a haiku about gateways"
+  duet model -m openai/gpt-6.1-sol "write a haiku about gateways"
   duet model -m bfl/flux-pro-1.1 -o art.png "a fox in snow"
   duet model -m openai/gpt-image-2.5-flare --background transparent -o logo.png "a maple leaf"
   duet model -m google/gemini-3.1-flash-image --type image --image src.png "add a hat"

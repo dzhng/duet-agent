@@ -56,20 +56,20 @@ const familyCases: readonly FamilyCase[] = [
   },
   {
     family: "sol",
-    latest: "gpt-6-sol",
+    latest: "gpt-6.1-sol",
     modelsByProvider: {
-      "duet-gateway": "openai/gpt-6-sol",
-      "vercel-ai-gateway": "openai/gpt-6-sol",
-      openrouter: "openai/gpt-6-sol",
+      "duet-gateway": "openai/gpt-6.1-sol",
+      "vercel-ai-gateway": "openai/gpt-6.1-sol",
+      openrouter: "openai/gpt-6.1-sol",
     },
   },
   {
     family: "terra",
-    latest: "gpt-6-sol",
+    latest: "gpt-6.1-sol",
     modelsByProvider: {
-      "duet-gateway": "openai/gpt-6-sol",
-      "vercel-ai-gateway": "openai/gpt-6-sol",
-      openrouter: "openai/gpt-6-sol",
+      "duet-gateway": "openai/gpt-6.1-sol",
+      "vercel-ai-gateway": "openai/gpt-6.1-sol",
+      openrouter: "openai/gpt-6.1-sol",
     },
   },
   {
@@ -161,6 +161,7 @@ describe("catalog family shorthands", () => {
       "sonnet-5",
       "sonnet-4.6",
       "haiku-4.5",
+      "gpt-6.1-sol",
       "gpt-6-sol",
       "gpt-6-luna",
       "gpt-6-astra",

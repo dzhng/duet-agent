@@ -238,7 +238,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
       routes: {
         visual: {
           description: VISUAL_DESCRIPTION,
-          target: { modelName: "kimi", thinkingLevel: "medium" },
+          target: { modelName: "opus", thinkingLevel: "medium" },
         },
         plan: {
           description: FRONTIER_PLAN_DESCRIPTION,
@@ -271,15 +271,15 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
       routes: {
         visual: {
           description: VISUAL_DESCRIPTION,
-          target: { modelName: "kimi", thinkingLevel: "medium" },
+          target: { modelName: "sonnet", thinkingLevel: "medium" },
         },
         plan: {
           description: FRONTIER_PLAN_DESCRIPTION,
-          target: { modelName: "sonnet", thinkingLevel: "medium" },
+          target: { modelName: "sol", thinkingLevel: "medium" },
         },
         implement: {
           description: IMPLEMENT_DESCRIPTION,
-          target: { modelName: "sonnet", thinkingLevel: "medium" },
+          target: { modelName: "sol", thinkingLevel: "medium" },
         },
         writing: {
           description: WRITING_DESCRIPTION,
@@ -287,7 +287,7 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
         },
         general: {
           description: GENERAL_DESCRIPTION,
-          target: { modelName: "sonnet", thinkingLevel: "medium" },
+          target: { modelName: "sol", thinkingLevel: "medium" },
         },
       },
       advisor: {
@@ -298,6 +298,10 @@ export const BUILT_IN_ROUTING_TABLE: RoutingTable = {
     },
     economy: {
       routes: {
+        visual: {
+          description: VISUAL_DESCRIPTION,
+          target: { modelName: "kimi", thinkingLevel: "medium" },
+        },
         implement: {
           description: IMPLEMENT_DESCRIPTION,
           target: { modelName: "deepseek", thinkingLevel: "medium" },

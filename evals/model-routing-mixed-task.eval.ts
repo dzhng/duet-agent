@@ -18,8 +18,31 @@ import { exportRoutingTable } from "../src/model-routing/loader.js";
 import { classifierPath } from "../src/model-routing/classifier.js";
 import { resolveMeteredModelName } from "../src/model-resolution/resolver.js";
 
-const KIMI_ID = "moonshotai/kimi-k3";
-const SOL_ID = "openai/gpt-6-sol";
+const tier = process.env.EVAL_TIER ?? "frontier";
+const targets = {
+  frontier: {
+    visual: "opus",
+    visualId: "anthropic/claude-opus-5.5",
+    implement: "sol",
+    implementId: "openai/gpt-6.1-sol",
+  },
+  balanced: {
+    visual: "sonnet",
+    visualId: "anthropic/claude-sonnet-5.5",
+    implement: "sol",
+    implementId: "openai/gpt-6.1-sol",
+  },
+  economy: {
+    visual: "kimi",
+    visualId: "moonshotai/kimi-k3",
+    implement: "deepseek",
+    implementId: "deepseek/deepseek-v4.1-flash",
+  },
+};
+if (!(tier in targets)) throw new Error(`Unknown EVAL_TIER: ${tier}`);
+const target = targets[tier as keyof typeof targets];
+const VISUAL_ID = target.visualId;
+const IMPLEMENT_ID = target.implementId;
 const FABLE_ID = "anthropic/claude-fable-5.1";
 const MAX_SWITCHES = 4;
 
@@ -152,7 +175,7 @@ async function seedTask(cwd: string): Promise<void> {
 
 describe("mixed-task model routing promotion", () => {
   testIfDocker(
-    "routes visual work to Kimi and the later backend implementation to Sol",
+    `routes ${tier} visual work to ${target.visual} and later implementation to ${target.implement}`,
     async () => {
       // Live executors occasionally under-run the eight-step script (observed:
       // ending the turn after the frontend phase) — executor variance, not
@@ -163,7 +186,7 @@ describe("mixed-task model routing promotion", () => {
   );
 
   async function runMixedTaskScenario(): Promise<void> {
-    // Deliberately ignore EVAL_MODEL: this promotion case must exercise --model frontier
+    // Deliberately ignore EVAL_MODEL: this promotion case exercises the selected tier
     // semantics through the real built-in table, configured classifier, and production cadence.
     const cwd = await mkdtemp(join(tmpdir(), "duet-model-routing-mixed-task-"));
     await seedTask(cwd);
@@ -174,7 +197,7 @@ describe("mixed-task model routing promotion", () => {
         : resolveMeteredModelName(table.classifier.target.modelName).id;
 
     const runner = new TurnRunner({
-      model: "frontier",
+      model: tier,
       mode: "agent",
       cwd,
       memoryDbPath: false,
@@ -270,10 +293,10 @@ describe("mixed-task model routing promotion", () => {
       expect(terminal.type).toBe("complete");
       expect(terminal.type === "complete" ? terminal.status : undefined).toBe("completed");
       expect(visualCalls.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(3);
-      expect(visualCalls.some((call) => call.model === KIMI_ID)).toBe(true);
-      expect(backendCalls.some((call) => call.model === SOL_ID)).toBe(true);
+      expect(visualCalls.some((call) => call.model === VISUAL_ID)).toBe(true);
+      expect(backendCalls.some((call) => call.model === IMPLEMENT_ID)).toBe(true);
       // The promotion contract: phases START in order, the cadence switch
-      // lands kimi→sol around the transition, and sol does real backend
+      // lands around the transition, and the implementation model does real backend
       // work after it. Deliberately NOT asserted: phase-END ordering by
       // max index. Two correct behaviors break it — cadence lag (the model
       // may begin backend steps up to a window before the check fires) and
@@ -286,20 +309,20 @@ describe("mixed-task model routing promotion", () => {
       expect(visualWork.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(1);
       expect(backendWork.length, JSON.stringify(calls, null, 2)).toBeGreaterThanOrEqual(1);
       expect(visualWork[0]!.index).toBeLessThan(backendWork[0]!.index);
-      expect(visualWork.some((call) => call.model === KIMI_ID)).toBe(true);
-      const kimiToSol = switches.find(
-        (event) => event.fromModel === "kimi" && event.toModel === "sol",
+      expect(visualWork.some((call) => call.model === VISUAL_ID)).toBe(true);
+      const phaseSwitch = switches.find(
+        (event) => event.fromModel === target.visual && event.toModel === target.implement,
       );
-      expect(kimiToSol, JSON.stringify(switches, null, 2)).toBeDefined();
-      const solBackendWork = backendWork.filter((call) => call.model === SOL_ID);
+      expect(phaseSwitch, JSON.stringify(switches, null, 2)).toBeDefined();
+      const implementationWork = backendWork.filter((call) => call.model === IMPLEMENT_ID);
       expect(
-        solBackendWork.length,
+        implementationWork.length,
         JSON.stringify({ calls, assistantTurns }, null, 2),
       ).toBeGreaterThanOrEqual(1);
       expect(backendWork[0]?.model, JSON.stringify({ calls, assistantTurns }, null, 2)).toBe(
-        SOL_ID,
+        IMPLEMENT_ID,
       );
-      expect(visualWork.some((call) => call.model === SOL_ID)).toBe(false);
+      expect(visualWork.some((call) => call.model === IMPLEMENT_ID)).toBe(false);
 
       // Advisor lifecycle checkpoints are steered in as system-reminder user
       // messages; the one real user message is the prompt itself.
@@ -312,14 +335,16 @@ describe("mixed-task model routing promotion", () => {
       const cadenceSwitches = switches.filter((event) => event.trigger === "cadence");
       expect(cadenceSwitches.length, JSON.stringify(switches, null, 2)).toBeGreaterThanOrEqual(1);
       expect(switches.length).toBeLessThanOrEqual(MAX_SWITCHES);
-      const kimiSwitchIndex = switches.findIndex((event) => event.toModel === "kimi");
-      const solSwitchIndex = switches.findIndex(
-        (event, index) => index > kimiSwitchIndex && event.toModel === "sol",
+      const visualSwitchIndex = switches.findIndex((event) => event.toModel === target.visual);
+      const implementSwitchIndex = switches.findIndex(
+        (event, index) => index > visualSwitchIndex && event.toModel === target.implement,
       );
-      expect(kimiSwitchIndex, JSON.stringify(switches, null, 2)).toBeGreaterThanOrEqual(0);
-      expect(solSwitchIndex, JSON.stringify(switches, null, 2)).toBeGreaterThan(kimiSwitchIndex);
+      expect(visualSwitchIndex, JSON.stringify(switches, null, 2)).toBeGreaterThanOrEqual(0);
+      expect(implementSwitchIndex, JSON.stringify(switches, null, 2)).toBeGreaterThan(
+        visualSwitchIndex,
+      );
       for (const switched of switches) {
-        expect(["kimi", "sol"]).toContain(switched.toModel);
+        expect([target.visual, target.implement]).toContain(switched.toModel);
         expect(switched.thinkingLevel).toBe("medium");
       }
 
@@ -327,18 +352,22 @@ describe("mixed-task model routing promotion", () => {
       expect(parentModels.has(classifierModelId)).toBe(false);
       expect(parentModels.has(FABLE_ID)).toBe(false);
       expect(calls.some((call) => call.tool === "ask_advisor")).toBe(false);
-      expect([...parentModels].every((model) => model === KIMI_ID || model === SOL_ID)).toBe(true);
+      expect(
+        [...parentModels].every((model) => model === VISUAL_ID || model === IMPLEMENT_ID),
+      ).toBe(true);
 
-      const kimiUsage = usageByModel.find((entry) => entry.model === KIMI_ID);
-      const solUsage = usageByModel.find((entry) => entry.model === SOL_ID);
+      const visualUsage = usageByModel.find((entry) => entry.model === VISUAL_ID);
+      const implementationUsage = usageByModel.find((entry) => entry.model === IMPLEMENT_ID);
       const classifierUsage = usageByModel.find((entry) => entry.model === classifierModelId);
-      expect(kimiUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
-      expect(solUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
+      expect(visualUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
+      expect(implementationUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
       // Memory is disabled and the classifier never executes parent work in this scenario,
       // so this row can only come from the real route classifier.
       expect(classifierUsage?.usage.totalTokens ?? 0).toBeGreaterThan(0);
       expect(
-        usageByModel.every((entry) => [KIMI_ID, SOL_ID, classifierModelId].includes(entry.model)),
+        usageByModel.every((entry) =>
+          [VISUAL_ID, IMPLEMENT_ID, classifierModelId].includes(entry.model),
+        ),
       ).toBe(true);
       expect(terminal.turnUsage).toBeDefined();
       expect(usageByModel.reduce((total, entry) => total + entry.usage.totalTokens, 0)).toBe(

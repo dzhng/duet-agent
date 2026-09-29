@@ -90,6 +90,8 @@ const WIRE_SHAPES = {
 } as const;
 
 test.each([
+  ["duet-gateway:openai/gpt-6.1-sol", "openai-responses"],
+  ["vercel-ai-gateway:openai/gpt-6.1-sol", "openai-responses"],
   ["duet-gateway:openai/gpt-6-sol", "openai-responses"],
   ["duet-gateway:openai/gpt-6-luna", "openai-responses"],
   ["duet-gateway:anthropic/claude-opus-5.5", "anthropic-messages"],

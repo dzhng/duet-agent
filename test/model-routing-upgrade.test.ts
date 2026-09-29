@@ -34,7 +34,7 @@ testIfDocker(
       );
       expect(table).toEqual(expected);
       for (const [tier, id] of [
-        ["openai-max", "openai/gpt-6-sol"],
+        ["openai-max", "openai/gpt-6.1-sol"],
         ["anthropic-max", "anthropic/claude-opus-5.5"],
       ]) {
         const selected = resolveRoute(

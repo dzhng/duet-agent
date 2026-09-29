@@ -98,8 +98,8 @@ testIfDocker(
           const targets: Record<string, string> = {
             "provider-duet": "anthropic/claude-opus-5.5",
             opus: "anthropic/claude-opus-5.5",
-            sol: "openai/gpt-6-sol",
-            terra: "openai/gpt-6-sol",
+            sol: "openai/gpt-6.1-sol",
+            terra: "openai/gpt-6.1-sol",
             luna: "openai/gpt-6-luna",
             grok: "spacexai/grok-4.7",
             glm: "zai/glm-5.3",

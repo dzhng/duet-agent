@@ -172,6 +172,18 @@ const MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   },
   {
     family: "sol",
+    shorthand: "gpt-6.1-sol",
+    aliases: ["openai/gpt-6.1-sol"],
+    modelsByProvider: {
+      "duet-gateway": "openai/gpt-6.1-sol",
+      "vercel-ai-gateway": "openai/gpt-6.1-sol",
+      openrouter: "openai/gpt-6.1-sol",
+      "openai-codex": "gpt-6.1-sol",
+    },
+    maxOutputTokens: 128000,
+  },
+  {
+    family: "sol",
     shorthand: "gpt-6-sol",
     aliases: ["openai/gpt-6-sol"],
     modelsByProvider: {

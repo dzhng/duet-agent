@@ -160,7 +160,7 @@ testIfDocker(
           expect(requests).toContain(`anthropic/claude-${parentModel}`);
           expect(terminal.state.stateMachine?.terminal?.status).toBe("completed");
           expect(requests).toContain(
-            location === "virtual" ? "anthropic/claude-haiku-4.5" : "openai/gpt-6-sol",
+            location === "virtual" ? "anthropic/claude-haiku-4.5" : "openai/gpt-6.1-sol",
           );
           expect(requests).not.toContain("openai/gpt-5.6-sol");
           expect(

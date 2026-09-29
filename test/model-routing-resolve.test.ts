@@ -15,14 +15,14 @@ function textOnlyImplementTable(): RoutingTable {
 }
 
 describe("model route resolution", () => {
-  test("falls through economy visual to its low-effort general route", () => {
+  test("routes economy visual work to its dedicated image-capable model", () => {
     expect(
       resolveRoute(BUILT_IN_ROUTING_TABLE, "economy", "visual", { hasImages: false }, catalog),
     ).toEqual({
       tier: "economy",
-      route: "general",
-      modelName: "deepseek",
-      thinkingLevel: "low",
+      route: "visual",
+      modelName: "kimi",
+      thinkingLevel: "medium",
       visionFallback: false,
       chain: ["economy"],
     });
@@ -101,7 +101,7 @@ describe("model route resolution", () => {
     ).toEqual({
       tier: "balanced",
       route: "general",
-      modelName: "sonnet",
+      modelName: "sol",
       thinkingLevel: "medium",
       visionFallback: false,
       chain: ["balanced"],
