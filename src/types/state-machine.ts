@@ -470,10 +470,6 @@ export type StateMachineSessionEvent =
       timestamp: number;
       decision: unknown;
       execution?: StateMachineExecutionReceipt;
-      /** Complete constructed task prompt/command, retained only in raw checkpoints while within the instruction budget. */
-      executionInstructions?: string;
-      /** Complete text was deliberately omitted; the bounded receipt still identifies the work. Legacy entries may have neither field. */
-      executionInstructionsUnavailable?: "evicted" | "too_large";
     }
   | {
       type: "state_started";
