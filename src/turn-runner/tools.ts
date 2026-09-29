@@ -1,3 +1,4 @@
+import { projectStateMachineSession } from "./state-machine-session.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import {
@@ -1320,7 +1321,8 @@ function createCurrentStateMachineStateTool(
       "Inspect current state-machine progress, including background work that ran after selecting a state. Use this after resume, interruption, or uncertainty before selecting the next state, and before answering user questions about state-machine progress, poll/wake status, what has already happened, or why the session is waiting.",
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute() {
-      const stateMachine = getStateMachine?.();
+      const raw = getStateMachine?.();
+      const stateMachine = raw ? projectStateMachineSession(raw) : undefined;
       const activeOutput = getActiveStateOutput?.();
       const result: CurrentStateMachineStateResult = {
         currentState: stateMachine?.currentState,

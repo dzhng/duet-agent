@@ -1,5 +1,10 @@
+import {
+  createStateMachineSession,
+  recordAcceptedExecution,
+  EXECUTION_INSTRUCTIONS_MAX_BYTES,
+} from "../src/turn-runner/state-machine-session.js";
 import { afterAll, beforeAll, expect } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAssistantMessageEventStream, type Context } from "@earendil-works/pi-ai";
@@ -9,7 +14,10 @@ import {
   type AgentWorkerInput,
   type AgentWorkerResult,
 } from "../src/turn-runner/turn-runner.js";
-import type { StateMachineDefinition } from "../src/types/state-machine.js";
+import type {
+  StateMachineDefinition,
+  StateMachineExecutionReceipt,
+} from "../src/types/state-machine.js";
 import type { StateMachineRunnerDecision } from "../src/turn-runner/tools.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 import { testIfDocker } from "./helpers/docker-only.js";
@@ -30,8 +38,21 @@ class ReceiptRunner extends TurnRunner {
   constructor(
     cwd: string,
     readonly decisions: StateMachineRunnerDecision[],
+    skillPaths: string[] = [],
   ) {
-    super({ cwd, model: "sol", memoryDbPath: false, skillDiscovery: { includeDefaults: false } });
+    super({
+      cwd,
+      model: "sol",
+      memoryDbPath: false,
+      skillDiscovery: { includeDefaults: false, skillPaths },
+    });
+  }
+  async currentStateView() {
+    const tool = this.requireParentAgent().state.tools.find(
+      (tool) => tool.name === "get_current_state_machine_state",
+    );
+    if (!tool) throw new Error("Missing current state tool");
+    return tool.execute("inspect", {});
   }
   protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     if (this.rejectAdmission) {
@@ -320,7 +341,7 @@ testIfDocker("script receipts use the command and cwd actually executed", async 
           {
             kind: "script",
             name: "work",
-            command: "printf '{{ input.message }}:'; pwd",
+            command: "printf '{{ input.message }}:'; pwd; # " + "script detail ".repeat(120),
             cwd: "child",
           },
           { kind: "terminal", name: "done", status: "completed" },
@@ -334,12 +355,17 @@ testIfDocker("script receipts use the command and cwd actually executed", async 
     });
     const history = terminal.state.stateMachine!.history;
     expect(
+      history.find((event) => event.type === "runner_decided" && event.execution),
+    ).toMatchObject({
+      executionInstructions: "printf 'sentinel:'; pwd; # " + "script detail ".repeat(120),
+    });
+    expect(
       history.find((event) => event.type === "state_started" && event.state === "work"),
     ).toMatchObject({
       execution: {
         kind: "script",
         cwd: join(cwd, "child"),
-        preview: "printf 'sentinel:'; pwd",
+        preview: ("printf 'sentinel:'; pwd; # " + "script detail ".repeat(120)).slice(0, 1200),
         renderedInputKeys: ["message"],
         suppliedInputKeys: ["extra", "message"],
       },
@@ -398,4 +424,136 @@ testIfDocker("delivered input corrections reset the execution streak", async () 
     await runner.dispose();
     await rm(cwd, { recursive: true, force: true });
   }
+});
+
+testIfDocker(
+  "full constructed instructions survive checkpoint resume while ordinary views stay bounded",
+  async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "execution-instructions-"));
+    const skill = join(cwd, "SKILL.md");
+    const body = "Immutable expanded task instructions. ".repeat(100) + "END-OF-ORIGINAL-SKILL";
+    await writeFile(skill, `---\nname: exact-task\ndescription: task fixture\n---\n${body}\n`);
+    const runner = new ReceiptRunner(
+      cwd,
+      [
+        {
+          state: "work",
+          override: { kind: "agent", state: { prompt: "/exact-task" } },
+          persistOverride: false,
+        },
+        { state: "done" },
+      ],
+      [skill],
+    );
+    const snapshots: unknown[] = [];
+    runner.subscribe((event) => {
+      if (event.type === "state_machine") snapshots.push(event.stateMachine);
+    });
+    try {
+      await runner.start({
+        type: "start",
+        mode: {
+          name: "detail",
+          prompt: "Work.",
+          states: [
+            { kind: "agent", name: "work", prompt: "Original definition." },
+            { kind: "terminal", name: "done", status: "completed" },
+          ],
+        },
+      });
+      await runner.turn({ type: "prompt", message: "Do work.", behavior: "follow_up" });
+      const prompt = runner.requests[0]!.messages.at(-1)!;
+      const actual =
+        typeof prompt.content === "string"
+          ? prompt.content
+          : prompt.content
+              .filter((c) => c.type === "text")
+              .map((c) => c.text)
+              .join("");
+      expect(actual).toContain(body);
+      const raw = runner.getState()!;
+      const decision = raw.stateMachine!.history.find(
+        (event) => event.type === "runner_decided" && event.execution,
+      );
+      if (!decision) throw new Error("Missing accepted execution");
+      expect(decision).toMatchObject({
+        executionInstructions: actual,
+        execution: { previewTruncated: true },
+      });
+      expect(JSON.stringify(snapshots)).not.toContain("END-OF-ORIGINAL-SKILL");
+      const view = await runner.currentStateView();
+      expect(JSON.stringify(view)).not.toContain("END-OF-ORIGINAL-SKILL");
+      const expectedHistory = structuredClone(raw.stateMachine!.history.slice(-10));
+      for (const event of expectedHistory) {
+        if (event.type === "runner_decided") {
+          delete event.executionInstructions;
+          delete event.executionInstructionsUnavailable;
+        }
+      }
+      expect(view.details).toMatchObject({ history: expectedHistory });
+      const checkpoint = join(cwd, "state.json");
+      await writeFile(checkpoint, JSON.stringify(raw));
+      await writeFile(
+        skill,
+        "---\nname: exact-task\ndescription: changed\n---\nReplacement skill.",
+      );
+      const saved = JSON.parse(await readFile(checkpoint, "utf8"));
+      saved.stateMachine.definition.states[0].prompt = "Replacement definition.";
+      const resumed = new ReceiptRunner(cwd, [], [skill]);
+      try {
+        await resumed.start({ type: "start", state: saved });
+        expect(resumed.getState()!.stateMachine!.history).toContainEqual(decision);
+        expect(JSON.stringify(await resumed.currentStateView())).not.toContain(
+          "END-OF-ORIGINAL-SKILL",
+        );
+      } finally {
+        await resumed.dispose();
+      }
+    } finally {
+      await runner.dispose();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  },
+);
+
+testIfDocker("instruction retention keeps complete newest text within its encoded budget", () => {
+  const receipt: StateMachineExecutionReceipt = {
+    id: "task",
+    state: "work",
+    kind: "script",
+    fingerprint: "hash",
+    cwd: "/tmp",
+    forkContext: false,
+    suppliedInputKeys: [],
+    renderedInputKeys: [],
+    persistOverride: false,
+    preview: "preview",
+    previewTruncated: true,
+  };
+  let session = createStateMachineSession(
+    "Work.",
+    { name: "quota", prompt: "Work.", states: [] },
+    "work",
+  );
+  const add = (text: string) => {
+    session.history.push({ type: "runner_decided", timestamp: 1, decision: { state: "work" } });
+    session = recordAcceptedExecution(session, receipt, text);
+  };
+  // Quotes double in JSON; a character-count budget would admit both entries.
+  const text = '"'.repeat(EXECUTION_INSTRUCTIONS_MAX_BYTES / 4);
+  add(text);
+  add(text);
+  expect(session.history[1]).toMatchObject({
+    execution: receipt,
+    executionInstructionsUnavailable: "evicted",
+  });
+  expect(session.history[1]).not.toHaveProperty("executionInstructions");
+  expect(session.history[2]).toMatchObject({ executionInstructions: text });
+  add("x".repeat(EXECUTION_INSTRUCTIONS_MAX_BYTES));
+  expect(session.history[3]).toMatchObject({
+    execution: receipt,
+    executionInstructionsUnavailable: "too_large",
+  });
+  expect(session.history[3]).not.toHaveProperty("executionInstructions");
+  expect(session.history[2]).toMatchObject({ executionInstructions: text });
 });

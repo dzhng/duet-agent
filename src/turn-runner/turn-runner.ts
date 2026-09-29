@@ -157,6 +157,7 @@ import {
   persistStateDefinition,
   recordStateStarted,
   recordAcceptedExecution,
+  projectStateMachineSession,
   annotateUnchangedExecution,
 } from "./state-machine-session.js";
 import {
@@ -1870,7 +1871,7 @@ export class TurnRunner {
               )
             : undefined;
           const accepted = receipt
-            ? recordAcceptedExecution(this.requireStateMachine(), receipt)
+            ? recordAcceptedExecution(this.requireStateMachine(), receipt, run.prepared!.prompt)
             : this.requireStateMachine();
           this.setStateMachine(
             recordStateStarted(accepted, selection.state, selection.input, receipt),
@@ -1924,7 +1925,7 @@ export class TurnRunner {
           );
           this.setStateMachine(
             recordStateStarted(
-              recordAcceptedExecution(this.requireStateMachine(), receipt),
+              recordAcceptedExecution(this.requireStateMachine(), receipt, spec.command),
               selection.state,
               selection.input,
               receipt,
@@ -2328,7 +2329,8 @@ export class TurnRunner {
 
   private setStateMachine(session: StateMachineSession, notify = false): void {
     this.stateMachine = session;
-    if (notify) this.emit({ type: "state_machine", stateMachine: session });
+    if (notify)
+      this.emit({ type: "state_machine", stateMachine: projectStateMachineSession(session) });
   }
 
   private getActiveStateOutput() {

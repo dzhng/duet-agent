@@ -657,6 +657,8 @@ const terminal = await turnRunner.turn({
 });
 ```
 
+Raw `Session.getState()` / `state.json` relay history retains the complete constructed task prompt or command on its accepted decision, alongside the bounded execution receipt. Routine model inspection and public state-machine events omit this detail. Retention is complete or explicitly unavailable: a 1 MiB aggregate budget for JSON-encoded instruction text keeps newest details, marks older details `evicted`, and marks a single over-budget task `too_large`. This bounds only the added instruction payload, not the complete checkpoint. Existing history eviction still applies; older checkpoints without details cannot reconstruct past instructions from today's definitions or skills.
+
 Resume continues turn runner session state, not an in-flight model/tool call. Any `in_progress` todo is retried from `pending`.
 
 Observational memory thresholds (tuned for modern 200k-token windows):

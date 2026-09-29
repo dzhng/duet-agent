@@ -24,6 +24,23 @@ import type { StateMachineRunnerDecision } from "./tools.js";
  */
 export const STATE_MACHINE_HISTORY_LIMIT = 100;
 
+/** Bounds only added instruction text (JSON-encoded), leaving headroom in gateway stdout records. */
+export const EXECUTION_INSTRUCTIONS_MAX_BYTES = 1024 * 1024;
+
+/** Routine model/public views carry receipts, not the checkpoint's full task instructions. */
+export function projectStateMachineSession(session: StateMachineSession): StateMachineSession {
+  return {
+    ...session,
+    history: session.history.map((event) => {
+      if (event.type !== "runner_decided") return event;
+      const visible = { ...event };
+      delete visible.executionInstructions;
+      delete visible.executionInstructionsUnavailable;
+      return visible;
+    }),
+  };
+}
+
 function appendHistory(
   history: StateMachineSessionEvent[],
   ...events: StateMachineSessionEvent[]
@@ -462,14 +479,32 @@ function clearProgressWakeTimes(
 export function recordAcceptedExecution(
   session: StateMachineSession,
   execution: StateMachineExecutionReceipt,
+  instructions: string,
 ): StateMachineSession {
   const history = [...session.history];
   for (let index = history.length - 1; index >= 0; index--) {
     const event = history[index]!;
     if (event.type === "runner_decided") {
-      history[index] = { ...event, execution };
+      history[index] = { ...event, execution, executionInstructions: instructions };
       break;
     }
+  }
+  let retainedBytes = 0;
+  for (let index = history.length - 1; index >= 0; index--) {
+    const event = history[index]!;
+    if (event.type !== "runner_decided" || event.executionInstructions === undefined) continue;
+    const bytes = Buffer.byteLength(JSON.stringify(event.executionInstructions));
+    if (retainedBytes + bytes <= EXECUTION_INSTRUCTIONS_MAX_BYTES) {
+      retainedBytes += bytes;
+      continue;
+    }
+    const rest = { ...event };
+    delete rest.executionInstructions;
+    history[index] = {
+      ...rest,
+      executionInstructionsUnavailable:
+        bytes > EXECUTION_INSTRUCTIONS_MAX_BYTES ? "too_large" : "evicted",
+    };
   }
   return { ...session, history };
 }
