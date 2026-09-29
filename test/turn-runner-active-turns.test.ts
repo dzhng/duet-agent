@@ -5,6 +5,7 @@ import { TurnRunner, type AgentConfigInput } from "../src/turn-runner/turn-runne
 import type { TurnEvent, TurnState, TurnTerminalEvent, TurnTodo } from "../src/types/protocol.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import { delay, waitFor } from "./helpers/async.js";
+import { testIfDocker } from "./helpers/docker-only.js";
 import { createAssistantMessage } from "./helpers/messages.js";
 import { createStateMachineState, startTurn } from "./helpers/turn-runner-protocol.js";
 
@@ -1360,3 +1361,79 @@ test("tasks settling during cleanup can perform follow-on work", async () => {
     await runner.dispose();
   }
 });
+
+testIfDocker(
+  "fresh resume keeps transition input separate from overridden script output",
+  async () => {
+    const { runner, events } = createStreamingRunner();
+    const { runner: resumed } = createStreamingRunner();
+    const definition: StateMachineDefinition = {
+      name: "resume_input",
+      prompt: "Run the script, then finish.",
+      states: [
+        {
+          name: "script_step",
+          kind: "script",
+          inputSchema: {
+            type: "object",
+            properties: { value: { type: "string" } },
+            required: ["value"],
+          },
+          command: "printf 'script-start {{ input.value }}\\n'; sleep 60",
+        },
+        { name: "done", kind: "terminal", status: "completed" },
+      ],
+    };
+    try {
+      const { turn } = await startTurn(runner, { mode: definition, prompt: "Start." });
+      await waitFor(() => runner.pendingStreams.length === 1);
+      runner.completeNextToolCall("select_state_machine_state", {
+        decision: { state: "script_step", input: { value: "same-input" } },
+      });
+      await waitFor(() =>
+        events.some((event) => event.type === "task_started" && event.task.name === "script_step"),
+      );
+      runner.interrupt({ type: "interrupt" });
+      const interrupted = await turn;
+      expect(interrupted.type).toBe("interrupted");
+      const checkpoint: TurnState = JSON.parse(JSON.stringify(interrupted.state));
+      await runner.dispose();
+      await resumed.start({ type: "start", state: checkpoint });
+      const continuation = resumed.turn({
+        type: "prompt",
+        message: "Continue.",
+        behavior: "follow_up",
+      });
+      await waitFor(() => resumed.pendingStreams.length === 1);
+      resumed.completeNextToolCall("select_state_machine_state", {
+        decision: {
+          state: "script_step",
+          input: { value: "same-input" },
+          override: {
+            kind: "script",
+            state: { command: `printf '{"rerun":true,"value":"same-input"}'` },
+          },
+        },
+      });
+      await waitFor(() => resumed.pendingStreams.length === 1);
+      resumed.completeNextToolCall("select_state_machine_state", { decision: { state: "done" } });
+      await ackTerminal(resumed);
+      const terminal = await continuation;
+      expect(terminal).toMatchObject({ type: "complete", status: "completed" });
+      const history = terminal.state.stateMachine!.history;
+      const inputs = history.flatMap((event) =>
+        event.type === "state_started" && event.state === "script_step" ? [event.input] : [],
+      );
+      expect(inputs).toEqual([{ value: "same-input" }, { value: "same-input" }]);
+      const completed = [...history]
+        .reverse()
+        .find((event) => event.type === "state_completed" && event.state === "script_step");
+      expect(completed).toMatchObject({
+        output: { stdout: '{"rerun":true,"value":"same-input"}', exitCode: 0 },
+      });
+    } finally {
+      await runner.dispose();
+      await resumed.dispose();
+    }
+  },
+);
