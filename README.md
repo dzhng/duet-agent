@@ -568,8 +568,9 @@ selections accept only state and reason.
 
 An accepted relay control action ends its parent pass before another queued
 message runs. The outer runner retains accepted user inputs until the parent
-actually consumes them, applies the selection, then delivers the remaining
-input. This keeps a follow-up from issuing a second control action against
+actually consumes them during normal relay control, applies the selection, then
+delivers the remaining input. Explicit interruption clears unconsumed queued work;
+an already-applied definition correction remains in the checkpoint. This keeps a follow-up from issuing a second control action against
 state that the first selection has not yet changed. Editing follow-ups replaces
 their pending delivery copies as well as the visible queue, including across
 checkpoint restoration; retained steering input does not suppress those edits.
