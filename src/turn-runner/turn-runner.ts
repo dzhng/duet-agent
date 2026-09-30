@@ -2638,10 +2638,14 @@ export class TurnRunner {
   }
 
   private async replaceActiveStateTasks(reason: string): Promise<void> {
-    const active = [...this.stateTasks.entries()].filter(
+    const pending = [...this.stateTasks.entries()];
+    // A worker stopped during the parent pass can still have its settlement
+    // queued. Retire every old state's result before selecting replacement work.
+    for (const [id] of pending) this.ignoredTaskSettlements.add(id);
+    const active = pending.filter(
       ([id]) => this.taskManager.output(id)?.descriptor.status === "running",
     );
-    for (const [id, metadata] of active) {
+    for (const [, metadata] of active) {
       const recorded = recordSettled(
         this.requireStateMachine(),
         metadata.stateName,
@@ -2651,7 +2655,6 @@ export class TurnRunner {
         this.clock.now(),
       );
       this.setStateMachine(recorded.session);
-      this.ignoredTaskSettlements.add(id);
     }
     await Promise.all(active.map(([id]) => this.taskManager.stop(id, reason)));
   }
