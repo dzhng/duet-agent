@@ -18,8 +18,12 @@ import { testIfDocker } from "./helpers/docker-only.js";
  *
  *  - Ctrl+Enter with non-empty composer dispatches exactly one prompt
  *    call with `behavior: "steer"` and the snapshotted message text.
- *  - Ctrl+Enter with empty composer is a no-op (no prompt, no
- *    interrupt, nothing visible).
+ *  - Ctrl+Enter with an empty composer and an empty follow-up queue is a
+ *    no-op (no prompt, no interrupt, nothing visible).
+ *  - Ctrl+Enter with an empty composer and a non-empty follow-up queue
+ *    promotes the oldest (front) queued entry into a steer: it is
+ *    dequeued and re-dispatched with `behavior: "steer"`, carrying its
+ *    own multimodal payload, and only ever one entry per press.
  *  - Ctrl+Enter while idle is a valid send — kicks off a fresh turn
  *    flagged with `behavior: "steer"`, matching the rule that the
  *    keybind is composer-state-agnostic.
@@ -67,18 +71,110 @@ describe("TUI Ctrl+Enter steer keystroke", () => {
     },
   );
 
-  testIfDocker("Ctrl+Enter with empty composer mid-turn is a no-op", async () => {
+  testIfDocker("Ctrl+Enter with empty composer and empty queue mid-turn is a no-op", async () => {
     await startLongRunningTurn();
     const promptsBefore = harness.promptCalls.length;
 
-    // Composer is empty after the previous submit. Pressing Ctrl+Enter
-    // here should not dispatch anything; it is a dedicated send-with-
-    // steer keybind, not an alternative interrupt.
+    // Composer is empty after the previous submit and no follow-ups are
+    // queued. Pressing Ctrl+Enter here should not dispatch anything; with
+    // an empty queue it is neither a send nor an interrupt.
     harness.mockInput.pressEnter({ ctrl: true });
     await harness.flush();
     await harness.flush();
 
     expect(harness.promptCalls.length).toBe(promptsBefore);
+  });
+
+  testIfDocker(
+    "Ctrl+Enter with empty composer promotes the oldest queued follow-up as a steer",
+    async () => {
+      await startLongRunningTurn();
+      const promptsBefore = harness.promptCalls.length;
+
+      harness.session.editFollowUpQueue({
+        prompts: [{ message: "first queued" }, { message: "second queued" }],
+      });
+      await harness.flush();
+
+      harness.mockInput.pressEnter({ ctrl: true });
+      await harness.waitForPrompt({ count: promptsBefore + 1 });
+
+      expect(harness.promptCalls.length).toBe(promptsBefore + 1);
+      const steer = harness.promptCalls[promptsBefore]!;
+      expect(steer.message).toBe("first queued");
+      expect(steer.behavior).toBe("steer");
+      expect(harness.session.getState()?.followUpQueue).toEqual([{ message: "second queued" }]);
+    },
+  );
+
+  testIfDocker("Ctrl+Enter promotes the queued follow-up with its own image payload", async () => {
+    await startLongRunningTurn();
+    const promptsBefore = harness.promptCalls.length;
+
+    const images = [{ data: "ZmFrZQ==", mimeType: "image/png" }];
+    harness.session.editFollowUpQueue({
+      prompts: [{ message: "queued with image", images }],
+    });
+    await harness.flush();
+
+    harness.mockInput.pressEnter({ ctrl: true });
+    await harness.waitForPrompt({ count: promptsBefore + 1 });
+
+    const steer = harness.promptCalls[promptsBefore]!;
+    expect(steer.message).toBe("queued with image");
+    expect(steer.behavior).toBe("steer");
+    expect(steer.images).toEqual(images);
+    expect(harness.session.getState()?.followUpQueue).toEqual([]);
+  });
+
+  testIfDocker("Ctrl+Enter promotes only one queued entry per press", async () => {
+    await startLongRunningTurn();
+    const promptsBefore = harness.promptCalls.length;
+
+    harness.session.editFollowUpQueue({
+      prompts: [{ message: "one" }, { message: "two" }, { message: "three" }],
+    });
+    await harness.flush();
+
+    harness.mockInput.pressEnter({ ctrl: true });
+    await harness.waitForPrompt({ count: promptsBefore + 1 });
+
+    expect(harness.promptCalls.length).toBe(promptsBefore + 1);
+    expect(harness.promptCalls[promptsBefore]!.message).toBe("one");
+    expect(harness.session.getState()?.followUpQueue).toEqual([
+      { message: "two" },
+      { message: "three" },
+    ]);
+  });
+
+  testIfDocker("Ctrl+Enter promotion renders duplicate-text attachments correctly", async () => {
+    await startLongRunningTurn();
+    const promptsBefore = harness.promptCalls.length;
+
+    const promotedImage = { data: "cHJvbW90ZWQ=", mimeType: "image/png" };
+    const remainingImage = { data: "cmVtYWluaW5n", mimeType: "image/png" };
+    harness.session.editFollowUpQueue({
+      prompts: [
+        { message: "same text", images: [promotedImage] },
+        { message: "same text", images: [remainingImage] },
+      ],
+    });
+    await harness.flush();
+
+    harness.mockInput.pressEnter({ ctrl: true });
+    await harness.waitForPrompt({ count: promptsBefore + 1 });
+
+    expect(harness.promptCalls[promptsBefore]).toMatchObject({
+      message: "same text",
+      behavior: "steer",
+      images: [promotedImage],
+    });
+    expect(harness.session.getState()?.followUpQueue).toEqual([
+      { message: "same text", images: [remainingImage] },
+    ]);
+
+    const frame = await harness.captureCharFrame();
+    expect(frame).toContain("📎 1 image attachment");
   });
 
   testIfDocker(
