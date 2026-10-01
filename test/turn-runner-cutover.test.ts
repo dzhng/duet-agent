@@ -83,7 +83,89 @@ class ReplacementProbeRunner extends TurnRunner {
   }
 }
 
+class StopThenReplaceRunner extends TurnRunner {
+  readonly stateRuns: Array<{ finish: () => void }> = [];
+  private selected = false;
+
+  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    if (!this.selected) {
+      this.selected = true;
+      return completedWorker(input, {
+        type: "select_state_machine_state",
+        decision: { state: "work" },
+      });
+    }
+    if (this.stateRuns.length === 2) {
+      return completedWorker(
+        input,
+        input.state.stateMachine?.terminal
+          ? { type: "none" }
+          : { type: "select_state_machine_state", decision: { state: "done" } },
+      );
+    }
+    const oldTask = this.taskManager.list().find((task) => task.status === "running");
+    const stop = this.createTools("auto").tools.find((tool) => tool.name === "task_stop");
+    if (!oldTask || !stop) throw new Error("Missing old worker or task_stop");
+    await stop.execute("stop-old-worker", { id: oldTask.id });
+    return completedWorker(input, {
+      type: "create_state_machine_definition",
+      definition: {
+        ...runningAgentDefinition,
+        name: "replacement",
+        states: [
+          ...runningAgentDefinition.states,
+          { kind: "terminal", name: "done", status: "completed" },
+        ],
+      },
+      firstState: "work",
+    });
+  }
+
+  protected override createStateSubagentRun(): SubagentRun {
+    let resolve!: (value: SubagentResult) => void;
+    const result = new Promise<SubagentResult>((settle) => {
+      resolve = settle;
+    });
+    this.stateRuns.push({
+      finish: () => resolve({ type: "complete", result: "replacement finished" }),
+    });
+    return {
+      prompt: () => result,
+      interrupt: () => resolve({ type: "interrupted" }),
+      partialAssistantText: () => undefined,
+      interruptedReason: () => undefined,
+    };
+  }
+}
+
 describe("TurnRunner cutover seams", () => {
+  test("stopping an old worker before replacing its workflow does not interrupt the replacement", async () => {
+    const runner = new StopThenReplaceRunner(config);
+    const events: TurnEvent[] = [];
+    runner.subscribe((event) => events.push(event));
+    await runner.start({ type: "start", mode: runningAgentDefinition });
+    const turn = runner.turn({ type: "prompt", message: "start", behavior: "follow_up" });
+    try {
+      await waitFor(() => runner.stateRuns.length === 1);
+      void runner.turn({
+        type: "prompt",
+        message: "stop the old worker and rebuild",
+        behavior: "steer",
+      });
+      await waitFor(() => runner.stateRuns.length === 2);
+      runner.stateRuns[1]!.finish();
+      const terminal = await turn;
+      expect(terminal).toMatchObject({ type: "complete", status: "completed" });
+      expect(terminal.state.stateMachine?.definition.name).toBe("replacement");
+      expect(
+        terminal.state.stateMachine?.history.filter((entry) => entry.type === "state_interrupted"),
+      ).toEqual([]);
+      expect(events.filter((event) => event.type === "interrupted")).toEqual([]);
+    } finally {
+      await runner.dispose();
+    }
+  });
+
   test("state completions drive one transition pass without generic settlement notices", async () => {
     const { runner } = createTurnRunner();
     const definition: StateMachineDefinition = {
