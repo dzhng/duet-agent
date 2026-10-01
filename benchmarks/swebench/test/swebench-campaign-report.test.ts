@@ -11,7 +11,7 @@ import {
 } from "../src/report.js";
 import type { ManifestEntry } from "../src/manifest.js";
 import { scoringModelName } from "../src/scoring-identity.js";
-import type { RolloutTelemetry } from "../src/telemetry.js";
+import type { RolloutTelemetry } from "../../shared/rollout-telemetry.js";
 
 const configs: CampaignConfigName[] = [
   "glm-pure",

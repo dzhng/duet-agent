@@ -9,7 +9,7 @@ import {
   loadRolloutAttempts,
   type RolloutArtifactSpec,
 } from "../src/artifacts.js";
-import { deriveTelemetry } from "../src/telemetry.js";
+import { deriveTelemetry } from "../../shared/rollout-telemetry.js";
 import type { TurnEvent } from "../../../src/types/protocol.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 

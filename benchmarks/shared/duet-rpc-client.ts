@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import { SystemRuntimeClock, type RuntimeClock } from "../../../src/turn-runner/runtime-clock.js";
+import { SystemRuntimeClock, type RuntimeClock } from "../../src/turn-runner/runtime-clock.js";
 import type {
   RpcRunnerCommand,
   TurnEvent,
   TurnStartCommand,
   TurnTerminalEvent,
-} from "../../../src/types/protocol.js";
+} from "../../src/types/protocol.js";
 
 /** Writable stdin half of a running duet RPC process. */
 export interface ExecTransportStdin {
@@ -91,7 +91,7 @@ export async function runDuetTurn(
   });
   await writeCommand(transport, {
     type: "prompt",
-    requestId: "swebench-rollout-prompt",
+    requestId: "benchmark-rollout-prompt",
     message: prompt,
     behavior: "follow_up",
   });

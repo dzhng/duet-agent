@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
+import { providerEnvironment } from "../../shared/provider-environment.js";
 import type { RolloutAttempt } from "../src/artifacts.js";
 import type { InstanceManifest } from "../src/manifest.js";
 import type { CampaignSpec } from "../src/orchestrator.js";
@@ -18,7 +19,7 @@ import {
   selectE2BInstanceIds,
   selectE2BShards,
 } from "../e2b/run.js";
-import { buildE2BEnvironmentLock, e2bTemplateName, providerEnvironment } from "../e2b/support.js";
+import { buildE2BEnvironmentLock, e2bTemplateName } from "../e2b/support.js";
 import { testIfDocker } from "./helpers/docker-only.js";
 
 describe("SWE-bench E2B execution", () => {
