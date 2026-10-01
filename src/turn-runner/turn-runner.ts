@@ -466,6 +466,8 @@ export class TurnRunner {
   private hydratedQueuedCommands?: TurnCommand[];
   /** Inputs waiting for the single parent slot between sequential passes. */
   private readonly parentInputs: PendingParentLoopInput[] = [];
+  // Queue edits preserve suspension; only a newly accepted turn command can reopen finalization.
+  private activeTurnCommandCount = 0;
   // Pi's queues are transient delivery copies. The outer queue owns accepted
   // commands until pi emits their exact message object as consumed input.
   private readonly piQueuedInputs = new Map<
@@ -920,6 +922,7 @@ export class TurnRunner {
       // turn() is the concurrency boundary: repeated calls extend or queue
       // behind the active chain instead of creating a separate parent transcript.
       this.handleCommandDuringActiveTurn(command);
+      this.activeTurnCommandCount += 1;
       onAccepted?.();
       return this.activeTurnPromise;
     }
@@ -937,6 +940,7 @@ export class TurnRunner {
   }
 
   private async runTurnLoop(command: TurnCommand): Promise<TurnTerminalEvent> {
+    this.activeTurnCommandCount = 0;
     this.turnUsage = undefined;
     this.turnUsageByModel = undefined;
     this.interruptReason = undefined;
@@ -988,164 +992,182 @@ export class TurnRunner {
     };
     const remindedTasks = new Set<TaskId>();
     let terminal!: TurnTerminalEvent;
-    try {
-      while (!questions && !this.interruptReason) {
-        this.enqueueAvailableSettlements();
-        const pendingBeforeInput = this.taskManager.pendingWork();
-        const runnableIndex =
-          pendingBeforeInput.kind === "open"
-            ? this.parentInputs.findIndex(
-                (queued) =>
-                  queued.type === "task_settlements" ||
-                  queued.type === "background_task_cleanup" ||
-                  (queued.type === "user_command" && queued.command.behavior === "steer"),
-              )
-            : 0;
-        const input =
-          runnableIndex >= 0 ? this.parentInputs.splice(runnableIndex, 1)[0] : undefined;
-        if (!input) {
-          if (pendingBeforeInput.kind !== "open") {
-            // The loop is out of work: this is the moment the turn ends, and
-            // the only point every park reaches. A park selected while
-            // transitioning out of a completed state returns no outcome at all,
-            // so hooking the terminal result instead would miss every park
-            // after the first.
-            const pendingTransition = this.requireRunnerState().pendingStateTransition;
-            if (pendingTransition && !this.stateMachine?.terminal) {
-              this.parentInputs.push({
-                type: "transition_enforcement",
-                ...pendingTransition,
-                output: this.completedStateOutput(pendingTransition.stateName),
-              });
-              continue;
+    const retainSleepingFollowUps = () =>
+      this.taskManager.pendingWork().kind === "sleep" &&
+      this.parentInputs.length > 0 &&
+      this.parentInputs.every(
+        (queued) => queued.type === "user_command" && queued.command.behavior === "follow_up",
+      );
+    for (;;) {
+      let commandsBeforeBookkeeping: number;
+      try {
+        while (!questions && !this.interruptReason) {
+          this.enqueueAvailableSettlements();
+          const pendingBeforeInput = this.taskManager.pendingWork();
+          const runnableIndex =
+            pendingBeforeInput.kind === "open"
+              ? this.parentInputs.findIndex(
+                  (queued) =>
+                    queued.type === "task_settlements" ||
+                    queued.type === "background_task_cleanup" ||
+                    (queued.type === "user_command" && queued.command.behavior === "steer"),
+                )
+              : 0;
+          const input =
+            runnableIndex >= 0 ? this.parentInputs.splice(runnableIndex, 1)[0] : undefined;
+          if (!input) {
+            if (pendingBeforeInput.kind !== "open") {
+              // The loop is out of work: this is the moment the turn ends, and
+              // the only point every park reaches. A park selected while
+              // transitioning out of a completed state returns no outcome at all,
+              // so hooking the terminal result instead would miss every park
+              // after the first.
+              const pendingTransition = this.requireRunnerState().pendingStateTransition;
+              if (pendingTransition && !this.stateMachine?.terminal) {
+                this.parentInputs.push({
+                  type: "transition_enforcement",
+                  ...pendingTransition,
+                  output: this.completedStateOutput(pendingTransition.stateName),
+                });
+                continue;
+              }
+              if (this.queueParkNudgeIfDue(completion.status, pendingBeforeInput)) continue;
+              const unfinished = this.stateMachine?.definition.states.find(
+                (state) => state.name === this.stateMachine?.currentState,
+              );
+              if (
+                this.recoverExecution &&
+                completion.status === "completed" &&
+                pendingBeforeInput.kind === "complete" &&
+                !this.stateMachine?.terminal &&
+                unfinished &&
+                (unfinished.kind === "agent" ||
+                  unfinished.kind === "script" ||
+                  unfinished.kind === "poll" ||
+                  unfinished.kind === "timer")
+              ) {
+                this.parentInputs.push({ type: "recover_state", stateName: unfinished.name });
+                continue;
+              }
+              break;
             }
-            if (this.queueParkNudgeIfDue(completion.status, pendingBeforeInput)) continue;
-            const unfinished = this.stateMachine?.definition.states.find(
-              (state) => state.name === this.stateMachine?.currentState,
-            );
+            const running = this.taskManager.list().filter((task) => task.status === "running");
+            // A live state worker still owns its work. Once it returns, give the
+            // parent one cleanup opportunity per task instead of silently parking
+            // its transition behind a server that may never exit on its own.
             if (
-              this.recoverExecution &&
-              completion.status === "completed" &&
-              pendingBeforeInput.kind === "complete" &&
-              !this.stateMachine?.terminal &&
-              unfinished &&
-              (unfinished.kind === "agent" ||
-                unfinished.kind === "script" ||
-                unfinished.kind === "poll" ||
-                unfinished.kind === "timer")
+              !running.some((task) => this.stateTasks.has(task.id)) &&
+              running.some((task) => !remindedTasks.has(task.id))
             ) {
-              this.parentInputs.push({ type: "recover_state", stateName: unfinished.name });
+              for (const task of running) remindedTasks.add(task.id);
+              this.parentInputs.push({ type: "background_task_cleanup" });
               continue;
             }
-            break;
-          }
-          const running = this.taskManager.list().filter((task) => task.status === "running");
-          // A live state worker still owns its work. Once it returns, give the
-          // parent one cleanup opportunity per task instead of silently parking
-          // its transition behind a server that may never exit on its own.
-          if (
-            !running.some((task) => this.stateTasks.has(task.id)) &&
-            running.some((task) => !remindedTasks.has(task.id))
-          ) {
-            for (const task of running) remindedTasks.add(task.id);
-            this.parentInputs.push({ type: "background_task_cleanup" });
+            await this.waitForLoopActivity();
             continue;
           }
-          await this.waitForLoopActivity();
-          continue;
-        }
 
-        if (
-          input.type === "wake" &&
-          input.queued === true &&
-          this.taskManager.pendingWork().kind !== "sleep" &&
-          this.requireRunnerState().status !== "sleeping"
-        ) {
-          continue;
-        }
+          if (
+            input.type === "wake" &&
+            input.queued === true &&
+            this.taskManager.pendingWork().kind !== "sleep" &&
+            this.requireRunnerState().status !== "sleeping"
+          ) {
+            continue;
+          }
 
-        const result = await this.processParentLoopInput(input);
-        if (result?.type === "ask") {
-          if (this.taskManager.pendingWork().kind === "open") {
-            // Terminal ⇒ quiescent forbids delivering the ask now. Keep the
-            // questions just long enough to remind the parent on its next pass
-            // (settlements guarantee one); the parent re-asks if still relevant.
-            this.withheldAskQuestions = result.questions;
-          } else {
-            questions = result.questions;
+          const result = await this.processParentLoopInput(input);
+          if (result?.type === "ask") {
+            if (this.taskManager.pendingWork().kind === "open") {
+              // Terminal ⇒ quiescent forbids delivering the ask now. Keep the
+              // questions just long enough to remind the parent on its next pass
+              // (settlements guarantee one); the parent re-asks if still relevant.
+              this.withheldAskQuestions = result.questions;
+            } else {
+              questions = result.questions;
+            }
+          }
+          if (result?.type === "interrupted") this.interruptReason ??= "Interrupted";
+          if (result?.type === "state_completed") {
+            // Reconsider tasks carried across states at each worker boundary,
+            // without re-prompting merely because the parent chose to wait.
+            remindedTasks.clear();
+            this.setState({
+              ...this.requireRunnerState(),
+              pendingStateTransition: { stateName: result.stateName },
+            });
+            this.enqueueParentInput({
+              type: "transition_enforcement",
+              stateName: result.stateName,
+              output: result.output,
+            });
+          }
+          if (result?.type === "terminal") {
+            if (this.queueAdvisorCompletionReviewIfDue(result.status)) continue;
+            completion = {
+              status: result.status === "error" ? "failed" : "completed",
+              ...(result.result !== undefined ? { result: result.result } : {}),
+              ...(result.error !== undefined ? { error: result.error } : {}),
+            };
+            if (this.stateMachine?.terminal && !this.stateMachine.terminalAcknowledged) {
+              this.enqueueParentInput({ type: "terminal_acknowledgment" });
+            }
+          }
+
+          // Preserve the old drain rule: follow-ups arriving after a sleep was
+          // selected remain queued for the next user-driven turn. A stale wake,
+          // however, is skipped above so it cannot clobber the meaningful result.
+          if (retainSleepingFollowUps()) {
+            break;
           }
         }
-        if (result?.type === "interrupted") this.interruptReason ??= "Interrupted";
-        if (result?.type === "state_completed") {
-          // Reconsider tasks carried across states at each worker boundary,
-          // without re-prompting merely because the parent chose to wait.
-          remindedTasks.clear();
-          this.setState({
-            ...this.requireRunnerState(),
-            pendingStateTransition: { stateName: result.stateName },
-          });
-          this.enqueueParentInput({
-            type: "transition_enforcement",
-            stateName: result.stateName,
-            output: result.output,
-          });
-        }
-        if (result?.type === "terminal") {
-          if (this.queueAdvisorCompletionReviewIfDue(result.status)) continue;
-          completion = {
-            status: result.status === "error" ? "failed" : "completed",
-            ...(result.result !== undefined ? { result: result.result } : {}),
-            ...(result.error !== undefined ? { error: result.error } : {}),
-          };
-          if (this.stateMachine?.terminal && !this.stateMachine.terminalAcknowledged) {
-            this.enqueueParentInput({ type: "terminal_acknowledgment" });
-          }
-        }
-
-        // Preserve the old drain rule: follow-ups arriving after a sleep was
-        // selected remain queued for the next user-driven turn. A stale wake,
-        // however, is skipped above so it cannot clobber the meaningful result.
-        if (
-          this.taskManager.pendingWork().kind === "sleep" &&
-          this.parentInputs.length > 0 &&
-          this.parentInputs.every(
-            (queued) => queued.type === "user_command" && queued.command.behavior === "follow_up",
-          )
-        ) {
-          break;
-        }
-      }
-    } catch (error) {
-      completion = {
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      };
-      await this.taskManager.interruptAll(`Turn failed: ${completion.error}`);
-    } finally {
-      await this.interruptCleanup;
-      if (!this.interruptReason && !questions && this.taskManager.pendingWork().kind === "open") {
-        await this.taskManager.interruptAll("Turn exited with in-process work still active.");
+        commandsBeforeBookkeeping = this.activeTurnCommandCount;
+      } catch (error) {
+        commandsBeforeBookkeeping = this.activeTurnCommandCount;
         completion = {
           status: "failed",
-          error: "Turn exited with in-process work still active.",
+          error: error instanceof Error ? error.message : String(error),
         };
+        await this.taskManager.interruptAll(`Turn failed: ${completion.error}`);
+      } finally {
+        await this.interruptCleanup;
+        if (!this.interruptReason && !questions && this.taskManager.pendingWork().kind === "open") {
+          await this.taskManager.interruptAll("Turn exited with in-process work still active.");
+          completion = {
+            status: "failed",
+            error: "Turn exited with in-process work still active.",
+          };
+        }
+        this.discardStaleTaskSettlements();
+        const quiescentState = this.snapshotState(this.requireRunnerState());
+        try {
+          await this.updateMemoryAfterAgentRun(
+            quiescentState.agent.messages,
+            quiescentState.options,
+          );
+        } catch (error) {
+          // Memory is bookkeeping, never the turn's outcome. A failed
+          // observation just leaves the message tail unobserved for the next
+          // pass to retry — the same best-effort contract the compaction
+          // call sites (ensureMemoryCoverageForCompaction) already use.
+          this.emit({
+            type: "system",
+            level: "warn",
+            message: `Memory update failed (${truncateForSystemMessage(
+              error instanceof Error ? error.message : String(error),
+            )}); the unobserved tail is retried next pass.`,
+          });
+        }
       }
-      this.discardStaleTaskSettlements();
-      const quiescentState = this.snapshotState(this.requireRunnerState());
-      try {
-        await this.updateMemoryAfterAgentRun(quiescentState.agent.messages, quiescentState.options);
-      } catch (error) {
-        // Memory is bookkeeping, never the turn's outcome. A failed
-        // observation just leaves the message tail unobserved for the next
-        // pass to retry — the same best-effort contract the compaction
-        // call sites (ensureMemoryCoverageForCompaction) already use.
-        this.emit({
-          type: "system",
-          level: "warn",
-          message: `Memory update failed (${truncateForSystemMessage(
-            error instanceof Error ? error.message : String(error),
-          )}); the unobserved tail is retried next pass.`,
-        });
+      // Commands acknowledged during asynchronous bookkeeping still belong to this chain.
+      if (
+        !this.interruptReason &&
+        this.activeTurnCommandCount > commandsBeforeBookkeeping &&
+        this.parentInputs.length > 0 &&
+        !retainSleepingFollowUps()
+      ) {
+        questions = undefined;
+        continue;
       }
       const state = this.snapshotState(this.requireRunnerState());
       if (this.interruptReason) {
@@ -1182,6 +1204,7 @@ export class TurnRunner {
       this.activeRootScopeId = undefined;
       this.turnUsage = undefined;
       this.turnUsageByModel = undefined;
+      break;
     }
     return terminal;
   }
