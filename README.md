@@ -558,7 +558,7 @@ flowchart TD
 
 `TurnRunner.turn()` is the concurrency boundary. Callers may invoke it repeatedly while work is active; the runner folds active `prompt` and `answer` commands back into the active pi agent as `steer` or `follow_up`, queues wakes and work it cannot absorb immediately, and emits one terminal event when the whole active work chain is done.
 
-A command acknowledged while a turn finishes still belongs to that turn: runnable inputs drain before its terminal event, including inputs arriving during memory bookkeeping. Follow-ups queued after a scheduled sleep remain deferred until the next user-driven turn.
+Completion drains runnable inputs before its terminal event, including commands arriving during asynchronous cleanup or memory bookkeeping. Questions retain queued inputs until the next user-driven turn; bookkeeping timing never dismisses a question. Follow-ups queued after a scheduled sleep also remain deferred.
 
 Tool arguments are admitted against the declared schema before SDK coercion or
 handler execution. Owned control envelopes reject unknown fields; deliberately

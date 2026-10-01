@@ -5,7 +5,7 @@ import {
   type AgentWorkerInput,
   type AgentWorkerResult,
 } from "../src/turn-runner/turn-runner.js";
-import type { TurnEvent } from "../src/types/protocol.js";
+import type { TurnCommand, TurnEvent } from "../src/types/protocol.js";
 import type { TurnRunnerControlResult } from "../src/turn-runner/tools.js";
 import type { StateMachineDefinition } from "../src/types/state-machine.js";
 import type { SubagentResult, SubagentRun } from "../src/turn-runner/subagent.js";
@@ -44,7 +44,7 @@ class CutoverRunner extends TurnRunner {
   }
 }
 
-class FinalizationSteerRunner extends TurnRunner {
+class FinalizationRunner extends TurnRunner {
   constructor(
     private readonly firstOutcome:
       | "complete"
@@ -186,10 +186,10 @@ class StopThenReplaceRunner extends TurnRunner {
 }
 
 describe("TurnRunner cutover seams", () => {
-  test.each(["complete", "ask", "failure", "memory_failure", "cleanup_failure"] as const)(
+  test.each(["complete", "failure", "memory_failure", "cleanup_failure"] as const)(
     "a steer accepted during %s finalization runs before the shared terminal",
     async (outcome) => {
-      const runner = new FinalizationSteerRunner(outcome);
+      const runner = new FinalizationRunner(outcome);
       const events: TurnEvent[] = [];
       runner.subscribe((event) => events.push(event));
       await runner.start({ type: "start" });
@@ -209,14 +209,62 @@ describe("TurnRunner cutover seams", () => {
       expect(correctionTerminal).toBe(initialTerminal);
       expect(correctionTerminal).toMatchObject({
         type: "complete",
+        status: "completed",
         result: "persist the correction",
       });
       expect(terminalEvents(events)).toHaveLength(1);
     },
   );
 
+  test.each(["steer", "follow_up", "wake"] as const)(
+    "%s accepted during question bookkeeping preserves the ask until resume",
+    async (behavior) => {
+      const command: TurnCommand =
+        behavior === "wake"
+          ? { type: "wake" }
+          : { type: "prompt", message: "late input", behavior };
+      const runner = new FinalizationRunner("ask");
+      const events: TurnEvent[] = [];
+      runner.subscribe((event) => events.push(event));
+      await runner.start({ type: "start" });
+      const first = runner.turn({ type: "prompt", message: "initial request", behavior: "steer" });
+      await waitFor(() => runner.finalizationStarted);
+      let accepted = false;
+      const pending = runner.turn(command, () => {
+        accepted = true;
+      });
+      await waitFor(() => accepted);
+      runner.releaseFinalization();
+      const [terminal, pendingTerminal] = await Promise.all([first, pending]);
+      expect(pendingTerminal).toBe(terminal);
+      expect(terminal).toMatchObject({
+        type: "ask",
+        questions: [{ question: "Please clarify", options: [{ label: "Continue" }] }],
+      });
+      expect(runner.processed).toEqual(["initial request"]);
+      expect(terminal.state.queuedCommands).toEqual(command.type === "wake" ? [] : [command]);
+      expect(terminalEvents(events)).toHaveLength(1);
+      const resumed = await runner.turn({
+        type: "prompt",
+        message: "resume now",
+        behavior: "steer",
+      });
+      expect(resumed).toMatchObject({
+        type: "complete",
+        status: "completed",
+        result: "resume now",
+      });
+      expect(runner.processed).toEqual(
+        command.type === "wake"
+          ? ["initial request", "resume now"]
+          : ["initial request", "late input", "resume now"],
+      );
+      expect(resumed.state.queuedCommands).toEqual([]);
+    },
+  );
+
   test("editing follow-ups during question finalization keeps them parked", async () => {
-    const runner = new FinalizationSteerRunner("ask");
+    const runner = new FinalizationRunner("ask");
     await runner.start({ type: "start" });
     const turn = runner.turn({ type: "prompt", message: "initial request", behavior: "steer" });
     await waitFor(() => runner.finalizationStarted);
