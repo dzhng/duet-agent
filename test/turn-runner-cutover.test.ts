@@ -45,8 +45,21 @@ class CutoverRunner extends TurnRunner {
 }
 
 class FinalizationSteerRunner extends TurnRunner {
-  constructor(private readonly firstOutcome: "complete" | "ask" | "failure" | "memory_failure") {
+  constructor(
+    private readonly firstOutcome:
+      | "complete"
+      | "ask"
+      | "failure"
+      | "memory_failure"
+      | "cleanup_failure",
+  ) {
     super(config);
+    if (firstOutcome === "cleanup_failure") {
+      this.taskManager.registerReaper(async () => {
+        this.finalizationStarted = true;
+        await this.finalizationGate;
+      });
+    }
   }
   readonly processed: string[] = [];
   finalizationStarted = false;
@@ -58,7 +71,8 @@ class FinalizationSteerRunner extends TurnRunner {
   protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
     this.processed.push(input.prompt);
     if (this.processed.length === 1) {
-      if (this.firstOutcome === "failure") throw new Error("parent failed before correction");
+      if (this.firstOutcome === "failure" || this.firstOutcome === "cleanup_failure")
+        throw new Error("parent failed before correction");
       if (this.firstOutcome === "ask") {
         return completedWorker(input, {
           type: "ask_user_question",
@@ -172,7 +186,7 @@ class StopThenReplaceRunner extends TurnRunner {
 }
 
 describe("TurnRunner cutover seams", () => {
-  test.each(["complete", "ask", "failure", "memory_failure"] as const)(
+  test.each(["complete", "ask", "failure", "memory_failure", "cleanup_failure"] as const)(
     "a steer accepted during %s finalization runs before the shared terminal",
     async (outcome) => {
       const runner = new FinalizationSteerRunner(outcome);
@@ -200,6 +214,24 @@ describe("TurnRunner cutover seams", () => {
       expect(terminalEvents(events)).toHaveLength(1);
     },
   );
+
+  test("editing follow-ups during question finalization keeps them parked", async () => {
+    const runner = new FinalizationSteerRunner("ask");
+    await runner.start({ type: "start" });
+    const turn = runner.turn({ type: "prompt", message: "initial request", behavior: "steer" });
+    await waitFor(() => runner.finalizationStarted);
+    runner.editFollowUpQueue({
+      type: "edit_follow_up_queue",
+      prompts: [{ message: "parked follow-up" }],
+    });
+    runner.releaseFinalization();
+    const terminal = await turn;
+    expect(terminal.type).toBe("ask");
+    expect(runner.processed).toEqual(["initial request"]);
+    expect(terminal.state.queuedCommands).toEqual([
+      { type: "prompt", message: "parked follow-up", behavior: "follow_up" },
+    ]);
+  });
 
   test("stopping an old worker before replacing its workflow does not interrupt the replacement", async () => {
     const runner = new StopThenReplaceRunner(config);

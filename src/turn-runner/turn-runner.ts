@@ -466,6 +466,8 @@ export class TurnRunner {
   private hydratedQueuedCommands?: TurnCommand[];
   /** Inputs waiting for the single parent slot between sequential passes. */
   private readonly parentInputs: PendingParentLoopInput[] = [];
+  // Queue edits preserve suspension; only a newly accepted turn command can reopen finalization.
+  private activeTurnCommandCount = 0;
   // Pi's queues are transient delivery copies. The outer queue owns accepted
   // commands until pi emits their exact message object as consumed input.
   private readonly piQueuedInputs = new Map<
@@ -920,6 +922,7 @@ export class TurnRunner {
       // turn() is the concurrency boundary: repeated calls extend or queue
       // behind the active chain instead of creating a separate parent transcript.
       this.handleCommandDuringActiveTurn(command);
+      this.activeTurnCommandCount += 1;
       onAccepted?.();
       return this.activeTurnPromise;
     }
@@ -937,6 +940,7 @@ export class TurnRunner {
   }
 
   private async runTurnLoop(command: TurnCommand): Promise<TurnTerminalEvent> {
+    this.activeTurnCommandCount = 0;
     this.turnUsage = undefined;
     this.turnUsageByModel = undefined;
     this.interruptReason = undefined;
@@ -995,6 +999,7 @@ export class TurnRunner {
         (queued) => queued.type === "user_command" && queued.command.behavior === "follow_up",
       );
     for (;;) {
+      let commandsBeforeBookkeeping: number;
       try {
         while (!questions && !this.interruptReason) {
           this.enqueueAvailableSettlements();
@@ -1116,7 +1121,9 @@ export class TurnRunner {
             break;
           }
         }
+        commandsBeforeBookkeeping = this.activeTurnCommandCount;
       } catch (error) {
+        commandsBeforeBookkeeping = this.activeTurnCommandCount;
         completion = {
           status: "failed",
           error: error instanceof Error ? error.message : String(error),
@@ -1153,7 +1160,12 @@ export class TurnRunner {
         }
       }
       // Commands acknowledged during asynchronous bookkeeping still belong to this chain.
-      if (!this.interruptReason && this.parentInputs.length > 0 && !retainSleepingFollowUps()) {
+      if (
+        !this.interruptReason &&
+        this.activeTurnCommandCount > commandsBeforeBookkeeping &&
+        this.parentInputs.length > 0 &&
+        !retainSleepingFollowUps()
+      ) {
         questions = undefined;
         continue;
       }
