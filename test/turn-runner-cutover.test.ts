@@ -44,6 +44,39 @@ class CutoverRunner extends TurnRunner {
   }
 }
 
+class FinalizationSteerRunner extends TurnRunner {
+  constructor(private readonly firstOutcome: "complete" | "ask" | "failure" | "memory_failure") {
+    super(config);
+  }
+  readonly processed: string[] = [];
+  finalizationStarted = false;
+  releaseFinalization!: () => void;
+  private readonly finalizationGate = new Promise<void>((resolve) => {
+    this.releaseFinalization = resolve;
+  });
+
+  protected override async runAgentWorker(input: AgentWorkerInput): Promise<AgentWorkerResult> {
+    this.processed.push(input.prompt);
+    if (this.processed.length === 1) {
+      if (this.firstOutcome === "failure") throw new Error("parent failed before correction");
+      if (this.firstOutcome === "ask") {
+        return completedWorker(input, {
+          type: "ask_user_question",
+          questions: [{ question: "Please clarify", options: [{ label: "Continue" }] }],
+        });
+      }
+    }
+    return completedWorker(input, { type: "none" }, input.prompt);
+  }
+
+  protected override async updateMemoryAfterAgentRun(): Promise<void> {
+    if (this.finalizationStarted) return;
+    this.finalizationStarted = true;
+    await this.finalizationGate;
+    if (this.firstOutcome === "memory_failure") throw new Error("memory observation failed");
+  }
+}
+
 class ThrowingPassRunner extends TurnRunner {
   protected override async runAgentWorker(): Promise<AgentWorkerResult> {
     throw new Error("injected parent-pass failure");
@@ -139,6 +172,35 @@ class StopThenReplaceRunner extends TurnRunner {
 }
 
 describe("TurnRunner cutover seams", () => {
+  test.each(["complete", "ask", "failure", "memory_failure"] as const)(
+    "a steer accepted during %s finalization runs before the shared terminal",
+    async (outcome) => {
+      const runner = new FinalizationSteerRunner(outcome);
+      const events: TurnEvent[] = [];
+      runner.subscribe((event) => events.push(event));
+      await runner.start({ type: "start" });
+      const first = runner.turn({ type: "prompt", message: "initial request", behavior: "steer" });
+      await waitFor(() => runner.finalizationStarted);
+      let accepted = false;
+      const correction = runner.turn(
+        { type: "prompt", message: "persist the correction", behavior: "steer" },
+        () => {
+          accepted = true;
+        },
+      );
+      await waitFor(() => accepted);
+      runner.releaseFinalization();
+      const [initialTerminal, correctionTerminal] = await Promise.all([first, correction]);
+      expect(runner.processed).toEqual(["initial request", "persist the correction"]);
+      expect(correctionTerminal).toBe(initialTerminal);
+      expect(correctionTerminal).toMatchObject({
+        type: "complete",
+        result: "persist the correction",
+      });
+      expect(terminalEvents(events)).toHaveLength(1);
+    },
+  );
+
   test("stopping an old worker before replacing its workflow does not interrupt the replacement", async () => {
     const runner = new StopThenReplaceRunner(config);
     const events: TurnEvent[] = [];
