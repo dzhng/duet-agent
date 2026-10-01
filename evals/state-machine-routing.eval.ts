@@ -99,9 +99,36 @@ describe("state machine vs todo routing", () => {
     120_000,
   );
 
-  testIfDocker(
-    "small in-conversation task routes to todo_write, not a state machine",
-    async () => {
+  testIfDocker.each([
+    {
+      label: "three small steps",
+      prompt: dedent`
+        In this conversation, please plan to do three small things one after
+        the other: rename the variable foo to bar in src/util.ts, then add a
+        one-line comment above its declaration explaining the rename, then
+        tell me you are done. I want to watch you work through this list
+        right now.
+      `,
+      maxTodos: 5,
+    },
+    {
+      label: "seven small steps",
+      prompt: dedent`
+        Please make these seven small edits to src/banner.ts in this conversation:
+        1. Change the heading from "Welcome" to "Hello".
+        2. Change the subtitle from "Start here" to "Come on in".
+        3. Rename the local variable heading to title.
+        4. Remove the unused local variable oldSubtitle.
+        5. Fix the typo "Welocme" in the comment.
+        6. Change the button label from "Submit" to "Continue".
+        7. Change the footer text from "Thanks" to "See you soon".
+        This is a small one-file copy cleanup. I want to watch the edits here.
+      `,
+      maxTodos: 9,
+    },
+  ])(
+    "$label routes to todo_write, not a state machine",
+    async ({ prompt, maxTodos }) => {
       const runner = new TurnRunner({
         model,
         mode: "auto",
@@ -129,13 +156,7 @@ describe("state machine vs todo routing", () => {
 
       const { turn } = await startTurn(runner, {
         mode: "auto",
-        prompt: dedent`
-          In this conversation, please plan to do three small things one after
-          the other: rename the variable foo to bar in src/util.ts, then add a
-          one-line comment above its declaration explaining the rename, then
-          tell me you are done. I want to watch you work through this list
-          right now.
-        `,
+        prompt,
       });
       const terminal = await turn;
 
@@ -149,10 +170,10 @@ describe("state machine vs todo routing", () => {
       // guidance is now too aggressive on the state-machine side.
       expect(stateMachineCalls.length).toBe(0);
       expect(todoCalls.length).toBeGreaterThanOrEqual(1);
-      // The todo list should actually reflect the three small items.
+      // The visible plan should reflect the requested edits.
       const finalTodos = todoEvents.at(-1) ?? [];
       expect(finalTodos.length).toBeGreaterThanOrEqual(2);
-      expect(finalTodos.length).toBeLessThanOrEqual(5);
+      expect(finalTodos.length).toBeLessThanOrEqual(maxTodos);
 
       expect(terminal.type).toBe("complete");
     },
