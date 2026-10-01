@@ -1,6 +1,6 @@
 ---
 name: refactor-clean
-description: Refactor cleanly instead of layering sediment. Use when a change reveals duplicated concepts, local adapters, obsolete owners, compatibility wrappers, parallel abstractions, an over-large module that has accreted many responsibilities, or "just tack this on" pressure in any code area.
+description: Refactor cleanly instead of layering sediment. Use when a change reveals duplicated concepts, local adapters, obsolete owners, redundant inputs or guards, compatibility wrappers, parallel abstractions, an over-large module that has accreted many responsibilities, or "just tack this on" pressure in any code area.
 ---
 
 # Clean Refactoring
@@ -21,13 +21,24 @@ module into the several owners it was hiding.
 2. Find every current owner and consumer. Treat wrappers, aliases, pass-local
    constants, copied structs, and "temporary" branches as sediment until proven
    otherwise.
-3. Promote the concept to its natural home. Pick the module that would own it from
-   scratch, then make old call sites consume that owner directly.
-4. Delete or collapse the stale path in the same pass when feasible. If a bridge must
-   remain, make it tiny, named as compatibility, and give it a removal condition.
-5. Verify behavior through consumers, not just the new module. A clean refactor is
-   only proven when the surfaces that used to diverge now report or exercise the
-   same source of truth.
+3. Run a deletion pass before relaxing checks or making inputs optional. For each
+   input, flag, guard, fallback, and adapter in the affected path, ask what required
+   behavior breaks if it disappears. Trace its writers, transport, readers,
+   validators, and consumers; compare them with the authoritative owner. Making a
+   redundant input optional is not completion. If removing it preserves required
+   behavior, delete the mechanism and its call-site, test, and documentation residue.
+4. Promote any remaining concept to its natural home. Pick the module that would
+   own it from scratch, then make old call sites consume that owner directly.
+   Delete or collapse the stale path in the same pass.
+5. Retain compatibility only for an identified consumer and a concrete behavior
+   that removal would break. Old inputs that can safely be ignored need no parser,
+   validator, or adapter just because they may still arrive. If a bridge is needed,
+   keep it tiny and give it a removal condition; hypothetical callers do not count.
+6. Verify behavior through consumers, including affected failure and retry paths.
+   Search again for the removed mechanism across code, tests, docs, and agent
+   instructions. Finish only when each retained mechanism in the affected path
+   has a named consumer and behavior it preserves; report retained bridges and
+   their removal conditions.
 
 ## Rules
 
@@ -109,6 +120,17 @@ module into the several owners it was hiding.
   the other already settled (orientation, units, edge cases, ordering).
 - Do not preserve dev-only compatibility by default. Unshipped scaffolding should
   move to the clean contract immediately.
+- **Zero lineage signaling: name things for what they are, never for where they
+  came from.** A name that encodes history — a slice file prefixed with the
+  mega-file it was split from, `foo-v2`/`foo-new`/`foo-legacy`, a module named
+  after the experiment that produced it, a wrapper named after the API it
+  replaced — carries no information to a reader who wasn't there, and actively
+  misleads the one who was once the old thing is gone. The test: would someone
+  who joined today, knowing nothing of the history, choose this name? If the
+  name only makes sense with the backstory, rename it; history lives in git,
+  not in identifiers. The same rule kills lineage comments ("previously this
+  was...", "moved from X") — they describe the diff, not the code, and rot the
+  moment the referent disappears.
 - **Prefer the idempotent contract over the refusal.** When an operation can be
   asked for twice — a retry after a lost response, a user clicking the same
   button again, a replayed webhook — reaching the requested end state should
