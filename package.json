@@ -94,10 +94,15 @@
     "@types/node": "^22.0.0",
     "e2b": "2.35.0",
     "husky": "^9.1.7",
+    "linguist-languages": "9.5.0",
+    "lint-staged": "17.6.0",
     "oxfmt": "^0.47.0",
     "oxlint": "^0.16.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
+  },
+  "lint-staged": {
+    "*": "node scripts/check-file-size.mjs"
   },
   "engines": {
     "node": ">=22"

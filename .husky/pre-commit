@@ -2,3 +2,6 @@ bun run format
 git add -u
 bun run check-types
 bun run lint
+
+# Ratchet source-file budget
+npx lint-staged

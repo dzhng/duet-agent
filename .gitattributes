@@ -1,1 +1,6 @@
 test/fixtures/memory-store/crlf.md -text whitespace=cr-at-eol
+
+# Ratchet exclusions: generated and vendored source is maintained by its producer.
+**/generated/** linguist-generated
+**/*.generated.* linguist-generated
+**/vendor/** linguist-vendored
