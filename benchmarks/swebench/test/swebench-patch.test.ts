@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { ContainerHandle, type CommandResult, type CommandRunner } from "../src/container.js";
-import type { ExecTransport } from "../src/duet-client.js";
+import { ContainerHandle } from "../src/container.js";
+import type { CommandResult, CommandRunner } from "../../shared/command-runner.js";
+import type { ExecTransport } from "../../shared/duet-rpc-client.js";
 import { capturePatchBaseline, extractPatch } from "../src/patch.js";
 
 class ScriptedCommands implements CommandRunner {

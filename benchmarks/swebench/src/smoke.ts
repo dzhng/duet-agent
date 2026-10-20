@@ -7,7 +7,7 @@ import type { DatasetRow, ManifestEntry } from "./manifest.js";
 import type { RunRolloutDependencies, RunRolloutSpec, RolloutContainer } from "./rollout.js";
 import { runRollout } from "./rollout.js";
 import { verifyPatchRoundTrip, type ExtractedPatch } from "./patch.js";
-import type { RolloutTelemetry } from "./telemetry.js";
+import type { RolloutTelemetry } from "../../shared/rollout-telemetry.js";
 
 const SMOKE_CONFIG = "glm-pure" satisfies CampaignConfigName;
 const SENTINEL_PATH = "duet-swebench-smoke.txt";

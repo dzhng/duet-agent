@@ -11,19 +11,19 @@ import {
   type RolloutStatus,
 } from "./artifacts.js";
 import type { CampaignConfigName } from "./config-override.js";
-import type { CommandResult } from "./container.js";
+import type { CommandResult } from "../../shared/command-runner.js";
 import {
   runDuetTurn,
   type ExecTransport,
   type RolloutLimits,
   type RolloutOutcome,
-} from "./duet-client.js";
-import type { DuetArtifact } from "./packaging.js";
+} from "../../shared/duet-rpc-client.js";
+import type { DuetArtifact } from "../../shared/duet-packaging.js";
 import { capturePatchBaseline, extractPatch } from "./patch.js";
 import { lintPatch } from "./patch-policy.js";
 import { buildRolloutPrompt, SWEBENCH_SYSTEM_PROMPT } from "./prompt.js";
 import type { DatasetRow, ManifestEntry } from "./manifest.js";
-import { deriveTelemetry, type RolloutTelemetry } from "./telemetry.js";
+import { deriveTelemetry, type RolloutTelemetry } from "../../shared/rollout-telemetry.js";
 
 /** Runtime inputs for one immutable benchmark work unit. */
 export interface RunRolloutSpec {
