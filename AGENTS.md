@@ -24,6 +24,8 @@ A change that reaches the whole system (the turn runner, a saved state shape) do
 
 Every expensive run must answer a question a cheaper one can't. Live evals, which call real models and cost money, and the whole suite in its container are the expensive runs here; do only the ones a change can move. Iterate on one eval, never the whole set. Reuse a result that is still valid, and rerun only what a change could have invalidated. Docs and data that no code reads need no run at all.
 
+Default to end-to-end or system-level tests for regression coverage; use a unit test only for specific, complex business logic when fast feedback will materially speed development.
+
 Write the test first. Before changing behaviour or fixing a bug, invoke [`write-tests`](.agents/skills/write-tests/SKILL.md) and follow its red/green workflow. Test what the product does and how it fails, not how the code is shaped.
 
 An eval counts only once you have seen it fail for the right reason. Before writing or changing a live eval, invoke [`write-eval`](.agents/skills/write-eval/SKILL.md).
