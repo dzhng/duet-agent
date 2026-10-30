@@ -245,7 +245,7 @@ The CLI runs on Bun because OpenTUI is Bun-native.
 <details>
 <summary><b>Development setup</b></summary>
 
-This repo uses Bun for package management, Husky for pre-commit checks, and Docker for functional tests.
+This repo uses Bun for package management, a shared pre-commit hook (installed by `bun install`) for checks, and Docker for functional tests.
 
 ```bash
 bun install
@@ -699,4 +699,4 @@ Apache-2.0
 
 ## Ratchet Files
 
-Source files are limited to 8,000 estimated tokens (bytes divided by four). The pre-commit hook runs `scripts/check-file-size.mjs` through lint-staged, so a clone must install the repository dependencies before commits. Existing oversized authored files are frozen at their current size; generated and vendored paths are excluded through `.gitattributes`. A file may use `@ratchet-files-ignore` in its first 10 lines only when splitting it would cost more than it saves, with the reason beside the pragma.
+Source files are limited to 8,000 estimated tokens (bytes divided by four). The pre-commit hook runs `scripts/check-file-size.mjs` through lint-staged. `bun install` runs `scripts/install-git-hooks.mjs`, which installs the hook once in the repository's shared hooks directory, so every linked worktree runs it; each checkout that commits needs its own `bun install`, and commits from one without dependencies are refused. Existing oversized authored files are frozen at their current size; generated and vendored paths are excluded through `.gitattributes`. A file may use `@ratchet-files-ignore` in its first 10 lines only when splitting it would cost more than it saves, with the reason beside the pragma.

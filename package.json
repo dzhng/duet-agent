@@ -67,7 +67,7 @@
     "example:memory-store": "bun examples/memory-store.ts",
     "example:state-machine": "bun examples/state-machine.ts",
     "example:tui-playground": "bun examples/tui-playground.ts",
-    "prepare": "husky",
+    "prepare": "node scripts/install-git-hooks.mjs",
     "build:compile": "bun build src/cli-entry.ts --compile --outfile dist/duet"
   },
   "dependencies": {
@@ -93,7 +93,6 @@
     "@types/ms": "^2.1.0",
     "@types/node": "^22.0.0",
     "e2b": "2.35.0",
-    "husky": "^9.1.7",
     "linguist-languages": "9.5.0",
     "lint-staged": "17.6.0",
     "oxfmt": "^0.47.0",
