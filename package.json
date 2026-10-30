@@ -101,7 +101,12 @@
     "typescript": "^5.7.0"
   },
   "lint-staged": {
-    "*": "node scripts/check-file-size.mjs"
+    "*": [
+      "bun run format",
+      "bash -c 'bun run check-types'",
+      "bash -c 'bun run lint'",
+      "node scripts/check-file-size.mjs"
+    ]
   },
   "engines": {
     "node": ">=22"
